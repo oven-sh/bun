@@ -859,7 +859,7 @@ const ParseTask = struct {
 
         const is_react_client_component = this.ctx.bundler.options.react_server_components and
             // TODO: make this more resilient.
-            strings.hasPrefixComptime(entry.contents, "\"use client\";\n");
+            strings.hasPrefixComptime(strings.trimLeadingChar(entry.contents, '\n'), "\"use client\";\n");
 
         var source = Logger.Source{
             .path = file_path,
@@ -1001,7 +1001,7 @@ const ParseTask = struct {
                                                 import_record.kind,
                                             );
                                         }
-                                    } else if (!platform.isBun()) {
+                                    } else {
                                         try addError(
                                             log,
                                             &source,

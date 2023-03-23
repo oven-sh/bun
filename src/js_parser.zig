@@ -76,6 +76,83 @@ const NodeFallbackModules = @import("./node_fallbacks.zig");
 
 const RefExprMap = std.ArrayHashMapUnmanaged(Ref, Expr, RefHashCtx, false);
 
+const JSXImport = enum {
+    jsx,
+    jsxDEV,
+    jsxs,
+    Fragment,
+    createElement,
+
+    pub const Symbols = struct {
+        jsx: ?LocRef = null,
+        jsxDEV: ?LocRef = null,
+        jsxs: ?LocRef = null,
+        Fragment: ?LocRef = null,
+        createElement: ?LocRef = null,
+
+        pub fn get(this: *const Symbols, name: []const u8) ?Ref {
+            if (strings.eqlComptime(name, "jsx")) return if (this.jsx) |jsx| jsx.ref.? else null;
+            if (strings.eqlComptime(name, "jsxDEV")) return if (this.jsxDEV) |jsx| jsx.ref.? else null;
+            if (strings.eqlComptime(name, "jsxs")) return if (this.jsxs) |jsxs| jsxs.ref.? else null;
+            if (strings.eqlComptime(name, "Fragment")) return if (this.Fragment) |Fragment| Fragment.ref.? else null;
+            if (strings.eqlComptime(name, "createElement")) return if (this.createElement) |createElement| createElement.ref.? else null;
+            return null;
+        }
+
+        const Runtime = struct {
+            pub const full: []const string = &[_]string{ "jsx", "jsxs" };
+            pub const jsxs_: []const string = &[_]string{"jsxs"};
+            pub const jsx_: []const string = &[_]string{"jsx"};
+        };
+
+        const DevRuntime = struct {
+            pub const full: []const string = &[_]string{ "jsxDEV", "jsxs" };
+            pub const jsxs_: []const string = &[_]string{"jsxs"};
+            pub const jsx_: []const string = &[_]string{"jsxDEV"};
+        };
+        pub fn runtimeImportNames(this: *const Symbols) []const string {
+            if (this.jsxDEV != null) {
+                std.debug.assert(this.jsx == null); // we should never end up with this in the same file
+
+                if (this.jsxs != null)
+                    return DevRuntime.full;
+
+                return DevRuntime.jsx_;
+            }
+
+            if (this.jsx != null and this.jsxs != null)
+                return Runtime.full;
+
+            if (this.jsxs != null)
+                return Runtime.jsxs_;
+
+            if (this.jsx != null)
+                return Runtime.jsx_;
+
+            return &[_]string{};
+        }
+
+        const Legacy = struct {
+            pub const full: []const string = &[_]string{ "createElement", "Fragment" };
+            pub const createElement_: []const string = &[_]string{"createElement"};
+            pub const Fragment_: []const string = &[_]string{"Fragment"};
+        };
+
+        pub fn legacyImportNames(this: *const Symbols) []const string {
+            if (this.Fragment != null and this.createElement != null)
+                return Legacy.full;
+
+            if (this.createElement != null)
+                return Legacy.createElement_;
+
+            if (this.Fragment != null)
+                return Legacy.Fragment_;
+
+            return &[_]string{};
+        }
+    };
+};
+
 const arguments_str: string = "arguments";
 
 // Dear reader,
@@ -3514,6 +3591,36 @@ pub const Parser = struct {
             }) catch unreachable;
         }
 
+        // handle new way to do automatic JSX imports which fixes symbol collision issues
+        if (p.options.jsx.parse) {
+            const runtime_import_names = p.jsx_imports.runtimeImportNames();
+            const legacy_import_names = p.jsx_imports.legacyImportNames();
+
+            if (runtime_import_names.len > 0) {
+                p.generateImportStmt(
+                    p.options.jsx.import_source,
+                    runtime_import_names,
+                    &before,
+                    &p.jsx_imports,
+                    null,
+                    "jsx",
+                    false,
+                ) catch unreachable;
+            }
+
+            if (legacy_import_names.len > 0) {
+                p.generateImportStmt(
+                    p.options.jsx.classic_import_source,
+                    legacy_import_names,
+                    &before,
+                    &p.jsx_imports,
+                    null,
+                    "React",
+                    false,
+                ) catch unreachable;
+            }
+        }
+
         var parts_slice: []js_ast.Part = &([_]js_ast.Part{});
 
         if (before.items.len > 0 or after.items.len > 0) {
@@ -3941,12 +4048,17 @@ fn NewParser_(
         /// Symbol object
         es6_symbol_global: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
         // jsx_filename: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
+
+        // TODO: remove all these
         jsx_runtime: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
         jsx_factory: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
         jsx_fragment: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
         jsx_automatic: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
         jsxs_runtime: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
         jsx_classic: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
+
+        jsx_imports: JSXImport.Symbols = .{},
+
         // only applicable when is_react_fast_refresh_enabled
         jsx_refresh_runtime: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
 
@@ -4825,7 +4937,8 @@ fn NewParser_(
             const allocator = p.allocator;
             const import_record_i = p.addImportRecordByRange(.stmt, logger.Range.None, import_path);
             var import_record: *ImportRecord = &p.import_records.items[import_record_i];
-            import_record.path.namespace = "runtime";
+            if (comptime is_internal)
+                import_record.path.namespace = "runtime";
             import_record.is_internal = is_internal;
             var import_path_identifier = try import_record.path.name.nonUniqueNameString(allocator);
             var namespace_identifier = try allocator.alloc(u8, import_path_identifier.len + suffix.len);
@@ -5447,9 +5560,7 @@ fn NewParser_(
 
             if (p.options.enable_legacy_bundling) {
                 p.runtime_imports.@"$$m" = try p.declareGeneratedSymbol(.other, "$$m");
-
                 p.runtime_imports.@"$$lzy" = try p.declareGeneratedSymbol(.other, "$$lzy");
-
                 p.runtime_imports.__export = try p.declareGeneratedSymbol(.other, "__export");
                 p.runtime_imports.__exportValue = try p.declareGeneratedSymbol(.other, "__exportValue");
                 p.runtime_imports.__exportDefault = try p.declareGeneratedSymbol(.other, "__exportDefault");
@@ -5484,29 +5595,34 @@ fn NewParser_(
                         p.react_element_type = p.declareGeneratedSymbol(.other, "REACT_ELEMENT_TYPE") catch unreachable;
                         p.es6_symbol_global = p.declareGeneratedSymbol(.unbound, "Symbol") catch unreachable;
                     }
-                    p.jsx_fragment = p.declareGeneratedSymbol(.other, "Fragment") catch unreachable;
-                    p.jsx_runtime = p.declareGeneratedSymbol(.other, "jsx") catch unreachable;
-                    if (comptime FeatureFlags.support_jsxs_in_jsx_transform)
-                        p.jsxs_runtime = p.declareGeneratedSymbol(.other, "jsxs") catch unreachable;
-                    p.jsx_factory = p.declareGeneratedSymbol(.other, "Factory") catch unreachable;
 
-                    if (p.options.jsx.factory.len > 1 or FeatureFlags.jsx_runtime_is_cjs) {
-                        p.jsx_classic = p.declareGeneratedSymbol(.other, "ClassicImportSource") catch unreachable;
-                    }
+                    if (!p.options.bundle) {
+                        p.jsx_fragment = p.declareGeneratedSymbol(.other, "Fragment") catch unreachable;
+                        p.jsx_runtime = p.declareGeneratedSymbol(.other, "jsx") catch unreachable;
+                        if (comptime FeatureFlags.support_jsxs_in_jsx_transform)
+                            p.jsxs_runtime = p.declareGeneratedSymbol(.other, "jsxs") catch unreachable;
+                        p.jsx_factory = p.declareGeneratedSymbol(.other, "Factory") catch unreachable;
 
-                    if (p.options.jsx.import_source.len > 0) {
-                        p.jsx_automatic = p.declareGeneratedSymbol(.other, "ImportSource") catch unreachable;
+                        if (p.options.jsx.factory.len > 1 or FeatureFlags.jsx_runtime_is_cjs) {
+                            p.jsx_classic = p.declareGeneratedSymbol(.other, "ClassicImportSource") catch unreachable;
+                        }
+
+                        if (p.options.jsx.import_source.len > 0) {
+                            p.jsx_automatic = p.declareGeneratedSymbol(.other, "ImportSource") catch unreachable;
+                        }
                     }
                 },
 
                 .macro => {
-                    p.bun_jsx_ref = p.declareSymbol(.other, logger.Loc.Empty, "bunJSX") catch unreachable;
-                    BunJSX.bun_jsx_identifier = E.Identifier{
-                        .ref = p.bun_jsx_ref,
-                        .can_be_removed_if_unused = true,
-                        .call_can_be_unwrapped_if_unused = true,
-                    };
-                    p.jsx_fragment = p.declareGeneratedSymbol(.other, "Fragment") catch unreachable;
+                    if (!p.options.bundle) {
+                        p.bun_jsx_ref = p.declareSymbol(.other, logger.Loc.Empty, "bunJSX") catch unreachable;
+                        BunJSX.bun_jsx_identifier = E.Identifier{
+                            .ref = p.bun_jsx_ref,
+                            .can_be_removed_if_unused = true,
+                            .call_can_be_unwrapped_if_unused = true,
+                        };
+                        p.jsx_fragment = p.declareGeneratedSymbol(.other, "Fragment") catch unreachable;
+                    }
                 },
                 else => {},
             }
@@ -5581,6 +5697,8 @@ fn NewParser_(
                     p.resolveGeneratedSymbol(merge);
                 }
             }
+            if (!p.options.bundle)
+                return;
             p.resolveGeneratedSymbol(&p.jsx_runtime);
             if (FeatureFlags.support_jsxs_in_jsx_transform)
                 p.resolveGeneratedSymbol(&p.jsxs_runtime);
@@ -12628,16 +12746,16 @@ fn NewParser_(
             return error.SyntaxError;
         }
 
-        // esbuild's version of this function is much more complicated.
-        // I'm not sure why defines is strictly relevant for this case
-        // do people do <API_URL>?
         fn jsxRefToMemberExpression(p: *P, loc: logger.Loc, ref: Ref) Expr {
             p.recordUsage(ref);
-            return p.newExpr(E.Identifier{
-                .ref = ref,
-                .can_be_removed_if_unused = true,
-                .call_can_be_unwrapped_if_unused = true,
-            }, loc);
+            return p.handleIdentifier(
+                loc,
+                E.Identifier{
+                    .ref = ref,
+                    .can_be_removed_if_unused = true,
+                    .call_can_be_unwrapped_if_unused = true,
+                },
+            );
         }
 
         fn jsxStringsToMemberExpression(p: *P, loc: logger.Loc, parts: []const []const u8) !Expr {
@@ -13601,7 +13719,7 @@ fn NewParser_(
                                 if (e_.tag) |_tag| {
                                     break :tagger p.visitExpr(_tag);
                                 } else {
-                                    break :tagger p.jsxRefToMemberExpression(expr.loc, p.jsx_fragment.ref);
+                                    break :tagger p.jsxImport(.Fragment, expr.loc);
                                 }
                             };
 
@@ -13678,7 +13796,7 @@ fn NewParser_(
 
                                     // Call createElement()
                                     return p.newExpr(E.Call{
-                                        .target = p.jsxRefToMemberExpression(expr.loc, p.jsx_factory.ref),
+                                        .target = p.jsxImport(.createElement, expr.loc),
                                         .args = ExprNodeList.init(args[0..i]),
                                         // Enable tree shaking
                                         .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
@@ -13913,7 +14031,7 @@ fn NewParser_(
                                         }
 
                                         return p.newExpr(E.Call{
-                                            .target = p.jsxRefToMemberExpressionAutomatic(expr.loc, is_static_jsx),
+                                            .target = p.jsxImportAutomatic(expr.loc, is_static_jsx),
                                             .args = ExprNodeList.init(args),
                                             // Enable tree shaking
                                             .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
@@ -15761,11 +15879,53 @@ fn NewParser_(
             }
         }
 
-        fn jsxRefToMemberExpressionAutomatic(p: *P, loc: logger.Loc, is_static: bool) Expr {
-            return p.jsxRefToMemberExpression(loc, if (is_static and !p.options.jsx.development and FeatureFlags.support_jsxs_in_jsx_transform)
-                p.jsxs_runtime.ref
-            else
-                p.jsx_runtime.ref);
+        fn jsxImportAutomatic(p: *P, loc: logger.Loc, is_static: bool) Expr {
+            return p.jsxImport(
+                if (is_static and !p.options.jsx.development and FeatureFlags.support_jsxs_in_jsx_transform)
+                    .jsxs
+                else if (p.options.jsx.development)
+                    .jsxDEV
+                else
+                    .jsx,
+                loc,
+            );
+        }
+
+        fn jsxImport(p: *P, kind: JSXImport, loc: logger.Loc) Expr {
+            var jsx_imports = &p.jsx_imports;
+            switch (kind) {
+                inline else => |field| {
+                    const ref: Ref = brk: {
+                        if (@field(jsx_imports, @tagName(field)) == null) {
+                            const loc_ref = LocRef{
+                                .loc = loc,
+                                .ref = p.newSymbol(.other, @tagName(field)) catch unreachable,
+                            };
+
+                            p.module_scope.generated.push(p.allocator, loc_ref.ref.?) catch unreachable;
+                            p.is_import_item.put(p.allocator, loc_ref.ref.?, {}) catch unreachable;
+                            @field(jsx_imports, @tagName(field)) = loc_ref;
+                            break :brk loc_ref.ref.?;
+                        }
+
+                        break :brk @field(jsx_imports, @tagName(field)).?.ref.?;
+                    };
+
+                    p.recordUsage(ref);
+                    return p.handleIdentifier(
+                        loc,
+                        E.Identifier{
+                            .ref = ref,
+                            .can_be_removed_if_unused = true,
+                            .call_can_be_unwrapped_if_unused = true,
+                        },
+                        null,
+                        .{
+                            .was_originally_identifier = true,
+                        },
+                    );
+                },
+            }
         }
 
         fn maybeRelocateVarsToTopLevel(p: *P, decls: []const G.Decl, mode: RelocateVars.Mode) RelocateVars {

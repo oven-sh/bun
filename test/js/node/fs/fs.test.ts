@@ -680,7 +680,7 @@ describe("createReadStream", () => {
 
   it("works with very large file", async () => {
     const tempFile = tmpdir() + "/" + "large-file" + Date.now() + ".txt";
-    Bun.write(Bun.file(tempFile), "big data big data big data".repeat(10000));
+    await Bun.write(Bun.file(tempFile), "big data big data big data".repeat(10000));
     var stream = createReadStream(tempFile, {
       highWaterMark: 512,
     });

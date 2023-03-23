@@ -1,26 +1,24 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { request } from "undici";
 
-import type { Server } from "bun";
-
 import { createServer } from "../../../http-test-server";
 
 describe("undici", () => {
-  let server: { server: Server; port: number; stop: () => void };
+  let serverCtl: ReturnType<typeof createServer>;
   let hostUrl: string;
   let hostname = "localhost";
   let port: number;
   let host: string;
 
   beforeAll(() => {
-    server = createServer();
+    serverCtl = createServer();
     port = server.port;
     host = `${hostname}:${port}`;
     hostUrl = `http://${host}`;
   });
 
   afterAll(() => {
-    server.stop();
+    serverCtl.stop();
   });
 
   describe("request", () => {

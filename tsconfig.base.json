@@ -6,6 +6,7 @@
     "module": "esnext",
     "target": "esnext",
     "moduleResolution": "nodenext",
+    "allowImportingTsExtensions": true,
     "strict": true,
     "noImplicitAny": false,
     "allowJs": true,

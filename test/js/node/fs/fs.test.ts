@@ -677,6 +677,29 @@ describe("createReadStream", () => {
       });
     });
   });
+
+  it("works with very large file", async () => {
+    const tempFile = tmpdir() + "/" + "large-file" + Date.now() + ".txt";
+    Bun.write(Bun.file(tempFile), "big data big data big data".repeat(10000));
+    var stream = createReadStream(tempFile, {
+      highWaterMark: 512,
+    });
+
+    var data = readFileSync(tempFile, "utf8");
+    var i = 0;
+    return await new Promise(resolve => {
+      stream.on("data", chunk => {
+        expect(chunk instanceof Buffer).toBe(true);
+        expect(chunk.toString()).toBe(data.slice(i, i + chunk.length));
+        i += chunk.length;
+      });
+      stream.on("end", () => {
+        expect(i).toBe("big data big data big data".repeat(10000).length);
+        rmSync(tempFile);
+        resolve(true);
+      });
+    });
+  });
 });
 
 describe("fs.WriteStream", () => {

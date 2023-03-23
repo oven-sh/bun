@@ -2304,6 +2304,10 @@ const FnOnlyDataVisit = struct {
     /// if one is missing so this will always be present inside a class body.
     class_name_ref: ?*Ref = null,
 
+    /// If true, we're inside a static class context where "this" expressions
+    /// should be replaced with the class name.
+    should_replace_this_with_class_name_ref: bool = false,
+
     // If we're inside an async arrow function and async functions are not
     // supported, then we will have to convert that arrow function to a generator
     // function. That means references to "arguments" inside the arrow function
@@ -13576,9 +13580,11 @@ fn NewParser_(
 
         fn valueForThis(p: *P, loc: logger.Loc) ?Expr {
             // Substitute "this" if we're inside a static class property initializer
-            if (p.fn_only_data_visit.class_name_ref) |ref| {
-                p.recordUsage(ref.*);
-                return p.newExpr(E.Identifier{ .ref = ref.* }, loc);
+            if (p.fn_only_data_visit.should_replace_this_with_class_name_ref) {
+                if (p.fn_only_data_visit.class_name_ref) |ref| {
+                    p.recordUsage(ref.*);
+                    return p.newExpr(E.Identifier{ .ref = ref.* }, loc);
+                }
             }
 
             // oroigianlly was !=- modepassthrough
@@ -18320,8 +18326,12 @@ fn NewParser_(
                         var old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
                         var old_fn_only_data = p.fn_only_data_visit;
                         p.fn_or_arrow_data_visit = .{};
-                        p.fn_only_data_visit = .{ .is_this_nested = true, .is_new_target_allowed = true, .class_name_ref = &shadow_ref };
-
+                        p.fn_only_data_visit = .{
+                            .is_this_nested = true,
+                            .is_new_target_allowed = true,
+                            .class_name_ref = &shadow_ref,
+                            .should_replace_this_with_class_name_ref = true,
+                        };
                         p.pushScopeForVisitPass(.class_static_init, property.class_static_block.?.loc) catch unreachable;
 
                         // Make it an error to use "arguments" in a static class block

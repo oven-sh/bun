@@ -636,6 +636,13 @@ pub const Loader = enum(u4) {
     wasm,
     napi,
 
+    pub fn canHaveSourceMap(this: Loader) bool {
+        return switch (this) {
+            .jsx, .js, .ts, .tsx => true,
+            else => false,
+        };
+    }
+
     pub fn canBeRunByBun(this: Loader) bool {
         return switch (this) {
             .jsx, .js, .ts, .tsx, .json, .wasm => true,

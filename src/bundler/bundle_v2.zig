@@ -5387,6 +5387,8 @@ const LinkerContext = struct {
         stmts.inside_wrapper_prefix.items.len = 0;
         stmts.inside_wrapper_suffix.items.len = 0;
 
+        // TODO: mergeAdjacentLocalStmts
+
         var out_stmts: []js_ast.Stmt = stmts.all_stmts.items;
         // Optionally wrap all statements in a closure
         if (needs_wrapper) {

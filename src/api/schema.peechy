@@ -588,3 +588,17 @@ message BunInstall {
   string global_dir = 17;
   string global_bin_dir = 18;
 }
+
+struct ReactClientComponentModule {
+  uint32 moduleId;
+  StringPointer inputName;
+  StringPointer assetName;
+  StringPointer exportNames;
+}
+
+struct ReactClientComponentModuleManifest {
+  uint32 version;
+  ReactClientComponentModule[] modules;
+  StringPointer[] exportNames;
+  byte[] contents;
+}

@@ -4634,7 +4634,13 @@ fn NewPrinter(
                 unreachable;
 
             const quote = bestQuoteCharForString(u8, import_record.path.text, false);
-            if (import_record.print_namespace_in_path and import_record.path.namespace.len > 0 and !strings.eqlComptime(import_record.path.namespace, "file")) {
+            if (import_record.print_namespace_in_path and import_record.module_id != 0) {
+                p.print(quote);
+                p.print(import_record.path.namespace);
+                p.print(":");
+                p.printModuleIdAssumeEnabled(import_record.module_id);
+                p.print(quote);
+            } else if (import_record.print_namespace_in_path and import_record.path.namespace.len > 0 and !strings.eqlComptime(import_record.path.namespace, "file")) {
                 p.print(quote);
                 p.print(import_record.path.namespace);
                 p.print(":");

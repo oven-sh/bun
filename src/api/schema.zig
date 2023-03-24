@@ -3039,4 +3039,66 @@ pub const Api = struct {
             try writer.endMessage();
         }
     };
+
+    pub const ReactClientComponentModule = struct {
+        /// moduleId
+        module_id: u32 = 0,
+
+        /// inputName
+        input_name: StringPointer,
+
+        /// assetName
+        asset_name: StringPointer,
+
+        /// exportNames
+        export_names: StringPointer,
+
+        pub fn decode(reader: anytype) anyerror!ReactClientComponentModule {
+            var this = std.mem.zeroes(ReactClientComponentModule);
+
+            this.module_id = try reader.readValue(u32);
+            this.input_name = try reader.readValue(StringPointer);
+            this.asset_name = try reader.readValue(StringPointer);
+            this.export_names = try reader.readValue(StringPointer);
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeInt(this.module_id);
+            try writer.writeValue(@TypeOf(this.input_name), this.input_name);
+            try writer.writeValue(@TypeOf(this.asset_name), this.asset_name);
+            try writer.writeValue(@TypeOf(this.export_names), this.export_names);
+        }
+    };
+
+    pub const ReactClientComponentModuleManifest = struct {
+        /// version
+        version: u32 = 0,
+
+        /// modules
+        modules: []const ReactClientComponentModule,
+
+        /// exportNames
+        export_names: []const StringPointer,
+
+        /// contents
+        contents: []const u8,
+
+        pub fn decode(reader: anytype) anyerror!ReactClientComponentModuleManifest {
+            var this = std.mem.zeroes(ReactClientComponentModuleManifest);
+
+            this.version = try reader.readValue(u32);
+            this.modules = try reader.readArray(ReactClientComponentModule);
+            this.export_names = try reader.readArray(StringPointer);
+            this.contents = try reader.readArray(u8);
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeInt(this.version);
+            try writer.writeArray(ReactClientComponentModule, this.modules);
+            try writer.writeArray(StringPointer, this.export_names);
+            try writer.writeArray(u8, this.contents);
+        }
+    };
 };

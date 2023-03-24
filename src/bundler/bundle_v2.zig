@@ -1600,6 +1600,7 @@ const LinkerGraph = struct {
                                     // That import is now a react client component
                                     import_record.tag = .react_client_component;
                                     import_record.path.namespace = "react-client";
+                                    import_record.module_id = bun.hash32(sources[source_index].path.pretty);
                                     import_record.print_namespace_in_path = true;
 
                                     if (entry_point_kinds[source_index] == .none) {
@@ -5769,11 +5770,115 @@ const LinkerContext = struct {
             }
         }
 
+        var react_client_components_manifest: []u8 = if (c.resolver.opts.react_server_components) brk: {
+            var react_client_components_iterator = c.graph.react_client_component_boundary.iterator(.{});
+            var modules = std.ArrayList(Api.ReactClientComponentModule).initCapacity(c.allocator, c.graph.react_client_component_boundary.count()) catch unreachable;
+            defer modules.deinit();
+            var export_names = std.ArrayList(Api.StringPointer).init(c.allocator);
+            defer export_names.deinit();
+            var bytes = std.ArrayList(u8).init(c.allocator);
+            defer bytes.deinit();
+            var all_sources = c.parse_graph.input_files.items(.source);
+            var all_named_exports = c.graph.ast.items(.named_exports);
+
+            var sorted_client_component_ids = std.ArrayList(u32).initCapacity(c.allocator, modules.capacity) catch unreachable;
+            defer sorted_client_component_ids.deinit();
+            while (react_client_components_iterator.next()) |source_index| {
+                if (!c.graph.files_live.isSet(source_index)) continue;
+                sorted_client_component_ids.appendAssumeCapacity(@intCast(u32, source_index));
+            }
+
+            const Sorter = struct {
+                sources: []const Logger.Source,
+                pub fn isLessThan(ctx: @This(), a_index: u32, b_index: u32) bool {
+                    const a = ctx.sources[a_index].path.pretty;
+                    const b = ctx.sources[b_index].path.pretty;
+                    return std.mem.order(u8, a, b) == .lt;
+                }
+            };
+            std.sort.sort(u32, sorted_client_component_ids.items, Sorter{ .sources = all_sources }, Sorter.isLessThan);
+
+            for (sorted_client_component_ids.items) |source_index| {
+                const named_exports = all_named_exports[source_index].keys();
+                const exports_len = @intCast(u32, named_exports.len);
+                const exports_start = @intCast(u32, export_names.items.len);
+
+                var grow_length: usize = 0;
+                try export_names.ensureUnusedCapacity(named_exports.len);
+
+                var chunk: *Chunk = brk2: {
+                    for (chunks) |*chunk_| {
+                        if (chunk_.entry_point.source_index == @intCast(u32, source_index)) {
+                            break :brk2 chunk_;
+                        }
+                    }
+
+                    @panic("Assertion failure: missing chunk for react client component");
+                };
+
+                grow_length += chunk.final_rel_path.len;
+
+                grow_length += all_sources[source_index].path.pretty.len;
+
+                for (named_exports) |export_name| {
+                    try export_names.append(Api.StringPointer{
+                        .offset = @intCast(u32, bytes.items.len + grow_length),
+                        .length = @intCast(u32, export_name.len),
+                    });
+                    grow_length += export_name.len;
+                }
+
+                try bytes.ensureUnusedCapacity(grow_length);
+
+                const input_name = Api.StringPointer{
+                    .offset = @intCast(u32, bytes.items.len),
+                    .length = @intCast(u32, all_sources[source_index].path.pretty.len),
+                };
+
+                bytes.appendSliceAssumeCapacity(all_sources[source_index].path.pretty);
+
+                const asset_name = Api.StringPointer{
+                    .offset = @intCast(u32, bytes.items.len),
+                    .length = @intCast(u32, chunk.final_rel_path.len),
+                };
+
+                bytes.appendSliceAssumeCapacity(chunk.final_rel_path);
+
+                for (named_exports) |export_name| {
+                    bytes.appendSliceAssumeCapacity(export_name);
+                }
+
+                modules.appendAssumeCapacity(.{
+                    .module_id = bun.hash32(all_sources[source_index].path.pretty),
+                    .asset_name = asset_name,
+                    .input_name = input_name,
+                    .export_names = .{
+                        .length = exports_len,
+                        .offset = exports_start,
+                    },
+                });
+            }
+            if (modules.items.len == 0) break :brk &.{};
+
+            var manifest = Api.ReactClientComponentModuleManifest{
+                .version = 1,
+                .modules = modules.items,
+                .export_names = export_names.items,
+                .contents = bytes.items,
+            };
+            var byte_buffer = std.ArrayList(u8).initCapacity(c.allocator, bytes.items.len) catch unreachable;
+            var byte_buffer_writer = byte_buffer.writer();
+            const SchemaWriter = schema.Writer(@TypeOf(&byte_buffer_writer));
+            var writer = SchemaWriter.init(&byte_buffer_writer);
+            manifest.encode(&writer) catch unreachable;
+            break :brk byte_buffer.items;
+        } else &.{};
+
         // Generate the final output files by joining file pieces together
-        var output_files = std.ArrayList(options.OutputFile).initCapacity(
-            c.allocator,
-            chunks.len, // + @as(usize, @boolToInt(react_client_component_manifest != null)),
-        ) catch unreachable;
+        var output_files = std.ArrayList(options.OutputFile).initCapacity(c.allocator, chunks.len + @as(
+            usize,
+            @boolToInt(react_client_components_manifest.len > 0),
+        )) catch unreachable;
         output_files.items.len = chunks.len;
         for (chunks, output_files.items) |*chunk, *output_file| {
             output_file.* = options.OutputFile.initBuf(
@@ -5782,6 +5887,14 @@ const LinkerContext = struct {
                 // TODO: remove this field
                 .js,
             );
+        }
+
+        if (react_client_components_manifest.len > 0) {
+            output_files.appendAssumeCapacity(options.OutputFile.initBuf(
+                react_client_components_manifest,
+                "./client-components-manifest.blob",
+                .file,
+            ));
         }
 
         return output_files;

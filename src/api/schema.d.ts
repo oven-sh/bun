@@ -702,6 +702,20 @@ export interface BunInstall {
   global_bin_dir?: string;
 }
 
+export interface ReactClientComponentModule {
+  moduleId: uint32;
+  inputName: StringPointer;
+  assetName: StringPointer;
+  exportNames: StringPointer;
+}
+
+export interface ReactClientComponentModuleManifest {
+  version: uint32;
+  modules: ReactClientComponentModule[];
+  exportNames: StringPointer[];
+  contents: Uint8Array;
+}
+
 export declare function encodeStackFrame(message: StackFrame, bb: ByteBuffer): void;
 export declare function decodeStackFrame(buffer: ByteBuffer): StackFrame;
 export declare function encodeStackFramePosition(message: StackFramePosition, bb: ByteBuffer): void;
@@ -816,3 +830,12 @@ export declare function encodeNPMRegistryMap(message: NPMRegistryMap, bb: ByteBu
 export declare function decodeNPMRegistryMap(buffer: ByteBuffer): NPMRegistryMap;
 export declare function encodeBunInstall(message: BunInstall, bb: ByteBuffer): void;
 export declare function decodeBunInstall(buffer: ByteBuffer): BunInstall;
+export declare function encodeReactClientComponentModule(message: ReactClientComponentModule, bb: ByteBuffer): void;
+export declare function decodeReactClientComponentModule(buffer: ByteBuffer): ReactClientComponentModule;
+export declare function encodeReactClientComponentModuleManifest(
+  message: ReactClientComponentModuleManifest,
+  bb: ByteBuffer,
+): void;
+export declare function decodeReactClientComponentModuleManifest(
+  buffer: ByteBuffer,
+): ReactClientComponentModuleManifest;

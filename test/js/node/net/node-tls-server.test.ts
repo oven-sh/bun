@@ -14,11 +14,9 @@ const COMMON_CERT = {
   passphrase: "1234",
 };
 
-
-const passKey = readFileSync(join(import.meta.dir, "fixtures","rsa_private_encrypted.pem"));
-const rawKey = readFileSync(join(import.meta.dir, "fixtures","rsa_private.pem"));
-const cert = readFileSync(join(import.meta.dir, "fixtures","rsa_cert.crt"));
-
+const passKey = readFileSync(join(import.meta.dir, "fixtures", "rsa_private_encrypted.pem"));
+const rawKey = readFileSync(join(import.meta.dir, "fixtures", "rsa_private.pem"));
+const cert = readFileSync(join(import.meta.dir, "fixtures", "rsa_cert.crt"));
 
 const socket_domain = join(realpathSync(tmpdir()), "node-tls-server.sock");
 

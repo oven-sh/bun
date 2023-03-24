@@ -73,6 +73,10 @@ const TLSSocket = (function (InternalTLSSocket) {
     constructor(options) {
       super(options);
       this.#secureContext = options.secureContext || createSecureContext(options);
+      this.authorized = false;
+      this.secureConnecting = true;
+      this._secureEstablished = false;
+      this._securePending = true;
     }
 
     _secureEstablished = false;
@@ -113,19 +117,6 @@ const TLSSocket = (function (InternalTLSSocket) {
       throw Error("Not implented in Bun yet");
     }
 
-    emit(event, args) {
-      super.emit(event, args);
-
-      if (event === "connect" && !this._readableState?.destroyed) {
-        this.authorized = true;
-        this.secureConnecting = false;
-        this._secureEstablished = true;
-        this._securePending = false;
-
-        super.emit("secureConnect", args);
-      }
-    }
-
     [buntls](port, host) {
       var { servername } = this;
       if (servername) {
@@ -146,8 +137,8 @@ class Server extends NetServer {
   ca;
   passphrase;
   secureOptions;
-  rejectUnauthorized;
-  requestCert;
+  _rejectUnauthorized;
+  _requestCert;
 
   constructor(options, secureConnectionListener) {
     super(options, secureConnectionListener);
@@ -187,15 +178,14 @@ class Server extends NetServer {
 
       const requestCert = options.requestCert || false;
 
-      if (requestCert) this.requestCert = requestCert;
-      else this.requestCert = undefined;
+      if (requestCert) this._requestCert = requestCert;
+      else this._requestCert = undefined;
 
       const rejectUnauthorized = options.rejectUnauthorized || false;
 
       if (rejectUnauthorized) {
-        this.rejectUnauthorized = rejectUnauthorized;
-        this.requestCert = true;
-      } else this.rejectUnauthorized = undefined;
+        this._rejectUnauthorized = rejectUnauthorized;
+      } else this._rejectUnauthorized = undefined;
     }
   }
 
@@ -207,7 +197,7 @@ class Server extends NetServer {
     throw Error("Not implented in Bun yet");
   }
 
-  [buntls](port, host) {
+  [buntls](port, host, isClient) {
     return [
       {
         serverName: host || "localhost",
@@ -216,8 +206,9 @@ class Server extends NetServer {
         ca: this.ca,
         passphrase: this.passphrase,
         secureOptions: this.secureOptions,
-        rejectUnauthorized: this.rejectUnauthorized,
-        requestCert: this.requestCert,
+        // Client always is NONE on set_verify
+        rejectUnauthorized: isClient ? false : this._rejectUnauthorized,
+        requestCert: isClient ? false : this._requestCert,
       },
       SocketClass,
     ];

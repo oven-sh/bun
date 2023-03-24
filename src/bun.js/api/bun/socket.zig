@@ -77,6 +77,7 @@ const Handlers = struct {
     onConnectError: JSC.JSValue = .zero,
     onEnd: JSC.JSValue = .zero,
     onError: JSC.JSValue = .zero,
+    onHandshake: JSC.JSValue = .zero,
 
     binary_type: BinaryType = .Buffer,
 
@@ -157,6 +158,7 @@ const Handlers = struct {
             .{ "onConnectError", "connectError" },
             .{ "onEnd", "end" },
             .{ "onError", "error" },
+            .{ "onHandshake", "handshake" },
         };
         inline for (pairs) |pair| {
             if (opts.getTruthy(globalObject, pair.@"1")) |callback_value| {
@@ -198,6 +200,7 @@ const Handlers = struct {
         this.onConnectError.unprotect();
         this.onEnd.unprotect();
         this.onError.unprotect();
+        this.onHandshake.unprotect();
     }
 
     pub fn protect(this: *Handlers) void {
@@ -209,6 +212,7 @@ const Handlers = struct {
         this.onConnectError.protect();
         this.onEnd.protect();
         this.onError.protect();
+        this.onHandshake.protect();
     }
 };
 
@@ -489,6 +493,7 @@ pub const Listener = struct {
                     pub const onTimeout = NewSocket(true).onTimeout;
                     pub const onConnectError = NewSocket(true).onConnectError;
                     pub const onEnd = NewSocket(true).onEnd;
+                    pub const onHandshake = NewSocket(true).onHandshake;
                 },
             );
         } else {
@@ -505,6 +510,7 @@ pub const Listener = struct {
                     pub const onTimeout = NewSocket(false).onTimeout;
                     pub const onConnectError = NewSocket(false).onConnectError;
                     pub const onEnd = NewSocket(false).onEnd;
+                    pub const onHandshake = NewSocket(false).onHandshake;
                 },
             );
         }
@@ -788,6 +794,7 @@ pub const Listener = struct {
                     pub const onTimeout = NewSocket(true).onTimeout;
                     pub const onConnectError = NewSocket(true).onConnectError;
                     pub const onEnd = NewSocket(true).onEnd;
+                    pub const onHandshake = NewSocket(true).onHandshake;
                 },
             );
         } else {
@@ -803,6 +810,7 @@ pub const Listener = struct {
                     pub const onTimeout = NewSocket(false).onTimeout;
                     pub const onConnectError = NewSocket(false).onConnectError;
                     pub const onEnd = NewSocket(false).onEnd;
+                    pub const onHandshake = NewSocket(false).onHandshake;
                 },
             );
         }
@@ -1128,6 +1136,44 @@ fn NewSocket(comptime ssl: bool) type {
             }
         }
 
+        pub fn onHandshake(this: *This, _: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
+            JSC.markBinding(@src());
+            log("onHandshake {} {} {s}", .{ success, ssl_error.error_no, if (ssl_error.code == null) "" else ssl_error.code[0..bun.len(ssl_error.code)] });
+            const handlers = this.handlers;
+            const callback = handlers.onHandshake;
+            if (callback == .zero) return;
+
+            log("onHandshake callback!", .{});
+
+            const globalObject = handlers.globalObject;
+            const this_value = this.getThisValue(globalObject);
+            var js_ssl_error: JSValue = undefined;
+            if (ssl_error.error_no == 0) {
+                js_ssl_error = JSValue.jsNull();
+            } else {
+                const code = if (ssl_error.code == null) "" else ssl_error.code[0..bun.len(ssl_error.code)];
+
+                const reason = if (ssl_error.reason == null) "" else ssl_error.reason[0..bun.len(ssl_error.reason)];
+
+                const fallback = JSC.SystemError{
+                    .code = ZigString.init(code),
+                    .message = ZigString.init(reason),
+                };
+
+                js_ssl_error = fallback.toErrorInstance(globalObject);
+            }
+
+            const result = callback.callWithThis(globalObject, this_value, &[_]JSValue{
+                this_value,
+                JSValue.jsNumberFromInt32(success),
+                js_ssl_error,
+            });
+
+            if (result.toError()) |err_value| {
+                _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, err_value });
+            }
+        }
+
         pub fn onClose(this: *This, _: Socket, err: c_int, _: ?*anyopaque) void {
             JSC.markBinding(@src());
             log("onClose", .{});
@@ -1260,11 +1306,10 @@ fn NewSocket(comptime ssl: bool) type {
             if (ssl_error.error_no == 0) {
                 return JSValue.jsNull();
             }
-            
-            const code = if (ssl_error.code == null) "" else ssl_error.code[0..bun.len(ssl_error.code)];
-            
-            const reason = if (ssl_error.reason == null) "" else ssl_error.reason[0..bun.len(ssl_error.reason)];
 
+            const code = if (ssl_error.code == null) "" else ssl_error.code[0..bun.len(ssl_error.code)];
+
+            const reason = if (ssl_error.reason == null) "" else ssl_error.reason[0..bun.len(ssl_error.reason)];
 
             const fallback = JSC.SystemError{
                 .code = ZigString.init(code),

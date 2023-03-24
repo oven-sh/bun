@@ -133,6 +133,7 @@ pub const ServerConfig = struct {
         secure_options: u32 = 0,
         request_cert: i32 = 0,
         reject_unauthorized: i32 = 0,
+        ssl_ciphers: [*c]const u8 = null,
 
         const log = Output.scoped(.SSLConfig, false);
 
@@ -165,6 +166,10 @@ pub const ServerConfig = struct {
                     ctx_opts.ca = ssl_config.ca;
                     ctx_opts.ca_count = ssl_config.ca_count;
                 }
+
+                if (ssl_config.ssl_ciphers != null) {
+                    ctx_opts.ssl_ciphers = ssl_config.ssl_ciphers;
+                }
                 ctx_opts.request_cert = ssl_config.request_cert;
                 ctx_opts.reject_unauthorized = ssl_config.reject_unauthorized;
             }
@@ -180,6 +185,7 @@ pub const ServerConfig = struct {
                 "ca_file_name",
                 "dh_params_file_name",
                 "passphrase",
+                "ssl_ciphers",
             };
 
             inline for (fields) |field| {
@@ -312,12 +318,23 @@ pub const ServerConfig = struct {
                 }
             }
 
-            if (obj.getTruthy(global, "requestCert")) |_| {
-                result.request_cert = 1;
+            if (obj.getTruthy(global, "requestCert")) |request_cert| {
+                result.request_cert = if (request_cert.asBoolean()) 1 else 0;
             }
-            if (obj.getTruthy(global, "rejectUnauthorized")) |_| {
-                result.reject_unauthorized = 1;
+
+            if (obj.getTruthy(global, "rejectUnauthorized")) |reject_unauthorized| {
+                result.reject_unauthorized = if (reject_unauthorized.asBoolean()) 1 else 0;
             }
+
+            if (obj.getTruthy(global, "ciphers")) |ssl_ciphers| {
+                var sliced = ssl_ciphers.toSlice(global, bun.default_allocator);
+                defer sliced.deinit();
+                if (sliced.len > 0) {
+                    result.ssl_ciphers = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    any = true;
+                }
+            }
+
             // Optional
             if (any) {
                 if (obj.getTruthy(global, "secureOptions")) |secure_options| {

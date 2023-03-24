@@ -92,8 +92,6 @@ const Socket = (function (InternalSocket) {
         self.emit("error", error);
       },
       data({ data: self }, buffer) {
-        console.log("data", self.#socket.verifyError());
-
         self.bytesRead += buffer.length;
         const queue = self.#readQueue;
 
@@ -119,12 +117,43 @@ const Socket = (function (InternalSocket) {
         socket.timeout(self.timeout);
         socket.ref();
         self.#socket = socket;
-        console.log(self.#socket.verifyError());
         // force collect cert
         self.#socket.write(" ");
         self.connecting = false;
         self.emit("connect", self);
         Socket.#Drain(socket);
+      },
+      handshake(socket, success, verifyError) {
+        const { data: self } = socket;
+        self._securePending = false;
+        self.secureConnecting = false;
+        self._secureEstablished = !!success;
+
+        // Needs getPeerCertificate support (not implemented yet)
+        // if (!verifyError && !this.isSessionReused()) {
+        //   const hostname = options.servername ||
+        //                  options.host ||
+        //                  (options.socket && options.socket._host) ||
+        //                  'localhost';
+        //   const cert = this.getPeerCertificate(true);
+        //   verifyError = options.checkServerIdentity(hostname, cert);
+        // }
+
+        if (self._requestCert || self._rejectUnauthorized) {
+          if (verifyError) {
+            self.authorized = false;
+            self.authorizationError = verifyError.code || verifyError.message;
+            if (self._rejectUnauthorized) {
+              // client connections call close uSockets never handle client
+              self.emit("error", verifyError);
+              Socket.#Close(socket);
+              return;
+            }
+          }
+        } else {
+          self.authorized = true;
+        }
+        self.emit("secureConnect", verifyError);
       },
       timeout(socket) {
         const self = socket.data;
@@ -146,8 +175,7 @@ const Socket = (function (InternalSocket) {
 
     static #Drain(socket) {
       const self = socket.data;
-      console.log("drain", self.#socket.verifyError());
-      
+
       const callback = self.#writeCallback;
       if (callback) {
         const chunk = self.#writeChunk;
@@ -177,9 +205,11 @@ const Socket = (function (InternalSocket) {
       open(socket) {
         const self = this.data;
         const options = self[bunSocketServerOptions];
-        const { pauseOnConnect, connectionListener, InternalSocketClass } = options;
+        const { pauseOnConnect, connectionListener, InternalSocketClass, requestCert, rejectUnauthorized } = options;
         const _socket = new InternalSocketClass({});
         _socket.isServer = true;
+        _socket._requestCert = requestCert;
+        _socket._rejectUnauthorized = rejectUnauthorized;
 
         _socket.#attach(this.localPort, socket);
         if (self.maxConnections && self[bunSocketServerConnections] >= self.maxConnections) {
@@ -207,6 +237,37 @@ const Socket = (function (InternalSocket) {
         }
         self.emit("connection", _socket);
       },
+      handshake({ data: self }, success, verifyError) {
+        self._securePending = false;
+        self.secureConnecting = false;
+        self._secureEstablished = !!success;
+
+        // Needs getPeerCertificate support (not implemented yet)
+        // if (!verifyError && !this.isSessionReused()) {
+        //   const hostname = options.servername ||
+        //                  options.host ||
+        //                  (options.socket && options.socket._host) ||
+        //                  'localhost';
+        //   const cert = this.getPeerCertificate(true);
+        //   verifyError = options.checkServerIdentity(hostname, cert);
+        // }
+
+        if (self._requestCert || self._rejectUnauthorized) {
+          if (verifyError) {
+            self.authorized = false;
+            self.authorizationError = verifyError.code || verifyError.message;
+            if (self._rejectUnauthorized) {
+              // no need to call self.destroy() this will be handled by uSockets
+              // self.destroy();
+              self.emit("error", verifyError);
+              return;
+            }
+          }
+        } else {
+          self.authorized = true;
+        }
+        self.emit("secureConnect", verifyError);
+      },
       error(socket, error) {
         Socket.#Handlers.error(socket, error);
         this.data.emit("error", error);
@@ -229,7 +290,7 @@ const Socket = (function (InternalSocket) {
     #writeCallback;
     #writeChunk;
     #pendingRead;
-    
+
     isServer = false;
 
     constructor(options) {
@@ -264,7 +325,6 @@ const Socket = (function (InternalSocket) {
       socket.ref();
       this.#socket = socket;
       this.connecting = false;
-
 
       this.emit("connect", this);
       Socket.#Drain(socket);
@@ -302,16 +362,26 @@ const Socket = (function (InternalSocket) {
           noDelay,
           keepAlive,
           keepAliveInitialDelay,
+          requestCert,
+          rejectUnauthorized,
         } = port;
       }
       this.connecting = true;
       this.remotePort = port;
-      if (connectListener) this.on("connect", connectListener);
+
       const bunTLS = this[bunTlsSymbol];
       var tls = undefined;
       if (typeof bunTLS === "function") {
-        tls = bunTLS.call(this, port, host);
+        tls = bunTLS.call(this, port, host, true);
+        this._requestCert = requestCert;
+        this._rejectUnauthorized = rejectUnauthorized;
+        this.authorized = false;
+        this.secureConnecting = true;
+        this._secureEstablished = false;
+        this._securePending = true;
       }
+
+      if (connectListener) this.on("connect", connectListener);
 
       bunConnect(
         path
@@ -629,7 +699,7 @@ class Server extends EventEmitter {
       var TLSSocketClass = undefined;
       const bunTLS = this[bunTlsSymbol];
       if (typeof bunTLS === "function") {
-        [tls, TLSSocketClass] = bunTLS.call(this, port, hostname);
+        [tls, TLSSocketClass] = bunTLS.call(this, port, hostname, false);
       }
 
       this[bunSocketServerOptions].InternalSocketClass = TLSSocketClass || SocketClass;

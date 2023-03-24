@@ -32,6 +32,12 @@
       ],
       "deno:harness": [
         "js/deno/harness.ts"
+      ],
+      "foo/bar": [
+        "js/bun/resolve/baz.js"
+      ],
+      "@faasjs/*": [
+        "js/bun/resolve/*.js"
       ]
     }
   },

@@ -318,7 +318,12 @@ pub const BundleV2 = struct {
         debug("Parsed {d} files, producing {d} ASTs", .{ this.graph.input_files.len, this.graph.ast.len });
     }
 
-    pub fn enqueueItem(this: *BundleV2, hash: ?u64, batch: *ThreadPoolLib.Batch, resolve: _resolver.Result) !?Index.Int {
+    pub fn enqueueItem(
+        this: *BundleV2,
+        hash: ?u64,
+        batch: *ThreadPoolLib.Batch,
+        resolve: _resolver.Result,
+    ) !?Index.Int {
         var result = resolve;
         var path = result.path() orelse return null;
 
@@ -355,6 +360,7 @@ pub const BundleV2 = struct {
         var task = try this.graph.allocator.create(ParseTask);
         task.* = ParseTask.init(&result, source_index);
         task.loader = loader;
+        task.jsx = this.bundler.options.jsx;
         task.task.node.next = null;
         task.tree_shaking = this.linker.options.tree_shaking;
         batch.push(ThreadPoolLib.Batch.from(&task.task));
@@ -364,9 +370,6 @@ pub const BundleV2 = struct {
     pub fn generate(
         bundler: *ThisBundler,
         allocator: std.mem.Allocator,
-        framework_config: ?Api.LoadedFramework,
-        route_config: ?Api.LoadedRouteConfig,
-        _: [*:0]const u8,
         estimated_input_lines_of_code: *usize,
         package_bundle_map: options.BundlePackage.Map,
         event_loop: EventLoop,
@@ -375,7 +378,6 @@ pub const BundleV2 = struct {
         _ = try bundler.fs.fs.openTmpDir();
         bundler.resetStore();
         try bundler.configureDefines();
-        _ = route_config;
         _ = estimated_input_lines_of_code;
         _ = package_bundle_map;
 
@@ -411,22 +413,6 @@ pub const BundleV2 = struct {
         // errdefer pool.destroy();
         errdefer generator.graph.heap.deinit();
 
-        if (framework_config != null) {
-            defer bundler.resetStore();
-
-            try bundler.configureFramework(true);
-            if (bundler.options.framework) |framework| {
-                Analytics.Features.framework = true;
-
-                if (framework.override_modules.keys.len > 0) {
-                    bundler.options.framework.?.override_modules_hashes = allocator.alloc(u64, framework.override_modules.keys.len) catch unreachable;
-                    for (framework.override_modules.keys, 0..) |key, i| {
-                        bundler.options.framework.?.override_modules_hashes[i] = std.hash.Wyhash.hash(0, key);
-                    }
-                }
-            }
-        } else {}
-
         pool.* = ThreadPool{};
         generator.graph.pool = pool;
 
@@ -435,21 +421,15 @@ pub const BundleV2 = struct {
         var this = generator;
         try pool.start(this);
 
-        if (framework_config != null) {
-            defer this.bundler.resetStore();
+        if (this.bundler.env.isProduction()) {
+            generator.bundler.options.jsx.development = false;
+        }
 
-            try this.bundler.configureFramework(true);
-            if (bundler.options.framework) |framework| {
-                Analytics.Features.framework = true;
+        if (!generator.bundler.options.jsx.development) {
+            generator.bundler.options.jsx.import_source = std.fmt.allocPrint(allocator, "{s}/jsx-runtime", .{generator.bundler.options.jsx.classic_import_source}) catch unreachable;
+        }
 
-                if (framework.override_modules.keys.len > 0) {
-                    bundler.options.framework.?.override_modules_hashes = allocator.alloc(u64, framework.override_modules.keys.len) catch unreachable;
-                    for (framework.override_modules.keys, 0..) |key, i| {
-                        bundler.options.framework.?.override_modules_hashes[i] = wyhash(0, key);
-                    }
-                }
-            }
-        } else {}
+        generator.bundler.resolver.opts.jsx = generator.bundler.options.jsx;
 
         {
             // Add the runtime
@@ -469,44 +449,6 @@ pub const BundleV2 = struct {
             runtime_parse_task.loader = .js;
             this.graph.parse_pending += 1;
             batch.push(ThreadPoolLib.Batch.from(&runtime_parse_task.task));
-        }
-
-        if (bundler.options.framework) |framework| {
-            if (bundler.options.platform.isBun()) {
-                if (framework.server.isEnabled()) {
-                    Analytics.Features.bunjs = true;
-                    const resolved = try bundler.resolver.resolve(
-                        bundler.fs.top_level_dir,
-                        framework.server.path,
-                        .entry_point,
-                    );
-                    if (try this.enqueueItem(null, &batch, resolved)) |source_index| {
-                        this.graph.entry_points.append(this.graph.allocator, Index.source(source_index)) catch unreachable;
-                    } else {}
-                }
-            } else {
-                if (framework.client.isEnabled()) {
-                    const resolved = try bundler.resolver.resolve(
-                        bundler.fs.top_level_dir,
-                        framework.client.path,
-                        .entry_point,
-                    );
-                    if (try this.enqueueItem(null, &batch, resolved)) |source_index| {
-                        this.graph.entry_points.append(this.graph.allocator, Index.source(source_index)) catch unreachable;
-                    } else {}
-                }
-
-                if (framework.fallback.isEnabled()) {
-                    const resolved = try bundler.resolver.resolve(
-                        bundler.fs.top_level_dir,
-                        framework.fallback.path,
-                        .entry_point,
-                    );
-                    if (try this.enqueueItem(null, &batch, resolved)) |source_index| {
-                        this.graph.entry_points.append(this.graph.allocator, Index.source(source_index)) catch unreachable;
-                    } else {}
-                }
-            }
         }
 
         if (bundler.router) |router| {
@@ -695,6 +637,7 @@ const ParseTask = struct {
     source_index: Index = Index.invalid,
     task: ThreadPoolLib.Task = .{ .callback = &callback },
     tree_shaking: bool = false,
+    known_platform: ?options.Platform = null,
 
     const debug = Output.scoped(.ParseTask, false);
 
@@ -874,7 +817,7 @@ const ParseTask = struct {
         const source_dir = file_path.sourceDir();
         const loader = task.loader orelse bundler.options.loader(file_path.name.ext);
         const platform = if (!is_react_client_component)
-            bundler.options.platform
+            task.known_platform orelse bundler.options.platform
         else
             options.Platform.browser;
 
@@ -896,8 +839,8 @@ const ParseTask = struct {
                 opts.macro_context = &this.data.macro_context;
                 opts.bundle = true;
                 opts.features.top_level_await = true;
-                opts.features.jsx_optimization_inline = platform.isBun();
-                opts.features.auto_import_jsx = task.jsx.parse and bundler.options.auto_import_jsx;
+                opts.features.jsx_optimization_inline = platform.isBun() and (bundler.options.jsx_optimization_inline orelse !task.jsx.development);
+                opts.features.auto_import_jsx = !opts.features.jsx_optimization_inline and task.jsx.parse and bundler.options.auto_import_jsx;
                 opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
                 opts.tree_shaking = task.tree_shaking;
 
@@ -964,6 +907,14 @@ const ParseTask = struct {
                         debug("created ParseTask: {s}", .{path.text});
 
                         resolve_entry.value_ptr.* = ParseTask.init(&resolve_result, null);
+                        if (is_react_client_component) {
+                            resolve_entry.value_ptr.known_platform = .browser;
+                        } else if (task.known_platform) |known_platform| {
+                            resolve_entry.value_ptr.known_platform = known_platform;
+                        }
+
+                        resolve_entry.value_ptr.jsx.development = task.jsx.development;
+
                         if (resolve_entry.value_ptr.loader == null) {
                             resolve_entry.value_ptr.loader = bundler.options.loader(path.name.ext);
                             resolve_entry.value_ptr.tree_shaking = task.tree_shaking;
@@ -1335,6 +1286,8 @@ const EntryPoint = struct {
         none,
         user_specified,
         dynamic_import,
+
+        /// Created via an import of a "use client" file
         react_client_component,
 
         pub inline fn isEntryPoint(this: Kind) bool {
@@ -1373,8 +1326,13 @@ const LinkerGraph = struct {
 
     stable_source_indices: []const u32 = &[_]u32{},
 
+    react_client_component_boundary: bun.bit_set.DynamicBitSetUnmanaged = undefined,
+
     pub fn init(allocator: std.mem.Allocator, file_count: usize) !LinkerGraph {
-        return LinkerGraph{ .allocator = allocator, .files_live = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(allocator, file_count) };
+        return LinkerGraph{
+            .allocator = allocator,
+            .files_live = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(allocator, file_count),
+        };
     }
 
     pub fn runtimeFunction(this: *const LinkerGraph, name: string) Ref {
@@ -1602,13 +1560,64 @@ const LinkerGraph = struct {
                 source_index.* = source.index.get();
             }
 
-            for (react_client_component_entry_points) |source_id| {
-                entry_point_kinds[source_id] = .react_client_component;
-                this.entry_points.appendAssumeCapacity(.{
-                    .source_index = source_id,
-                    .output_path = bun.PathString.init(sources[source_id].path.text),
-                    .output_path_was_auto_generated = true,
-                });
+            var import_records_list: []ImportRecord.List = this.ast.items(.import_records);
+            try this.meta.ensureTotalCapacity(this.allocator, import_records_list.len);
+            this.meta.len = this.ast.len;
+            this.meta.zero();
+
+            if (react_client_component_entry_points.len > 0) {
+                this.react_client_component_boundary = bun.bit_set.DynamicBitSetUnmanaged.initEmpty(this.allocator, this.files.len) catch unreachable;
+
+                // Loop #1: populate the list of files that are react client components
+                for (react_client_component_entry_points) |source_id| {
+                    this.react_client_component_boundary.set(source_id);
+                }
+
+                // Loop #2: For each import in the entire module graph
+                for (this.reachable_files) |source_id| {
+                    // If the reachable file has a "use client"; at the top
+                    if (this.react_client_component_boundary.isSet(source_id.get())) {
+                        for (import_records_list[source_id.get()].slice()) |*import_record| {
+                            const source_index_ = import_record.source_index;
+                            if (source_index_.isValid()) {
+                                const source_index = import_record.source_index.get();
+
+                                // and the import path referrs to a server entry point
+                                if (import_record.tag == .none and entry_point_kinds[source_index] == .user_specified) {
+                                    // That import is a React Server Component reference.
+                                    import_record.tag = .react_server_component;
+                                }
+                            }
+                        }
+                    } else {
+                        // If the reachable file does NOT have a "use client"; at the top
+                        for (import_records_list[source_id.get()].slice()) |*import_record| {
+                            const source_index_ = import_record.source_index;
+                            if (source_index_.isValid()) {
+                                const source_index = import_record.source_index.get();
+                                // and if the import points to a file which does have a "use client" at the top
+                                if (import_record.tag == .none and this.react_client_component_boundary.isSet(source_index)) {
+                                    // That import is now a react client component
+                                    import_record.tag = .react_client_component;
+                                    import_record.path.namespace = "react-client";
+                                    import_record.print_namespace_in_path = true;
+
+                                    if (entry_point_kinds[source_index] == .none) {
+                                        if (comptime Environment.allow_assert)
+                                            debug("Adding client component entry point for {s}", .{sources[source_index].path.text});
+
+                                        try this.entry_points.append(this.allocator, .{
+                                            .source_index = source_index,
+                                            .output_path = bun.PathString.init(sources[source_index].path.text),
+                                            .output_path_was_auto_generated = true,
+                                        });
+                                        entry_point_kinds[source_index] = .react_client_component;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -1634,10 +1643,6 @@ const LinkerGraph = struct {
         }
 
         this.symbols = js_ast.Symbol.Map.initList(js_ast.Symbol.NestedList.init(this.ast.items(.symbols)));
-        var import_records_list: []ImportRecord.List = this.ast.items(.import_records);
-        try this.meta.ensureTotalCapacity(this.allocator, import_records_list.len);
-        this.meta.len = this.ast.len;
-        this.meta.zero();
 
         var in_resolved_exports: []ResolvedExports = this.meta.items(.resolved_exports);
         var src_resolved_exports: []js_ast.Ast.NamedExports = this.ast.items(.named_exports);
@@ -1754,7 +1759,7 @@ const LinkerContext = struct {
         if (part.stmts.len == 1) {
             if (part.stmts[0].data == .s_import) {
                 const record = c.graph.ast.items(.import_records)[source_index].at(part.stmts[0].data.s_import.import_record_index);
-                if (record.tag == .react_client_component)
+                if (record.tag.isReactReference())
                     return true;
 
                 if (record.source_index.isValid() and c.graph.meta.items(.flags)[record.source_index.get()].wrap == .none) {
@@ -2008,6 +2013,7 @@ const LinkerContext = struct {
             parts_prefix: std.ArrayList(PartRange) = undefined,
             c: *LinkerContext,
             entry_point: Chunk.EntryPoint,
+            is_react_server_components_enabled: bool = false,
 
             fn appendOrExtendRange(
                 ranges: *std.ArrayList(PartRange),
@@ -2038,11 +2044,10 @@ const LinkerContext = struct {
 
                 var is_file_in_chunk = v.entry_bits.hasIntersection(&v.c.graph.files.items(.entry_bits)[source_index]);
 
-                if (is_file_in_chunk and
+                if (is_file_in_chunk and v.is_react_server_components_enabled and
                     v.entry_point.is_entry_point and
                     v.entry_point.source_index != source_index and
-                    v.c.graph.files.items(.entry_point_kind)[v.entry_point.source_index] != .react_client_component and
-                    v.c.graph.files.items(.entry_point_kind)[source_index] == .react_client_component)
+                    v.c.graph.react_client_component_boundary.isSet(source_index))
                 {
                     return;
                 }
@@ -2121,6 +2126,7 @@ const LinkerContext = struct {
             .entry_bits = chunk.entryBits(),
             .c = this,
             .entry_point = chunk.entry_point,
+            .is_react_server_components_enabled = this.resolver.opts.react_server_components,
         };
         defer {
             part_ranges_shared.* = visitor.part_ranges;
@@ -2253,12 +2259,24 @@ const LinkerContext = struct {
             if (comptime Environment.allow_assert) {
                 var cjs_count: usize = 0;
                 var esm_count: usize = 0;
+                var wrap_cjs_count: usize = 0;
+                var wrap_esm_count: usize = 0;
                 for (exports_kind) |kind| {
                     cjs_count += @boolToInt(kind == .cjs);
                     esm_count += @boolToInt(kind == .esm);
                 }
 
-                debug("Step 1: {d} CommonJS modules, {d} ES modules", .{ cjs_count, esm_count });
+                for (flags) |flag| {
+                    wrap_cjs_count += @boolToInt(flag.wrap == .cjs);
+                    wrap_esm_count += @boolToInt(flag.wrap == .esm);
+                }
+
+                debug("Step 1: {d} CommonJS modules (+ {d} wrapped), {d} ES modules (+ {d} wrapped)", .{
+                    cjs_count,
+                    wrap_cjs_count,
+                    esm_count,
+                    wrap_esm_count,
+                });
             }
 
             // Step 2: Propagate dynamic export status for export star statements that
@@ -4399,7 +4417,7 @@ const LinkerContext = struct {
                             var items = std.ArrayList(js_ast.ClauseItem).init(temp_allocator);
                             const cjs_export_copies = c.graph.meta.items(.cjs_export_copies)[source_index];
 
-                            for (sorted_and_filtered_export_aliases, cjs_export_copies) |alias, temp_ref| {
+                            for (sorted_and_filtered_export_aliases, 0..) |alias, i| {
                                 var resolved_export = resolved_exports.get(alias).?;
 
                                 // If this is an export of an import, reference the symbol that the import
@@ -4413,8 +4431,9 @@ const LinkerContext = struct {
 
                                 // Exports of imports need EImportIdentifier in case they need to be re-
                                 // written to a property access later on
-
                                 if (c.graph.symbols.get(resolved_export.data.import_ref).?.namespace_alias != null) {
+                                    const temp_ref = cjs_export_copies[i];
+
                                     // Create both a local variable and an export clause for that variable.
                                     // The local variable is initialized with the initial value of the
                                     // export. This isn't fully correct because it's a "dead" binding and
@@ -4676,7 +4695,7 @@ const LinkerContext = struct {
         ast: *const js_ast.Ast,
     ) !bool {
         const record = ast.import_records.at(import_record_index);
-        if (record.tag == .react_client_component)
+        if (record.tag.isReactReference())
             return false;
 
         // Is this an external import?
@@ -5751,8 +5770,11 @@ const LinkerContext = struct {
         }
 
         // Generate the final output files by joining file pieces together
-        var output_files = std.ArrayList(options.OutputFile).initCapacity(c.allocator, chunks.len) catch unreachable;
-        output_files.expandToCapacity();
+        var output_files = std.ArrayList(options.OutputFile).initCapacity(
+            c.allocator,
+            chunks.len, // + @as(usize, @boolToInt(react_client_component_manifest != null)),
+        ) catch unreachable;
+        output_files.items.len = chunks.len;
         for (chunks, output_files.items) |*chunk, *output_file| {
             output_file.* = options.OutputFile.initBuf(
                 chunk.intermediate_output.code(c.allocator) catch @panic("Failed to allocate memory for output file"),
@@ -5823,9 +5845,11 @@ const LinkerContext = struct {
             );
 
         // TODO: CSS AST
+        var has_client_component = false;
 
         for (import_records[source_index].slice()) |*record| {
-            if (record.source_index.isValid() and !c.isExternalDynamicImport(record, source_index)) {
+            has_client_component = has_client_component or record.tag == .react_client_component;
+            if (record.source_index.isValid() and record.tag != .react_client_component and !c.isExternalDynamicImport(record, source_index)) {
                 c.markFileReachableForCodeSplitting(
                     record.source_index.get(),
                     entry_points_count,
@@ -5841,6 +5865,11 @@ const LinkerContext = struct {
         for (parts[source_index].slice()) |part| {
             for (part.dependencies.slice()) |dependency| {
                 if (dependency.source_index.get() != source_index) {
+                    if (has_client_component and
+                        // Do not mark the dependencies of the react client component as reacahable from the entry point
+                        c.graph.files.items(.entry_point_kind)[dependency.source_index.get()] == .react_client_component)
+                        continue;
+
                     c.markFileReachableForCodeSplitting(
                         dependency.source_index.get(),
                         entry_points_count,

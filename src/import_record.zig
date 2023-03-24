@@ -187,6 +187,17 @@ pub const ImportRecord = struct {
         /// Referenced "use client"; at the start of the file
         react_client_component,
 
+        /// A file starting with "use client"; imported a server entry point
+        /// We don't actually support this right now.
+        react_server_component,
+
+        pub fn isReactReference(this: Tag) bool {
+            return switch (this) {
+                .react_client_component, .react_server_component => true,
+                else => false,
+            };
+        }
+
         pub inline fn isRuntime(this: Tag) bool {
             return this == .runtime;
         }

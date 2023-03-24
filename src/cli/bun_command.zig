@@ -110,8 +110,6 @@ pub const BunCommand = struct {
         this_bundler.resolver.opts.react_server_components = ctx.bundler_options.react_server_components;
 
         this_bundler.configureLinker();
-        var filepath: [*:0]const u8 = "node_modules.bun";
-        // var server_bundle_filepath: [*:0]const u8 = "node_modules.server.bun";
 
         // This step is optional
         // If it fails for any reason, ignore it and continue bundling
@@ -134,18 +132,6 @@ pub const BunCommand = struct {
             this_bundler.options.macro_remap = macros;
         }
 
-        var loaded_route_config: ?Api.LoadedRouteConfig = brk: {
-            if (this_bundler.options.routes.routes_enabled) {
-                break :brk this_bundler.options.routes.toAPI();
-            }
-            break :brk null;
-        };
-        var loaded_framework: ?Api.LoadedFramework = brk: {
-            if (this_bundler.options.framework) |*conf| {
-                break :brk try conf.toAPI(allocator, this_bundler.fs.top_level_dir);
-            }
-            break :brk null;
-        };
         // var env_loader = this_bundler.env;
 
         if (ctx.debug.dump_environment_variables) {
@@ -188,9 +174,6 @@ pub const BunCommand = struct {
             const output_files = BundleV2.generate(
                 &this_bundler,
                 allocator,
-                loaded_framework,
-                loaded_route_config,
-                filepath,
                 &estimated_input_lines_of_code_,
                 ctx.debug.package_bundle_map,
                 bun.JSC.AnyEventLoop.init(ctx.allocator),

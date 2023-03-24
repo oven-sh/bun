@@ -117,8 +117,6 @@ const Socket = (function (InternalSocket) {
         socket.timeout(self.timeout);
         socket.ref();
         self.#socket = socket;
-        // force collect cert
-        self.#socket.write(" ");
         self.connecting = false;
         self.emit("connect", self);
         Socket.#Drain(socket);
@@ -166,6 +164,8 @@ const Socket = (function (InternalSocket) {
       const self = socket.data;
       if (self.#closed) return;
       self.#closed = true;
+      //socket cannot be used after close
+      self.#socket = null;
       const queue = self.#readQueue;
       if (queue.isEmpty()) {
         if (self.push(null)) return;
@@ -325,7 +325,6 @@ const Socket = (function (InternalSocket) {
       socket.ref();
       this.#socket = socket;
       this.connecting = false;
-
       this.emit("connect", this);
       Socket.#Drain(socket);
     }
@@ -364,7 +363,12 @@ const Socket = (function (InternalSocket) {
           keepAliveInitialDelay,
           requestCert,
           rejectUnauthorized,
+          pauseOnConnect,
         } = port;
+      }
+
+      if (!pauseOnConnect) {
+        this.resume();
       }
       this.connecting = true;
       this.remotePort = port;
@@ -408,7 +412,7 @@ const Socket = (function (InternalSocket) {
     }
 
     _final(callback) {
-      this.#socket.end();
+      this.#socket?.end();
       callback();
     }
 

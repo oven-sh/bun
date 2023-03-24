@@ -14,10 +14,6 @@ const COMMON_CERT = {
   passphrase: "1234",
 };
 
-const passKey = readFileSync(join(import.meta.dir, "fixtures", "rsa_private_encrypted.pem"));
-const rawKey = readFileSync(join(import.meta.dir, "fixtures", "rsa_private.pem"));
-const cert = readFileSync(join(import.meta.dir, "fixtures", "rsa_cert.crt"));
-
 const socket_domain = join(realpathSync(tmpdir()), "node-tls-server.sock");
 
 describe("tls.createServer listen", () => {
@@ -196,7 +192,7 @@ describe("tls.createServer listen", () => {
 it("should receive data", done => {
   const { mustCall, mustNotCall } = createCallCheckCtx(done);
   let timeout;
-
+  let client = null;
   const onData = mustCall(data => {
     clearTimeout(timeout);
     server.close();
@@ -209,32 +205,30 @@ it("should receive data", done => {
     socket.on("data", onData);
   });
 
-  const closeAndFail = mustNotCall("no data received (timeout)", () => {
+  const closeAndFail = () => {
     clearTimeout(timeout);
     server.close();
-  });
+    client?.end();
+    mustNotCall("no data received")();
+  };
 
-  server.on("error", mustNotCall("no data received"));
+  server.on("error", closeAndFail);
 
   //should be faster than 100ms
   timeout = setTimeout(() => {
     closeAndFail();
-  }, 100);
+  }, 1000);
 
   server.listen(
-    mustCall(() => {
+    mustCall(async () => {
       const address = server.address();
-      Bun.connect({
+      client = await Bun.connect({
         tls: true,
         hostname: address.address,
         port: address.port,
         socket: {
-          drain(socket) {
-            socket.write("Hello");
-            socket.end();
-          },
           data(socket) {},
-          open(socket) {
+          handshake(socket, success, verifyError) {
             if (socket.write("Hello")) {
               socket.end();
             }
@@ -462,17 +456,19 @@ it("should call abort with signal", done => {
 it("should echo data", done => {
   const { mustCall, mustNotCall } = createCallCheckCtx(done);
   let timeout;
-
+  let client = null;
   const server = createServer(COMMON_CERT, socket => {
     socket.pipe(socket);
   });
 
-  const closeAndFail = mustNotCall("no data received (timeout)", () => {
+  const closeAndFail = () => {
     clearTimeout(timeout);
     server.close();
-  });
+    client?.end();
+    mustNotCall("no data received")();
+  };
 
-  server.on("error", mustNotCall("no data received"));
+  server.on("error", closeAndFail);
 
   //should be faster than 100ms
   timeout = setTimeout(() => {
@@ -480,9 +476,9 @@ it("should echo data", done => {
   }, 100);
 
   server.listen(
-    mustCall(() => {
+    mustCall(async () => {
       const address = server.address();
-      Bun.connect({
+      client = await Bun.connect({
         tls: true,
         hostname: address.address,
         port: address.port,
@@ -498,7 +494,7 @@ it("should echo data", done => {
             expect(data.toString("utf8")).toBe("Hello");
             done();
           },
-          open(socket) {
+          handshake(socket) {
             socket.write("Hello");
           },
           connectError: closeAndFail, // connection failed

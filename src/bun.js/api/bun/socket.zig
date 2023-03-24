@@ -1072,6 +1072,10 @@ fn NewSocket(comptime ssl: bool) type {
             this.detached = false;
             this.socket = socket;
             socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, this);
+            if (ssl) {
+                // this will not write, but will trigger client handshake
+                _ = this.writeMaybeCorked(" ", false);
+            }
 
             const handlers = this.handlers;
             const callback = handlers.onOpen;
@@ -1138,12 +1142,9 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn onHandshake(this: *This, _: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
             JSC.markBinding(@src());
-            log("onHandshake {} {} {s}", .{ success, ssl_error.error_no, if (ssl_error.code == null) "" else ssl_error.code[0..bun.len(ssl_error.code)] });
             const handlers = this.handlers;
             const callback = handlers.onHandshake;
             if (callback == .zero) return;
-
-            log("onHandshake callback!", .{});
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);

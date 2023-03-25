@@ -1269,14 +1269,14 @@ describe("readline.Interface", () => {
     assertCursorRowsAndCols(rli, 0, 11);
     // Perform undo twice
     fi.emit("keypress", ",", { sequence: "\x1F" });
-    assert.strictEqual(rli.line, "the quick brown");
+    expect(rli.line).toEqual("the quick brown");
     fi.emit("keypress", ",", { sequence: "\x1F" });
-    assert.strictEqual(rli.line, "the quick brown fox");
+    expect(rli.line).toEqual("the quick brown fox");
     // Perform redo twice
     fi.emit("keypress", ",", { sequence: "\x1E" });
-    assert.strictEqual(rli.line, "the quick brown");
+    expect(rli.line).toEqual("the quick brown");
     fi.emit("keypress", ",", { sequence: "\x1E" });
-    assert.strictEqual(rli.line, "the quick b");
+    expect(rli.line).toEqual("the quick b");
     fi.emit("data", "\n");
     rli.close();
   });

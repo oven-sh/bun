@@ -28,10 +28,6 @@ inline void generateEventsSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
   exportValues.append(JSC::JSFunction::create(
       vm, lexicalGlobalObject, 0, MAKE_STATIC_STRING_IMPL("once"),
       Events_functionOnce, ImplementationVisibility::Public));
-  exportNames.append(JSC::Identifier::fromString(vm, "on"_s));
-  exportValues.append(JSC::JSFunction::create(
-      vm, lexicalGlobalObject, 0, MAKE_STATIC_STRING_IMPL("on"),
-      Events_functionOn, ImplementationVisibility::Public));
   exportNames.append(
       JSC::Identifier::fromString(vm, "captureRejectionSymbol"_s));
   exportValues.append(Symbol::create(
@@ -41,15 +37,22 @@ inline void generateEventsSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
       jsCast<JSFunction *>(WebCore::JSEventEmitter::getConstructor(
           vm, reinterpret_cast<Zig::GlobalObject *>(globalObject)));
 
+  for (size_t i = 0; i < exportNames.size(); i++) {
+    eventEmitterModuleCJS->putDirect(vm, exportNames[i], exportValues.at(i), 0);
+  }
+
+  exportNames.append(JSC::Identifier::fromString(vm, "on"_s));
+  auto *onAsyncIterFnPtr = eventEmitterModuleCJS->putDirectBuiltinFunction(
+      vm, globalObject, JSC::Identifier::fromString(vm, "on"_s),
+      nodeEventsOnAsyncIteratorCodeGenerator(vm),
+      PropertyAttribute::Builtin | PropertyAttribute::DontDelete);
+  exportValues.append(onAsyncIterFnPtr);
+
   eventEmitterModuleCJS->putDirect(
       vm,
       PropertyName(
           Identifier::fromUid(vm.symbolRegistry().symbolForKey("CommonJS"_s))),
       jsNumber(0), 0);
-
-  for (size_t i = 0; i < exportNames.size(); i++) {
-    eventEmitterModuleCJS->putDirect(vm, exportNames[i], exportValues.at(i), 0);
-  }
 
   exportNames.append(JSC::Identifier::fromString(vm, "default"_s));
   exportValues.append(eventEmitterModuleCJS);

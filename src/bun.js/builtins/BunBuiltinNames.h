@@ -147,6 +147,7 @@ using namespace JSC;
     macro(nextTick) \
     macro(normalize) \
     macro(on) \
+    macro(onAsyncIterator) \
     macro(once) \
     macro(options) \
     macro(origin) \

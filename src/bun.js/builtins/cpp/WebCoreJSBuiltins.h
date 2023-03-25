@@ -41,6 +41,7 @@
 #include "ImportMetaObjectBuiltins.h"
 #include "JSBufferConstructorBuiltins.h"
 #include "JSBufferPrototypeBuiltins.h"
+#include "NodeEventsBuiltins.h"
 #include "ProcessObjectInternalsBuiltins.h"
 #include "ReadableByteStreamControllerBuiltins.h"
 #include "ReadableByteStreamInternalsBuiltins.h"
@@ -71,6 +72,7 @@ public:
         , m_importMetaObjectBuiltins(m_vm)
         , m_jsBufferConstructorBuiltins(m_vm)
         , m_jsBufferPrototypeBuiltins(m_vm)
+        , m_nodeEventsBuiltins(m_vm)
         , m_processObjectInternalsBuiltins(m_vm)
         , m_readableByteStreamControllerBuiltins(m_vm)
         , m_readableByteStreamInternalsBuiltins(m_vm)
@@ -101,6 +103,7 @@ public:
     ImportMetaObjectBuiltinsWrapper& importMetaObjectBuiltins() { return m_importMetaObjectBuiltins; }
     JSBufferConstructorBuiltinsWrapper& jsBufferConstructorBuiltins() { return m_jsBufferConstructorBuiltins; }
     JSBufferPrototypeBuiltinsWrapper& jsBufferPrototypeBuiltins() { return m_jsBufferPrototypeBuiltins; }
+    NodeEventsBuiltinsWrapper& nodeEventsBuiltins() { return m_nodeEventsBuiltins; }
     ProcessObjectInternalsBuiltinsWrapper& processObjectInternalsBuiltins() { return m_processObjectInternalsBuiltins; }
     ReadableByteStreamControllerBuiltinsWrapper& readableByteStreamControllerBuiltins() { return m_readableByteStreamControllerBuiltins; }
     ReadableByteStreamInternalsBuiltinsWrapper& readableByteStreamInternalsBuiltins() { return m_readableByteStreamInternalsBuiltins; }
@@ -126,6 +129,7 @@ private:
     ImportMetaObjectBuiltinsWrapper m_importMetaObjectBuiltins;
     JSBufferConstructorBuiltinsWrapper m_jsBufferConstructorBuiltins;
     JSBufferPrototypeBuiltinsWrapper m_jsBufferPrototypeBuiltins;
+    NodeEventsBuiltinsWrapper m_nodeEventsBuiltins;
     ProcessObjectInternalsBuiltinsWrapper m_processObjectInternalsBuiltins;
     ReadableByteStreamControllerBuiltinsWrapper m_readableByteStreamControllerBuiltins;
     ReadableByteStreamInternalsBuiltinsWrapper m_readableByteStreamInternalsBuiltins;

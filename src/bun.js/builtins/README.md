@@ -4,7 +4,7 @@ TLDR:
 
 ```bash
 # Delete the built files
-make clean-bindings generate-bindings && \
+make clean-bindings generate-builtins && \
     # Compile all the C++ files which live in ../bindings
     make bindings -j10 && \
     # Re-link the binary without compiling zig (so it's faster)
@@ -31,7 +31,7 @@ The `js` directory is necessary for the bindings generator to work.
 To regenerate the builtins, run this from Bun's project root (where the `Makefile` is)
 
 ```bash
-make builtins
+make generate-builtins
 ```
 
 You'll want to also rebuild all the C++ bindings or you will get strange crashes on start

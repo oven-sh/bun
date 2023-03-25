@@ -39,6 +39,7 @@
 #include "ImportMetaObjectBuiltins.cpp"
 #include "JSBufferConstructorBuiltins.cpp"
 #include "JSBufferPrototypeBuiltins.cpp"
+#include "NodeEventsBuiltins.cpp"
 #include "ProcessObjectInternalsBuiltins.cpp"
 #include "ReadableByteStreamControllerBuiltins.cpp"
 #include "ReadableByteStreamInternalsBuiltins.cpp"

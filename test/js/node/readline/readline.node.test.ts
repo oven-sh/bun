@@ -757,14 +757,7 @@ describe("readline.Interface", () => {
         throw err;
       }
     });
-    assert.throws(
-      () => fi.emit("data", "fooX"),
-      e => {
-        console.log("ERRROR!", e);
-        assert.strictEqual(e, err);
-        return true;
-      },
-    );
+    expect(() => fi.emit("data", "fooX")).toThrow(err);
     fi.emit("data", "bar");
     assert.strictEqual(keys.join(""), "fooXbar");
     rli.close();

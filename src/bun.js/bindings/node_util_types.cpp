@@ -93,6 +93,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsNativeError, (JSC::JSGlobalObject * globalO
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSObject* object = value.toObject(globalObject);
 
+        // node util.isError relies on toString
+        // https://github.com/nodejs/node/blob/cf8c6994e0f764af02da4fa70bc5962142181bf3/doc/api/util.md#L2923
         PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
         if (object->getPropertySlot(globalObject, vm.propertyNames->toStringTagSymbol, slot)) {
             EXCEPTION_ASSERT(!scope.exception());

@@ -2038,21 +2038,22 @@ const LinkerContext = struct {
 
             // Traverse the graph using this stable order and linearize the files with
             // dependencies before dependents
-            pub fn visit(v: *@This(), source_index: Index.Int) void {
+            pub fn visit(v: *@This(), source_index: Index.Int, comptime with_react_server_components: bool) void {
                 if (source_index == Index.invalid.value) return;
                 const visited_entry = v.visited.getOrPut(source_index) catch unreachable;
                 if (visited_entry.found_existing) return;
 
                 var is_file_in_chunk = v.entry_bits.hasIntersection(&v.c.graph.files.items(.entry_bits)[source_index]);
-
-                if (is_file_in_chunk and v.is_react_server_components_enabled and
-                    v.entry_point.is_entry_point and
-                    v.entry_point.source_index != source_index and
-                    v.c.graph.react_client_component_boundary.isSet(source_index))
-                {
-                    return;
+                if (comptime with_react_server_components) {
+                    if (is_file_in_chunk and v.is_react_server_components_enabled and
+                        v.entry_point.is_entry_point and
+                        v.entry_point.source_index != source_index and
+                        v.c.graph.react_client_component_boundary.bit_length > 0 and
+                        v.c.graph.react_client_component_boundary.isSet(source_index))
+                    {
+                        return;
+                    }
                 }
-
                 // Wrapped files can't be split because they are all inside the wrapper
                 const can_be_split = v.flags[source_index].wrap == .none;
 
@@ -2074,7 +2075,7 @@ const LinkerContext = struct {
                                 continue;
                             }
 
-                            v.visit(record.source_index.get());
+                            v.visit(record.source_index.get(), with_react_server_components);
                         }
                     }
 
@@ -2127,7 +2128,7 @@ const LinkerContext = struct {
             .entry_bits = chunk.entryBits(),
             .c = this,
             .entry_point = chunk.entry_point,
-            .is_react_server_components_enabled = this.resolver.opts.react_server_components,
+            .is_react_server_components_enabled = this.graph.react_client_component_boundary.bit_length > 0,
         };
         defer {
             part_ranges_shared.* = visitor.part_ranges;
@@ -2135,9 +2136,13 @@ const LinkerContext = struct {
             visitor.visited.deinit();
         }
 
-        visitor.visit(Index.runtime.value);
-        for (chunk_order_array.items) |order| {
-            visitor.visit(order.source_index);
+        switch (visitor.is_react_server_components_enabled) {
+            inline else => |with_react_server_components| {
+                visitor.visit(Index.runtime.value, with_react_server_components);
+                for (chunk_order_array.items) |order| {
+                    visitor.visit(order.source_index, with_react_server_components);
+                }
+            },
         }
 
         var parts_in_chunk_order = try this.allocator.alloc(PartRange, visitor.part_ranges.items.len + visitor.parts_prefix.items.len);
@@ -5791,8 +5796,8 @@ const LinkerContext = struct {
             const Sorter = struct {
                 sources: []const Logger.Source,
                 pub fn isLessThan(ctx: @This(), a_index: u32, b_index: u32) bool {
-                    const a = ctx.sources[a_index].path.pretty;
-                    const b = ctx.sources[b_index].path.pretty;
+                    const a = ctx.sources[a_index].path.text;
+                    const b = ctx.sources[b_index].path.text;
                     return std.mem.order(u8, a, b) == .lt;
                 }
             };

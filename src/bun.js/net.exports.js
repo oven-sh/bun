@@ -186,6 +186,9 @@ const Socket = (function (InternalSocket) {
           self.#writeChunk = null;
           callback(null);
         }
+      } else if (self._securePending) {
+        // Ensure that we'll cycle through internal openssl's state
+        socket.write("");
       }
     }
 
@@ -229,9 +232,18 @@ const Socket = (function (InternalSocket) {
         }
 
         self[bunSocketServerConnections]++;
+
         if (typeof connectionListener == "function") {
-          connectionListener(_socket);
+          if (InternalSocketClass.name === "TLSSocket") {
+            // add secureConnection event handler
+            self.once("secureConnection", () => connectionListener(_socket));
+            // Ensure that we'll cycle through internal openssl's state
+            _socket.write("");
+          } else {
+            connectionListener(_socket);
+          }
         }
+
         self.emit("connection", _socket);
       },
       handshake({ data: self }, success, verifyError) {

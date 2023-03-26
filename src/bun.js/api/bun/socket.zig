@@ -1410,7 +1410,10 @@ fn NewSocket(comptime ssl: bool) type {
                     }
                 }
 
-                if (slice.len == 0) return .{ .success = .{} };
+                // sending empty can be used to ensure that we'll cycle through internal openssl's state
+                if (comptime ssl == false) {
+                    if (slice.len == 0) return .{ .success = .{} };
+                }
 
                 return .{
                     .success = .{
@@ -1468,7 +1471,10 @@ fn NewSocket(comptime ssl: bool) type {
                         }
                     }
 
-                    if (slice.len == 0) return .{ .success = .{} };
+                    // sending empty can be used to ensure that we'll cycle through internal openssl's state
+                    if (comptime ssl == false) {
+                        if (slice.len == 0) return .{ .success = .{} };
+                    }
 
                     return .{
                         .success = .{
@@ -1506,7 +1512,10 @@ fn NewSocket(comptime ssl: bool) type {
                     }
                 }
 
-                if (slice.len == 0) return .{ .success = .{} };
+                // sending empty can be used to ensure that we'll cycle through internal openssl's state
+                if (comptime ssl == false) {
+                    if (slice.len == 0) return .{ .success = .{} };
+                }
 
                 return .{
                     .success = .{

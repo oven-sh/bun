@@ -1,15 +1,24 @@
-import { sleep } from "bun";
-import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "fs";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { mkdtempSync, realpathSync, rmSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 
+let package_dir: string;
+
+beforeEach(() => {
+  package_dir = mkdtempSync(join(realpathSync(tmpdir()), "bun-install-path"));
+});
+
+afterEach(() => {
+  rmSync(package_dir, { recursive: true, force: true });
+});
+
 // https://github.com/oven-sh/bun/issues/2462
 test("custom registry doesn't have multiple trailing slashes in pathname", async () => {
-  var urls: string[] = [];
+  const urls: string[] = [];
 
-  var server = Bun.serve({
+  const server = Bun.serve({
     port: 0,
     async fetch(req) {
       urls.push(req.url);
@@ -17,10 +26,6 @@ test("custom registry doesn't have multiple trailing slashes in pathname", async
     },
   });
   const { port, hostname } = server;
-  const package_dir = join(tmpdir(), mkdtempSync("bun-install-path"));
-  try {
-    mkdirSync(package_dir, { recursive: true });
-  } catch {}
   await Bun.write(
     join(package_dir, "bunfig.toml"),
     `
@@ -49,10 +54,7 @@ registry = "http://${hostname}:${port}/prefixed-route/"
     stdin: "ignore",
   });
 
-  await sleep(10);
-
   server.stop(true);
-  expect(urls.length).toBeGreaterThan(0);
-  expect(urls[0]).toBe(`http://${hostname}:${port}/prefixed-route/react`);
-  rmSync(package_dir, { recursive: true, force: true });
+  expect(urls.length).toBe(1);
+  expect(urls).toEqual([`http://${hostname}:${port}/prefixed-route/react`]);
 });

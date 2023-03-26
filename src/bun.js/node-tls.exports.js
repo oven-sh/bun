@@ -148,7 +148,10 @@ class Server extends NetServer {
     super.emit(event, args);
 
     if (event === "connection") {
-      super.emit("secureConnection", args);
+      // grabs secureConnect to emit secureConnection
+      args.once("secureConnect", () => {
+        super.emit("secureConnection", args);
+      });
     }
   }
   setSecureContext(options) {

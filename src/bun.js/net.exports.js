@@ -109,7 +109,6 @@ const Socket = (function (InternalSocket) {
           self.#writeCallback = null;
           callback(error);
         }
-        console.error(error);
         self.emit("error", error);
       },
       open(socket) {
@@ -142,9 +141,7 @@ const Socket = (function (InternalSocket) {
             self.authorized = false;
             self.authorizationError = verifyError.code || verifyError.message;
             if (self._rejectUnauthorized) {
-              // client connections call close uSockets never handle client
-              self.emit("error", verifyError);
-              Socket.#Close(socket);
+              self.destroy(verifyError);
               return;
             }
           }
@@ -383,9 +380,8 @@ const Socket = (function (InternalSocket) {
         this.secureConnecting = true;
         this._secureEstablished = false;
         this._securePending = true;
-      }
-
-      if (connectListener) this.on("connect", connectListener);
+        if (connectListener) this.on("secureConnect", connectListener);
+      } else if (connectListener) this.on("connect", connectListener);
 
       bunConnect(
         path

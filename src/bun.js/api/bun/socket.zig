@@ -896,7 +896,6 @@ fn NewSocket(comptime ssl: bool) type {
         // `Listener` keep a list of all the sockets JSValue in there
         // This is wasteful because it means we are keeping a JSC::Weak for every single open socket
         has_pending_activity: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(true),
-
         const This = @This();
         const log = Output.scoped(.Socket, false);
         const WriteResult = union(enum) {
@@ -1072,10 +1071,6 @@ fn NewSocket(comptime ssl: bool) type {
             this.detached = false;
             this.socket = socket;
             socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, this);
-            if (ssl) {
-                // this will not write, but will trigger client handshake
-                _ = this.writeMaybeCorked(" ", false);
-            }
 
             const handlers = this.handlers;
             const callback = handlers.onOpen;

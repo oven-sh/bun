@@ -5,7 +5,7 @@
  */
 import { file, Server } from "bun";
 
-var expect: typeof import("bun:test")["expect"];
+let expect: typeof import("bun:test")["expect"];
 
 import { mkdtemp, readdir, realpath, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
@@ -94,8 +94,8 @@ export function dummyAfterAll() {
   server.stop();
 }
 
-var packageDirGetter: () => Promise<string> = async () => {
-  return await realpath(await mkdtemp(join(await realpath(tmpdir()), "bun-install-test-" + testCounter++ + "--")));
+let packageDirGetter: () => Promise<string> = async () => {
+  return await mkdtemp(join(await realpath(tmpdir()), "bun-install-test-" + testCounter++ + "--"));
 };
 export async function dummyBeforeEach() {
   resetHandler();

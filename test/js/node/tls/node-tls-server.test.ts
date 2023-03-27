@@ -621,3 +621,29 @@ it("should not listen without password", done => {
   server.listen(0, "127.0.0.1", closeAndFail);
   done();
 });
+
+it("should accept cert array and key array", done => {
+  const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+  const server = createServer({
+    cert: [cert],
+    key: [passKey],
+    password: 'password',
+  });
+
+  server.on("error", mustNotCall());
+
+  server.listen(
+    0,
+    "127.0.0.1",
+    mustCall(() => {
+      const address = server.address();
+      expect(address.address).toStrictEqual("127.0.0.1");
+      //system should provide an port when 0 or no port is passed
+      expect(address.port).toBeGreaterThan(100);
+      expect(address.family).toStrictEqual("IPv4");
+      server.close();
+    }),
+  );
+  done();
+});

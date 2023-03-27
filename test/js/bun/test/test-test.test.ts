@@ -187,6 +187,130 @@ test("deepEquals regex", () => {
   expect(new RegExp("s", "g")).not.toEqual(new RegExp("s", "i"));
 });
 
+test("deepEquals works with accessors", () => {
+  {
+    let l1 = [1, undefined, 2];
+    let l2 = [1, undefined, 2];
+    Object.defineProperty(l1, 6, { get: () => 1 });
+    Object.defineProperty(l2, 6, { get: () => 1 });
+    expect(l1).toEqual(l2);
+    expect(l1).toStrictEqual(l2);
+  }
+  {
+    let l1 = [1, , 2];
+    let l2 = [1, undefined, 2];
+    Object.defineProperty(l1, 6, { get: () => 1 });
+    Object.defineProperty(l2, 6, { get: () => 2 });
+    expect(l1).toEqual(l2);
+    expect(l1).not.toStrictEqual(l2);
+  }
+  {
+    let l1 = [1, , 2];
+    let l2 = [1, , 2];
+    Object.defineProperty(l1, "hi", { get: () => 4 });
+    Object.defineProperty(l2, "hi", { get: () => 5 });
+    expect(l1).toEqual(l2);
+    expect(l1).toStrictEqual(l2);
+  }
+
+  {
+    let l1 = [1, , 2];
+    let l2 = [1, , 2];
+    Object.defineProperty(l1, "hi", { set: () => 4 });
+    Object.defineProperty(l2, "hi", { set: () => 5 });
+    expect(l1).toEqual(l2);
+    expect(l1).toStrictEqual(l2);
+  }
+
+  {
+    let o1 = { a: 1, c: undefined, b: 2 };
+    let o2 = { a: 1, c: undefined, b: 2 };
+    Object.defineProperty(o1, 6, { get: () => 1 });
+    Object.defineProperty(o2, 6, { get: () => 1 });
+    expect(o1).toEqual(o2);
+    expect(o1).toStrictEqual(o2);
+  }
+  {
+    let o1 = { a: 1, c: undefined, b: 2 };
+    let o2 = { a: 1, c: undefined, b: 2 };
+    Object.defineProperty(o1, 6, { get: () => 1 });
+    Object.defineProperty(o2, 6, { get: () => 2 });
+    expect(o1).toEqual(o2);
+    expect(o1).toStrictEqual(o2);
+  }
+  {
+    let o1 = { a: 1, c: undefined, b: 2 };
+    let o2 = { a: 1, c: undefined, b: 2 };
+    Object.defineProperty(o1, "hi", { get: () => 4 });
+    Object.defineProperty(o2, "hi", { get: () => 5 });
+    expect(o1).toEqual(o2);
+    expect(o1).toStrictEqual(o2);
+  }
+
+  {
+    let o1 = { a: 1, c: undefined, b: 2 };
+    let o2 = { a: 1, c: undefined, b: 2 };
+    Object.defineProperty(o1, "hi", { set: () => 4 });
+    Object.defineProperty(o2, "hi", { set: () => 5 });
+    expect(o1).toEqual(o2);
+    expect(o1).toStrictEqual(o2);
+  }
+});
+
+test("deepEquals works with proxies", () => {
+  {
+    let p1 = new Proxy({ a: 1, b: 2 }, {});
+    let p2 = new Proxy({ a: 1, b: 2 }, {});
+    expect(p1).toEqual(p2);
+    expect(p1).toStrictEqual(p2);
+    let p3 = new Proxy({ a: 1, b: 2 }, {});
+    let p4 = new Proxy({ a: 1, b: 3 }, {});
+    expect(p3).not.toEqual(p4);
+    expect(p3).not.toStrictEqual(p4);
+  }
+  {
+    let t1 = { a: 1, b: 2 };
+    let h1 = { get: (t, k) => t[k] };
+    let p1 = new Proxy(t1, h1);
+    let t2 = { a: 1, b: 2 };
+    let h2 = { get: (t, k) => 0 };
+    let p2 = new Proxy(t2, h2);
+    expect(p1).not.toEqual(p2);
+    expect(p1).not.toStrictEqual(p2);
+  }
+  {
+    // still broken
+    let t1 = { a: 1, b: 2 };
+    let h1 = { get: t => t };
+    let p1 = new Proxy(t1, h1);
+    let t2 = { a: 1, b: 2 };
+    let h2 = { get: t => t };
+    let p2 = new Proxy(t2, h2);
+    expect(p1).not.toEqual(p2);
+    expect(p1).not.toStrictEqual(p2);
+  }
+  {
+    let t1 = { a: 1, b: 2 };
+    let h1 = { get: (t, k) => t[k] + 2 };
+    let p1 = new Proxy(t1, h1);
+    let t2 = { a: 1, b: 2 };
+    let h2 = { get: (t, k) => t[k] + 2 };
+    let p2 = new Proxy(t2, h2);
+    expect(p1).toEqual(p2);
+    expect(p1).toStrictEqual(p2);
+  }
+  {
+    let t1 = { a: 1, b: 2 };
+    let h1 = { get: (t, k) => t[k] + 2 };
+    let p1 = new Proxy(t1, h1);
+    let t2 = { a: 1, b: 2 };
+    let h2 = { get: (t, k) => t[k] + 3 };
+    let p2 = new Proxy(t2, h2);
+    expect(p1).not.toEqual(p2);
+    expect(p1).not.toStrictEqual(p2);
+  }
+});
+
 test("toThrow", () => {
   expect(() => {
     throw new Error("hello");

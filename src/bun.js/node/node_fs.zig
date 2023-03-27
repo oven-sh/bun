@@ -3582,44 +3582,82 @@ pub const NodeFS = struct {
     pub fn rmdir(this: *NodeFS, args: Arguments.RmDir, comptime flavor: Flavor) Maybe(Return.Rmdir) {
         switch (comptime flavor) {
             .sync => {
-                if (args.recursive) {
-                    std.fs.cwd().deleteTree(args.path.slice()) catch |err| {
-                        const errno: std.os.E = switch (err) {
-                            error.InvalidHandle => .BADF,
-                            error.AccessDenied => .PERM,
-                            error.FileTooBig => .FBIG,
-                            error.SymLinkLoop => .LOOP,
-                            error.ProcessFdQuotaExceeded => .NFILE,
-                            error.NameTooLong => .NAMETOOLONG,
-                            error.SystemFdQuotaExceeded => .MFILE,
-                            error.SystemResources => .NOMEM,
-                            error.ReadOnlyFileSystem => .ROFS,
-                            error.FileSystem => .IO,
-                            error.FileBusy => .BUSY,
-                            error.DeviceBusy => .BUSY,
+                if (comptime Environment.isMac) {
+                    if (args.recursive) {
+                        var dest = args.path.sliceZ(&this.sync_error_buf);
 
-                            // One of the path components was not a directory.
-                            // This error is unreachable if `sub_path` does not contain a path separator.
-                            error.NotDir => .NOTDIR,
-                            // On Windows, file paths must be valid Unicode.
-                            error.InvalidUtf8 => .INVAL,
+                        var flags: u32 = bun.C.darwin.RemoveFileFlags.cross_mount |
+                            bun.C.darwin.RemoveFileFlags.allow_long_paths |
+                            bun.C.darwin.RemoveFileFlags.recursive;
 
-                            // On Windows, file paths cannot contain these characters:
-                            // '/', '*', '?', '"', '<', '>', '|'
-                            error.BadPathName => .INVAL,
+                        while (true) {
+                            if (Maybe(Return.Rmdir).errnoSys(bun.C.darwin.removefileat(std.os.AT.FDCWD, dest, null, flags), .rmdir)) |errno| {
+                                switch (@intToEnum(os.E, errno.err.errno)) {
+                                    .AGAIN, .INTR => continue,
+                                    .NOENT => return Maybe(Return.Rmdir).success,
+                                    .MLINK => {
+                                        var copy: [bun.MAX_PATH_BYTES]u8 = undefined;
+                                        @memcpy(&copy, dest.ptr, dest.len);
+                                        copy[dest.len] = 0;
+                                        var dest_copy = copy[0..dest.len :0];
+                                        switch (Syscall.unlink(dest_copy).getErrno()) {
+                                            .AGAIN, .INTR => continue,
+                                            .NOENT => return errno,
+                                            .SUCCESS => continue,
+                                            else => return errno,
+                                        }
+                                    },
+                                    .SUCCESS => unreachable,
+                                    else => return errno,
+                                }
+                            }
 
-                            else => .FAULT,
+                            return Maybe(Return.Rmdir).success;
+                        }
+                    }
+
+                    return Maybe(Return.Rmdir).errnoSysP(system.rmdir(args.path.sliceZ(&this.sync_error_buf)), .rmdir, args.path.slice()) orelse
+                        Maybe(Return.Rmdir).success;
+                } else if (comptime Environment.isLinux) {
+                    if (args.recursive) {
+                        std.fs.cwd().deleteTree(args.path.slice()) catch |err| {
+                            const errno: std.os.E = switch (err) {
+                                error.InvalidHandle => .BADF,
+                                error.AccessDenied => .PERM,
+                                error.FileTooBig => .FBIG,
+                                error.SymLinkLoop => .LOOP,
+                                error.ProcessFdQuotaExceeded => .NFILE,
+                                error.NameTooLong => .NAMETOOLONG,
+                                error.SystemFdQuotaExceeded => .MFILE,
+                                error.SystemResources => .NOMEM,
+                                error.ReadOnlyFileSystem => .ROFS,
+                                error.FileSystem => .IO,
+                                error.FileBusy => .BUSY,
+                                error.DeviceBusy => .BUSY,
+
+                                // One of the path components was not a directory.
+                                // This error is unreachable if `sub_path` does not contain a path separator.
+                                error.NotDir => .NOTDIR,
+                                // On Windows, file paths must be valid Unicode.
+                                error.InvalidUtf8 => .INVAL,
+
+                                // On Windows, file paths cannot contain these characters:
+                                // '/', '*', '?', '"', '<', '>', '|'
+                                error.BadPathName => .INVAL,
+
+                                else => .FAULT,
+                            };
+                            return Maybe(Return.Rm){
+                                .err = JSC.Node.Syscall.Error.fromCode(errno, .rmdir),
+                            };
                         };
-                        return Maybe(Return.Rm){
-                            .err = JSC.Node.Syscall.Error.fromCode(errno, .rmdir),
-                        };
-                    };
 
-                    return Maybe(Return.Rmdir).success;
+                        return Maybe(Return.Rmdir).success;
+                    }
+
+                    return Maybe(Return.Rmdir).errnoSysP(system.rmdir(args.path.sliceZ(&this.sync_error_buf)), .rmdir, args.path.slice()) orelse
+                        Maybe(Return.Rmdir).success;
                 }
-
-                return Maybe(Return.Rmdir).errnoSysP(system.rmdir(args.path.sliceZ(&this.sync_error_buf)), .rmdir, args.path.slice()) orelse
-                    Maybe(Return.Rmdir).success;
             },
             else => {},
         }

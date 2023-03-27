@@ -1,5 +1,5 @@
 const { createServer, connect } = require("tls");
-import { realpathSync, readFileSync } from "fs";
+import { realpathSync, readFileSync, close } from "fs";
 
 import { tmpdir } from "os";
 import { join } from "path";
@@ -260,11 +260,12 @@ it("should call end", done => {
     socket.end();
   });
 
-  const closeAndFail = mustNotCall("end not called (timeout)", () => {
+  const closeAndFail = () => {
     clearTimeout(timeout);
     server.close();
-  });
-  server.on("error", mustNotCall("end not called"));
+    mustNotCall("end not called")();
+  };
+  server.on("error", closeAndFail);
 
   //should be faster than 100ms
   timeout = setTimeout(() => {
@@ -307,11 +308,11 @@ it("should call connection and drop", done => {
   let maxClients = 2;
   server.maxConnections = maxClients - 1;
 
-  const closeAndFail = mustNotCall("drop not called (timeout)", () => {
+  const closeAndFail = () => {
     clearTimeout(timeout);
     server.close();
-    done();
-  });
+    mustNotCall("drop not called")();
+  };
 
   //should be faster than 100ms
   timeout = setTimeout(() => {
@@ -370,11 +371,11 @@ it("should call listening", done => {
   let maxClients = 2;
   server.maxConnections = maxClients - 1;
 
-  const closeAndFail = mustNotCall("listening not called (timeout)", () => {
+  const closeAndFail = () => {
     clearTimeout(timeout);
     server.close();
-    done();
-  });
+    mustNotCall("listening not called")();
+  };
 
   //should be faster than 100ms
   timeout = setTimeout(() => {
@@ -401,11 +402,11 @@ it("should call error", done => {
   let maxClients = 2;
   server.maxConnections = maxClients - 1;
 
-  const closeAndFail = mustNotCall("error not called (timeout)", () => {
+  const closeAndFail = () => {
     clearTimeout(timeout);
     server.close();
-    done();
-  });
+    mustNotCall("error not called")();
+  };
 
   //should be faster than 100ms
   timeout = setTimeout(() => {
@@ -434,11 +435,11 @@ it("should call abort with signal", done => {
   let maxClients = 2;
   server.maxConnections = maxClients - 1;
 
-  const closeAndFail = mustNotCall("close not called (timeout)", () => {
+  const closeAndFail = () => {
     clearTimeout(timeout);
     server.close();
-    done();
-  });
+    mustNotCall("close not called")();
+  };
 
   //should be faster than 100ms
   timeout = setTimeout(() => {
@@ -507,4 +508,116 @@ it("should echo data", done => {
       }).catch(closeAndFail);
     }),
   );
+});
+
+it("should not listen with wrong password", done => {
+  const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+  const server = createServer({
+    key: passKey,
+    passphrase: "invalid",
+    cert: cert,
+  });
+
+  server.on(
+    "error",
+    mustCall(() => {
+      const address = server.address();
+      expect(address.address).toStrictEqual("127.0.0.1");
+      //system should provide an port when 0 or no port is passed
+      expect(address.port).toBeGreaterThan(100);
+      expect(address.family).toStrictEqual("IPv4");
+    }),
+  );
+
+  function closeAndFail() {
+    server.close();
+    mustNotCall()();
+  }
+
+  server.listen(0, "127.0.0.1", closeAndFail);
+  done();
+});
+
+it("should not listen without cert", done => {
+  const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+  const server = createServer({
+    key: passKey,
+    passphrase: "invalid",
+  });
+
+  server.on(
+    "error",
+    mustCall(() => {
+      const address = server.address();
+      expect(address.address).toStrictEqual("127.0.0.1");
+      //system should provide an port when 0 or no port is passed
+      expect(address.port).toBeGreaterThan(100);
+      expect(address.family).toStrictEqual("IPv4");
+    }),
+  );
+
+  function closeAndFail() {
+    server.close();
+    mustNotCall()();
+  }
+
+  server.listen(0, "127.0.0.1", closeAndFail);
+  done();
+});
+
+it("should not listen without key", done => {
+  const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+  const server = createServer({
+    cert: cert,
+  });
+
+  server.on(
+    "error",
+    mustCall(() => {
+      const address = server.address();
+      expect(address.address).toStrictEqual("127.0.0.1");
+      //system should provide an port when 0 or no port is passed
+      expect(address.port).toBeGreaterThan(100);
+      expect(address.family).toStrictEqual("IPv4");
+    }),
+  );
+
+  function closeAndFail() {
+    server.close();
+    mustNotCall()();
+  }
+
+  server.listen(0, "127.0.0.1", closeAndFail);
+  done();
+});
+
+it("should not listen without password", done => {
+  const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+  const server = createServer({
+    key: passKey,
+    cert: cert,
+  });
+
+  server.on(
+    "error",
+    mustCall(() => {
+      const address = server.address();
+      expect(address.address).toStrictEqual("127.0.0.1");
+      //system should provide an port when 0 or no port is passed
+      expect(address.port).toBeGreaterThan(100);
+      expect(address.family).toStrictEqual("IPv4");
+    }),
+  );
+
+  function closeAndFail() {
+    server.close();
+    mustNotCall()();
+  }
+
+  server.listen(0, "127.0.0.1", closeAndFail);
+  done();
 });

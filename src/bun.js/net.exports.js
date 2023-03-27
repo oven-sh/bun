@@ -261,9 +261,7 @@ const Socket = (function (InternalSocket) {
             self.authorized = false;
             self.authorizationError = verifyError.code || verifyError.message;
             if (self._rejectUnauthorized) {
-              // no need to call self.destroy() this will be handled by uSockets
-              // self.destroy(verifyError);
-              self.emit("error", verifyError);
+              self.destroy(verifyError);
               return;
             }
           }
@@ -382,7 +380,7 @@ const Socket = (function (InternalSocket) {
       if (typeof bunTLS === "function") {
         tls = bunTLS.call(this, port, host, true);
         //Client always request Cert
-        this._requestCert = true; 
+        this._requestCert = true;
         this._rejectUnauthorized = rejectUnauthorized;
         this.authorized = false;
         this.secureConnecting = true;

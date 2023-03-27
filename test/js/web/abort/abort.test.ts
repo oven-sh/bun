@@ -1,4 +1,5 @@
 import { describe, test, expect } from "bun:test";
+import { expectMaxObjectTypeCount } from "harness";
 
 describe("AbortSignal", () => {
   test("constructor", () => {
@@ -136,6 +137,26 @@ describe("AbortController", () => {
       expect(controller.signal instanceof AbortSignal).toBe(true);
     });
     describe("abort()", () => {
+      test("signal and controller are garbage collected", async () => {
+        (function () {
+          var last;
+          class MyAbortSignalReasonGCTest {}
+          for (let i = 0; i < 1e3; i++) {
+            const controller = new AbortController();
+            var escape;
+            controller.signal.onabort = reason => {
+              escape = reason;
+            };
+            controller.abort(new MyAbortSignalReasonGCTest());
+            last = escape;
+            new MyAbortSignalReasonGCTest();
+          }
+
+          return last;
+        })();
+        await expectMaxObjectTypeCount(expect, "AbortController", 2);
+        await expectMaxObjectTypeCount(expect, "AbortSignal", 2);
+      });
       const reasons = [
         {
           label: "undefined",

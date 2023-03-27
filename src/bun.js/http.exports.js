@@ -1044,7 +1044,7 @@ export class ClientRequest extends OutgoingMessage {
       // throw new ERR_INVALID_PROTOCOL(protocol, expectedProtocol);
     }
 
-    this.#port = options.port || options.defaultPort || this.#agent?.defaultPort || 80;
+    this.#port = options.port || options.defaultPort || this.#agent?.defaultPort || (protocol == "https:" ? 443 : 80);
     const host =
       (this.#host =
       options.host =

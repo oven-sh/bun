@@ -349,8 +349,8 @@ export class IncomingMessage extends Readable {
 
     this.#bodyStream = null;
     const socket = new FakeSocket();
-    socket.remoteAddress = req.hostname;
-    socket.remotePort = req.port;
+    socket.remoteAddress = url.hostname;
+    socket.remotePort = url.port;
     this.#fakeSocket = socket;
 
     this.url = url.pathname + url.search;

@@ -2850,6 +2850,11 @@ declare module "bun" {
       socket: Socket<Data>,
       data: BinaryTypeList[DataBinaryType],
     ): void | Promise<void>;
+    handshake?(
+      socket: Socket<Data>,
+      success: number,
+      verifyError: Error | null,
+    ): void;
     drain?(socket: Socket<Data>): void | Promise<void>;
 
     /**

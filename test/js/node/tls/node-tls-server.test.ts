@@ -450,7 +450,7 @@ it("should call abort with signal", done => {
     .on(
       "close",
       mustCall(() => {
-        clearImmediate(timeout);
+        clearTimeout(timeout);
         done();
       }),
     )

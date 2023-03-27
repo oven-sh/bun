@@ -39,6 +39,8 @@ const NODE_HTTP_WARNING =
 var _globalAgent;
 
 var FakeSocket = class Socket {
+  remoteAddress;
+  remotePort;
   on() {
     return this;
   }
@@ -346,7 +348,10 @@ export class IncomingMessage extends Readable {
     this.complete = !!this.#noBody;
 
     this.#bodyStream = null;
-    this.#fakeSocket = undefined;
+    const socket = new FakeSocket();
+    socket.remoteAddress = req.hostname;
+    socket.remotePort = req.port;
+    this.#fakeSocket = socket;
 
     this.url = url.pathname + url.search;
     assignHeaders(this, req);

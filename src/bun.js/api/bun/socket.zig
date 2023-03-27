@@ -891,8 +891,6 @@ fn NewSocket(comptime ssl: bool) type {
         poll_ref: JSC.PollRef = JSC.PollRef.init(),
         reffer: JSC.Ref = JSC.Ref.init(),
         last_4: [4]u8 = .{ 0, 0, 0, 0 },
-        is_client: bool = false,
-        is_pending_handshake: bool = ssl,
 
         // TODO: switch to something that uses `visitAggregate` and have the
         // `Listener` keep a list of all the sockets JSValue in there
@@ -916,7 +914,6 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn doConnect(this: *This, connection: Listener.UnixOrHost, socket_ctx: *uws.SocketContext) !void {
-            this.is_client = true;
             switch (connection) {
                 .host => |c| {
                     _ = @This().Socket.connectPtr(
@@ -952,11 +949,6 @@ fn NewSocket(comptime ssl: bool) type {
             JSC.markBinding(@src());
             log("onWritable", .{});
             if (this.detached) return;
-            if (this.is_client == false and this.is_pending_handshake) {
-                // Ensure that we'll cycle through internal openssl's state
-                _ = this.writeMaybeCorked("", false);
-                return;
-            }
             const handlers = this.handlers;
             const callback = handlers.onWritable;
             if (callback == .zero) return;
@@ -1105,12 +1097,6 @@ fn NewSocket(comptime ssl: bool) type {
 
                 if (handlers.rejectPromise(err)) return;
                 _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, err });
-            } else {
-                if (this.is_client == false and this.is_pending_handshake) {
-                    // Ensure that we'll cycle through internal openssl's state
-                    _ = this.writeMaybeCorked("", false);
-                    return;
-                }
             }
         }
 
@@ -1152,7 +1138,6 @@ fn NewSocket(comptime ssl: bool) type {
             JSC.markBinding(@src());
             const handlers = this.handlers;
             const callback = handlers.onHandshake;
-            this.is_pending_handshake = false;
             if (callback == .zero) return;
 
             const globalObject = handlers.globalObject;

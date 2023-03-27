@@ -262,7 +262,7 @@ const Socket = (function (InternalSocket) {
             self.authorizationError = verifyError.code || verifyError.message;
             if (self._rejectUnauthorized) {
               // no need to call self.destroy() this will be handled by uSockets
-              // self.destroy();
+              // self.destroy(verifyError);
               self.emit("error", verifyError);
               return;
             }

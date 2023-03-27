@@ -147,6 +147,23 @@ it("Bun.file empty file", async () => {
   await gcTick();
 });
 
+it("Bun.file lastModified update", async () => {
+  const file = Bun.file("/tmp/bun.test.lastModified.txt");
+  await gcTick();
+  // setup
+  await Bun.write(file, "test text.");
+  const lastModified0 = file.lastModified;
+
+  // sleep some time and write the file again.
+  await Bun.sleep(10);
+  await Bun.write(file, "test text2.");
+  const lastModified1 = file.lastModified;
+
+  // ensure the last modified timestamp is updated.
+  expect(lastModified1).toBeGreaterThan(lastModified0);
+  await gcTick();
+});
+
 it("Bun.file as a Blob", async () => {
   const filePath = path.join(import.meta.path, "../fetch.js.txt");
   const fixture = fs.readFileSync(filePath, "utf8");

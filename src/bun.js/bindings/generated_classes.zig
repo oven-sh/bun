@@ -90,6 +90,9 @@ pub const JSBlob = struct {
             @compileLog("Expected Blob.getFormData to be a callback but received " ++ @typeName(@TypeOf(Blob.getFormData)));
         if (@TypeOf(Blob.getJSON) != CallbackType)
             @compileLog("Expected Blob.getJSON to be a callback but received " ++ @typeName(@TypeOf(Blob.getJSON)));
+        if (@TypeOf(Blob.getLastModified) != GetterType)
+            @compileLog("Expected Blob.getLastModified to be a getter");
+
         if (@TypeOf(Blob.getSize) != GetterType)
             @compileLog("Expected Blob.getSize to be a getter");
 
@@ -110,6 +113,7 @@ pub const JSBlob = struct {
             @export(Blob.getArrayBuffer, .{ .name = "BlobPrototype__getArrayBuffer" });
             @export(Blob.getFormData, .{ .name = "BlobPrototype__getFormData" });
             @export(Blob.getJSON, .{ .name = "BlobPrototype__getJSON" });
+            @export(Blob.getLastModified, .{ .name = "BlobPrototype__getLastModified" });
             @export(Blob.getSize, .{ .name = "BlobPrototype__getSize" });
             @export(Blob.getSlice, .{ .name = "BlobPrototype__getSlice" });
             @export(Blob.getStream, .{ .name = "BlobPrototype__getStream" });

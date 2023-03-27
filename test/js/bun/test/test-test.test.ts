@@ -264,16 +264,6 @@ test("deepEquals works with proxies", () => {
     expect(p1).toEqual(p2);
     expect(p1).toStrictEqual(p2);
     let p3 = new Proxy({ a: 1, b: 2 }, {});
-    let p4 = new Proxy({ a: 1, b: 2 }, {});
-    expect(p3).toEqual(p4);
-    expect(p3).toStrictEqual(p4);
-  }
-  {
-    let p1 = new Proxy({ a: 1, b: 2 }, {});
-    let p2 = new Proxy({ a: 1, b: 2 }, {});
-    expect(p1).toEqual(p2);
-    expect(p1).toStrictEqual(p2);
-    let p3 = new Proxy({ a: 1, b: 2 }, {});
     let p4 = new Proxy({ a: 1, b: 3 }, {});
     expect(p3).not.toEqual(p4);
     expect(p3).not.toStrictEqual(p4);

@@ -5228,8 +5228,8 @@ pub const Ast = struct {
     // These are used when bundling. They are filled in during the parser pass
     // since we already have to traverse the AST then anyway and the parser pass
     // is conveniently fully parallelized.
-    named_imports: NamedImports = undefined,
-    named_exports: NamedExports = undefined,
+    named_imports: NamedImports = NamedImports.init(bun.failing_allocator),
+    named_exports: NamedExports = NamedExports.init(bun.failing_allocator),
     export_star_import_records: []u32 = &([_]u32{}),
 
     allocator: std.mem.Allocator,

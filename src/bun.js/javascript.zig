@@ -363,6 +363,8 @@ pub const VirtualMachine = struct {
     pending_unref_counter: i32 = 0,
     preload: []const string = &[_][]const u8{},
 
+    hot_reload: bun.CLI.Command.HotReload = .none,
+
     /// hide bun:wrap from stack traces
     /// bun:wrap is very noisy
     hide_bun_stackframes: bool = true,
@@ -543,6 +545,15 @@ pub const VirtualMachine = struct {
 
     pub fn reload(this: *VirtualMachine) void {
         Output.debug("Reloading...", .{});
+        if (this.hot_reload == .watch) {
+            Output.flush();
+            std.os.execveZ(
+                std.os.argv[0],
+                bun.default_allocator.dupeZ([*:0]const u8, std.os.argv[1..]) catch unreachable,
+                std.c.environ,
+            ) catch unreachable;
+        }
+
         this.global.reload();
         this.pending_internal_promise = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
     }

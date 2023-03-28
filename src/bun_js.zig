@@ -147,7 +147,8 @@ pub const Run = struct {
 
     pub fn start(this: *Run) void {
         var vm = this.vm;
-        if (this.ctx.debug.hot_reload) {
+        vm.hot_reload = this.ctx.debug.hot_reload;
+        if (this.ctx.debug.hot_reload != .none) {
             JSC.HotReloader.enableHotModuleReloading(vm);
         }
         if (vm.loadEntryPoint(this.entry_path)) |promise| {

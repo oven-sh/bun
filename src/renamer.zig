@@ -121,17 +121,20 @@ pub const NumberRenamer = struct {
         }
 
         r.name_stack_fallback.fixed_buffer_allocator.end_index = 0;
-        const name = scope.findUnusedName(r.allocator, r.name_temp_allocator, symbol.original_name) orelse return;
-
-        const new_len = @max(inner.len, ref.innerIndex() + 1);
-        if (inner.cap <= new_len) {
-            const prev_cap = inner.len;
-            inner.ensureUnusedCapacity(r.allocator, new_len - prev_cap) catch unreachable;
-            const to_write = inner.ptr[prev_cap..inner.cap];
-            @memset(std.mem.sliceAsBytes(to_write).ptr, 0, std.mem.sliceAsBytes(to_write).len);
+        switch (scope.findUnusedName(r.allocator, r.name_temp_allocator, symbol.original_name)) {
+            .renamed => |name| {
+                const new_len = @max(inner.len, ref.innerIndex() + 1);
+                if (inner.cap <= new_len) {
+                    const prev_cap = inner.len;
+                    inner.ensureUnusedCapacity(r.allocator, new_len - prev_cap) catch unreachable;
+                    const to_write = inner.ptr[prev_cap..inner.cap];
+                    @memset(std.mem.sliceAsBytes(to_write).ptr, 0, std.mem.sliceAsBytes(to_write).len);
+                }
+                inner.len = new_len;
+                inner.mut(ref.innerIndex()).* = name;
+            },
+            .no_collision => {},
         }
-        inner.len = new_len;
-        inner.mut(ref.innerIndex()).* = name;
     }
 
     pub fn init(
@@ -329,8 +332,13 @@ pub const NumberRenamer = struct {
             }
         };
 
+        const UnusedName = union(enum) {
+            no_collision: void,
+            renamed: string,
+        };
+
         /// Caller must use an arena allocator
-        pub fn findUnusedName(this: *NumberScope, allocator: std.mem.Allocator, temp_allocator: std.mem.Allocator, input_name: []const u8) ?string {
+        pub fn findUnusedName(this: *NumberScope, allocator: std.mem.Allocator, temp_allocator: std.mem.Allocator, input_name: []const u8) UnusedName {
             var name = bun.MutableString.ensureValidIdentifier(input_name, temp_allocator) catch unreachable;
 
             switch (NameUse.find(this, name)) {
@@ -411,13 +419,13 @@ pub const NumberRenamer = struct {
             // "name" is called "name2"
             if (strings.eqlLong(name, input_name, true)) {
                 this.name_counts.putNoClobber(allocator, input_name, 1) catch unreachable;
-                return null;
+                return .{ .no_collision = {} };
             }
 
             name = allocator.dupe(u8, name) catch unreachable;
 
             this.name_counts.putNoClobber(allocator, name, 1) catch unreachable;
-            return name;
+            return .{ .renamed = name };
         }
     };
 };

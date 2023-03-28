@@ -220,9 +220,9 @@ fn NewHTTPContext(comptime ssl: bool) type {
         }
 
         pub fn init(this: *@This()) !void {
-            var opts: uws.us_socket_context_options_t = undefined;
-            @memset(@ptrCast([*]u8, &opts), 0, @sizeOf(uws.us_socket_context_options_t));
-            this.us_socket_context = uws.us_create_socket_context(ssl_int, http_thread.loop, @sizeOf(usize), opts).?;
+            var opts: uws.us_bun_socket_context_options_t = undefined;
+            @memset(@ptrCast([*]u8, &opts), 0, @sizeOf(uws.us_bun_socket_context_options_t));
+            this.us_socket_context = uws.us_create_bun_socket_context(ssl_int, http_thread.loop, @sizeOf(usize), opts).?;
             if (comptime ssl) {
                 this.sslCtx().setup();
             }
@@ -273,9 +273,15 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 ptr: *anyopaque,
                 socket: HTTPSocket,
             ) void {
+
                 const active = ActiveSocket.from(bun.cast(**anyopaque, ptr).*);
                 if (active.get(HTTPClient)) |client| {
-                    return client.onOpen(comptime ssl, socket);
+                    if (comptime ssl == false) {
+                        return client.onOpen(comptime ssl, socket);
+                    } else {
+                        // when ssl wait handshake before open
+                        return;
+                    }
                 }
 
                 if (active.get(PooledSocket)) |pooled| {
@@ -288,6 +294,20 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     std.debug.assert(false);
                 }
             }
+
+            pub fn onHandshake(ptr: *anyopaque, socket: HTTPSocket, success: i32, _: uws.us_bun_verify_error_t) void {
+               log("onHandshake {d}", .{ success });
+
+                const active = ActiveSocket.from(bun.cast(**anyopaque, ptr).*);
+                if (active.get(HTTPClient)) |client| {
+                    if (success == 1) {
+                        return client.onOpen(comptime ssl, socket);
+                    }
+                    // Fail with TLSHandshakeError
+                    client.onTLSHandshakeError(comptime ssl, socket);
+                }
+            }
+
             pub fn onClose(
                 ptr: *anyopaque,
                 socket: HTTPSocket,
@@ -744,13 +764,19 @@ pub fn onTimeout(
 pub fn onConnectError(
     client: *HTTPClient,
     comptime is_ssl: bool,
-    socket: NewHTTPContext(is_ssl).HTTPSocket,
+    _: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
-    _ = socket;
     log("onConnectError  {s}\n", .{client.url.href});
 
     if (client.state.stage != .done and client.state.stage != .fail)
         client.fail(error.ConnectionRefused);
+}
+
+pub fn onTLSHandshakeError(client: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    log("onTLSHandshakeError  {s}\n", .{client.url.href});
+
+    if (client.state.stage != .done and client.state.stage != .fail)
+        client.closeAndFail(error.TLSHandshakeError, is_ssl, socket);
 }
 pub fn onEnd(
     client: *HTTPClient,

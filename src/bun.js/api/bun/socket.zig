@@ -891,7 +891,7 @@ fn NewSocket(comptime ssl: bool) type {
         poll_ref: JSC.PollRef = JSC.PollRef.init(),
         reffer: JSC.Ref = JSC.Ref.init(),
         last_4: [4]u8 = .{ 0, 0, 0, 0 },
-        authorized: i32 = 0,
+        authorized: bool = false,
 
         // TODO: switch to something that uses `visitAggregate` and have the
         // `Listener` keep a list of all the sockets JSValue in there
@@ -1145,23 +1145,21 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn onHandshake(this: *This, _: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
             JSC.markBinding(@src());
 
-            this.authorized = success;
+            const authorized = if (success == 1) true else false;
+
+            this.authorized = authorized;
 
             const handlers = this.handlers;
-
             var callback = handlers.onHandshake;
             var is_open = false;
-            if (comptime ssl) {
-                // Use open callback when handshake is not provided
+
+            // Use open callback when handshake is not provided
+            if (callback == .zero) {
+                callback = handlers.onOpen;
                 if (callback == .zero) {
-                    callback = handlers.onOpen;
-                    if (callback == .zero) {
-                        return;
-                    }
-                    is_open = true;
+                    return;
                 }
-            } else {
-                if (callback == .zero) return;
+                is_open = true;
             }
 
             const globalObject = handlers.globalObject;
@@ -1191,7 +1189,7 @@ fn NewSocket(comptime ssl: bool) type {
                 }
                 result = callback.callWithThis(globalObject, this_value, &[_]JSValue{
                     this_value,
-                    JSValue.jsNumberFromInt32(success),
+                    JSValue.jsBoolean(authorized),
                     authorization_error,
                 });
             }
@@ -1301,8 +1299,7 @@ fn NewSocket(comptime ssl: bool) type {
             _: *JSC.JSGlobalObject,
         ) callconv(.C) JSValue {
             log("getAuthorized()", .{});
-
-            return JSValue.jsNumber(@as(i32, this.authorized));
+            return JSValue.jsBoolean(this.authorized);
         }
         pub fn timeout(
             this: *This,

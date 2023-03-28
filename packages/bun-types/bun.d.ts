@@ -2852,7 +2852,7 @@ declare module "bun" {
     ): void | Promise<void>;
     handshake?(
       socket: Socket<Data>,
-      success: number,
+      success: boolean,
       verifyError: Error | null,
     ): void;
     drain?(socket: Socket<Data>): void | Promise<void>;

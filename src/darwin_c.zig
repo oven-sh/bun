@@ -784,3 +784,7 @@ pub const sockaddr_dl = extern struct {
     //	u_short sdl_route[16];  /* source routing information */
     //#endif
 };
+
+pub usingnamespace @cImport({
+    @cInclude("sys/spawn.h");
+});

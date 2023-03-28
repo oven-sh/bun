@@ -8,9 +8,12 @@ function generate(ssl) {
     noConstructor: true,
     configurable: false,
     proto: {
-      verifyError: {
-        fn: "verifyError",
+      getAuthorizationError: {
+        fn: "getAuthorizationError",
         length: 0,
+      },
+      authorized: {
+        getter: "getAuthorized",
       },
       write: {
         fn: "write",
@@ -65,6 +68,7 @@ function generate(ssl) {
       readyState: {
         getter: "getReadyState",
       },
+      
 
       // topics: {
       //   getter: "getTopics",

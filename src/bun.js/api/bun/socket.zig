@@ -891,6 +891,7 @@ fn NewSocket(comptime ssl: bool) type {
         poll_ref: JSC.PollRef = JSC.PollRef.init(),
         reffer: JSC.Ref = JSC.Ref.init(),
         last_4: [4]u8 = .{ 0, 0, 0, 0 },
+        authorized: i32 = 0,
 
         // TODO: switch to something that uses `visitAggregate` and have the
         // `Listener` keep a list of all the sockets JSValue in there
@@ -1073,6 +1074,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             const handlers = this.handlers;
             const callback = handlers.onOpen;
+            const handshake_callback = handlers.onHandshake;
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
@@ -1080,8 +1082,14 @@ fn NewSocket(comptime ssl: bool) type {
             this.markActive();
             handlers.resolvePromise(this_value);
 
-            if (callback == .zero) return;
-
+            if (comptime ssl) {
+                // only calls open callback if handshake callback is provided
+                // If handshake is provided, open is called on connection open
+                // If is not provided, open is called after handshake
+                if (callback == .zero or handshake_callback == .zero) return;
+            } else {
+                if (callback == .zero) return;
+            }
             const result = callback.callWithThis(globalObject, this_value, &[_]JSValue{
                 this_value,
             });
@@ -1136,33 +1144,57 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn onHandshake(this: *This, _: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
             JSC.markBinding(@src());
+
+            this.authorized = success;
+
             const handlers = this.handlers;
-            const callback = handlers.onHandshake;
-            if (callback == .zero) return;
+
+            var callback = handlers.onHandshake;
+            var is_open = false;
+            if (comptime ssl) {
+                // Use open callback when handshake is not provided
+                if (callback == .zero) {
+                    callback = handlers.onOpen;
+                    if (callback == .zero) {
+                        return;
+                    }
+                    is_open = true;
+                }
+            } else {
+                if (callback == .zero) return;
+            }
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
-            var js_ssl_error: JSValue = undefined;
-            if (ssl_error.error_no == 0) {
-                js_ssl_error = JSValue.jsNull();
+
+            var result: JSC.JSValue = JSC.JSValue.zero;
+            // open callback only have 1 parameters and its the socket
+            // you should use getAuthorizationError and authorized getter to get those values in this case
+            if (is_open) {
+                result = callback.callWithThis(globalObject, this_value, &[_]JSValue{this_value});
             } else {
-                const code = if (ssl_error.code == null) "" else ssl_error.code[0..bun.len(ssl_error.code)];
+                // call handhsake callback with authorized and authorization error if has one
+                var authorization_error: JSValue = undefined;
+                if (ssl_error.error_no == 0) {
+                    authorization_error = JSValue.jsNull();
+                } else {
+                    const code = if (ssl_error.code == null) "" else ssl_error.code[0..bun.len(ssl_error.code)];
 
-                const reason = if (ssl_error.reason == null) "" else ssl_error.reason[0..bun.len(ssl_error.reason)];
+                    const reason = if (ssl_error.reason == null) "" else ssl_error.reason[0..bun.len(ssl_error.reason)];
 
-                const fallback = JSC.SystemError{
-                    .code = ZigString.init(code),
-                    .message = ZigString.init(reason),
-                };
+                    const fallback = JSC.SystemError{
+                        .code = ZigString.init(code),
+                        .message = ZigString.init(reason),
+                    };
 
-                js_ssl_error = fallback.toErrorInstance(globalObject);
+                    authorization_error = fallback.toErrorInstance(globalObject);
+                }
+                result = callback.callWithThis(globalObject, this_value, &[_]JSValue{
+                    this_value,
+                    JSValue.jsNumberFromInt32(success),
+                    authorization_error,
+                });
             }
-
-            const result = callback.callWithThis(globalObject, this_value, &[_]JSValue{
-                this_value,
-                JSValue.jsNumberFromInt32(success),
-                js_ssl_error,
-            });
 
             if (result.toError()) |err_value| {
                 _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, err_value });
@@ -1264,6 +1296,14 @@ fn NewSocket(comptime ssl: bool) type {
             }
         }
 
+        pub fn getAuthorized(
+            this: *This,
+            _: *JSC.JSGlobalObject,
+        ) callconv(.C) JSValue {
+            log("getAuthorized()", .{});
+
+            return JSValue.jsNumber(@as(i32, this.authorized));
+        }
         pub fn timeout(
             this: *This,
             globalObject: *JSC.JSGlobalObject,
@@ -1287,7 +1327,7 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsUndefined();
         }
 
-        pub fn verifyError(
+        pub fn getAuthorizationError(
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
@@ -1297,6 +1337,9 @@ fn NewSocket(comptime ssl: bool) type {
             if (this.detached) {
                 return JSValue.jsNull();
             }
+
+            // this error can change if called in different stages of hanshake
+            // is very usefull to have this feature depending on the user workflow
             const ssl_error = this.socket.verifyError();
             if (ssl_error.error_no == 0) {
                 return JSValue.jsNull();

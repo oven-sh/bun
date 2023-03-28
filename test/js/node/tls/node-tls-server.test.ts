@@ -352,6 +352,7 @@ it("should call connection and drop", done => {
           hostname: address.address,
           socket: {
             data(socket) {},
+            handshake(socket, success, verifyError) {},
             open(socket) {
               socket.end();
             },

@@ -218,6 +218,7 @@ const Socket = (function (InternalSocket) {
             remotePort: _socket.remotePort,
             remoteFamily: _socket.remoteFamily || "IPv4",
           };
+
           socket.end();
 
           self.emit("drop", data);

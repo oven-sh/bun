@@ -1,7 +1,7 @@
 import readlinePromises from "node:readline/promises";
 import { EventEmitter } from "node:events";
 import { createTest } from "node-harness";
-const { describe, it, createDoneDotAll, createCallCheckCtx, assert } = createTest(import.meta.path);
+const { describe, it, expect, createDoneDotAll, createCallCheckCtx, assert } = createTest(import.meta.path);
 
 // ----------------------------------------------------------------------------
 // Helpers

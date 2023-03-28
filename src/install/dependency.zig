@@ -15,7 +15,7 @@ const string = @import("../string_types.zig").string;
 const strings = @import("../string_immutable.zig");
 const Dependency = @This();
 
-pub const URI = union(Tag) {
+const URI = union(Tag) {
     local: String,
     remote: String,
 
@@ -117,10 +117,11 @@ pub const Context = struct {
 /// Get the name of the package as it should appear in a remote registry.
 pub inline fn realname(this: *const Dependency) String {
     return switch (this.version.tag) {
-        .npm => this.version.value.npm.name,
         .dist_tag => this.version.value.dist_tag.name,
         .git => this.version.value.git.package_name,
         .github => this.version.value.github.package_name,
+        .npm => this.version.value.npm.name,
+        .tarball => this.version.value.tarball.package_name,
         else => this.name,
     };
 }
@@ -131,6 +132,7 @@ pub inline fn isAliased(this: *const Dependency, buf: []const u8) bool {
         .dist_tag => !this.version.value.dist_tag.name.eql(this.name, buf, buf),
         .git => !this.version.value.git.package_name.eql(this.name, buf, buf),
         .github => !this.version.value.github.package_name.eql(this.name, buf, buf),
+        .tarball => !this.version.value.tarball.package_name.eql(this.name, buf, buf),
         else => false,
     };
 }
@@ -560,7 +562,16 @@ pub const Version = struct {
         tag: String,
 
         fn eql(this: TagInfo, that: TagInfo, this_buf: []const u8, that_buf: []const u8) bool {
-            return this.name.eql(that.name, this_buf, that_buf) and this.tag.eql(that.tag);
+            return this.name.eql(that.name, this_buf, that_buf) and this.tag.eql(that.tag, this_buf, that_buf);
+        }
+    };
+
+    const TarballInfo = struct {
+        uri: URI,
+        package_name: String = .{},
+
+        fn eql(this: TarballInfo, that: TarballInfo, this_buf: []const u8, that_buf: []const u8) bool {
+            return this.uri.eql(that.uri, this_buf, that_buf);
         }
     };
 
@@ -569,7 +580,7 @@ pub const Version = struct {
 
         npm: NpmInfo,
         dist_tag: TagInfo,
-        tarball: URI,
+        tarball: TarballInfo,
         folder: String,
 
         /// Equivalent to npm link
@@ -807,13 +818,13 @@ pub fn parseWithTag(
                 return .{
                     .tag = .tarball,
                     .literal = sliced.value(),
-                    .value = .{ .tarball = .{ .remote = sliced.sub(dependency).value() } },
+                    .value = .{ .tarball = .{ .uri = .{ .remote = sliced.sub(dependency).value() } } },
                 };
             } else if (strings.hasPrefixComptime(dependency, "file://")) {
                 return .{
                     .tag = .tarball,
                     .literal = sliced.value(),
-                    .value = .{ .tarball = .{ .local = sliced.sub(dependency[7..]).value() } },
+                    .value = .{ .tarball = .{ .uri = .{ .local = sliced.sub(dependency[7..]).value() } } },
                 };
             } else if (strings.contains(dependency, "://")) {
                 if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "invalid or unsupported dependency \"{s}\"", .{dependency}) catch unreachable;
@@ -821,13 +832,9 @@ pub fn parseWithTag(
             }
 
             return .{
-                .literal = sliced.value(),
-                .value = .{
-                    .tarball = .{
-                        .local = sliced.value(),
-                    },
-                },
                 .tag = .tarball,
+                .literal = sliced.value(),
+                .value = .{ .tarball = .{ .uri = .{ .local = sliced.value() } } },
             };
         },
         .folder => {

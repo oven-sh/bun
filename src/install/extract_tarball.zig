@@ -19,7 +19,6 @@ const ExtractTarball = @This();
 
 name: strings.StringOrTinyString,
 resolution: Resolution,
-registry: string,
 cache_dir: std.fs.Dir,
 temp_dir: std.fs.Dir,
 dependency_id: DependencyID,
@@ -289,6 +288,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     const folder_name = switch (this.resolution.tag) {
         .npm => this.package_manager.cachedNPMPackageFolderNamePrint(&folder_name_buf, name, this.resolution.value.npm.version),
         .github => PackageManager.cachedGitHubFolderNamePrint(&folder_name_buf, resolved),
+        .local_tarball, .remote_tarball => PackageManager.cachedTarballFolderNamePrint(&folder_name_buf, this.url),
         else => unreachable,
     };
     if (folder_name.len == 0 or (folder_name.len == 1 and folder_name[0] == '/')) @panic("Tried to delete root and stopped it");
@@ -362,7 +362,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     var json_buf: []u8 = "";
     var json_len: usize = 0;
     switch (this.resolution.tag) {
-        .github => {
+        .github, .local_tarball, .remote_tarball => {
             const json_file = final_dir.openFileZ("package.json", .{ .mode = .read_only }) catch |err| {
                 this.package_manager.log.addErrorFmt(
                     null,

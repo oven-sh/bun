@@ -77,7 +77,7 @@ pub const Renamer = union(enum) {
 
 pub const NumberRenamer = struct {
     symbols: js_ast.Symbol.Map,
-    names: bun.BabyList(bun.BabyList(string)) = .{},
+    names: []bun.BabyList(string) = &.{},
     allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     number_scope_pool: bun.HiveArray(NumberScope, 128).Fallback,
@@ -87,7 +87,7 @@ pub const NumberRenamer = struct {
     name_temp_allocator: std.mem.Allocator = undefined,
 
     pub fn deinit(self: *NumberRenamer) void {
-        self.names.deinitWithAllocator(self.allocator);
+        self.allocator.free(self.names);
         self.root.deinit(self.temp_allocator);
         self.arena.deinit();
     }
@@ -111,7 +111,7 @@ pub const NumberRenamer = struct {
         const ref = r.symbols.follow(input_ref);
 
         // Don't rename the same symbol more than once
-        var inner: *bun.BabyList(string) = r.names.mut(ref.sourceIndex());
+        var inner: *bun.BabyList(string) = &r.names[ref.sourceIndex()];
         if (inner.len > ref.innerIndex() and inner.at(ref.innerIndex()).len > 0) return;
 
         // Don't rename unbound symbols, symbols marked as reserved names, labels, or private names
@@ -148,7 +148,7 @@ pub const NumberRenamer = struct {
             .symbols = symbols,
             .allocator = allocator,
             .temp_allocator = temp_allocator,
-            .names = try bun.BabyList(bun.BabyList(string)).initCapacity(allocator, symbols.symbols_for_source.len),
+            .names = try allocator.alloc(bun.BabyList(string), symbols.symbols_for_source.len),
             .number_scope_pool = undefined,
             .arena = std.heap.ArenaAllocator.init(temp_allocator),
         };
@@ -165,10 +165,8 @@ pub const NumberRenamer = struct {
                 symbols.dump();
         }
 
-        renamer.names.len = symbols.symbols_for_source.len;
-        for (renamer.names.slice()) |*inner| {
-            inner.* = .{};
-        }
+        @memset(std.mem.sliceAsBytes(renamer.names).ptr, 0, std.mem.sliceAsBytes(renamer.names).len);
+
         return renamer;
     }
 
@@ -273,7 +271,7 @@ pub const NumberRenamer = struct {
 
     pub fn nameForSymbol(renamer: *NumberRenamer, ref: Ref) string {
         if (ref.isSourceContentsSlice()) {
-            bun.unreachablePanic("Unexpected unbound symobl!\n{any}", .{ref});
+            bun.unreachablePanic("Unexpected unbound symbol!\n{any}", .{ref});
         }
 
         const resolved = renamer.symbols.follow(ref);
@@ -281,8 +279,7 @@ pub const NumberRenamer = struct {
         const source_index = resolved.sourceIndex();
         const inner_index = resolved.innerIndex();
 
-        const renamed_list = renamer.names
-            .at(source_index);
+        const renamed_list = renamer.names[source_index];
 
         if (renamed_list.len > inner_index) {
             const renamed = renamed_list.at(inner_index).*;
@@ -291,7 +288,7 @@ pub const NumberRenamer = struct {
             }
         }
 
-        return renamer.symbols.getConst(resolved).?.original_name;
+        return renamer.symbols.symbols_for_source.at(source_index).at(inner_index).original_name;
     }
 
     pub const NumberScope = struct {

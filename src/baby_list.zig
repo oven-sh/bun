@@ -69,16 +69,15 @@ pub fn BabyList(comptime Type: type) type {
         pub inline fn appendAssumeCapacity(this: *@This(), value: Type) void {
             this.ptr[this.len] = value;
             this.len += 1;
+            std.debug.assert(this.cap >= this.len);
         }
 
         pub inline fn appendSliceAssumeCapacity(this: *@This(), values: []const Type) void {
             var tail = this.ptr[this.len .. this.len + values.len];
             std.debug.assert(this.cap >= this.len + @truncate(u32, values.len));
-            for (values) |value| {
-                tail[0] = value;
-                tail = tail[1..];
-            }
+            bun.copy(Type, tail, values);
             this.len += @truncate(u32, values.len);
+            std.debug.assert(this.cap >= this.len);
         }
 
         pub inline fn initCapacity(allocator: std.mem.Allocator, len: usize) !ListType {

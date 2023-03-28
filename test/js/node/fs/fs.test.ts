@@ -522,6 +522,21 @@ describe("rmdir", () => {
       done();
     });
   });
+  it("does not remove a dir with a file in it", done => {
+    const path = `${tmpdir()}/${Date.now()}.rm.dir`;
+    try {
+      mkdirSync(path);
+      writeFileSync(`${path}/file.txt`, "File written successfully", "utf8");
+    } catch (e) {}
+    expect(existsSync(path + "/file.txt")).toBe(true);
+    rmdir(path, err => {
+      expect("ENOTEMPTY").toContain(err!.code);
+      done();
+    });
+    expect(existsSync(path + "/file.txt")).toBe(true);
+    rmdir(path, { recursive: true }, () => {});
+    expect(existsSync(path + "/file.txt")).toBe(false);
+  });
   it("removes a dir recursively", done => {
     const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
     try {

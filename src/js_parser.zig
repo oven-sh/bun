@@ -4719,7 +4719,7 @@ fn NewParser_(
         }
 
         pub fn findSymbolWithRecordUsage(p: *P, loc: logger.Loc, name: string, comptime record_usage: bool) !FindSymbolResult {
-            var declare_loc: logger.Loc = undefined;
+            var declare_loc: logger.Loc = logger.Loc.Empty;
             var is_inside_with_scope = false;
             // This function can show up in profiling.
             // That's part of why we do this.
@@ -10929,12 +10929,11 @@ fn NewParser_(
                             p.log.addRangeError(p.source, key_range, "Invalid field name \"#constructor\"") catch unreachable;
                         }
 
-                        var declare: js_ast.Symbol.Kind = undefined;
-                        if (opts.is_static) {
-                            declare = .private_static_field;
-                        } else {
-                            declare = .private_field;
-                        }
+                        const declare: js_ast.Symbol.Kind = if (opts.is_static)
+                            .private_static_field
+                        else
+                            .private_field;
+
                         private.ref = p.declareSymbol(declare, key.loc, name) catch unreachable;
                     },
                     else => {},
@@ -11039,34 +11038,21 @@ fn NewParser_(
                 // Special-case private identifiers
                 switch (key.data) {
                     .e_private_identifier => |*private| {
-                        var declare: Symbol.Kind = undefined;
-                        var suffix: string = "";
-                        switch (kind) {
-                            .get => {
-                                if (opts.is_static) {
-                                    declare = .private_static_get;
-                                } else {
-                                    declare = .private_get;
-                                }
-                                suffix = "_get";
-                            },
-                            .set => {
-                                if (opts.is_static) {
-                                    declare = .private_static_set;
-                                } else {
-                                    declare = .private_set;
-                                }
-                                suffix = "_set";
-                            },
-                            else => {
-                                if (opts.is_static) {
-                                    declare = .private_static_method;
-                                } else {
-                                    declare = .private_method;
-                                }
-                                suffix = "_fn";
-                            },
-                        }
+                        const declare: Symbol.Kind = switch (kind) {
+                            .get => if (opts.is_static)
+                                .private_static_get
+                            else
+                                .private_get,
+
+                            .set => if (opts.is_static)
+                                .private_static_set
+                            else
+                                .private_set,
+                            else => if (opts.is_static)
+                                .private_static_method
+                            else
+                                .private_method,
+                        };
 
                         const name = p.loadNameFromRef(private.ref);
                         if (strings.eqlComptime(name, "#constructor")) {

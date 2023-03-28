@@ -3,7 +3,6 @@
 #include "root.h"
 
 #include "IdentifierEventListenerMap.h"
-#include "ExceptionOr.h"
 #include "ContextDestructionObserver.h"
 #include "ScriptWrappable.h"
 #include <memory>
@@ -49,13 +48,13 @@ public:
     WEBCORE_EXPORT void addListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&&, bool, bool);
     WEBCORE_EXPORT void removeListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&&);
     WEBCORE_EXPORT void removeAllListenersForBindings(const Identifier& eventType);
-    WEBCORE_EXPORT bool emitForBindings(const Identifier&, const MarkedArgumentBuffer&);
+    WEBCORE_EXPORT bool emitForBindings(JSC::JSGlobalObject* lexicalGlobalObject, const Identifier&, const MarkedArgumentBuffer&);
 
     WEBCORE_EXPORT bool addListener(const Identifier& eventType, Ref<EventListener>&&, bool, bool);
     WEBCORE_EXPORT bool removeListener(const Identifier& eventType, EventListener&);
     WEBCORE_EXPORT bool removeAllListeners(const Identifier& eventType);
 
-    WEBCORE_EXPORT void emit(const Identifier&, const MarkedArgumentBuffer&);
+    WEBCORE_EXPORT std::optional<JSC::Exception> emit(const Identifier&, const MarkedArgumentBuffer&);
     WEBCORE_EXPORT void uncaughtExceptionInEventHandler();
 
     WEBCORE_EXPORT Vector<Identifier> getEventNames();
@@ -74,7 +73,7 @@ public:
     Vector<Identifier> eventTypes();
     const SimpleEventListenerVector& eventListeners(const Identifier& eventType);
 
-    void fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments);
+    std::optional<JSC::Exception> fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments);
     bool isFiringEventListeners() const;
 
     void invalidateJSEventListeners(JSC::JSObject*);
@@ -103,7 +102,7 @@ private:
     EventEmitterData& ensureEventEmitterData() { return m_eventTargetData; }
     void eventListenersDidChange() {}
 
-    void innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments);
+    std::optional<JSC::Exception> innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments);
     void invalidateEventListenerRegions();
 
     EventEmitterData m_eventTargetData;

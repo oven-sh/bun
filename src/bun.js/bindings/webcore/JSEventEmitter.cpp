@@ -243,8 +243,14 @@ static inline JSC::EncodedJSValue addListener(JSC::JSGlobalObject* lexicalGlobal
     args.append(argument0.value());
     args.append(argument1.value());
 
-    auto result2 = JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.emitForBindings(WTFMove(newListenerEventType), WTFMove(args)); }));
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    auto catchScope = DECLARE_CATCH_SCOPE(vm);
+    auto result = impl.emitForBindings(lexicalGlobalObject, WTFMove(newListenerEventType), WTFMove(args));
+    auto* exception = catchScope.exception();
+    if (UNLIKELY(exception)) {
+        catchScope.clearException();
+        JSC::throwVMError(lexicalGlobalObject, throwScope, exception);
+        return JSValue::encode(JSValue {});
+    }
 
     vm.writeBarrier(&static_cast<JSObject&>(*castedThis), argument1.value());
     impl.setThisObject(actualThis);
@@ -399,7 +405,15 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_emitBody(JSC::
     for (size_t i = 1; i < argumentCount; ++i) {
         args.append(callFrame->uncheckedArgument(i));
     }
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.emitForBindings(eventType, args))));
+    auto catchScope = DECLARE_CATCH_SCOPE(vm);
+    bool result = impl.emitForBindings(lexicalGlobalObject, WTFMove(eventType), WTFMove(args));
+    auto* exception = catchScope.exception();
+    if (exception) {
+        catchScope.clearException();
+        throwVMError(lexicalGlobalObject, throwScope, exception);
+        return encodedJSValue();
+    }
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, result)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_emit, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

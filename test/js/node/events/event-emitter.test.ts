@@ -162,3 +162,8 @@ test("EventEmitter GCs", async () => {
 
   await expectMaxObjectTypeCount(expect, "EventEmitter", startCount);
 });
+
+test("EventEmitter error without listener", () => {
+  var myEmitter = new EventEmitter();
+  expect(() => myEmitter.emit("error", new Error("whoops"))).toThrow("whoops");
+});

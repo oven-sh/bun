@@ -104,18 +104,24 @@ bool EventEmitter::hasActiveEventListeners(const Identifier& eventType) const
     return data && data->eventListenerMap.containsActive(eventType);
 }
 
-bool EventEmitter::emitForBindings(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
+bool EventEmitter::emitForBindings(JSC::JSGlobalObject* lexicalGlobalObject, const Identifier& eventType, const MarkedArgumentBuffer& arguments)
 {
     if (!scriptExecutionContext())
         return false;
 
-    emit(eventType, arguments);
+    auto result = emit(eventType, arguments);
+    if (UNLIKELY(result)) {
+        auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
+        JSC::throwVMError(lexicalGlobalObject, throwScope, &*result);
+        return false;
+    }
     return true;
 }
 
-void EventEmitter::emit(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
+std::optional<JSC::Exception> EventEmitter::emit(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
 {
-    fireEventListeners(eventType, arguments);
+    auto result = fireEventListeners(eventType, arguments);
+    return result;
 }
 
 void EventEmitter::uncaughtExceptionInEventHandler()
@@ -169,28 +175,29 @@ Vector<JSObject*> EventEmitter::getListeners(const Identifier& eventType)
 }
 
 // https://dom.spec.whatwg.org/#concept-event-listener-invoke
-void EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
+std::optional<JSC::Exception> EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
 {
     ASSERT_WITH_SECURITY_IMPLICATION(ScriptDisallowedScope::isEventAllowedInMainThread());
 
     auto* data = eventTargetData();
     if (!data)
-        return;
+        return std::nullopt;
 
     auto* listenersVector = data->eventListenerMap.find(eventType);
     if (UNLIKELY(!listenersVector))
-        return;
+        return std::nullopt;
 
     bool prevFiringEventListeners = data->isFiringEventListeners;
     data->isFiringEventListeners = true;
-    innerInvokeEventListeners(eventType, *listenersVector, arguments);
+    auto result = innerInvokeEventListeners(eventType, *listenersVector, arguments);
     data->isFiringEventListeners = prevFiringEventListeners;
+    return result;
 }
 
 // Intentionally creates a copy of the listeners vector to avoid event listeners added after this point from being run.
 // Note that removal still has an effect due to the removed field in RegisteredEventListener.
 // https://dom.spec.whatwg.org/#concept-event-listener-inner-invoke
-void EventEmitter::innerInvokeEventListeners(const Identifier& eventType, SimpleEventListenerVector listeners, const MarkedArgumentBuffer& arguments)
+std::optional<JSC::Exception> EventEmitter::innerInvokeEventListeners(const Identifier& eventType, SimpleEventListenerVector listeners, const MarkedArgumentBuffer& arguments)
 {
     Ref<EventEmitter> protectedThis(*this);
     ASSERT(!listeners.isEmpty());
@@ -235,8 +242,11 @@ void EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
             auto errorIdentifier = JSC::Identifier::fromString(vm, eventNames().errorEvent);
             auto hasErrorListener = this->hasActiveEventListeners(errorIdentifier);
             if (!hasErrorListener || eventType == errorIdentifier) {
-                // If the event type is error, report the exception to the console.
-                Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(JSValue(exception)));
+                // To match Node behavior, we need to throw when we can't emit an error event because there are no listeners or otherwise
+                // So we bubble it up
+                return std::optional<JSC::Exception> { *exception };
+                // // If the event type is error, report the exception to the console.
+                // Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(JSValue(exception)));
             } else if (hasErrorListener) {
                 MarkedArgumentBuffer expcep;
                 JSValue errorValue = exception->value();
@@ -244,10 +254,17 @@ void EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
                     errorValue = JSC::jsUndefined();
                 }
                 expcep.append(errorValue);
-                fireEventListeners(errorIdentifier, WTFMove(expcep));
+                auto result = fireEventListeners(errorIdentifier, WTFMove(expcep));
+
+                // We bubble any exceptions which are not emitted as an error event
+                if (UNLIKELY(result)) {
+                    return result;
+                }
             }
         }
     }
+
+    return std::nullopt;
 }
 
 Vector<Identifier> EventEmitter::eventTypes()

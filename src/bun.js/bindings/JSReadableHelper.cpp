@@ -37,7 +37,10 @@ static bool callRead(JSValue stream, JSFunction* read, JSC::MarkedArgumentBuffer
     WTF::NakedPtr<JSC::Exception> exceptionPtr;
     JSC::CallData callData = JSC::getCallData(read);
     JSValue ret = JSC::call(lexicalGlobalObject, read, callData, JSValue(stream), WTFMove(args), exceptionPtr);
-    if (auto* exception = exceptionPtr.get()) {
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    auto* exception = exceptionPtr.get();
+    if (UNLIKELY(exception)) {
         JSC::Identifier errorEventName = JSC::Identifier::fromString(vm, "error"_s);
         if (emitter.hasEventListeners(errorEventName)) {
             args.clear();
@@ -46,7 +49,15 @@ static bool callRead(JSValue stream, JSFunction* read, JSC::MarkedArgumentBuffer
                 val = jsUndefined();
             }
             args.append(val);
-            emitter.emitForBindings(errorEventName, args);
+
+            auto catchScope = DECLARE_CATCH_SCOPE(vm);
+            auto result = emitter.emitForBindings(lexicalGlobalObject, errorEventName, args);
+            auto* exception = catchScope.exception();
+            if (UNLIKELY(exception)) {
+                catchScope.clearException();
+                reportException(lexicalGlobalObject, exception);
+                return false;
+            }
         } else {
             reportException(lexicalGlobalObject, exception);
         }
@@ -149,7 +160,14 @@ JSC_DEFINE_HOST_FUNCTION(jsReadable_resume, (JSGlobalObject * lexicalGlobalObjec
     auto eventType = clientData->builtinNames().resumePublicName();
     MarkedArgumentBuffer args;
 
-    emitter.emitForBindings(eventType, args);
+    auto catchScope = DECLARE_CATCH_SCOPE(vm);
+    auto result = emitter.emitForBindings(lexicalGlobalObject, eventType, args);
+    auto* exception = catchScope.exception();
+    if (UNLIKELY(exception)) {
+        catchScope.clearException();
+        JSC::throwVMError(lexicalGlobalObject, throwScope, exception);
+        return JSValue::encode(JSValue {});
+    }
 
     flow(lexicalGlobalObject, stream, state);
 
@@ -185,7 +203,15 @@ EncodedJSValue emitReadable_(JSGlobalObject* lexicalGlobalObject, JSObject* stre
             throwTypeError(lexicalGlobalObject, throwScope, "Stream must be an EventEmitter"_s);
             return JSValue::encode(JSValue {});
         }
-        emitter->wrapped().emitForBindings(eventType, args);
+
+        auto catchScope = DECLARE_CATCH_SCOPE(vm);
+        auto result = emitter->wrapped().emitForBindings(lexicalGlobalObject, eventType, args);
+        auto* exception = catchScope.exception();
+        if (UNLIKELY(exception)) {
+            catchScope.clearException();
+            JSC::throwVMError(lexicalGlobalObject, throwScope, exception);
+            return JSValue::encode(JSValue {});
+        }
 
         state->setBool(JSReadableState::emittedReadable, false);
     }

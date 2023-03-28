@@ -169,6 +169,8 @@ jobs:
           push: true
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
+          build-args: |
+            BUN_VERSION=${{ env.TAG }}
   homebrew:
     name: Release to Homebrew
     runs-on: ubuntu-latest

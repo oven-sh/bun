@@ -445,6 +445,7 @@ pub const Arguments = struct {
             ctx.debug.hot_reload = .hot;
         } else if (args.flag("--watch")) {
             ctx.debug.hot_reload = .watch;
+            bun.auto_reload_on_crash = true;
         }
         ctx.passthrough = args.remaining();
 

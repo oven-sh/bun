@@ -1016,3 +1016,79 @@ pub fn asByteSlice(buffer: anytype) []const u8 {
         },
     };
 }
+
+/// Reload Bun's process
+///
+/// This clones envp, argv, and gets the current executable path
+///
+/// Overwrites the current process with the new process
+///
+/// Must be able to allocate memory. malloc is not signal safe, but it's
+/// best-effort. Not much we can do if it fails.
+pub fn reloadProcess(
+    allocator: std.mem.Allocator,
+    clear_terminal: bool,
+) void {
+    const PosixSpawn = @import("./bun.js/api/bun/spawn.zig").PosixSpawn;
+
+    var dupe_argv = allocator.allocSentinel(?[*:0]const u8, std.os.argv.len, null) catch unreachable;
+    for (std.os.argv, dupe_argv) |src, *dest| {
+        dest.* = (allocator.dupeZ(u8, sliceTo(src, 0)) catch unreachable).ptr;
+    }
+
+    var environ_slice = std.mem.span(std.c.environ);
+    var environ = allocator.allocSentinel(?[*:0]const u8, environ_slice.len, null) catch unreachable;
+    for (environ_slice, environ) |src, *dest| {
+        if (src == null) {
+            dest.* = null;
+        } else {
+            dest.* = (allocator.dupeZ(u8, sliceTo(src.?, 0)) catch unreachable).ptr;
+        }
+    }
+
+    // we must clone selfExePath incase the argv[0] was not an absolute path (what appears in the terminal)
+    const exec_path = (allocator.dupeZ(u8, std.fs.selfExePathAlloc(allocator) catch unreachable) catch unreachable).ptr;
+
+    // we clone argv so that the memory address isn't the same as the libc one
+    const argv = @ptrCast([*:null]?[*:0]const u8, dupe_argv.ptr);
+
+    // we clone envp so that the memory address of environment variables isn't the same as the libc one
+    const envp = @ptrCast([*:null]?[*:0]const u8, environ.ptr);
+
+    // Clear the terminal
+    if (clear_terminal) {
+        Output.resetTerminalAll();
+    }
+
+    // macOS doesn't have CLOEXEC, so we must go through posix_spawn
+    if (comptime Environment.isMac) {
+        var actions = PosixSpawn.Actions.init() catch unreachable;
+        actions.inherit(0) catch unreachable;
+        actions.inherit(1) catch unreachable;
+        actions.inherit(2) catch unreachable;
+        var attrs = PosixSpawn.Attr.init() catch unreachable;
+        attrs.set(
+            C.POSIX_SPAWN_CLOEXEC_DEFAULT |
+                // Apple Extension: If this bit is set, rather
+                // than returning to the caller, posix_spawn(2)
+                // and posix_spawnp(2) will behave as a more
+                // featureful execve(2).
+                C.POSIX_SPAWN_SETEXEC |
+                C.POSIX_SPAWN_SETSIGDEF | C.POSIX_SPAWN_SETSIGMASK,
+        ) catch unreachable;
+        switch (PosixSpawn.spawnZ(exec_path, actions, attrs, @ptrCast([*:null]?[*:0]const u8, argv), @ptrCast([*:null]?[*:0]const u8, envp))) {
+            .err => |err| {
+                Output.panic("Unexpected error while reloading: {d} {s}", .{ err.errno, @tagName(err.getErrno()) });
+            },
+            .result => |_| {},
+        }
+    } else {
+        const err = std.os.execveZ(
+            exec_path,
+            argv,
+            envp,
+        );
+        Output.panic("Unexpected error while reloading: {s}", .{@errorName(err)});
+    }
+}
+pub var auto_reload_on_crash = false;

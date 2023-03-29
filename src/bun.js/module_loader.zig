@@ -931,13 +931,14 @@ pub const ModuleLoader = struct {
                     jsc_vm.bundler.options.macro_remap;
 
                 var fallback_source: logger.Source = undefined;
-
+                var input_file_fd: StoredFileDescriptorType = 0;
                 var parse_options = Bundler.ParseOptions{
                     .allocator = allocator,
                     .path = path,
                     .loader = loader,
                     .dirname_fd = 0,
                     .file_descriptor = fd,
+                    .file_fd_ptr = &input_file_fd,
                     .file_hash = hash,
                     .macro_remappings = macro_remappings,
                     .jsx = jsc_vm.bundler.options.jsx,
@@ -962,6 +963,24 @@ pub const ModuleLoader = struct {
                     null,
                     disable_transpilying,
                 ) orelse {
+                    if (comptime !disable_transpilying) {
+                        if (jsc_vm.isWatcherEnabled()) {
+                            if (input_file_fd != 0) {
+                                if (jsc_vm.bun_watcher != null and !is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
+                                    jsc_vm.bun_watcher.?.addFile(
+                                        input_file_fd,
+                                        path.text,
+                                        hash,
+                                        loader,
+                                        0,
+                                        package_json,
+                                        true,
+                                    ) catch {};
+                                }
+                            }
+                        }
+                    }
+
                     return error.ParseError;
                 };
 
@@ -982,6 +1001,24 @@ pub const ModuleLoader = struct {
                         flags,
                     );
                     return wasm_result;
+                }
+
+                if (comptime !disable_transpilying) {
+                    if (jsc_vm.isWatcherEnabled()) {
+                        if (input_file_fd != 0) {
+                            if (jsc_vm.bun_watcher != null and !is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
+                                jsc_vm.bun_watcher.?.addFile(
+                                    input_file_fd,
+                                    path.text,
+                                    hash,
+                                    loader,
+                                    0,
+                                    package_json,
+                                    true,
+                                ) catch {};
+                            }
+                        }
+                    }
                 }
 
                 if (jsc_vm.bundler.log.errors > 0) {
@@ -1024,22 +1061,6 @@ pub const ModuleLoader = struct {
                 if (parse_result.pending_imports.len > 0) {
                     if (promise_ptr == null) {
                         return error.UnexpectedPendingResolution;
-                    }
-
-                    if (jsc_vm.isWatcherEnabled()) {
-                        if (parse_result.input_fd) |fd_| {
-                            if (jsc_vm.bun_watcher != null and !is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
-                                jsc_vm.bun_watcher.?.addFile(
-                                    fd_,
-                                    path.text,
-                                    hash,
-                                    loader,
-                                    0,
-                                    package_json,
-                                    true,
-                                ) catch {};
-                            }
-                        }
                     }
 
                     if (parse_result.source.contents_is_recycled) {
@@ -1109,20 +1130,6 @@ pub const ModuleLoader = struct {
 
                 if (jsc_vm.isWatcherEnabled()) {
                     const resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, display_specifier, path.text, null);
-
-                    if (parse_result.input_fd) |fd_| {
-                        if (jsc_vm.bun_watcher != null and !is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
-                            jsc_vm.bun_watcher.?.addFile(
-                                fd_,
-                                path.text,
-                                hash,
-                                loader,
-                                0,
-                                package_json,
-                                true,
-                            ) catch {};
-                        }
-                    }
 
                     return resolved_source;
                 }

@@ -364,6 +364,8 @@ pub const VirtualMachine = struct {
     preload: []const string = &[_][]const u8{},
     unhandled_pending_rejection_to_capture: ?*JSC.JSValue = null,
 
+    hot_reload: bun.CLI.Command.HotReload = .none,
+
     /// hide bun:wrap from stack traces
     /// bun:wrap is very noisy
     hide_bun_stackframes: bool = true,
@@ -552,6 +554,11 @@ pub const VirtualMachine = struct {
 
     pub fn reload(this: *VirtualMachine) void {
         Output.debug("Reloading...", .{});
+        if (this.hot_reload == .watch) {
+            Output.flush();
+            bun.reloadProcess(bun.default_allocator, !strings.eqlComptime(this.bundler.env.map.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true"));
+        }
+
         this.global.reload();
         this.pending_internal_promise = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
     }

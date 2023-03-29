@@ -192,6 +192,7 @@ pub const Arguments = struct {
         clap.parseParam("-u, --origin <STR>                Rewrite import URLs to start with --origin. Default: \"\"") catch unreachable,
         clap.parseParam("-p, --port <STR>                  Port to serve bun's dev server on. Default: \"3000\"") catch unreachable,
         clap.parseParam("--hot                             Enable auto reload in bun's JavaScript runtime") catch unreachable,
+        clap.parseParam("--watch                           Automatically restart bun's JavaScript runtime on file change") catch unreachable,
         clap.parseParam("--no-install                      Disable auto install in bun's JavaScript runtime") catch unreachable,
         clap.parseParam("-i                                Automatically install dependencies and use global cache in bun's runtime, equivalent to --install=fallback") catch unreachable,
         clap.parseParam("--install <STR>                   Install dependencies automatically when no node_modules are present, default: \"auto\". \"force\" to ignore node_modules, fallback to install any missing") catch unreachable,
@@ -440,7 +441,12 @@ pub const Arguments = struct {
         // we never actually supported inject.
         // opts.inject = args.options("--inject");
         opts.extension_order = args.options("--extension-order");
-        ctx.debug.hot_reload = args.flag("--hot");
+        if (args.flag("--hot")) {
+            ctx.debug.hot_reload = .hot;
+        } else if (args.flag("--watch")) {
+            ctx.debug.hot_reload = .watch;
+            bun.auto_reload_on_crash = true;
+        }
         ctx.passthrough = args.remaining();
 
         opts.no_summary = args.flag("--no-summary");
@@ -864,7 +870,7 @@ pub const Command = struct {
         dump_limits: bool = false,
         fallback_only: bool = false,
         silent: bool = false,
-        hot_reload: bool = false,
+        hot_reload: HotReload = HotReload.none,
         global_cache: options.GlobalCache = .auto,
         offline_mode_setting: ?Bunfig.OfflineMode = null,
         run_in_bun: bool = false,
@@ -876,6 +882,12 @@ pub const Command = struct {
         package_bundle_map: bun.StringArrayHashMapUnmanaged(options.BundlePackage) = bun.StringArrayHashMapUnmanaged(options.BundlePackage){},
 
         test_directory: []const u8 = "",
+    };
+
+    pub const HotReload = enum {
+        none,
+        hot,
+        watch,
     };
 
     pub const TestOptions = struct {

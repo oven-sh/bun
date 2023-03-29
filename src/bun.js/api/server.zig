@@ -692,6 +692,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pending_promises_for_abort: u8 = 0,
 
         has_marked_complete: bool = false,
+        has_marked_pending: bool = false,
+
         response_jsvalue: JSC.JSValue = JSC.JSValue.zero,
         response_protected: bool = false,
         response_ptr: ?*JSC.WebCore.Response = null,
@@ -835,7 +837,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return;
             }
 
-            if (!ctx.resp.hasResponded()) {
+            if (!ctx.resp.hasResponded() and !ctx.has_marked_pending) {
                 ctx.renderMissing();
                 return;
             }
@@ -930,6 +932,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return;
             }
 
+            this.has_marked_pending = true;
             this.response_buf_owned = std.ArrayListUnmanaged(u8){ .items = bb.items, .capacity = bb.capacity };
             this.resp.onWritable(*RequestContext, onWritableCompleteResponseBuffer, this);
             this.setAbortHandler();
@@ -948,11 +951,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.response_buf_owned.items.len,
                 this.shouldCloseConnection(),
             )) {
+                this.has_marked_pending = true;
                 this.resp.onWritable(*RequestContext, onWritableCompleteResponseBuffer, this);
                 this.setAbortHandler();
                 return;
             }
-
             this.finalize();
         }
 
@@ -1320,6 +1323,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             if (!this.sendfile.has_set_on_writable) {
                 this.sendfile.has_set_on_writable = true;
+                this.has_marked_pending = true;
                 this.resp.onWritable(*RequestContext, onWritableSendfile, this);
             }
 
@@ -1352,6 +1356,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.finalize();
                 return true;
             } else {
+                this.has_marked_pending = true;
                 this.resp.onWritable(*RequestContext, onWritableBytes, this);
                 return true;
             }
@@ -1365,6 +1370,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.response_buf_owned.items.len = 0;
                 this.finalize();
             } else {
+                this.has_marked_pending = true;
                 this.resp.onWritable(*RequestContext, onWritableCompleteResponseBuffer, this);
             }
 
@@ -1885,7 +1891,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             // The user returned something that wasn't a promise or a promise with a response
-            if (!ctx.resp.hasResponded()) ctx.renderMissing();
+            if (!ctx.resp.hasResponded() and !ctx.has_marked_pending) ctx.renderMissing();
         }
 
         pub fn handleResolveStream(req: *RequestContext) void {
@@ -2139,6 +2145,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             } else {
                 // when it's the last one, we just want to know if it's done
                 if (stream.isDone()) {
+                    this.has_marked_pending = true;
                     this.resp.onWritable(*RequestContext, onWritableResponseBuffer, this);
                 }
             }
@@ -2394,6 +2401,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 bytes.len,
                 this.shouldCloseConnection(),
             )) {
+                this.has_marked_pending = true;
                 this.resp.onWritable(*RequestContext, onWritableBytes, this);
                 // given a blob, we might not have set an abort handler yet
                 this.setAbortHandler();

@@ -1156,7 +1156,7 @@ pub const Printer = struct {
             {
                 var i: PackageID = 1;
                 while (i < package_count) : (i += 1) {
-                    alphabetized_names[i - 1] = @truncate(PackageID, i);
+                    alphabetized_names[i - 1] = i;
 
                     var resolutions = resolutions_buffer;
                     var dependencies = dependencies_buffer;
@@ -1196,14 +1196,22 @@ pub const Printer = struct {
                 const resolution = resolved[i];
                 const meta = metas[i];
                 const dependencies: []const Dependency = dependency_lists[i].get(dependencies_buffer);
+                const version_formatter = resolution.fmt(string_buf);
 
                 // This prints:
                 // "@babel/core@7.9.0":
                 {
                     try writer.writeAll("\n");
-
                     const dependency_versions = requested_versions.get(i).?;
-                    const always_needs_quote = name[0] == '@';
+
+                    // https://github.com/yarnpkg/yarn/blob/158d96dce95313d9a00218302631cd263877d164/src/lockfile/stringify.js#L9
+                    const always_needs_quote = switch (name[0]) {
+                        'A'...'Z', 'a'...'z' => strings.hasPrefixComptime(name, "true") or
+                            strings.hasPrefixComptime(name, "false") or
+                            std.mem.indexOfAnyPos(u8, name, 1, ": \t\r\n\x0B\x0C\\\",[]") != null,
+                        else => true,
+                    };
+
                     var prev_dependency_version: ?Dependency.Version = null;
                     var needs_comma = false;
                     for (dependency_versions) |*dependency_version| {
@@ -1225,7 +1233,11 @@ pub const Printer = struct {
 
                         try writer.writeAll(name);
                         try writer.writeByte('@');
-                        try writer.writeAll(version_name);
+                        if (version_name.len == 0) {
+                            try std.fmt.format(writer, "^{any}", .{version_formatter});
+                        } else {
+                            try writer.writeAll(version_name);
+                        }
 
                         if (needs_quote) {
                             try writer.writeByte('"');
@@ -1239,8 +1251,6 @@ pub const Printer = struct {
 
                 {
                     try writer.writeAll("  version ");
-
-                    const version_formatter = resolution.fmt(string_buf);
 
                     // Version is always quoted
                     try std.fmt.format(writer, "\"{any}\"\n", .{version_formatter});

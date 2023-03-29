@@ -8,13 +8,13 @@ async function expectMaxObjectTypeCount(
   count: number,
   maxWait = 1000,
 ) {
-  gc();
+  gc(true);
   if (heapStats().objectTypeCounts[type] <= count) return;
   gc(true);
   for (const wait = 20; maxWait > 0; maxWait -= wait) {
     if (heapStats().objectTypeCounts[type] <= count) break;
     await new Promise(resolve => setTimeout(resolve, wait));
-    gc();
+    gc(true);
   }
   expect(heapStats().objectTypeCounts[type]).toBeLessThanOrEqual(count);
 }

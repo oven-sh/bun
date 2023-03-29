@@ -171,8 +171,8 @@ pub const ModuleLoader = struct {
 
         // This is all the state used by the printer to print the module
         parse_result: ParseResult,
-        stmt_blocks: []*js_ast.Stmt.Data.Store.All.Block = &[_]*js_ast.Stmt.Data.Store.All.Block{},
-        expr_blocks: []*js_ast.Expr.Data.Store.All.Block = &[_]*js_ast.Expr.Data.Store.All.Block{},
+        // stmt_blocks: []*js_ast.Stmt.Data.Store.All.Block = &[_]*js_ast.Stmt.Data.Store.All.Block{},
+        // expr_blocks: []*js_ast.Expr.Data.Store.All.Block = &[_]*js_ast.Expr.Data.Store.All.Block{},
         promise: JSC.Strong = .{},
         path: Fs.Path,
         specifier: string = "",
@@ -484,8 +484,8 @@ pub const ModuleLoader = struct {
 
         pub fn init(opts: anytype, globalObject: *JSC.JSGlobalObject) !AsyncModule {
             var promise = JSC.Strong{};
-            var stmt_blocks = js_ast.Stmt.Data.Store.toOwnedSlice();
-            var expr_blocks = js_ast.Expr.Data.Store.toOwnedSlice();
+            // var stmt_blocks = js_ast.Stmt.Data.toOwnedSlice();
+            // var expr_blocks = js_ast.Expr.Data.toOwnedSlice();
             const this_promise = JSValue.createInternalPromise(globalObject);
             promise.set(globalObject, this_promise);
 
@@ -510,9 +510,9 @@ pub const ModuleLoader = struct {
                 .package_json = opts.package_json,
                 .loader = opts.loader.toAPI(),
                 .string_buf = buf.allocatedSlice(),
-                .stmt_blocks = stmt_blocks,
+                // .stmt_blocks = stmt_blocks,
+                // .expr_blocks = expr_blocks,
                 .globalThis = globalObject,
-                .expr_blocks = expr_blocks,
             };
         }
 
@@ -836,8 +836,8 @@ pub const ModuleLoader = struct {
 
         pub fn deinit(this: *AsyncModule) void {
             this.parse_result.deinit();
-            bun.default_allocator.free(this.stmt_blocks);
-            bun.default_allocator.free(this.expr_blocks);
+            // bun.default_allocator.free(this.stmt_blocks);
+            // bun.default_allocator.free(this.expr_blocks);
             this.promise.deinit();
             bun.default_allocator.free(this.string_buf);
         }

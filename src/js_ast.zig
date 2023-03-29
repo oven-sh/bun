@@ -2166,7 +2166,17 @@ pub const Stmt = struct {
         };
     }
     inline fn comptime_alloc(comptime tag_name: string, comptime typename: type, origData: anytype, loc: logger.Loc) Stmt {
-        return Stmt{ .loc = loc, .data = @unionInit(Data, tag_name, Data.Store.append(typename, origData)) };
+        return Stmt{
+            .loc = loc,
+            .data = @unionInit(
+                Data,
+                tag_name,
+                Data.Store.append(
+                    typename,
+                    origData,
+                ),
+            ),
+        };
     }
 
     fn allocateData(allocator: std.mem.Allocator, comptime tag_name: string, comptime typename: type, origData: anytype, loc: logger.Loc) Stmt {
@@ -2386,12 +2396,13 @@ pub const Stmt = struct {
                 S.While,
                 S.With,
             };
-            pub const All = NewBaseStore(Union, 128);
+            const All = NewBaseStore(Union, 128);
+            pub threadlocal var memory_allocator: ?*ASTMemoryAllocator = null;
 
             threadlocal var has_inited = false;
             pub threadlocal var disable_reset = false;
             pub fn create(allocator: std.mem.Allocator) void {
-                if (has_inited) {
+                if (has_inited or memory_allocator != null) {
                     return;
                 }
 
@@ -2400,24 +2411,28 @@ pub const Stmt = struct {
             }
 
             pub fn reset() void {
-                if (disable_reset) return;
+                if (disable_reset or memory_allocator != null) return;
                 All.reset();
             }
 
             pub fn deinit() void {
-                if (!has_inited) return;
+                if (!has_inited or memory_allocator != null) return;
                 All.deinit();
                 has_inited = false;
             }
 
             pub inline fn assert() void {
                 if (comptime Environment.allow_assert) {
-                    if (!has_inited)
+                    if (!has_inited and memory_allocator == null)
                         bun.unreachablePanic("Store must be init'd", .{});
                 }
             }
 
             pub fn append(comptime ValueType: type, value: anytype) *ValueType {
+                if (memory_allocator) |allocator| {
+                    return allocator.append(ValueType, value);
+                }
+
                 return All.append(Disabler, ValueType, value);
             }
 
@@ -3234,7 +3249,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_array = Data.Store.All.append(Disabler, Type, st),
+                        .e_array = Data.Store.append(Type, st),
                     },
                 };
             },
@@ -3242,7 +3257,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_class = Data.Store.All.append(Disabler, Type, st),
+                        .e_class = Data.Store.append(Type, st),
                     },
                 };
             },
@@ -3250,7 +3265,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_unary = Data.Store.All.append(Disabler, Type, st),
+                        .e_unary = Data.Store.append(Type, st),
                     },
                 };
             },
@@ -3258,7 +3273,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_binary = Data.Store.All.append(Disabler, Type, st),
+                        .e_binary = Data.Store.append(Type, st),
                     },
                 };
             },
@@ -3306,7 +3321,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_new = Data.Store.All.append(Disabler, Type, st),
+                        .e_new = Data.Store.append(Type, st),
                     },
                 };
             },
@@ -3322,7 +3337,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_function = Data.Store.All.append(Disabler, Type, st),
+                        .e_function = Data.Store.append(Type, st),
                     },
                 };
             },
@@ -3338,7 +3353,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_call = Data.Store.All.append(Disabler, Type, st),
+                        .e_call = Data.Store.append(Type, st),
                     },
                 };
             },
@@ -3346,7 +3361,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_dot = Data.Store.All.append(Disabler, Type, st),
+                        .e_dot = Data.Store.append(Type, st),
                     },
                 };
             },
@@ -3354,7 +3369,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_index = Data.Store.All.append(Disabler, Type, st),
+                        .e_index = Data.Store.append(Type, st),
                     },
                 };
             },
@@ -3362,7 +3377,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_arrow = Data.Store.All.append(Disabler, Type, st),
+                        .e_arrow = Data.Store.append(Type, st),
                     },
                 };
             },
@@ -3412,7 +3427,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_jsx_element = Data.Store.All.append(Disabler, Type, st),
+                        .e_jsx_element = Data.Store.append(Type, st),
                     },
                 };
             },
@@ -3431,7 +3446,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_big_int = Data.Store.All.append(Disabler, Type, st),
+                        .e_big_int = Data.Store.append(Type, st),
                     },
                 };
             },
@@ -3439,7 +3454,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_object = Data.Store.All.append(Disabler, Type, st),
+                        .e_object = Data.Store.append(Type, st),
                     },
                 };
             },
@@ -3447,7 +3462,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_spread = Data.Store.All.append(Disabler, Type, st),
+                        .e_spread = Data.Store.append(Type, st),
                     },
                 };
             },
@@ -3462,7 +3477,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_string = Data.Store.All.append(Disabler, Type, st),
+                        .e_string = Data.Store.append(Type, st),
                     },
                 };
             },
@@ -3470,7 +3485,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_template_part = Data.Store.All.append(Disabler, Type, st),
+                        .e_template_part = Data.Store.append(Type, st),
                     },
                 };
             },
@@ -3478,7 +3493,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_template = Data.Store.All.append(Disabler, Type, st),
+                        .e_template = Data.Store.append(Type, st),
                     },
                 };
             },
@@ -3486,7 +3501,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_reg_exp = Data.Store.All.append(Disabler, Type, st),
+                        .e_reg_exp = Data.Store.append(Type, st),
                     },
                 };
             },
@@ -3494,7 +3509,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_await = Data.Store.All.append(Disabler, Type, st),
+                        .e_await = Data.Store.append(Type, st),
                     },
                 };
             },
@@ -3502,7 +3517,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_yield = Data.Store.All.append(Disabler, Type, st),
+                        .e_yield = Data.Store.append(Type, st),
                     },
                 };
             },
@@ -3510,7 +3525,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_if = Data.Store.All.append(Disabler, Type, st),
+                        .e_if = Data.Store.append(Type, st),
                     },
                 };
             },
@@ -3526,7 +3541,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_import = Data.Store.All.append(Disabler, Type, st),
+                        .e_import = Data.Store.append(Type, st),
                     },
                 };
             },
@@ -3542,7 +3557,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_string = Data.Store.All.append(Disabler, @TypeOf(st.*), st.*),
+                        .e_string = Data.Store.append(@TypeOf(st.*), st.*),
                     },
                 };
             },
@@ -4597,7 +4612,7 @@ pub const Expr = struct {
             const medium = 256;
             const rare = 24;
 
-            pub const All = NewBaseStore(
+            const All = NewBaseStore(
                 &([_]type{
                     E.Array,
                     E.Unary,
@@ -4628,10 +4643,12 @@ pub const Expr = struct {
                 512,
             );
 
+            pub threadlocal var memory_allocator: ?*ASTMemoryAllocator = null;
+
             threadlocal var has_inited = false;
             pub threadlocal var disable_reset = false;
             pub fn create(allocator: std.mem.Allocator) void {
-                if (has_inited) {
+                if (has_inited or memory_allocator != null) {
                     return;
                 }
 
@@ -4639,34 +4656,34 @@ pub const Expr = struct {
                 _ = All.init(allocator);
             }
 
-            pub inline fn assert() void {
-                if (comptime Environment.allow_assert) {
-                    if (!has_inited)
-                        bun.unreachablePanic("Store must be init'd", .{});
-                }
-            }
-
             pub fn reset() void {
-                if (disable_reset) return;
+                if (disable_reset or memory_allocator != null) return;
                 All.reset();
             }
 
             pub fn deinit() void {
-                if (!has_inited) return;
+                if (!has_inited or memory_allocator != null) return;
                 All.deinit();
                 has_inited = false;
             }
 
-            pub fn append(comptime ValueType: type, value: anytype) *ValueType {
-                if (ValueType == E.Identifier) {
-                    return E.Identifier.append(ValueType, value);
-                } else {
-                    return All.append(ValueType, value);
+            pub inline fn assert() void {
+                if (comptime Environment.allow_assert) {
+                    if (!has_inited and memory_allocator == null)
+                        bun.unreachablePanic("Store must be init'd", .{});
                 }
             }
 
+            pub fn append(comptime ValueType: type, value: anytype) *ValueType {
+                if (memory_allocator) |allocator| {
+                    return allocator.append(ValueType, value);
+                }
+
+                return All.append(Disabler, ValueType, value);
+            }
+
             pub fn toOwnedSlice() []*Store.All.Block {
-                if (!has_inited or Store.All._self.overflow.used == 0 or disable_reset) return &[_]*Store.All.Block{};
+                if (!has_inited or Store.All._self.overflow.used == 0 or disable_reset or memory_allocator != null) return &[_]*Store.All.Block{};
                 return Store.All.reclaim();
             }
         };
@@ -9099,6 +9116,36 @@ pub const Macro = struct {
 
         extern "C" fn Bun__startMacro(function: *const anyopaque, *anyopaque) void;
     };
+};
+
+pub const ASTMemoryAllocator = struct {
+    allocator: std.mem.Allocator,
+    previous: ?*ASTMemoryAllocator = null,
+
+    pub fn push(this: *ASTMemoryAllocator) void {
+        var prev = Stmt.Data.Store.memory_allocator;
+        if (this.previous) |other| {
+            other.previous = prev;
+        } else {
+            this.previous = prev;
+        }
+        Stmt.Data.Store.memory_allocator = this;
+        Expr.Data.Store.memory_allocator = this;
+    }
+
+    pub fn pop(this: *ASTMemoryAllocator) void {
+        var prev = this.previous;
+        std.debug.assert(prev != this);
+        Stmt.Data.Store.memory_allocator = prev;
+        Expr.Data.Store.memory_allocator = prev;
+        this.previous = null;
+    }
+
+    pub fn append(this: ASTMemoryAllocator, comptime ValueType: type, value: anytype) *ValueType {
+        const ptr = this.allocator.create(ValueType) catch unreachable;
+        ptr.* = value;
+        return ptr;
+    }
 };
 
 // test "Binding.init" {

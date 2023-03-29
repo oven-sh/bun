@@ -136,16 +136,23 @@ pub const ThreadPool = struct {
         data: *WorkerData = undefined,
         quit: bool = false,
 
-        has_notify_started: bool = false,
+        ast_memory_allocator: js_ast.ASTMemoryAllocator = undefined,
 
+        has_notify_started: bool = false,
+        has_created: bool = false,
         pub fn get() *Worker {
-            return @ptrCast(
+            var worker = @ptrCast(
                 *ThreadPool.Worker,
                 @alignCast(
                     @alignOf(*ThreadPool.Worker),
                     ThreadPoolLib.Thread.current.?.ctx.?,
                 ),
             );
+            if (!worker.has_created) {
+                worker.create();
+            }
+
+            return worker;
         }
 
         pub const WorkerData = struct {
@@ -179,19 +186,17 @@ pub const ThreadPool = struct {
             }
         }
 
-        pub fn run(this: *Worker) void {
+        fn create(this: *Worker) void {
+            this.has_created = true;
             Output.Source.configureThread();
             this.thread_id = std.Thread.getCurrentId();
             this.heap = ThreadlocalArena.init() catch unreachable;
             this.allocator = this.heap.allocator();
             var allocator = this.allocator;
 
-            // Ensure we're using the same allocator for the worker's data.
-            js_ast.Expr.Data.Store.deinit();
-            js_ast.Stmt.Data.Store.deinit();
+            this.ast_memory_allocator = .{ .allocator = this.allocator };
+            this.ast_memory_allocator.push();
 
-            js_ast.Expr.Data.Store.create(allocator);
-            js_ast.Stmt.Data.Store.create(allocator);
             this.data = allocator.create(WorkerData) catch unreachable;
             this.data.* = WorkerData{
                 .log = allocator.create(Logger.Log) catch unreachable,
@@ -209,6 +214,12 @@ pub const ThreadPool = struct {
             const CacheSet = @import("../cache.zig");
 
             this.data.bundler.resolver.caches = CacheSet.Set.init(this.allocator);
+        }
+
+        pub fn run(this: *Worker) void {
+            if (!this.has_created) {
+                this.create();
+            }
 
             // no funny business mr. cache
 
@@ -1643,7 +1654,15 @@ const LinkerGraph = struct {
             this.stable_source_indices = @ptrCast([]const u32, stable_source_indices);
         }
 
-        this.symbols = js_ast.Symbol.Map.initList(js_ast.Symbol.NestedList.init(this.ast.items(.symbols)));
+        // Doe this fix the memory allocation issue??
+        {
+            var input_symbols = js_ast.Symbol.Map.initList(js_ast.Symbol.NestedList.init(this.ast.items(.symbols)));
+            var symbols = input_symbols.symbols_for_source.clone(this.allocator) catch @panic("Out of memory");
+            for (symbols.slice(), input_symbols.symbols_for_source.slice()) |*dest, src| {
+                dest.* = src.clone(this.allocator) catch @panic("Out of memory");
+            }
+            this.symbols = js_ast.Symbol.Map.initList(symbols);
+        }
 
         var in_resolved_exports: []ResolvedExports = this.meta.items(.resolved_exports);
         var src_resolved_exports: []js_ast.Ast.NamedExports = this.ast.items(.named_exports);
@@ -3937,6 +3956,7 @@ const LinkerContext = struct {
         if (comptime FeatureFlags.help_catch_memory_issues) {
             worker.heap.gc(false);
         }
+
         const allocator = worker.allocator;
         const c = ctx.c;
         std.debug.assert(chunk.content == .javascript);

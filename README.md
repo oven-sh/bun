@@ -99,7 +99,7 @@ bun upgrade --canary
 - Runtime
   - [Runtime](https://bun.sh/docs/runtime/index)
   - [Module resolution](https://bun.sh/docs/runtime/modules)
-  - [Hot reloading](https://bun.sh/docs/runtime/hot)
+  - [Hot &amp; live reloading](https://bun.sh/docs/runtime/hot)
   - [Plugins](https://bun.sh/docs/runtime/plugins)
 - Ecosystem
   - [Node.js](https://bun.sh/docs/ecosystem/nodejs)

@@ -1,6 +1,32 @@
-{% callout %}
-🚧 **Experimental** — Introduced in Bun v0.2.0.
-{% /callout %}
+Bun supports two kinds of automatic reloading via CLI flags:
+
+- `--watch` mode, which hard restarts Bun's process when imported files change (introduced in Bun v0.5.9)
+- `--hot` mode, which soft reloads the code (without restarting the process) when imported files change (introduced in Bun v0.2.0)
+
+## `--watch` mode
+
+Watch mode can be used with `bun test` or when running TypeScript, JSX, and JavaScript files.
+
+watch mode looks at every file that is imported by the entrypoint (or tests) and watches them for changes. When a change is detected, Bun restarts the process, preserving the same arguments and environment variables used to initially start the process. Additionally, incase Bun crashes, `--watch` will attempt to automatically restart the process.
+
+#### watch mode with `bun test`
+
+```bash
+bun test --watch
+```
+
+![https://user-images.githubusercontent.com/709451/228396976-38a23864-4a1d-4c96-87cc-04e5181bf459.gif](bun test gif)
+
+#### watch mode with JavaScript and TypeScript files
+
+```bash
+bun --watch ./watchy.tsx
+```
+
+![https://user-images.githubusercontent.com/709451/228439002-7b9fad11-0db2-4e48-b82d-2b88c8625625.gif](bun watch gif)
+
+## `--hot` mode
+
 Use `bun --hot` to enable hot reloading when executing code with Bun.
 
 ```bash

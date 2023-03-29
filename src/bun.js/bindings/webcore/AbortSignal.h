@@ -55,7 +55,7 @@ public:
     void signalFollow(AbortSignal&);
 
     bool aborted() const { return m_aborted; }
-    const JSValueInWrappedObject& reason() const { return m_reason; }
+    JSValue reason() const { return m_reason.get(); }
 
     bool hasActiveTimeoutTimer() const { return m_hasActiveTimeoutTimer; }
     bool hasAbortEventListener() const { return m_hasAbortEventListener; }
@@ -90,7 +90,7 @@ private:
     Vector<Algorithm> m_algorithms;
     Vector<std::tuple<void*, void (*)(void*, JSC::EncodedJSValue)>> m_native_callbacks;
     WeakPtr<AbortSignal> m_followingSignal;
-    JSValueInWrappedObject m_reason;
+    JSC::Strong<JSC::Unknown> m_reason;
     bool m_hasActiveTimeoutTimer { false };
     bool m_hasAbortEventListener { false };
 };

@@ -121,12 +121,6 @@ it("fetch() with a gzip response works (one chunk, streamed, with a delay", asyn
   server.stop();
 });
 
-const arg = Bun.listen({
-  hostname: "asdf",
-  port: 1234,
-  socket: {},
-});
-
 it("fetch() with a gzip response works (multiple chunks, TCP server", async done => {
   const compressed = await Bun.file(import.meta.dir + "/fixture.html.gz").arrayBuffer();
   var socketToClose!: Socket;

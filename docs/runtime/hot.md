@@ -48,6 +48,8 @@ The filesystem watchers you're probably used to have several layers of libraries
 
 {% /details %}
 
+For maximum speed, enable [save-on-keypress](https://code.visualstudio.com/docs/editor/codebasics#_save-auto-save) in your editor. This will save the file as you type, which will trigger a reload. This is especially useful when working with React, Vue, or Svelte.
+
 ## `--hot` mode
 
 Use `bun --hot` to enable hot reloading when executing code with Bun.

@@ -13,7 +13,7 @@ Watch mode can be used with `bun test` or when running TypeScript, JSX, and Java
 bun test --watch
 ```
 
-!(bun test gif)[https://user-images.githubusercontent.com/709451/228396976-38a23864-4a1d-4c96-87cc-04e5181bf459.gif]
+![bun test gif](https://user-images.githubusercontent.com/709451/228396976-38a23864-4a1d-4c96-87cc-04e5181bf459.gif)
 
 #### watching JavaScript and TypeScript files
 
@@ -21,7 +21,7 @@ bun test --watch
 bun --watch ./watchy.tsx
 ```
 
-!(bun watch gif)[https://user-images.githubusercontent.com/709451/228439002-7b9fad11-0db2-4e48-b82d-2b88c8625625.gif]
+![bun watch gif](https://user-images.githubusercontent.com/709451/228439002-7b9fad11-0db2-4e48-b82d-2b88c8625625.gif)
 
 ## `--hot` mode
 

@@ -232,6 +232,13 @@ pub fn resetTerminal() void {
     }
 }
 
+pub fn resetTerminalAll() void {
+    if (enable_ansi_colors_stderr)
+        _ = source.error_stream.write("\x1b[H\x1b[2J") catch 0;
+    if (enable_ansi_colors_stdout)
+        _ = source.stream.write("\x1b[H\x1b[2J") catch 0;
+}
+
 /// Write buffered stdout & stderr to the terminal.
 /// Must be called before the process exits or the buffered output will be lost.
 /// Bun automatically calls this function in Global.exit().

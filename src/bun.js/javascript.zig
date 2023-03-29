@@ -361,6 +361,9 @@ pub const VirtualMachine = struct {
     uws_event_loop: ?*uws.Loop = null,
     pending_unref_counter: i32 = 0,
     preload: []const string = &[_][]const u8{},
+    unhandled_pending_rejection_to_capture: ?*JSC.JSValue = null,
+
+    hot_reload: bun.CLI.Command.HotReload = .none,
 
     hot_reload: bun.CLI.Command.HotReload = .none,
 
@@ -480,6 +483,14 @@ pub const VirtualMachine = struct {
         this.unhandled_error_counter += 1;
     }
 
+    pub fn onQuietUnhandledRejectionHandlerCaptureValue(this: *VirtualMachine, _: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        this.unhandled_error_counter += 1;
+        value.ensureStillAlive();
+        if (this.unhandled_pending_rejection_to_capture) |ptr| {
+            ptr.* = value;
+        }
+    }
+
     pub fn unhandledRejectionScope(this: *VirtualMachine) UnhandledRejectionScope {
         return .{
             .onUnhandledRejection = this.onUnhandledRejection,
@@ -546,11 +557,7 @@ pub const VirtualMachine = struct {
         Output.debug("Reloading...", .{});
         if (this.hot_reload == .watch) {
             Output.flush();
-            std.os.execveZ(
-                std.os.argv[0],
-                bun.default_allocator.dupeZ([*:0]const u8, std.os.argv[1..]) catch unreachable,
-                std.c.environ,
-            ) catch unreachable;
+            bun.reloadProcess(bun.default_allocator, !strings.eqlComptime(this.bundler.env.map.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true"));
         }
 
         this.global.reload();

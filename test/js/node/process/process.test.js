@@ -1,7 +1,7 @@
 import { resolveSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, realpathSync } from "fs";
-import { basename } from "path";
+import { basename, resolve } from "path";
 
 it("process", () => {
   // this property isn't implemented yet but it should at least return a string
@@ -40,12 +40,14 @@ it("process", () => {
     throw new Error("process.env should call toJSON to hide its internal state");
   }
 
-  var { env, ...proces } = process;
-  console.log(proces);
+  // Make sure it doesn't crash
+  expect(Bun.inspect(process).length > 0).toBe(true);
 
-  console.log("CWD", process.cwd());
-  console.log("SET CWD", process.chdir("../"));
-  console.log("CWD", process.cwd());
+  let cwd = process.cwd();
+  process.chdir("../");
+  expect(process.cwd()).toEqual(resolve(cwd, "../"));
+  process.chdir(cwd);
+  expect(cwd).toEqual(process.cwd());
 });
 
 it("process.hrtime()", () => {

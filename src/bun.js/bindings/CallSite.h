@@ -81,6 +81,7 @@ private:
         : Base(vm, structure)
         , m_lineNumber(-1)
         , m_columnNumber(-1)
+        , m_flags(0)
     {
     }
 

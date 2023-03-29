@@ -431,6 +431,9 @@ pub const TestCommand = struct {
 
         const test_files = try scanner.results.toOwnedSlice();
         if (test_files.len > 0) {
+            vm.hot_reload = ctx.debug.hot_reload;
+            if (vm.hot_reload != .none)
+                JSC.HotReloader.enableHotModuleReloading(vm);
             // vm.bundler.fs.fs.readDirectory(_dir: string, _handle: ?std.fs.Dir)
             runAllTests(reporter, vm, test_files, ctx.allocator);
         }
@@ -549,6 +552,19 @@ pub const TestCommand = struct {
 
         Output.prettyError("\n", .{});
         Output.flush();
+
+        if (vm.hot_reload == .watch) {
+            vm.eventLoop().tickPossiblyForever();
+
+            while (true) {
+                while (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0) {
+                    vm.tick();
+                    vm.eventLoop().autoTickActive();
+                }
+
+                vm.eventLoop().tickPossiblyForever();
+            }
+        }
 
         if (reporter.summary.fail > 0) {
             Global.exit(1);

@@ -36,6 +36,15 @@ pub fn NewPanicHandler(comptime panic_func: fn ([]const u8, ?*std.builtin.StackT
 
             Output.disableBuffering();
 
+            if (bun.auto_reload_on_crash) {
+                // attempt to prevent a double panic
+                bun.auto_reload_on_crash = false;
+
+                Output.prettyErrorln("<d>--- Bun is auto-restarting due to crash <d>[time: <b>{d}<r><d>] ---<r>", .{@max(std.time.milliTimestamp(), 0)});
+                Output.flush();
+                bun.reloadProcess(bun.default_allocator, false);
+            }
+
             // // We want to always inline the panic handler so it doesn't show up in the stacktrace.
             @call(.always_inline, panic_func, .{ msg, error_return_type, addr });
         }

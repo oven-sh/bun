@@ -43,7 +43,7 @@ export async function expectMaxObjectTypeCount(
     await new Promise(resolve => setTimeout(resolve, wait));
     gc();
   }
-  expect(heapStats().objectTypeCounts[type]).toBe(count);
+  expect(heapStats().objectTypeCounts[type]).toBeLessThanOrEqual(count);
 }
 
 // we must ensure that finalizers are run

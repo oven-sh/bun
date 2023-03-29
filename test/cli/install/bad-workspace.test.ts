@@ -1,12 +1,21 @@
 import { spawnSync } from "bun";
-import { test, describe, expect } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { bunExe, bunEnv } from "harness";
-import { mkdirSync, rmSync, writeFileSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
+
+let cwd: string;
+
+beforeEach(() => {
+  cwd = mkdtempSync(join(realpathSync(tmpdir()), "bad-workspace.test"));
+});
+
+afterEach(() => {
+  rmSync(cwd, { recursive: true, force: true });
+});
 
 test("bad workspace path", () => {
-  const cwd = "/tmp/bun-bad-workspace";
-  rmSync(cwd, { recursive: true, force: true });
-  mkdirSync(cwd);
   writeFileSync(
     `${cwd}/package.json`,
     JSON.stringify(
@@ -32,5 +41,4 @@ test("bad workspace path", () => {
   expect(text).toContain("glob star * in the middle of a path");
 
   expect(exitCode).toBe(1);
-  rmSync(cwd, { recursive: true, force: true });
 });

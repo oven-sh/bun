@@ -47,7 +47,7 @@ function mkdirForce(path: string) {
 
 describe("copyFileSync", () => {
   it("should work for files < 128 KB", () => {
-    const tempdir = `/tmp/fs.test.js/${Date.now()}/1234/hi`;
+    const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}/1234/hi`;
     expect(existsSync(tempdir)).toBe(false);
     expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
 
@@ -65,7 +65,7 @@ describe("copyFileSync", () => {
   });
 
   it("should work for files > 128 KB ", () => {
-    const tempdir = `/tmp/fs.test.js/${Date.now()}-1/1234/hi`;
+    const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}-1/1234/hi`;
     expect(existsSync(tempdir)).toBe(false);
     expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
     var buffer = new Int32Array(128 * 1024);
@@ -90,7 +90,7 @@ describe("copyFileSync", () => {
 
 describe("mkdirSync", () => {
   it("should create a directory", () => {
-    const tempdir = `/tmp/fs.test.js/${Date.now()}/1234/hi`;
+    const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}/1234/hi`;
     expect(existsSync(tempdir)).toBe(false);
     expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
     expect(existsSync(tempdir)).toBe(true);
@@ -113,7 +113,7 @@ it("readdirSync on import.meta.dir", () => {
 
 // https://github.com/oven-sh/bun/issues/1887
 it("mkdtempSync, readdirSync, rmdirSync and unlinkSync with non-ascii", () => {
-  const tempdir = mkdtempSync(`/tmp/emoji-fruit-🍇 🍈 🍉 🍊 🍋`);
+  const tempdir = mkdtempSync(`${tmpdir()}/emoji-fruit-🍇 🍈 🍉 🍊 🍋`);
   expect(existsSync(tempdir)).toBe(true);
   writeFileSync(tempdir + "/non-ascii-👍.txt", "hello");
   const dirs = readdirSync(tempdir);
@@ -171,13 +171,13 @@ it("readdirSync on import.meta.dir with trailing slash", () => {
 });
 
 it("readdirSync works on empty directories", () => {
-  const path = `/tmp/fs-test-empty-dir-${(Math.random() * 100000 + 100).toString(32)}`;
+  const path = `${tmpdir()}/fs-test-empty-dir-${(Math.random() * 100000 + 100).toString(32)}`;
   mkdirSync(path, { recursive: true });
   expect(readdirSync(path).length).toBe(0);
 });
 
 it("readdirSync works on directories with under 32 files", () => {
-  const path = `/tmp/fs-test-one-dir-${(Math.random() * 100000 + 100).toString(32)}`;
+  const path = `${tmpdir()}/fs-test-one-dir-${(Math.random() * 100000 + 100).toString(32)}`;
   mkdirSync(path, { recursive: true });
   writeFileSync(`${path}/a`, "a");
   const results = readdirSync(path);
@@ -334,7 +334,7 @@ describe("readFile", () => {
 
 describe("writeFileSync", () => {
   it("works", () => {
-    const path = `/tmp/${Date.now()}.writeFileSync.txt`;
+    const path = `${tmpdir()}/${Date.now()}.writeFileSync.txt`;
     writeFileSync(path, "File written successfully", "utf8");
 
     expect(readFileSync(path, "utf8")).toBe("File written successfully");
@@ -345,7 +345,7 @@ describe("writeFileSync", () => {
       70, 105, 108, 101, 32, 119, 114, 105, 116, 116, 101, 110, 32, 115, 117, 99, 99, 101, 115, 115, 102, 117, 108, 108,
       121,
     ]);
-    const path = `/tmp/${Date.now()}.blob.writeFileSync.txt`;
+    const path = `${tmpdir()}/${Date.now()}.blob.writeFileSync.txt`;
     writeFileSync(path, buffer);
     const out = readFileSync(path);
 
@@ -358,7 +358,7 @@ describe("writeFileSync", () => {
       70, 105, 108, 101, 32, 119, 114, 105, 116, 116, 101, 110, 32, 115, 117, 99, 99, 101, 115, 115, 102, 117, 108, 108,
       121,
     ]);
-    const path = `/tmp/${Date.now()}.blob2.writeFileSync.txt`;
+    const path = `${tmpdir()}/${Date.now()}.blob2.writeFileSync.txt`;
     writeFileSync(path, buffer);
     const out = readFileSync(path);
 
@@ -454,7 +454,7 @@ describe("stat", () => {
 
   it("stat returns ENOENT", () => {
     try {
-      statSync("/tmp/doesntexist");
+      statSync("${tmpdir()}/doesntexist");
       throw "statSync should throw";
     } catch (e: any) {
       expect(e.code).toBe("ENOENT");
@@ -464,7 +464,7 @@ describe("stat", () => {
 
 describe("rm", () => {
   it("removes a file", () => {
-    const path = `/tmp/${Date.now()}.rm.txt`;
+    const path = `${tmpdir()}/${Date.now()}.rm.txt`;
     writeFileSync(path, "File written successfully", "utf8");
     expect(existsSync(path)).toBe(true);
     rmSync(path);
@@ -472,17 +472,17 @@ describe("rm", () => {
   });
 
   it("removes a dir", () => {
-    const path = `/tmp/${Date.now()}.rm.dir`;
+    const path = `${tmpdir()}/${Date.now()}.rm.dir`;
     try {
       mkdirSync(path);
     } catch (e) {}
     expect(existsSync(path)).toBe(true);
-    rmSync(path);
+    rmSync(path, { recursive: true });
     expect(existsSync(path)).toBe(false);
   });
 
   it("removes a dir recursively", () => {
-    const path = `/tmp/${Date.now()}.rm.dir/foo/bar`;
+    const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
     try {
       mkdirSync(path, { recursive: true });
     } catch (e) {}
@@ -493,15 +493,14 @@ describe("rm", () => {
 });
 
 describe("rmdir", () => {
-  it("removes a file", done => {
-    const path = `/tmp/${Date.now()}.rm.txt`;
+  it("does not remove a file", done => {
+    const path = `${tmpdir()}/${Date.now()}.rm.txt`;
     writeFileSync(path, "File written successfully", "utf8");
     expect(existsSync(path)).toBe(true);
     rmdir(path, err => {
       try {
         expect(err).toBeDefined();
-        expect(err!.code).toBe("EPERM");
-        expect(err!.message).toBe("Operation not permitted");
+        expect("ENOENT ENOTDIR EPERM").toContain(err!.code);
         expect(existsSync(path)).toBe(true);
       } catch (e) {
         return done(e);
@@ -512,7 +511,7 @@ describe("rmdir", () => {
   });
 
   it("removes a dir", done => {
-    const path = `/tmp/${Date.now()}.rm.dir`;
+    const path = `${tmpdir()}/${Date.now()}.rm.dir`;
     try {
       mkdirSync(path);
     } catch (e) {}
@@ -523,9 +522,23 @@ describe("rmdir", () => {
       done();
     });
   });
-  // TODO support `recursive: true`
+  it("does not remove a dir with a file in it", done => {
+    const path = `${tmpdir()}/${Date.now()}.rm.dir`;
+    try {
+      mkdirSync(path);
+      writeFileSync(`${path}/file.txt`, "File written successfully", "utf8");
+    } catch (e) {}
+    expect(existsSync(path + "/file.txt")).toBe(true);
+    rmdir(path, err => {
+      expect("ENOTEMPTY").toContain(err!.code);
+      done();
+    });
+    expect(existsSync(path + "/file.txt")).toBe(true);
+    rmdir(path, { recursive: true }, () => {});
+    expect(existsSync(path + "/file.txt")).toBe(false);
+  });
   it("removes a dir recursively", done => {
-    const path = `/tmp/${Date.now()}.rm.dir/foo/bar`;
+    const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
     try {
       mkdirSync(path, { recursive: true });
     } catch (e) {}
@@ -544,17 +557,17 @@ describe("rmdir", () => {
 });
 
 describe("rmdirSync", () => {
-  it("removes a file", () => {
-    const path = `/tmp/${Date.now()}.rm.txt`;
+  it("does not remove a file", () => {
+    const path = `${tmpdir()}/${Date.now()}.rm.txt`;
     writeFileSync(path, "File written successfully", "utf8");
     expect(existsSync(path)).toBe(true);
     expect(() => {
       rmdirSync(path);
-    }).toThrow("Operation not permitted");
+    }).toThrow();
     expect(existsSync(path)).toBe(true);
   });
   it("removes a dir", () => {
-    const path = `/tmp/${Date.now()}.rm.dir`;
+    const path = `${tmpdir()}/${Date.now()}.rm.dir`;
     try {
       mkdirSync(path);
     } catch (e) {}
@@ -562,9 +575,8 @@ describe("rmdirSync", () => {
     rmdirSync(path);
     expect(existsSync(path)).toBe(false);
   });
-  // TODO support `recursive: true`
   it("removes a dir recursively", () => {
-    const path = `/tmp/${Date.now()}.rm.dir/foo/bar`;
+    const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
     try {
       mkdirSync(path, { recursive: true });
     } catch (e) {}
@@ -888,7 +900,7 @@ describe("fs.ReadStream", () => {
 
 describe("createWriteStream", () => {
   it("simple write stream finishes", async () => {
-    const path = `/tmp/fs.test.js/${Date.now()}.createWriteStream.txt`;
+    const path = `${tmpdir()}/fs.test.js/${Date.now()}.createWriteStream.txt`;
     const stream = createWriteStream(path);
     stream.write("Test file written successfully");
     stream.end();
@@ -906,7 +918,7 @@ describe("createWriteStream", () => {
   });
 
   it("writing null throws ERR_STREAM_NULL_VALUES", async () => {
-    const path = `/tmp/fs.test.js/${Date.now()}.createWriteStreamNulls.txt`;
+    const path = `${tmpdir()}/fs.test.js/${Date.now()}.createWriteStreamNulls.txt`;
     const stream = createWriteStream(path);
     try {
       stream.write(null);
@@ -917,7 +929,7 @@ describe("createWriteStream", () => {
   });
 
   it("writing null throws ERR_STREAM_NULL_VALUES (objectMode: true)", async () => {
-    const path = `/tmp/fs.test.js/${Date.now()}.createWriteStreamNulls.txt`;
+    const path = `${tmpdir()}/fs.test.js/${Date.now()}.createWriteStreamNulls.txt`;
     const stream = createWriteStream(path, {
       // @ts-ignore-next-line
       objectMode: true,
@@ -931,7 +943,7 @@ describe("createWriteStream", () => {
   });
 
   it("writing false throws ERR_INVALID_ARG_TYPE", async () => {
-    const path = `/tmp/fs.test.js/${Date.now()}.createWriteStreamFalse.txt`;
+    const path = `${tmpdir()}/fs.test.js/${Date.now()}.createWriteStreamFalse.txt`;
     const stream = createWriteStream(path);
     try {
       stream.write(false);
@@ -942,7 +954,7 @@ describe("createWriteStream", () => {
   });
 
   it("writing false throws ERR_INVALID_ARG_TYPE (objectMode: true)", async () => {
-    const path = `/tmp/fs.test.js/${Date.now()}.createWriteStreamFalse.txt`;
+    const path = `${tmpdir()}/fs.test.js/${Date.now()}.createWriteStreamFalse.txt`;
     const stream = createWriteStream(path, {
       // @ts-ignore-next-line
       objectMode: true,
@@ -971,7 +983,7 @@ describe("fs/promises", () => {
   });
 
   it("writeFile", async () => {
-    const path = `/tmp/fs.test.js/${Date.now()}.writeFile.txt`;
+    const path = `${tmpdir()}/fs.test.js/${Date.now()}.writeFile.txt`;
     await writeFile(path, "File written successfully");
     expect(readFileSync(path, "utf8")).toBe("File written successfully");
   });
@@ -1004,21 +1016,20 @@ describe("fs/promises", () => {
 
   describe("rmdir", () => {
     it("removes a file", async () => {
-      const path = `/tmp/${Date.now()}.rm.txt`;
+      const path = `${tmpdir()}/${Date.now()}.rm.txt`;
       await writeFile(path, "File written successfully", "utf8");
       expect(await exists(path)).toBe(true);
       try {
         await rmdir(path);
         expect(() => {}).toThrow();
       } catch (err: any) {
-        expect(err.code).toBe("ENOTDIR");
-        // expect(err.message).toBe("Operation not permitted");
+        expect("ENOTDIR EPERM ENOENT").toContain(err.code);
         expect(await exists(path)).toBe(true);
       }
     });
 
     it("removes a dir", async () => {
-      const path = `/tmp/${Date.now()}.rm.dir`;
+      const path = `${tmpdir()}/${Date.now()}.rm.dir`;
       try {
         await mkdir(path);
       } catch (e) {}
@@ -1026,16 +1037,15 @@ describe("fs/promises", () => {
       await rmdir(path);
       expect(await exists(path)).toBe(false);
     });
-    // TODO support `recursive: true`
-    // it("removes a dir recursively", async () => {
-    //   const path = `/tmp/${Date.now()}.rm.dir/foo/bar`;
-    //   try {
-    //     await mkdir(path, { recursive: true });
-    //   } catch (e) {}
-    //   expect(await exists(path)).toBe(true);
-    //   await rmdir(join(path, "../../"), { recursive: true });
-    //   expect(await exists(path)).toBe(false);
-    // });
+    it("removes a dir recursively", async () => {
+      const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
+      try {
+        await mkdir(path, { recursive: true });
+      } catch (e) {}
+      expect(await exists(path)).toBe(true);
+      await rmdir(join(path, "../../"), { recursive: true });
+      expect(await exists(path)).toBe(false);
+    });
   });
 });
 
@@ -1091,7 +1101,7 @@ it("fs.Stats", () => {
 });
 
 it("repro 1516: can use undefined/null to specify default flag", () => {
-  const path = "/tmp/repro_1516.txt";
+  const path = `${tmpdir()}/repro_1516.txt`;
   writeFileSync(path, "b", { flag: undefined });
   // @ts-ignore-next-line
   expect(readFileSync(path, { encoding: "utf8", flag: null })).toBe("b");

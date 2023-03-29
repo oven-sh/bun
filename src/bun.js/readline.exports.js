@@ -2248,7 +2248,7 @@ var _Interface = class Interface extends InterfaceConstructor {
     var previousKey = this[kPreviousKey];
     key = key || kEmptyObject;
     this[kPreviousKey] = key;
-    var { name: keyName, meta: keyMeta, ctrl: keyCtrl, shift: keyShift } = key;
+    var { name: keyName, meta: keyMeta, ctrl: keyCtrl, shift: keyShift, sequence: keySeq } = key;
 
     if (!keyMeta || keyName !== "y") {
       // Reset yanking state unless we are doing yank pop.

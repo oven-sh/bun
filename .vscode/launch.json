@@ -16,6 +16,18 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": "bun test --watch",
+      "program": "bun-debug",
+      "args": ["--watch", "test", "${file}"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "FORCE_COLOR": "1"
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "bun test (all)",
       "program": "bun-debug",
       "args": ["wiptest"],
@@ -32,6 +44,18 @@
       "name": "bun run current file",
       "program": "bun-debug",
       "args": ["${file}"],
+      "cwd": "${file}/../../",
+      "env": {
+        "FORCE_COLOR": "1"
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun run (watch)",
+      "program": "bun-debug",
+      "args": ["--watch", "${file}"],
       "cwd": "${file}/../../",
       "env": {
         "FORCE_COLOR": "1"

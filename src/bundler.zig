@@ -1263,6 +1263,10 @@ pub const Bundler = struct {
         dirname_fd: StoredFileDescriptorType,
         file_descriptor: ?StoredFileDescriptorType = null,
         file_hash: ?u32 = null,
+
+        /// On exception, we might still want to watch the file.
+        file_fd_ptr: ?*StoredFileDescriptorType = null,
+
         path: Fs.Path,
         loader: options.Loader,
         jsx: options.JSX.Pragma,
@@ -1335,6 +1339,9 @@ pub const Bundler = struct {
                 return null;
             };
             input_fd = entry.fd;
+            if (this_parse.file_fd_ptr) |file_fd_ptr| {
+                file_fd_ptr.* = entry.fd;
+            }
             break :brk logger.Source.initRecycledFile(Fs.File{ .path = path, .contents = entry.contents }, bundler.allocator) catch return null;
         };
 

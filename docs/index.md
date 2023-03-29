@@ -16,7 +16,7 @@ $ bunx cowsay "Hello, world!"   # execute a package
 ```
 
 {% callout type="note" %}
-**​​Bun is still under development.** Use it to speed up your development workflows or run simpler production code in resource-constrained environments like serverless functions. We're working on more complete Node.js compatibility and integration with existing frameworks. Join the [Discord](https://bun.sh/discord) and watch the [GitHub repository](https://github.com/oven-sh/bun) to keeps tabs on future releases.
+**​​Bun is still under development.** Use it to speed up your development workflows or run simpler production code in resource-constrained environments like serverless functions. We're working on more complete Node.js compatibility and integration with existing frameworks. Join the [Discord](https://bun.sh/discord) and watch the [GitHub repository](https://github.com/oven-sh/bun) to keep tabs on future releases.
 {% /callout %}
 
 ### Get started

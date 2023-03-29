@@ -363,6 +363,7 @@ pub const EventLoop = struct {
     waker: ?AsyncIO.Waker = null,
     start_server_on_next_tick: bool = false,
     defer_count: std.atomic.Atomic(usize) = std.atomic.Atomic(usize).init(0),
+    forever_timer: ?*uws.Timer = null,
 
     pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
 
@@ -496,6 +497,34 @@ pub const EventLoop = struct {
             this.processGCTimer();
             // this.afterUSocketsTick();
         }
+    }
+
+    pub fn tickPossiblyForever(this: *EventLoop) void {
+        var ctx = this.virtual_machine;
+        var loop = ctx.uws_event_loop.?;
+
+        const pending_unref = ctx.pending_unref_counter;
+        if (pending_unref > 0) {
+            ctx.pending_unref_counter = 0;
+            loop.unrefCount(pending_unref);
+        }
+
+        if (loop.num_polls == 0 or loop.active == 0) {
+            if (this.forever_timer == null) {
+                var t = uws.Timer.create(loop, this);
+                t.set(this, &noopForeverTimer, 1000 * 60 * 4, 1000 * 60 * 4);
+                this.forever_timer = t;
+            }
+        }
+
+        loop.tick();
+        this.processGCTimer();
+        this.tickConcurrent();
+        this.tick();
+    }
+
+    fn noopForeverTimer(_: *uws.Timer) callconv(.C) void {
+        // do nothing
     }
 
     pub fn autoTickActive(this: *EventLoop) void {

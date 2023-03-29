@@ -2748,10 +2748,8 @@ pub const PackageManager = struct {
         var tmpfile = FileSystem.RealFS.Tmpfile{};
         var secret: [32]u8 = undefined;
         std.mem.writeIntNative(u64, secret[0..8], @intCast(u64, std.time.milliTimestamp()));
-        var state = std.rand.Xoodoo.init(secret);
-        const rng = state.random();
         var base64_bytes: [64]u8 = undefined;
-        rng.bytes(&base64_bytes);
+        std.crypto.random.bytes(&base64_bytes);
 
         const tmpname__ = std.fmt.bufPrint(tmpname_buf[8..], "{s}", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
         tmpname_buf[tmpname__.len + 8] = 0;

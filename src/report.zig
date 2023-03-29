@@ -558,5 +558,14 @@ pub noinline fn globalError(err: anyerror) noreturn {
         std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig(std.io.getStdErr())) catch break :print_stacktrace;
     }
 
+    if (bun.auto_reload_on_crash) {
+        // attempt to prevent a double panic
+        bun.auto_reload_on_crash = false;
+
+        Output.prettyErrorln("<d>---<r> Bun is auto-restarting due to crash <d>[time: <b>{d}<r><d>] ---<r>", .{@max(std.time.milliTimestamp(), 0)});
+        Output.flush();
+        bun.reloadProcess(bun.default_allocator, false);
+    }
+
     Global.exit(1);
 }

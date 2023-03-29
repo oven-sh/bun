@@ -362,6 +362,7 @@ pub const VirtualMachine = struct {
     uws_event_loop: ?*uws.Loop = null,
     pending_unref_counter: i32 = 0,
     preload: []const string = &[_][]const u8{},
+    unhandled_pending_rejection_to_capture: ?*JSC.JSValue = null,
 
     /// hide bun:wrap from stack traces
     /// bun:wrap is very noisy
@@ -477,6 +478,14 @@ pub const VirtualMachine = struct {
 
     pub fn onQuietUnhandledRejectionHandler(this: *VirtualMachine, _: *JSC.JSGlobalObject, _: JSC.JSValue) void {
         this.unhandled_error_counter += 1;
+    }
+
+    pub fn onQuietUnhandledRejectionHandlerCaptureValue(this: *VirtualMachine, _: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        this.unhandled_error_counter += 1;
+        value.ensureStillAlive();
+        if (this.unhandled_pending_rejection_to_capture) |ptr| {
+            ptr.* = value;
+        }
     }
 
     pub fn unhandledRejectionScope(this: *VirtualMachine) UnhandledRejectionScope {

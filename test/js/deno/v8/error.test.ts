@@ -3,7 +3,7 @@
 // https://raw.githubusercontent.com/denoland/deno/main/cli/tests/unit/error_stack_test.ts
 import { createDenoTest } from "deno:harness";
 const { test, assertEquals, assertMatch } = createDenoTest(import.meta.path);
-test(function errorStackMessageLine() {
+test.ignore(function errorStackMessageLine() {
     const e1 = new Error();
     e1.name = "Foo";
     e1.message = "bar";

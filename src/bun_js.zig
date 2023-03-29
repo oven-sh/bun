@@ -230,9 +230,9 @@ pub const Run = struct {
                         prev_promise = this.vm.pending_internal_promise;
                         vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
                     }
-                }
 
-                vm.eventLoop().tickPossiblyForever();
+                    vm.eventLoop().tickPossiblyForever();
+                }
 
                 if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
                     prev_promise = this.vm.pending_internal_promise;

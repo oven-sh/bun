@@ -365,8 +365,6 @@ pub const VirtualMachine = struct {
 
     hot_reload: bun.CLI.Command.HotReload = .none,
 
-    hot_reload: bun.CLI.Command.HotReload = .none,
-
     /// hide bun:wrap from stack traces
     /// bun:wrap is very noisy
     hide_bun_stackframes: bool = true,

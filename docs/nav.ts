@@ -78,8 +78,8 @@ export default {
     page("runtime/modules", "Module resolution", {
       description: `Bun uses ESM and implements an extended version of the Node.js module resolution algorithm.`,
     }),
-    page("runtime/hot", "Hot reloading", {
-      description: `Reload a running application without restarting the Bun process.`,
+    page("runtime/hot", "Watch mode", {
+      description: `Reload your application & tests automatically.`,
     }),
     // page("runtime/loaders", "Loaders"),
     page("runtime/plugins", "Plugins", {

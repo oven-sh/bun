@@ -1,6 +1,63 @@
-{% callout %}
-🚧 **Experimental** — Introduced in Bun v0.2.0.
-{% /callout %}
+Bun supports two kinds of automatic reloading via CLI flags:
+
+- `--watch` mode, which hard restarts Bun's process when imported files change (introduced in Bun v0.5.9)
+- `--hot` mode, which soft reloads the code (without restarting the process) when imported files change (introduced in Bun v0.2.0)
+
+## `--watch` mode
+
+Watch mode can be used with `bun test` or when running TypeScript, JSX, and JavaScript files.
+
+`--watch` looks at every file that is imported by the entrypoint (or tests) and watches them for changes. When a change is detected, Bun restarts the process, using the same arguments and environment variables that initially started the process. Additionally, incase Bun crashes, `--watch` will attempt to automatically restart the process.
+
+#### watching tests with `bun test`
+
+To watch tests with `bun test`, pass the `--watch` flag.
+
+```bash
+$ bun test --watch
+```
+
+![bun test gif](https://user-images.githubusercontent.com/709451/228396976-38a23864-4a1d-4c96-87cc-04e5181bf459.gif)
+
+#### watching JavaScript and TypeScript files
+
+To watch executed code, pass the `--watch` flag to `bun` or `bun run`.
+
+Example script:
+
+```tsx#watchy.tsx
+import { serve } from "bun";
+console.log("I restarted at:", Date.now());
+
+serve({
+  port: 4003,
+
+  fetch(request) {
+    return new Response("Sup");
+  },
+});
+```
+
+Run the file with `--watch`:
+
+```bash
+$ bun --watch ./watchy.tsx
+```
+
+![bun watch gif](https://user-images.githubusercontent.com/709451/228439002-7b9fad11-0db2-4e48-b82d-2b88c8625625.gif)
+
+{% details summary="Why is it fast?" %}
+
+The filesystem watchers you're probably used to have several layers of libraries wrapping the native APIs or worse, rely on polling.
+
+Instead, Bun uses operating system native filesystem watcher APIs like kqueue or inotify to detect changes to files. Bun also does a number of optimizations to enable it scale to larger projects (such as setting a high rlimit for file descriptors, statically allocated file path buffers, reuse file descriptors when possible, etc).
+
+{% /details %}
+
+For maximum speed, enable [save-on-keypress](https://code.visualstudio.com/docs/editor/codebasics#_save-auto-save) in your editor. This will save the file as you type, which will trigger a restart of Bun's process.
+
+## `--hot` mode
+
 Use `bun --hot` to enable hot reloading when executing code with Bun.
 
 ```bash
@@ -95,7 +152,7 @@ if (!globalThis.server) {
 
 {% details summary="Implementation `details`" %}
 
-On reload, Bun:
+On hot reload, Bun:
 
 - Resets the internal `require` cache and ES module registry (`Loader.registry`)
 - Runs the garbage collector synchronously (to minimize memory leaks, at the cost of runtime performance)

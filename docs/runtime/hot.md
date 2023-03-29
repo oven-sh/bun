@@ -21,7 +21,9 @@ $ bun test --watch
 
 #### watching JavaScript and TypeScript files
 
-To watch executed code, pass the `--watch` flag to `bun` or `bun run`:
+To watch executed code, pass the `--watch` flag to `bun` or `bun run`.
+
+Example script:
 
 ```tsx#watchy.tsx
 import { serve } from "bun";
@@ -36,6 +38,8 @@ serve({
 });
 ```
 
+Run the file with `--watch`:
+
 ```bash
 $ bun --watch ./watchy.tsx
 ```
@@ -44,11 +48,13 @@ $ bun --watch ./watchy.tsx
 
 {% details summary="Why is it fast?" %}
 
-The filesystem watchers you're probably used to have several layers of libraries wrapping the native APIs or worse, rely on polling. Instead, Bun uses operating system native filesystem watcher APIs like kqueue or inotify to detect changes to files. Bun also does a number of optimizations to enable it scale to larger projects (such as setting a high rlimit for file descriptors, statically allocated file path buffers, reuse file descriptors when possible, etc).
+The filesystem watchers you're probably used to have several layers of libraries wrapping the native APIs or worse, rely on polling.
+
+Instead, Bun uses operating system native filesystem watcher APIs like kqueue or inotify to detect changes to files. Bun also does a number of optimizations to enable it scale to larger projects (such as setting a high rlimit for file descriptors, statically allocated file path buffers, reuse file descriptors when possible, etc).
 
 {% /details %}
 
-For maximum speed, enable [save-on-keypress](https://code.visualstudio.com/docs/editor/codebasics#_save-auto-save) in your editor. This will save the file as you type, which will trigger a reload. This is especially useful when working with React, Vue, or Svelte.
+For maximum speed, enable [save-on-keypress](https://code.visualstudio.com/docs/editor/codebasics#_save-auto-save) in your editor. This will save the file as you type, which will trigger a restart of Bun's process.
 
 ## `--hot` mode
 

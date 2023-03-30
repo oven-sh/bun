@@ -9119,10 +9119,17 @@ pub const Macro = struct {
 };
 
 pub const ASTMemoryAllocator = struct {
+    stack_allocator: std.heap.StackFallbackAllocator(8096) = undefined,
+    bump_allocator: std.mem.Allocator = undefined,
     allocator: std.mem.Allocator,
     previous: ?*ASTMemoryAllocator = null,
 
     pub fn push(this: *ASTMemoryAllocator) void {
+        if (Stmt.Data.Store.memory_allocator == this) {
+            return;
+        }
+        this.stack_allocator.fallback_allocator = this.allocator;
+        this.bump_allocator = this.stack_allocator.get();
         var prev = Stmt.Data.Store.memory_allocator;
         if (this.previous) |other| {
             other.previous = prev;
@@ -9142,7 +9149,7 @@ pub const ASTMemoryAllocator = struct {
     }
 
     pub fn append(this: ASTMemoryAllocator, comptime ValueType: type, value: anytype) *ValueType {
-        const ptr = this.allocator.create(ValueType) catch unreachable;
+        const ptr = this.bump_allocator.create(ValueType) catch unreachable;
         ptr.* = value;
         return ptr;
     }

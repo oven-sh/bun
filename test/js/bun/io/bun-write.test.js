@@ -2,6 +2,7 @@ import fs from "fs";
 import { it, expect, describe } from "bun:test";
 import path from "path";
 import { gcTick, withoutAggressiveGC } from "harness";
+import { tmpdir } from "os";
 
 it("Bun.write blob", async () => {
   await Bun.write(Bun.file("/tmp/response-file.test.txt"), Bun.file(path.join(import.meta.dir, "fetch.js.txt")));
@@ -148,7 +149,7 @@ it("Bun.file empty file", async () => {
 });
 
 it("Bun.file lastModified update", async () => {
-  const file = Bun.file("/tmp/bun.test.lastModified.txt");
+  const file = Bun.file(tmpdir() + "/bun.test.lastModified.txt");
   await gcTick();
   // setup
   await Bun.write(file, "test text.");

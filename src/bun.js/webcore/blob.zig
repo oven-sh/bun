@@ -102,8 +102,7 @@ pub const Blob = struct {
     /// According to https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Date,
     /// maximum Date in JavaScript is less than Number.MAX_SAFE_INTEGER (u52).
     pub const JSTimeType = u52;
-    pub const MillisecPerSec = 1000;
-    pub const NanosecPerMillisec = 1000000;
+    pub const init_timestamp = std.math.maxInt(JSTimeType);
 
     pub fn getFormDataEncoding(this: *Blob) ?*bun.FormData.AsyncFormData {
         var content_type_slice: ZigString.Slice = this.getContentType() orelse return null;
@@ -583,11 +582,11 @@ pub const Blob = struct {
                 exception.* = JSC.toInvalidArguments("Blob is detached", .{}, ctx).asObjectRef();
                 return null;
             } else {
-                // TODO only set last_modified 0 on success pathes instead of
-                // setting last_modified to 0 at the beginning for better performance.
+                // TODO only reset last_modified on success pathes instead of
+                // resetting last_modified at the beginning for better performance.
                 if (path_or_blob.blob.store.?.data == .file) {
-                    // set last_modified to 0 to force getLastModified() to reload after writing.
-                    path_or_blob.blob.store.?.data.file.last_modified = 0;
+                    // reset last_modified to force getLastModified() to reload after writing.
+                    path_or_blob.blob.store.?.data.file.last_modified = init_timestamp;
                 }
             }
         }
@@ -1466,7 +1465,7 @@ pub const Blob = struct {
 
                 if (this.store) |store| {
                     if (store.data == .file) {
-                        store.data.file.last_modified = toJSTime(stat.mtim.tv_sec, stat.mtim.tv_nsec);
+                        store.data.file.last_modified = toJSTime(stat.mtime().tv_sec, stat.mtime().tv_nsec);
                     }
                 }
 
@@ -2193,7 +2192,7 @@ pub const Blob = struct {
         seekable: ?bool = null,
         max_size: SizeType = Blob.max_size,
         // milliseconds since ECMAScript epoch
-        last_modified: JSTimeType = 0,
+        last_modified: JSTimeType = init_timestamp,
 
         pub fn isSeekable(this: *const FileStore) ?bool {
             if (this.seekable) |seekable| {
@@ -2543,15 +2542,15 @@ pub const Blob = struct {
     ) callconv(.C) JSValue {
         if (this.store) |store| {
             if (store.data == .file) {
-                // if lastModified time is not 0, it can be already set during read.
-                if (store.data.file.last_modified == 0) {
+                // last_modified can be already set during read.
+                if (store.data.file.last_modified == init_timestamp) {
                     resolveFileStat(store);
                 }
                 return JSValue.jsNumber(store.data.file.last_modified);
             }
         }
 
-        return JSValue.jsNumber(0);
+        return JSValue.jsNumber(init_timestamp);
     }
 
     pub fn getSize(this: *Blob, _: *JSC.JSGlobalObject) callconv(.C) JSValue {
@@ -2621,7 +2620,7 @@ pub const Blob = struct {
                         Blob.max_size;
                     store.data.file.mode = stat.mode;
                     store.data.file.seekable = std.os.S.ISREG(stat.mode);
-                    store.data.file.last_modified = toJSTime(stat.mtim.tv_sec, stat.mtim.tv_nsec);
+                    store.data.file.last_modified = toJSTime(stat.mtime().tv_sec, stat.mtime().tv_nsec);
                 },
                 // the file may not exist yet. Thats's okay.
                 else => {},
@@ -2635,7 +2634,7 @@ pub const Blob = struct {
                         Blob.max_size;
                     store.data.file.mode = stat.mode;
                     store.data.file.seekable = std.os.S.ISREG(stat.mode);
-                    store.data.file.last_modified = toJSTime(stat.mtim.tv_sec, stat.mtim.tv_nsec);
+                    store.data.file.last_modified = toJSTime(stat.mtime().tv_sec, stat.mtime().tv_nsec);
                 },
                 // the file may not exist yet. Thats's okay.
                 else => {},

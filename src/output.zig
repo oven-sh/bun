@@ -376,6 +376,7 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
         var out_set = false;
         var really_disable = disabled;
         var evaluated_disable = false;
+        var lock = std.Thread.Mutex{};
 
         /// Debug-only logs which should not appear in release mode
         /// To enable a specific log at runtime, set the environment variable
@@ -410,6 +411,9 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
                 out = buffered_writer.writer();
                 out_set = true;
             }
+
+            lock.lock();
+            defer lock.unlock();
 
             if (Output.enable_ansi_colors_stderr) {
                 out.print(comptime prettyFmt("<r><d>[" ++ @tagName(tag) ++ "]<r> " ++ fmt, true), args) catch unreachable;

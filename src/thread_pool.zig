@@ -290,48 +290,60 @@ pub fn Do(
     const WaitContext = struct {
         wait_group: *WaitGroup = undefined,
         ctx: Context,
+        values: ValuesType,
     };
 
-    const Runner = struct {
-        pub fn call(ctx_: WaitContext, values_: ValuesType, i: usize) void {
+    const RunnerTask = struct {
+        task: Task,
+        ctx: *WaitContext,
+        i: usize = 0,
+
+        pub fn call(task: *Task) void {
+            var runner_task = @fieldParentPtr(@This(), "task", task);
+            const i = runner_task.i;
             if (comptime as_ptr) {
-                for (values_, 0..) |*v, j| {
-                    Function(ctx_.ctx, v, i + j);
-                }
+                Function(runner_task.ctx.ctx, &runner_task.ctx.values[i], i);
             } else {
-                for (values_, 0..) |v, j| {
-                    Function(ctx_.ctx, v, i + j);
-                }
+                Function(runner_task.ctx.ctx, runner_task.ctx.values[i], i);
             }
 
-            ctx_.wait_group.finish();
+            runner_task.ctx.wait_group.finish();
         }
     };
-
-    const tasks_per_worker = @max(try std.math.divFloor(u32, @intCast(u32, values.len), this.max_threads), 1);
-    const count = @truncate(u32, values.len / tasks_per_worker);
-    var runny = try runner(this, allocator, Runner.call, count + 1);
-    defer runny.deinit();
-
-    var i: usize = 0;
-    const context_ = WaitContext{
+    var wait_context = allocator.create(WaitContext) catch unreachable;
+    wait_context.* = .{
         .ctx = ctx,
         .wait_group = wait_group,
+        .values = values,
     };
-    var remain = values;
-    while (remain.len > 0) {
-        var slice = remain[0..@min(remain.len, tasks_per_worker)];
+    defer allocator.destroy(wait_context);
+    var tasks = allocator.alloc(RunnerTask, values.len) catch unreachable;
+    defer allocator.free(tasks);
+    var batch: Batch = undefined;
+    var offset = tasks.len - 1;
 
-        runny.call(.{
-            context_,
-            slice,
-            i,
-        });
-        i += 1;
-        remain = remain[slice.len..];
-        wait_group.counter += 1;
+    {
+        tasks[0] = .{
+            .i = offset,
+            .task = .{ .callback = RunnerTask.call },
+            .ctx = wait_context,
+        };
+        batch = Batch.from(&tasks[0].task);
     }
-    runny.run();
+    if (tasks.len > 1) {
+        for (tasks[1..]) |*runner_task| {
+            offset -= 1;
+            runner_task.* = .{
+                .i = offset,
+                .task = .{ .callback = RunnerTask.call },
+                .ctx = wait_context,
+            };
+            batch.push(Batch.from(&runner_task.task));
+        }
+    }
+
+    wait_group.counter += @intCast(u32, values.len);
+    this.schedule(batch);
     wait_group.wait();
 }
 

@@ -1025,14 +1025,16 @@ pub const Symbol = struct {
 
             var old_symbol = this.get(old).?;
             if (old_symbol.hasLink()) {
-                old_symbol.link = this.merge(old_symbol.link, new);
+                const old_link = old_symbol.link;
+                old_symbol.link = this.merge(old_link, new);
                 return old_symbol.link;
             }
 
             var new_symbol = this.get(new).?;
 
             if (new_symbol.hasLink()) {
-                new_symbol.link = this.merge(old, new_symbol.link);
+                const new_link = new_symbol.link;
+                new_symbol.link = this.merge(old, new_link);
                 return new_symbol.link;
             }
 

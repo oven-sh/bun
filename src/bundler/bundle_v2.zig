@@ -2056,12 +2056,23 @@ const LinkerContext = struct {
 
             // Traverse the graph using this stable order and linearize the files with
             // dependencies before dependents
-            pub fn visit(v: *@This(), source_index: Index.Int, comptime with_react_server_components: bool) void {
+            pub fn visit(
+                v: *@This(),
+                source_index: Index.Int,
+                comptime with_react_server_components: bool,
+                comptime with_code_splitting: bool,
+            ) void {
                 if (source_index == Index.invalid.value) return;
                 const visited_entry = v.visited.getOrPut(source_index) catch unreachable;
                 if (visited_entry.found_existing) return;
 
-                var is_file_in_chunk = v.entry_bits.eql(&v.c.graph.files.items(.entry_bits)[source_index]);
+                var is_file_in_chunk = if (comptime with_code_splitting)
+                    // when code splitting, include the file in the chunk if ALL of the entry points overlap
+                    v.entry_bits.eql(&v.c.graph.files.items(.entry_bits)[source_index])
+                else
+                    // when NOT code splitting, include the file in the chunk if ANY of the entry points overlap
+                    v.entry_bits.hasIntersection(&v.c.graph.files.items(.entry_bits)[source_index]);
+
                 if (comptime with_react_server_components) {
                     if (is_file_in_chunk and v.is_react_server_components_enabled and
                         v.entry_point.is_entry_point and
@@ -2093,7 +2104,7 @@ const LinkerContext = struct {
                                 continue;
                             }
 
-                            v.visit(record.source_index.get(), with_react_server_components);
+                            v.visit(record.source_index.get(), with_react_server_components, with_code_splitting);
                         }
                     }
 
@@ -2154,12 +2165,14 @@ const LinkerContext = struct {
             visitor.visited.deinit();
         }
 
-        switch (visitor.is_react_server_components_enabled) {
-            inline else => |with_react_server_components| {
-                visitor.visit(Index.runtime.value, with_react_server_components);
-                for (chunk_order_array.items) |order| {
-                    visitor.visit(order.source_index, with_react_server_components);
-                }
+        switch (this.graph.code_splitting) {
+            inline else => |with_code_splitting| switch (visitor.is_react_server_components_enabled) {
+                inline else => |with_react_server_components| {
+                    visitor.visit(Index.runtime.value, with_react_server_components, with_code_splitting);
+                    for (chunk_order_array.items) |order| {
+                        visitor.visit(order.source_index, with_react_server_components, with_code_splitting);
+                    }
+                },
             },
         }
 
@@ -2635,10 +2648,10 @@ const LinkerContext = struct {
                             // file containing the import and the file containing the imported symbol
                             part.dependencies.appendSliceAssumeCapacity(import.re_exports.slice());
                         }
-                    }
 
-                    // Merge these symbols so they will share the same name
-                    import_ref.* = this.graph.symbols.merge(ref, import.data.import_ref);
+                        // Merge these symbols so they will share the same name
+                        import_ref.* = this.graph.symbols.merge(ref, import.data.import_ref);
+                    }
                 }
 
                 // If this is an entry point, depend on all exports so they are included
@@ -3383,10 +3396,13 @@ const LinkerContext = struct {
     }
 
     const ChunkMeta = struct {
-        imports: std.ArrayHashMap(Ref, void, Ref.ArrayHashCtx, false),
-        exports: std.ArrayHashMap(Ref, void, Ref.ArrayHashCtx, false),
+        imports: Map,
+        exports: Map,
         dynamic_imports: std.AutoArrayHashMap(Index.Int, void),
+
+        pub const Map = std.AutoArrayHashMap(Ref, void);
     };
+
     const CrossChunkDependencies = struct {
         chunk_meta: []ChunkMeta,
         chunks: []Chunk,
@@ -3402,16 +3418,8 @@ const LinkerContext = struct {
         symbols: *Symbol.Map,
 
         pub fn walk(deps: *@This(), chunk: *Chunk, chunk_index: usize) void {
-            var worker = ThreadPool.Worker.get();
-
             var chunk_meta = &deps.chunk_meta[chunk_index];
-            var imports = std.ArrayHashMap(Ref, void, Ref.ArrayHashCtx, false).init(
-                worker.allocator,
-            );
-            defer {
-                chunk_meta.imports = imports.cloneWithAllocator(chunk_meta.imports.allocator) catch unreachable;
-                imports.deinit();
-            }
+            var imports = &deps.chunk_meta[chunk_index].imports;
 
             const entry_point_chunk_indices = deps.entry_point_chunk_indices;
 
@@ -3420,14 +3428,14 @@ const LinkerContext = struct {
                 if (chunk.content != .javascript) continue;
 
                 // Go over each part in this file that's marked for inclusion in this chunk
-                var parts = deps.parts[source_index].slice();
+                const parts = deps.parts[source_index].slice();
                 var import_records = deps.import_records[source_index].slice();
                 const imports_to_bind = deps.imports_to_bind[source_index];
                 const wrap = deps.flags[source_index].wrap;
                 const wrapper_ref = deps.wrapper_refs[source_index].?;
                 const _chunks = deps.chunks;
 
-                for (parts) |*part| {
+                for (parts) |part| {
                     if (!part.is_live)
                         continue;
 
@@ -3454,44 +3462,52 @@ const LinkerContext = struct {
                     // is fine.
                     deps.symbols.assignChunkIndex(part.declared_symbols, @truncate(u32, chunk_index));
 
-                    for (part.symbol_uses.keys()) |ref_| {
-                        var ref = ref_;
-                        var symbol = deps.symbols.getConst(ref).?;
+                    const used_refs = part.symbol_uses.keys();
 
-                        // Ignore unbound symbols
-                        if (symbol.kind == .unbound)
-                            continue;
+                    for (used_refs) |ref_| {
+                        const ref_to_use = brk: {
+                            var ref = ref_;
+                            var symbol = deps.symbols.getConst(ref).?;
 
-                        // Ignore symbols that are going to be replaced by undefined
-                        if (symbol.import_item_status == .missing) {
-                            continue;
-                        }
+                            // Ignore unbound symbols
+                            if (symbol.kind == .unbound)
+                                continue;
 
-                        // If this is imported from another file, follow the import
-                        // reference and reference the symbol in that file instead
-                        if (imports_to_bind.get(ref)) |import_data| {
-                            ref = import_data.data.import_ref;
-                            symbol = deps.symbols.getConst(ref).?;
-                        } else if (wrap == .cjs and ref.eql(wrapper_ref)) {
-                            // The only internal symbol that wrapped CommonJS files export
-                            // is the wrapper itself.
-                            continue;
-                        }
+                            // Ignore symbols that are going to be replaced by undefined
+                            if (symbol.import_item_status == .missing) {
+                                continue;
+                            }
 
-                        // If this is an ES6 import from a CommonJS file, it will become a
-                        // property access off the namespace symbol instead of a bare
-                        // identifier. In that case we want to pull in the namespace symbol
-                        // instead. The namespace symbol stores the result of "require()".
-                        if (symbol.namespace_alias) |*namespace_alias| {
-                            ref = namespace_alias.namespace_ref;
-                        }
+                            // If this is imported from another file, follow the import
+                            // reference and reference the symbol in that file instead
+                            if (imports_to_bind.get(ref)) |import_data| {
+                                ref = import_data.data.import_ref;
+                                symbol = deps.symbols.getConst(ref).?;
+                            } else if (wrap == .cjs and ref.eql(wrapper_ref)) {
+                                // The only internal symbol that wrapped CommonJS files export
+                                // is the wrapper itself.
+                                continue;
+                            }
+
+                            // If this is an ES6 import from a CommonJS file, it will become a
+                            // property access off the namespace symbol instead of a bare
+                            // identifier. In that case we want to pull in the namespace symbol
+                            // instead. The namespace symbol stores the result of "require()".
+                            if (symbol.namespace_alias) |*namespace_alias| {
+                                ref = namespace_alias.namespace_ref;
+                            }
+                            break :brk ref;
+                        };
+
+                        if (comptime Environment.allow_assert)
+                            debug("Cross-chunk import: {s} {}", .{ deps.symbols.get(ref_to_use).?.original_name, ref_to_use });
 
                         // We must record this relationship even for symbols that are not
                         // imports. Due to code splitting, the definition of a symbol may
                         // be moved to a separate chunk than the use of a symbol even if
                         // the definition and use of that symbol are originally from the
                         // same source file.
-                        imports.put(ref, void{}) catch unreachable;
+                        imports.put(ref_to_use, void{}) catch unreachable;
                     }
                 }
             }
@@ -3540,7 +3556,7 @@ const LinkerContext = struct {
         }
     };
 
-    pub noinline fn computeCrossChunkDependencies(c: *LinkerContext, chunks: []Chunk) !void {
+    pub fn computeCrossChunkDependencies(c: *LinkerContext, chunks: []Chunk) !void {
         if (!c.graph.code_splitting) {
             // No need to compute cross-chunk dependencies if there can't be any
             return;
@@ -3550,8 +3566,8 @@ const LinkerContext = struct {
         for (chunk_metas) |*meta| {
             // these must be global allocator
             meta.* = .{
-                .imports = std.ArrayHashMap(Ref, void, Ref.ArrayHashCtx, false).init(bun.default_allocator),
-                .exports = std.ArrayHashMap(Ref, void, Ref.ArrayHashCtx, false).init(bun.default_allocator),
+                .imports = ChunkMeta.Map.init(bun.default_allocator),
+                .exports = ChunkMeta.Map.init(bun.default_allocator),
                 .dynamic_imports = std.AutoArrayHashMap(Index.Int, void).init(bun.default_allocator),
             };
         }
@@ -3583,13 +3599,13 @@ const LinkerContext = struct {
                 .symbols = &c.graph.symbols,
             };
 
-            try c.parse_graph.pool.pool.doPtr(
+            c.parse_graph.pool.pool.doPtr(
                 c.allocator,
                 &c.wait_group,
                 cross_chunk_dependencies,
                 CrossChunkDependencies.walk,
                 chunks,
-            );
+            ) catch unreachable;
         }
 
         // Mark imported symbols as exported in the chunk from which they are declared
@@ -5959,7 +5975,7 @@ const LinkerContext = struct {
     // Sort cross-chunk exports by chunk name for determinism
     fn sortedCrossChunkExportItems(
         c: *LinkerContext,
-        export_refs: RefVoidMapManaged,
+        export_refs: ChunkMeta.Map,
         list: *std.ArrayList(StableRef),
     ) void {
         var result = list.*;

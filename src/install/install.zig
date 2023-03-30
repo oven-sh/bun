@@ -2705,7 +2705,7 @@ pub const PackageManager = struct {
         this: *PackageManager,
         task_id: u64,
         dependency_id: DependencyID,
-        name: String,
+        name: string,
         path: string,
         resolution: Resolution,
     ) *ThreadPool.Task {
@@ -2719,7 +2719,7 @@ pub const PackageManager = struct {
                     .tarball = .{
                         .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
                         .name = strings.StringOrTinyString.initAppendIfNeeded(
-                            this.lockfile.str(&name),
+                            name,
                             *FileSystem.FilenameStore,
                             &FileSystem.FilenameStore.instance,
                         ) catch unreachable,
@@ -3230,7 +3230,7 @@ pub const PackageManager = struct {
                         this.task_batch.push(ThreadPool.Batch.from(this.enqueueLocalTarball(
                             task_id,
                             id,
-                            dependency.name,
+                            this.lockfile.str(&dependency.name),
                             url,
                             res,
                         )));
@@ -6341,6 +6341,8 @@ pub const PackageManager = struct {
             const task_id = switch (resolution.tag) {
                 .git => Task.Id.forGitCheckout(data.url, data.resolved),
                 .github => Task.Id.forTarball(data.url),
+                .local_tarball => Task.Id.forTarball(this.lockfile.str(&resolution.value.local_tarball)),
+                .remote_tarball => Task.Id.forTarball(this.lockfile.str(&resolution.value.remote_tarball)),
                 .npm => Task.Id.forNPMPackage(name, resolution.value.npm.version),
                 else => unreachable,
             };
@@ -6575,7 +6577,24 @@ pub const PackageManager = struct {
                                     this.manager.enqueueTarballForDownload(
                                         dependency_id,
                                         package_id,
-                                        &resolution.value.github,
+                                        this.manager.allocGitHubURL(&resolution.value.github) catch unreachable,
+                                        .{ .node_modules_folder = this.node_modules_folder.dir.fd },
+                                    );
+                                },
+                                .local_tarball => {
+                                    this.manager.enqueueTarballForReading(
+                                        dependency_id,
+                                        package_id,
+                                        alias,
+                                        resolution.value.local_tarball.slice(buf),
+                                        .{ .node_modules_folder = this.node_modules_folder.dir.fd },
+                                    );
+                                },
+                                .remote_tarball => {
+                                    this.manager.enqueueTarballForDownload(
+                                        dependency_id,
+                                        package_id,
+                                        resolution.value.remote_tarball.slice(buf),
                                         .{ .node_modules_folder = this.node_modules_folder.dir.fd },
                                     );
                                 },
@@ -6659,17 +6678,17 @@ pub const PackageManager = struct {
             task_context,
         ) catch unreachable;
 
-        if (!task_queue.found_existing) {
-            if (this.generateNetworkTaskForTarball(
-                task_id,
-                url,
-                dependency_id,
-                this.lockfile.packages.get(package_id),
-            ) catch unreachable) |task| {
-                task.schedule(&this.network_tarball_batch);
-                if (this.network_tarball_batch.len > 0) {
-                    _ = this.scheduleTasks();
-                }
+        if (task_queue.found_existing) return;
+
+        if (this.generateNetworkTaskForTarball(
+            task_id,
+            url,
+            dependency_id,
+            this.lockfile.packages.get(package_id),
+        ) catch unreachable) |task| {
+            task.schedule(&this.network_tarball_batch);
+            if (this.network_tarball_batch.len > 0) {
+                _ = this.scheduleTasks();
             }
         }
     }
@@ -6678,10 +6697,9 @@ pub const PackageManager = struct {
         this: *PackageManager,
         dependency_id: PackageID,
         package_id: PackageID,
-        repository: *const Repository,
+        url: string,
         task_context: TaskCallbackContext,
     ) void {
-        const url = this.allocGitHubURL(repository) catch unreachable;
         const task_id = Task.Id.forTarball(url);
         var task_queue = this.task_queue.getOrPut(this.allocator, task_id) catch unreachable;
         if (!task_queue.found_existing) {
@@ -6693,19 +6711,49 @@ pub const PackageManager = struct {
             task_context,
         ) catch unreachable;
 
-        if (!task_queue.found_existing) {
-            if (this.generateNetworkTaskForTarball(
-                task_id,
-                url,
-                dependency_id,
-                this.lockfile.packages.get(package_id),
-            ) catch unreachable) |task| {
-                task.schedule(&this.network_tarball_batch);
-                if (this.network_tarball_batch.len > 0) {
-                    _ = this.scheduleTasks();
-                }
+        if (task_queue.found_existing) return;
+
+        if (this.generateNetworkTaskForTarball(
+            task_id,
+            url,
+            dependency_id,
+            this.lockfile.packages.get(package_id),
+        ) catch unreachable) |task| {
+            task.schedule(&this.network_tarball_batch);
+            if (this.network_tarball_batch.len > 0) {
+                _ = this.scheduleTasks();
             }
         }
+    }
+
+    pub fn enqueueTarballForReading(
+        this: *PackageManager,
+        dependency_id: PackageID,
+        package_id: PackageID,
+        alias: string,
+        path: string,
+        task_context: TaskCallbackContext,
+    ) void {
+        const task_id = Task.Id.forTarball(path);
+        var task_queue = this.task_queue.getOrPut(this.allocator, task_id) catch unreachable;
+        if (!task_queue.found_existing) {
+            task_queue.value_ptr.* = .{};
+        }
+
+        task_queue.value_ptr.append(
+            this.allocator,
+            task_context,
+        ) catch unreachable;
+
+        if (task_queue.found_existing) return;
+
+        this.task_batch.push(ThreadPool.Batch.from(this.enqueueLocalTarball(
+            task_id,
+            dependency_id,
+            alias,
+            path,
+            this.lockfile.packages.items(.resolution)[package_id],
+        )));
     }
 
     pub fn installPackages(

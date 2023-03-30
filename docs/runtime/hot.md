@@ -29,7 +29,7 @@ Instead, Bun uses operating system native filesystem watcher APIs like kqueue or
 
 {% /callout %}
 
-The following examples show Bun live-reloading as it is edited, with VSCode configured to save the file [on each keystroke](https://code.visualstudio.com/docs/editor/codebasics#_save-auto-save).
+The following examples show Bun live-reloading a file as it is edited, with VSCode configured to save the file [on each keystroke](https://code.visualstudio.com/docs/editor/codebasics#_save-auto-save).
 
 {% codetabs %}
 

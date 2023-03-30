@@ -1,3 +1,5 @@
+import { expectType } from "tsd";
+
 Bun.spawn(["echo", "hello"]);
 {
   const proc = Bun.spawn(["echo", "hello"], {
@@ -65,6 +67,11 @@ Bun.spawn(["echo", "hello"]);
   proc.unref();
 }
 
+// Bun.spawn()'s stdout & stderr are wrong when ReadableStream.getReader().read(
+
 {
+  const proc = Bun.spawn([]);
+  const arg = await proc.stdout!.getReader().read();
+  expectType<Uint8Array>(arg.value!);
 }
 export {};

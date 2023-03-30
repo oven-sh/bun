@@ -197,6 +197,7 @@ pub const Arguments = struct {
         clap.parseParam("--entry-names <STR>              Pattern to use for entry point filenames") catch unreachable,
         clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
         clap.parseParam("--react-server-components        Enable React Server Components (experimental)") catch unreachable,
+        clap.parseParam("--splitting                      Split up code!") catch unreachable,
     };
 
     // TODO: update test completions
@@ -505,6 +506,10 @@ pub const Arguments = struct {
                 if (outfile.len > 0) {
                     ctx.bundler_options.outfile = outfile;
                 }
+            }
+
+            if (args.flag("--splitting")) {
+                ctx.bundler_options.code_splitting = true;
             }
 
             if (args.option("--entry-names")) |entry_names| {
@@ -919,6 +924,7 @@ pub const Command = struct {
             outfile: []const u8 = "",
             entry_names: []const u8 = "./[name].[ext]",
             react_server_components: bool = false,
+            code_splitting: bool = false,
         };
 
         const _ctx = Command.Context{

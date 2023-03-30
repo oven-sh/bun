@@ -3829,7 +3829,7 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
     }
 
-    auto moduleKeyZig = toZigString(moduleKey);
+    auto moduleKeyZig = Zig::utf8ToZigString(moduleKey);
     auto source = Zig::toZigString(value1, globalObject);
     ErrorableResolvedSource res;
     res.success = false;

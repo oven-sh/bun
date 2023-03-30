@@ -3276,8 +3276,12 @@ declare module "bun" {
       : Opts["stdin"] extends "pipe"
       ? FileSink
       : ReadableStream;
-    stdout?: Opts["stdout"] extends number ? number : ReadableStream;
-    stderr?: Opts["stderr"] extends number ? number : ReadableStream;
+    stdout?: Opts["stdout"] extends number
+      ? number
+      : ReadableStream<Uint8Array>;
+    stderr?: Opts["stderr"] extends number
+      ? number
+      : ReadableStream<Uint8Array>;
   };
 
   /**

@@ -2145,7 +2145,7 @@ declare var Loader: {
 };
 
 /** This Streams API interface represents a readable stream of byte data. The Fetch API offers a concrete instance of a ReadableStream through the body property of a Response object. */
-interface ReadableStream<R = Uint8Array> {
+interface ReadableStream<R extends Uint8Array | string = Uint8Array | string> {
   readonly locked: boolean;
   cancel(reason?: any): Promise<void>;
   getReader(): ReadableStreamDefaultReader<R>;

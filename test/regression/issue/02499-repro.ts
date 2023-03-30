@@ -19,3 +19,5 @@ console.log(
     }
   }
 })();
+
+export {};

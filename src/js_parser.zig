@@ -3510,11 +3510,10 @@ pub const Parser = struct {
 
             if (p.options.enable_legacy_bundling) p.resolveBundlingSymbols();
         }
-        var runtime_imports_iter = p.runtime_imports.iter();
 
         const has_cjs_imports = p.cjs_import_stmts.items.len > 0 and p.options.transform_require_to_import;
 
-        {
+        if (!p.options.bundle) {
             // "did they actually use require?"
             // well, if they didn't, in the linker later, we might need to inject it
             // but we don't know what name we can use there
@@ -3542,6 +3541,8 @@ pub const Parser = struct {
                 !p.options.enable_legacy_bundling and
                 (p.has_called_runtime or p.options.features.hot_module_reloading or has_cjs_imports))
             {
+                var runtime_imports_iter = p.runtime_imports.iter();
+
                 const before_start = before.items.len;
                 if (p.options.features.hot_module_reloading) {
                     p.resolveHMRSymbols();
@@ -3625,6 +3626,42 @@ pub const Parser = struct {
                 .import_record_indices = import_records,
                 .tag = .cjs_imports,
             }) catch unreachable;
+        }
+
+        if (p.has_called_runtime) {
+            var runtime_imports: [RuntimeImports.all.len]u8 = undefined;
+            var iter = p.runtime_imports.iter();
+            var i: usize = 0;
+            while (iter.next()) |entry| {
+                runtime_imports[i] = @intCast(u8, entry.key);
+                i += 1;
+            }
+
+            std.sort.sort(
+                u8,
+                runtime_imports[0..i],
+                {},
+                struct {
+                    pub fn isLessThan(_: void, a: u8, b: u8) bool {
+                        return std.math.order(
+                            RuntimeImports.all_sorted_index[a],
+                            RuntimeImports.all_sorted_index[b],
+                        ) == .lt;
+                    }
+                }.isLessThan,
+            );
+
+            if (i > 0) {
+                p.generateImportStmt(
+                    RuntimeImports.Name,
+                    runtime_imports[0..i],
+                    &before,
+                    p.runtime_imports,
+                    null,
+                    "import_",
+                    true,
+                ) catch unreachable;
+            }
         }
 
         // handle new way to do automatic JSX imports which fixes symbol collision issues

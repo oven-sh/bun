@@ -387,6 +387,33 @@ pub const Runtime = struct {
             "__decorateClass",
             "__decorateParam",
         };
+        const all_sorted: [all.len]string = brk: {
+            var list = all;
+            const Sorter = struct {
+                fn compare(_: void, a: []const u8, b: []const u8) bool {
+                    return std.mem.order(u8, a, b) == .lt;
+                }
+            };
+            std.sort.sort(string, &list, void{}, Sorter.compare);
+            break :brk list;
+        };
+
+        /// When generating the list of runtime imports, we sort it for determinism.
+        /// This is a lookup table so we don't need to resort the strings each time
+        pub const all_sorted_index = brk: {
+            var out: [all.len]usize = undefined;
+            inline for (all, 0..) |name, i| {
+                for (all_sorted, 0..) |cmp, j| {
+                    if (strings.eqlComptime(name, cmp)) {
+                        out[i] = j;
+                        break;
+                    }
+                }
+            }
+
+            break :brk out;
+        };
+
         pub const Name = "bun:wrap";
         pub const alt_name = "bun:wrap";
 

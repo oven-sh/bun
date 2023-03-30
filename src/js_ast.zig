@@ -654,130 +654,149 @@ pub const G = struct {
 };
 
 pub const Symbol = struct {
-    // This is the name that came from the parser. Printed names may be renamed
-    // during minification or to avoid name collisions. Do not use the original
-    // name during printing.
+    /// This is the name that came from the parser. Printed names may be renamed
+    /// during minification or to avoid name collisions. Do not use the original
+    /// name during printing.
     original_name: string,
 
-    // This is used for symbols that represent items in the import clause of an
-    // ES6 import statement. These should always be referenced by EImportIdentifier
-    // instead of an EIdentifier. When this is present, the expression should
-    // be printed as a property access off the namespace instead of as a bare
-    // identifier.
-    //
-    // For correctness, this must be stored on the symbol instead of indirectly
-    // associated with the Ref for the symbol somehow. In ES6 "flat bundling"
-    // mode, re-exported symbols are collapsed using MergeSymbols() and renamed
-    // symbols from other files that end up at this symbol must be able to tell
-    // if it has a namespace alias.
+    /// This is used for symbols that represent items in the import clause of an
+    /// ES6 import statement. These should always be referenced by EImportIdentifier
+    /// instead of an EIdentifier. When this is present, the expression should
+    /// be printed as a property access off the namespace instead of as a bare
+    /// identifier.
+    ///
+    /// For correctness, this must be stored on the symbol instead of indirectly
+    /// associated with the Ref for the symbol somehow. In ES6 "flat bundling"
+    /// mode, re-exported symbols are collapsed using MergeSymbols() and renamed
+    /// symbols from other files that end up at this symbol must be able to tell
+    /// if it has a namespace alias.
     namespace_alias: ?G.NamespaceAlias = null,
 
-    // Used by the parser for single pass parsing.
+    /// Used by the parser for single pass parsing.
     link: Ref = Ref.None,
 
-    // An estimate of the number of uses of this symbol. This is used to detect
-    // whether a symbol is used or not. For example, TypeScript imports that are
-    // unused must be removed because they are probably type-only imports. This
-    // is an estimate and may not be completely accurate due to oversights in the
-    // code. But it should always be non-zero when the symbol is used.
+    /// An estimate of the number of uses of this symbol. This is used to detect
+    /// whether a symbol is used or not. For example, TypeScript imports that are
+    /// unused must be removed because they are probably type-only imports. This
+    /// is an estimate and may not be completely accurate due to oversights in the
+    /// code. But it should always be non-zero when the symbol is used.
     use_count_estimate: u32 = 0,
 
-    // This is for generating cross-chunk imports and exports for code splitting.
-    chunk_index: ?u32 = null,
+    /// This is for generating cross-chunk imports and exports for code splitting.
+    ///
+    /// Do not use this directly. Use `chunkIndex()` instead.
+    chunk_index: u32 = invalid_chunk_index,
 
-    // This is used for minification. Symbols that are declared in sibling scopes
-    // can share a name. A good heuristic (from Google Closure Compiler) is to
-    // assign names to symbols from sibling scopes in declaration order. That way
-    // local variable names are reused in each global function like this, which
-    // improves gzip compression:
-    //
-    //   function x(a, b) { ... }
-    //   function y(a, b, c) { ... }
-    //
-    // The parser fills this in for symbols inside nested scopes. There are three
-    // slot namespaces: regular symbols, label symbols, and private symbols.
-    nested_scope_slot: ?u32 = null,
+    /// This is used for minification. Symbols that are declared in sibling scopes
+    /// can share a name. A good heuristic (from Google Closure Compiler) is to
+    /// assign names to symbols from sibling scopes in declaration order. That way
+    /// local variable names are reused in each global function like this, which
+    /// improves gzip compression:
+    ///
+    ///   function x(a, b) { ... }
+    ///   function y(a, b, c) { ... }
+    ///
+    /// The parser fills this in for symbols inside nested scopes. There are three
+    /// slot namespaces: regular symbols, label symbols, and private symbols.
+    ///
+    /// Do not use this directly. Use `nestedScopeSlot()` instead.
+    nested_scope_slot: u32 = invalid_nested_scope_slot,
 
+    /// The kind of symbol. This is used to determine how to print the symbol
+    /// and how to deal with conflicts, renaming, etc.
     kind: Kind = Kind.other,
 
-    // Certain symbols must not be renamed or minified. For example, the
-    // "arguments" variable is declared by the runtime for every function.
-    // Renaming can also break any identifier used inside a "with" statement.
+    /// Certain symbols must not be renamed or minified. For example, the
+    /// "arguments" variable is declared by the runtime for every function.
+    /// Renaming can also break any identifier used inside a "with" statement.
     must_not_be_renamed: bool = false,
 
-    // We automatically generate import items for property accesses off of
-    // namespace imports. This lets us remove the expensive namespace imports
-    // while bundling in many cases, replacing them with a cheap import item
-    // instead:
-    //
-    //   import * as ns from 'path'
-    //   ns.foo()
-    //
-    // That can often be replaced by this, which avoids needing the namespace:
-    //
-    //   import {foo} from 'path'
-    //   foo()
-    //
-    // However, if the import is actually missing then we don't want to report a
-    // compile-time error like we do for real import items. This status lets us
-    // avoid this. We also need to be able to replace such import items with
-    // undefined, which this status is also used for.
+    /// We automatically generate import items for property accesses off of
+    /// namespace imports. This lets us remove the expensive namespace imports
+    /// while bundling in many cases, replacing them with a cheap import item
+    /// instead:
+    ///
+    ///   import * as ns from 'path'
+    ///   ns.foo()
+    ///
+    /// That can often be replaced by this, which avoids needing the namespace:
+    ///
+    ///   import {foo} from 'path'
+    ///   foo()
+    ///
+    /// However, if the import is actually missing then we don't want to report a
+    /// compile-time error like we do for real import items. This status lets us
+    /// avoid this. We also need to be able to replace such import items with
+    /// undefined, which this status is also used for.
     import_item_status: ImportItemStatus = ImportItemStatus.none,
 
-    // Sometimes we lower private symbols even if they are supported. For example,
-    // consider the following TypeScript code:
-    //
-    //   class Foo {
-    //     #foo = 123
-    //     bar = this.#foo
-    //   }
-    //
-    // If "useDefineForClassFields: false" is set in "tsconfig.json", then "bar"
-    // must use assignment semantics instead of define semantics. We can compile
-    // that to this code:
-    //
-    //   class Foo {
-    //     constructor() {
-    //       this.#foo = 123;
-    //       this.bar = this.#foo;
-    //     }
-    //     #foo;
-    //   }
-    //
-    // However, we can't do the same for static fields:
-    //
-    //   class Foo {
-    //     static #foo = 123
-    //     static bar = this.#foo
-    //   }
-    //
-    // Compiling these static fields to something like this would be invalid:
-    //
-    //   class Foo {
-    //     static #foo;
-    //   }
-    //   Foo.#foo = 123;
-    //   Foo.bar = Foo.#foo;
-    //
-    // Thus "#foo" must be lowered even though it's supported. Another case is
-    // when we're converting top-level class declarations to class expressions
-    // to avoid the TDZ and the class shadowing symbol is referenced within the
-    // class body:
-    //
-    //   class Foo {
-    //     static #foo = Foo
-    //   }
-    //
-    // This cannot be converted into something like this:
-    //
-    //   var Foo = class {
-    //     static #foo;
-    //   };
-    //   Foo.#foo = Foo;
-    //
+    /// --- Not actually used yet -----------------------------------------------
+    /// Sometimes we lower private symbols even if they are supported. For example,
+    /// consider the following TypeScript code:
+    ///
+    ///   class Foo {
+    ///     #foo = 123
+    ///     bar = this.#foo
+    ///   }
+    ///
+    /// If "useDefineForClassFields: false" is set in "tsconfig.json", then "bar"
+    /// must use assignment semantics instead of define semantics. We can compile
+    /// that to this code:
+    ///
+    ///   class Foo {
+    ///     constructor() {
+    ///       this.#foo = 123;
+    ///       this.bar = this.#foo;
+    ///     }
+    ///     #foo;
+    ///   }
+    ///
+    /// However, we can't do the same for static fields:
+    ///
+    ///   class Foo {
+    ///     static #foo = 123
+    ///     static bar = this.#foo
+    ///   }
+    ///
+    /// Compiling these static fields to something like this would be invalid:
+    ///
+    ///   class Foo {
+    ///     static #foo;
+    ///   }
+    ///   Foo.#foo = 123;
+    ///   Foo.bar = Foo.#foo;
+    ///
+    /// Thus "#foo" must be lowered even though it's supported. Another case is
+    /// when we're converting top-level class declarations to class expressions
+    /// to avoid the TDZ and the class shadowing symbol is referenced within the
+    /// class body:
+    ///
+    ///   class Foo {
+    ///     static #foo = Foo
+    ///   }
+    ///
+    /// This cannot be converted into something like this:
+    ///
+    ///   var Foo = class {
+    ///     static #foo;
+    ///   };
+    ///   Foo.#foo = Foo;
+    ///
+    /// --- Not actually used yet -----------------------------------------------
     private_symbol_must_be_lowered: bool = false,
 
-    debug_mode_source_index: if (Environment.allow_assert) Index.Int else u0 = 0,
+    /// In debug mode, sometimes its helpful to know what source file
+    /// A symbol came from. This is used for that.
+    ///
+    /// We don't want this in non-debug mode because it increases the size of
+    /// the symbol table.
+    debug_mode_source_index: if (Environment.allow_assert)
+        Index.Int
+    else
+        u0 = 0,
+
+    const invalid_chunk_index = std.math.maxInt(u32);
+    const invalid_nested_scope_slot = std.math.maxInt(u32);
 
     pub const SlotNamespace = enum {
         default,
@@ -786,6 +805,17 @@ pub const Symbol = struct {
         mangled_prop,
         must_not_be_renamed,
     };
+
+    /// This is for generating cross-chunk imports and exports for code splitting.
+    pub inline fn chunkIndex(this: *const Symbol) ?u32 {
+        const i = this.chunk_index;
+        return if (i == invalid_chunk_index) null else i;
+    }
+
+    pub inline fn nestedScopeSlot(this: *const Symbol) ?u32 {
+        const i = this.nested_scope_slot;
+        return if (i == invalid_nested_scope_slot) null else i;
+    }
 
     pub fn slotNamespace(this: *const Symbol) SlotNamespace {
         const kind = this.kind;

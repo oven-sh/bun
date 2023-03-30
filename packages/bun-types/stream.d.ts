@@ -46,7 +46,7 @@ declare module "stream" {
       encoding?: BufferEncoding | undefined;
       read?(this: Readable, size: number): void;
     }
-    class Readable<R = any> extends Stream implements ReadableStream {
+    class Readable<R = any> extends Stream implements ReadableStream<R> {
       // TODO: improve type later
       values: any;
 

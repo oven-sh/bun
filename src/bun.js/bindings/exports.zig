@@ -2304,7 +2304,10 @@ pub const ZigConsoleClient = struct {
                         // in the code for printing dates, it never exceeds this amount
                         var iso_string_buf: [36]u8 = undefined;
                         var out_buf: []const u8 = std.fmt.bufPrint(&iso_string_buf, "{}", .{str}) catch "";
-                        if (out_buf.len > 2) {
+
+                        if (strings.eql(out_buf, "null")) {
+                            out_buf = "Invalid Date";
+                        } else if (out_buf.len > 2) {
                             // trim the quotes
                             out_buf = out_buf[1 .. out_buf.len - 1];
                         }

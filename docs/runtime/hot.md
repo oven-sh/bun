@@ -28,7 +28,8 @@ In `--watch` mode, Bun keeps track of all imported files and watches them for ch
 Instead, Bun uses operating system native filesystem watcher APIs like kqueue or inotify to detect changes to files. Bun also does a number of optimizations to enable it scale to larger projects (such as setting a high rlimit for file descriptors, statically allocated file path buffers, reuse file descriptors when possible, etc).
 
 {% /callout %}
-The following examples shows real-time reloading using the [save-on-keypress](https://code.visualstudio.com/docs/editor/codebasics#_save-auto-save) plugin for VSCode, which saves the current file on each keystroke.
+
+The following examples show Bun live-reloading as it is edited, with VSCode configured to save the file [on each keystroke](https://code.visualstudio.com/docs/editor/codebasics#_save-auto-save).
 
 {% codetabs %}
 

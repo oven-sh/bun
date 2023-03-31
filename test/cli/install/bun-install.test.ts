@@ -3464,6 +3464,86 @@ it("should handle tarball path with aliasing", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
+it("should de-duplicate dependencies alongside tarball URL", async () => {
+  const urls: string[] = [];
+  setHandler(
+    dummyRegistry(urls, {
+      "0.0.2": {},
+      "0.0.3": {
+        bin: {
+          "baz-run": "index.js",
+        },
+      },
+    }),
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        "@barn/moo": `${root_url}/moo-0.1.0.tgz`,
+        bar: "<=0.0.2",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    ` + @barn/moo@${root_url}/moo-0.1.0.tgz`,
+    " + bar@0.0.2",
+    "",
+    " 3 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([
+    `${root_url}/bar`,
+    `${root_url}/bar-0.0.2.tgz`,
+    `${root_url}/baz`,
+    `${root_url}/baz-0.0.3.tgz`,
+    `${root_url}/moo-0.1.0.tgz`,
+  ]);
+  expect(requested).toBe(5);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "@barn", "bar", "baz"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["baz-run"]);
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "baz-run"))).toBe(join("..", "baz", "index.js"));
+  expect(await readdirSorted(join(package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "@barn", "moo", "package.json")).json()).toEqual({
+    name: "@barn/moo",
+    version: "0.1.0",
+    dependencies: {
+      bar: "0.0.2",
+      baz: "latest",
+    },
+  });
+  expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
+  expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
+  expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
+    name: "baz",
+    version: "0.0.3",
+    bin: {
+      "baz-run": "index.js",
+    },
+  });
+  await access(join(package_dir, "bun.lockb"));
+});
+
 it("should handle tarball URL with existing lockfile", async () => {
   const urls: string[] = [];
   setHandler(

@@ -2001,15 +2001,15 @@ pub const PackageManager = struct {
         return this.allocator.create(NetworkTask) catch @panic("Memory allocation failure creating NetworkTask!");
     }
 
-    fn buildGitHubURL(this: *const PackageManager, buf: []u8, repository: *const Repository) string {
+    fn allocGitHubURL(this: *const PackageManager, repository: *const Repository) string {
         var github_api_domain: string = "api.github.com";
         if (this.env.map.get("GITHUB_API_DOMAIN")) |api_domain| {
             if (api_domain.len > 0) {
                 github_api_domain = api_domain;
             }
         }
-        return std.fmt.bufPrintZ(
-            buf,
+        return std.fmt.allocPrint(
+            this.allocator,
             "https://{s}/repos/{s}/{s}/tarball/{s}",
             .{
                 github_api_domain,
@@ -3109,8 +3109,8 @@ pub const PackageManager = struct {
                     return;
                 }
 
-                var url_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const url = this.buildGitHubURL(&url_buf, dep);
+                const url = this.allocGitHubURL(dep);
+                defer this.allocator.free(url);
                 const task_id = Task.Id.forTarball(url);
                 var entry = this.task_queue.getOrPutContext(this.allocator, task_id, .{}) catch unreachable;
                 if (!entry.found_existing) {
@@ -6597,11 +6597,12 @@ pub const PackageManager = struct {
                                     );
                                 },
                                 .github => {
-                                    var url_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                                    const url = this.manager.allocGitHubURL(&resolution.value.github);
+                                    defer this.manager.allocator.free(url);
                                     this.manager.enqueueTarballForDownload(
                                         dependency_id,
                                         package_id,
-                                        this.manager.buildGitHubURL(&url_buf, &resolution.value.github),
+                                        url,
                                         .{ .node_modules_folder = this.node_modules_folder.dir.fd },
                                     );
                                 },

@@ -3055,7 +3055,9 @@ pub const PackageManager = struct {
 
                     var entry = this.task_queue.getOrPutContext(this.allocator, checkout_id, .{}) catch unreachable;
                     if (!entry.found_existing) entry.value_ptr.* = .{};
-                    try entry.value_ptr.append(this.allocator, ctx);
+                    if (this.lockfile.buffers.resolutions.items[id] == invalid_package_id) {
+                        try entry.value_ptr.append(this.allocator, ctx);
+                    }
 
                     if (dependency.behavior.isPeer()) return;
 
@@ -4102,7 +4104,10 @@ pub const PackageManager = struct {
                                     repo.package_name = pkg.name;
                                     try manager.processDependencyListItem(dep, &any_root);
                                 },
-                                else => unreachable,
+                                else => {
+                                    // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
+                                    dependency_list_entry.value_ptr.append(manager.allocator, dep) catch unreachable;
+                                },
                             }
                         }
                     }
@@ -6573,6 +6578,14 @@ pub const PackageManager = struct {
                     .fail => |cause| {
                         if (cause.isPackageMissingFromCache()) {
                             switch (resolution.tag) {
+                                .git => {
+                                    this.manager.enqueueGitForCheckout(
+                                        dependency_id,
+                                        alias,
+                                        resolution,
+                                        .{ .node_modules_folder = this.node_modules_folder.dir.fd },
+                                    );
+                                },
                                 .github => {
                                     this.manager.enqueueTarballForDownload(
                                         dependency_id,
@@ -6584,9 +6597,8 @@ pub const PackageManager = struct {
                                 .local_tarball => {
                                     this.manager.enqueueTarballForReading(
                                         dependency_id,
-                                        package_id,
                                         alias,
-                                        resolution.value.local_tarball.slice(buf),
+                                        resolution,
                                         .{ .node_modules_folder = this.node_modules_folder.dir.fd },
                                     );
                                 },
@@ -6658,10 +6670,60 @@ pub const PackageManager = struct {
         }
     };
 
+    pub fn enqueueGitForCheckout(
+        this: *PackageManager,
+        dependency_id: DependencyID,
+        alias: string,
+        resolution: *const Resolution,
+        task_context: TaskCallbackContext,
+    ) void {
+        const repository = &resolution.value.git;
+        const url = this.lockfile.str(&repository.repo);
+        const clone_id = Task.Id.forGitClone(url);
+        const resolved = this.lockfile.str(&repository.resolved);
+        const checkout_id = Task.Id.forGitCheckout(url, resolved);
+        var checkout_queue = this.task_queue.getOrPut(this.allocator, checkout_id) catch unreachable;
+        if (!checkout_queue.found_existing) {
+            checkout_queue.value_ptr.* = .{};
+        }
+
+        checkout_queue.value_ptr.append(
+            this.allocator,
+            task_context,
+        ) catch unreachable;
+
+        if (checkout_queue.found_existing) return;
+
+        if (this.git_repositories.get(clone_id)) |repo_fd| {
+            this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitCheckout(
+                checkout_id,
+                repo_fd,
+                dependency_id,
+                alias,
+                resolution.*,
+                resolved,
+            )));
+        } else {
+            var clone_queue = this.task_queue.getOrPut(this.allocator, clone_id) catch unreachable;
+            if (!clone_queue.found_existing) {
+                clone_queue.value_ptr.* = .{};
+            }
+
+            clone_queue.value_ptr.append(
+                this.allocator,
+                .{ .dependency = dependency_id },
+            ) catch unreachable;
+
+            if (clone_queue.found_existing) return;
+
+            this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitClone(clone_id, alias, repository)));
+        }
+    }
+
     pub fn enqueuePackageForDownload(
         this: *PackageManager,
         name: []const u8,
-        dependency_id: PackageID,
+        dependency_id: DependencyID,
         package_id: PackageID,
         version: Semver.Version,
         url: []const u8,
@@ -6695,7 +6757,7 @@ pub const PackageManager = struct {
 
     pub fn enqueueTarballForDownload(
         this: *PackageManager,
-        dependency_id: PackageID,
+        dependency_id: DependencyID,
         package_id: PackageID,
         url: string,
         task_context: TaskCallbackContext,
@@ -6728,12 +6790,12 @@ pub const PackageManager = struct {
 
     pub fn enqueueTarballForReading(
         this: *PackageManager,
-        dependency_id: PackageID,
-        package_id: PackageID,
+        dependency_id: DependencyID,
         alias: string,
-        path: string,
+        resolution: *const Resolution,
         task_context: TaskCallbackContext,
     ) void {
+        const path = this.lockfile.str(&resolution.value.local_tarball);
         const task_id = Task.Id.forTarball(path);
         var task_queue = this.task_queue.getOrPut(this.allocator, task_id) catch unreachable;
         if (!task_queue.found_existing) {
@@ -6752,7 +6814,7 @@ pub const PackageManager = struct {
             dependency_id,
             alias,
             path,
-            this.lockfile.packages.items(.resolution)[package_id],
+            resolution.*,
         )));
     }
 

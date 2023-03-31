@@ -1,10 +1,10 @@
 import * as action from "@actions/core";
 import { spawnSync } from "child_process";
-import { fsyncSync, rmSync, statSync, writeFileSync, writeSync } from "fs";
+import { fsyncSync, rmSync, writeFileSync, writeSync } from "fs";
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
-import { basename, relative } from "path";
+import { relative } from "path";
 import { fileURLToPath } from "url";
 
 const cwd = resolve(fileURLToPath(import.meta.url), "../../../../");
@@ -55,6 +55,7 @@ async function runTest(path) {
     stdout,
     stderr,
     status: exitCode,
+    error: timedOut,
   } = spawnSync("bun", ["test", path], {
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 10_000,
@@ -63,18 +64,20 @@ async function runTest(path) {
       FORCE_COLOR: "1",
     },
   });
+  const passed = exitCode === 0 && !timedOut;
 
-  if (+exitCode !== 0) {
+  if (!passed) {
     failingTests.push(name);
+    if (timedOut) console.error(timedOut);
   }
 
-  if (isAction && exitCode !== 0) {
+  if (isAction && !passed) {
     findErrors(stdout);
     findErrors(stderr);
   }
 
   if (isAction) {
-    const prefix = +exitCode === 0 ? "PASS" : `FAIL`;
+    const prefix = passed ? "PASS" : `FAIL`;
     action.startGroup(`${prefix} - ${name}`);
   }
 
@@ -85,8 +88,6 @@ async function runTest(path) {
     action.endGroup();
   }
 }
-
-let failed = false;
 
 function findErrors(data) {
   const text = new StringDecoder().write(new Buffer(data.buffer)).replaceAll(/\u001b\[.*?m/g, "");
@@ -149,4 +150,4 @@ if (isAction) {
   writeFileSync("failing-tests.txt", failingTests.join("\n"));
 }
 
-process.exit(failed ? 1 : 0);
+process.exit(failingTests.length);

@@ -5288,6 +5288,9 @@ pub const Ast = struct {
 
     redirect_import_record_index: ?u32 = null,
 
+    /// Only populated when bundling
+    platform: bun.options.Platform = .browser,
+
     pub const CommonJSNamedExport = struct {
         loc_ref: LocRef,
         needs_decl: bool = true,
@@ -9184,6 +9187,79 @@ pub const ASTMemoryAllocator = struct {
         const ptr = this.bump_allocator.create(ValueType) catch unreachable;
         ptr.* = value;
         return ptr;
+    }
+};
+
+pub const UseDirective = enum {
+    none,
+    @"use client",
+    @"use server",
+
+    pub const Flags = struct {
+        is_client: bool = false,
+        is_server: bool = false,
+    };
+
+    pub fn isBoundary(this: UseDirective, other: UseDirective) bool {
+        if (this == .none and other == .none)
+            return false;
+
+        return this != other;
+    }
+
+    pub fn boundering(this: UseDirective, other: UseDirective) ?UseDirective {
+        if (this == other or other == .none)
+            return null;
+
+        return other;
+    }
+
+    pub const EntryPoint = struct {
+        source_index: Index.Int,
+        use_directive: UseDirective,
+    };
+
+    pub const List = std.MultiArrayList(UseDirective.EntryPoint);
+
+    // TODO: remove this, add an onModuleDirective() callback to the parser
+    pub fn parse(contents: []const u8) UseDirective {
+        const truncated = std.mem.trimLeft(u8, contents, " \t\n\r;");
+
+        if (truncated.len < "'use client';".len)
+            return .none;
+
+        const directive_string = truncated[0.."'use client';".len].*;
+
+        const first_quote = directive_string[0];
+        const last_quote = directive_string[directive_string.len - 2];
+        if (first_quote != last_quote or (first_quote != '"' and first_quote != '\'' and first_quote != '`'))
+            return .none;
+
+        const unquoted = directive_string[1 .. directive_string.len - 2];
+
+        if (strings.eqlComptime(
+            unquoted,
+            "use client",
+        )) {
+            return .@"use client";
+        }
+
+        if (strings.eqlComptime(
+            unquoted,
+            "use server",
+        )) {
+            return .@"use server";
+        }
+
+        return .none;
+    }
+
+    pub fn platform(this: UseDirective, default: bun.options.Platform) bun.options.Platform {
+        return switch (this) {
+            .none => default,
+            .@"use client" => .browser,
+            .@"use server" => .bun,
+        };
     }
 };
 

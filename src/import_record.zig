@@ -205,6 +205,14 @@ pub const ImportRecord = struct {
         pub inline fn isInternal(this: Tag) bool {
             return @enumToInt(this) >= @enumToInt(Tag.runtime);
         }
+
+        pub fn useDirective(this: Tag) bun.JSAst.UseDirective {
+            return switch (this) {
+                .react_client_component => .@"use client",
+                .react_server_component => .@"use server",
+                else => .none,
+            };
+        }
     };
 
     pub const PrintMode = enum {

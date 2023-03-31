@@ -364,6 +364,7 @@ pub const Runtime = struct {
         __merge: ?GeneratedSymbol = null,
         __decorateClass: ?GeneratedSymbol = null,
         __decorateParam: ?GeneratedSymbol = null,
+        @"$$typeof": ?GeneratedSymbol = null,
 
         pub const all = [_][]const u8{
             // __HMRClient goes first
@@ -386,6 +387,7 @@ pub const Runtime = struct {
             "__merge",
             "__decorateClass",
             "__decorateParam",
+            "$$typeof",
         };
         const all_sorted: [all.len]string = brk: {
             var list = all;
@@ -522,6 +524,11 @@ pub const Runtime = struct {
                                 return Entry{ .key = 17, .value = val.ref };
                             }
                         },
+                        18 => {
+                            if (@field(this.runtime_imports, all[18])) |val| {
+                                return Entry{ .key = 18, .value = val.ref };
+                            }
+                        },
                         else => {
                             return null;
                         },
@@ -584,6 +591,7 @@ pub const Runtime = struct {
                 15 => (@field(imports, all[15]) orelse return null).ref,
                 16 => (@field(imports, all[16]) orelse return null).ref,
                 17 => (@field(imports, all[17]) orelse return null).ref,
+                18 => (@field(imports, all[18]) orelse return null).ref,
                 else => null,
             };
         }

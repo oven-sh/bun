@@ -278,7 +278,7 @@ pub const AssignTarget = enum(u2) {
     }
 };
 
-pub const LocRef = struct { loc: logger.Loc, ref: ?Ref = null };
+pub const LocRef = struct { loc: logger.Loc = logger.Loc.Empty, ref: ?Ref = null };
 
 pub const Flags = struct {
     pub const JSXElement = enum {
@@ -529,8 +529,8 @@ pub const B = union(Binding.Tag) {
 };
 
 pub const ClauseItem = struct {
-    alias: string,
-    alias_loc: logger.Loc,
+    alias: string = "",
+    alias_loc: logger.Loc = logger.Loc.Empty,
     name: LocRef,
 
     /// This is the original name of the symbol stored in "Name". It's needed for

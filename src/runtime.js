@@ -59,7 +59,7 @@ export var __toESM = (mod, isNodeMode, target) => {
 };
 
 /* @__PURE__ */
-var moduleCache = new /* @__PURE__ */ WeakMap();
+var moduleCache = /* @__PURE__ */ new WeakMap();
 // Converts the module from ESM to CommonJS. This clones the input module
 // object with the addition of a non-enumerable "__esModule" property set
 // to "true", which overwrites any existing export named "__esModule".
@@ -264,3 +264,7 @@ export var __decorateClass = (decorators, target, key, kind) => {
 export var __decorateParam = (index, decorator) => (target, key) => decorator(target, key, index);
 
 export var __esm = (fn, res) => () => (fn && (res = fn((fn = 0))), res);
+
+// This is used for JSX inlining with React.
+export var $$typeof = /* @__PURE__ */ Symbol.for("react.element");
+

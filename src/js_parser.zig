@@ -1221,6 +1221,7 @@ const StaticSymbolName = struct {
         pub const __FastRefreshRuntime = NewStaticSymbol("FastRefresh");
         pub const __decorateClass = NewStaticSymbol("__decorateClass");
         pub const __decorateParam = NewStaticSymbol("__decorateParam");
+        pub const @"$$typeof" = NewStaticSymbol("$$typeof");
 
         pub const @"$$m" = NewStaticSymbol("$$m");
 
@@ -5664,12 +5665,12 @@ fn NewParser_(
 
             switch (comptime jsx_transform_type) {
                 .react => {
-                    if (p.options.features.jsx_optimization_inline) {
-                        p.react_element_type = p.declareGeneratedSymbol(.other, "REACT_ELEMENT_TYPE") catch unreachable;
-                        p.es6_symbol_global = p.declareGeneratedSymbol(.unbound, "Symbol") catch unreachable;
-                    }
-
                     if (!p.options.bundle) {
+                        if (p.options.features.jsx_optimization_inline) {
+                            p.react_element_type = p.declareGeneratedSymbol(.other, "REACT_ELEMENT_TYPE") catch unreachable;
+                            p.es6_symbol_global = p.declareGeneratedSymbol(.unbound, "Symbol") catch unreachable;
+                        }
+
                         p.jsx_fragment = p.declareGeneratedSymbol(.other, "Fragment") catch unreachable;
                         p.jsx_runtime = p.declareGeneratedSymbol(.other, "jsx") catch unreachable;
                         if (comptime FeatureFlags.support_jsxs_in_jsx_transform)
@@ -5763,6 +5764,9 @@ fn NewParser_(
         }
 
         pub fn resolveStaticJSXSymbols(p: *P) void {
+            if (!p.options.bundle)
+                return;
+
             if (p.options.features.jsx_optimization_inline) {
                 p.resolveGeneratedSymbol(&p.react_element_type);
                 p.resolveGeneratedSymbol(&p.es6_symbol_global);
@@ -5770,8 +5774,7 @@ fn NewParser_(
                     p.resolveGeneratedSymbol(merge);
                 }
             }
-            if (!p.options.bundle)
-                return;
+
             p.resolveGeneratedSymbol(&p.jsx_runtime);
             if (FeatureFlags.support_jsxs_in_jsx_transform)
                 p.resolveGeneratedSymbol(&p.jsxs_runtime);
@@ -13981,12 +13984,16 @@ fn NewParser_(
                                         if (tag.data != .e_string) {
                                             // We assume defaultProps is supposed to _not_ have side effects
                                             // We do not support "key" or "ref" in defaultProps.
-                                            const defaultProps = p.newExpr(E.Dot{
-                                                .name = "defaultProps",
-                                                .name_loc = tag.loc,
-                                                .target = tag,
-                                                .can_be_removed_if_unused = true,
-                                            }, tag.loc);
+                                            const defaultProps = p.newExpr(
+                                                E.Dot{
+                                                    .name = "defaultProps",
+                                                    .name_loc = tag.loc,
+                                                    .target = tag,
+                                                    .can_be_removed_if_unused = true,
+                                                    .call_can_be_unwrapped_if_unused = true,
+                                                },
+                                                tag.loc,
+                                            );
                                             // props: MyComponent.defaultProps || {}
                                             if (props.items.len == 0) {
                                                 props_expression = p.newExpr(E.Binary{ .op = Op.Code.bin_logical_or, .left = defaultProps, .right = props_object }, defaultProps.loc);
@@ -14012,13 +14019,16 @@ fn NewParser_(
                                             [_]G.Property{
                                             G.Property{
                                                 .key = Expr{ .data = Prefill.Data.@"$$typeof", .loc = tag.loc },
-                                                .value = p.newExpr(
-                                                    E.Identifier{
-                                                        .ref = p.react_element_type.ref,
-                                                        .can_be_removed_if_unused = true,
-                                                    },
-                                                    tag.loc,
-                                                ),
+                                                .value = if (p.options.bundle)
+                                                    p.runtimeIdentifier(tag.loc, "$$typeof")
+                                                else
+                                                    p.newExpr(
+                                                        E.Identifier{
+                                                            .ref = p.react_element_type.ref,
+                                                            .can_be_removed_if_unused = true,
+                                                        },
+                                                        tag.loc,
+                                                    ),
                                             },
                                             G.Property{
                                                 .key = Expr{ .data = Prefill.Data.type, .loc = tag.loc },

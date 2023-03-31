@@ -3708,11 +3708,12 @@ const LinkerContext = struct {
                         r.clearRetainingCapacity();
 
                         for (stable_ref_list.items, clause_items.slice()) |stable_ref, *clause_item| {
-                            const alias = r.nextRenamedName(c.graph.symbols.get(stable_ref.ref).?.original_name);
+                            const ref = stable_ref.ref;
+                            const alias = r.nextRenamedName(c.graph.symbols.get(ref).?.original_name);
 
                             clause_item.* = .{
                                 .name = .{
-                                    .ref = stable_ref.ref,
+                                    .ref = ref,
                                     .loc = Logger.Loc.Empty,
                                 },
                                 .alias = alias,
@@ -3721,7 +3722,7 @@ const LinkerContext = struct {
                             };
 
                             repr.exports_to_other_chunks.putAssumeCapacity(
-                                stable_ref.ref,
+                                ref,
                                 alias,
                             );
                         }
@@ -3731,7 +3732,7 @@ const LinkerContext = struct {
                             var export_clause = c.allocator.create(js_ast.S.ExportClause) catch unreachable;
                             export_clause.* = .{
                                 .items = clause_items.slice(),
-                                .is_single_line = false,
+                                .is_single_line = true,
                             };
                             stmts.appendAssumeCapacity(.{
                                 .data = .{

@@ -9201,10 +9201,10 @@ pub const UseDirective = enum {
     };
 
     pub fn isBoundary(this: UseDirective, other: UseDirective) bool {
-        if (this == .none and other == .none)
+        if (this == other or other == .none)
             return false;
 
-        return this != other;
+        return true;
     }
 
     pub fn boundering(this: UseDirective, other: UseDirective) ?UseDirective {

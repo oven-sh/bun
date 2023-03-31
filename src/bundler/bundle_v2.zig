@@ -78,6 +78,7 @@ const AutoBitSet = bun.bit_set.AutoBitSet;
 const renamer = bun.renamer;
 const Scope = js_ast.Scope;
 const JSC = bun.JSC;
+const debugTreeShake = Output.scoped(.TreeShake, true);
 
 pub const ThreadPool = struct {
     pool: ThreadPoolLib = undefined,
@@ -269,7 +270,9 @@ pub const BundleV2 = struct {
                         if (other_source.isValid()) {
                             if (v.redirects[other_source.get()]) |redirect_id| {
                                 var other_import_records = v.all_import_records[other_source.get()].slice();
-                                import_record.source_index = other_import_records[redirect_id].source_index;
+                                const other_import_record = &other_import_records[redirect_id];
+                                import_record.source_index = other_import_record.source_index;
+                                import_record.path = other_import_record.path;
                             }
 
                             v.visit(import_record.source_index);
@@ -571,6 +574,17 @@ pub const BundleV2 = struct {
                         continue;
                     }
                     var existing = graph.path_to_source_index_map.getOrPut(graph.allocator, hash) catch unreachable;
+
+                    // If the same file is imported and required, and those point to different files
+                    // Automatically rewrite it to the secondary one
+                    if (value.secondary_path_for_commonjs_interop) |secondary_path| {
+                        const secondary_hash = bun.hash(secondary_path.text);
+                        if (graph.path_to_source_index_map.get(secondary_hash)) |secondary| {
+                            existing.found_existing = true;
+                            existing.value_ptr.* = secondary;
+                        }
+                    }
+
                     if (!existing.found_existing) {
                         var new_input_file = Graph.InputFile{
                             .source = Logger.Source.initEmptyFile(entry.value_ptr.path.text),
@@ -646,6 +660,7 @@ const UseDirective = js_ast.UseDirective;
 
 const ParseTask = struct {
     path: Fs.Path,
+    secondary_path_for_commonjs_interop: ?Fs.Path = null,
     contents_or_fd: union(enum) {
         fd: struct {
             dir: StoredFileDescriptorType,
@@ -967,11 +982,19 @@ const ParseTask = struct {
                             }
                         }
 
+                        var secondary_path_to_copy: ?Fs.Path = null;
+                        if (resolve_result.path_pair.secondary) |*secondary| {
+                            if (!secondary.is_disabled and secondary != path) {
+                                secondary_path_to_copy = try secondary.dupeAlloc(allocator);
+                            }
+                        }
+
                         path.* = try path.dupeAlloc(allocator);
                         import_record.path = path.*;
                         debug("created ParseTask: {s}", .{path.text});
 
                         resolve_entry.value_ptr.* = ParseTask.init(&resolve_result, null);
+                        resolve_entry.value_ptr.secondary_path_for_commonjs_interop = secondary_path_to_copy;
                         if (use_directive != .none) {
                             resolve_entry.value_ptr.known_platform = platform;
                         } else if (task.known_platform) |known_platform| {
@@ -1717,6 +1740,7 @@ const LinkerGraph = struct {
                                             .@"use server" => {
                                                 import_record.tag = .react_server_component;
                                                 import_record.path.namespace = "react-server";
+                                                import_record.print_namespace_in_path = true;
 
                                                 if (entry_point_kinds[source_index] == .none) {
                                                     if (comptime Environment.allow_assert)
@@ -2327,8 +2351,6 @@ const LinkerContext = struct {
     pub fn scanImportsAndExports(this: *LinkerContext) !void {
         const reachable = this.graph.reachable_files;
         const output_format = this.options.output_format;
-        const max_id = reachable.len;
-
         {
             var import_records_list: []ImportRecord.List = this.graph.ast.items(.import_records);
 
@@ -2637,9 +2659,6 @@ const LinkerContext = struct {
             for (reachable) |source_index_| {
                 const source_index = source_index_.get();
                 const id = source_index;
-                if (id > max_id) {
-                    continue;
-                }
 
                 const is_entry_point = entry_point_kinds[source_index].isEntryPoint();
                 const aliases = this.graph.meta.items(.sorted_and_filtered_export_aliases)[id];
@@ -6156,7 +6175,7 @@ const LinkerContext = struct {
         result.items.len = export_refs.count();
         for (export_refs.keys(), result.items) |export_ref, *item| {
             if (comptime Environment.allow_assert)
-                debug("Export name: {s} (in {s})", .{
+                debugTreeShake("Export name: {s} (in {s})", .{
                     c.graph.symbols.get(export_ref).?.original_name,
                     c.parse_graph.input_files.get(export_ref.sourceIndex()).source.path.text,
                 });
@@ -6197,7 +6216,7 @@ const LinkerContext = struct {
         bits.set(entry_points_count);
 
         if (comptime bun.Environment.allow_assert)
-            debug(
+            debugTreeShake(
                 "markFileReachableForCodeSplitting(entry: {d}): {s} ({d})",
                 .{
                     entry_points_count,
@@ -6211,7 +6230,7 @@ const LinkerContext = struct {
         const use_directive = c.graph.useDirectiveBoundary(source_index);
 
         for (import_records[source_index].slice()) |*record| {
-            const is_boundary = record.tag.useDirective().isBoundary(use_directive);
+            const is_boundary = use_directive.isBoundary(record.tag.useDirective());
             imports_a_boundary = use_directive != .none and (imports_a_boundary or is_boundary);
             if (record.source_index.isValid() and !is_boundary and !c.isExternalDynamicImport(record, source_index)) {
                 c.markFileReachableForCodeSplitting(
@@ -6230,8 +6249,9 @@ const LinkerContext = struct {
             for (part.dependencies.slice()) |dependency| {
                 if (dependency.source_index.get() != source_index) {
                     if (imports_a_boundary and
-                        // Do not mark the dependencies of the react client component as reacahable from the entry point
-                        c.graph.files.items(.entry_point_kind)[dependency.source_index.get()].useDirective().isBoundary(use_directive))
+                        // "use client" -> "use server" imports don't
+                        use_directive.isBoundary(c.graph.files.items(.entry_point_kind)[dependency.source_index.get()]
+                        .useDirective()))
                         continue;
 
                     c.markFileReachableForCodeSplitting(
@@ -6257,7 +6277,7 @@ const LinkerContext = struct {
         entry_point_kinds: []EntryPoint.Kind,
     ) void {
         if (comptime bun.Environment.allow_assert)
-            debug(
+            debugTreeShake(
                 "markFileLiveForTreeShaking({d}, {s}) = {s}",
                 .{
                     source_index,
@@ -6351,7 +6371,7 @@ const LinkerContext = struct {
 
         part.is_live = true;
         if (comptime bun.Environment.allow_assert)
-            debug("markPartLiveForTreeShaking({d}): {s}:{d} = {d}, {s}", .{
+            debugTreeShake("markPartLiveForTreeShaking({d}): {s}:{d} = {d}, {s}", .{
                 id,
                 c.parse_graph.input_files.get(id).source.path.text,
                 part_index,

@@ -2755,62 +2755,65 @@ pub const Parser = struct {
 
         var did_import_fast_refresh = false;
 
-        if (p.commonjs_named_exports.count() > 0) {
-            var export_refs = p.commonjs_named_exports.values();
-            var export_names = p.commonjs_named_exports.keys();
+        if (comptime FeatureFlags.commonjs_to_esm) {
+            if (p.commonjs_named_exports.count() > 0) {
+                var export_refs = p.commonjs_named_exports.values();
+                var export_names = p.commonjs_named_exports.keys();
 
-            if (!p.commonjs_named_exports_deoptimized) {
-                // We make this safe by doing toCommonJS() at runtimes
-                for (export_refs, export_names) |*export_ref, alias| {
-                    if (export_ref.needs_decl) {
-                        var this_stmts = p.allocator.alloc(Stmt, 2) catch unreachable;
-                        var decls = p.allocator.alloc(Decl, 1) catch unreachable;
-                        const ref = export_ref.loc_ref.ref.?;
-                        decls[0] = .{
-                            .binding = p.b(B.Identifier{ .ref = ref }, export_ref.loc_ref.loc),
-                            .value = null,
-                        };
-                        p.module_scope.generated.push(p.allocator, ref) catch unreachable;
-                        var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, 1) catch unreachable;
-                        declared_symbols.appendAssumeCapacity(.{ .ref = ref, .is_top_level = true });
-                        this_stmts[0] = p.s(
-                            S.Local{
-                                .kind = .k_var,
-                                .is_export = false,
-                                .decls = decls,
-                            },
-                            export_ref.loc_ref.loc,
-                        );
+                if (!p.commonjs_named_exports_deoptimized) {
+                    // We make this safe by doing toCommonJS() at runtimes
+                    for (export_refs, export_names) |*export_ref, alias| {
+                        if (export_ref.needs_decl) {
+                            var this_stmts = p.allocator.alloc(Stmt, 2) catch unreachable;
+                            var decls = p.allocator.alloc(Decl, 1) catch unreachable;
+                            const ref = export_ref.loc_ref.ref.?;
+                            decls[0] = .{
+                                .binding = p.b(B.Identifier{ .ref = ref }, export_ref.loc_ref.loc),
+                                .value = null,
+                            };
+                            var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, 1) catch unreachable;
+                            declared_symbols.appendAssumeCapacity(.{ .ref = ref, .is_top_level = true });
+                            this_stmts[0] = p.s(
+                                S.Local{
+                                    .kind = .k_var,
+                                    .is_export = false,
+                                    .decls = decls,
+                                },
+                                export_ref.loc_ref.loc,
+                            );
 
-                        var clause_items = p.allocator.alloc(js_ast.ClauseItem, 1) catch unreachable;
-                        clause_items[0] = js_ast.ClauseItem{
-                            .alias = alias,
-                            .alias_loc = export_ref.loc_ref.loc,
-                            .name = export_ref.loc_ref,
-                        };
+                            var clause_items = p.allocator.alloc(js_ast.ClauseItem, 1) catch unreachable;
+                            clause_items[0] = js_ast.ClauseItem{
+                                .alias = alias,
+                                .alias_loc = export_ref.loc_ref.loc,
+                                .name = export_ref.loc_ref,
+                            };
 
-                        this_stmts[1] = p.s(
-                            S.ExportClause{
-                                .items = clause_items,
-                                .is_single_line = true,
-                            },
-                            export_ref.loc_ref.loc,
-                        );
-                        export_ref.needs_decl = false;
-                        before.append(.{
-                            .stmts = this_stmts,
-                            .declared_symbols = declared_symbols,
-                            .can_be_removed_if_unused = true,
-                        }) catch unreachable;
+                            this_stmts[1] = p.s(
+                                S.ExportClause{
+                                    .items = clause_items,
+                                    .is_single_line = true,
+                                },
+                                export_ref.loc_ref.loc,
+                            );
+                            export_ref.needs_decl = false;
+                            before.append(.{
+                                .stmts = this_stmts,
+                                .declared_symbols = declared_symbols,
+                                .can_be_removed_if_unused = true,
+                            }) catch unreachable;
+                        }
                     }
                 }
-            }
 
-            if (!p.commonjs_named_exports_deoptimized and p.es6_export_keyword.len == 0) {
-                p.es6_export_keyword.loc = export_refs[0].loc_ref.loc;
-                p.es6_export_keyword.len = 5;
+                if (!p.commonjs_named_exports_deoptimized and p.es6_export_keyword.len == 0) {
+                    p.es6_export_keyword.loc = export_refs[0].loc_ref.loc;
+                    p.es6_export_keyword.len = 5;
+                }
             }
-        } else if (p.options.bundle and parts.items.len == 1) {
+        }
+
+        if (p.options.bundle and parts.items.len == 1) {
             // Specially handle modules shaped like this:
             //   CommonJS:
             //
@@ -5633,6 +5636,7 @@ fn NewParser_(
 
             p.exports_ref = try p.declareCommonJSSymbol(.hoisted, "exports");
             p.module_ref = try p.declareCommonJSSymbol(.hoisted, "module");
+
             p.require_ref = try p.declareCommonJSSymbol(.unbound, "require");
             p.dirname_ref = try p.declareCommonJSSymbol(.unbound, "__dirname");
             p.filename_ref = try p.declareCommonJSSymbol(.unbound, "__filename");
@@ -16176,39 +16180,41 @@ fn NewParser_(
                         }
                     }
 
-                    if (!p.is_control_flow_dead and id.ref.eql(p.exports_ref) and !p.commonjs_named_exports_deoptimized) {
-                        if (identifier_opts.is_delete_target) {
-                            p.deoptimizeCommonJSNamedExports();
-                            return null;
-                        }
+                    if (comptime FeatureFlags.commonjs_to_esm) {
+                        if (!p.is_control_flow_dead and id.ref.eql(p.exports_ref) and !p.commonjs_named_exports_deoptimized) {
+                            if (identifier_opts.is_delete_target) {
+                                p.deoptimizeCommonJSNamedExports();
+                                return null;
+                            }
 
-                        var named_export_entry = p.commonjs_named_exports.getOrPut(p.allocator, name) catch unreachable;
-                        if (!named_export_entry.found_existing) {
-                            const new_ref = p.newSymbol(
-                                .other,
-                                std.fmt.allocPrint(p.allocator, "${any}", .{strings.fmtIdentifier(name)}) catch unreachable,
-                            ) catch unreachable;
-                            named_export_entry.value_ptr.* = .{
-                                .loc_ref = LocRef{
-                                    .loc = name_loc,
-                                    .ref = new_ref,
+                            var named_export_entry = p.commonjs_named_exports.getOrPut(p.allocator, name) catch unreachable;
+                            if (!named_export_entry.found_existing) {
+                                const new_ref = p.newSymbol(
+                                    .other,
+                                    std.fmt.allocPrint(p.allocator, "${any}", .{strings.fmtIdentifier(name)}) catch unreachable,
+                                ) catch unreachable;
+                                named_export_entry.value_ptr.* = .{
+                                    .loc_ref = LocRef{
+                                        .loc = name_loc,
+                                        .ref = new_ref,
+                                    },
+                                    .needs_decl = true,
+                                };
+                                if (p.commonjs_named_exports_needs_conversion == std.math.maxInt(u32))
+                                    p.commonjs_named_exports_needs_conversion = @truncate(u32, p.commonjs_named_exports.count() - 1);
+                            }
+
+                            const ref = named_export_entry.value_ptr.*.loc_ref.ref.?;
+                            p.ignoreUsage(id.ref);
+                            p.recordUsage(ref);
+
+                            return p.newExpr(
+                                E.CommonJSExportIdentifier{
+                                    .ref = ref,
                                 },
-                                .needs_decl = true,
-                            };
-                            if (p.commonjs_named_exports_needs_conversion == std.math.maxInt(u32))
-                                p.commonjs_named_exports_needs_conversion = @truncate(u32, p.commonjs_named_exports.count() - 1);
+                                name_loc,
+                            );
                         }
-
-                        const ref = named_export_entry.value_ptr.*.loc_ref.ref.?;
-                        p.ignoreUsage(id.ref);
-                        p.recordUsage(ref);
-
-                        return p.newExpr(
-                            E.CommonJSExportIdentifier{
-                                .ref = ref,
-                            },
-                            name_loc,
-                        );
                     }
 
                     // If this is a known enum value, inline the value of the enum
@@ -16786,71 +16792,73 @@ fn NewParser_(
                 .s_expr => |data| {
                     p.stmt_expr_value = data.value.data;
                     const is_top_level = p.current_scope == p.module_scope;
-
-                    p.commonjs_named_exports_needs_conversion = if (is_top_level)
-                        std.math.maxInt(u32)
-                    else
-                        p.commonjs_named_exports_needs_conversion;
+                    if (comptime FeatureFlags.commonjs_to_esm) {
+                        p.commonjs_named_exports_needs_conversion = if (is_top_level)
+                            std.math.maxInt(u32)
+                        else
+                            p.commonjs_named_exports_needs_conversion;
+                    }
 
                     data.value = p.visitExpr(data.value);
 
                     // simplify unused
                     data.value = SideEffects.simpifyUnusedExpr(p, data.value) orelse data.value.toEmpty();
 
-                    if (is_top_level) {
-                        if (data.value.data == .e_binary) {
-                            const to_convert = p.commonjs_named_exports_needs_conversion;
-                            if (to_convert != std.math.maxInt(u32)) {
-                                p.commonjs_named_exports_needs_conversion = std.math.maxInt(u32);
-                                convert: {
-                                    const bin: *E.Binary = data.value.data.e_binary;
-                                    if (bin.op == .bin_assign and bin.left.data == .e_commonjs_export_identifier) {
-                                        var last = &p.commonjs_named_exports.values()[to_convert];
-                                        if (!last.needs_decl) break :convert;
-                                        last.needs_decl = false;
+                    if (comptime FeatureFlags.commonjs_to_esm) {
+                        if (is_top_level) {
+                            if (data.value.data == .e_binary) {
+                                const to_convert = p.commonjs_named_exports_needs_conversion;
+                                if (to_convert != std.math.maxInt(u32)) {
+                                    p.commonjs_named_exports_needs_conversion = std.math.maxInt(u32);
+                                    convert: {
+                                        const bin: *E.Binary = data.value.data.e_binary;
+                                        if (bin.op == .bin_assign and bin.left.data == .e_commonjs_export_identifier) {
+                                            var last = &p.commonjs_named_exports.values()[to_convert];
+                                            if (!last.needs_decl) break :convert;
+                                            last.needs_decl = false;
 
-                                        var decls = p.allocator.alloc(Decl, 1) catch unreachable;
-                                        const ref = bin.left.data.e_commonjs_export_identifier.ref;
-                                        decls[0] = .{
-                                            .binding = p.b(B.Identifier{ .ref = ref }, bin.left.loc),
-                                            .value = bin.right,
-                                        };
-                                        p.module_scope.generated.push(p.allocator, ref) catch unreachable;
-                                        p.recordDeclaredSymbol(ref) catch unreachable;
-                                        p.ignoreUsage(ref);
-                                        p.es6_export_keyword.loc = stmt.loc;
-                                        p.es6_export_keyword.len = 5;
-                                        var clause_items = p.allocator.alloc(js_ast.ClauseItem, 1) catch unreachable;
-                                        clause_items[0] = js_ast.ClauseItem{
-                                            // We want the generated name to not conflict
-                                            .alias = p.commonjs_named_exports.keys()[to_convert],
-                                            .alias_loc = bin.left.loc,
-                                            .name = .{
-                                                .ref = ref,
-                                                .loc = last.loc_ref.loc,
-                                            },
-                                        };
-                                        stmts.appendSlice(
-                                            &[_]Stmt{
-                                                p.s(
-                                                    S.Local{
-                                                        .kind = .k_var,
-                                                        .is_export = false,
-                                                        .decls = decls,
-                                                    },
-                                                    stmt.loc,
-                                                ),
-                                                p.s(
-                                                    S.ExportClause{
-                                                        .items = clause_items,
-                                                        .is_single_line = true,
-                                                    },
-                                                    stmt.loc,
-                                                ),
-                                            },
-                                        ) catch unreachable;
+                                            var decls = p.allocator.alloc(Decl, 1) catch unreachable;
+                                            const ref = bin.left.data.e_commonjs_export_identifier.ref;
+                                            decls[0] = .{
+                                                .binding = p.b(B.Identifier{ .ref = ref }, bin.left.loc),
+                                                .value = bin.right,
+                                            };
+                                            p.recordDeclaredSymbol(ref) catch unreachable;
+                                            p.ignoreUsage(ref);
+                                            p.es6_export_keyword.loc = stmt.loc;
+                                            p.es6_export_keyword.len = 5;
+                                            var clause_items = p.allocator.alloc(js_ast.ClauseItem, 1) catch unreachable;
+                                            clause_items[0] = js_ast.ClauseItem{
+                                                // We want the generated name to not conflict
+                                                .alias = p.commonjs_named_exports.keys()[to_convert],
+                                                .alias_loc = bin.left.loc,
+                                                .name = .{
+                                                    .ref = ref,
+                                                    .loc = last.loc_ref.loc,
+                                                },
+                                            };
+                                            stmts.appendSlice(
+                                                &[_]Stmt{
+                                                    p.s(
+                                                        S.Local{
+                                                            .kind = .k_var,
+                                                            .is_export = false,
+                                                            .decls = decls,
+                                                        },
+                                                        stmt.loc,
+                                                    ),
+                                                    p.s(
+                                                        S.ExportClause{
+                                                            .items = clause_items,
+                                                            .is_single_line = true,
+                                                        },
+                                                        stmt.loc,
+                                                    ),
+                                                },
+                                            ) catch unreachable;
 
-                                        return;
+                                            return;
+                                        }
                                     }
                                 }
                             }

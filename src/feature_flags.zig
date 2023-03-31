@@ -121,3 +121,5 @@ pub const same_target_becomes_destructuring = true;
 pub const react_server_components = true;
 
 pub const help_catch_memory_issues = @import("bun").Environment.allow_assert;
+
+pub const commonjs_to_esm = false;

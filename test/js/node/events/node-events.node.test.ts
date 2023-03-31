@@ -5,7 +5,11 @@ const { expect, assert, describe, it, createCallCheckCtx, createDoneDotAll } = c
 // const NodeEventTarget = globalThis.EventTarget;
 
 describe("node:events.on (EE async iterator)", () => {
-  it("should return an async iterator", async () => {
+  it("should return an async iterator", async done => {
+    let resolveDeferred: () => void;
+    const deferred = new Promise(resolve => {
+      resolveDeferred = resolve as () => void;
+    });
     const ee = new EventEmitter();
     process.nextTick(() => {
       ee.emit("foo", "bar");
@@ -13,12 +17,14 @@ describe("node:events.on (EE async iterator)", () => {
       // that it does not show up in the iterable
       ee.emit("bar", 24);
       ee.emit("foo", 42);
+      resolveDeferred(); // Resolve in the next tick
     });
 
     const iterable = on(ee, "foo");
     const expected = [["bar"], [42]];
 
     for await (const event of iterable) {
+      console.log(event);
       const current = expected.shift();
 
       assert.deepStrictEqual(current, event);
@@ -27,19 +33,20 @@ describe("node:events.on (EE async iterator)", () => {
         break;
       }
     }
-    assert.strictEqual(ee.listenerCount("foo"), 0);
-    assert.strictEqual(ee.listenerCount("error"), 0);
+
+    // This is necessary due to how we try to run emits on next tick
+    deferred
+      .then(() => {
+        assert.strictEqual(ee.listenerCount("foo"), 0);
+        assert.strictEqual(ee.listenerCount("error"), 0);
+      })
+      .catch(done);
   });
 
-  // async function invalidArgType() {
-  //   assert.throws(
-  //     () => on({}, "foo"),
-  //     common.expectsError({
-  //       code: "ERR_INVALID_ARG_TYPE",
-  //       name: "TypeError",
-  //     }),
-  //   );
-  // }
+  // TODO: Fix undefined is not a function
+  it.skip("should throw an error when the first argument is not an EventEmitter", async () => {
+    expect(on({} as any, "foo")).toThrow(TypeError);
+  });
 
   it("should throw an error when an error event is emitted", async () => {
     const ee = new EventEmitter();
@@ -65,31 +72,48 @@ describe("node:events.on (EE async iterator)", () => {
     assert.strictEqual(looped, false);
   });
 
-  // async function errorDelayed() {
-  //   const ee = new EventEmitter();
-  //   const _err = new Error("kaboom");
-  //   process.nextTick(() => {
-  //     ee.emit("foo", 42);
-  //     ee.emit("error", _err);
-  //   });
+  it("should throw when error emitted", async done => {
+    let resolveDeferred: () => void;
+    const deferred = new Promise(resolve => {
+      resolveDeferred = resolve as () => void;
+    });
 
-  //   const iterable = on(ee, "foo");
-  //   const expected = [[42]];
-  //   let thrown = false;
+    const ee = new EventEmitter();
+    const _err = new Error("kaboom");
+    process.nextTick(() => {
+      ee.emit("foo", 42);
+      ee.emit("error", _err);
+      resolveDeferred();
+    });
 
-  //   try {
-  //     for await (const event of iterable) {
-  //       const current = expected.shift();
-  //       assert.deepStrictEqual(current, event);
-  //     }
-  //   } catch (err) {
-  //     thrown = true;
-  //     assert.strictEqual(err, _err);
-  //   }
-  //   assert.strictEqual(thrown, true);
-  //   assert.strictEqual(ee.listenerCount("foo"), 0);
-  //   assert.strictEqual(ee.listenerCount("error"), 0);
-  // }
+    const iterable = on(ee, "foo");
+    const expected = [[42]];
+
+    const current = [] as (number[] | undefined)[];
+    const received = [] as (number[] | undefined)[];
+    let thrownErr: any;
+
+    try {
+      for await (const event of iterable) {
+        current.push(expected.shift());
+        received.push(event);
+      }
+    } catch (err) {
+      console.log(err);
+      thrownErr = err;
+    }
+
+    deferred
+      .then(() => {
+        assert.deepStrictEqual(current, received);
+        assert.strictEqual(ee.listenerCount("foo"), 0);
+        assert.strictEqual(ee.listenerCount("error"), 0);
+
+        expect(thrownErr).toBeInstanceOf(Error);
+        assert.strictEqual(thrownErr, _err);
+      })
+      .catch(done);
+  });
 
   // async function throwInLoop() {
   //   const ee = new EventEmitter();

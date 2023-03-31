@@ -892,6 +892,50 @@ const ParseTask = struct {
                         continue;
                     }
 
+                    if (platform.isBun()) {
+                        if (JSC.HardcodedModule.Aliases.get(import_record.path.text)) |replacement| {
+                            import_record.path.text = replacement.path;
+                            import_record.tag = replacement.tag;
+                            import_record.source_index = Index.invalid;
+                            continue;
+                        }
+
+                        if (JSC.DisabledModule.has(import_record.path.text)) {
+                            import_record.path.is_disabled = true;
+                            import_record.do_commonjs_transform_in_printer = true;
+                            import_record.source_index = Index.invalid;
+                            continue;
+                        }
+
+                        if (bundler.options.rewrite_jest_for_tests) {
+                            if (strings.eqlComptime(
+                                import_record.path.text,
+                                "@jest/globals",
+                            ) or strings.eqlComptime(
+                                import_record.path.text,
+                                "vitest",
+                            )) {
+                                import_record.path.namespace = "bun";
+                                import_record.tag = .bun_test;
+                                import_record.path.text = "test";
+                                continue;
+                            }
+                        }
+
+                        if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
+                            import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
+                            import_record.path.namespace = "bun";
+                            import_record.source_index = Index.invalid;
+
+                            if (strings.eqlComptime(import_record.path.text, "test")) {
+                                import_record.tag = .bun_test;
+                            }
+
+                            // don't link bun
+                            continue;
+                        }
+                    }
+
                     if (resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |_resolved_import| {
                         var resolve_result = _resolved_import;
                         // if there were errors, lets go ahead and collect them all

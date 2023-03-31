@@ -3155,7 +3155,7 @@ function encodeBunInstall(message, bb) {
   bb.writeByte(0);
 }
 
-function decodeReactClientComponentModule(bb) {
+function decodeClientServerModule(bb) {
   var result = {};
 
   result["moduleId"] = bb.readUint32();
@@ -3165,7 +3165,7 @@ function decodeReactClientComponentModule(bb) {
   return result;
 }
 
-function encodeReactClientComponentModule(message, bb) {
+function encodeClientServerModule(message, bb) {
   var value = message["moduleId"];
   if (value != null) {
     bb.writeUint32(value);
@@ -3195,13 +3195,19 @@ function encodeReactClientComponentModule(message, bb) {
   }
 }
 
-function decodeReactClientComponentModuleManifest(bb) {
+function decodeClientServerModuleManifest(bb) {
   var result = {};
 
   result["version"] = bb.readUint32();
   var length = bb.readVarUint();
-  var values = (result["modules"] = Array(length));
-  for (var i = 0; i < length; i++) values[i] = decodeReactClientComponentModule(bb);
+  var values = (result["clientModules"] = Array(length));
+  for (var i = 0; i < length; i++) values[i] = decodeClientServerModule(bb);
+  var length = bb.readVarUint();
+  var values = (result["serverModules"] = Array(length));
+  for (var i = 0; i < length; i++) values[i] = decodeClientServerModule(bb);
+  var length = bb.readVarUint();
+  var values = (result["ssrModules"] = Array(length));
+  for (var i = 0; i < length; i++) values[i] = decodeClientServerModule(bb);
   var length = bb.readVarUint();
   var values = (result["exportNames"] = Array(length));
   for (var i = 0; i < length; i++) values[i] = decodeStringPointer(bb);
@@ -3209,7 +3215,7 @@ function decodeReactClientComponentModuleManifest(bb) {
   return result;
 }
 
-function encodeReactClientComponentModuleManifest(message, bb) {
+function encodeClientServerModuleManifest(message, bb) {
   var value = message["version"];
   if (value != null) {
     bb.writeUint32(value);
@@ -3217,17 +3223,43 @@ function encodeReactClientComponentModuleManifest(message, bb) {
     throw new Error('Missing required field "version"');
   }
 
-  var value = message["modules"];
+  var value = message["clientModules"];
   if (value != null) {
     var values = value,
       n = values.length;
     bb.writeVarUint(n);
     for (var i = 0; i < n; i++) {
       value = values[i];
-      encodeReactClientComponentModule(value, bb);
+      encodeClientServerModule(value, bb);
     }
   } else {
-    throw new Error('Missing required field "modules"');
+    throw new Error('Missing required field "clientModules"');
+  }
+
+  var value = message["serverModules"];
+  if (value != null) {
+    var values = value,
+      n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      encodeClientServerModule(value, bb);
+    }
+  } else {
+    throw new Error('Missing required field "serverModules"');
+  }
+
+  var value = message["ssrModules"];
+  if (value != null) {
+    var values = value,
+      n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      encodeClientServerModule(value, bb);
+    }
+  } else {
+    throw new Error('Missing required field "ssrModules"');
   }
 
   var value = message["exportNames"];
@@ -3393,7 +3425,7 @@ export { decodeNPMRegistryMap };
 export { encodeNPMRegistryMap };
 export { decodeBunInstall };
 export { encodeBunInstall };
-export { decodeReactClientComponentModule };
-export { encodeReactClientComponentModule };
-export { decodeReactClientComponentModuleManifest };
-export { encodeReactClientComponentModuleManifest };
+export { decodeClientServerModule };
+export { encodeClientServerModule };
+export { decodeClientServerModuleManifest };
+export { encodeClientServerModuleManifest };

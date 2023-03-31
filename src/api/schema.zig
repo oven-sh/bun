@@ -3040,7 +3040,7 @@ pub const Api = struct {
         }
     };
 
-    pub const ReactClientComponentModule = struct {
+    pub const ClientServerModule = struct {
         /// moduleId
         module_id: u32 = 0,
 
@@ -3053,8 +3053,8 @@ pub const Api = struct {
         /// exportNames
         export_names: StringPointer,
 
-        pub fn decode(reader: anytype) anyerror!ReactClientComponentModule {
-            var this = std.mem.zeroes(ReactClientComponentModule);
+        pub fn decode(reader: anytype) anyerror!ClientServerModule {
+            var this = std.mem.zeroes(ClientServerModule);
 
             this.module_id = try reader.readValue(u32);
             this.input_name = try reader.readValue(StringPointer);
@@ -3071,12 +3071,18 @@ pub const Api = struct {
         }
     };
 
-    pub const ReactClientComponentModuleManifest = struct {
+    pub const ClientServerModuleManifest = struct {
         /// version
         version: u32 = 0,
 
-        /// modules
-        modules: []const ReactClientComponentModule,
+        /// clientModules
+        client_modules: []const ClientServerModule,
+
+        /// serverModules
+        server_modules: []const ClientServerModule,
+
+        /// ssrModules
+        ssr_modules: []const ClientServerModule,
 
         /// exportNames
         export_names: []const StringPointer,
@@ -3084,11 +3090,13 @@ pub const Api = struct {
         /// contents
         contents: []const u8,
 
-        pub fn decode(reader: anytype) anyerror!ReactClientComponentModuleManifest {
-            var this = std.mem.zeroes(ReactClientComponentModuleManifest);
+        pub fn decode(reader: anytype) anyerror!ClientServerModuleManifest {
+            var this = std.mem.zeroes(ClientServerModuleManifest);
 
             this.version = try reader.readValue(u32);
-            this.modules = try reader.readArray(ReactClientComponentModule);
+            this.client_modules = try reader.readArray(ClientServerModule);
+            this.server_modules = try reader.readArray(ClientServerModule);
+            this.ssr_modules = try reader.readArray(ClientServerModule);
             this.export_names = try reader.readArray(StringPointer);
             this.contents = try reader.readArray(u8);
             return this;
@@ -3096,7 +3104,9 @@ pub const Api = struct {
 
         pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
             try writer.writeInt(this.version);
-            try writer.writeArray(ReactClientComponentModule, this.modules);
+            try writer.writeArray(ClientServerModule, this.client_modules);
+            try writer.writeArray(ClientServerModule, this.server_modules);
+            try writer.writeArray(ClientServerModule, this.ssr_modules);
             try writer.writeArray(StringPointer, this.export_names);
             try writer.writeArray(u8, this.contents);
         }

@@ -702,16 +702,18 @@ export interface BunInstall {
   global_bin_dir?: string;
 }
 
-export interface ReactClientComponentModule {
+export interface ClientServerModule {
   moduleId: uint32;
   inputName: StringPointer;
   assetName: StringPointer;
   exportNames: StringPointer;
 }
 
-export interface ReactClientComponentModuleManifest {
+export interface ClientServerModuleManifest {
   version: uint32;
-  modules: ReactClientComponentModule[];
+  clientModules: ClientServerModule[];
+  serverModules: ClientServerModule[];
+  ssrModules: ClientServerModule[];
   exportNames: StringPointer[];
   contents: Uint8Array;
 }
@@ -830,12 +832,7 @@ export declare function encodeNPMRegistryMap(message: NPMRegistryMap, bb: ByteBu
 export declare function decodeNPMRegistryMap(buffer: ByteBuffer): NPMRegistryMap;
 export declare function encodeBunInstall(message: BunInstall, bb: ByteBuffer): void;
 export declare function decodeBunInstall(buffer: ByteBuffer): BunInstall;
-export declare function encodeReactClientComponentModule(message: ReactClientComponentModule, bb: ByteBuffer): void;
-export declare function decodeReactClientComponentModule(buffer: ByteBuffer): ReactClientComponentModule;
-export declare function encodeReactClientComponentModuleManifest(
-  message: ReactClientComponentModuleManifest,
-  bb: ByteBuffer,
-): void;
-export declare function decodeReactClientComponentModuleManifest(
-  buffer: ByteBuffer,
-): ReactClientComponentModuleManifest;
+export declare function encodeClientServerModule(message: ClientServerModule, bb: ByteBuffer): void;
+export declare function decodeClientServerModule(buffer: ByteBuffer): ClientServerModule;
+export declare function encodeClientServerModuleManifest(message: ClientServerModuleManifest, bb: ByteBuffer): void;
+export declare function decodeClientServerModuleManifest(buffer: ByteBuffer): ClientServerModuleManifest;

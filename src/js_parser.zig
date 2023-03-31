@@ -2757,12 +2757,13 @@ pub const Parser = struct {
 
         if (p.commonjs_named_exports.count() > 0) {
             var export_refs = p.commonjs_named_exports.values();
+            var export_names = p.commonjs_named_exports.keys();
 
             if (!p.commonjs_named_exports_deoptimized) {
                 // We make this safe by doing toCommonJS() at runtimes
-                for (export_refs) |*export_ref| {
+                for (export_refs, export_names) |*export_ref, alias| {
                     if (export_ref.needs_decl) {
-                        var this_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+                        var this_stmts = p.allocator.alloc(Stmt, 2) catch unreachable;
                         var decls = p.allocator.alloc(Decl, 1) catch unreachable;
                         const ref = export_ref.loc_ref.ref.?;
                         decls[0] = .{
@@ -2775,8 +2776,23 @@ pub const Parser = struct {
                         this_stmts[0] = p.s(
                             S.Local{
                                 .kind = .k_var,
-                                .is_export = true,
+                                .is_export = false,
                                 .decls = decls,
+                            },
+                            export_ref.loc_ref.loc,
+                        );
+
+                        var clause_items = p.allocator.alloc(js_ast.ClauseItem, 1) catch unreachable;
+                        clause_items[0] = js_ast.ClauseItem{
+                            .alias = alias,
+                            .alias_loc = export_ref.loc_ref.loc,
+                            .name = export_ref.loc_ref,
+                        };
+
+                        this_stmts[1] = p.s(
+                            S.ExportClause{
+                                .items = clause_items,
+                                .is_single_line = true,
                             },
                             export_ref.loc_ref.loc,
                         );
@@ -16170,13 +16186,7 @@ fn NewParser_(
                         if (!named_export_entry.found_existing) {
                             const new_ref = p.newSymbol(
                                 .other,
-                                if (p.options.bundle)
-                                    MutableString.ensureValidIdentifier(
-                                        name,
-                                        p.allocator,
-                                    ) catch unreachable
-                                else
-                                    std.fmt.allocPrint(p.allocator, "exports_{any}", .{strings.fmtIdentifier(name)}) catch unreachable,
+                                std.fmt.allocPrint(p.allocator, "${any}", .{strings.fmtIdentifier(name)}) catch unreachable,
                             ) catch unreachable;
                             named_export_entry.value_ptr.* = .{
                                 .loc_ref = LocRef{
@@ -16810,12 +16820,35 @@ fn NewParser_(
                                         p.ignoreUsage(ref);
                                         p.es6_export_keyword.loc = stmt.loc;
                                         p.es6_export_keyword.len = 5;
-                                        const new_stmt = p.s(S.Local{
-                                            .kind = .k_var,
-                                            .is_export = true,
-                                            .decls = decls,
-                                        }, stmt.loc);
-                                        stmts.append(new_stmt) catch unreachable;
+                                        var clause_items = p.allocator.alloc(js_ast.ClauseItem, 1) catch unreachable;
+                                        clause_items[0] = js_ast.ClauseItem{
+                                            // We want the generated name to not conflict
+                                            .alias = p.commonjs_named_exports.keys()[to_convert],
+                                            .alias_loc = bin.left.loc,
+                                            .name = .{
+                                                .ref = ref,
+                                                .loc = last.loc_ref.loc,
+                                            },
+                                        };
+                                        stmts.appendSlice(
+                                            &[_]Stmt{
+                                                p.s(
+                                                    S.Local{
+                                                        .kind = .k_var,
+                                                        .is_export = false,
+                                                        .decls = decls,
+                                                    },
+                                                    stmt.loc,
+                                                ),
+                                                p.s(
+                                                    S.ExportClause{
+                                                        .items = clause_items,
+                                                        .is_single_line = true,
+                                                    },
+                                                    stmt.loc,
+                                                ),
+                                            },
+                                        ) catch unreachable;
 
                                         return;
                                     }

@@ -373,7 +373,8 @@ const NetworkTask = struct {
         tarball: ExtractTarball,
         scope: *const Npm.Registry.Scope,
     ) !void {
-        if (tarball.url.len == 0) {
+        const tarball_url = tarball.url.slice();
+        if (tarball_url.len == 0) {
             this.url_buf = try ExtractTarball.buildURL(
                 scope.url.href,
                 tarball.name,
@@ -381,7 +382,7 @@ const NetworkTask = struct {
                 this.package_manager.lockfile.buffers.string_bytes.items,
             );
         } else {
-            this.url_buf = tarball.url;
+            this.url_buf = tarball_url;
         }
 
         this.response_buffer = try MutableString.init(allocator, 0);
@@ -704,7 +705,7 @@ const Task = struct {
     }
 
     fn readAndExtract(allocator: std.mem.Allocator, tarball: ExtractTarball) !ExtractData {
-        const file = try std.fs.cwd().openFile(tarball.url, .{ .mode = .read_only });
+        const file = try std.fs.cwd().openFile(tarball.url.slice(), .{ .mode = .read_only });
         defer file.close();
         const bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
         defer allocator.free(bytes);
@@ -2000,15 +2001,15 @@ pub const PackageManager = struct {
         return this.allocator.create(NetworkTask) catch @panic("Memory allocation failure creating NetworkTask!");
     }
 
-    fn allocGitHubURL(this: *const PackageManager, repository: *const Repository) !string {
+    fn buildGitHubURL(this: *const PackageManager, buf: []u8, repository: *const Repository) string {
         var github_api_domain: string = "api.github.com";
         if (this.env.map.get("GITHUB_API_DOMAIN")) |api_domain| {
             if (api_domain.len > 0) {
                 github_api_domain = api_domain;
             }
         }
-        return try std.fmt.allocPrint(
-            this.allocator,
+        return std.fmt.bufPrintZ(
+            buf,
             "https://{s}/repos/{s}/{s}/tarball/{s}",
             .{
                 github_api_domain,
@@ -2016,7 +2017,7 @@ pub const PackageManager = struct {
                 this.lockfile.str(&repository.repo),
                 this.lockfile.str(&repository.committish),
             },
-        );
+        ) catch unreachable;
     }
 
     pub fn cachedGitFolderNamePrint(buf: []u8, resolved: string) stringZ {
@@ -2437,7 +2438,11 @@ pub const PackageManager = struct {
                 .temp_dir = this.getTemporaryDirectory().dir,
                 .dependency_id = dependency_id,
                 .integrity = package.meta.integrity,
-                .url = url,
+                .url = try strings.StringOrTinyString.initAppendIfNeeded(
+                    url,
+                    *FileSystem.FilenameStore,
+                    &FileSystem.FilenameStore.instance,
+                ),
             },
             scope,
         );
@@ -2727,7 +2732,11 @@ pub const PackageManager = struct {
                         .cache_dir = this.getCacheDirectory().dir,
                         .temp_dir = this.getTemporaryDirectory().dir,
                         .dependency_id = dependency_id,
-                        .url = path,
+                        .url = strings.StringOrTinyString.initAppendIfNeeded(
+                            path,
+                            *FileSystem.FilenameStore,
+                            &FileSystem.FilenameStore.instance,
+                        ) catch unreachable,
                     },
                 },
             },
@@ -3100,7 +3109,8 @@ pub const PackageManager = struct {
                     return;
                 }
 
-                const url = this.allocGitHubURL(dep) catch unreachable;
+                var url_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                const url = this.buildGitHubURL(&url_buf, dep);
                 const task_id = Task.Id.forTarball(url);
                 var entry = this.task_queue.getOrPutContext(this.allocator, task_id, .{}) catch unreachable;
                 if (!entry.found_existing) {
@@ -3922,7 +3932,7 @@ pub const PackageManager = struct {
                                 err,
                                 switch (task.tag) {
                                     .extract => task.request.extract.network.url_buf,
-                                    .local_tarball => task.request.local_tarball.tarball.url,
+                                    .local_tarball => task.request.local_tarball.tarball.url.slice(),
                                     else => unreachable,
                                 },
                             );
@@ -6587,10 +6597,11 @@ pub const PackageManager = struct {
                                     );
                                 },
                                 .github => {
+                                    var url_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                                     this.manager.enqueueTarballForDownload(
                                         dependency_id,
                                         package_id,
-                                        this.manager.allocGitHubURL(&resolution.value.github) catch unreachable,
+                                        this.manager.buildGitHubURL(&url_buf, &resolution.value.github),
                                         .{ .node_modules_folder = this.node_modules_folder.dir.fd },
                                     );
                                 },

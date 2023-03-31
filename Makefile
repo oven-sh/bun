@@ -1550,7 +1550,7 @@ $(OBJ_DIR)/%.o: src/bun.js/bindings/webcrypto/%.cpp
 		-fno-rtti \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM) \
-		-g3 -c -o $@ $<
+		-c -o $@ $<
 
 # $(DEBUG_OBJ_DIR) is not included here because it breaks
 # detecting if a file needs to be rebuilt

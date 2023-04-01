@@ -2026,6 +2026,14 @@ pub const ModuleLoader = struct {
                         .hash = 0,
                     };
                 },
+                .@"node:v8" => jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:v8", "v8.exports.js"),
+                .@"node:trace_events" => jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:trace_events", "trace_events.exports.js"),
+                .@"node:repl" => jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:repl", "repl.exports.js"),
+                .@"node:inspector" => jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:inspector", "inspector.exports.js"),
+                .@"node:http2" => jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:http2", "http2.exports.js"),
+                .@"node:diagnostics_channel" => jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:diagnostics_channel", "diagnostics_channel.exports.js"),
+                .@"node:dgram" => jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:dgram", "dgram.exports.js"),
+                .@"node:cluster" => jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:cluster", "cluster.exports.js"),
             }
         } else if (strings.hasPrefixComptime(specifier, js_ast.Macro.namespaceWithColon)) {
             if (jsc_vm.macro_entry_points.get(MacroEntryPoint.generateIDFromSpecifier(specifier))) |entry| {
@@ -2184,6 +2192,17 @@ pub const HardcodedModule = enum {
     undici,
     ws,
     @"node:wasi",
+
+    // These are all not implemented yet, but are stubbed
+    @"node:v8",
+    @"node:trace_events",
+    @"node:repl",
+    @"node:inspector",
+    @"node:http2",
+    @"node:diagnostics_channel",
+    @"node:dgram",
+    @"node:cluster",
+
     /// Already resolved modules go in here.
     /// This does not remap the module name, it is just a hash table.
     /// Do not put modules that have aliases in here
@@ -2199,17 +2218,22 @@ pub const HardcodedModule = enum {
             .{ "depd", HardcodedModule.depd },
             .{ "detect-libc", HardcodedModule.@"detect-libc" },
             .{ "node:assert", HardcodedModule.@"node:assert" },
-            .{ "node:buffer", HardcodedModule.@"node:buffer" },
             .{ "node:async_hooks", HardcodedModule.@"node:async_hooks" },
+            .{ "node:buffer", HardcodedModule.@"node:buffer" },
             .{ "node:child_process", HardcodedModule.@"node:child_process" },
+            .{ "node:cluster", HardcodedModule.@"node:cluster" },
             .{ "node:crypto", HardcodedModule.@"node:crypto" },
+            .{ "node:dgram", HardcodedModule.@"node:dgram" },
+            .{ "node:diagnostics_channel", HardcodedModule.@"node:diagnostics_channel" },
             .{ "node:dns", HardcodedModule.@"node:dns" },
             .{ "node:dns/promises", HardcodedModule.@"node:dns/promises" },
             .{ "node:events", HardcodedModule.@"node:events" },
             .{ "node:fs", HardcodedModule.@"node:fs" },
             .{ "node:fs/promises", HardcodedModule.@"node:fs/promises" },
             .{ "node:http", HardcodedModule.@"node:http" },
+            .{ "node:http2", HardcodedModule.@"node:http2" },
             .{ "node:https", HardcodedModule.@"node:https" },
+            .{ "node:inspector", HardcodedModule.@"node:inspector" },
             .{ "node:module", HardcodedModule.@"node:module" },
             .{ "node:net", HardcodedModule.@"node:net" },
             .{ "node:os", HardcodedModule.@"node:os" },
@@ -2220,6 +2244,7 @@ pub const HardcodedModule = enum {
             .{ "node:process", HardcodedModule.@"node:process" },
             .{ "node:readline", HardcodedModule.@"node:readline" },
             .{ "node:readline/promises", HardcodedModule.@"node:readline/promises" },
+            .{ "node:repl", HardcodedModule.@"node:repl" },
             .{ "node:stream", HardcodedModule.@"node:stream" },
             .{ "node:stream/consumers", HardcodedModule.@"node:stream/consumers" },
             .{ "node:stream/web", HardcodedModule.@"node:stream/web" },
@@ -2227,10 +2252,12 @@ pub const HardcodedModule = enum {
             .{ "node:timers", HardcodedModule.@"node:timers" },
             .{ "node:timers/promises", HardcodedModule.@"node:timers/promises" },
             .{ "node:tls", HardcodedModule.@"node:tls" },
+            .{ "node:trace_events", HardcodedModule.@"node:trace_events" },
             .{ "node:tty", HardcodedModule.@"node:tty" },
             .{ "node:url", HardcodedModule.@"node:url" },
             .{ "node:util", HardcodedModule.@"node:util" },
             .{ "node:util/types", HardcodedModule.@"node:util/types" },
+            .{ "node:v8", HardcodedModule.@"node:v8" },
             .{ "node:wasi", HardcodedModule.@"node:wasi" },
             .{ "node:zlib", HardcodedModule.@"node:zlib" },
             .{ "undici", HardcodedModule.undici },
@@ -2332,8 +2359,40 @@ pub const HardcodedModule = enum {
             .{ "ws/lib/websocket", .{ .path = "ws" } },
             .{ "zlib", .{ .path = "node:zlib" } },
 
-            // // Prisma has an edge build, but has not set it in package.json exports
-            // .{ "@prisma/client", .{ .path = "@prisma/client/edge", .tag = .none } },
+            // These are returned in builtinModules, but probably not many packages use them
+            // so we will just alias them.
+            .{ "_http_agent", .{ .path = "node:http" } },
+            .{ "_http_client", .{ .path = "node:http" } },
+            .{ "_http_common", .{ .path = "node:http" } },
+            .{ "_http_incoming", .{ .path = "node:http" } },
+            .{ "_http_outgoing", .{ .path = "node:http" } },
+            .{ "_http_server", .{ .path = "node:http" } },
+            .{ "_stream_duplex", .{ .path = "node:stream" } },
+            .{ "_stream_passthrough", .{ .path = "node:stream" } },
+            .{ "_stream_readable", .{ .path = "node:stream" } },
+            .{ "_stream_transform", .{ .path = "node:stream" } },
+            .{ "_stream_writable", .{ .path = "node:stream" } },
+            .{ "_tls_wrap", .{ .path = "node:tls" } },
+            .{ "_tls_common", .{ .path = "node:tls" } },
+
+            // These are not actually implemented, they are stubbed out
+            .{ "v8", .{ .path = "node:v8" } },
+            .{ "trace_events", .{ .path = "node:trace_events" } },
+            .{ "repl", .{ .path = "node:repl" } },
+            .{ "inspector", .{ .path = "node:inspector" } },
+            .{ "http2", .{ .path = "node:http2" } },
+            .{ "diagnostics_channel", .{ .path = "node:diagnostics_channel" } },
+            .{ "dgram", .{ .path = "node:dgram" } },
+            .{ "cluster", .{ .path = "node:cluster" } },
+
+            .{ "node:v8", .{ .path = "node:v8" } },
+            .{ "node:trace_events", .{ .path = "node:trace_events" } },
+            .{ "node:repl", .{ .path = "node:repl" } },
+            .{ "node:inspector", .{ .path = "node:inspector" } },
+            .{ "node:http2", .{ .path = "node:http2" } },
+            .{ "node:diagnostics_channel", .{ .path = "node:diagnostics_channel" } },
+            .{ "node:dgram", .{ .path = "node:dgram" } },
+            .{ "node:cluster", .{ .path = "node:cluster" } },
         },
     );
 };
@@ -2341,11 +2400,18 @@ pub const HardcodedModule = enum {
 pub const DisabledModule = bun.ComptimeStringMap(
     void,
     .{
-        .{"async_hooks"},
-        .{"node:async_hooks"},
-        .{"node:tls"},
-        .{"node:worker_threads"},
-        .{"tls"},
+        // Stubbing out worker_threads will break esbuild.
         .{"worker_threads"},
+        .{"node:worker_threads"},
     },
 );
+
+fn jsResolvedSource(builtins: []const u8, comptime module: HardcodedModule, comptime input: []const u8) ResolvedSource {
+    return ResolvedSource{
+        .allocator = null,
+        .source_code = ZigString.init(jsModuleFromFile(builtins, input)),
+        .specifier = ZigString.init(@tagName(module)),
+        .source_url = ZigString.init(@tagName(module)),
+        .hash = 0,
+    };
+}

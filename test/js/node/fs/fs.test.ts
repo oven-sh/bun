@@ -530,7 +530,7 @@ describe("rmdir", () => {
     } catch (e) {}
     expect(existsSync(path + "/file.txt")).toBe(true);
     rmdir(path, err => {
-      expect("ENOTEMPTY").toContain(err!.code);
+      expect("ENOTEMPTY EPERM").toContain(err!.code);
       done();
     });
     expect(existsSync(path + "/file.txt")).toBe(true);

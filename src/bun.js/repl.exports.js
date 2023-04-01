@@ -24,6 +24,7 @@ function start() {
 }
 
 var repl = {
+  [Symbol.for("CommonJS")]: 0,
   lines: [],
   context: globalThis,
   historyIndex: -1,

@@ -15,7 +15,7 @@ export var SCHED_NONE = 0,
   schedulingPolicy = 2,
   isWorker = false,
   isPrimary = true,
-  isMaster = true;
+  isMaster = true, cluster;
 
 Worker = function Worker() {
   throw new TODO("Worker is not implemented yet in Bun");
@@ -27,7 +27,7 @@ class Cluster extends EventEmitter {
   static isPrimary = true;
   static isMaster = true;
 
-  static Worker = WorkerClass;
+  static Worker = Worker;
 
   fork() {
     throw new TODO();
@@ -49,9 +49,8 @@ class Cluster extends EventEmitter {
   [Symbol.for("CommonJS")] = 0;
 }
 
-const cluster = new Cluster();
+ cluster = new Cluster();
 
 export {
   cluster as default,
-  cluster,
 }

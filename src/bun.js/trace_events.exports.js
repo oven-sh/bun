@@ -11,17 +11,20 @@ function ERR_INVALID_ARG_TYPE(name, type, value) {
   return err;
 }
 
-export function createTracing(opts) {
-  if (typeof opts !== "object" || opts == null) throw new ERR_INVALID_ARG_TYPE("options", "Object", opts);
+function createTracing(opts) {
+  if (typeof opts !== "object" || opts == null) {
+    throw new ERR_INVALID_ARG_TYPE("options", "Object", opts);
+  }
+
   // TODO: validate categories
   return new Tracing(opts);
 }
 
-export function getEnabledCategories() {
+function getEnabledCategories() {
   return "";
 }
 
-const defaultObject = {
+var defaultObject = {
   createTracing,
   getEnabledCategories,
   [Symbol.for("CommonJS")]: 0,

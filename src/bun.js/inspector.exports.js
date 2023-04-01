@@ -52,7 +52,7 @@ const console = {
   context: globalThis,
 };
 
-const defaultObject = {
+var defaultObject = {
   console,
   open,
   close,
@@ -62,5 +62,5 @@ const defaultObject = {
   [Symbol.for("CommonJS")]: 0,
 };
 
-export { console, open, close, url, waitForDebugger, Session, defaultObject };
+export { console, open, close, url, waitForDebugger, Session, defaultObject as default };
 hideFromStack([notimpl, TODO.prototype.constructor, open, close, url, waitForDebugger, Session.prototype.constructor]);

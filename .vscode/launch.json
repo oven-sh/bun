@@ -160,14 +160,74 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "bun build debug stdout",
+      "name": "bun build debug STDOUT",
       "program": "bun-debug",
-      "args": [ "bun", "--react-server-components", "--entry-names=./[name]-[hash].[ext]", "--outdir=out", "--platform=bun", "${file}"],
+      "args": ["bun", "${file}"],
       "cwd": "${file}/../",
       "console": "internalConsole",
+      "env": {}
+    },
+
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun build debug (no splitting, browser entry)",
+      "program": "bun-debug",
+      "args": [
+        "--entry-names=./[name].[ext]",
+        "--outdir=/Users/jarred/Code/bun-rsc/.rsc-no-split",
+        "--platform=browser",
+        "bun",
+        "./quick.tsx"
+      ],
+      "cwd": "/Users/jarred/Code/bun-rsc",
+      "console": "internalConsole",
       "env": {
-        "NODE_ENV" :"production",
-        "GOMAXPROCS": "2",
+        "NODE_ENV": "production"
+        // "BUN_DEBUG_QUIET_LOGS": "1"
+        // "BUN_DUMP_SYMBOLS": "1"
+      }
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun build debug (splitting, rsc)",
+      "program": "bun-debug",
+      "args": [
+        "--entry-names=./[name].[ext]",
+        "--outdir=/Users/jarred/Code/bun-rsc/.rsc-split",
+        "--server-components",
+        "--platform=bun",
+        "--splitting",
+        "bun",
+        "/Users/jarred/Code/bun-rsc/components/Message.tsx",
+        "/Users/jarred/Code/bun-rsc/components/Button.tsx",
+      ],
+      "cwd": "/Users/jarred/Code/bun-rsc",
+      "console": "internalConsole",
+      "env": {
+        "NODE_ENV": "production"
+        // "BUN_DEBUG_QUIET_LOGS": "1"
+        // "BUN_DUMP_SYMBOLS": "1"
+      }
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun build debug (NO splitting, rsc)",
+      "program": "bun-debug",
+      "args": [
+        "--entry-names=./[name].[ext]",
+        "--outdir=/Users/jarred/Code/bun-rsc/.rsccheck",
+        "--server-components",
+        "--platform=bun",
+        "bun",
+        "/Users/jarred/Code/bun-rsc/pages/index.js"
+      ],
+      "cwd": "/Users/jarred/Code/bun-rsc",
+      "console": "internalConsole",
+      "env": {
+        "NODE_ENV": "production"
         // "BUN_DEBUG_QUIET_LOGS": "1"
         // "BUN_DUMP_SYMBOLS": "1"
       }

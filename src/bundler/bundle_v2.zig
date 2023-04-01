@@ -857,7 +857,7 @@ const ParseTask = struct {
         const platform = use_directive.platform(task.known_platform orelse bundler.options.platform);
 
         var resolve_queue = ResolveQueue.init(bun.default_allocator);
-        // TODO: react-server ESM condition
+        // TODO: server ESM condition
 
         errdefer resolve_queue.clearAndFree();
 
@@ -1722,7 +1722,7 @@ const LinkerGraph = struct {
                                         switch (boundary) {
                                             .@"use client" => {
                                                 import_record.tag = .react_client_component;
-                                                import_record.path.namespace = "react-client";
+                                                import_record.path.namespace = "client";
                                                 import_record.print_namespace_in_path = true;
 
                                                 if (entry_point_kinds[source_index] == .none) {
@@ -1739,7 +1739,7 @@ const LinkerGraph = struct {
                                             },
                                             .@"use server" => {
                                                 import_record.tag = .react_server_component;
-                                                import_record.path.namespace = "react-server";
+                                                import_record.path.namespace = "server";
                                                 import_record.print_namespace_in_path = true;
 
                                                 if (entry_point_kinds[source_index] == .none) {
@@ -2037,29 +2037,48 @@ const LinkerContext = struct {
             }
         };
 
+        // var is_inside_chunk_boundary: AutoBitSet = undefined;
+
+        // if (comptime FeatureFlags.boundary_based_chunking) {
+        //     if (this.graph.code_splitting) {
+        //         is_inside_chunk_boundary = AutoBitSet.initEmpty(temp_allocator, this.graph.files.len) catch unreachable;
+        //         const sources = this.graph.input_files.items(.source);
+        //         for (this.graph.reachable_files) |source_index| {
+        //             if (this.graph.files_live.isSet(source_index.get())) {
+        //                 const path: *const Fs.Path = &sources[source_index.get()].path;
+        //                 if (path.isNodeModule()) {
+        //                     is_inside_chunk_boundary.set(source_index.get());
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
+
         // Figure out which JS files are in which chunk
         for (this.graph.reachable_files) |source_index| {
             if (this.graph.files_live.isSet(source_index.get())) {
                 const entry_bits: *const AutoBitSet = &file_entry_bits[source_index.get()];
 
                 if (this.graph.code_splitting) {
-                    var js_chunk_entry = try js_chunks.getOrPut(
-                        try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)),
-                    );
+                    if (comptime FeatureFlags.boundary_based_chunking) {} else {
+                        var js_chunk_entry = try js_chunks.getOrPut(
+                            try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)),
+                        );
 
-                    if (!js_chunk_entry.found_existing) {
-                        js_chunk_entry.value_ptr.* = .{
-                            .entry_bits = entry_bits.*,
-                            .entry_point = .{
-                                .source_index = source_index.get(),
-                            },
-                            .content = .{
-                                .javascript = .{},
-                            },
-                        };
+                        if (!js_chunk_entry.found_existing) {
+                            js_chunk_entry.value_ptr.* = .{
+                                .entry_bits = entry_bits.*,
+                                .entry_point = .{
+                                    .source_index = source_index.get(),
+                                },
+                                .content = .{
+                                    .javascript = .{},
+                                },
+                            };
+                        }
+
+                        _ = js_chunk_entry.value_ptr.files_with_parts_in_chunk.getOrPut(this.allocator, @truncate(u32, source_index.get())) catch unreachable;
                     }
-
-                    _ = js_chunk_entry.value_ptr.files_with_parts_in_chunk.getOrPut(this.allocator, @truncate(u32, source_index.get())) catch unreachable;
                 }
 
                 var handler = Handler{

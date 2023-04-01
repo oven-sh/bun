@@ -196,7 +196,7 @@ pub const Arguments = struct {
         clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
         clap.parseParam("--entry-names <STR>              Pattern to use for entry point filenames") catch unreachable,
         clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
-        clap.parseParam("--react-server-components        Enable React Server Components (experimental)") catch unreachable,
+        clap.parseParam("--server-components        Enable React Server Components (experimental)") catch unreachable,
         clap.parseParam("--splitting                      Split up code!") catch unreachable,
     };
 
@@ -517,7 +517,7 @@ pub const Arguments = struct {
             }
 
             if (comptime FeatureFlags.react_server_components) {
-                if (args.flag("--react-server-components")) {
+                if (args.flag("--server-components")) {
                     ctx.bundler_options.react_server_components = true;
                 }
             }

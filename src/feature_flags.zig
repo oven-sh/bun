@@ -122,4 +122,7 @@ pub const react_server_components = true;
 
 pub const help_catch_memory_issues = @import("bun").Environment.allow_assert;
 
+/// Disabled because we need to handle module scope for CJS better.
 pub const commonjs_to_esm = false;
+
+pub const boundary_based_chunking = true;

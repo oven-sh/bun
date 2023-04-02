@@ -308,15 +308,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUptime,
     return JSC::JSValue::encode(JSC::jsNumber(result));
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionBinding,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    auto& vm = globalObject->vm();
-    throwTypeError(globalObject, scope, "process.binding is not supported in Bun. If this breaks a library you're using, please file an issue at https://bun.sh/issues and include a reproducible code sample."_s);
-    return JSC::JSValue::encode(JSC::JSValue {});
-}
-
 JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -733,8 +724,9 @@ void Process::finishCreation(JSC::VM& vm)
     this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(this->vm(), "umask"_s),
         1, Process_functionUmask, ImplementationVisibility::Public, NoIntrinsic, 0);
 
-    this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(this->vm(), "binding"_s),
-        1, Process_functionBinding, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontEnum | 0);
+    this->putDirectBuiltinFunction(vm, globalObject, JSC::Identifier::fromString(this->vm(), "binding"_s),
+        processObjectInternalsBindingCodeGenerator(vm),
+        0);
 
     this->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
 

@@ -1284,23 +1284,30 @@ var require_assert = __commonJS({
 });
 var assert_module = require_assert();
 
+function CallTracker() {
+  throw new Error("CallTracker is not supported yet");
+}
+
 assert_module[Symbol.for("CommonJS")] = 0;
+assert_module["CallTracker"] = CallTracker;
+export var {
+  AssertionError,
+  assert,
+  deepEqual,
+  deepStrictEqual,
+  doesNotReject,
+  doesNotThrow,
+  equal,
+  fail,
+  ifError,
+  notDeepEqual,
+  notDeepStrictEqual,
+  notEqual,
+  notStrictEqual,
+  ok,
+  rejects,
+  strict,
+  strictEqual,
+  throws,
+} = assert_module;
 export default assert_module;
-export var AssertionError = assert_module.AssertionError;
-export var assert = assert_module.assert;
-export var deepEqual = assert_module.deepEqual;
-export var deepStrictEqual = assert_module.deepStrictEqual;
-export var doesNotReject = assert_module.doesNotReject;
-export var doesNotThrow = assert_module.doesNotThrow;
-export var equal = assert_module.equal;
-export var fail = assert_module.fail;
-export var ifError = assert_module.ifError;
-export var notDeepEqual = assert_module.notDeepEqual;
-export var notDeepStrictEqual = assert_module.notDeepStrictEqual;
-export var notEqual = assert_module.notEqual;
-export var notStrictEqual = assert_module.notStrictEqual;
-export var ok = assert_module.ok;
-export var rejects = assert_module.rejects;
-export var strict = assert_module.strict;
-export var strictEqual = assert_module.strictEqual;
-export var throws = assert_module.throws;

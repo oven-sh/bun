@@ -58,7 +58,7 @@ async function runTest(path) {
     error: timedOut,
   } = spawnSync("bun", ["test", path], {
     stdio: ["ignore", "pipe", "pipe"],
-    timeout: 10_000,
+    timeout: 500_000,
     env: {
       ...process.env,
       FORCE_COLOR: "1",

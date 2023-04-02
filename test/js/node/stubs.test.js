@@ -102,3 +102,19 @@ for (let specifier of specifiers) {
     }
   });
 }
+
+// TODO: when node:vm is implemented, delete this test.
+test("node:vm", () => {
+  const { Script } = import.meta.require("node:vm");
+  try {
+    // **This line should appear in the stack trace**
+    // That way it shows the "real" line causing the issue
+    // Instead of several layers of wrapping
+    new Script("1 + 1");
+    throw new Error("unreacahble");
+  } catch (e) {
+    const msg = Bun.inspect(e);
+    expect(msg).not.toContain("node:vm:");
+    expect(msg).toContain("**This line should appear in the stack trace**");
+  }
+});

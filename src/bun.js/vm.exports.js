@@ -80,6 +80,8 @@ export {
 };
 
 hideFromStack([
+  TODO.prototype.constructor,
+  notimpl,
   createContext,
   createScript,
   runInContext,

@@ -49,7 +49,9 @@ class Session extends EventEmitter {
 
 const console = {
   ...globalThis.console,
-  context: globalThis,
+  context: {
+    console: globalThis.console,
+  },
 };
 
 var defaultObject = {

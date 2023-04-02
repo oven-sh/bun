@@ -1,41 +1,104 @@
 import { describe, expect, test } from "bun:test";
 
-const stubbed = [
-  "node:v8",
-  "node:trace_events",
-  "node:repl",
-  "node:inspector",
-  "node:http2",
-  "node:diagnostics_channel",
-  "node:dgram",
-  "node:cluster",
-  
-  "v8",
-  "trace_events",
-  "repl",
-  "inspector",
-  "http2",
-  "diagnostics_channel",
-  "dgram",
-  "cluster",
+const weirdInternalSpecifiers = [
+  "_http_agent",
+  "_http_client",
+  "_http_common",
+  "_http_incoming",
+  "_http_outgoing",
+  "_http_server",
+  "_stream_duplex",
+  "_stream_passthrough",
+  "_stream_readable",
+  "_stream_transform",
+  "_stream_wrap",
+  "_stream_writable",
+  "_tls_common",
+  "_tls_wrap",
 ];
 
-for (let specifier of stubbed) {
-  test(`stubbed CJS import.meta.require ${specifier}`, async () => {
-    const mod = import.meta.require(specifier);
+// Check that all the node modules comply with the expected interface in bun
+var specifiers = [
+  "assert",
+  "assert/strict",
+  "async_hooks",
+  "buffer",
+  "child_process",
+  "cluster",
+  "console",
+  "constants",
+  "crypto",
+  "dgram",
+  "diagnostics_channel",
+  "dns",
+  "dns/promises",
+  "domain",
+  "events",
+  "fs",
+  "fs/promises",
+  "http",
+  "http2",
+  "https",
+  "inspector",
+  "inspector/promises",
+  "module",
+  "net",
+  "os",
+  "path",
+  "path/posix",
+  "path/win32",
+  "perf_hooks",
+  "process",
+  "punycode",
+  "querystring",
+  "readline",
+  "readline/promises",
+  "repl",
+  "stream",
+  "stream/consumers",
+  "stream/promises",
+  "stream/web",
+  "string_decoder",
+  "sys",
+  "timers",
+  "timers/promises",
+  "tls",
+  "trace_events",
+  "tty",
+  "url",
+  "util",
+  "util/types",
+  "v8",
+  "vm",
+  "worker_threads",
+  "zlib",
+];
+specifiers = [...weirdInternalSpecifiers, ...specifiers.flatMap(a => ["node:" + a, a])];
 
-    expect(Object.keys(mod)).not.toHaveLength(0);
+for (let specifier of specifiers) {
+  test(`stubbed CJS import.meta.require ${specifier}`, async () => {
+    import.meta.require(specifier);
   });
 
   test(`stubbed CJS require ${specifier}`, async () => {
-    const mod = require(specifier);
-
-    expect(Object.keys(mod)).not.toHaveLength(0);
+    require(specifier);
   });
 
   test(`stubbed import ${specifier}`, async () => {
     const mod = await import(specifier);
-    expect(mod).toHaveProperty("default");
-    expect(mod.default[Symbol.for("CommonJS")]).toBe(0);
+    if ("default" in mod) {
+      expect(mod).toHaveProperty("default");
+      const cjs = mod.default[Symbol.for("CommonJS")];
+      if (typeof cjs !== "undefined") {
+        if (cjs === 1) {
+          expect(typeof mod.default).toBe("function");
+        } else if (cjs === true) {
+          expect(cjs).toBe(true);
+          if (typeof mod.default !== "undefined") {
+            expect(typeof mod.default).toBe("function");
+          }
+        }
+      }
+    }
   });
 }

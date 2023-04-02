@@ -3,7 +3,9 @@
 // TODO: implement node cluster
 const { EventEmitter } = import.meta.require("node:events");
 class TODO extends Error {
-  constructor(message = "node:cluster is not implemented yet in Bun. Track the status: https://github.com/oven-sh/bun/issues/2428") {
+  constructor(
+    message = "node:cluster is not implemented yet in Bun. Track the status: https://github.com/oven-sh/bun/issues/2428",
+  ) {
     super(message);
     this.name = "TODO";
   }
@@ -15,7 +17,8 @@ export var SCHED_NONE = 0,
   schedulingPolicy = 2,
   isWorker = false,
   isPrimary = true,
-  isMaster = true, cluster;
+  isMaster = true,
+  cluster;
 
 Worker = function Worker() {
   throw new TODO("Worker is not implemented yet in Bun");
@@ -49,8 +52,6 @@ class Cluster extends EventEmitter {
   [Symbol.for("CommonJS")] = 0;
 }
 
- cluster = new Cluster();
+cluster = new Cluster();
 
-export {
-  cluster as default,
-}
+export { cluster as default };

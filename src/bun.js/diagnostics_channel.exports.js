@@ -54,4 +54,4 @@ const defaultObject = {
 
 export { defaultObject as default, Channel, channel, hasSubscribers, subscribe, unsubscribe };
 
-hideFromStack([TODO.prototype.constructor, notimpl, channel, hasSubscribers, subscribe, unsubscribe, Channel])
+hideFromStack([TODO.prototype.constructor, notimpl, channel, hasSubscribers, subscribe, unsubscribe, Channel]);

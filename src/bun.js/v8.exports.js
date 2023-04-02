@@ -2,31 +2,25 @@
 
 class TODO extends Error {
   constructor(messageName) {
-    const message = messageName ? `node:v8 ${messageName} is not implemented yet in Bun. ` : `node:v8 is not implemented yet in Bun`;
+    const message = messageName
+      ? `node:v8 ${messageName} is not implemented yet in Bun. `
+      : `node:v8 is not implemented yet in Bun`;
     super(message);
     this.name = "TODO";
   }
 }
 
-function notimpl(message) {
-    throw new TODO(message);
+function hideFromStack(fns) {
+  for (const fn of fns) {
+    Object.defineProperty(fn, "name", {
+      value: "::bunternal::",
+    });
+  }
 }
 
-Object.defineProperty(
-    TODO.prototype.constructor,
-    "name",
-    {
-        value: "::bunternal::"
-    }
-);
-
-Object.defineProperty(
-    notimpl,
-    "name",
-    {
-        value: "::bunternal::"
-    }
-);
+function notimpl(message) {
+  throw new TODO(message);
+}
 
 class Deserializer {
   constructor() {
@@ -148,3 +142,25 @@ export {
   GCProfiler,
   defaultObject as default,
 };
+
+hideFromStack([
+  TODO.prototype.constructor,
+  notimpl,
+  cachedDataVersionTag,
+  getHeapSnapshot,
+  getHeapStatistics,
+  getHeapSpaceStatistics,
+  getHeapCodeStatistics,
+  setFlagsFromString,
+  deserialize,
+  takeCoverage,
+  stopCoverage,
+  serialize,
+  writeHeapSnapshot,
+  setHeapSnapshotNearHeapLimit,
+  Deserializer,
+  Serializer,
+  DefaultDeserializer,
+  DefaultSerializer,
+  GCProfiler,
+]);

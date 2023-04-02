@@ -14,7 +14,7 @@ namespace Zig {
 
 using namespace JSC;
 
-#define REPORTED_NODE_VERSION "18.13.0"
+#define REPORTED_NODE_VERSION "18.15.0"
 
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;

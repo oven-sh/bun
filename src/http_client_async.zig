@@ -1,5 +1,5 @@
-const picohttp = @import("bun").picohttp;
 const bun = @import("bun");
+const picohttp = bun.picohttp;
 const JSC = bun.JSC;
 const string = bun.string;
 const Output = bun.Output;
@@ -10,6 +10,9 @@ const MutableString = bun.MutableString;
 const FeatureFlags = bun.FeatureFlags;
 const stringZ = bun.stringZ;
 const C = bun.C;
+const Loc = bun.logger.Loc;
+const Log = bun.logger.Log;
+const DotEnv = @import("./env_loader.zig");
 const std = @import("std");
 const URL = @import("./url.zig").URL;
 pub const Method = @import("./http/method.zig").Method;
@@ -18,16 +21,16 @@ const Lock = @import("./lock.zig").Lock;
 const HTTPClient = @This();
 const Zlib = @import("./zlib.zig");
 const StringBuilder = @import("./string_builder.zig");
-const AsyncIO = @import("bun").AsyncIO;
-const ThreadPool = @import("bun").ThreadPool;
-const BoringSSL = @import("bun").BoringSSL;
+const AsyncIO = bun.AsyncIO;
+const ThreadPool = bun.ThreadPool;
+const BoringSSL = bun.BoringSSL;
 pub const NetworkThread = @import("./network_thread.zig");
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const SOCK = os.SOCK;
 const Arena = @import("./mimalloc_arena.zig").Arena;
 const ZlibPool = @import("./http/zlib.zig");
 const URLBufferPool = ObjectPool([4096]u8, null, false, 10);
-const uws = @import("bun").uws;
+const uws = bun.uws;
 pub const MimeType = @import("./http/mime_type.zig");
 pub const URLPath = @import("./http/url_path.zig");
 // This becomes Arena.allocator
@@ -570,8 +573,8 @@ pub const HTTPThread = struct {
         }
 
         var count: usize = 0;
-        var remaining: usize = AsyncHTTP.max_simultaneous_requests - AsyncHTTP.active_requests_count.loadUnchecked();
-        if (remaining == 0) return;
+        var active = AsyncHTTP.active_requests_count.loadUnchecked();
+        if (active >= AsyncHTTP.max_simultaneous_requests) return;
         defer {
             if (comptime Environment.allow_assert) {
                 if (count > 0)
@@ -588,8 +591,8 @@ pub const HTTPThread = struct {
                 count += 1;
             }
 
-            remaining -= 1;
-            if (remaining == 0) break;
+            active += 1;
+            if (active >= AsyncHTTP.max_simultaneous_requests) break;
         }
     }
 
@@ -1171,7 +1174,6 @@ pub const AsyncHTTP = struct {
     allocator: std.mem.Allocator,
     request_header_buf: string = "",
     method: Method = Method.GET,
-    max_retry_count: u32 = 0,
     url: URL,
     http_proxy: ?URL = null,
     real: ?*AsyncHTTP = null,
@@ -1185,7 +1187,6 @@ pub const AsyncHTTP = struct {
     redirected: bool = false,
 
     response_encoding: Encoding = Encoding.identity,
-    retries_count: u32 = 0,
     verbose: bool = false,
 
     client: HTTPClient = undefined,
@@ -1198,6 +1199,32 @@ pub const AsyncHTTP = struct {
 
     pub var active_requests_count = std.atomic.Atomic(usize).init(0);
     pub var max_simultaneous_requests: usize = 256;
+
+    pub fn loadEnv(allocator: std.mem.Allocator, logger: *Log, env: *DotEnv.Loader) void {
+        if (env.map.get("BUN_CONFIG_MAX_HTTP_REQUESTS")) |max_http_requests| {
+            const max = std.fmt.parseInt(u16, max_http_requests, 10) catch {
+                logger.addErrorFmt(
+                    null,
+                    Loc.Empty,
+                    allocator,
+                    "BUN_CONFIG_MAX_HTTP_REQUESTS value \"{s}\" is not a valid integer between 1 and 65535",
+                    .{max_http_requests},
+                ) catch unreachable;
+                return;
+            };
+            if (max == 0) {
+                logger.addWarningFmt(
+                    null,
+                    Loc.Empty,
+                    allocator,
+                    "BUN_CONFIG_MAX_HTTP_REQUESTS value must be a number between 1 and 65535",
+                    .{},
+                ) catch unreachable;
+                return;
+            }
+            AsyncHTTP.max_simultaneous_requests = max;
+        }
+    }
 
     pub fn deinit(this: *AsyncHTTP) void {
         this.response_headers.deinit(this.allocator);
@@ -1357,7 +1384,7 @@ pub const AsyncHTTP = struct {
 
         completion.function(completion.ctx, result);
 
-        if (active_requests == AsyncHTTP.max_simultaneous_requests) {
+        if (active_requests >= AsyncHTTP.max_simultaneous_requests) {
             http_thread.drainEvents();
         }
     }

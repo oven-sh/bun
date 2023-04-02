@@ -104,33 +104,8 @@ pub const Run = struct {
             Output.prettyErrorln("\n", .{});
             Global.exit(1);
         };
-        AsyncHTTP.max_simultaneous_requests = 255;
 
-        if (b.env.map.get("BUN_CONFIG_MAX_HTTP_REQUESTS")) |max_http_requests| {
-            load: {
-                AsyncHTTP.max_simultaneous_requests = std.fmt.parseInt(u16, max_http_requests, 10) catch {
-                    vm.log.addErrorFmt(
-                        null,
-                        logger.Loc.Empty,
-                        vm.allocator,
-                        "BUN_CONFIG_MAX_HTTP_REQUESTS value \"{s}\" is not a valid integer between 1 and 65535",
-                        .{max_http_requests},
-                    ) catch unreachable;
-                    break :load;
-                };
-
-                if (AsyncHTTP.max_simultaneous_requests == 0) {
-                    vm.log.addWarningFmt(
-                        null,
-                        logger.Loc.Empty,
-                        vm.allocator,
-                        "BUN_CONFIG_MAX_HTTP_REQUESTS value must be a number between 1 and 65535",
-                        .{},
-                    ) catch unreachable;
-                    AsyncHTTP.max_simultaneous_requests = 255;
-                }
-            }
-        }
+        AsyncHTTP.loadEnv(vm.allocator, vm.log, b.env);
 
         vm.loadExtraEnv();
         vm.is_main_thread = true;

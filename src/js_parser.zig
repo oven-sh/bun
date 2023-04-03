@@ -18609,24 +18609,37 @@ fn NewParser_(
 
             if (!p.runtime_imports.contains(name)) {
                 ref = brk: {
-                    if (comptime strings.eqlComptime(name, "__require")) {
-                        p.ensureRequireSymbol();
-                        break :brk p.runtime_imports.__require.?.ref;
+                    if (!p.options.bundle) {
+                        if (comptime strings.eqlComptime(name, "__require")) {
+                            p.ensureRequireSymbol();
+                            break :brk p.runtime_imports.__require.?.ref;
+                        }
+                        const generated_symbol = p.declareGeneratedSymbol(.other, name) catch unreachable;
+                        p.runtime_imports.put(name, generated_symbol);
+                        break :brk generated_symbol.ref;
+                    } else {
+                        const loc_ref = js_ast.LocRef{
+                            .loc = loc,
+                            .ref = p.newSymbol(.other, name) catch unreachable,
+                        };
+                        p.runtime_imports.put(name, .{
+                            .primary = loc_ref.ref.?,
+                            .backup = loc_ref.ref.?,
+                            .ref = loc_ref.ref.?,
+                        });
+                        p.module_scope.generated.push(p.allocator, loc_ref.ref.?) catch unreachable;
+                        break :brk loc_ref.ref.?;
                     }
-                    const generated_symbol = p.declareGeneratedSymbol(.other, name) catch unreachable;
-                    p.runtime_imports.put(name, generated_symbol);
-                    break :brk generated_symbol.ref;
                 };
-
-                p.module_scope.generated.push(p.allocator, ref) catch unreachable;
             } else {
                 ref = p.runtime_imports.at(name).?;
             }
 
             p.recordUsage(ref);
             return p.newExpr(
-                E.Identifier{
+                E.ImportIdentifier{
                     .ref = ref,
+                    .was_originally_identifier = false,
                 },
                 loc,
             );

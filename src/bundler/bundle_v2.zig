@@ -2808,7 +2808,8 @@ const LinkerContext = struct {
                     if (named_imports[id].get(ref)) |named_import| {
                         for (named_import.local_parts_with_uses.slice()) |part_index| {
                             var part: *js_ast.Part = &parts[part_index];
-                            const parts_declaring_symbol = this.topLevelSymbolsToParts(import_id, import.data.import_ref);
+                            const parts_declaring_symbol: []u32 =
+                                this.graph.ast.items(.top_level_symbols_to_parts)[import_id].get(import.data.import_ref).?.slice();
 
                             part.dependencies.ensureUnusedCapacity(
                                 this.allocator,
@@ -3672,6 +3673,14 @@ const LinkerContext = struct {
                                 // The only internal symbol that wrapped CommonJS files export
                                 // is the wrapper itself.
                                 continue;
+                            } else if (symbol.kind == .other) {
+                                // TODO: figure out why we need to do this
+                                // Without this, we are unable to map the import to runtime symbols across chunks
+                                // which means we miss any runtime-imported symbol
+                                if (imports_to_bind.get(deps.symbols.follow(ref))) |import_data| {
+                                    ref = import_data.data.import_ref;
+                                    symbol = deps.symbols.getConst(ref).?;
+                                }
                             }
 
                             // If this is an ES6 import from a CommonJS file, it will become a

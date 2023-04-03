@@ -892,6 +892,15 @@ const ParseTask = struct {
                 ast.platform = platform;
                 var estimated_resolve_queue_count: usize = 0;
                 for (ast.import_records.slice()) |*import_record| {
+                    if (import_record.is_internal) {
+                        import_record.tag = .runtime;
+                        import_record.source_index = Index.runtime;
+                    }
+
+                    if (import_record.is_unused) {
+                        import_record.source_index = Index.invalid;
+                    }
+
                     // Don't resolve the runtime
                     if (import_record.is_internal or import_record.is_unused) {
                         continue;
@@ -903,8 +912,7 @@ const ParseTask = struct {
                 var last_error: ?anyerror = null;
                 for (ast.import_records.slice()) |*import_record| {
                     // Don't resolve the runtime
-                    if (import_record.is_internal or import_record.is_unused) {
-                        import_record.source_index = Index.invalid;
+                    if (import_record.is_unused or import_record.is_internal) {
                         continue;
                     }
 
@@ -1393,6 +1401,11 @@ const EntryPoint = struct {
         pub inline fn isServerEntryPoint(this: Kind) bool {
             return this == .user_specified or this == .react_server_component;
         }
+
+        pub fn isReactReference(this: Kind) bool {
+            return this == .react_client_component or this == .react_server_component;
+        }
+
         pub fn useDirective(this: Kind) UseDirective {
             return switch (this) {
                 .react_client_component => .@"use client",
@@ -1879,7 +1892,12 @@ const LinkerContext = struct {
     ambiguous_result_pool: std.ArrayList(MatchImport) = undefined,
 
     loop: EventLoop,
+
+    /// string buffer containing pre-formatted unique keys
     unique_key_buf: []u8 = "",
+
+    /// string buffer containing prefix for each unique keys
+    unique_key_prefix: string = "",
 
     pub const LinkerOptions = struct {
         output_format: options.OutputFormat = .esm,
@@ -2091,9 +2109,10 @@ const LinkerContext = struct {
         // Determine the order of JS files (and parts) within the chunk ahead of time
         try this.findAllImportedPartsInJSOrder(temp_allocator, chunks);
 
-        const unique_key_item_len = std.fmt.count("{any}C{d:8}", .{ bun.fmt.hexIntLower(unique_key), chunks.len });
+        const unique_key_item_len = std.fmt.count("{any}C{d:0>8}", .{ bun.fmt.hexIntLower(unique_key), chunks.len });
         var unique_key_builder = try bun.StringBuilder.initCapacity(this.allocator, unique_key_item_len * chunks.len);
         this.unique_key_buf = unique_key_builder.allocatedSlice();
+
         errdefer {
             unique_key_builder.deinit(this.allocator);
             this.unique_key_buf = "";
@@ -2104,7 +2123,9 @@ const LinkerContext = struct {
             // Assign a unique key to each chunk. This key encodes the index directly so
             // we can easily recover it later without needing to look it up in a map. The
             // last 8 numbers of the key are the chunk index.
-            chunk.unique_key = unique_key_builder.fmt("{any}C{d:8}", .{ bun.fmt.hexIntLower(unique_key), chunk_id });
+            chunk.unique_key = unique_key_builder.fmt("{any}C{d:0>8}", .{ bun.fmt.hexIntLower(unique_key), chunk_id });
+            if (this.unique_key_prefix.len == 0)
+                this.unique_key_prefix = chunk.unique_key[0..std.fmt.count("{any}", .{bun.fmt.hexIntLower(unique_key)})];
 
             if (chunk.entry_point.is_entry_point) {
                 chunk.template = PathTemplate.file;
@@ -3021,7 +3042,6 @@ const LinkerContext = struct {
                         source_index,
                         Index.part(part_index),
 
-                        // TODO: implement this runtime symbol
                         "__toESM",
                         to_esm_uses,
                     ) catch unreachable;
@@ -3814,6 +3834,18 @@ const LinkerContext = struct {
                     if (other_chunk_index == chunk_index or other_chunk.content != .javascript) continue;
 
                     if (other_chunk.entry_bits.isSet(chunk.entry_point.entry_point_id)) {
+                        if (other_chunk.entry_point.is_entry_point) {
+                            if (c.graph.react_client_component_boundary.bit_length > 0 or c.graph.react_server_component_boundary.bit_length > 0) {
+                                const other_kind = c.graph.files.items(.entry_point_kind)[other_chunk.entry_point.source_index];
+                                const this_kind = c.graph.files.items(.entry_point_kind)[chunk.entry_point.source_index];
+
+                                if (this_kind != .react_client_component and
+                                    other_kind.isReactReference())
+                                {
+                                    continue;
+                                }
+                            }
+                        }
                         _ = js.imports_from_other_chunks.getOrPutValue(
                             c.allocator,
                             @truncate(u32, other_chunk_index),
@@ -3934,7 +3966,7 @@ const LinkerContext = struct {
                 for (cross_chunk_imports_input) |cross_chunk_import| {
                     switch (c.options.output_format) {
                         .esm => {
-                            const import_record_index = @truncate(u32, chunk.cross_chunk_imports.len);
+                            const import_record_index = @intCast(u32, cross_chunk_imports.len);
 
                             var clauses = std.ArrayList(js_ast.ClauseItem).initCapacity(c.allocator, cross_chunk_import.sorted_import_items.len) catch unreachable;
                             for (cross_chunk_import.sorted_import_items.slice()) |item| {
@@ -4465,6 +4497,8 @@ const LinkerContext = struct {
         chunk.intermediate_output = c.breakOutputIntoPieces(
             allocator,
             &j,
+            cross_chunk_prefix.len > 0 or
+                cross_chunk_suffix.len > 0,
             @truncate(u32, ctx.chunks.len),
         ) catch @panic("Unhandled out of memory error in breakOutputIntoPieces()");
 
@@ -6147,7 +6181,7 @@ const LinkerContext = struct {
         output_files.items.len = chunks.len;
         for (chunks, output_files.items) |*chunk, *output_file| {
             output_file.* = options.OutputFile.initBuf(
-                chunk.intermediate_output.code(c.allocator) catch @panic("Failed to allocate memory for output file"),
+                chunk.intermediate_output.code(c.allocator, chunk, chunks) catch @panic("Failed to allocate memory for output file"),
                 chunk.final_rel_path,
                 // TODO: remove this field
                 .js,
@@ -7134,12 +7168,13 @@ const LinkerContext = struct {
         c: *LinkerContext,
         allocator: std.mem.Allocator,
         j: *bun.Joiner,
+        has_any_cross_chunk_code: bool,
         count: u32,
     ) !Chunk.IntermediateOutput {
         // Optimization: If there can be no substitutions, just reuse the initial
         // joiner that was used when generating the intermediate chunk output
         // instead of creating another one and copying the whole file into it.
-        if (j.watcher.estimated_count == 0) {
+        if (!has_any_cross_chunk_code) {
             return Chunk.IntermediateOutput{
                 .joiner = j.*,
             };
@@ -7149,7 +7184,7 @@ const LinkerContext = struct {
         const complete_output = try j.done(allocator);
         var output = complete_output;
 
-        const prefix = c.unique_key_buf;
+        const prefix = c.unique_key_prefix;
 
         while (true) {
             const invalid_boundary = std.math.maxInt(usize);
@@ -7157,6 +7192,7 @@ const LinkerContext = struct {
             var boundary = strings.indexOf(output, prefix) orelse invalid_boundary;
 
             var output_piece_index = Chunk.OutputPieceIndex{};
+            var index: usize = 0;
 
             // Try to parse the piece boundary
             if (boundary != invalid_boundary) {
@@ -7172,19 +7208,16 @@ const LinkerContext = struct {
                         'C' => {
                             output_piece_index.kind = .chunk;
                         },
-                        else => {
-                            for (output[start..][1..9].*) |char| {
-                                if (char <= '0' or char > '9') {
-                                    boundary = invalid_boundary;
-                                    break;
-                                }
+                        else => {},
+                    }
 
-                                output_piece_index.index = @truncate(
-                                    u30,
-                                    @as(u32, output_piece_index.index) * 10 + (@as(u32, output[start]) - '0'),
-                                );
-                            }
-                        },
+                    for (output[start..][1..9].*) |char| {
+                        if (char < '0' or char > '9') {
+                            boundary = invalid_boundary;
+                            break;
+                        }
+
+                        index = (index * 10) + (@as(usize, char) - '0');
                     }
                 }
             }
@@ -7192,12 +7225,12 @@ const LinkerContext = struct {
             // Validate the boundary
             switch (output_piece_index.kind) {
                 .asset => {
-                    if (@as(u32, output_piece_index.index) >= @truncate(u32, c.graph.files.len)) {
+                    if (index >= c.graph.files.len) {
                         boundary = invalid_boundary;
                     }
                 },
                 .chunk => {
-                    if (@as(usize, output_piece_index.index) >= count) {
+                    if (index >= count) {
                         boundary = invalid_boundary;
                     }
                 },
@@ -7205,6 +7238,8 @@ const LinkerContext = struct {
                     boundary = invalid_boundary;
                 },
             }
+
+            output_piece_index.index = @intCast(u30, index);
 
             // If we're at the end, generate one final piece
             if (boundary == invalid_boundary) {
@@ -7521,13 +7556,22 @@ pub const Chunk = struct {
 
         empty: void,
 
-        pub fn code(this: IntermediateOutput, allocator: std.mem.Allocator) ![]const u8 {
+        pub fn code(this: IntermediateOutput, allocator: std.mem.Allocator, chunk: *Chunk, chunks: []Chunk) ![]const u8 {
             switch (this) {
                 .pieces => |*pieces| {
                     var count: usize = 0;
+                    var file_path_buf: [4096]u8 = undefined;
+                    _ = file_path_buf;
+                    var from_chunk_dir = std.fs.path.dirname(chunk.final_rel_path) orelse "";
+                    if (strings.eqlComptime(from_chunk_dir, "."))
+                        from_chunk_dir = "";
 
                     for (pieces.slice()) |piece| {
                         count += piece.data_len;
+                        if (piece.index.kind != .none) {
+                            const file_path = chunks[piece.index.index].final_rel_path;
+                            count += if (from_chunk_dir.len == 0) file_path.len else bun.path.relative(from_chunk_dir, file_path).len;
+                        }
                     }
 
                     var total_buf = try allocator.alloc(u8, count);
@@ -7535,8 +7579,25 @@ pub const Chunk = struct {
 
                     for (pieces.slice()) |piece| {
                         const data = piece.data();
-                        @memcpy(remain.ptr, data.ptr, data.len);
+
+                        if (data.len > 0)
+                            @memcpy(remain.ptr, data.ptr, data.len);
+
                         remain = remain[data.len..];
+                        const index = piece.index.index;
+
+                        if (piece.index.kind != .none) {
+                            const file_path = chunks[index].final_rel_path;
+                            const relative_path = if (from_chunk_dir.len > 0)
+                                bun.path.relative(from_chunk_dir, file_path)
+                            else
+                                file_path;
+
+                            if (relative_path.len > 0)
+                                @memcpy(remain.ptr, relative_path.ptr, relative_path.len);
+
+                            remain = remain[relative_path.len..];
+                        }
                     }
 
                     std.debug.assert(remain.len == 0);

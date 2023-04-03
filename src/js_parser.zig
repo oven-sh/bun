@@ -5038,11 +5038,15 @@ fn NewParser_(
             var clause_items = try allocator.alloc(js_ast.ClauseItem, imports.len);
             var stmts = try allocator.alloc(Stmt, 1 + if (additional_stmt != null) @as(usize, 1) else @as(usize, 0));
             var declared_symbols = DeclaredSymbol.List{};
-            try declared_symbols.ensureTotalCapacity(allocator, imports.len);
+            try declared_symbols.ensureTotalCapacity(allocator, imports.len + 1);
             bun.copy(u8, namespace_identifier, suffix);
             bun.copy(u8, namespace_identifier[suffix.len..], import_path_identifier);
 
             const namespace_ref = try p.newSymbol(.other, namespace_identifier);
+            declared_symbols.appendAssumeCapacity(.{
+                .ref = namespace_ref,
+                .is_top_level = true,
+            });
             try p.module_scope.generated.push(allocator, namespace_ref);
             for (imports, clause_items) |alias, *clause_item| {
                 const ref = symbols.get(alias) orelse unreachable;
@@ -5053,12 +5057,12 @@ fn NewParser_(
                     .alias_loc = logger.Loc{},
                     .name = LocRef{ .ref = ref, .loc = logger.Loc{} },
                 };
-                declared_symbols.appendAssumeCapacity(DeclaredSymbol{ .ref = ref, .is_top_level = true });
+                declared_symbols.appendAssumeCapacity(.{ .ref = ref, .is_top_level = true });
                 try p.is_import_item.put(allocator, ref, {});
                 try p.named_imports.put(ref, js_ast.NamedImport{
                     .alias = alias_name,
                     .alias_loc = logger.Loc{},
-                    .namespace_ref = null,
+                    .namespace_ref = namespace_ref,
                     .import_record_index = import_record_i,
                 });
             }
@@ -5784,7 +5788,7 @@ fn NewParser_(
         }
 
         pub fn resolveStaticJSXSymbols(p: *P) void {
-            if (!p.options.bundle)
+            if (p.options.bundle)
                 return;
 
             if (p.options.features.jsx_optimization_inline) {
@@ -13966,7 +13970,8 @@ fn NewParser_(
                                         //     _owner: null
                                         // };
                                         //
-                                        p.recordUsage(p.react_element_type.ref);
+                                        if (!p.options.bundle)
+                                            p.recordUsage(p.react_element_type.ref);
                                         const key = if (e_.key) |key_| brk: {
                                             // key: void 0 === key ? null : "" + key,
                                             break :brk switch (key_.data) {
@@ -13998,42 +14003,44 @@ fn NewParser_(
                                             },
                                             expr.loc,
                                         );
-                                        var props_expression = props_object;
-
-                                        // we must check for default props
-                                        if (tag.data != .e_string) {
-                                            // We assume defaultProps is supposed to _not_ have side effects
-                                            // We do not support "key" or "ref" in defaultProps.
-                                            const defaultProps = p.newExpr(
-                                                E.Dot{
-                                                    .name = "defaultProps",
-                                                    .name_loc = tag.loc,
-                                                    .target = tag,
-                                                    .can_be_removed_if_unused = true,
-                                                    .call_can_be_unwrapped_if_unused = true,
-                                                },
-                                                tag.loc,
-                                            );
-                                            // props: MyComponent.defaultProps || {}
-                                            if (props.items.len == 0) {
-                                                props_expression = p.newExpr(E.Binary{ .op = Op.Code.bin_logical_or, .left = defaultProps, .right = props_object }, defaultProps.loc);
-                                            } else {
-                                                var call_args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                                call_args[0..2].* = .{
-                                                    props_object,
-                                                    defaultProps,
-                                                };
-                                                // __merge(props, MyComponent.defaultProps)
-                                                // originally, we always inlined here
-                                                // see https://twitter.com/jarredsumner/status/1534084541236686848
-                                                // but, that breaks for defaultProps
-                                                // we assume that most components do not have defaultProps
-                                                // so __merge quickly checks if it needs to merge any props
-                                                // and if not, it passes along the props object
-                                                // this skips an extra allocation
-                                                props_expression = p.callRuntime(tag.loc, "__merge", call_args);
+                                        const props_expression = brk: {
+                                            // we must check for default props
+                                            if (tag.data != .e_string) {
+                                                // We assume defaultProps is supposed to _not_ have side effects
+                                                // We do not support "key" or "ref" in defaultProps.
+                                                const defaultProps = p.newExpr(
+                                                    E.Dot{
+                                                        .name = "defaultProps",
+                                                        .name_loc = tag.loc,
+                                                        .target = tag,
+                                                        .can_be_removed_if_unused = true,
+                                                        .call_can_be_unwrapped_if_unused = true,
+                                                    },
+                                                    tag.loc,
+                                                );
+                                                // props: MyComponent.defaultProps || {}
+                                                if (props.items.len == 0) {
+                                                    break :brk p.newExpr(E.Binary{ .op = Op.Code.bin_logical_or, .left = defaultProps, .right = props_object }, defaultProps.loc);
+                                                } else {
+                                                    var call_args = p.allocator.alloc(Expr, 2) catch unreachable;
+                                                    call_args[0..2].* = .{
+                                                        props_object,
+                                                        defaultProps,
+                                                    };
+                                                    // __merge(props, MyComponent.defaultProps)
+                                                    // originally, we always inlined here
+                                                    // see https://twitter.com/jarredsumner/status/1534084541236686848
+                                                    // but, that breaks for defaultProps
+                                                    // we assume that most components do not have defaultProps
+                                                    // so __merge quickly checks if it needs to merge any props
+                                                    // and if not, it passes along the props object
+                                                    // this skips an extra allocation
+                                                    break :brk p.callRuntime(tag.loc, "__merge", call_args);
+                                                }
                                             }
-                                        }
+
+                                            break :brk props_object;
+                                        };
 
                                         jsx_element[0..6].* =
                                             [_]G.Property{
@@ -18618,7 +18625,7 @@ fn NewParser_(
 
             p.recordUsage(ref);
             return p.newExpr(
-                E.ImportIdentifier{
+                E.Identifier{
                     .ref = ref,
                 },
                 loc,
@@ -19131,7 +19138,6 @@ fn NewParser_(
         pub fn toAST(p: *P, _parts: []js_ast.Part, exports_kind: js_ast.ExportsKind, commonjs_wrapper_expr: ?Expr) !js_ast.Ast {
             const allocator = p.allocator;
             var parts = _parts;
-            // Insert an import statement for any runtime imports we generated
 
             // if (p.options.tree_shaking and p.options.features.trim_unused_imports) {
             //     p.treeShake(&parts, false);

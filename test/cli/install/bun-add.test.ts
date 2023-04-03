@@ -65,7 +65,7 @@ it("should add existing package", async () => {
     ` installed foo@${add_path}`,
     "",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(await file(join(package_dir, "package.json")).json()).toEqual({
@@ -266,7 +266,7 @@ it("should add dependency with capital letters", async () => {
     " installed BaR@0.0.2",
     "",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/BaR`, `${root_url}/BaR-0.0.2.tgz`]);
@@ -324,7 +324,7 @@ it("should add dependency with specified semver", async () => {
     "  - baz-run",
     "",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
@@ -462,7 +462,7 @@ it("should add aliased dependency (npm)", async () => {
     "  - baz-run",
     "",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
@@ -517,7 +517,7 @@ it("should add aliased dependency (GitHub)", async () => {
     "  - uglifyjs",
     "",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([]);
@@ -595,7 +595,7 @@ it("should let you add the same package twice", async () => {
     " installed baz@0.0.3",
     "",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited1).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
@@ -696,7 +696,7 @@ it("should install version tagged with `latest` by default", async () => {
     " installed baz@0.0.3",
     "",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited1).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
@@ -740,7 +740,7 @@ it("should install version tagged with `latest` by default", async () => {
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + baz@0.0.3",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited2).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
@@ -798,7 +798,7 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
     "  - uglifyjs",
     "",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited1).toBe(0);
   expect(urls.sort()).toEqual([]);
@@ -852,7 +852,7 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    "Checked 1 installs across 2 packages (no changes)",
+    "Checked 1 install across 2 packages (no changes)",
   ]);
   expect(await exited2).toBe(0);
   expect(urls.sort()).toEqual([]);

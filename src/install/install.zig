@@ -3603,8 +3603,9 @@ pub const PackageManager = struct {
                             if (!has_network_error) {
                                 has_network_error = true;
                                 const min = manager.options.min_simultaneous_requests;
-                                if (AsyncHTTP.max_simultaneous_requests > min) {
-                                    AsyncHTTP.max_simultaneous_requests = @max(min, AsyncHTTP.max_simultaneous_requests / 2);
+                                const max = AsyncHTTP.max_simultaneous_requests.load(.Monotonic);
+                                if (max > min) {
+                                    AsyncHTTP.max_simultaneous_requests.store(@max(min, max / 2), .Monotonic);
                                 }
                             }
                             manager.enqueueNetworkTask(task);
@@ -3784,8 +3785,9 @@ pub const PackageManager = struct {
                             if (!has_network_error) {
                                 has_network_error = true;
                                 const min = manager.options.min_simultaneous_requests;
-                                if (AsyncHTTP.max_simultaneous_requests > min) {
-                                    AsyncHTTP.max_simultaneous_requests = @max(min, AsyncHTTP.max_simultaneous_requests / 2);
+                                const max = AsyncHTTP.max_simultaneous_requests.load(.Monotonic);
+                                if (max > min) {
+                                    AsyncHTTP.max_simultaneous_requests.store(@max(min, max / 2), .Monotonic);
                                 }
                             }
                             manager.enqueueNetworkTask(task);

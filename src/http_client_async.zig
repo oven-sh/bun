@@ -573,8 +573,9 @@ pub const HTTPThread = struct {
         }
 
         var count: usize = 0;
-        var active = AsyncHTTP.active_requests_count.loadUnchecked();
-        if (active >= AsyncHTTP.max_simultaneous_requests) return;
+        var active = AsyncHTTP.active_requests_count.load(.Monotonic);
+        const max = AsyncHTTP.max_simultaneous_requests.load(.Monotonic);
+        if (active >= max) return;
         defer {
             if (comptime Environment.allow_assert) {
                 if (count > 0)
@@ -592,7 +593,7 @@ pub const HTTPThread = struct {
             }
 
             active += 1;
-            if (active >= AsyncHTTP.max_simultaneous_requests) break;
+            if (active >= max) break;
         }
     }
 
@@ -1198,7 +1199,7 @@ pub const AsyncHTTP = struct {
     gzip_elapsed: u64 = 0,
 
     pub var active_requests_count = std.atomic.Atomic(usize).init(0);
-    pub var max_simultaneous_requests: usize = 256;
+    pub var max_simultaneous_requests = std.atomic.Atomic(usize).init(256);
 
     pub fn loadEnv(allocator: std.mem.Allocator, logger: *Log, env: *DotEnv.Loader) void {
         if (env.map.get("BUN_CONFIG_MAX_HTTP_REQUESTS")) |max_http_requests| {
@@ -1222,7 +1223,7 @@ pub const AsyncHTTP = struct {
                 ) catch unreachable;
                 return;
             }
-            AsyncHTTP.max_simultaneous_requests = max;
+            AsyncHTTP.max_simultaneous_requests.store(max, .Monotonic);
         }
     }
 
@@ -1384,7 +1385,7 @@ pub const AsyncHTTP = struct {
 
         completion.function(completion.ctx, result);
 
-        if (active_requests >= AsyncHTTP.max_simultaneous_requests) {
+        if (active_requests >= AsyncHTTP.max_simultaneous_requests.load(.Monotonic)) {
             http_thread.drainEvents();
         }
     }

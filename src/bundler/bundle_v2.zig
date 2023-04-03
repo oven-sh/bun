@@ -79,6 +79,7 @@ const renamer = bun.renamer;
 const Scope = js_ast.Scope;
 const JSC = bun.JSC;
 const debugTreeShake = Output.scoped(.TreeShake, true);
+const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 
 pub const ThreadPool = struct {
     pool: ThreadPoolLib = undefined,
@@ -1411,7 +1412,7 @@ const LinkerGraph = struct {
     const debug = Output.scoped(.LinkerGraph, false);
 
     files: File.List = .{},
-    files_live: bun.bit_set.DynamicBitSetUnmanaged = undefined,
+    files_live: BitSet = undefined,
     entry_points: EntryPoint.List = .{},
     symbols: js_ast.Symbol.Map = .{},
 
@@ -1428,13 +1429,15 @@ const LinkerGraph = struct {
 
     stable_source_indices: []const u32 = &[_]u32{},
 
-    react_client_component_boundary: bun.bit_set.DynamicBitSetUnmanaged = .{},
-    react_server_component_boundary: bun.bit_set.DynamicBitSetUnmanaged = .{},
+    react_client_component_boundary: BitSet = .{},
+    react_server_component_boundary: BitSet = .{},
+    has_client_components: bool = false,
+    has_server_components: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, file_count: usize) !LinkerGraph {
         return LinkerGraph{
             .allocator = allocator,
-            .files_live = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(allocator, file_count),
+            .files_live = try BitSet.initEmpty(allocator, file_count),
         };
     }
 
@@ -1644,7 +1647,7 @@ const LinkerGraph = struct {
     ) !void {
         try this.files.ensureTotalCapacity(this.allocator, sources.len);
         this.files.zero();
-        this.files_live = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(
+        this.files_live = try BitSet.initEmpty(
             this.allocator,
             sources.len,
         );
@@ -1685,8 +1688,8 @@ const LinkerGraph = struct {
             this.meta.zero();
 
             if (use_directive_entry_points.len > 0) {
-                this.react_client_component_boundary = bun.bit_set.DynamicBitSetUnmanaged.initEmpty(this.allocator, this.files.len) catch unreachable;
-                this.react_server_component_boundary = bun.bit_set.DynamicBitSetUnmanaged.initEmpty(this.allocator, this.files.len) catch unreachable;
+                this.react_client_component_boundary = BitSet.initEmpty(this.allocator, this.files.len) catch unreachable;
+                this.react_server_component_boundary = BitSet.initEmpty(this.allocator, this.files.len) catch unreachable;
                 var any_server = false;
                 var any_client = false;
 
@@ -2037,56 +2040,37 @@ const LinkerContext = struct {
             }
         };
 
-        // var is_inside_chunk_boundary: AutoBitSet = undefined;
-
-        // if (comptime FeatureFlags.boundary_based_chunking) {
-        //     if (this.graph.code_splitting) {
-        //         is_inside_chunk_boundary = AutoBitSet.initEmpty(temp_allocator, this.graph.files.len) catch unreachable;
-        //         const sources = this.graph.input_files.items(.source);
-        //         for (this.graph.reachable_files) |source_index| {
-        //             if (this.graph.files_live.isSet(source_index.get())) {
-        //                 const path: *const Fs.Path = &sources[source_index.get()].path;
-        //                 if (path.isNodeModule()) {
-        //                     is_inside_chunk_boundary.set(source_index.get());
-        //                 }
-        //             }
-        //         }
-        //     }
-        // }
-
         // Figure out which JS files are in which chunk
         for (this.graph.reachable_files) |source_index| {
             if (this.graph.files_live.isSet(source_index.get())) {
                 const entry_bits: *const AutoBitSet = &file_entry_bits[source_index.get()];
 
                 if (this.graph.code_splitting) {
-                    if (comptime FeatureFlags.boundary_based_chunking) {} else {
-                        var js_chunk_entry = try js_chunks.getOrPut(
-                            try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)),
-                        );
+                    var js_chunk_entry = try js_chunks.getOrPut(
+                        try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)),
+                    );
 
-                        if (!js_chunk_entry.found_existing) {
-                            js_chunk_entry.value_ptr.* = .{
-                                .entry_bits = entry_bits.*,
-                                .entry_point = .{
-                                    .source_index = source_index.get(),
-                                },
-                                .content = .{
-                                    .javascript = .{},
-                                },
-                            };
-                        }
-
-                        _ = js_chunk_entry.value_ptr.files_with_parts_in_chunk.getOrPut(this.allocator, @truncate(u32, source_index.get())) catch unreachable;
+                    if (!js_chunk_entry.found_existing) {
+                        js_chunk_entry.value_ptr.* = .{
+                            .entry_bits = entry_bits.*,
+                            .entry_point = .{
+                                .source_index = source_index.get(),
+                            },
+                            .content = .{
+                                .javascript = .{},
+                            },
+                        };
                     }
-                }
 
-                var handler = Handler{
-                    .chunks = js_chunks.values(),
-                    .allocator = this.allocator,
-                    .source_id = source_index.get(),
-                };
-                entry_bits.forEach(Handler, &handler, Handler.next);
+                    _ = js_chunk_entry.value_ptr.files_with_parts_in_chunk.getOrPut(this.allocator, @truncate(u32, source_index.get())) catch unreachable;
+                } else {
+                    var handler = Handler{
+                        .chunks = js_chunks.values(),
+                        .allocator = this.allocator,
+                        .source_id = source_index.get(),
+                    };
+                    entry_bits.forEach(Handler, &handler, Handler.next);
+                }
             }
         }
 

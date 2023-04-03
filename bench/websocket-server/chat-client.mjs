@@ -114,6 +114,8 @@ var received = 0;
 var total = 0;
 var more = false;
 var remaining;
+var t0 = 0;
+var t1 = 0;
 
 for (let i = 0; i < CLIENTS_TO_WAIT_FOR; i++) {
   clients[i].onmessage = event => {
@@ -122,6 +124,7 @@ for (let i = 0; i < CLIENTS_TO_WAIT_FOR; i++) {
     remaining--;
 
     if (remaining === 0) {
+      t1 = performance.now();
       more = true;
       remaining = total;
     }
@@ -141,6 +144,7 @@ for (let i = 0; i < CLIENTS_TO_WAIT_FOR; i++) {
 remaining = total;
 
 function restart() {
+  t0 = performance.now();
   for (let i = 0; i < CLIENTS_TO_WAIT_FOR; i++) {
     for (let j = 0; j < MESSAGES_TO_SEND.length; j++) {
       clients[i].send(MESSAGES_TO_SEND[j]);
@@ -149,25 +153,31 @@ function restart() {
 }
 
 var runs = [];
-setInterval(() => {
-  const last = received;
-  runs.push(last);
-  received = 0;
-  console.log(
-    last,
-    `messages per second (${CLIENTS_TO_WAIT_FOR} clients x ${MESSAGES_TO_SEND.length} msg, min delay: ${DELAY}ms)`,
-  );
-
-  if (runs.length >= 10) {
-    console.log("10 runs");
-    console.log(JSON.stringify(runs, null, 2));
-    if ("process" in globalThis) process.exit(0);
-    runs.length = 0;
-  }
-}, 1000);
 var isRestarting = false;
+
 setInterval(() => {
   if (more && !isRestarting) {
+    const secondsTaken = (t1 - t0) / 1_000;
+    const rate = received / secondsTaken;
+    runs.push(rate);
+    received = 0;
+    console.log(
+      rate,
+      `messages per second (${CLIENTS_TO_WAIT_FOR} clients x ${MESSAGES_TO_SEND.length} msg, time: ${secondsTaken}s)`,
+    );
+
+    if (runs.length >= 10) {
+      console.log("10 runs");
+      console.log(JSON.stringify(runs, null, 2));
+      const sum = runs.reduce((prev, curr) => {
+        return prev + curr;
+      });
+      const avg = sum / runs.length;
+      console.log(`Average: ${avg}`);
+      if ("process" in globalThis) process.exit(0);
+      runs.length = 0;
+    }
+
     more = false;
     isRestarting = true;
     restart();

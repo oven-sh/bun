@@ -67,27 +67,36 @@ extern const int s_importMetaObjectRequireCodeLength;
 extern const JSC::ConstructAbility s_importMetaObjectRequireCodeConstructAbility;
 extern const JSC::ConstructorKind s_importMetaObjectRequireCodeConstructorKind;
 extern const JSC::ImplementationVisibility s_importMetaObjectRequireCodeImplementationVisibility;
+extern const char* const s_importMetaObjectMainCode;
+extern const int s_importMetaObjectMainCodeLength;
+extern const JSC::ConstructAbility s_importMetaObjectMainCodeConstructAbility;
+extern const JSC::ConstructorKind s_importMetaObjectMainCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_importMetaObjectMainCodeImplementationVisibility;
 
 #define WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_DATA(macro) \
     macro(loadCJS2ESM, importMetaObjectLoadCJS2ESM, 1) \
     macro(requireESM, importMetaObjectRequireESM, 1) \
     macro(internalRequire, importMetaObjectInternalRequire, 1) \
     macro(require, importMetaObjectRequire, 1) \
+    macro(main, importMetaObjectMain, 0) \
 
 #define WEBCORE_BUILTIN_IMPORTMETAOBJECT_LOADCJS2ESM 1
 #define WEBCORE_BUILTIN_IMPORTMETAOBJECT_REQUIREESM 1
 #define WEBCORE_BUILTIN_IMPORTMETAOBJECT_INTERNALREQUIRE 1
 #define WEBCORE_BUILTIN_IMPORTMETAOBJECT_REQUIRE 1
+#define WEBCORE_BUILTIN_IMPORTMETAOBJECT_MAIN 1
 
 #define WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_CODE(macro) \
     macro(importMetaObjectLoadCJS2ESMCode, loadCJS2ESM, ASCIILiteral(), s_importMetaObjectLoadCJS2ESMCodeLength) \
     macro(importMetaObjectRequireESMCode, requireESM, ASCIILiteral(), s_importMetaObjectRequireESMCodeLength) \
     macro(importMetaObjectInternalRequireCode, internalRequire, ASCIILiteral(), s_importMetaObjectInternalRequireCodeLength) \
     macro(importMetaObjectRequireCode, require, ASCIILiteral(), s_importMetaObjectRequireCodeLength) \
+    macro(importMetaObjectMainCode, main, "get main"_s, s_importMetaObjectMainCodeLength) \
 
 #define WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_FUNCTION_NAME(macro) \
     macro(internalRequire) \
     macro(loadCJS2ESM) \
+    macro(main) \
     macro(require) \
     macro(requireESM) \
 

@@ -203,3 +203,8 @@ function require(name) {
 
   return @internalRequire(@resolveSync(name, from));
 }
+
+@getter
+function main() {
+  return this.path === @Bun.main;
+}

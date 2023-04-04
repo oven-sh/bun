@@ -39,6 +39,7 @@
 
 #include "JSDOMURL.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
+#include "JavaScriptCore/GetterSetter.h"
 
 namespace Zig {
 using namespace JSC;
@@ -84,7 +85,7 @@ static EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObject, 
             // require.resolve also supports a paths array
             // we only support a single path
             if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
-                 if (JSValue pathsValue = fromValue.getObject()->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "paths"_s))) {
+                if (JSValue pathsValue = fromValue.getObject()->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "paths"_s))) {
                     if (JSC::JSArray* array = JSC::jsDynamicCast<JSC::JSArray*>(pathsValue)) {
                         if (array->length() > 0) {
                             fromValue = array->getIndex(globalObject, 0);
@@ -413,7 +414,13 @@ void ImportMetaObjectPrototype::finishCreation(VM& vm, JSGlobalObject* globalObj
     this->putDirect(vm, builtinNames.dirPublicName(), jsEmptyString(vm), 0);
     this->putDirect(vm, builtinNames.pathPublicName(), jsEmptyString(vm), 0);
     this->putDirect(vm, builtinNames.urlPublicName(), jsEmptyString(vm), 0);
-    this->putDirect(vm, builtinNames.mainPublicName(), jsBoolean(false), 0);
+
+    this->putDirect(
+        vm,
+        builtinNames.mainPublicName(),
+        GetterSetter::create(vm, globalObject, JSFunction::create(vm, importMetaObjectMainCodeGenerator(vm), globalObject), nullptr),
+        JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin | 0);
+        
     this->putDirect(vm, Identifier::fromString(vm, "primordials"_s), jsUndefined(), JSC::PropertyAttribute::DontEnum | 0);
 
     String requireString = "[[require]]"_s;

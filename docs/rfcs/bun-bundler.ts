@@ -29,25 +29,23 @@ export type Loader =
 export type LogLevel = "verbose" | "debug" | "info" | "warning" | "error" | "silent";
 export type Charset = "ascii" | "utf8";
 
+type BundlerError = {
+  file: string;
+  error: Error;
+};
+
 export interface BundlerOptions {
+  // handle build errors
+  catch?(errors: BundlerError[]): void;
+
   // currently this only accepts a Loader string
   // change: set an ext->loader map
   loader?: { [k in string]: Loader };
 
   // rename `platform` to `target`
-  target?:
-    | Target
-    | {
-        name: Target; // e.g. 'node', 'browser'
-        // instead of esbuild's `target`
-        version?: string; // e.g. '18', 'es2020'
-        // low priority
-        supported?: Record<string, boolean>;
-      };
+  target?: Target;
 
-  // currently accepts a tsconfig as stringified JSON or an object
-  // IMO this should accept a file path to a tsconfig.json file instead
-  // or at least in addition
+  // a file path to a tsconfig.json file
   // that's what most people are used to in config files
   tsconfig?: string;
 
@@ -56,13 +54,6 @@ export interface BundlerOptions {
 
   // from Bun.Transpiler API
   macro?: MacroMap;
-  autoImportJSX?: boolean;
-  jsxOptimizationInline?: boolean;
-  inline?: boolean;
-  optimization?: {
-    inline?: boolean;
-    jsxInline?: boolean;
-  };
 
   sourcemap?:
     | boolean
@@ -75,22 +66,9 @@ export interface BundlerOptions {
         content?: boolean;
       };
 
-  format?:
-    | Format
-    | {
-        type: "iife";
-        globalName?: string;
-      };
+  format?: Format;
 
-  logging?: {
-    color?: boolean;
-    level?: LogLevel;
-    // extremely low priority
-    limit?: number;
-    override?: Record<string, LogLevel>;
-  };
-
-  // removed: mangleProps, reserveProps, mangleQuoted, mangleCache
+  // removed: logging, mangleProps, reserveProps, mangleQuoted, mangleCache
 
   /** Documentation: https://esbuild.github.io/api/#minify */
   minify?:
@@ -101,17 +79,7 @@ export interface BundlerOptions {
         syntax?: boolean;
       };
 
-  treeShaking?:
-    | boolean
-    | {
-        imports?: boolean;
-        code?: boolean;
-        // whether to believe @__PURE__
-        // I hate this
-        pure?: boolean;
-        // whether to believe package.json sideEffects
-        sideEffects?: boolean;
-      };
+  treeShaking?: boolean;
 
   jsx?:
     | JsxTransform
@@ -127,10 +95,6 @@ export interface BundlerOptions {
         autoImport?: boolean;
       };
 
-  /**
-   * Low priority
-   * */
-  legalComments?: "none" | "inline" | "eof" | "linked" | "external";
   charset?: Charset;
 }
 
@@ -153,16 +117,6 @@ interface BuildOptions extends BundlerOptions {
   entrypoints: string[];
   rootDir?: string; // equiv. outbase
 
-  memory?: boolean;
-
-  // no outfile; it can be specified with `outdir` and `outnames`
-  write?:
-    | string
-    | {
-        dir?: string;
-        overwrite?: boolean;
-      };
-
   naming?: {
     /** Documentation: https://esbuild.github.io/api/#entry-names */
     entry?: string;
@@ -181,14 +135,8 @@ interface BuildOptions extends BundlerOptions {
     bare?: boolean;
   };
 
+  // transform options only apply to entrypoints
   transform?: {
-    define?: Record<string, string>;
-    inject?: Array<{
-      position: "start" | "end";
-      target: "entry" | "chunk" | "all";
-      content: string;
-      extensions: string[];
-    }>;
     imports?: {
       rename?: Record<string, string>;
     };
@@ -196,9 +144,6 @@ interface BuildOptions extends BundlerOptions {
       pick?: string[];
       omit?: string[];
       rename?: Record<string, string>;
-      // replace definition with a code snippet?
-      // probably not workable
-      stub?: Record<string, string>;
     };
   };
 
@@ -213,15 +158,27 @@ interface BuildOptions extends BundlerOptions {
   publicPath?: string;
 }
 
-type BuildResult = {
-  then(cb: (result: BuildResult) => BuildOptions): BuildResult;
-  results: Record<string, Buffer>;
+type BuildResult<T> = {
+  // only exists if `manifest` is true
+  manifest?: object;
+  // build context that can be written to by plugins
+  context?: object;
+  results: { path: string; result: T }[];
+};
+
+type LazyBuildResult = {
+  then(cb: (result: LazyBuildResult) => BuildOptions): LazyBuildResult;
+  write(dir: string): Promise<{ path: string }[]>;
+  text(): Promise<BuildResult<string>>;
+  blob(): Promise<BuildResult<Blob>>;
+  response(): Promise<BuildResult<Response>>;
+  arrayBuffer(): Promise<BuildResult<ArrayBuffer>>;
+  gzip(): Promise<BuildResult<Blob>>;
 };
 
 declare class Bundler {
   constructor(options: BundlerOptions);
-  build: (options: BuildOptions) => Promise<BuildResult>;
-  buildSync: (options: BuildOptions) => BuildResult;
+  makeBuild: (options: BuildOptions) => LazyBuildResult;
   handle: (
     req: Request,
     options: { prefix?: string }, // prefix to remove from req.url
@@ -229,22 +186,25 @@ declare class Bundler {
   rebuild(): Promise<void>;
 }
 
-// simple build
+// simple build, writes to disk
 {
-  const bundler = new Bundler({}).build({
-    entrypoints: ["index.js"],
-    write: process.cwd() + "/build",
-  });
+  const bundler = new Bundler({});
+  bundler
+    .makeBuild({
+      entrypoints: ["index.js"],
+    })
+    .write("./build");
 }
 
-// staged build
+// simple build, returns results as Blob
 {
-  const router = new Bun.FileSystemRouter({
-    dir: "./pages",
-    style: "nextjs",
-  });
-  const bundler = new Bundler({}).build({
-    entrypoints: Object.values(router.routes),
-    write: process.cwd() + "/build",
-  });
+  const bundler = new Bundler({});
+  const result = await bundler
+    .makeBuild({
+      entrypoints: ["index.js"],
+    })
+    .blob();
+
+  console.log(result.results[0].path);
+  console.log(result.results[0].result);
 }

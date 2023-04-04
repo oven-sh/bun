@@ -230,6 +230,8 @@ pub const ThreadPool = struct {
     };
 };
 
+const Watcher = bun.JSC.NewHotReloader(BundleV2, EventLoop, true);
+
 pub const BundleV2 = struct {
     bundler: *Bundler,
     client_bundler: *Bundler,
@@ -238,6 +240,7 @@ pub const BundleV2 = struct {
     linker: LinkerContext = LinkerContext{ .loop = undefined },
     tmpfile: std.fs.File = undefined,
     tmpfile_byte_offset: u32 = 0,
+    bun_watcher: ?*Watcher.Watcher = null,
 
     const debug = Output.scoped(.Bundle, false);
 
@@ -379,6 +382,7 @@ pub const BundleV2 = struct {
         package_bundle_map: options.BundlePackage.Map,
         event_loop: EventLoop,
         unique_key: u64,
+        enable_reloading: bool,
     ) !std.ArrayList(options.OutputFile) {
         _ = try bundler.fs.fs.openTmpDir();
         bundler.resetStore();
@@ -418,6 +422,9 @@ pub const BundleV2 = struct {
         generator.linker.graph.code_splitting = bundler.options.code_splitting;
         generator.graph.code_splitting = bundler.options.code_splitting;
         var pool = try generator.graph.allocator.create(ThreadPool);
+        if (enable_reloading) {
+            Watcher.enableHotModuleReloading(generator);
+        }
         // errdefer pool.destroy();
         errdefer generator.graph.heap.deinit();
 
@@ -526,25 +533,56 @@ pub const BundleV2 = struct {
         var graph = &this.graph;
         var batch = ThreadPoolLib.Batch{};
         var diff: isize = -1;
+
         defer graph.parse_pending = if (diff > 0)
             graph.parse_pending + @intCast(usize, diff)
         else
             graph.parse_pending - @intCast(usize, -diff);
         switch (parse_result.value) {
-            .empty => |source_index| {
+            .empty => |empty_result| {
                 var input_files = graph.input_files.slice();
                 var side_effects = input_files.items(.side_effects);
-                side_effects[source_index.get()] = .no_side_effects__empty_ast;
+                side_effects[empty_result.source_index.get()] = .no_side_effects__empty_ast;
                 if (comptime Environment.allow_assert) {
                     debug("onParse({d}, {s}) = empty", .{
-                        source_index.get(),
-                        input_files.items(.source)[source_index.get()].path.text,
+                        empty_result.source_index.get(),
+                        input_files.items(.source)[empty_result.source_index.get()].path.text,
                     });
+                }
+
+                if (this.bun_watcher != null) {
+                    if (empty_result.watcher_data.fd > 0) {
+                        this.bun_watcher.?.addFile(
+                            empty_result.watcher_data.fd,
+                            input_files.items(.source)[empty_result.source_index.get()].path.text,
+                            bun.hash32(input_files.items(.source)[empty_result.source_index.get()].path.text),
+                            graph.input_files.items(.loader)[empty_result.source_index.get()],
+                            empty_result.watcher_data.dir_fd,
+                            null,
+                            false,
+                        ) catch {};
+                    }
                 }
             },
             .success => |*result| {
                 result.log.appendTo(this.bundler.log) catch unreachable;
+
                 {
+                    // to minimize contention, we add watcher here
+                    if (this.bun_watcher != null) {
+                        if (result.watcher_data.fd > 0) {
+                            this.bun_watcher.?.addFile(
+                                result.watcher_data.fd,
+                                result.source.path.text,
+                                bun.hash32(result.source.path.text),
+                                this.bundler.options.loader(result.source.path.name.ext),
+                                result.watcher_data.dir_fd,
+                                result.watcher_data.package_json,
+                                false,
+                            ) catch {};
+                        }
+                    }
+
                     var input_files = graph.input_files.slice();
                     input_files.items(.source)[result.source.index.get()] = result.source;
                     debug("onParse({d}, {s}) = {d} imports, {d} exports", .{
@@ -715,8 +753,18 @@ const ParseTask = struct {
         value: union(Tag) {
             err: Error,
             success: Success,
-            empty: Index,
+            empty: struct {
+                source_index: Index,
+
+                watcher_data: WatcherData = .{},
+            },
         },
+
+        const WatcherData = struct {
+            fd: bun.StoredFileDescriptorType = 0,
+            dir_fd: bun.StoredFileDescriptorType = 0,
+            package_json: ?*PackageJSON = null,
+        };
 
         pub const Success = struct {
             ast: js_ast.Ast,
@@ -725,6 +773,7 @@ const ParseTask = struct {
             log: Logger.Log,
 
             use_directive: UseDirective = .none,
+            watcher_data: WatcherData = .{},
         };
 
         pub const Error = struct {
@@ -1089,6 +1138,10 @@ const ParseTask = struct {
                     .resolve_queue = resolve_queue,
                     .log = log.*,
                     .use_directive = use_directive,
+                    .watcher_data = .{
+                        .fd = if (task.contents_or_fd == .fd) task.contents_or_fd.fd.file else 0,
+                        .dir_fd = if (task.contents_or_fd == .fd) task.contents_or_fd.fd.dir else 0,
+                    },
                 };
             },
             else => return null,
@@ -1128,12 +1181,28 @@ const ParseTask = struct {
                         break :brk .{ .success = ast };
                     } else {
                         log.deinit();
-                        break :brk .{ .empty = this.source_index };
+                        break :brk .{
+                            .empty = .{
+                                .source_index = this.source_index,
+                                .watcher_data = .{
+                                    .fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.file else 0,
+                                    .dir_fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.dir else 0,
+                                },
+                            },
+                        };
                     }
                 } else |err| {
                     if (err == error.EmptyAST) {
                         log.deinit();
-                        break :brk .{ .empty = this.source_index };
+                        break :brk .{
+                            .empty = .{
+                                .source_index = this.source_index,
+                                .watcher_data = .{
+                                    .fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.file else 0,
+                                    .dir_fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.dir else 0,
+                                },
+                            },
+                        };
                     }
                     break :brk .{
                         .err = .{

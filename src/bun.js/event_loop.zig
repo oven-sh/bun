@@ -448,7 +448,7 @@ pub const EventLoop = struct {
                     transform_task.*.runFromJS();
                     transform_task.deinit();
                 },
-                .HotReloadTask => {
+                @field(Task.Tag, @typeName(HotReloadTask)) => {
                     var transform_task: *HotReloadTask = task.get(HotReloadTask).?;
                     transform_task.*.run();
                     transform_task.deinit();
@@ -779,10 +779,6 @@ pub const MiniEventLoop = struct {
                 break;
             }
         }
-    }
-
-    pub fn enqueueJSCTask(this: *MiniEventLoop, task: *MiniEventLoop.Task) void {
-        this.tasks.writeItem(task) catch unreachable;
     }
 
     pub fn enqueueTask(

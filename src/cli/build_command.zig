@@ -123,6 +123,7 @@ pub const BuildCommand = struct {
                 ctx.debug.package_bundle_map,
                 bun.JSC.AnyEventLoop.init(ctx.allocator),
                 std.crypto.random.int(u64),
+                ctx.debug.hot_reload == .watch,
             ) catch |err| {
                 if (log.msgs.items.len > 0) {
                     try log.printForLogLevel(Output.errorWriter());
@@ -131,7 +132,8 @@ pub const BuildCommand = struct {
                 }
 
                 Output.flush();
-                Global.exit(1);
+                exitOrWatch(ctx.debug.hot_reload == .watch);
+                unreachable;
             };
 
             {
@@ -220,8 +222,18 @@ pub const BuildCommand = struct {
                     }
                 }
             }
-
             try log.printForLogLevel(Output.errorWriter());
+            exitOrWatch(ctx.debug.hot_reload == .watch);
         }
     }
 };
+
+fn exitOrWatch(watch: bool) void {
+    if (watch) {
+        // the watcher thread will exit the process
+        std.time.sleep(std.math.maxInt(u64) - 1);
+        Global.exit(0);
+    } else {
+        Global.exit(1);
+    }
+}

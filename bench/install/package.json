@@ -6,11 +6,8 @@
     "dev": "remix dev",
     "start": "remix-serve build",
     "typecheck": "tsc",
-    "install:bun": "rm -rf node_modules && bun install",
-    "install:pnpm": "rm -rf node_modules && pnpm install",
-    "install:yarn": "rm -rf node_modules && yarn",
-    "install:npm": "rm -rf node_modules && npm install",
-    "bench": "hyperfine --warmup 2 'bun run install:bun' 'bun run install:pnpm' 'bun run install:yarn' 'bun run install:npm'"
+    "clean": "rm -rf node_modules",
+    "bench": "hyperfine --prepare 'rm -rf node_modules' --warmup 1 --runs 3 'bun install' 'pnpm install' 'yarn' 'npm install'"
   },
   "dependencies": {
     "@remix-run/node": "^1.15.0",

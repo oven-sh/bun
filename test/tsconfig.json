@@ -11,6 +11,8 @@
     "module": "ESNext",
     "target": "ESNext",
     "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "allowImportingTsExtensions": true,
     "strict": true,
     "downlevelIteration": true,
     "skipLibCheck": true,

@@ -17,6 +17,7 @@
   },
   "private": true,
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "postinstall": "cd node_modules/bktree-fast && bun x node-gyp configure build"
   }
 }

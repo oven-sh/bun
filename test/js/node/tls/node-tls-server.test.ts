@@ -36,7 +36,12 @@ describe("tls.createServer listen", () => {
 
     const server = createServer(COMMON_CERT);
 
-    server.on("error", mustNotCall());
+    const closeAndFail = () => {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall()();
+    };
+    server.on("error", closeAndFail);
 
     server.listen(
       0,
@@ -47,9 +52,9 @@ describe("tls.createServer listen", () => {
         expect(address.port).toBeGreaterThan(100);
         expect(address.family).toStrictEqual("IPv6");
         server.close();
+        done();
       }),
     );
-    done();
   });
 
   it("should listen on IPv4", done => {
@@ -57,7 +62,12 @@ describe("tls.createServer listen", () => {
 
     const server = createServer(COMMON_CERT);
 
-    server.on("error", mustNotCall());
+    const closeAndFail = () => {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall()();
+    };
+    server.on("error", closeAndFail);
 
     server.listen(
       0,
@@ -69,6 +79,7 @@ describe("tls.createServer listen", () => {
         expect(address.port).toBeGreaterThan(100);
         expect(address.family).toStrictEqual("IPv4");
         server.close();
+        done();
       }),
     );
     done();
@@ -79,7 +90,12 @@ describe("tls.createServer listen", () => {
 
     const server = createServer(COMMON_CERT);
 
-    server.on("error", mustNotCall());
+    const closeAndFail = () => {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall()();
+    };
+    server.on("error", closeAndFail);
 
     server.listen(
       0,
@@ -91,9 +107,9 @@ describe("tls.createServer listen", () => {
         expect(address.port).toBeGreaterThan(100);
         expect(address.family).toStrictEqual("IPv6");
         server.close();
+        done();
       }),
     );
-    done();
   });
 
   it("should listen on localhost", done => {
@@ -101,7 +117,12 @@ describe("tls.createServer listen", () => {
 
     const server = createServer(COMMON_CERT);
 
-    server.on("error", mustNotCall());
+    const closeAndFail = () => {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall()();
+    };
+    server.on("error", closeAndFail);
 
     server.listen(
       0,
@@ -111,9 +132,9 @@ describe("tls.createServer listen", () => {
         expect(address.address).toStrictEqual("::1");
         expect(address.family).toStrictEqual("IPv6");
         server.close();
+        done();
       }),
     );
-    done();
   });
 
   it("should listen without port or host", done => {
@@ -121,7 +142,12 @@ describe("tls.createServer listen", () => {
 
     const server = createServer(COMMON_CERT);
 
-    server.on("error", mustNotCall());
+    const closeAndFail = () => {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall()();
+    };
+    server.on("error", closeAndFail);
 
     server.listen(
       mustCall(() => {
@@ -131,9 +157,9 @@ describe("tls.createServer listen", () => {
         expect(address.port).toBeGreaterThan(100);
         expect(address.family).toStrictEqual("IPv6");
         server.close();
+        done();
       }),
     );
-    done();
   });
 
   it("should listen on the correct port", done => {
@@ -141,7 +167,12 @@ describe("tls.createServer listen", () => {
 
     const server = createServer(COMMON_CERT);
 
-    server.on("error", mustNotCall());
+    const closeAndFail = () => {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall()();
+    };
+    server.on("error", closeAndFail);
 
     server.listen(
       49027,
@@ -151,9 +182,9 @@ describe("tls.createServer listen", () => {
         expect(address.port).toStrictEqual(49027);
         expect(address.family).toStrictEqual("IPv6");
         server.close();
+        done();
       }),
     );
-    done();
   });
 
   it("should listen on the correct port with IPV4", done => {
@@ -161,7 +192,12 @@ describe("tls.createServer listen", () => {
 
     const server = createServer(COMMON_CERT);
 
-    server.on("error", mustNotCall());
+    const closeAndFail = () => {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall()();
+    };
+    server.on("error", closeAndFail);
 
     server.listen(
       49026,
@@ -172,9 +208,9 @@ describe("tls.createServer listen", () => {
         expect(address.port).toStrictEqual(49026);
         expect(address.family).toStrictEqual("IPv4");
         server.close();
+        done();
       }),
     );
-    done();
   });
 
   it("should listen on unix domain socket", done => {
@@ -182,7 +218,12 @@ describe("tls.createServer listen", () => {
 
     const server = createServer(COMMON_CERT);
 
-    server.on("error", mustNotCall());
+    const closeAndFail = () => {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall()();
+    };
+    server.on("error", closeAndFail);
 
     server.listen(
       socket_domain,
@@ -190,9 +231,9 @@ describe("tls.createServer listen", () => {
         const address = server.address();
         expect(address).toStrictEqual(socket_domain);
         server.close();
+        done();
       }),
     );
-    done();
   });
 });
 

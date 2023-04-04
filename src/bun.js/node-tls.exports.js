@@ -13,18 +13,18 @@ var InternalSecureContext = class SecureContext {
     const context = {};
     if (options) {
       if (options.key) {
-        context.key = (options.key instanceof Array ? options.key : [options.key]).map(mapStringArray);
+        context.key = (Array.isArray(options.key) ? options.key : [options.key]).map(mapStringArray);
       } else context.key = undefined;
 
       if (options.passphrase) context.passphrase = options.passphrase;
       else context.passphrase = undefined;
 
       if (options.cert) {
-        context.cert = (options.cert instanceof Array ? options.cert : [options.cert]).map(mapStringArray);
+        context.cert = (Array.isArray(options.cert) ? options.cert : [options.cert]).map(mapStringArray);
       } else context.cert = undefined;
 
       if (options.ca) {
-        context.ca = (options.ca instanceof Array ? options.ca : [options.ca]).map(mapStringArray);
+        context.ca = (Array.isArray(options.ca) ? options.ca : [options.ca]).map(mapStringArray);
       } else context.ca = undefined;
 
       const secureOptions = options.secureOptions || 0;
@@ -160,18 +160,18 @@ class Server extends NetServer {
     }
     if (options) {
       if (options.key) {
-        this.key = (options.key instanceof Array ? options.key : [options.key]).map(mapStringArray);
+        this.key = (Array.isArray(options.key) ? options.key : [options.key]).map(mapStringArray);
       } else this.key = undefined;
 
       if (options.passphrase) this.passphrase = options.passphrase;
       else this.passphrase = undefined;
 
       if (options.cert) {
-        this.cert = (options.cert instanceof Array ? options.cert : [options.cert]).map(mapStringArray);
+        this.cert = (Array.isArray(options.cert) ? options.cert : [options.cert]).map(mapStringArray);
       } else this.cert = undefined;
 
       if (options.ca) {
-        this.ca = (options.ca instanceof Array ? options.ca : [options.ca]).map(mapStringArray);
+        this.ca = (Array.isArray(options.ca) ? options.ca : [options.ca]).map(mapStringArray);
       } else this.ca = undefined;
 
       const secureOptions = options.secureOptions || 0;

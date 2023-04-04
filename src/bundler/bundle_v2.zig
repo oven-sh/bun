@@ -232,6 +232,8 @@ pub const ThreadPool = struct {
 
 pub const BundleV2 = struct {
     bundler: *Bundler,
+    client_bundler: *Bundler,
+    server_bundler: *Bundler,
     graph: Graph = Graph{},
     linker: LinkerContext = LinkerContext{ .loop = undefined },
     tmpfile: std.fs.File = undefined,
@@ -313,19 +315,6 @@ pub const BundleV2 = struct {
         return visitor.reachable.toOwnedSlice();
     }
 
-    pub fn appendBytes(generator: *BundleV2, bytes: anytype) !void {
-        try generator.tmpfile.writeAll(bytes);
-        generator.tmpfile_byte_offset += @truncate(u32, bytes.len);
-    }
-
-    pub fn ensurePathIsAllocated(this: *BundleV2, path_: ?*Fs.Path) !void {
-        var path = path_ orelse return;
-
-        const loader = this.bundler.options.loaders.get(path.name.ext) orelse .file;
-        if (!loader.isJavaScriptLikeOrJSON()) return;
-        path.* = try path.dupeAlloc(this.allocator);
-    }
-
     pub fn waitForParse(this: *BundleV2) void {
         while (this.graph.parse_pending > 0) {
             this.loop().tick(this);
@@ -405,6 +394,8 @@ pub const BundleV2 = struct {
         generator.* = BundleV2{
             .tmpfile = undefined,
             .bundler = bundler,
+            .client_bundler = bundler,
+            .server_bundler = bundler,
             .graph = .{
                 .pool = undefined,
                 .heap = try ThreadlocalArena.init(),
@@ -676,6 +667,7 @@ const ParseTask = struct {
     task: ThreadPoolLib.Task = .{ .callback = &callback },
     tree_shaking: bool = false,
     known_platform: ?options.Platform = null,
+    module_type: options.ModuleType = .unknown,
 
     const debug = Output.scoped(.ParseTask, false);
 
@@ -693,6 +685,7 @@ const ParseTask = struct {
             .side_effects = resolve_result.primary_side_effects_data,
             .jsx = resolve_result.jsx,
             .source_index = source_index orelse Index.invalid,
+            .module_type = resolve_result.module_type,
         };
     }
 
@@ -879,6 +872,7 @@ const ParseTask = struct {
                 opts.features.auto_import_jsx = !opts.features.jsx_optimization_inline and task.jsx.parse and bundler.options.auto_import_jsx;
                 opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
                 opts.tree_shaking = task.tree_shaking;
+                opts.module_type = task.module_type;
 
                 var ast = (try resolver.caches.js.parse(
                     bundler.allocator,

@@ -2369,8 +2369,6 @@ const ImportClause = struct {
     had_type_only_imports: bool = false,
 };
 
-const ModuleType = enum { esm };
-
 const PropertyOpts = struct {
     async_range: logger.Range = logger.Range.None,
     declare_range: logger.Range = logger.Range.None,
@@ -2455,7 +2453,7 @@ pub const Parser = struct {
         enable_legacy_bundling: bool = false,
         transform_require_to_import: bool = true,
 
-        moduleType: ModuleType = ModuleType.esm,
+        module_type: options.ModuleType = .unknown,
 
         pub fn init(jsx: options.JSX.Pragma, loader: options.Loader) Options {
             var opts = Options{
@@ -2806,9 +2804,9 @@ pub const Parser = struct {
                     }
                 }
 
-                if (!p.commonjs_named_exports_deoptimized and p.es6_export_keyword.len == 0) {
-                    p.es6_export_keyword.loc = export_refs[0].loc_ref.loc;
-                    p.es6_export_keyword.len = 5;
+                if (!p.commonjs_named_exports_deoptimized and p.esm_export_keyword.len == 0) {
+                    p.esm_export_keyword.loc = export_refs[0].loc_ref.loc;
+                    p.esm_export_keyword.len = 5;
                 }
             }
         }
@@ -2857,7 +2855,7 @@ pub const Parser = struct {
                             }
                         }
                     }
-                } else if (p.es6_export_keyword.len > 0) {
+                } else if (p.esm_export_keyword.len > 0) {
                     switch (stmt.data) {
                         .s_export_star => |star| {
                             if (star.alias == null) {
@@ -2886,7 +2884,7 @@ pub const Parser = struct {
 
         var wrapper_expr: ?Expr = null;
 
-        if ((p.es6_export_keyword.len > 0 or p.top_level_await_keyword.len > 0) and !uses_exports_ref) {
+        if (p.esm_export_keyword.len > 0 or p.top_level_await_keyword.len > 0) {
             exports_kind = .esm;
         } else if (uses_exports_ref or uses_module_ref or p.has_top_level_return) {
             exports_kind = .cjs;
@@ -2914,7 +2912,18 @@ pub const Parser = struct {
                 }
             }
         } else {
-            exports_kind = .esm;
+            switch (p.options.module_type) {
+                // ".cjs" or ".cts" or ("type: commonjs" and (".js" or ".jsx" or ".ts" or ".tsx"))
+                .cjs => {
+                    exports_kind = .cjs;
+                },
+                .esm => {
+                    exports_kind = .esm;
+                },
+                else => {
+                    exports_kind = .esm;
+                },
+            }
         }
 
         // Auto inject jest globals into the test file
@@ -4086,6 +4095,8 @@ fn NewParser_(
         /// Used for transforming export default -> module.exports
         has_export_default: bool = false,
 
+        is_file_considered_to_have_esm_exports: bool = false,
+
         hmr_module: GeneratedSymbol = GeneratedSymbol{ .primary = Ref.None, .backup = Ref.None, .ref = Ref.None },
 
         has_called_runtime: bool = false,
@@ -4140,7 +4151,6 @@ fn NewParser_(
         react_element_type: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
         /// Symbol object
         es6_symbol_global: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
-        // jsx_filename: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
 
         // TODO: remove all these
         jsx_runtime: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
@@ -4165,8 +4175,8 @@ fn NewParser_(
         export_star_import_records: List(u32) = .{},
 
         // These are for handling ES6 imports and exports
-        es6_import_keyword: logger.Range = logger.Range.None,
-        es6_export_keyword: logger.Range = logger.Range.None,
+        esm_import_keyword: logger.Range = logger.Range.None,
+        esm_export_keyword: logger.Range = logger.Range.None,
         enclosing_class_keyword: logger.Range = logger.Range.None,
         import_items_for_namespace: std.AutoHashMapUnmanaged(Ref, ImportItemForNamespaceMap) = .{},
         is_import_item: RefMap = .{},
@@ -5598,16 +5608,20 @@ fn NewParser_(
                 }
             }
 
+            p.is_file_considered_to_have_esm_exports =
+                !p.top_level_await_keyword.isEmpty() or !p.esm_export_keyword.isEmpty() or
+                p.options.module_type == .esm;
+
             try p.pushScopeForVisitPass(js_ast.Scope.Kind.entry, locModuleScope);
             p.fn_or_arrow_data_visit.is_outside_fn_or_arrow = true;
             p.module_scope = p.current_scope;
-            p.has_es_module_syntax = p.es6_import_keyword.len > 0 or p.es6_export_keyword.len > 0 or p.top_level_await_keyword.len > 0;
+            p.has_es_module_syntax = p.esm_import_keyword.len > 0 or p.esm_export_keyword.len > 0 or p.top_level_await_keyword.len > 0;
 
             // ECMAScript modules are always interpreted as strict mode. This has to be
             // done before "hoistSymbols" because strict mode can alter hoisting (!).
-            if (p.es6_import_keyword.len > 0) {
+            if (p.esm_import_keyword.len > 0) {
                 p.module_scope.recursiveSetStrictMode(js_ast.StrictModeKind.implicit_strict_mode_import);
-            } else if (p.es6_export_keyword.len > 0) {
+            } else if (p.esm_export_keyword.len > 0) {
                 p.module_scope.recursiveSetStrictMode(js_ast.StrictModeKind.implicit_strict_mode_export);
             } else if (p.top_level_await_keyword.len > 0) {
                 p.module_scope.recursiveSetStrictMode(js_ast.StrictModeKind.implicit_strict_mode_top_level_await);
@@ -7495,9 +7509,9 @@ fn NewParser_(
                 },
 
                 .t_export => {
-                    var previousExportKeyword = p.es6_export_keyword;
+                    var previousExportKeyword = p.esm_export_keyword;
                     if (opts.is_module_scope) {
-                        p.es6_export_keyword = p.lexer.range();
+                        p.esm_export_keyword = p.lexer.range();
                     } else if (!opts.is_namespace_scope) {
                         try p.lexer.unexpected();
                         return error.SyntaxError;
@@ -7878,7 +7892,7 @@ fn NewParser_(
                         T.t_equals => {
                             // "export = value;"
 
-                            p.es6_export_keyword = previousExportKeyword; // This wasn't an ESM export statement after all
+                            p.esm_export_keyword = previousExportKeyword; // This wasn't an ESM export statement after all
                             if (is_typescript_enabled) {
                                 try p.lexer.next();
                                 var value = try p.parseExpr(.lowest);
@@ -8326,8 +8340,8 @@ fn NewParser_(
                     );
                 },
                 .t_import => {
-                    const previous_import_keyword = p.es6_import_keyword;
-                    p.es6_import_keyword = p.lexer.range();
+                    const previous_import_keyword = p.esm_import_keyword;
+                    p.esm_import_keyword = p.lexer.range();
                     try p.lexer.next();
                     var stmt: S.Import = S.Import{
                         .namespace_ref = Ref.None,
@@ -8344,7 +8358,7 @@ fn NewParser_(
                         // "import('path')"
                         // "import.meta"
                         .t_open_paren, .t_dot => {
-                            p.es6_import_keyword = previous_import_keyword; // this wasn't an esm import statement after all
+                            p.esm_import_keyword = previous_import_keyword; // this wasn't an esm import statement after all
                             const expr = try p.parseSuffix(try p.parseImportExpr(loc, .lowest), .lowest, null, Expr.EFlags.none);
                             try p.lexer.expectOrInsertSemicolon();
                             return p.s(S.SExpr{
@@ -8464,7 +8478,7 @@ fn NewParser_(
 
                                 // Parse TypeScript import assignment statements
                                 if (p.lexer.token == .t_equals or opts.is_export or (opts.is_namespace_scope and !opts.is_typescript_declare)) {
-                                    p.es6_import_keyword = previous_import_keyword; // This wasn't an ESM import statement after all;
+                                    p.esm_import_keyword = previous_import_keyword; // This wasn't an ESM import statement after all;
                                     return p.parseTypeScriptImportEqualsStmt(loc, opts, logger.Loc.Empty, default_name);
                                 }
                             }
@@ -10000,10 +10014,10 @@ fn NewParser_(
                 var where: logger.Range = logger.Range.None;
                 switch (scope.strict_mode) {
                     .implicit_strict_mode_import => {
-                        where = p.es6_import_keyword;
+                        where = p.esm_import_keyword;
                     },
                     .implicit_strict_mode_export => {
-                        where = p.es6_export_keyword;
+                        where = p.esm_export_keyword;
                     },
                     .implicit_strict_mode_top_level_await => {
                         where = p.top_level_await_keyword;
@@ -12911,7 +12925,7 @@ fn NewParser_(
         fn parseImportExpr(p: *P, loc: logger.Loc, level: Level) anyerror!Expr {
             // Parse an "import.meta" expression
             if (p.lexer.token == .t_dot) {
-                p.es6_import_keyword = js_lexer.rangeOfIdentifier(p.source, loc);
+                p.esm_import_keyword = js_lexer.rangeOfIdentifier(p.source, loc);
                 try p.lexer.next();
                 if (p.lexer.isContextualKeyword("meta")) {
                     try p.lexer.next();
@@ -16832,8 +16846,8 @@ fn NewParser_(
                                             };
                                             p.recordDeclaredSymbol(ref) catch unreachable;
                                             p.ignoreUsage(ref);
-                                            p.es6_export_keyword.loc = stmt.loc;
-                                            p.es6_export_keyword.len = 5;
+                                            p.esm_export_keyword.loc = stmt.loc;
+                                            p.esm_export_keyword.len = 5;
                                             var clause_items = p.allocator.alloc(js_ast.ClauseItem, 1) catch unreachable;
                                             clause_items[0] = js_ast.ClauseItem{
                                                 // We want the generated name to not conflict
@@ -16880,8 +16894,8 @@ fn NewParser_(
                     // Forbid top-level return inside modules with ECMAScript-style exports
                     if (p.fn_or_arrow_data_visit.is_outside_fn_or_arrow) {
                         const where = where: {
-                            if (p.es6_export_keyword.len > 0) {
-                                break :where p.es6_export_keyword;
+                            if (p.esm_export_keyword.len > 0) {
+                                break :where p.esm_export_keyword;
                             } else if (p.top_level_await_keyword.len > 0) {
                                 break :where p.top_level_await_keyword;
                             } else {
@@ -19807,8 +19821,8 @@ fn NewParser_(
                 .exports_kind = exports_kind,
                 .named_imports = p.named_imports,
                 .named_exports = p.named_exports,
-                .import_keyword = p.es6_import_keyword,
-                .export_keyword = p.es6_export_keyword,
+                .import_keyword = p.esm_import_keyword,
+                .export_keyword = p.esm_export_keyword,
                 .top_level_symbols_to_parts = top_level_symbols_to_parts,
                 .require_ref = if (p.runtime_imports.__require != null)
                     p.runtime_imports.__require.?.ref

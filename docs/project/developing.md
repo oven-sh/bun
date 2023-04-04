@@ -116,7 +116,7 @@ To install and build dependencies:
 # mostly due to WebKit
 $ git submodule update --init --recursive --progress --depth=1 --checkout
 $ bun install
-$ make vendor identifier-cache webcrypto-debug
+$ make vendor identifier-cache
 ```
 
 To compile the C++ bindings:

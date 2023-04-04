@@ -109,6 +109,7 @@ misctools/machbench
 bun-webkit
 
 src/deps/c-ares/build
+src/bun.js/bindings-obj
 src/bun.js/debug-bindings-obj
 
 failing-tests.txt

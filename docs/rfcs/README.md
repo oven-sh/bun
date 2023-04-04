@@ -1,4 +1,5 @@
 # RFCs
 
-| Number | Name | Issue |
-| ------ | ---- | ----- |
+| Number | Name            | Issue                            |
+| ------ | --------------- | -------------------------------- |
+| 1      | Bunfig overhaul | (Proposal)[./bunfig-overhaul.md] |

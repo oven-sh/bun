@@ -104,33 +104,8 @@ pub const Run = struct {
             Output.prettyErrorln("\n", .{});
             Global.exit(1);
         };
-        AsyncHTTP.max_simultaneous_requests = 255;
 
-        if (b.env.map.get("BUN_CONFIG_MAX_HTTP_REQUESTS")) |max_http_requests| {
-            load: {
-                AsyncHTTP.max_simultaneous_requests = std.fmt.parseInt(u16, max_http_requests, 10) catch {
-                    vm.log.addErrorFmt(
-                        null,
-                        logger.Loc.Empty,
-                        vm.allocator,
-                        "BUN_CONFIG_MAX_HTTP_REQUESTS value \"{s}\" is not a valid integer between 1 and 65535",
-                        .{max_http_requests},
-                    ) catch unreachable;
-                    break :load;
-                };
-
-                if (AsyncHTTP.max_simultaneous_requests == 0) {
-                    vm.log.addWarningFmt(
-                        null,
-                        logger.Loc.Empty,
-                        vm.allocator,
-                        "BUN_CONFIG_MAX_HTTP_REQUESTS value must be a number between 1 and 65535",
-                        .{},
-                    ) catch unreachable;
-                    AsyncHTTP.max_simultaneous_requests = 255;
-                }
-            }
-        }
+        AsyncHTTP.loadEnv(vm.allocator, vm.log, b.env);
 
         vm.loadExtraEnv();
         vm.is_main_thread = true;
@@ -147,13 +122,20 @@ pub const Run = struct {
 
     pub fn start(this: *Run) void {
         var vm = this.vm;
-        if (this.ctx.debug.hot_reload) {
+        vm.hot_reload = this.ctx.debug.hot_reload;
+        if (this.ctx.debug.hot_reload != .none) {
             JSC.HotReloader.enableHotModuleReloading(vm);
         }
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
             if (promise.status(vm.global.vm()) == .Rejected) {
                 vm.runErrorHandler(promise.result(vm.global.vm()), null);
-                Global.exit(1);
+
+                if (vm.hot_reload != .none) {
+                    vm.eventLoop().tick();
+                    vm.eventLoop().tickPossiblyForever();
+                } else {
+                    Global.exit(1);
+                }
             }
 
             _ = promise.result(vm.global.vm());
@@ -178,7 +160,13 @@ pub const Run = struct {
             } else {
                 Output.prettyErrorln("Error occurred loading entry point: {s}", .{@errorName(err)});
             }
-            Global.exit(1);
+
+            if (vm.hot_reload != .none) {
+                vm.eventLoop().tick();
+                vm.eventLoop().tickPossiblyForever();
+            } else {
+                Global.exit(1);
+            }
         }
 
         // don't run the GC if we don't actually need to
@@ -199,17 +187,26 @@ pub const Run = struct {
                     vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
                 }
 
-                while (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0) {
-                    vm.tick();
+                while (true) {
+                    while (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0) {
+                        vm.tick();
 
-                    // Report exceptions in hot-reloaded modules
+                        // Report exceptions in hot-reloaded modules
+                        if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
+                            prev_promise = this.vm.pending_internal_promise;
+                            vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
+                            continue;
+                        }
+
+                        vm.eventLoop().autoTickActive();
+                    }
+
                     if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
                         prev_promise = this.vm.pending_internal_promise;
                         vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
-                        continue;
                     }
 
-                    vm.eventLoop().autoTickActive();
+                    vm.eventLoop().tickPossiblyForever();
                 }
 
                 if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {

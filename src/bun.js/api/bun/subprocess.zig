@@ -1181,7 +1181,7 @@ pub const Subprocess = struct {
         var actions = PosixSpawn.Actions.init() catch |err| return globalThis.handleError(err, "in posix_spawn");
         if (comptime Environment.isMac) {
             attr.set(
-                os.darwin.POSIX_SPAWN_CLOEXEC_DEFAULT | os.darwin.POSIX_SPAWN_SETSIGDEF | os.darwin.POSIX_SPAWN_SETSIGMASK,
+                bun.C.POSIX_SPAWN_CLOEXEC_DEFAULT | bun.C.POSIX_SPAWN_SETSIGDEF | bun.C.POSIX_SPAWN_SETSIGMASK,
             ) catch |err| return globalThis.handleError(err, "in posix_spawn");
         } else if (comptime Environment.isLinux) {
             attr.set(

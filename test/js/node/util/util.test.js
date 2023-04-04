@@ -88,6 +88,38 @@ describe("util", () => {
       strictEqual(util.isError({ name: "Error", message: "" }), false);
       strictEqual(util.isError([]), false);
       strictEqual(util.isError(Object.create(Error.prototype)), true);
+
+      let err1 = {};
+      err1.__proto__ = Error.prototype;
+      strictEqual(util.isError(err1), true);
+
+      let err2 = {};
+      err2[Symbol.toStringTag] = "Error";
+      strictEqual(util.isError(err2), true);
+
+      let err3 = {};
+      err3[Symbol.toStringTag] = "[object Error]";
+      strictEqual(util.isError(err3), false);
+
+      let err4 = {};
+      err4.toString = () => "[object Error]";
+      strictEqual(util.isError(err4), false);
+
+      let err5 = {};
+      err5.toString = () => "Error";
+      strictEqual(util.isError(err5), false);
+
+      class Error2 extends Error {}
+      let err6 = new Error2();
+      strictEqual(util.isError(err6), true);
+
+      let err7 = {};
+      err7.name = "Error";
+      strictEqual(util.isError(err7), false);
+
+      class Error3 extends Error2 {}
+      let err8 = new Error3();
+      strictEqual(util.isError(err8), true);
     });
   });
 

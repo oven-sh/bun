@@ -339,7 +339,7 @@ jobs:
           rm -rf packages/${{ matrix.package }}
           mkdir -p packages/${{ matrix.package }}
           mv ${{ runner.temp }}/release/* packages/${{ matrix.package }}/
-          make webcrypto bun-link-lld-release copy-to-bun-release-dir-bin
+          make bun-link-lld-release copy-to-bun-release-dir-bin
       - name: Zip
         env:
           CPU_TARGET: ${{ matrix.cpu }}
@@ -417,12 +417,6 @@ jobs:
         with:
           name: ${{matrix.tag}}
           path: ${{runner.temp}}/release
-      - id: shim-path
-        name: set path
-        run: |
-          stage_bin=$(mktemp -d)
-          echo "stage_bin=$stage_bin"
-          echo $stage_bin >> $GITHUB_PATH
       - id: install
         name: Install
         run: |
@@ -430,7 +424,7 @@ jobs:
           unzip ${{matrix.tag}}.zip
           cd ${{matrix.tag}}
           chmod +x bun
-          mv bun $stage_bin/bun
+          sudo mv bun /usr/local/bin/bun
           bun --version
       - id: test
         name: Test (node runner)

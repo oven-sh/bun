@@ -48,6 +48,40 @@
 
 namespace WebCore {
 
+const JSC::ConstructAbility s_processObjectInternalsBindingCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_processObjectInternalsBindingCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_processObjectInternalsBindingCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_processObjectInternalsBindingCodeLength = 688;
+static const JSC::Intrinsic s_processObjectInternalsBindingCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_processObjectInternalsBindingCode =
+    "(function (bindingName) {\n" \
+    "  \"use strict\";\n" \
+    "  bindingName !== \"constants\" &&\n" \
+    "    @throwTypeError(\n" \
+    "      'process.binding() is not supported in Bun. If that breaks something, please file an issue and include a reproducible code sample.'\n" \
+    "    );\n" \
+    "\n" \
+    "  var cache = globalThis.Symbol.for(\"process.bindings.constants\");\n" \
+    "  var constants = globalThis[cache];\n" \
+    "  if (!constants) {\n" \
+    "    const {constants: fs} = globalThis[globalThis.Symbol.for(\"Bun.lazy\")](\n" \
+    "      \"createImportMeta\",\n" \
+    "      \"node:process\"\n" \
+    "    ).require(\n" \
+    "      \"node:fs\"\n" \
+    "    )\n" \
+    "    constants = {\n" \
+    "      fs,\n" \
+    "      zlib: {},\n" \
+    "      crypto: {},\n" \
+    "      os: @Bun._Os().constants,\n" \
+    "    };\n" \
+    "    globalThis[cache] = constants;\n" \
+    "  }\n" \
+    "  return constants;\n" \
+    "})\n" \
+;
+
 const JSC::ConstructAbility s_processObjectInternalsGetStdioWriteStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_processObjectInternalsGetStdioWriteStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_processObjectInternalsGetStdioWriteStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;

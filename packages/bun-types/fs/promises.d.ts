@@ -705,10 +705,7 @@ declare module "fs/promises" {
    *
    * To remove a directory recursively, use `fs.promises.rm()` instead, with the `recursive` option set to `true`.
    */
-  function rmdir(
-    path: PathLike,
-    options?: Omit<RmDirOptions, "recursive">,
-  ): Promise<void>;
+  function rmdir(path: PathLike, options?: RmDirOptions): Promise<void>;
 }
 
 declare module "node:fs/promises" {

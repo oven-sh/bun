@@ -1,7 +1,7 @@
 import readlinePromises from "node:readline/promises";
 import { EventEmitter } from "node:events";
 import { createTest } from "node-harness";
-const { describe, it, createDoneDotAll, createCallCheckCtx, assert } = createTest(import.meta.path);
+const { describe, it, expect, createDoneDotAll, createCallCheckCtx, assert } = createTest(import.meta.path);
 
 // ----------------------------------------------------------------------------
 // Helpers
@@ -40,13 +40,10 @@ describe("readline/promises.createInterface()", () => {
 
     rli.on("line", mustNotCall());
     fi.emit("data", "\t");
-    const outCheckDone = createDone();
     process.nextTick(() => {
-      console.log("output", fi.output);
-      assert.match(fi.output, /^Tab completion error/);
-      fi.reset();
-      outCheckDone();
+      expect(fi.output).toMatch(/^Tab completion error/);
+      rli.close();
+      done();
     });
-    rli.close();
   });
 });

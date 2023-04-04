@@ -2126,9 +2126,17 @@ pub const Expect = struct {
 
         const result_: ?JSValue = brk: {
             var vm = globalObject.bunVM();
+            var return_value: JSValue = .zero;
             var scope = vm.unhandledRejectionScope();
-            vm.onUnhandledRejection = &VirtualMachine.onQuietUnhandledRejectionHandler;
-            const return_value: JSValue = value.call(globalObject, &.{});
+            var prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
+            vm.unhandled_pending_rejection_to_capture = &return_value;
+            vm.onUnhandledRejection = &VirtualMachine.onQuietUnhandledRejectionHandlerCaptureValue;
+            const return_value_from_fucntion: JSValue = value.call(globalObject, &.{});
+            vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
+
+            if (return_value == .zero) {
+                return_value = return_value_from_fucntion;
+            }
 
             if (return_value.asAnyPromise()) |promise| {
                 globalObject.bunVM().waitForPromise(promise);

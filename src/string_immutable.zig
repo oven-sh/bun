@@ -2146,7 +2146,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
 
                             buf = try std.ArrayList(u8).initCapacity(allocator, latin1.len + @as(usize, Scalar.lengths[c]));
                             const copy_len = @ptrToInt(ptr) - @ptrToInt(latin1.ptr);
-                            @memcpy(buf.items.ptr, latin1.ptr, copy_len - 1);
+                            @memcpy(buf.items.ptr, latin1.ptr, copy_len);
                             buf.items.len = copy_len;
                             any_needs_escape = true;
                             break :scan_and_allocate_lazily;

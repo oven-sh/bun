@@ -337,3 +337,15 @@ describe("crash testing", () => {
 it("possibly formatted emojis log", () => {
   expect(Bun.inspect("✔", "hey")).toBe("✔ hey");
 });
+
+it("new Date(..)", () => {
+  expect(Bun.inspect(new Date(1679911059000))).toBe("2023-03-27T09:54:00.000Z");
+  expect(Bun.inspect(new Date("March 27, 2023 09:54:00"))).toBe("2023-03-27T09:54:00.000Z");
+  expect(Bun.inspect(new Date("2023-03-27T09:54:00"))).toBe("2023-03-27T09:54:00.000Z");
+  expect(Bun.inspect(new Date(2023, 02, 27))).toBe("2023-03-27T00:00:00.000Z");
+  expect(Bun.inspect(new Date(2023, 02, 27, 09, 54, 0))).toBe("2023-03-27T09:54:00.000Z");
+
+  expect(Bun.inspect(new Date("1679911059000"))).toBe("Invalid Date");
+  expect(Bun.inspect(new Date("hello world"))).toBe("Invalid Date");
+  expect(Bun.inspect(new Date("Invalid Date"))).toBe("Invalid Date");
+});

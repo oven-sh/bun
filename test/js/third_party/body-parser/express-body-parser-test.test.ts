@@ -22,7 +22,7 @@ test("iconv works", () => {
 });
 
 // https://github.com/oven-sh/bun/issues/1913
-test("httpServer", async done => {
+test("httpServer", async () => {
   // Constants
   const PORT = 8412;
 
@@ -32,7 +32,6 @@ test("httpServer", async done => {
 
   app.on("error", err => {
     console.error(err);
-    done(err);
   });
   app.use(json());
 
@@ -43,7 +42,6 @@ test("httpServer", async done => {
     reached = true;
     response.status(200).send("POST - pong");
     httpServer.close();
-    done();
   });
 
   httpServer.listen(PORT);
@@ -58,5 +56,4 @@ test("httpServer", async done => {
   expect(resp.status).toBe(200);
 
   expect(reached).toBe(true);
-  done();
 });

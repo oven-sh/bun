@@ -152,7 +152,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [linux]
     if: github.event_name == 'pull_request'
-    timeout-minutes: 10
+    timeout-minutes: 20
     outputs:
       failing_tests: ${{ steps.test.outputs.failing_tests }}
       failing_tests_count: ${{ steps.test.outputs.failing_tests_count }}

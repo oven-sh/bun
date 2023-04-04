@@ -14,9 +14,6 @@ beforeAll(() => {
         return new Response("Bad Request", { status: 400 });
       }
 
-      if (request.headers.has("proxy-authorization")) {
-      }
-
       // simple http proxy
       if (request.url.startsWith("http://")) {
         return await fetch(request.url, {

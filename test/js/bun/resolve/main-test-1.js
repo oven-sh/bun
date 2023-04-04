@@ -1,5 +1,5 @@
 if (import.meta.main) {
-  process.exit(0);
+  process.exit(1);
 }
 
 export const pass = true;

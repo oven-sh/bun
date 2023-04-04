@@ -54,14 +54,15 @@ export interface BundlerOptions {
   // I don't know what this is
   allowBunRuntime?: boolean;
 
-  ////////////////////////////////
-  // no changes below this line //
-  ////////////////////////////////
+  // from Bun.Transpiler API
   macro?: MacroMap;
   autoImportJSX?: boolean;
-  trimUnusedImports?: boolean;
   jsxOptimizationInline?: boolean;
   inline?: boolean;
+  optimization?: {
+    inline?: boolean;
+    jsxInline?: boolean;
+  };
 
   sourcemap?:
     | boolean
@@ -121,6 +122,9 @@ export interface BundlerOptions {
         importSource?: string;
         development?: boolean;
         sideEffects?: boolean;
+        inline?: boolean;
+        optimizeReact?: boolean;
+        autoImport?: boolean;
       };
 
   /**
@@ -179,7 +183,12 @@ interface BuildOptions extends BundlerOptions {
 
   transform?: {
     define?: Record<string, string>;
-    inject?: string[];
+    inject?: Array<{
+      position: "start" | "end";
+      target: "entry" | "chunk" | "all";
+      content: string;
+      extensions: string[];
+    }>;
     imports?: {
       rename?: Record<string, string>;
     };
@@ -201,20 +210,11 @@ interface BuildOptions extends BundlerOptions {
     extensions?: string[];
   };
 
-  /** Documentation: https://esbuild.github.io/api/#public-path */
   publicPath?: string;
-
-  /** Documentation: https://esbuild.github.io/api/#banner */
-  inject?: Array<{
-    position: "start" | "end";
-    target: "entry" | "chunk" | "all";
-    content: string;
-    extensions: string[];
-  }>;
 }
 
 type BuildResult = {
-  manifest: object;
+  then(cb: (result: BuildResult) => BuildOptions): BuildResult;
   results: Record<string, Buffer>;
 };
 
@@ -229,7 +229,22 @@ declare class Bundler {
   rebuild(): Promise<void>;
 }
 
-const bundler = new Bundler({}).build({
-  entrypoints: ["index.js"],
-  write: process.cwd() + "/build",
-});
+// simple build
+{
+  const bundler = new Bundler({}).build({
+    entrypoints: ["index.js"],
+    write: process.cwd() + "/build",
+  });
+}
+
+// staged build
+{
+  const router = new Bun.FileSystemRouter({
+    dir: "./pages",
+    style: "nextjs",
+  });
+  const bundler = new Bundler({}).build({
+    entrypoints: Object.values(router.routes),
+    write: process.cwd() + "/build",
+  });
+}

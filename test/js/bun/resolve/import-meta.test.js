@@ -2,11 +2,25 @@ import { it, expect } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import * as Module from "node:module";
 import sync from "./require-json.json";
+import { spawnSync } from "bun";
+import { bunEnv, bunExe } from "harness";
+import { join } from "node:path";
 
 const { path, dir } = import.meta;
 
 it("primordials are not here!", () => {
   expect(import.meta.primordials === undefined).toBe(true);
+});
+
+it("import.meta.main", () => {
+  const { exitCode } = spawnSync({
+    cmd: [bunExe(), "run", join(import.meta.dir, "./main-test-script.js")],
+    env: bunEnv,
+    stderr: "inherit",
+    stdout: "inherit",
+    stdin: null,
+  });
+  expect(exitCode).toBe(0);
 });
 
 it("import.meta.resolveSync", () => {

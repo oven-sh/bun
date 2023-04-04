@@ -38,6 +38,7 @@ import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "
 const Buffer = globalThis.Buffer || Uint8Array;
 
 if (!import.meta.dir) {
+  //@ts-expect-error
   import.meta.dir = ".";
 }
 

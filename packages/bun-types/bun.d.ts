@@ -1354,7 +1354,6 @@ declare module "bun" {
       code: number,
       message: string,
     ) => void | Promise<void>;
-
     /**
      * Enable compression for clients that support it. By default, compression is disabled.
      *
@@ -2844,6 +2843,11 @@ declare module "bun" {
     Data = unknown,
     DataBinaryType extends BinaryType = "buffer",
   > {
+    /**
+     * Is called when the socket connects, or in case of TLS if no handshake is provided
+     * this will be called only after handshake
+     * @param socket
+     */
     open?(socket: Socket<Data>): void | Promise<void>;
     close?(socket: Socket<Data>): void | Promise<void>;
     error?(socket: Socket<Data>, error: Error): void | Promise<void>;
@@ -2852,6 +2856,18 @@ declare module "bun" {
       data: BinaryTypeList[DataBinaryType],
     ): void | Promise<void>;
     drain?(socket: Socket<Data>): void | Promise<void>;
+
+    /**
+     * When handshake is completed, this functions is called.
+     * @param socket
+     * @param success Indicates if the server authorized despite the authorizationError.
+     * @param authorizationError Certificate Authorization Error or null.
+     */
+    handshake?(
+      socket: Socket<Data>,
+      success: boolean,
+      authorizationError: Error | null,
+    ): void;
 
     /**
      * When the socket has been shutdown from the other end, this function is

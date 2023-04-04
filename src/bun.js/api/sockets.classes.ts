@@ -68,7 +68,6 @@ function generate(ssl) {
       readyState: {
         getter: "getReadyState",
       },
-      
 
       // topics: {
       //   getter: "getTopics",

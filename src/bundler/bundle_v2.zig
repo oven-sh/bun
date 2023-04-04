@@ -993,7 +993,10 @@ const ParseTask = struct {
 
                         var secondary_path_to_copy: ?Fs.Path = null;
                         if (resolve_result.path_pair.secondary) |*secondary| {
-                            if (!secondary.is_disabled and secondary != path) {
+                            if (!secondary.is_disabled and
+                                secondary != path and
+                                !strings.eqlLong(secondary.text, path.text, true))
+                            {
                                 secondary_path_to_copy = try secondary.dupeAlloc(allocator);
                             }
                         }

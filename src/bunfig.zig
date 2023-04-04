@@ -428,7 +428,7 @@ pub const Bunfig = struct {
             }
 
             if (json.get("bundle")) |_bun| {
-                if (comptime cmd == .DevCommand or cmd == .BuildCommand or cmd == .RunCommand or cmd == .AutoCommand or cmd == .BunCommand) {
+                if (comptime cmd == .DevCommand or cmd == .BuildCommand or cmd == .RunCommand or cmd == .AutoCommand or cmd == .BuildCommand) {
                     if (_bun.get("saveTo")) |file| {
                         try this.expect(file, .e_string);
                         this.bunfig.node_modules_bundle_path = try file.data.e_string.string(allocator);
@@ -440,7 +440,7 @@ pub const Bunfig = struct {
                     }
                 }
 
-                if (comptime cmd == .BunCommand) {
+                if (comptime cmd == .BuildCommand) {
                     if (_bun.get("logLevel")) |expr2| {
                         try this.loadLogLevel(expr2);
                     }
@@ -555,7 +555,7 @@ pub const Bunfig = struct {
             }
 
             switch (comptime cmd) {
-                .AutoCommand, .DevCommand, .BuildCommand, .BunCommand => {
+                .AutoCommand, .DevCommand, .BuildCommand => {
                     if (json.get("publicDir")) |public_dir| {
                         try this.expect(public_dir, .e_string);
                         this.bunfig.router = Api.RouteConfig{

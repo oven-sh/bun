@@ -422,7 +422,6 @@ pub const Arguments = struct {
         }
         opts.serve = cmd == .DevCommand;
         opts.main_fields = args.options("--main-fields");
-        opts.generate_node_module_bundle = cmd == .BunCommand;
         // we never actually supported inject.
         // opts.inject = args.options("--inject");
         opts.extension_order = args.options("--extension-order");
@@ -497,7 +496,7 @@ pub const Arguments = struct {
         const production = false;
         var output_file: ?string = null;
 
-        if (cmd == .BuildCommand or cmd == .BunCommand) {
+        if (cmd == .BuildCommand) {
             if (args.option("--outdir")) |outdir| {
                 if (outdir.len > 0) {
                     ctx.bundler_options.outdir = outdir;
@@ -540,11 +539,11 @@ pub const Arguments = struct {
             var entry_points = ctx.positionals;
 
             switch (comptime cmd) {
-                .BunCommand => {
+                .BuildCommand => {
                     if (entry_points.len > 0 and (strings.eqlComptime(
                         entry_points[0],
-                        "bun",
-                    ))) {
+                        "build",
+                    ) or strings.eqlComptime(entry_points[0], "bun"))) {
                         entry_points = entry_points[1..];
                     }
                 },
@@ -557,24 +556,6 @@ pub const Arguments = struct {
                         "d",
                     ))) {
                         entry_points = entry_points[1..];
-                    }
-                },
-                .BuildCommand => {
-                    if (entry_points.len > 0 and (strings.eqlComptime(
-                        entry_points[0],
-                        "build",
-                    ) or strings.eqlComptime(
-                        entry_points[0],
-                        "b",
-                    ))) {
-                        entry_points = entry_points[1..];
-                    }
-
-                    opts.write = entry_points.len > 1 or
-                        output_dir != null or
-                        @enumToInt(opts.source_map orelse Api.SourceMapMode._none) > 0;
-                    if ((opts.write orelse false) and (output_dir orelse "").len == 0) {
-                        output_dir = "out";
                     }
                 },
                 .RunCommand => {
@@ -600,7 +581,7 @@ pub const Arguments = struct {
         var jsx_runtime = args.option("--jsx-runtime");
         var jsx_production = args.flag("--jsx-production");
         const react_fast_refresh = switch (comptime cmd) {
-            .BunCommand, .DevCommand => !(args.flag("--disable-react-fast-refresh") or jsx_production),
+            .BuildCommand, .DevCommand => !(args.flag("--disable-react-fast-refresh") or jsx_production),
             else => true,
         };
 
@@ -619,7 +600,10 @@ pub const Arguments = struct {
         }
 
         switch (comptime cmd) {
-            .AutoCommand, .DevCommand, .BuildCommand, .BunCommand => {
+            .AutoCommand,
+            .DevCommand,
+            .BuildCommand,
+            => {
                 if (args.option("--public-dir")) |public_dir| {
                     if (public_dir.len > 0) {
                         opts.router = Api.RouteConfig{ .extensions = &.{}, .dir = &.{}, .static_dir = public_dir };
@@ -714,7 +698,7 @@ pub const Arguments = struct {
             };
         }
 
-        if (cmd == .BunCommand or !FeatureFlags.dev_only) {
+        if (cmd == .BuildCommand) {
             if (opts.entry_points.len == 0 and opts.framework == null and opts.node_modules_bundle_path == null) {
                 return error.MissingEntryPoint;
             }
@@ -786,6 +770,7 @@ pub const HelpCommand = struct {
         // the spacing between commands here is intentional
         const fmt =
             \\> <r> <b><magenta>run     <r><d>  ./my-script.ts        <r>Run JavaScript with bun, a package.json script, or a bin<r>
+            \\> <r> <b><magenta>build     <r><d>  ./a.ts ./b.jsx<r>        Bundle TypeScript & JavaScript into a single file <r>
             \\> <r> <b><green>x     <r>    <d>bun-repl        <r>      Install and execute a package bin <d>(bunx)<r>
             \\
             \\> <r> <b><cyan>init<r>                            Start an empty Bun project from a blank template<r>
@@ -798,7 +783,6 @@ pub const HelpCommand = struct {
             \\> <r> pm  <r>                            More commands for managing packages
             \\
             \\> <r> <b><green>dev     <r><d>  ./a.ts ./b.jsx<r>        Start a bun (frontend) Dev Server
-            \\> <r> <b><magenta>bun     <r><d>  ./a.ts ./b.jsx<r>        Bundle dependencies of input files into a <r><magenta>.bun<r>
             \\
             \\> <r> <b><blue>upgrade <r>                        Get the latest version of bun
             \\> <r> <b><d>completions<r>                     Install shell completions for tab-completion
@@ -993,7 +977,7 @@ pub const Command = struct {
 
         return switch (RootCommandMatcher.match(first_arg_name)) {
             RootCommandMatcher.case("init") => .InitCommand,
-            RootCommandMatcher.case("bun") => .BunCommand,
+            RootCommandMatcher.case("build"), RootCommandMatcher.case("bun") => .BuildCommand,
             RootCommandMatcher.case("discord") => .DiscordCommand,
             RootCommandMatcher.case("upgrade") => .UpgradeCommand,
             RootCommandMatcher.case("completions") => .InstallCompletionsCommand,
@@ -1021,7 +1005,6 @@ pub const Command = struct {
             RootCommandMatcher.case("add"), RootCommandMatcher.case("update"), RootCommandMatcher.case("a") => .AddCommand,
             RootCommandMatcher.case("r"), RootCommandMatcher.case("remove"), RootCommandMatcher.case("rm"), RootCommandMatcher.case("uninstall") => .RemoveCommand,
 
-            RootCommandMatcher.case("b"), RootCommandMatcher.case("build") => .BuildCommand,
             RootCommandMatcher.case("run") => .RunCommand,
             RootCommandMatcher.case("d"), RootCommandMatcher.case("dev") => .DevCommand,
 
@@ -1054,10 +1037,9 @@ pub const Command = struct {
     };
 
     pub fn start(allocator: std.mem.Allocator, log: *logger.Log) !void {
-        const BunCommand = @import("./cli/bun_command.zig").BunCommand;
+        const BuildCommand = @import("./cli/build_command.zig").BuildCommand;
 
         const AddCommand = @import("./cli/add_command.zig").AddCommand;
-        const BuildCommand = @import("./cli/build_command.zig").BuildCommand;
         const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
         const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
         const DevCommand = @import("./cli/dev_command.zig").DevCommand;
@@ -1104,23 +1086,17 @@ pub const Command = struct {
         }
 
         switch (tag) {
-            .BunCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .BunCommand);
+            .BuildCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BuildCommand) unreachable;
+                const ctx = try Command.Context.create(allocator, log, .BuildCommand);
 
-                try BunCommand.exec(ctx);
+                try BuildCommand.exec(ctx);
             },
             .DevCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .DevCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .DevCommand);
 
                 try DevCommand.exec(ctx);
-            },
-            .BuildCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BuildCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .BuildCommand);
-
-                try BuildCommand.exec(ctx);
             },
             .InstallCompletionsCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .InstallCompletionsCommand) unreachable;
@@ -1508,7 +1484,6 @@ pub const Command = struct {
         AddCommand,
         AutoCommand,
         BuildCommand,
-        BunCommand,
         BunxCommand,
         CreateCommand,
         DevCommand,
@@ -1528,7 +1503,7 @@ pub const Command = struct {
 
         pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
             return &comptime switch (cmd) {
-                Command.Tag.BunCommand, Command.Tag.BuildCommand => Arguments.build_params,
+                Command.Tag.BuildCommand => Arguments.build_params,
                 Command.Tag.TestCommand => Arguments.test_params,
                 else => Arguments.params,
             };
@@ -1550,8 +1525,7 @@ pub const Command = struct {
 
         pub const cares_about_bun_file: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
             .AutoCommand = true,
-            .BuildCommand = true,
-            .BunCommand = true,
+            .BuildCommand = false,
             .DevCommand = true,
             .RunCommand = true,
             .TestCommand = true,
@@ -1569,7 +1543,6 @@ pub const Command = struct {
         };
         pub const always_loads_config: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
             .BuildCommand = true,
-            .BunCommand = true,
             .DevCommand = true,
             .TestCommand = true,
             .InstallCommand = true,

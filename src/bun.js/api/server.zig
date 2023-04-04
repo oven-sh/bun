@@ -278,7 +278,7 @@ pub const ServerConfig = struct {
                                     any = true;
                                 }
                             } else {
-                                global.throwInvalidArguments("expected string or buffer", .{});
+                                global.throwInvalidArguments("key argument must be an array containing string, Buffer or TypedArray", .{});
                                 arena.deinit();
                                 // mark and free all keys
                                 result.key = native_array;
@@ -297,6 +297,10 @@ pub const ServerConfig = struct {
 
                         result.key_count = valid_count;
                     }
+                } else {
+                    global.throwInvalidArguments("key argument must be an array containing string, Buffer or TypedArray", .{});
+                    result.deinit();
+                    return null;
                 }
             }
 
@@ -323,18 +327,27 @@ pub const ServerConfig = struct {
                         var i: u32 = 0;
                         var valid_count: u32 = 0;
 
+                        var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator);
                         while (i < count) : (i += 1) {
                             const item = js_obj.getIndex(global, i);
-
-                            var sliced = item.toSliceZ(global, bun.default_allocator);
-                            if (sliced.len > 0) {
-                                native_array[valid_count] = sliced.ptr;
-                                valid_count += 1;
-                                any = true;
+                            if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item, exception)) |sb| {
+                                const sliced = sb.slice();
+                                if (sliced.len > 0) {
+                                    native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                                    valid_count += 1;
+                                    any = true;
+                                }
                             } else {
-                                sliced.deinit();
+                                global.throwInvalidArguments("cert argument must be an array containing string, Buffer or TypedArray", .{});
+                                arena.deinit();
+                                // mark and free all certs
+                                result.cert = native_array;
+                                result.deinit();
+                                return null;
                             }
                         }
+
+                        arena.deinit();
 
                         if (valid_count == 0) {
                             bun.default_allocator.free(native_array);
@@ -344,6 +357,10 @@ pub const ServerConfig = struct {
 
                         result.cert_count = valid_count;
                     }
+                } else {
+                    global.throwInvalidArguments("cert argument must be an array containing string, Buffer or TypedArray", .{});
+                    result.deinit();
+                    return null;
                 }
             }
 
@@ -389,18 +406,27 @@ pub const ServerConfig = struct {
                             var i: u32 = 0;
                             var valid_count: u32 = 0;
 
+                            var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator);
                             while (i < count) : (i += 1) {
                                 const item = js_obj.getIndex(global, i);
-
-                                var sliced = item.toSliceZ(global, bun.default_allocator);
-                                if (sliced.len > 0) {
-                                    native_array[valid_count] = sliced.ptr;
-                                    valid_count += 1;
-                                    any = true;
+                                if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item, exception)) |sb| {
+                                    const sliced = sb.slice();
+                                    if (sliced.len > 0) {
+                                        native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                                        valid_count += 1;
+                                        any = true;
+                                    }
                                 } else {
-                                    sliced.deinit();
+                                    global.throwInvalidArguments("ca argument must be an array containing string, Buffer or TypedArray", .{});
+                                    arena.deinit();
+                                    // mark and free all CA's
+                                    result.cert = native_array;
+                                    result.deinit();
+                                    return null;
                                 }
                             }
+
+                            arena.deinit();
 
                             if (valid_count == 0) {
                                 bun.default_allocator.free(native_array);
@@ -410,6 +436,10 @@ pub const ServerConfig = struct {
 
                             result.ca_count = valid_count;
                         }
+                    } else {
+                        global.throwInvalidArguments("cert argument must be an array containing string, Buffer or TypedArray", .{});
+                        result.deinit();
+                        return null;
                     }
                 }
 

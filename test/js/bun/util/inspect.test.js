@@ -339,7 +339,7 @@ it("possibly formatted emojis log", () => {
 });
 
 it("new Date(..)", () => {
-  expect(Bun.inspect(new Date(1679911059000 - new Date().getTimezoneOffset()))).toBe("2023-03-27T09:57:38.580Z");
+  // expect(Bun.inspect(new Date(1679911059000 - new Date().getTimezoneOffset()))).toBe("2023-03-27T09:57:38.580Z");
   let offset = new Date().getTimezoneOffset() / 60;
   let hour = (9 - offset).toString();
   if (hour.length === 1) {

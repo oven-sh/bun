@@ -18,6 +18,6 @@
   "private": true,
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "postinstall": "cd node_modules/bktree-fast && bunx node-gyp configure build"
+    "postinstall": "cd node_modules/bktree-fast && bun x node-gyp configure build"
   }
 }

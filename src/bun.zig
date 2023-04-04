@@ -370,6 +370,29 @@ pub fn span(ptr: anytype) Span(@TypeOf(ptr)) {
 
 pub const IdentityContext = @import("./identity_context.zig").IdentityContext;
 pub const ArrayIdentityContext = @import("./identity_context.zig").ArrayIdentityContext;
+pub const StringHashMapUnowned = struct {
+    pub const Key = struct {
+        hash: u64,
+        len: usize,
+
+        pub fn init(str: []const u8) Key {
+            return Key{
+                .hash = hash(str),
+                .len = str.len,
+            };
+        }
+    };
+
+    pub const Adapter = struct {
+        pub fn eql(_: @This(), a: Key, b: Key) bool {
+            return a.hash == b.hash and a.len == b.len;
+        }
+
+        pub fn hash(_: @This(), key: Key) u64 {
+            return key.hash;
+        }
+    };
+};
 pub const BabyList = @import("./baby_list.zig").BabyList;
 pub const ByteList = BabyList(u8);
 
@@ -1038,7 +1061,7 @@ pub const ImportRecord = @import("./import_record.zig").ImportRecord;
 pub const ImportKind = @import("./import_record.zig").ImportKind;
 
 pub usingnamespace @import("./util.zig");
-pub const fast_debug_build_cmd = .BunCommand;
+pub const fast_debug_build_cmd = .None;
 pub const fast_debug_build_mode = fast_debug_build_cmd != .None and
     Environment.isDebug;
 

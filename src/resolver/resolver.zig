@@ -886,11 +886,33 @@ pub const Resolver = struct {
         var module_type = result.module_type;
         while (iter.next()) |path| {
             var dir: *DirInfo = (r.readDirInfo(path.name.dir) catch continue) orelse continue;
+            var needs_side_effects = true;
             if (result.package_json) |existing| {
+                // if we don't have it here, they might put it in a sideEfffects
+                // map of the parent package.json
+                // TODO: check if webpack also does this parent lookup
+                needs_side_effects = existing.side_effects == .unspecified;
+
+                result.primary_side_effects_data = switch (existing.side_effects) {
+                    .unspecified => .has_side_effects,
+                    .false => .no_side_effects__package_json,
+                    .map => |map| if (map.contains(bun.StringHashMapUnowned.Key.init(path.text))) .has_side_effects else .no_side_effects__package_json,
+                };
+
                 if (existing.name.len == 0 or r.care_about_bin_folder) result.package_json = null;
             }
 
             result.package_json = result.package_json orelse dir.enclosing_package_json;
+
+            if (needs_side_effects) {
+                if (result.package_json) |package_json| {
+                    result.primary_side_effects_data = switch (package_json.side_effects) {
+                        .unspecified => .has_side_effects,
+                        .false => .no_side_effects__package_json,
+                        .map => |map| if (map.contains(bun.StringHashMapUnowned.Key.init(path.text))) .has_side_effects else .no_side_effects__package_json,
+                    };
+                }
+            }
 
             if (dir.enclosing_tsconfig_json) |tsconfig| {
                 result.jsx = tsconfig.mergeJSX(result.jsx);

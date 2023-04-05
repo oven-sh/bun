@@ -51,42 +51,43 @@ namespace WebCore {
 const JSC::ConstructAbility s_nodeEventsOnAsyncIteratorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_nodeEventsOnAsyncIteratorCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_nodeEventsOnAsyncIteratorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_nodeEventsOnAsyncIteratorCodeLength = 4024;
+const int s_nodeEventsOnAsyncIteratorCodeLength = 4473;
 static const JSC::Intrinsic s_nodeEventsOnAsyncIteratorCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_nodeEventsOnAsyncIteratorCode =
     "(function (emitter, event, options) {\n" \
     "  \"use strict\";\n" \
     "\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
+    "  var { AbortSignal, Number, Error } = globalThis;\n" \
     "\n" \
-    "  //\n" \
-    "  var { Object, Number, console, Symbol } = globalThis;\n" \
-    "  //\n" \
+    "  var AbortError = class AbortError extends Error {\n" \
+    "    constructor(message = \"The operation was aborted\", options = void 0) {\n" \
+    "      if (options !== void 0 && typeof options !== \"object\") {\n" \
+    "        throw new Error(`Invalid AbortError options:\\n" \
+    "\\n" \
+    "${JSON.stringify(options, null, 2)}`);\n" \
+    "      }\n" \
+    "      super(message, options);\n" \
+    "      this.code = \"ABORT_ERR\";\n" \
+    "      this.name = \"AbortError\";\n" \
+    "    }\n" \
+    "  };\n" \
     "\n" \
-    "  function isUndefinedOrNull(value) {\n" \
-    "    return value === undefined || value === null;\n" \
-    "  }\n" \
+    "  if (@isUndefinedOrNull(emitter)) @throwTypeError(\"emitter is required\");\n" \
+    "  //\n" \
+    "  if (!(typeof emitter === \"object\" && @isCallable(emitter.emit) && @isCallable(emitter.on)))\n" \
+    "    @throwTypeError(\"emitter must be an EventEmitter\");\n" \
     "\n" \
-    "  if (isUndefinedOrNull(options)) options = {};\n" \
+    "  if (@isUndefinedOrNull(options)) options = {};\n" \
     "\n" \
     "  //\n" \
     "  var signal = options.signal;\n" \
-    "  //\n" \
-    "  //\n" \
+    "  if (!@isUndefinedOrNull(signal) && !(signal instanceof AbortSignal))\n" \
+    "    @throwTypeError(\"options.signal must be an AbortSignal\");\n" \
     "\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
+    "  if (signal?.aborted) {\n" \
+    "    //\n" \
+    "    throw new AbortError(@undefined, { cause: signal?.reason });\n" \
+    "  }\n" \
     "\n" \
     "  var highWatermark = options.highWatermark ?? Number.MAX_SAFE_INTEGER;\n" \
     "  if (highWatermark < 1) \n" \
@@ -105,9 +106,9 @@ const char* const s_nodeEventsOnAsyncIteratorCode =
     "  var size = 0;\n" \
     "  var listeners = [];\n" \
     "\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
+    "  function abortListener() {\n" \
+    "    errorHandler(new AbortError(@undefined, { cause: signal?.reason }));\n" \
+    "  }\n" \
     "\n" \
     "  function eventHandler(value) {\n" \
     "    if (unconsumedPromises.isEmpty()) {\n" \
@@ -117,22 +118,22 @@ const char* const s_nodeEventsOnAsyncIteratorCode =
     "        emitter.pause();\n" \
     "      }\n" \
     "      unconsumedEvents.push(value);\n" \
-    "    } else unconsumedPromises.shift().@resolve.@call(undefined, [value]);\n" \
+    "    } else unconsumedPromises.shift().@resolve.@call(@undefined, [value]);\n" \
     "  }\n" \
     "\n" \
     "  function closeHandler() {\n" \
     "    removeAllListeners(listeners);\n" \
     "    finished = true;\n" \
     "    while (!unconsumedPromises.isEmpty()) {\n" \
-    "      unconsumedPromises.shift().@resolve.@call(undefined, [undefined]);\n" \
+    "      const promise = unconsumedPromises.shift();\n" \
+    "      promise.@resolve.@call(@undefined, [@undefined]);\n" \
     "    }\n" \
-    "  \n" \
-    "    return @createFulfilledPromise([undefined]);\n" \
+    "    return @createFulfilledPromise([@undefined]);\n" \
     "  }\n" \
     "\n" \
     "  function errorHandler(err) {\n" \
     "    if (unconsumedPromises.isEmpty()) error = err;\n" \
-    "    else unconsumedPromises.shift().@reject.@call(undefined, err);\n" \
+    "    else unconsumedPromises.shift().@reject.@call(@undefined, err);\n" \
     "  \n" \
     "    closeHandler();\n" \
     "  }\n" \
@@ -140,37 +141,30 @@ const char* const s_nodeEventsOnAsyncIteratorCode =
     "  function addEventListener(emitter, event, handler) {\n" \
     "    emitter.on(event, handler);\n" \
     "    listeners.push([emitter, event, handler]);\n" \
-    "    //\n" \
     "  }\n" \
     "  \n" \
     "  function removeAllListeners() {\n" \
-    "    var heldEmitter;\n" \
     "    while (listeners.length > 0) {\n" \
-    "      //\n" \
     "      var entry = listeners.pop();\n" \
     "      var [emitter, event, handler] = entry;\n" \
-    "      if (event === \"foo\") heldEmitter = emitter;\n" \
-    "      console.log(emitter, event, handler);\n" \
     "      emitter.off(event, handler);\n" \
     "    }\n" \
-    "    console.log(heldEmitter.listenerCount(\"foo\"));\n" \
     "  }\n" \
     "\n" \
-    "  var iterator = async function* NodeEventsOnAsyncIterator() {\n" \
-    "      //\n" \
-    "      while (!finished) {\n" \
-    "        if (size) {\n" \
-    "          var values = [];\n" \
-    "          while (size) {\n" \
-    "            values.push(unconsumedEvents.shift());\n" \
-    "            size--;\n" \
-    "            if (paused && size < lowWatermark) {\n" \
-    "              emitter.resume();\n" \
-    "              paused = false;\n" \
-    "              break;\n" \
-    "            }\n" \
+    "  var createIterator = async function* NodeEventsOnAsyncIterator() {\n" \
+    "    //\n" \
+    "    try {\n" \
+    "      while (true) {\n" \
+    "        //\n" \
+    "        while (size) {\n" \
+    "          const value = unconsumedEvents.shift();\n" \
+    "          size--;\n" \
+    "          if (paused && size < lowWatermark) {\n" \
+    "            emitter.resume();\n" \
+    "            paused = false;\n" \
+    "            break;\n" \
     "          }\n" \
-    "          yield @createFulfilledPromise(values);\n" \
+    "          yield @createFulfilledPromise([value]);\n" \
     "        }\n" \
     "\n" \
     "        //\n" \
@@ -181,65 +175,17 @@ const char* const s_nodeEventsOnAsyncIteratorCode =
     "        }\n" \
     "\n" \
     "        //\n" \
-    "        if (finished) {\n" \
-    "          console.log(\"FINISHED\")\n" \
-    "          yield closeHandler();\n" \
-    "          break;\n" \
-    "        };\n" \
+    "        if (finished) break;\n" \
     "\n" \
     "        //\n" \
     "        var nextEventPromiseCapability = @newPromiseCapability(@Promise);\n" \
     "        unconsumedPromises.push(nextEventPromiseCapability);\n" \
     "        yield nextEventPromiseCapability.@promise;\n" \
     "      }\n" \
+    "    } finally {\n" \
+    "      closeHandler();\n" \
+    "    }\n" \
     "  };\n" \
-    "\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
-    "  //\n" \
     "\n" \
     "  //\n" \
     "  addEventListener(emitter, event, eventHandler);\n" \
@@ -253,23 +199,30 @@ const char* const s_nodeEventsOnAsyncIteratorCode =
     "    }\n" \
     "  }\n" \
     "\n" \
-    "  //\n" \
-    "  //\n" \
+    "  if (signal)\n" \
+    "    signal.once(\"abort\", abortListener);\n" \
     "\n" \
-    "  return {\n" \
-    "    throw: (err) => {\n" \
-    "      if (err === undefined || err === null || !(err instanceof Error)) {\n" \
-    "        @throwTypeError(\"The argument must be an instance of Error\");\n" \
-    "      }\n" \
-    "      errorHandler(err);\n" \
+    "  var iterator = createIterator();\n" \
+    "\n" \
+    "  @Object.defineProperties(iterator, {\n" \
+    "    return: {\n" \
+    "      value: function() {\n" \
+    "        return closeHandler();\n" \
+    "      },\n" \
     "    },\n" \
-    "    return: () => {\n" \
-    "      console.log(\"we're here\");\n" \
-    "      return closeHandler();\n" \
+    "    throw: {\n" \
+    "      value: function(err) {\n" \
+    "        if (!err || !(err instanceof Error)) {\n" \
+    "          throw new TypeError(\"EventEmitter.AsyncIterator must be called with an error\");\n" \
+    "        }\n" \
+    "        errorHandler(err);\n" \
+    "      },\n" \
     "    },\n" \
-    "    next: () => iterator.next(),\n" \
-    "    [Symbol.asyncIterator]: iterator,\n" \
-    "  };\n" \
+    "    [Symbol.asyncIterator]: {\n" \
+    "      value: function() { return this; }\n" \
+    "    },\n" \
+    "  });\n" \
+    "  return iterator;\n" \
     "})\n" \
 ;
 

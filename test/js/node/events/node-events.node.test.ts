@@ -5,26 +5,19 @@ const { expect, assert, describe, it, createCallCheckCtx, createDoneDotAll } = c
 // const NodeEventTarget = globalThis.EventTarget;
 
 describe("node:events.on (EE async iterator)", () => {
-  it("should return an async iterator", async done => {
-    let resolveDeferred: () => void;
-    const deferred = new Promise(resolve => {
-      resolveDeferred = resolve as () => void;
-    });
+  it("should return an async iterator", async () => {
     const ee = new EventEmitter();
-    process.nextTick(() => {
-      ee.emit("foo", "bar");
-      // 'bar' is a spurious event, we are testing
-      // that it does not show up in the iterable
-      ee.emit("bar", 24);
-      ee.emit("foo", 42);
-      resolveDeferred(); // Resolve in the next tick
-    });
-
     const iterable = on(ee, "foo");
+
+    ee.emit("foo", "bar");
+    // 'bar' is a spurious event, we are testing
+    // that it does not show up in the iterable
+    ee.emit("bar", 24);
+    ee.emit("foo", 42);
+
     const expected = [["bar"], [42]];
 
     for await (const event of iterable) {
-      console.log(event);
       const current = expected.shift();
 
       assert.deepStrictEqual(current, event);
@@ -34,34 +27,29 @@ describe("node:events.on (EE async iterator)", () => {
       }
     }
 
-    // This is necessary due to how we try to run emits on next tick
-    deferred
-      .then(() => {
-        assert.strictEqual(ee.listenerCount("foo"), 0);
-        assert.strictEqual(ee.listenerCount("error"), 0);
-      })
-      .catch(done);
+    assert.strictEqual(ee.listenerCount("foo"), 0);
+    assert.strictEqual(ee.listenerCount("error"), 0);
   });
 
-  // TODO: Fix undefined is not a function
-  it.skip("should throw an error when the first argument is not an EventEmitter", async () => {
-    expect(on({} as any, "foo")).toThrow(TypeError);
+  it("should throw an error when the first argument is not an EventEmitter", () => {
+    expect(() => on({} as any, "foo")).toThrow();
   });
 
   it("should throw an error when an error event is emitted", async () => {
     const ee = new EventEmitter();
     const _err = new Error("kaboom");
-    process.nextTick(() => {
-      ee.emit("error", _err);
-    });
 
     const iterable = on(ee, "foo");
+
+    ee.emit("error", _err);
+
     let looped = false;
     let thrown = false;
 
     try {
       // eslint-disable-next-line no-unused-vars
       for await (const event of iterable) {
+        console.log("LOOPED?!");
         looped = true;
       }
     } catch (err) {
@@ -72,133 +60,148 @@ describe("node:events.on (EE async iterator)", () => {
     assert.strictEqual(looped, false);
   });
 
-  it("should throw when error emitted", async done => {
-    let resolveDeferred: () => void;
-    const deferred = new Promise(resolve => {
-      resolveDeferred = resolve as () => void;
-    });
-
+  it("should throw when error emitted after successful events", async () => {
     const ee = new EventEmitter();
     const _err = new Error("kaboom");
-    process.nextTick(() => {
-      ee.emit("foo", 42);
-      ee.emit("error", _err);
-      resolveDeferred();
-    });
-
     const iterable = on(ee, "foo");
-    const expected = [[42]];
 
-    const current = [] as (number[] | undefined)[];
-    const received = [] as (number[] | undefined)[];
+    ee.emit("foo", 42);
+    ee.emit("error", _err);
+
+    const expected = [[42]] as (number[] | undefined[])[];
+
+    const current = [] as (number[] | undefined[])[];
+    const received = [] as (number[] | undefined[])[];
     let thrownErr: any;
 
     try {
       for await (const event of iterable) {
-        current.push(expected.shift());
+        const _expected = expected.shift();
+        if (_expected !== undefined) current.push(_expected);
         received.push(event);
       }
     } catch (err) {
-      console.log(err);
       thrownErr = err;
     }
 
-    deferred
-      .then(() => {
-        assert.deepStrictEqual(current, received);
-        assert.strictEqual(ee.listenerCount("foo"), 0);
-        assert.strictEqual(ee.listenerCount("error"), 0);
+    assert.deepStrictEqual(current, received);
+    assert.strictEqual(ee.listenerCount("foo"), 0);
+    assert.strictEqual(ee.listenerCount("error"), 0);
 
-        expect(thrownErr).toBeInstanceOf(Error);
-        assert.strictEqual(thrownErr, _err);
-      })
-      .catch(done);
+    expect(thrownErr).toBeInstanceOf(Error);
+    assert.strictEqual(thrownErr, _err);
   });
 
-  // async function throwInLoop() {
-  //   const ee = new EventEmitter();
-  //   const _err = new Error("kaboom");
+  it("should throw when error thrown from inside loop", async () => {
+    const ee = new EventEmitter();
+    const _err = new Error("kaboom");
 
-  //   process.nextTick(() => {
-  //     ee.emit("foo", 42);
-  //   });
+    const iterable = on(ee, "foo");
 
-  //   try {
-  //     for await (const event of on(ee, "foo")) {
-  //       assert.deepStrictEqual(event, [42]);
-  //       throw _err;
-  //     }
-  //   } catch (err) {
-  //     assert.strictEqual(err, _err);
-  //   }
+    ee.emit("foo", 42);
 
-  //   assert.strictEqual(ee.listenerCount("foo"), 0);
-  //   assert.strictEqual(ee.listenerCount("error"), 0);
-  // }
+    let looped = false;
+    let thrown = false;
 
-  // async function next() {
-  //   const ee = new EventEmitter();
-  //   const iterable = on(ee, "foo");
+    try {
+      // eslint-disable-next-line no-unused-vars
+      for await (const event of iterable) {
+        assert.deepStrictEqual(event, [42]);
+        looped = true;
+        throw _err;
+      }
+    } catch (err) {
+      thrown = true;
+      assert.strictEqual(err, _err);
+    }
 
-  //   process.nextTick(function () {
-  //     ee.emit("foo", "bar");
-  //     ee.emit("foo", 42);
-  //     iterable.return();
-  //   });
+    assert.strictEqual(thrown, true);
+    assert.strictEqual(looped, true);
+    assert.strictEqual(ee.listenerCount("foo"), 0);
+    assert.strictEqual(ee.listenerCount("error"), 0);
+  });
 
-  //   const results = await Promise.all([iterable.next(), iterable.next(), iterable.next()]);
+  it("should allow for async iteration via .next()", async done => {
+    const ee = new EventEmitter();
+    const iterable = on(ee, "foo");
 
-  //   assert.deepStrictEqual(results, [
-  //     {
-  //       value: ["bar"],
-  //       done: false,
-  //     },
-  //     {
-  //       value: [42],
-  //       done: false,
-  //     },
-  //     {
-  //       value: undefined,
-  //       done: true,
-  //     },
-  //   ]);
+    process.nextTick(() => {
+      ee.emit("foo", "bar");
+      ee.emit("foo", 42);
+      // @ts-ignore
+      iterable.return();
+    });
 
-  //   assert.deepStrictEqual(await iterable.next(), {
-  //     value: undefined,
-  //     done: true,
-  //   });
-  // }
+    const results = await Promise.all([iterable.next(), iterable.next(), iterable.next()]);
+    assert.deepStrictEqual(results, [
+      {
+        value: ["bar"],
+        done: false,
+      },
+      {
+        value: [42],
+        done: false,
+      },
+      {
+        value: undefined,
+        done: true,
+      },
+    ]);
 
-  // async function nextError() {
-  //   const ee = new EventEmitter();
-  //   const iterable = on(ee, "foo");
-  //   const _err = new Error("kaboom");
-  //   process.nextTick(function () {
-  //     ee.emit("error", _err);
-  //   });
-  //   const results = await Promise.allSettled([iterable.next(), iterable.next(), iterable.next()]);
-  //   assert.deepStrictEqual(results, [
-  //     {
-  //       status: "rejected",
-  //       reason: _err,
-  //     },
-  //     {
-  //       status: "fulfilled",
-  //       value: {
-  //         value: undefined,
-  //         done: true,
-  //       },
-  //     },
-  //     {
-  //       status: "fulfilled",
-  //       value: {
-  //         value: undefined,
-  //         done: true,
-  //       },
-  //     },
-  //   ]);
-  //   assert.strictEqual(ee.listeners("error").length, 0);
-  // }
+    assert.deepStrictEqual(await iterable.next(), {
+      value: undefined,
+      done: true,
+    });
+
+    done();
+  });
+
+  it("it should fulfill subsequent deferred promises with `undefined` when the emitter emits an error", async done => {
+    const ee = new EventEmitter();
+    const iterable = on(ee, "foo");
+    const _err = new Error("kaboom");
+
+    process.nextTick(function () {
+      ee.emit("error", _err);
+    });
+
+    const results = await Promise.allSettled([iterable.next(), iterable.next(), iterable.next()]);
+
+    assert.deepStrictEqual(results, [
+      {
+        status: "rejected",
+        reason: _err,
+      },
+      {
+        status: "fulfilled",
+        value: {
+          value: undefined,
+          done: true,
+        },
+      },
+      {
+        status: "fulfilled",
+        value: {
+          value: undefined,
+          done: true,
+        },
+      },
+    ]);
+
+    assert.strictEqual(ee.listeners("error").length, 0);
+
+    done();
+  });
+
+  it("should throw a `TypeError` when calling throw without args", async () => {
+    const ee = new EventEmitter();
+    const iterable = on(ee, "foo");
+
+    expect(() => {
+      // @ts-ignore
+      iterable.throw();
+    }).toThrow(TypeError);
+  });
 
   // async function iterableThrow() {
   //   const ee = new EventEmitter();

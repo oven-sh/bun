@@ -167,6 +167,22 @@ static bool canPerformFastPropertyEnumerationForIterationBun(Structure* s)
     return true;
 }
 
+JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, uint64_t i)
+{
+    if (obj->canGetIndexQuickly(i)) {
+        return obj->tryGetIndexQuickly(i);
+    }
+
+    PropertySlot slot(obj, PropertySlot::InternalMethodType::Get);
+    if (obj->methodTable()->getOwnPropertySlotByIndex(obj, globalObject, i, slot)) {
+        if (!slot.isAccessor()) {
+            return slot.getValue(globalObject, i);
+        }
+    }
+
+    return JSValue();
+}
+
 template<bool isStrict>
 bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope* scope, bool addToStack)
 {
@@ -478,13 +494,9 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
 
         for (uint64_t i = 0; i < length; i++) {
-            JSValue left = o1->canGetIndexQuickly(i)
-                ? o1->getIndexQuickly(i)
-                : o1->tryGetIndexQuickly(i);
+            JSValue left = getIndexWithoutAccessors(globalObject, o1, i);
             RETURN_IF_EXCEPTION(*scope, false);
-            JSValue right = o2->canGetIndexQuickly(i)
-                ? o2->getIndexQuickly(i)
-                : o2->tryGetIndexQuickly(i);
+            JSValue right = getIndexWithoutAccessors(globalObject, o2, i);
             RETURN_IF_EXCEPTION(*scope, false);
 
             if constexpr (isStrict) {
@@ -651,10 +663,8 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     o2->getPropertyNames(globalObject, a2, DontEnumPropertiesMode::Exclude);
 
     const size_t propertyArrayLength = a1.size();
-    if constexpr (isStrict) {
-        if (propertyArrayLength != a2.size()) {
-            return false;
-        }
+    if (propertyArrayLength != a2.size()) {
+        return false;
     }
 
     // take a property name from one, try to get it from both

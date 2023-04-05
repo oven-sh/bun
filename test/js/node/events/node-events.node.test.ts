@@ -49,7 +49,6 @@ describe("node:events.on (EE async iterator)", () => {
     try {
       // eslint-disable-next-line no-unused-vars
       for await (const event of iterable) {
-        console.log("LOOPED?!");
         looped = true;
       }
     } catch (err) {

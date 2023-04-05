@@ -298,6 +298,70 @@ test("deepEquals works with proxies", () => {
     expect(p1).not.toEqual(p2);
     expect(p1).not.toStrictEqual(p2);
   }
+  {
+    // same handlers, different targets
+    let t1 = { a: 1, b: 2 };
+    let t2 = { a: 1, b: 2 };
+    let h1 = { get: (t, k) => t[k] + 2 };
+    let p1 = new Proxy(t1, h1);
+    let p2 = new Proxy(t2, h1);
+    expect(p1).toEqual(p2);
+    expect(p1).toStrictEqual(p2);
+  }
+  {
+    // same targets, different handlers
+    let t1 = { a: 1, b: 2 };
+    let h1 = { get: (t, k) => t[k] + 2 };
+    let h2 = { get: (t, k) => t[k] + 3 };
+    let p1 = new Proxy(t1, h1);
+    let p2 = new Proxy(t1, h2);
+    expect(p1).not.toEqual(p2);
+    expect(p1).not.toStrictEqual(p2);
+  }
+  {
+    // property with object
+    let t1 = { a: { b: 3 } };
+    let h1 = { get: (t, k) => t[k] };
+    let p1 = new Proxy(t1, h1);
+
+    let t2 = { a: { b: 3 } };
+    let h2 = { get: (t, k) => t[k] };
+    let p2 = new Proxy(t2, h2);
+
+    expect(p1).toEqual(p2);
+    expect(p1).toStrictEqual(p2);
+
+    let t3 = { a: { b: 3 } };
+    let h3 = { get: (t, k) => t[k] };
+    let p3 = new Proxy(t3, h3);
+
+    let t4 = { a: { b: 4 } };
+    let h4 = { get: (t, k) => t[k] };
+    let p4 = new Proxy(t4, h4);
+
+    expect(p3).not.toEqual(p4);
+    expect(p3).not.toStrictEqual(p4);
+  }
+  {
+    // proxy object equals itself
+    let t1 = { a: 1, b: 2 };
+    let h1 = { get: (t, k) => t[k] + 2 };
+    let p1 = new Proxy(t1, h1);
+    expect(p1).toEqual(p1);
+    expect(p1).toStrictEqual(p1);
+  }
+  {
+    let t1 = { a: 1, b: 2 };
+    let h1 = { get: (t, k) => k };
+    let p1 = new Proxy(t1, h1);
+
+    let t2 = { a: 1, b: 2 };
+    let h2 = { get: (t, k) => k };
+    let p2 = new Proxy(t2, h2);
+
+    expect(p1).toEqual(p2);
+    expect(p1).toStrictEqual(p2);
+  }
 });
 
 test("toThrow", () => {
@@ -714,6 +778,58 @@ test("deepEquals - symbols", () => {
 });
 
 test("toEqual objects and arrays", () => {
+  {
+    let o1 = { 1: 4, 6: 3 };
+    let o2 = { 1: 4, 6: 3 };
+    expect(o1).toEqual(o2);
+    expect(o1).toStrictEqual(o2);
+  }
+  {
+    let o1 = { 1: 4, 6: 2 };
+    let o2 = { 1: 4, 6: 3 };
+    expect(o1).not.toEqual(o2);
+    expect(o1).not.toStrictEqual(o2);
+  }
+
+  {
+    let o1 = { a: 1, 3: 0 };
+    let o2 = { a: 1, 3: 0 };
+    expect(o1).toEqual(o2);
+    expect(o1).toStrictEqual(o2);
+  }
+  {
+    let o1 = { a: 1, 3: 0 };
+    let o2 = { a: 1, 3: 1 };
+    expect(o1).not.toEqual(o2);
+    expect(o1).not.toStrictEqual(o2);
+  }
+  {
+    let o1 = { a: {}, 4: { b: 3, c: { 9: 2 } } };
+    let o2 = { a: {}, 4: { b: 3, c: { 9: 2 } } };
+    expect(o1).toEqual(o2);
+    expect(o1).toStrictEqual(o2);
+  }
+  {
+    let o1 = { a: {}, 4: { b: 3, c: { 9: 2 } } };
+    let o2 = { a: {}, 4: { b: 3, c: { 9: 3 } } };
+    expect(o1).not.toEqual(o2);
+    expect(o1).not.toStrictEqual(o2);
+  }
+
+  {
+    let o1 = { a: 1, b: 2, c: 3 };
+    let o2 = { a: 1, b: 2, c: 3, 0: 1 };
+    expect(o1).not.toEqual(o2);
+    expect(o1).not.toStrictEqual(o2);
+  }
+
+  {
+    let o1 = { a: 1, b: 2, c: 3, 0: 1 };
+    let o2 = { a: 1, b: 2, c: 3 };
+    expect(o1).not.toEqual(o2);
+    expect(o1).not.toStrictEqual(o2);
+  }
+
   expect("hello").toEqual("hello");
   const s1 = Symbol("test1");
   const s2 = Symbol("test2");

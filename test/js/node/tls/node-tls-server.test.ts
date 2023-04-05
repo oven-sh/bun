@@ -3,7 +3,6 @@ import { realpathSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { createTest } from "node-harness";
-import { Serve } from "bun";
 import { AddressInfo } from "net";
 
 const { describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
@@ -35,12 +34,14 @@ describe("tls.createServer listen", () => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
     const server: Server = createServer(COMMON_CERT);
-
+    let timeout: Timer;
     const closeAndFail = () => {
+      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
+    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       0,
@@ -61,11 +62,14 @@ describe("tls.createServer listen", () => {
 
     const server: Server = createServer(COMMON_CERT);
 
+    let timeout: Timer;
     const closeAndFail = () => {
+      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
+    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       0,
@@ -88,11 +92,14 @@ describe("tls.createServer listen", () => {
 
     const server: Server = createServer(COMMON_CERT);
 
+    let timeout: Timer;
     const closeAndFail = () => {
+      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
+    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       0,
@@ -114,11 +121,14 @@ describe("tls.createServer listen", () => {
 
     const server: Server = createServer(COMMON_CERT);
 
+    let timeout: Timer;
     const closeAndFail = () => {
+      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
+    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       0,
@@ -138,11 +148,14 @@ describe("tls.createServer listen", () => {
 
     const server: Server = createServer(COMMON_CERT);
 
+    let timeout: Timer;
     const closeAndFail = () => {
+      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
+    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       mustCall(() => {
@@ -162,11 +175,14 @@ describe("tls.createServer listen", () => {
 
     const server: Server = createServer(COMMON_CERT);
 
+    let timeout: Timer;
     const closeAndFail = () => {
+      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
+    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       49027,
@@ -186,11 +202,14 @@ describe("tls.createServer listen", () => {
 
     const server: Server = createServer(COMMON_CERT);
 
+    let timeout: Timer;
     const closeAndFail = () => {
+      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
+    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       49026,
@@ -211,11 +230,14 @@ describe("tls.createServer listen", () => {
 
     const server: Server = createServer(COMMON_CERT);
 
+    let timeout: Timer;
     const closeAndFail = () => {
+      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
+    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       socket_domain,
@@ -255,9 +277,7 @@ it("should receive data", done => {
   server.on("error", closeAndFail);
 
   //should be faster than 100ms
-  timeout = setTimeout(() => {
-    closeAndFail();
-  }, 100);
+  timeout = setTimeout(closeAndFail, 100);
 
   server.listen(
     mustCall(async () => {
@@ -303,9 +323,7 @@ it("should call end", done => {
   server.on("error", closeAndFail);
 
   //should be faster than 100ms
-  timeout = setTimeout(() => {
-    closeAndFail();
-  }, 100);
+  timeout = setTimeout(closeAndFail, 100);
 
   server.listen(
     mustCall(() => {
@@ -350,9 +368,7 @@ it("should call connection and drop", done => {
   };
 
   //should be faster than 100ms
-  timeout = setTimeout(() => {
-    closeAndFail();
-  }, 100);
+  timeout = setTimeout(closeAndFail, 100);
   let connection_called = false;
   server
     .on(
@@ -414,9 +430,7 @@ it("should call listening", done => {
   };
 
   //should be faster than 100ms
-  timeout = setTimeout(() => {
-    closeAndFail();
-  }, 100);
+  timeout = setTimeout(closeAndFail, 100);
 
   server
     .on(
@@ -445,9 +459,7 @@ it("should call error", done => {
   };
 
   //should be faster than 100ms
-  timeout = setTimeout(() => {
-    closeAndFail();
-  }, 100);
+  timeout = setTimeout(closeAndFail, 100);
 
   server
     .on(
@@ -478,9 +490,7 @@ it("should call abort with signal", done => {
   };
 
   //should be faster than 100ms
-  timeout = setTimeout(() => {
-    closeAndFail();
-  }, 100);
+  timeout = setTimeout(closeAndFail, 100);
 
   server
     .on(
@@ -519,7 +529,7 @@ it("should echo data", done => {
 
   server.listen(
     mustCall(async () => {
-      const address = server.address();
+      const address = server.address() as AddressInfo;
       client = await Bun.connect({
         tls: true,
         hostname: address.address,
@@ -556,11 +566,14 @@ it("should not listen with wrong password", done => {
   });
 
   server.on("error", mustCall());
-
+  let timeout: Timer;
   function closeAndFail() {
+    clearTimeout(timeout);
     server.close();
     mustNotCall()();
   }
+
+  timeout = setTimeout(closeAndFail, 100);
 
   server.listen(0, "127.0.0.1", closeAndFail);
 });
@@ -575,10 +588,14 @@ it("should not listen without cert", done => {
 
   server.on("error", mustCall());
 
+  let timeout: Timer;
   function closeAndFail() {
+    clearTimeout(timeout);
     server.close();
     mustNotCall()();
   }
+
+  timeout = setTimeout(closeAndFail, 100);
 
   server.listen(0, "127.0.0.1", closeAndFail);
 });
@@ -593,10 +610,14 @@ it("should not listen without password", done => {
 
   server.on("error", mustCall());
 
+  let timeout: Timer;
   function closeAndFail() {
+    clearTimeout(timeout);
     server.close();
     mustNotCall()();
   }
+
+  timeout = setTimeout(closeAndFail, 100);
 
   server.listen(0, "127.0.0.1", closeAndFail);
 });

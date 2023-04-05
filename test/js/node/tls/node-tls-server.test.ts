@@ -73,10 +73,10 @@ describe("tls.createServer listen", () => {
 
     server.listen(
       0,
-      "127.0.0.1",
+      "0.0.0.0",
       mustCall(() => {
         const address = server.address() as AddressInfo;
-        expect(address.address).toStrictEqual("127.0.0.1");
+        expect(address.address).toStrictEqual("0.0.0.0");
         //system should provide an port when 0 or no port is passed
         expect(address.port).toBeGreaterThan(100);
         expect(address.family).toStrictEqual("IPv4");
@@ -213,10 +213,10 @@ describe("tls.createServer listen", () => {
 
     server.listen(
       49026,
-      "127.0.0.1",
+      "0.0.0.0",
       mustCall(() => {
         const address = server.address() as AddressInfo;
-        expect(address.address).toStrictEqual("127.0.0.1");
+        expect(address.address).toStrictEqual("0.0.0.0");
         expect(address.port).toStrictEqual(49026);
         expect(address.family).toStrictEqual("IPv4");
         server.close();
@@ -269,7 +269,7 @@ describe("tls.createServer listen", () => {
 
     timeout = setTimeout(closeAndFail, 100);
 
-    server.listen(0, "127.0.0.1", closeAndFail);
+    server.listen(0, "0.0.0.0", closeAndFail);
   });
 
   it("should not listen without cert", done => {
@@ -291,7 +291,7 @@ describe("tls.createServer listen", () => {
 
     timeout = setTimeout(closeAndFail, 100);
 
-    server.listen(0, "127.0.0.1", closeAndFail);
+    server.listen(0, "0.0.0.0", closeAndFail);
   });
 
   it("should not listen without password", done => {
@@ -313,7 +313,7 @@ describe("tls.createServer listen", () => {
 
     timeout = setTimeout(closeAndFail, 100);
 
-    server.listen(0, "127.0.0.1", closeAndFail);
+    server.listen(0, "0.0.0.0", closeAndFail);
   });
 });
 
@@ -506,7 +506,7 @@ describe("tls.createServer events", () => {
           done();
         }),
       )
-      .listen(0, "127.0.0.1");
+      .listen(0, "0.0.0.0");
   });
 
   it("should call error", done => {

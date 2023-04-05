@@ -4,6 +4,7 @@ const SERVER = env.SERVER || "ws://0.0.0.0:4001";
 const WebSocket = globalThis.WebSocket || (await import("ws")).WebSocket;
 const LOG_MESSAGES = env.LOG_MESSAGES === "1";
 const CLIENTS_TO_WAIT_FOR = parseInt(env.CLIENTS_COUNT || "", 10) || 16;
+const WORKERS = parseInt(env.WORKERS || "", 10) || 1;
 const DELAY = 64;
 const MESSAGES_TO_SEND = Array.from({ length: 32 }, () => [
   "Hello World!",
@@ -101,6 +102,10 @@ for (let i = 0; i < CLIENTS_TO_WAIT_FOR; i++) {
   promises.push(
     new Promise((resolve, reject) => {
       clients[i].onmessage = event => {
+        if (event.data !== "ready") {
+          // Warning in case clients are out of sync at the beginning
+          console.error(`Incorrect signal, expected: "ready", received ${event.data}`);
+        }
         resolve();
       };
     }),
@@ -111,7 +116,6 @@ await Promise.all(promises);
 console.timeEnd(`All ${clients.length} clients connected`);
 
 var received = 0;
-var total = 0;
 var more = false;
 var remaining;
 var t0 = 0;
@@ -132,15 +136,10 @@ for (let i = 0; i < CLIENTS_TO_WAIT_FOR; i++) {
 }
 
 // each message is supposed to be received
-// by each client
-// so its an extra loop
-for (let i = 0; i < CLIENTS_TO_WAIT_FOR; i++) {
-  for (let j = 0; j < MESSAGES_TO_SEND.length; j++) {
-    for (let k = 0; k < CLIENTS_TO_WAIT_FOR; k++) {
-      total++;
-    }
-  }
-}
+// by each client on each worker
+// numberOfMessagesToBeSentByAllWorkers = CLIENTS_TO_WAIT_FOR * WORKERS * MESSAGES_TO_SEND.length;
+// expectedToBeReceivedByThisWorker = numberOfMessagesToBeSentByAllWorkers * CLIENTS_TO_WAIT_FOR;
+const total = CLIENTS_TO_WAIT_FOR * CLIENTS_TO_WAIT_FOR * WORKERS * MESSAGES_TO_SEND.length;
 remaining = total;
 
 function restart() {
@@ -163,7 +162,7 @@ setInterval(() => {
     received = 0;
     console.log(
       rate,
-      `messages per second (${CLIENTS_TO_WAIT_FOR} clients x ${MESSAGES_TO_SEND.length} msg, time: ${secondsTaken}s)`,
+      `messages per second (${WORKERS} * ${CLIENTS_TO_WAIT_FOR} clients x ${MESSAGES_TO_SEND.length} msg, time: ${secondsTaken}s)`,
     );
 
     if (runs.length >= 10) {
@@ -184,4 +183,8 @@ setInterval(() => {
     isRestarting = false;
   }
 }, DELAY);
-restart();
+setTimeout(() => {
+  // So we can see that the clients are starting around the same millisecond
+  console.log(`Starting benchmark at ${Date.now()}`);
+  restart();
+}, 1_000);

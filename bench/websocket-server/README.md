@@ -28,6 +28,19 @@ Then, run the client script. By default, it will connect 16 clients. This client
 node ./chat-client.mjs
 ```
 
+Example for running clients in multiple processes. (6 \* 32 = 192)
+First start the server:
+
+```bash
+CLIENTS_COUNT=192 node ./chat-server.uws.mjs
+```
+
+Then run 6 of these:
+
+```bash
+WORKERS=6 CLIENTS_COUNT=32 node ./chat-client.mjs
+```
+
 The client script loops through a list of messages for each connected client and sends a message.
 
 For example, when the client sends `"foo"`, the server sends back `"John: foo"` so that all members of the chatroom receive the message.

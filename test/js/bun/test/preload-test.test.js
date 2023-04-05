@@ -68,10 +68,10 @@ describe("preload for bun:test", () => {
       });
 
       expect(exitCode).toBe(0);
-      expect(stderr.toString()).toBe("");
-      expect(stdout.toString()).toContain("✓ says hello world");
-      expect(stdout.toString()).toContain("1 pass");
-      expect(stdout.toString()).toContain("0 fail");
+      const str = stderr.toString();
+      expect(str).toContain("✓ says hello world");
+      expect(str).toContain("1 pass");
+      expect(str).toContain("0 fail");
     }
   });
 
@@ -97,10 +97,10 @@ describe("preload for bun:test", () => {
       });
 
       expect(exitCode).toBe(0);
-      expect(stderr.toString()).toBe("");
-      expect(stdout.toString()).toContain("✓ says hello world");
-      expect(stdout.toString()).toContain("1 pass");
-      expect(stdout.toString()).toContain("0 fail");
+      const str = stderr.toString();
+      expect(str).toContain("✓ says hello world");
+      expect(str).toContain("1 pass");
+      expect(str).toContain("0 fail");
     }
   });
 });

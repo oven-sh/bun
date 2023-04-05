@@ -279,17 +279,6 @@ test("deepEquals works with proxies", () => {
     expect(p1).not.toStrictEqual(p2);
   }
   {
-    // still broken
-    let t1 = { a: 1, b: 2 };
-    let h1 = { get: t => t };
-    let p1 = new Proxy(t1, h1);
-    let t2 = { a: 1, b: 2 };
-    let h2 = { get: t => t };
-    let p2 = new Proxy(t2, h2);
-    expect(p1).not.toEqual(p2);
-    expect(p1).not.toStrictEqual(p2);
-  }
-  {
     let t1 = { a: 1, b: 2 };
     let h1 = { get: (t, k) => t[k] + 2 };
     let p1 = new Proxy(t1, h1);

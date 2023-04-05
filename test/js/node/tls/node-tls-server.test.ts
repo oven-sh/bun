@@ -249,375 +249,377 @@ describe("tls.createServer listen", () => {
       }),
     );
   });
+
+  it("should not listen with wrong password", done => {
+    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+    const server: Server = createServer({
+      key: passKey,
+      passphrase: "invalid",
+      cert: cert,
+    });
+
+    server.on("error", mustCall());
+    let timeout: Timer;
+    function closeAndFail() {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall()();
+    }
+
+    timeout = setTimeout(closeAndFail, 100);
+
+    server.listen(0, "127.0.0.1", closeAndFail);
+  });
+
+  it("should not listen without cert", done => {
+    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+    const server: Server = createServer({
+      key: passKey,
+      passphrase: "invalid",
+    });
+
+    server.on("error", mustCall());
+
+    let timeout: Timer;
+    function closeAndFail() {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall()();
+    }
+
+    timeout = setTimeout(closeAndFail, 100);
+
+    server.listen(0, "127.0.0.1", closeAndFail);
+  });
+
+  it("should not listen without password", done => {
+    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+    const server: Server = createServer({
+      key: passKey,
+      cert: cert,
+    });
+
+    server.on("error", mustCall());
+
+    let timeout: Timer;
+    function closeAndFail() {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall()();
+    }
+
+    timeout = setTimeout(closeAndFail, 100);
+
+    server.listen(0, "127.0.0.1", closeAndFail);
+  });
 });
 
-it("should receive data", done => {
-  const { mustCall, mustNotCall } = createCallCheckCtx(done);
-  let timeout: Timer;
-  let client: any = null;
-  const onData = mustCall(data => {
-    clearTimeout(timeout);
-    server.close();
-    expect(data.byteLength).toBe(5);
-    expect(data.toString("utf8")).toBe("Hello");
-    done();
-  });
+describe("tls.createServer events", () => {
+  it("should receive data", done => {
+    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    let timeout: Timer;
+    let client: any = null;
+    const onData = mustCall(data => {
+      clearTimeout(timeout);
+      server.close();
+      expect(data.byteLength).toBe(5);
+      expect(data.toString("utf8")).toBe("Hello");
+      done();
+    });
 
-  const server: Server = createServer(COMMON_CERT, (socket: TLSSocket) => {
-    socket.on("data", onData);
-  });
+    const server: Server = createServer(COMMON_CERT, (socket: TLSSocket) => {
+      socket.on("data", onData);
+    });
 
-  const closeAndFail = () => {
-    clearTimeout(timeout);
-    server.close();
-    client?.end();
-    mustNotCall("no data received")();
-  };
+    const closeAndFail = () => {
+      clearTimeout(timeout);
+      server.close();
+      client?.end();
+      mustNotCall("no data received")();
+    };
 
-  server.on("error", closeAndFail);
+    server.on("error", closeAndFail);
 
-  //should be faster than 100ms
-  timeout = setTimeout(closeAndFail, 100);
+    //should be faster than 100ms
+    timeout = setTimeout(closeAndFail, 100);
 
-  server.listen(
-    mustCall(async () => {
-      const address = server.address() as AddressInfo;
-      client = await Bun.connect({
-        tls: true,
-        hostname: address.address,
-        port: address.port,
-        socket: {
-          data(socket) {},
-          handshake(socket, success, verifyError) {
-            if (socket.write("Hello")) {
-              socket.end();
-            }
-          },
-          connectError: closeAndFail, // connection failed
-        },
-      }).catch(closeAndFail);
-    }),
-  );
-});
-
-it("should call end", done => {
-  const { mustCall, mustNotCall } = createCallCheckCtx(done);
-  let timeout: Timer;
-
-  const onEnd = mustCall(() => {
-    clearTimeout(timeout);
-    server.close();
-    done();
-  });
-
-  const server: Server = createServer(COMMON_CERT, (socket: TLSSocket) => {
-    socket.on("end", onEnd);
-    socket.end();
-  });
-
-  const closeAndFail = () => {
-    clearTimeout(timeout);
-    server.close();
-    mustNotCall("end not called")();
-  };
-  server.on("error", closeAndFail);
-
-  //should be faster than 100ms
-  timeout = setTimeout(closeAndFail, 100);
-
-  server.listen(
-    mustCall(() => {
-      const address = server.address() as AddressInfo;
-      Bun.connect({
-        tls: true,
-        hostname: address.address,
-        port: address.port,
-        socket: {
-          data(socket) {},
-          open(socket) {},
-          connectError: closeAndFail, // connection failed
-        },
-      }).catch(closeAndFail);
-    }),
-  );
-});
-
-it("should call close", done => {
-  let closed = false;
-  const server: Server = createServer(COMMON_CERT);
-  server.listen().on("close", () => {
-    closed = true;
-  });
-  server.close();
-  expect(closed).toBe(true);
-  done();
-});
-
-it("should call connection and drop", done => {
-  const { mustCall, mustNotCall } = createCallCheckCtx(done);
-
-  let timeout: Timer;
-  const server = createServer();
-  let maxClients = 2;
-  server.maxConnections = maxClients - 1;
-
-  const closeAndFail = () => {
-    clearTimeout(timeout);
-    server.close();
-    mustNotCall("drop not called")();
-  };
-
-  //should be faster than 100ms
-  timeout = setTimeout(closeAndFail, 100);
-  let connection_called = false;
-  server
-    .on(
-      "connection",
-      mustCall(() => {
-        connection_called = true;
-      }),
-    )
-    .on(
-      "drop",
-      mustCall(data => {
-        server.close();
-        clearTimeout(timeout);
-        expect(data.localPort).toBeDefined();
-        expect(data.remotePort).toBeDefined();
-        expect(data.remoteFamily).toBeDefined();
-        expect(data.localFamily).toBeDefined();
-        expect(data.localAddress).toBeDefined();
-        expect(connection_called).toBe(true);
-        done();
-      }),
-    )
-    .listen(() => {
-      const address = server.address() as AddressInfo;
-
-      function spawnClient() {
-        Bun.connect({
+    server.listen(
+      mustCall(async () => {
+        const address = server.address() as AddressInfo;
+        client = await Bun.connect({
           tls: true,
-          port: address?.port,
-          hostname: address?.address,
+          hostname: address.address,
+          port: address.port,
           socket: {
             data(socket) {},
-            handshake(socket, success, verifyError) {},
-            open(socket) {
-              socket.end();
+            handshake(socket, success, verifyError) {
+              if (socket.write("Hello")) {
+                socket.end();
+              }
             },
+            connectError: closeAndFail, // connection failed
           },
-        });
-      }
-      for (let i = 0; i < maxClients; i++) {
-        spawnClient();
-        spawnClient();
-      }
+        }).catch(closeAndFail);
+      }),
+    );
+  });
+
+  it("should call end", done => {
+    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    let timeout: Timer;
+
+    const onEnd = mustCall(() => {
+      clearTimeout(timeout);
+      server.close();
+      done();
     });
-});
 
-it("should call listening", done => {
-  const { mustCall, mustNotCall } = createCallCheckCtx(done);
-
-  let timeout: Timer;
-  const server: Server = createServer(COMMON_CERT);
-  let maxClients = 2;
-  server.maxConnections = maxClients - 1;
-
-  const closeAndFail = () => {
-    clearTimeout(timeout);
-    server.close();
-    mustNotCall("listening not called")();
-  };
-
-  //should be faster than 100ms
-  timeout = setTimeout(closeAndFail, 100);
-
-  server
-    .on(
-      "listening",
-      mustCall(() => {
-        server.close();
-        clearTimeout(timeout);
-        done();
-      }),
-    )
-    .listen();
-});
-
-it("should call error", done => {
-  const { mustCall, mustNotCall } = createCallCheckCtx(done);
-
-  let timeout: Timer;
-  const server: Server = createServer(COMMON_CERT);
-  let maxClients = 2;
-  server.maxConnections = maxClients - 1;
-
-  const closeAndFail = () => {
-    clearTimeout(timeout);
-    server.close();
-    mustNotCall("error not called")();
-  };
-
-  //should be faster than 100ms
-  timeout = setTimeout(closeAndFail, 100);
-
-  server
-    .on(
-      "error",
-      mustCall(err => {
-        server.close();
-        clearTimeout(timeout);
-        expect(err).toBeDefined();
-        done();
-      }),
-    )
-    .listen(123456);
-});
-
-it("should call abort with signal", done => {
-  const { mustCall, mustNotCall } = createCallCheckCtx(done);
-
-  const controller = new AbortController();
-  let timeout: Timer;
-  const server = createServer(COMMON_CERT);
-  let maxClients = 2;
-  server.maxConnections = maxClients - 1;
-
-  const closeAndFail = () => {
-    clearTimeout(timeout);
-    server.close();
-    mustNotCall("close not called")();
-  };
-
-  //should be faster than 100ms
-  timeout = setTimeout(closeAndFail, 100);
-
-  server
-    .on(
-      "close",
-      mustCall(() => {
-        clearTimeout(timeout);
-        done();
-      }),
-    )
-    .listen({ port: 0, signal: controller.signal }, () => {
-      controller.abort();
+    const server: Server = createServer(COMMON_CERT, (socket: TLSSocket) => {
+      socket.on("end", onEnd);
+      socket.end();
     });
-});
 
-it("should echo data", done => {
-  const { mustCall, mustNotCall } = createCallCheckCtx(done);
-  let timeout: Timer;
-  let client: any = null;
-  const server: Server = createServer(COMMON_CERT, (socket: TLSSocket) => {
-    socket.pipe(socket);
-  });
+    const closeAndFail = () => {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall("end not called")();
+    };
+    server.on("error", closeAndFail);
 
-  const closeAndFail = () => {
-    clearTimeout(timeout);
-    server.close();
-    client?.end();
-    mustNotCall("no data received")();
-  };
+    //should be faster than 100ms
+    timeout = setTimeout(closeAndFail, 100);
 
-  server.on("error", closeAndFail);
-
-  //should be faster than 100ms
-  timeout = setTimeout(() => {
-    closeAndFail();
-  }, 100);
-
-  server.listen(
-    mustCall(async () => {
-      const address = server.address() as AddressInfo;
-      client = await Bun.connect({
-        tls: true,
-        hostname: address.address,
-        port: address.port,
-        socket: {
-          drain(socket) {
-            socket.write("Hello");
+    server.listen(
+      mustCall(() => {
+        const address = server.address() as AddressInfo;
+        Bun.connect({
+          tls: true,
+          hostname: address.address,
+          port: address.port,
+          socket: {
+            data(socket) {},
+            open(socket) {},
+            connectError: closeAndFail, // connection failed
           },
-          data(socket, data) {
-            clearTimeout(timeout);
-            server.close();
-            socket.end();
-            expect(data.byteLength).toBe(5);
-            expect(data.toString("utf8")).toBe("Hello");
-            done();
+        }).catch(closeAndFail);
+      }),
+    );
+  });
+
+  it("should call close", done => {
+    let closed = false;
+    const server: Server = createServer(COMMON_CERT);
+    server.listen().on("close", () => {
+      closed = true;
+    });
+    server.close();
+    expect(closed).toBe(true);
+    done();
+  });
+
+  it("should call connection and drop", done => {
+    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+    let timeout: Timer;
+    const server = createServer();
+    let maxClients = 2;
+    server.maxConnections = maxClients - 1;
+
+    const closeAndFail = () => {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall("drop not called")();
+    };
+
+    //should be faster than 100ms
+    timeout = setTimeout(closeAndFail, 100);
+    let connection_called = false;
+    server
+      .on(
+        "connection",
+        mustCall(() => {
+          connection_called = true;
+        }),
+      )
+      .on(
+        "drop",
+        mustCall(data => {
+          server.close();
+          clearTimeout(timeout);
+          expect(data.localPort).toBeDefined();
+          expect(data.remotePort).toBeDefined();
+          expect(data.remoteFamily).toBeDefined();
+          expect(data.localFamily).toBeDefined();
+          expect(data.localAddress).toBeDefined();
+          expect(connection_called).toBe(true);
+          done();
+        }),
+      )
+      .listen(() => {
+        const address = server.address() as AddressInfo;
+
+        function spawnClient() {
+          Bun.connect({
+            tls: true,
+            port: address?.port,
+            hostname: address?.address,
+            socket: {
+              data(socket) {},
+              handshake(socket, success, verifyError) {},
+              open(socket) {
+                socket.end();
+              },
+            },
+          });
+        }
+        for (let i = 0; i < maxClients; i++) {
+          spawnClient();
+          spawnClient();
+        }
+      });
+  });
+
+  it("should call listening", done => {
+    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+    let timeout: Timer;
+    const server: Server = createServer(COMMON_CERT);
+    let maxClients = 2;
+    server.maxConnections = maxClients - 1;
+
+    const closeAndFail = () => {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall("listening not called")();
+    };
+
+    //should be faster than 100ms
+    timeout = setTimeout(closeAndFail, 100);
+
+    server
+      .on(
+        "listening",
+        mustCall(() => {
+          server.close();
+          clearTimeout(timeout);
+          done();
+        }),
+      )
+      .listen();
+  });
+
+  it("should call error", done => {
+    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+    let timeout: Timer;
+    const server: Server = createServer(COMMON_CERT);
+    let maxClients = 2;
+    server.maxConnections = maxClients - 1;
+
+    const closeAndFail = () => {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall("error not called")();
+    };
+
+    //should be faster than 100ms
+    timeout = setTimeout(closeAndFail, 100);
+
+    server
+      .on(
+        "error",
+        mustCall(err => {
+          server.close();
+          clearTimeout(timeout);
+          expect(err).toBeDefined();
+          done();
+        }),
+      )
+      .listen(123456);
+  });
+
+  it("should call abort with signal", done => {
+    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+    const controller = new AbortController();
+    let timeout: Timer;
+    const server = createServer(COMMON_CERT);
+    let maxClients = 2;
+    server.maxConnections = maxClients - 1;
+
+    const closeAndFail = () => {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall("close not called")();
+    };
+
+    //should be faster than 100ms
+    timeout = setTimeout(closeAndFail, 100);
+
+    server
+      .on(
+        "close",
+        mustCall(() => {
+          clearTimeout(timeout);
+          done();
+        }),
+      )
+      .listen({ port: 0, signal: controller.signal }, () => {
+        controller.abort();
+      });
+  });
+
+  it("should echo data", done => {
+    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    let timeout: Timer;
+    let client: any = null;
+    const server: Server = createServer(COMMON_CERT, (socket: TLSSocket) => {
+      socket.pipe(socket);
+    });
+
+    const closeAndFail = () => {
+      clearTimeout(timeout);
+      server.close();
+      client?.end();
+      mustNotCall("no data received")();
+    };
+
+    server.on("error", closeAndFail);
+
+    //should be faster than 100ms
+    timeout = setTimeout(() => {
+      closeAndFail();
+    }, 100);
+
+    server.listen(
+      mustCall(async () => {
+        const address = server.address() as AddressInfo;
+        client = await Bun.connect({
+          tls: true,
+          hostname: address.address,
+          port: address.port,
+          socket: {
+            drain(socket) {
+              socket.write("Hello");
+            },
+            data(socket, data) {
+              clearTimeout(timeout);
+              server.close();
+              socket.end();
+              expect(data.byteLength).toBe(5);
+              expect(data.toString("utf8")).toBe("Hello");
+              done();
+            },
+            handshake(socket) {
+              socket.write("Hello");
+            },
+            connectError: closeAndFail, // connection failed
           },
-          handshake(socket) {
-            socket.write("Hello");
-          },
-          connectError: closeAndFail, // connection failed
-        },
-      }).catch(closeAndFail);
-    }),
-  );
-});
-
-it("should not listen with wrong password", done => {
-  const { mustCall, mustNotCall } = createCallCheckCtx(done);
-
-  const server: Server = createServer({
-    key: passKey,
-    passphrase: "invalid",
-    cert: cert,
+        }).catch(closeAndFail);
+      }),
+    );
   });
-
-  server.on("error", mustCall());
-  let timeout: Timer;
-  function closeAndFail() {
-    clearTimeout(timeout);
-    server.close();
-    mustNotCall()();
-  }
-
-  timeout = setTimeout(closeAndFail, 100);
-
-  server.listen(0, "127.0.0.1", closeAndFail);
-});
-
-it("should not listen without cert", done => {
-  const { mustCall, mustNotCall } = createCallCheckCtx(done);
-
-  const server: Server = createServer({
-    key: passKey,
-    passphrase: "invalid",
-  });
-
-  server.on("error", mustCall());
-
-  let timeout: Timer;
-  function closeAndFail() {
-    clearTimeout(timeout);
-    server.close();
-    mustNotCall()();
-  }
-
-  timeout = setTimeout(closeAndFail, 100);
-
-  server.listen(0, "127.0.0.1", closeAndFail);
-});
-
-it("should not listen without password", done => {
-  const { mustCall, mustNotCall } = createCallCheckCtx(done);
-
-  const server: Server = createServer({
-    key: passKey,
-    cert: cert,
-  });
-
-  server.on("error", mustCall());
-
-  let timeout: Timer;
-  function closeAndFail() {
-    clearTimeout(timeout);
-    server.close();
-    mustNotCall()();
-  }
-
-  timeout = setTimeout(closeAndFail, 100);
-
-  server.listen(0, "127.0.0.1", closeAndFail);
 });

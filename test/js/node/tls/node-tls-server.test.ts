@@ -487,8 +487,6 @@ describe("tls.createServer events", () => {
 
     let timeout: Timer;
     const server: Server = createServer(COMMON_CERT);
-    let maxClients = 2;
-    server.maxConnections = maxClients - 1;
 
     const closeAndFail = () => {
       clearTimeout(timeout);
@@ -503,12 +501,12 @@ describe("tls.createServer events", () => {
       .on(
         "listening",
         mustCall(() => {
-          server.close();
           clearTimeout(timeout);
+          server.close();
           done();
         }),
       )
-      .listen();
+      .listen(0, "127.0.0.1");
   });
 
   it("should call error", done => {
@@ -516,8 +514,6 @@ describe("tls.createServer events", () => {
 
     let timeout: Timer;
     const server: Server = createServer(COMMON_CERT);
-    let maxClients = 2;
-    server.maxConnections = maxClients - 1;
 
     const closeAndFail = () => {
       clearTimeout(timeout);
@@ -547,8 +543,6 @@ describe("tls.createServer events", () => {
     const controller = new AbortController();
     let timeout: Timer;
     const server = createServer(COMMON_CERT);
-    let maxClients = 2;
-    server.maxConnections = maxClients - 1;
 
     const closeAndFail = () => {
       clearTimeout(timeout);

@@ -663,10 +663,8 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     o2->getPropertyNames(globalObject, a2, DontEnumPropertiesMode::Exclude);
 
     const size_t propertyArrayLength = a1.size();
-    if constexpr (isStrict) {
-        if (propertyArrayLength != a2.size()) {
-            return false;
-        }
+    if (propertyArrayLength != a2.size()) {
+        return false;
     }
 
     // take a property name from one, try to get it from both

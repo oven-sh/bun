@@ -28,6 +28,8 @@ declare module "fs/promises" {
     RmDirOptions,
   } from "node:fs";
 
+  export { constants } from "node:fs";
+
   interface FlagAndOpenMode {
     mode?: Mode | undefined;
     flag?: OpenMode | undefined;

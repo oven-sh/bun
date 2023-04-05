@@ -110,5 +110,6 @@ export default {
   lutimes,
   rm,
   rmdir,
+  constants,
   [Symbol.for("CommonJS")]: 0,
 };

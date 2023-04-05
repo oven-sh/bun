@@ -1,12 +1,11 @@
-import { createServer, TLSSocket } from "tls";
+import { createServer, Server, TLSSocket } from "tls";
 import { realpathSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { createTest } from "node-harness";
+import { Serve } from "bun";
 
-const { throws, assert, createDoneDotAll, afterAll, beforeAll, describe, expect, it, createCallCheckCtx } = createTest(
-  import.meta.path,
-);
+const { describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
 
 const passKeyFile = join(import.meta.dir, "fixtures", "rsa_private_encrypted.pem");
 const passKey = readFileSync(passKeyFile);
@@ -34,10 +33,9 @@ describe("tls.createServer listen", () => {
   it("should listen on IPv6 by default", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
-    const server = createServer(COMMON_CERT);
+    const server: Server = createServer(COMMON_CERT);
 
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
@@ -60,10 +58,9 @@ describe("tls.createServer listen", () => {
   it("should listen on IPv4", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
-    const server = createServer(COMMON_CERT);
+    const server: Server = createServer(COMMON_CERT);
 
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
@@ -88,10 +85,9 @@ describe("tls.createServer listen", () => {
   it("should listen on localhost", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
-    const server = createServer(COMMON_CERT);
+    const server: Server = createServer(COMMON_CERT);
 
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
@@ -115,10 +111,9 @@ describe("tls.createServer listen", () => {
   it("should listen on localhost", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
-    const server = createServer(COMMON_CERT);
+    const server: Server = createServer(COMMON_CERT);
 
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
@@ -140,7 +135,7 @@ describe("tls.createServer listen", () => {
   it("should listen without port or host", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
-    const server = createServer(COMMON_CERT);
+    const server: Server = createServer(COMMON_CERT);
 
     const closeAndFail = () => {
       clearTimeout(timeout);
@@ -165,10 +160,9 @@ describe("tls.createServer listen", () => {
   it("should listen on the correct port", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
-    const server = createServer(COMMON_CERT);
+    const server: Server = createServer(COMMON_CERT);
 
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
@@ -190,10 +184,9 @@ describe("tls.createServer listen", () => {
   it("should listen on the correct port with IPV4", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
-    const server = createServer(COMMON_CERT);
+    const server: Server = createServer(COMMON_CERT);
 
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
@@ -216,10 +209,9 @@ describe("tls.createServer listen", () => {
   it("should listen on unix domain socket", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
-    const server = createServer(COMMON_CERT);
+    const server: Server = createServer(COMMON_CERT);
 
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
@@ -239,7 +231,7 @@ describe("tls.createServer listen", () => {
 
 it("should receive data", done => {
   const { mustCall, mustNotCall } = createCallCheckCtx(done);
-  let timeout: any;
+  let timeout: Timer;
   let client: any = null;
   const onData = mustCall(data => {
     clearTimeout(timeout);
@@ -249,7 +241,7 @@ it("should receive data", done => {
     done();
   });
 
-  const server = createServer(COMMON_CERT, (socket: TLSSocket) => {
+  const server: Server = createServer(COMMON_CERT, (socket: TLSSocket) => {
     socket.on("data", onData);
   });
 
@@ -298,7 +290,7 @@ it("should call end", done => {
     done();
   });
 
-  const server = createServer(COMMON_CERT, (socket: TLSSocket) => {
+  const server: Server = createServer(COMMON_CERT, (socket: TLSSocket) => {
     socket.on("end", onEnd);
     socket.end();
   });
@@ -334,7 +326,7 @@ it("should call end", done => {
 
 it("should call close", done => {
   let closed = false;
-  const server = createServer(COMMON_CERT);
+  const server: Server = createServer(COMMON_CERT);
   server.listen().on("close", () => {
     closed = true;
   });
@@ -411,7 +403,7 @@ it("should call listening", done => {
   const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
   let timeout: Timer;
-  const server = createServer(COMMON_CERT);
+  const server: Server = createServer(COMMON_CERT);
   let maxClients = 2;
   server.maxConnections = maxClients - 1;
 
@@ -442,7 +434,7 @@ it("should call error", done => {
   const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
   let timeout: Timer;
-  const server = createServer(COMMON_CERT);
+  const server: Server = createServer(COMMON_CERT);
   let maxClients = 2;
   server.maxConnections = maxClients - 1;
 
@@ -507,7 +499,7 @@ it("should echo data", done => {
   const { mustCall, mustNotCall } = createCallCheckCtx(done);
   let timeout: Timer;
   let client: any = null;
-  const server = createServer(COMMON_CERT, (socket: TLSSocket) => {
+  const server: Server = createServer(COMMON_CERT, (socket: TLSSocket) => {
     socket.pipe(socket);
   });
 
@@ -557,7 +549,7 @@ it("should echo data", done => {
 it("should not listen with wrong password", done => {
   const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
-  const server = createServer({
+  const server: Server = createServer({
     key: passKey,
     passphrase: "invalid",
     cert: cert,
@@ -576,7 +568,7 @@ it("should not listen with wrong password", done => {
 it("should not listen without cert", done => {
   const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
-  const server = createServer({
+  const server: Server = createServer({
     key: passKey,
     passphrase: "invalid",
   });
@@ -594,7 +586,7 @@ it("should not listen without cert", done => {
 it("should not listen without password", done => {
   const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
-  const server = createServer({
+  const server: Server = createServer({
     key: passKey,
     cert: cert,
   });

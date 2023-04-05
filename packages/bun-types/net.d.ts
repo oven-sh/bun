@@ -667,8 +667,8 @@ declare module "net" {
      * with `child_process.fork()`.
      * @since v0.2.0
      */
-    // maxConnections: number;
-    // connections: number;
+    maxConnections: number;
+    connections: number;
     /**
      * Indicates whether or not the server is listening for connections.
      * @since v5.7.0

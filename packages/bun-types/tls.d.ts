@@ -860,7 +860,7 @@ declare module "tls" {
      * the well-known CAs curated by Mozilla. Mozilla's CAs are completely
      * replaced when CAs are explicitly specified using this option.
      */
-    // ca?: string | Buffer | Array<string | Buffer> | undefined;
+    ca?: string | Buffer | Array<string | Buffer> | undefined;
     /**
      *  Cert chains in PEM format. One cert chain should be provided per
      *  private key. Each cert chain should consist of the PEM formatted
@@ -872,7 +872,7 @@ declare module "tls" {
      *  intermediate certificates are not provided, the peer will not be
      *  able to validate the certificate, and the handshake will fail.
      */
-    // cert?: string | Buffer | Array<string | Buffer> | undefined;
+    cert?: string | Buffer | Array<string | Buffer> | undefined;
     /**
      *  Colon-separated list of supported signature algorithms. The list
      *  can contain digest algorithms (SHA256, MD5 etc.), public key
@@ -886,7 +886,7 @@ declare module "tls" {
      * ciphers can be obtained via tls.getCiphers(). Cipher names must be
      * uppercased in order for OpenSSL to accept them.
      */
-    // ciphers?: string | undefined;
+    ciphers?: string | undefined;
     /**
      * Name of an OpenSSL engine which can provide the client certificate.
      */
@@ -930,7 +930,7 @@ declare module "tls" {
      * object.passphrase is optional. Encrypted keys will be decrypted with
      * object.passphrase if provided, or options.passphrase if it is not.
      */
-    // key?: string | Buffer | Array<string | Buffer | KeyObject> | undefined;
+    key?: string | Buffer | Array<string | Buffer | KeyObject> | undefined;
     /**
      * Name of an OpenSSL engine to get private key from. Should be used
      * together with privateKeyIdentifier.
@@ -965,7 +965,7 @@ declare module "tls" {
     /**
      * Shared passphrase used for a single private key and/or a PFX.
      */
-    // passphrase?: string | undefined;
+    passphrase?: string | undefined;
     /**
      * PFX or PKCS12 encoded private key and certificate chain. pfx is an
      * alternative to providing key and cert individually. PFX is usually
@@ -982,7 +982,7 @@ declare module "tls" {
      * usually necessary. This should be used carefully if at all! Value is
      * a numeric bitmask of the SSL_OP_* options from OpenSSL Options
      */
-    // secureOptions?: number | undefined; // Value is a numeric bitmask of the `SSL_OP_*` options
+    secureOptions?: number | undefined; // Value is a numeric bitmask of the `SSL_OP_*` options
     /**
      * Legacy mechanism to select the TLS protocol version to use, it does
      * not support independent control of the minimum and maximum version,

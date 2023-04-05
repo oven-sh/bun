@@ -26,6 +26,14 @@ export type Loader =
   | "text"
   | "ts"
   | "tsx";
+export type ImportKind =
+  | "entry-point"
+  | "import-statement"
+  | "require-call"
+  | "dynamic-import"
+  | "require-resolve"
+  | "import-rule"
+  | "url-token";
 export type LogLevel = "verbose" | "debug" | "info" | "warning" | "error" | "silent";
 export type Charset = "ascii" | "utf8";
 
@@ -158,22 +166,53 @@ interface BuildOptions extends BundlerOptions {
   publicPath?: string;
 }
 
+// copied from esbuild
+type BuildManifest = {
+  inputs: {
+    [path: string]: {
+      output: {
+        path: string;
+      };
+      imports: {
+        path: string;
+        kind: ImportKind;
+        external?: boolean;
+      }[];
+    };
+  };
+
+  outputs: {
+    [path: string]: {
+      type: "chunk" | "entry-point" | "asset";
+
+      // low priority
+      inputs: {
+        [path: string]: {
+          bytesInOutput: number;
+        };
+      };
+      imports: {
+        path: string;
+        kind: ImportKind | "file-loader";
+        external?: boolean;
+      }[];
+      exports: string[];
+    };
+  };
+};
+
 type BuildResult<T> = {
   // only exists if `manifest` is true
-  manifest?: object;
-  // build context that can be written to by plugins
+  manifest?: BuildManifest;
+  // per-build context that can be written to by plugins
   context?: object;
-  results: { path: string; result: T }[];
+  outputs: { path: string; result: T }[];
 };
 
 type LazyBuildResult = {
   then(cb: (result: LazyBuildResult) => BuildOptions): LazyBuildResult;
-  write(dir: string): Promise<{ path: string }[]>;
-  text(): Promise<BuildResult<string>>;
-  blob(): Promise<BuildResult<Blob>>;
-  response(): Promise<BuildResult<Response>>;
-  arrayBuffer(): Promise<BuildResult<ArrayBuffer>>;
-  gzip(): Promise<BuildResult<Blob>>;
+  run(): Promise<BuildResult<Blob>>;
+  write(dir: string): Promise<BuildResult<FileBlob>>;
 };
 
 declare class Bundler {
@@ -203,8 +242,8 @@ declare class Bundler {
     .makeBuild({
       entrypoints: ["index.js"],
     })
-    .blob();
+    .run();
 
-  console.log(result.results[0].path);
-  console.log(result.results[0].result);
+  console.log(result.outputs[0].path);
+  console.log(result.outputs[0].result);
 }

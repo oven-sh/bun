@@ -125,15 +125,17 @@ interface BuildOptions extends BundlerOptions {
   entrypoints: string[];
   rootDir?: string; // equiv. outbase
 
-  naming?: {
-    /** Documentation: https://esbuild.github.io/api/#entry-names */
-    entry?: string;
-    /** Documentation: https://esbuild.github.io/api/#chunk-names */
-    chunk?: string;
-    /** Documentation: https://esbuild.github.io/api/#asset-names */
-    asset?: string;
-    extensions?: { [ext: string]: string };
-  };
+  naming?:
+    | string
+    | {
+        /** Documentation: https://esbuild.github.io/api/#entry-names */
+        entry?: string;
+        /** Documentation: https://esbuild.github.io/api/#chunk-names */
+        chunk?: string;
+        /** Documentation: https://esbuild.github.io/api/#asset-names */
+        asset?: string;
+        extensions?: { [ext: string]: string };
+      };
 
   /** Documentation: https://esbuild.github.io/api/#external */
   external?: {
@@ -210,12 +212,12 @@ type BuildResult<T> = {
 };
 
 type LazyBuildResult = {
-  then(cb: (result: LazyBuildResult) => BuildOptions): LazyBuildResult;
+  then(cb: (context: any) => BuildOptions): LazyBuildResult;
   run(): Promise<BuildResult<Blob>>;
   write(dir: string): Promise<BuildResult<FileBlob>>;
 };
 
-declare class Bundler {
+export declare class Bundler {
   constructor(options: BundlerOptions);
   makeBuild: (options: BuildOptions) => LazyBuildResult;
   handle: (

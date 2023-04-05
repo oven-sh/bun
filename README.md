@@ -40,7 +40,7 @@ bun run index.tsx             # TS and JSX supported out of the box
 bun test                      # run tests
 bun run start                 # run the `start` script in `package.json`
 bun install <pkg>​             # install a package
-bunx cowsay "Hello, world!"   # execute a package
+bunx cowsay 'Hello, world!'   # execute a package
 ```
 
 ## Install

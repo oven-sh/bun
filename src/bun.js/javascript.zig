@@ -433,7 +433,7 @@ pub const VirtualMachine = struct {
     is_us_loop_entered: bool = false,
     pending_internal_promise: *JSC.JSInternalPromise = undefined,
     auto_install_dependencies: bool = false,
-    load_builtins_from_path: []const u8 = "",
+    load_builtins_from_path: []const u8 = "dist",
 
     onUnhandledRejection: *const OnUnhandledRejection = defaultOnUnhandledRejection,
     onUnhandledRejectionCtx: ?*anyopaque = null,

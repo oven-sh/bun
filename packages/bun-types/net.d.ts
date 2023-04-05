@@ -528,7 +528,7 @@ declare module "net" {
    * @since v0.1.90
    */
   // change back to class once implemented
-  interface Server extends EventEmitter {
+  class Server extends EventEmitter {
     // constructor(connectionListener?: (socket: Socket) => void);
     // constructor(
     //   options?: ServerOpts,

@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { createTest } from "node-harness";
 import { Serve } from "bun";
+import { AddressInfo } from "net";
 
 const { describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
 
@@ -44,7 +45,7 @@ describe("tls.createServer listen", () => {
     server.listen(
       0,
       mustCall(() => {
-        const address = server.address();
+        const address = server.address() as AddressInfo;
         expect(address.address).toStrictEqual("::");
         //system should provide an port when 0 or no port is passed
         expect(address.port).toBeGreaterThan(100);
@@ -70,7 +71,7 @@ describe("tls.createServer listen", () => {
       0,
       "127.0.0.1",
       mustCall(() => {
-        const address = server.address();
+        const address = server.address() as AddressInfo;
         expect(address.address).toStrictEqual("127.0.0.1");
         //system should provide an port when 0 or no port is passed
         expect(address.port).toBeGreaterThan(100);
@@ -97,7 +98,7 @@ describe("tls.createServer listen", () => {
       0,
       "::1",
       mustCall(() => {
-        const address = server.address();
+        const address = server.address() as AddressInfo;
         expect(address.address).toStrictEqual("::1");
         //system should provide an port when 0 or no port is passed
         expect(address.port).toBeGreaterThan(100);
@@ -123,7 +124,7 @@ describe("tls.createServer listen", () => {
       0,
       "::1",
       mustCall(() => {
-        const address = server.address();
+        const address = server.address() as AddressInfo;
         expect(address.address).toStrictEqual("::1");
         expect(address.family).toStrictEqual("IPv6");
         server.close();
@@ -138,7 +139,6 @@ describe("tls.createServer listen", () => {
     const server: Server = createServer(COMMON_CERT);
 
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
@@ -146,7 +146,7 @@ describe("tls.createServer listen", () => {
 
     server.listen(
       mustCall(() => {
-        const address = server.address();
+        const address = server.address() as AddressInfo;
         expect(address.address).toStrictEqual("::");
         //system should provide an port when 0 or no port is passed
         expect(address.port).toBeGreaterThan(100);
@@ -171,7 +171,7 @@ describe("tls.createServer listen", () => {
     server.listen(
       49027,
       mustCall(() => {
-        const address = server.address();
+        const address = server.address() as AddressInfo;
         expect(address.address).toStrictEqual("::");
         expect(address.port).toStrictEqual(49027);
         expect(address.family).toStrictEqual("IPv6");
@@ -196,7 +196,7 @@ describe("tls.createServer listen", () => {
       49026,
       "127.0.0.1",
       mustCall(() => {
-        const address = server.address();
+        const address = server.address() as AddressInfo;
         expect(address.address).toStrictEqual("127.0.0.1");
         expect(address.port).toStrictEqual(49026);
         expect(address.family).toStrictEqual("IPv4");
@@ -261,7 +261,7 @@ it("should receive data", done => {
 
   server.listen(
     mustCall(async () => {
-      const address = server.address();
+      const address = server.address() as AddressInfo;
       client = await Bun.connect({
         tls: true,
         hostname: address.address,
@@ -309,7 +309,7 @@ it("should call end", done => {
 
   server.listen(
     mustCall(() => {
-      const address = server.address();
+      const address = server.address() as AddressInfo;
       Bun.connect({
         tls: true,
         hostname: address.address,
@@ -376,13 +376,13 @@ it("should call connection and drop", done => {
       }),
     )
     .listen(() => {
-      const address = server.address();
+      const address = server.address() as AddressInfo;
 
       function spawnClient() {
         Bun.connect({
           tls: true,
-          port: address.port,
-          hostname: address.address,
+          port: address?.port,
+          hostname: address?.address,
           socket: {
             data(socket) {},
             handshake(socket, success, verifyError) {},

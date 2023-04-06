@@ -3116,7 +3116,7 @@ declare module "bun" {
             // aka if true that means the user didn't specify anything
             Writable extends In ? "ignore" : In,
             Readable extends Out ? "pipe" : Out,
-            Readable extends Err ? "pipe" : Err
+            Readable extends Err ? "inherit" : Err
           >
         : Subprocess<Writable, Readable, Readable>;
 
@@ -3128,6 +3128,8 @@ declare module "bun" {
           >
         : SyncSubprocess<Readable, Readable>;
 
+    type ReadableIO = ReadableStream<Buffer> | number | undefined;
+
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
       ? ReadableStream<Buffer>
       : X extends FileBlob | ArrayBufferView | number
@@ -3137,6 +3139,8 @@ declare module "bun" {
     type ReadableToSyncIO<X extends Readable> = X extends "pipe" | undefined
       ? Buffer
       : undefined;
+
+    type WritableIO = FileSink | number | undefined;
 
     type WritableToIO<X extends Writable> = X extends "pipe"
       ? FileSink
@@ -3363,6 +3367,15 @@ declare module "bun" {
     cmds: string[],
     options?: Opts,
   ): SpawnOptions.OptionsToSyncSubprocess<Opts>;
+
+  type ReadableSubprocess = Subprocess<any, "pipe", "pipe">;
+  type WritableSubprocess = Subprocess<"pipe", any, any>;
+  type PipedSubprocess = Subprocess<"pipe", "pipe", "pipe">;
+  type NullSubprocess = Subprocess<
+    "ignore" | "inherit" | null | undefined,
+    "ignore" | "inherit" | null | undefined,
+    "ignore" | "inherit" | null | undefined
+  >;
 
   export class FileSystemRouter {
     /**

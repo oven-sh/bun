@@ -41,7 +41,7 @@ test('says hello world', () => {
 });
 `;
 
-const bunfig = `preload = ["./preload.js"]`;
+const bunfig = `test.preload = ["./preload.js"]`;
 
 describe("preload for bun:test", () => {
   test("works with bunfig", async () => {
@@ -54,9 +54,7 @@ describe("preload for bun:test", () => {
     await Bun.write(mainPath, mainModule);
     await Bun.write(bunfigPath, bunfig);
 
-    const cmds = [
-      [bunExe(), "test", mainPath],
-    ];
+    const cmds = [[bunExe(), "test", mainPath]];
 
     for (let cmd of cmds) {
       const { stderr, exitCode, stdout } = spawnSync({
@@ -83,9 +81,7 @@ describe("preload for bun:test", () => {
     await Bun.write(preloadPath, preloadModule);
     await Bun.write(mainPath, mainModule);
 
-    const cmds = [
-      [bunExe(), `-r=${preloadPath}`, "test", mainPath],
-    ];
+    const cmds = [[bunExe(), `-r=${preloadPath}`, "test", mainPath]];
 
     for (let cmd of cmds) {
       const { stderr, exitCode, stdout } = spawnSync({

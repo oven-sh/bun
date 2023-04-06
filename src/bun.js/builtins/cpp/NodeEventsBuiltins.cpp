@@ -51,13 +51,13 @@ namespace WebCore {
 const JSC::ConstructAbility s_nodeEventsOnAsyncIteratorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_nodeEventsOnAsyncIteratorCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_nodeEventsOnAsyncIteratorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_nodeEventsOnAsyncIteratorCodeLength = 4473;
+const int s_nodeEventsOnAsyncIteratorCodeLength = 4455;
 static const JSC::Intrinsic s_nodeEventsOnAsyncIteratorCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_nodeEventsOnAsyncIteratorCode =
     "(function (emitter, event, options) {\n" \
     "  \"use strict\";\n" \
     "\n" \
-    "  var { AbortSignal, Number, Error } = globalThis;\n" \
+    "  var { AbortSignal, Symbol, Number, Error } = globalThis;\n" \
     "\n" \
     "  var AbortError = class AbortError extends Error {\n" \
     "    constructor(message = \"The operation was aborted\", options = void 0) {\n" \
@@ -74,14 +74,14 @@ const char* const s_nodeEventsOnAsyncIteratorCode =
     "\n" \
     "  if (@isUndefinedOrNull(emitter)) @throwTypeError(\"emitter is required\");\n" \
     "  //\n" \
-    "  if (!(typeof emitter === \"object\" && @isCallable(emitter.emit) && @isCallable(emitter.on)))\n" \
+    "  if (!(@isObject(emitter) && @isCallable(emitter.emit) && @isCallable(emitter.on)))\n" \
     "    @throwTypeError(\"emitter must be an EventEmitter\");\n" \
     "\n" \
     "  if (@isUndefinedOrNull(options)) options = {};\n" \
     "\n" \
     "  //\n" \
     "  var signal = options.signal;\n" \
-    "  if (!@isUndefinedOrNull(signal) && !(signal instanceof AbortSignal))\n" \
+    "  if (signal !== undefined && (!@isObject(signal) || !(signal instanceof AbortSignal)))\n" \
     "    @throwTypeError(\"options.signal must be an AbortSignal\");\n" \
     "\n" \
     "  if (signal?.aborted) {\n" \
@@ -122,7 +122,7 @@ const char* const s_nodeEventsOnAsyncIteratorCode =
     "  }\n" \
     "\n" \
     "  function closeHandler() {\n" \
-    "    removeAllListeners(listeners);\n" \
+    "    removeAllListeners();\n" \
     "    finished = true;\n" \
     "    while (!unconsumedPromises.isEmpty()) {\n" \
     "      const promise = unconsumedPromises.shift();\n" \
@@ -199,19 +199,15 @@ const char* const s_nodeEventsOnAsyncIteratorCode =
     "    }\n" \
     "  }\n" \
     "\n" \
-    "  if (signal)\n" \
-    "    signal.once(\"abort\", abortListener);\n" \
+    "  if (signal) signal.addEventListener(\"abort\", abortListener, { once: true });\n" \
     "\n" \
     "  var iterator = createIterator();\n" \
-    "\n" \
     "  @Object.defineProperties(iterator, {\n" \
     "    return: {\n" \
-    "      value: function() {\n" \
-    "        return closeHandler();\n" \
-    "      },\n" \
+    "      value: () => closeHandler(),\n" \
     "    },\n" \
     "    throw: {\n" \
-    "      value: function(err) {\n" \
+    "      value: (err) => {\n" \
     "        if (!err || !(err instanceof Error)) {\n" \
     "          throw new TypeError(\"EventEmitter.AsyncIterator must be called with an error\");\n" \
     "        }\n" \
@@ -219,7 +215,7 @@ const char* const s_nodeEventsOnAsyncIteratorCode =
     "      },\n" \
     "    },\n" \
     "    [Symbol.asyncIterator]: {\n" \
-    "      value: function() { return this; }\n" \
+    "      value: () => iterator,\n" \
     "    },\n" \
     "  });\n" \
     "  return iterator;\n" \

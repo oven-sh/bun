@@ -26,7 +26,7 @@
 function onAsyncIterator(emitter, event, options) {
   "use strict";
 
-  var { AbortSignal, Number, Error } = globalThis;
+  var { AbortSignal, Symbol, Number, Error } = globalThis;
 
   var AbortError = class AbortError extends Error {
     constructor(message = "The operation was aborted", options = void 0) {
@@ -41,14 +41,14 @@ function onAsyncIterator(emitter, event, options) {
 
   if (@isUndefinedOrNull(emitter)) @throwTypeError("emitter is required");
   // TODO: Do a more accurate check
-  if (!(typeof emitter === "object" && @isCallable(emitter.emit) && @isCallable(emitter.on)))
+  if (!(@isObject(emitter) && @isCallable(emitter.emit) && @isCallable(emitter.on)))
     @throwTypeError("emitter must be an EventEmitter");
 
   if (@isUndefinedOrNull(options)) options = {};
 
   // Parameters validation
   var signal = options.signal;
-  if (!@isUndefinedOrNull(signal) && !(signal instanceof AbortSignal))
+  if (signal !== undefined && (!@isObject(signal) || !(signal instanceof AbortSignal)))
     @throwTypeError("options.signal must be an AbortSignal");
 
   if (signal?.aborted) {
@@ -89,7 +89,7 @@ function onAsyncIterator(emitter, event, options) {
   }
 
   function closeHandler() {
-    removeAllListeners(listeners);
+    removeAllListeners();
     finished = true;
     while (!unconsumedPromises.isEmpty()) {
       const promise = unconsumedPromises.shift();
@@ -166,19 +166,15 @@ function onAsyncIterator(emitter, event, options) {
     }
   }
 
-  if (signal)
-    signal.once("abort", abortListener);
+  if (signal) signal.addEventListener("abort", abortListener, { once: true });
 
   var iterator = createIterator();
-
   @Object.defineProperties(iterator, {
     return: {
-      value: function() {
-        return closeHandler();
-      },
+      value: () => closeHandler(),
     },
     throw: {
-      value: function(err) {
+      value: (err) => {
         if (!err || !(err instanceof Error)) {
           throw new TypeError("EventEmitter.AsyncIterator must be called with an error");
         }
@@ -186,7 +182,7 @@ function onAsyncIterator(emitter, event, options) {
       },
     },
     [Symbol.asyncIterator]: {
-      value: function() { return this; }
+      value: () => iterator,
     },
   });
   return iterator;

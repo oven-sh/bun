@@ -1,10 +1,10 @@
 import { EventEmitter, on } from "node:events";
 import { createTest } from "node-harness";
 
-const { expect, assert, describe, it, createCallCheckCtx, createDoneDotAll } = createTest(import.meta.path);
+const { beforeAll, expect, assert, describe, it, createCallCheckCtx, createDoneDotAll } = createTest(import.meta.path);
 // const NodeEventTarget = globalThis.EventTarget;
 
-describe("node:events.on (EE async iterator)", () => {
+describe("node:events.on (EventEmitter AsyncIterator)", () => {
   it("should return an async iterator", async () => {
     const ee = new EventEmitter();
     const iterable = on(ee, "foo");
@@ -192,106 +192,174 @@ describe("node:events.on (EE async iterator)", () => {
     done();
   });
 
-  it("should throw a `TypeError` when calling throw without args", async () => {
-    const ee = new EventEmitter();
-    const iterable = on(ee, "foo");
+  describe(".throw()", () => {
+    let ee: EventEmitter;
+    let iterable: AsyncIterableIterator<any>;
 
-    expect(() => {
-      // @ts-ignore
-      iterable.throw();
-    }).toThrow(TypeError);
+    beforeAll(() => {
+      ee = new EventEmitter();
+      iterable = on(ee, "foo");
+    });
+
+    it("should throw a `TypeError` when calling without args", async () => {
+      expect(() => {
+        iterable.throw!();
+      }).toThrow(TypeError);
+
+      assert.strictEqual(ee.listenerCount("foo"), 1);
+      assert.strictEqual(ee.listenerCount("error"), 1);
+    });
+
+    it("should throw when called with an error", async () => {
+      const _err = new Error("kaboom");
+
+      ee.emit("foo", "bar");
+      ee.emit("foo", 42);
+      iterable.throw!(_err);
+
+      const expected = [["bar"], [42]];
+
+      let thrown = false;
+      let looped = false;
+
+      try {
+        for await (const event of iterable) {
+          assert.deepStrictEqual(event, expected.shift());
+          looped = true;
+        }
+      } catch (err) {
+        thrown = true;
+        assert.strictEqual(err, _err);
+      }
+
+      assert.strictEqual(looped, true);
+      assert.strictEqual(thrown, true);
+      assert.strictEqual(ee.listenerCount("foo"), 0);
+      assert.strictEqual(ee.listenerCount("error"), 0);
+    });
   });
 
-  // async function iterableThrow() {
-  //   const ee = new EventEmitter();
-  //   const iterable = on(ee, "foo");
+  it("should add an error listener when the iterable is created", () => {
+    const ee = new EventEmitter();
+    on(ee, "foo");
+    assert.strictEqual(ee.listenerCount("error"), 1);
+  });
 
-  //   process.nextTick(() => {
-  //     ee.emit("foo", "bar");
-  //     ee.emit("foo", 42); // lost in the queue
-  //     iterable.throw(_err);
-  //   });
+  it("should throw when called with an aborted signal", () => {
+    const ee = new EventEmitter();
+    const abortedSignal = AbortSignal.abort();
+    [1, {}, null, false, "hi"].forEach((signal: any) => {
+      assert.throws(() => on(ee, "foo", { signal }), Error);
+    });
+    assert.throws(() => on(ee, "foo", { signal: abortedSignal }), {
+      name: "AbortError",
+    });
+  });
 
-  //   const _err = new Error("kaboom");
-  //   let thrown = false;
+  it("should NOT THROW an `AbortError` AFTER done iterating over events", async _done => {
+    let _doneCalled = false;
+    const done = (err?: Error) => {
+      if (_doneCalled) return;
+      _doneCalled = true;
+      _done(err);
+    };
 
-  //   assert.throws(
-  //     () => {
-  //       // No argument
-  //       iterable.throw();
-  //     },
-  //     {
-  //       message: 'The "EventEmitter.AsyncIterator" property must be' + " an instance of Error. Received undefined",
-  //       name: "TypeError",
-  //     },
-  //   );
+    const ee = new EventEmitter();
+    const ac = new AbortController();
 
-  //   const expected = [["bar"], [42]];
+    const i = setInterval(() => ee.emit("foo", "foo"), 1);
+    let count = 0;
 
-  //   try {
-  //     for await (const event of iterable) {
-  //       assert.deepStrictEqual(event, expected.shift());
+    async function foo() {
+      for await (const f of on(ee, "foo", { signal: ac.signal })) {
+        assert.strictEqual(f[0], "foo");
+        if (++count === 5) break;
+      }
+      ac.abort(); // No error will occur
+    }
+
+    foo()
+      .catch(err => done(err))
+      .finally(() => {
+        clearInterval(i);
+        if (!_doneCalled) expect(true).toBe(true);
+        done();
+      });
+  });
+
+  it("should THROW an `AbortError` BEFORE done iterating over events", async _done => {
+    let _doneCalled = false;
+    const done = (err?: Error) => {
+      if (_doneCalled) return;
+      _doneCalled = true;
+      _done(err);
+    };
+
+    let count = 0;
+
+    const createDone = createDoneDotAll(done);
+    const { mustCall, closeTimers } = createCallCheckCtx(createDone());
+    const finalDone = createDone();
+
+    const ee = new EventEmitter();
+    const ac = new AbortController();
+
+    const i = setInterval(() => ee.emit("foo", "foo"), 10);
+
+    setTimeout(() => ac.abort(), 50);
+
+    async function foo() {
+      for await (const f of on(ee, "foo", { signal: ac.signal })) {
+        assert.deepStrictEqual(f, ["foo"]);
+      }
+    }
+
+    foo()
+      .then(() => done(new Error("Should not be called")))
+      .catch(
+        mustCall(error => {
+          assert.strictEqual(error.name, "AbortError");
+        }),
+      )
+      .finally(() => {
+        clearInterval(i);
+        closeTimers();
+        if (!_doneCalled) finalDone();
+      });
+  });
+
+  // TODO: Uncomment tests for NodeEventTarget and Web EventTarget
+
+  // async function eventTarget() {
+  //   const et = new EventTarget();
+  //   const tick = () => et.dispatchEvent(new Event("tick"));
+  //   const interval = setInterval(tick, 0);
+  //   let count = 0;
+  //   for await (const [event] of on(et, "tick")) {
+  //     count++;
+  //     assert.strictEqual(event.type, "tick");
+  //     if (count >= 5) {
+  //       break;
   //     }
-  //   } catch (err) {
-  //     thrown = true;
-  //     assert.strictEqual(err, _err);
   //   }
-  //   assert.strictEqual(thrown, true);
-  //   assert.strictEqual(expected.length, 0);
-  //   assert.strictEqual(ee.listenerCount("foo"), 0);
-  //   assert.strictEqual(ee.listenerCount("error"), 0);
+  //   assert.strictEqual(count, 5);
+  //   clearInterval(interval);
   // }
 
-  // // async function eventTarget() {
-  // //   const et = new EventTarget();
-  // //   const tick = () => et.dispatchEvent(new Event("tick"));
-  // //   const interval = setInterval(tick, 0);
-  // //   let count = 0;
-  // //   for await (const [event] of on(et, "tick")) {
-  // //     count++;
-  // //     assert.strictEqual(event.type, "tick");
-  // //     if (count >= 5) {
-  // //       break;
-  // //     }
-  // //   }
-  // //   assert.strictEqual(count, 5);
-  // //   clearInterval(interval);
-  // // }
-
-  // async function errorListenerCount() {
-  //   const et = new EventEmitter();
-  //   on(et, "foo");
-  //   assert.strictEqual(et.listenerCount("error"), 1);
-  // }
-
-  // // async function nodeEventTarget() {
-  // //   const et = new NodeEventTarget();
-  // //   const tick = () => et.dispatchEvent(new Event("tick"));
-  // //   const interval = setInterval(tick, 0);
-  // //   let count = 0;
-  // //   for await (const [event] of on(et, "tick")) {
-  // //     count++;
-  // //     assert.strictEqual(event.type, "tick");
-  // //     if (count >= 5) {
-  // //       break;
-  // //     }
-  // //   }
-  // //   assert.strictEqual(count, 5);
-  // //   clearInterval(interval);
-  // // }
-
-  // async function abortableOnBefore() {
-  //   it("should ");
-  //   const ee = new EventEmitter();
-  //   const abortedSignal = AbortSignal.abort();
-  //   [1, {}, null, false, "hi"].forEach((signal: any) => {
-  //     assert.throws(() => on(ee, "foo", { signal }), {
-  //       code: "ERR_INVALID_ARG_TYPE",
-  //     });
-  //   });
-  //   assert.throws(() => on(ee, "foo", { signal: abortedSignal }), {
-  //     name: "AbortError",
-  //   });
+  // async function nodeEventTarget() {
+  //   const et = new NodeEventTarget();
+  //   const tick = () => et.dispatchEvent(new Event("tick"));
+  //   const interval = setInterval(tick, 0);
+  //   let count = 0;
+  //   for await (const [event] of on(et, "tick")) {
+  //     count++;
+  //     assert.strictEqual(event.type, "tick");
+  //     if (count >= 5) {
+  //       break;
+  //     }
+  //   }
+  //   assert.strictEqual(count, 5);
+  //   clearInterval(interval);
   // }
 
   // async function eventTargetAbortableOnBefore() {
@@ -306,59 +374,6 @@ describe("node:events.on (EE async iterator)", () => {
   //     name: "AbortError",
   //   });
   // }
-
-  // it("should NOT throw an `AbortError` when done iterating over events", async done => {
-  //   const ee = new EventEmitter();
-  //   const ac = new AbortController();
-
-  //   const i = setInterval(() => ee.emit("foo", "foo"), 1);
-  //   let count = 0;
-
-  //   async function foo() {
-  //     for await (const f of on(ee, "foo", { signal: ac.signal })) {
-  //       assert.strictEqual(f[0], "foo");
-  //       if (++count === 5) break;
-  //     }
-  //     ac.abort(); // No error will occur
-  //   }
-
-  //   foo().finally(() => {
-  //     clearInterval(i);
-  //     expect(true).toBe(true);
-  //     done();
-  //   });
-  // });
-
-  // it("should throw an `AbortError` when NOT done iterating over events", async done => {
-  //   const createDone = createDoneDotAll(done);
-  //   const { mustCall, closeTimers } = createCallCheckCtx(createDone());
-  //   const finalDone = createDone();
-
-  //   const ee = new EventEmitter();
-  //   const ac = new AbortController();
-
-  //   const i = setInterval(() => ee.emit("foo", "foo"), 10);
-
-  //   async function foo() {
-  //     for await (const f of on(ee, "foo", { signal: ac.signal })) {
-  //       assert.strictEqual(f, "foo");
-  //     }
-  //   }
-
-  //   foo()
-  //     .catch(
-  //       mustCall(error => {
-  //         assert.strictEqual(error.name, "AbortError");
-  //       }),
-  //     )
-  //     .finally(() => {
-  //       clearInterval(i);
-  //       finalDone();
-  //       closeTimers();
-  //     });
-
-  //   process.nextTick(() => ac.abort());
-  // });
 
   // async function eventTargetAbortableOnAfter() {
   //   const et = new EventTarget();

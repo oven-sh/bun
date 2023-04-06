@@ -81,7 +81,8 @@ pub const JSBlob = struct {
 
     extern fn Blob__dangerouslySetPtr(JSC.JSValue, ?*Blob) bool;
 
-    comptime {     
+    comptime {
+        
         if (@TypeOf(Blob.constructor) != (fn(*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*Blob)) {
            @compileLog("Blob.constructor is not a constructor");
         }

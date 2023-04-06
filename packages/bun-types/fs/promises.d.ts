@@ -84,6 +84,7 @@ declare module "fs/promises" {
    * @param [mode=fs.constants.F_OK]
    * @return Fulfills with `undefined` upon success.
    */
+
   function access(path: PathLike, mode?: number): Promise<void>;
   /**
    * Asynchronously copies `src` to `dest`. By default, `dest` is overwritten if it

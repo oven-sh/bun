@@ -9,8 +9,8 @@ const strictEqual = (...args) => {
   expect(true).toBe(true);
 };
 
-it('should not inherit Object.prototype', () => {
-  expect(path).not.toHaveProperty('toString');
+it("should not inherit Object.prototype", () => {
+  expect(path).not.toHaveProperty("toString");
 });
 
 it("path.basename", () => {

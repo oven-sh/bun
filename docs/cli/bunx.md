@@ -1,5 +1,5 @@
 {% callout %}
-**Note** — `bunx` is just alias of `bun x`
+**Note** — `bunx` is an alias for `bun x`
 {% /callout %}
 
 Use `bunx` to auto-install and run packages from `npm`. The `bunx` CLI will be auto-installed when you install `bun`.

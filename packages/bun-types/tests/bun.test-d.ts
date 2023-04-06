@@ -1,4 +1,4 @@
-import { BunPlugin } from "bun";
+import { BunFile, BunPlugin, FileBlob } from "bun";
 import * as tsd from "tsd";
 {
   const _plugin: BunPlugin = {
@@ -23,4 +23,10 @@ import * as tsd from "tsd";
   });
 
   tsd.expectType<Promise<void>>(arg);
+}
+
+{
+  const f = Bun.file("asdf");
+  tsd.expectType<BunFile>(f);
+  tsd.expectType<FileBlob>(f);
 }

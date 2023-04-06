@@ -1093,6 +1093,11 @@ it("fs.constants", () => {
   expect(constants.S_IWOTH).toBeDefined();
 });
 
+it("fs.promises.constants", () => {
+  expect(promises.constants).toBeDefined();
+  expect(promises.constants).toBe(fs.constants);
+});
+
 it("fs.Dirent", () => {
   expect(Dirent).toBeDefined();
 });

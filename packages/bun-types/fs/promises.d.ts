@@ -28,8 +28,7 @@ declare module "fs/promises" {
     RmDirOptions,
   } from "node:fs";
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  import { constants } from "node:fs";
+  const constants: typeof import("node:fs")["constants"];
 
   interface FlagAndOpenMode {
     mode?: Mode | undefined;

@@ -1,5 +1,5 @@
 // Utils to extract later
-const createModule = (obj) => Object.assign(Object.create(null), obj);
+const createModule = obj => Object.assign(Object.create(null), obj);
 
 function bound(obj) {
   var result = createModule({

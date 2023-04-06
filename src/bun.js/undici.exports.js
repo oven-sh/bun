@@ -167,7 +167,7 @@ export async function request(
   if (typeof url === "string") {
     if (query) url = new URL(url);
   } else if (typeof url === "object" && url !== null) {
-    if (!(url instanceof URL) ){
+    if (!(url instanceof URL)) {
       // TODO: Parse undici UrlObject
       throw new Error("not implemented");
     }

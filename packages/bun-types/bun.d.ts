@@ -2972,7 +2972,7 @@ declare module "bun" {
       | "inherit"
       | "ignore"
       | null // equivalent to "ignore"
-      | undefined // use default
+      | undefined // to use default
       | FileBlob
       | ArrayBufferView
       | number;
@@ -2985,7 +2985,7 @@ declare module "bun" {
       | "inherit"
       | "ignore"
       | null // equivalent to "ignore"
-      | undefined // use default
+      | undefined // to use default
       | FileBlob
       | ArrayBufferView
       | number
@@ -3155,6 +3155,15 @@ declare module "bun" {
       : undefined;
   }
 
+  /**
+   * A process created by {@link Bun.spawn}.
+   *
+   * This type accepts 3 optional type parameters which correspond to the `stdio` array from the options object. Instead of specifying these, you should use one of the following utility types instead:
+   * - {@link ReadableSubprocess} (any, pipe, pipe)
+   * - {@link WritableSubprocess} (pipe, any, any)
+   * - {@link PipedSubprocess} (pipe, pipe, pipe)
+   * - {@link NullSubprocess} (ignore, ignore, ignore)
+   */
   interface Subprocess<
     In extends SpawnOptions.Writable = SpawnOptions.Writable,
     Out extends SpawnOptions.Readable = SpawnOptions.Readable,
@@ -3233,6 +3242,13 @@ declare module "bun" {
     unref(): void;
   }
 
+  /**
+   * A process created by {@link Bun.spawnSync}.
+   *
+   * This type accepts 2 optional type parameters which correspond to the `stdout` and `stderr` options. Instead of specifying these, you should use one of the following utility types instead:
+   * - {@link ReadableSyncSubprocess} (pipe, pipe)
+   * - {@link NullSyncSubprocess} (ignore, ignore)
+   */
   interface SyncSubprocess<
     Out extends SpawnOptions.Readable = SpawnOptions.Readable,
     Err extends SpawnOptions.Readable = SpawnOptions.Readable,
@@ -3368,11 +3384,22 @@ declare module "bun" {
     options?: Opts,
   ): SpawnOptions.OptionsToSyncSubprocess<Opts>;
 
+  /** Utility type for any process from {@link Bun.spawn()} with both stdout and stderr set to `"pipe"` */
   type ReadableSubprocess = Subprocess<any, "pipe", "pipe">;
+  /** Utility type for any process from {@link Bun.spawn()} with stdin set to `"pipe"` */
   type WritableSubprocess = Subprocess<"pipe", any, any>;
+  /** Utility type for any process from {@link Bun.spawn()} with stdin, stdout, stderr all set to `"pipe"`. A combination of {@link ReadableSubprocess} and {@link WritableSubprocess} */
   type PipedSubprocess = Subprocess<"pipe", "pipe", "pipe">;
+  /** Utility type for any process from {@link Bun.spawn()} with stdin, stdout, stderr all set to `null` or similar. */
   type NullSubprocess = Subprocess<
     "ignore" | "inherit" | null | undefined,
+    "ignore" | "inherit" | null | undefined,
+    "ignore" | "inherit" | null | undefined
+  >;
+  /** Utility type for any process from {@link Bun.spawnSync()} with both stdout and stderr set to `"pipe"` */
+  type ReadableSyncSubprocess = SyncSubprocess<"pipe", "pipe">;
+  /** Utility type for any process from {@link Bun.spawnSync()} with both stdout and stderr set to `null` or similar */
+  type NullSyncSubprocess = SyncSubprocess<
     "ignore" | "inherit" | null | undefined,
     "ignore" | "inherit" | null | undefined
   >;

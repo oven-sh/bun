@@ -84,7 +84,32 @@ describe("tls.createServer listen", () => {
         done();
       }),
     );
-    done();
+  });
+
+  it("should call listening", done => {
+    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+    const server: Server = createServer(COMMON_CERT);
+
+    let timeout: Timer;
+    const closeAndFail = () => {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall()();
+    };
+
+    server.on("error", closeAndFail).on(
+      "listening",
+      mustCall(() => {
+        clearTimeout(timeout);
+        server.close();
+        done();
+      }),
+    );
+
+    timeout = setTimeout(closeAndFail, 100);
+
+    server.listen(0, "0.0.0.0");
   });
 
   it("should listen on localhost", done => {
@@ -480,35 +505,6 @@ describe("tls.createServer events", () => {
           spawnClient();
         }
       });
-  });
-
-  it("should call listening", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
-
-    let timeout: Timer;
-    const server: Server = createServer(COMMON_CERT);
-
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall("listening not called")();
-    };
-
-    server.on("error", closeAndFail);
-
-    //should be faster than 100ms
-    timeout = setTimeout(closeAndFail, 1000);
-
-    server
-      .on(
-        "listening",
-        mustCall(() => {
-          clearTimeout(timeout);
-          server.close();
-          done();
-        }),
-      )
-      .listen(0, "0.0.0.0");
   });
 
   it("should call error", done => {

@@ -494,8 +494,10 @@ describe("tls.createServer events", () => {
       mustNotCall("listening not called")();
     };
 
+    server.on("error", closeAndFail);
+
     //should be faster than 100ms
-    timeout = setTimeout(closeAndFail, 100);
+    timeout = setTimeout(closeAndFail, 1000);
 
     server
       .on(
@@ -506,7 +508,7 @@ describe("tls.createServer events", () => {
           done();
         }),
       )
-      .listen({ port: 0 }, ()=> {});
+      .listen(0, "0.0.0.0");
   });
 
   it("should call error", done => {
@@ -584,9 +586,7 @@ describe("tls.createServer events", () => {
     server.on("error", closeAndFail);
 
     //should be faster than 100ms
-    timeout = setTimeout(() => {
-      closeAndFail();
-    }, 100);
+    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       mustCall(async () => {

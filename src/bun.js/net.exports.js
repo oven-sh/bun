@@ -744,7 +744,7 @@ class Server extends EventEmitter {
       setTimeout(emitListeningNextTick, 1, this, onListen);
     } catch (err) {
       this.#listening = false;
-      process.nextTick(emitErrorNextTick, this, err);
+      setTimeout(emitErrorNextTick, 1, this, err);
     }
     return this;
   }

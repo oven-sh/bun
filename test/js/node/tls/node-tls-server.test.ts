@@ -347,7 +347,9 @@ describe("tls.createServer events", () => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
     let timeout: Timer;
     let client: any = null;
+    let is_done = false;
     const onData = mustCall(data => {
+      is_done = true;
       clearTimeout(timeout);
       server.close();
       expect(data.byteLength).toBe(5);
@@ -360,6 +362,7 @@ describe("tls.createServer events", () => {
     });
 
     const closeAndFail = () => {
+      if (is_done) return;
       clearTimeout(timeout);
       server.close();
       client?.end();
@@ -395,8 +398,9 @@ describe("tls.createServer events", () => {
   it("should call end", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
     let timeout: Timer;
-
+    let is_done = false;
     const onEnd = mustCall(() => {
+      is_done = true;
       clearTimeout(timeout);
       server.close();
       done();
@@ -408,6 +412,7 @@ describe("tls.createServer events", () => {
     });
 
     const closeAndFail = () => {
+      if (is_done) return;
       clearTimeout(timeout);
       server.close();
       mustNotCall("end not called")();
@@ -449,11 +454,13 @@ describe("tls.createServer events", () => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
     let timeout: Timer;
+    let is_done = false;
     const server = createServer();
     let maxClients = 2;
     server.maxConnections = maxClients - 1;
 
     const closeAndFail = () => {
+      if (is_done) return;
       clearTimeout(timeout);
       server.close();
       mustNotCall("drop not called")();
@@ -472,6 +479,7 @@ describe("tls.createServer events", () => {
       .on(
         "drop",
         mustCall(data => {
+          is_done = true;
           server.close();
           clearTimeout(timeout);
           expect(data.localPort).toBeDefined();
@@ -573,8 +581,9 @@ describe("tls.createServer events", () => {
     const server: Server = createServer(COMMON_CERT, (socket: TLSSocket) => {
       socket.pipe(socket);
     });
-
+    let is_done = false;
     const closeAndFail = () => {
+      if (is_done) return;
       clearTimeout(timeout);
       server.close();
       client?.end();
@@ -598,6 +607,7 @@ describe("tls.createServer events", () => {
               socket.write("Hello");
             },
             data(socket, data) {
+              is_done = true;
               clearTimeout(timeout);
               server.close();
               socket.end();

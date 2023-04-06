@@ -418,9 +418,9 @@ describe("tls.createServer events", () => {
     timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
-      mustCall(() => {
+      mustCall(async () => {
         const address = server.address() as AddressInfo;
-        Bun.connect({
+        await Bun.connect({
           tls: true,
           hostname: address.address,
           port: address.port,
@@ -483,11 +483,11 @@ describe("tls.createServer events", () => {
           done();
         }),
       )
-      .listen(() => {
+      .listen(async () => {
         const address = server.address() as AddressInfo;
 
-        function spawnClient() {
-          Bun.connect({
+        async function spawnClient() {
+          await Bun.connect({
             tls: true,
             port: address?.port,
             hostname: address?.address,
@@ -500,10 +500,12 @@ describe("tls.createServer events", () => {
             },
           });
         }
+
+        const promises = [];
         for (let i = 0; i < maxClients; i++) {
-          spawnClient();
-          spawnClient();
+          promises.push(spawnClient());
         }
+        await Promise.all(promises).catch(closeAndFail);
       });
   });
 

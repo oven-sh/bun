@@ -651,7 +651,6 @@ const exports = {
   setDefaultResultOrder,
   resolve,
   reverse,
-  resolve,
   resolve4,
   resolve6,
   resolveAny,

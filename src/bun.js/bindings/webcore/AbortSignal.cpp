@@ -71,7 +71,14 @@ Ref<AbortSignal> AbortSignal::timeout(ScriptExecutionContext& context, uint64_t 
         Locker locker { vm.apiLock() };
         signal->signalAbort(toJS(globalObject, globalObject, DOMException::create(TimeoutError)));
     };
-    context.postTaskOnTimeout(WTFMove(action), Seconds::fromMilliseconds(milliseconds));
+
+    if (milliseconds == 0) {
+        // immediately write to task queue
+        context.postTask(WTFMove(action));
+    } else {
+        context.postTaskOnTimeout(WTFMove(action), Seconds::fromMilliseconds(milliseconds));
+    }
+
     return signal;
 }
 

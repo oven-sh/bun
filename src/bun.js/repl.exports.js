@@ -38,7 +38,6 @@ var repl = {
   history: [],
   _initialPrompt: "> ",
   terminal: true,
-  cursor: 0,
   input: new Proxy(
     {},
     {

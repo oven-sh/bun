@@ -1144,9 +1144,8 @@ pub const Fetch = struct {
                     }
                     if (options.get(globalThis, "proxy")) |proxy_arg| {
                         if (!proxy_arg.isUndefined()) {
-                            var proxy_str = proxy_arg.toStringOrNull(globalThis) orelse return null;
                             // proxy + url 1 allocation
-                            var url_zig = proxy_str.getZigString(globalThis);
+                            var url_zig = jsstring.getZigString(globalThis);
 
                             if (url_zig.len == 0) {
                                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
@@ -1165,6 +1164,7 @@ pub const Fetch = struct {
                                 proxy = ZigURL{}; //empty proxy
 
                             } else {
+                                var proxy_str = proxy_arg.toStringOrNull(globalThis) orelse return null;
                                 var proxy_url_zig = proxy_str.getZigString(globalThis);
 
                                 // proxy is actual 0 len so ignores it

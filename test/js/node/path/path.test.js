@@ -9,6 +9,10 @@ const strictEqual = (...args) => {
   expect(true).toBe(true);
 };
 
+it("should not inherit Object.prototype", () => {
+  expect(path).not.toHaveProperty("toString");
+});
+
 it("path.basename", () => {
   strictEqual(path.basename(file), "path.test.js");
   strictEqual(path.basename(file, ".js"), "path.test");

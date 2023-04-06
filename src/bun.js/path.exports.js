@@ -1,5 +1,8 @@
+// Utils to extract later
+const createModule = obj => Object.assign(Object.create(null), obj);
+
 function bound(obj) {
-  var result = {
+  var result = createModule({
     basename: obj.basename.bind(obj),
     dirname: obj.dirname.bind(obj),
     extname: obj.extname.bind(obj),
@@ -13,7 +16,7 @@ function bound(obj) {
     toNamespacedPath: obj.toNamespacedPath.bind(obj),
     sep: obj.sep,
     delimiter: obj.delimiter,
-  };
+  });
   result.default = result;
   return result;
 }

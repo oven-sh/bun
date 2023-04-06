@@ -20,7 +20,6 @@ export class PerformanceNodeTiming {
 export default {
   performance,
   PerformanceEntry,
-  PerformanceEntry,
   PerformanceNodeTiming,
   [Symbol.for("CommonJS")]: 0,
 };

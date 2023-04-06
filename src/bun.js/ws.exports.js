@@ -88,7 +88,7 @@ class Receiver {
 
 BunWebSocket.Receiver = Receiver;
 
-var createWebSocketStream = (ws) => {
+var createWebSocketStream = ws => {
   throw new Error("Not supported yet in Bun");
 };
 
@@ -96,11 +96,4 @@ BunWebSocket.createWebSocketStream = createWebSocketStream;
 
 export default BunWebSocket;
 
-export {
-  createWebSocketStream,
-  Server,
-  Receiver,
-  Sender,
-  BunWebSocket as WebSocket,
-  Server as WebSocketServer,
-};
+export { createWebSocketStream, Server, Receiver, Sender, BunWebSocket as WebSocket, Server as WebSocketServer };

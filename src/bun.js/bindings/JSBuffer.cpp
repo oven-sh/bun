@@ -56,6 +56,46 @@
 // #include "JavaScriptCore/JSTypedArrayViewPrototype.h"
 #include "JavaScriptCore/JSArrayBufferViewInlines.h"
 
+#include "simdjson.h"
+#include <JavaScriptCore/JSONAtomStringCache.h>
+#include "simdutf.h"
+
+#include "JavaScriptCore/SmallStrings.h"
+#include "JavaScriptCore/VM.h"
+
+namespace JSC {
+
+template<typename CharacterType>
+ALWAYS_INLINE Ref<AtomStringImpl> JSONAtomStringCache::make(Type type, const CharacterType* characters, unsigned length)
+{
+    if (!length)
+        return *static_cast<AtomStringImpl*>(StringImpl::empty());
+
+    auto firstCharacter = characters[0];
+    if (length == 1) {
+        if (firstCharacter <= maxSingleCharacterString)
+            return vm().smallStrings.singleCharacterStringRep(firstCharacter);
+    } else if (length > maxStringLengthForCache)
+        return AtomStringImpl::add(characters, length).releaseNonNull();
+
+    auto lastCharacter = characters[length - 1];
+    auto& slot = cacheSlot(type, firstCharacter, lastCharacter, length);
+    if (!equal(slot.get(), characters, length)) {
+        auto result = AtomStringImpl::add(characters, length);
+        slot = result;
+        return result.releaseNonNull();
+    }
+
+    return *slot;
+}
+
+ALWAYS_INLINE VM& JSONAtomStringCache::vm() const
+{
+    return *bitwise_cast<VM*>(bitwise_cast<uintptr_t>(this) - OBJECT_OFFSETOF(VM, jsonAtomStringCache));
+}
+
+} // namespace JSC
+
 JSC_DECLARE_HOST_FUNCTION(constructJSBuffer);
 
 static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_alloc);
@@ -81,6 +121,406 @@ static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap32);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap64);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_toString);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_write);
+
+using namespace simdjson;
+
+static JSValue recursiveParseJSON(JSC::JSGlobalObject* globalObject, bool& stop, simdjson::ondemand::value element)
+{
+    simdjson::ondemand::json_type type;
+    if (UNLIKELY(element.type().get(type))) {
+        stop = true;
+        return JSC::jsUndefined();
+    }
+
+    switch (type) {
+    case simdjson::ondemand::json_type::array: {
+        JSC::JSArray* array = JSC::JSArray::tryCreate(globalObject->vm(), globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithUndecided));
+        for (auto child : element.get_array()) {
+            simdjson::ondemand::value current;
+
+            if (UNLIKELY(child.get(current))) {
+                stop = true;
+                return JSC::jsUndefined();
+            }
+
+            array->push(globalObject, recursiveParseJSON(globalObject, stop, current));
+            if (UNLIKELY(stop)) {
+                return JSC::jsUndefined();
+            }
+        }
+        return array;
+    }
+    case simdjson::ondemand::json_type::object: {
+        JSC::JSObject* object = JSC::constructEmptyObject(globalObject);
+        simdjson::ondemand::object elementObject;
+        if (UNLIKELY(element.get_object().get(elementObject))) {
+            stop = true;
+            return JSC::jsUndefined();
+        }
+
+        for (auto field : elementObject) {
+            simdjson::ondemand::value current;
+            std::string_view keyView;
+
+            if (UNLIKELY(field.unescaped_key(true).get(keyView))) {
+                stop = true;
+                return JSC::jsUndefined();
+            }
+
+            if (UNLIKELY(field.value().get(current))) {
+                stop = true;
+                return JSC::jsUndefined();
+            }
+
+            JSC::Identifier identifier;
+            if (simdutf::validate_ascii(keyView.data(), keyView.length())) {
+                identifier = JSC::Identifier::fromString(globalObject->vm(), globalObject->vm().jsonAtomStringCache.makeIdentifier(keyView.data(), keyView.length()));
+            } else {
+                identifier = JSC::Identifier::fromString(globalObject->vm(), WTF::String::fromUTF8(keyView.data(), keyView.length()));
+            }
+
+            object->putDirect(
+                globalObject->vm(),
+                identifier,
+                recursiveParseJSON(globalObject, stop, current));
+
+            if (UNLIKELY(stop)) {
+                return JSC::jsUndefined();
+            }
+        }
+        return object;
+    }
+    case simdjson::ondemand::json_type::number: {
+        double val;
+        if (UNLIKELY(element.get(val))) {
+            stop = true;
+            return JSC::jsUndefined();
+        }
+
+        return jsNumber(val);
+    }
+    case simdjson::ondemand::json_type::string: {
+        std::string_view str;
+        if (UNLIKELY(element.get(str))) {
+            stop = true;
+            return JSC::jsUndefined();
+        }
+        return JSC::jsString(globalObject->vm(), WTF::String::fromUTF8(str.data(), str.length()));
+    }
+    case simdjson::ondemand::json_type::boolean: {
+        bool val;
+        if (UNLIKELY(element.get(val))) {
+            stop = true;
+            return JSC::jsUndefined();
+        }
+
+        return jsBoolean(val);
+    }
+    case simdjson::ondemand::json_type::null: {
+        bool val;
+        if (UNLIKELY(element.is_null().get(val) || !val)) {
+            stop = true;
+            return JSC::jsUndefined();
+        }
+
+        return JSC::jsNull();
+    }
+    }
+}
+
+static JSValue recursiveParseJSONDOM(JSC::JSGlobalObject* globalObject, bool& stop, simdjson::dom::element element)
+{
+    simdjson::dom::element_type type;
+    switch (element.type()) {
+    case simdjson::dom::element_type::ARRAY: {
+        JSC::JSArray* array = JSC::JSArray::tryCreate(globalObject->vm(), globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithUndecided));
+        simdjson::dom::array elementArray;
+        if (UNLIKELY(element.get_array().get(elementArray))) {
+            stop = true;
+            return JSC::jsUndefined();
+        }
+
+        for (auto child : elementArray) {
+            simdjson::dom::element current;
+
+            if (UNLIKELY(child.get(current))) {
+                stop = true;
+                return JSC::jsUndefined();
+            }
+
+            array->push(globalObject, recursiveParseJSONDOM(globalObject, stop, current));
+            if (UNLIKELY(stop)) {
+                return JSC::jsUndefined();
+            }
+        }
+        return array;
+    }
+    case simdjson::dom::element_type::OBJECT: {
+        JSC::JSObject* object = JSC::constructEmptyObject(globalObject);
+        simdjson::dom::object elementObject;
+        if (UNLIKELY(element.get_object().get(elementObject))) {
+            stop = true;
+            return JSC::jsUndefined();
+        }
+
+        for (auto field : elementObject) {
+            simdjson::dom::element current = field.value;
+            std::string_view keyView = field.key;
+
+            object->putDirect(
+                globalObject->vm(),
+                JSC::Identifier::fromString(globalObject->vm(), WTF::String::fromUTF8(keyView.data(), keyView.length())),
+                recursiveParseJSONDOM(globalObject, stop, current));
+
+            if (UNLIKELY(stop)) {
+                return JSC::jsUndefined();
+            }
+        }
+        return object;
+    }
+    case simdjson::dom::element_type::INT64:
+    case simdjson::dom::element_type::UINT64:
+    case simdjson::dom::element_type::DOUBLE: {
+        double val;
+        if (UNLIKELY(element.get(val))) {
+            stop = true;
+            return JSC::jsUndefined();
+        }
+
+        return jsNumber(val);
+    }
+    case simdjson::dom::element_type::STRING: {
+        std::string_view str;
+        if (UNLIKELY(element.get(str))) {
+            stop = true;
+            return JSC::jsUndefined();
+        }
+        return JSC::jsString(globalObject->vm(), WTF::String::fromUTF8(str.data(), str.length()));
+    }
+    case simdjson::dom::element_type::BOOL: {
+        bool val;
+        if (UNLIKELY(element.get(val))) {
+            stop = true;
+            return JSC::jsUndefined();
+        }
+
+        return jsBoolean(val);
+    }
+    case simdjson::dom::element_type::NULL_VALUE: {
+        bool val;
+        if (UNLIKELY(element.get(val) || !val)) {
+            stop = true;
+            return JSC::jsUndefined();
+        }
+
+        return JSC::jsNull();
+    }
+    }
+}
+
+static JSValue parseJSONOnDemand(JSC::JSGlobalObject* globalObject, const char* ptr, size_t byteLength, size_t allocatedLength)
+{
+    JSC::VM& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    simdjson::ondemand::document document;
+    static simdjson::ondemand::parser parser = simdjson::ondemand::parser();
+
+    bool stop = false;
+
+    auto err = parser.iterate(ptr, byteLength, allocatedLength).get(document);
+    if (err != simdjson::SUCCESS) {
+        throwException(globalObject, throwScope, JSC::createSyntaxError(globalObject, "Invalid JSON"_s));
+        return JSC::jsNull();
+    }
+
+    simdjson::ondemand::value value;
+    err = document.get_value().get(value);
+
+    if (err == simdjson::error_code::SCALAR_DOCUMENT_AS_VALUE) {
+        simdjson::ondemand::json_type type;
+        if (!document.type().get(type)) {
+            switch (type) {
+            case simdjson::ondemand::json_type::number: {
+                double val;
+                if (UNLIKELY(document.get_double().get(val))) {
+
+                    throwException(globalObject, throwScope, JSC::createSyntaxError(globalObject, "Invalid JSON"_s));
+                    return JSC::jsNull();
+                }
+
+                return jsNumber(val);
+            }
+            case simdjson::ondemand::json_type::string: {
+                std::string_view str;
+                if (UNLIKELY(document.get_string().get(str))) {
+
+                    throwException(globalObject, throwScope, JSC::createSyntaxError(globalObject, "Invalid JSON"_s));
+                    return JSC::jsNull();
+                }
+
+                return JSC::jsString(globalObject->vm(), WTF::String::fromUTF8(str.data(), str.length()));
+            }
+
+            case simdjson::ondemand::json_type::boolean: {
+                bool val;
+                if (UNLIKELY(document.get_bool().get(val))) {
+
+                    throwException(globalObject, throwScope, JSC::createSyntaxError(globalObject, "Invalid JSON"_s));
+                    return JSC::jsNull();
+                }
+
+                return jsBoolean(val);
+            }
+
+            case simdjson::ondemand::json_type::null: {
+                bool val;
+                if (UNLIKELY(document.is_null().get(val) || !val)) {
+
+                    throwException(globalObject, throwScope, JSC::createSyntaxError(globalObject, "Invalid JSON"_s));
+                    return JSC::jsNull();
+                }
+
+                return JSC::jsNull();
+            }
+            }
+        }
+    }
+
+    // if (err != simdjson::error_code::SUCCESS) {
+    //     throwException(globalObject, throwScope, JSC::createSyntaxError(globalObject, makeString("Invalid JSON due to error"_s, err)));
+    //     return JSC::jsNull();
+    // }
+
+    auto result = recursiveParseJSON(globalObject, stop, value);
+
+    if (stop) {
+        throwException(globalObject, throwScope, JSC::createSyntaxError(globalObject, "Invalid JSON"_s));
+        return JSC::jsNull();
+    }
+
+    return result;
+}
+
+static JSValue parseJSON(JSC::JSGlobalObject* globalObject, const char* ptr, size_t byteLength, size_t allocatedLength)
+{
+    JSC::VM& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    dom::parser parser;
+    dom::element document;
+
+    if (parser.parse(ptr, byteLength, allocatedLength).get(document)) {
+        throwException(globalObject, throwScope, JSC::createSyntaxError(globalObject, "Invalid JSON"_s));
+        return JSC::jsNull();
+    }
+
+    // if (err == simdjson::error_code::SCALAR_DOCUMENT_AS_VALUE) {
+    //     simdjson::ondemand::json_type type;
+    //     if (!document.type().get(type)) {
+    //         switch (type) {
+    //         case simdjson::ondemand::json_type::number: {
+    //             double val;
+    //             if (UNLIKELY(document.get_double().get(val))) {
+
+    //                 throwException(globalObject, throwScope, JSC::createSyntaxError(globalObject, "Invalid JSON"_s));
+    //                 return JSC::jsNull();
+    //             }
+
+    //             return jsNumber(val);
+    //         }
+    //         case simdjson::ondemand::json_type::string: {
+    //             std::string_view str;
+    //             if (UNLIKELY(document.get_string().get(str))) {
+
+    //                 throwException(globalObject, throwScope, JSC::createSyntaxError(globalObject, "Invalid JSON"_s));
+    //                 return JSC::jsNull();
+    //             }
+
+    //             return JSC::jsString(globalObject->vm(), WTF::String::fromUTF8(str.data(), str.length()));
+    //         }
+
+    //         case simdjson::ondemand::json_type::boolean: {
+    //             bool val;
+    //             if (UNLIKELY(document.get_bool().get(val))) {
+
+    //                 throwException(globalObject, throwScope, JSC::createSyntaxError(globalObject, "Invalid JSON"_s));
+    //                 return JSC::jsNull();
+    //             }
+
+    //             return jsBoolean(val);
+    //         }
+
+    //         case simdjson::ondemand::json_type::null: {
+    //             bool val;
+    //             if (UNLIKELY(document.is_null().get(val) || !val)) {
+
+    //                 throwException(globalObject, throwScope, JSC::createSyntaxError(globalObject, "Invalid JSON"_s));
+    //                 return JSC::jsNull();
+    //             }
+
+    //             return JSC::jsNull();
+    //         }
+    //         }
+    //     }
+    // }
+
+    // if (err != simdjson::error_code::SUCCESS) {
+    //     throwException(globalObject, throwScope, JSC::createSyntaxError(globalObject, makeString("Invalid JSON due to error"_s, err)));
+    //     return JSC::jsNull();
+    // }
+    bool stop = false;
+    auto result = recursiveParseJSONDOM(globalObject, stop, document);
+
+    if (stop) {
+        throwException(globalObject, throwScope, JSC::createSyntaxError(globalObject, "Invalid JSON"_s));
+        return JSC::jsNull();
+    }
+
+    return result;
+}
+
+static JSValue parseJSONWithInsufficientPadding(JSC::JSGlobalObject* globalObject, const void* data, size_t byteLength)
+{
+    JSC::VM& vm = JSC::getVM(globalObject);
+
+    if (!byteLength)
+        return JSC::jsNull();
+
+    void* ptr = malloc(byteLength + simdjson::SIMDJSON_PADDING);
+    if (!ptr) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwOutOfMemoryError(globalObject, throwScope);
+        return JSC::jsNull();
+    }
+    memcpy(ptr, data, byteLength);
+
+    JSValue result = parseJSONOnDemand(globalObject, reinterpret_cast<const char*>(ptr), byteLength, byteLength + simdjson::SIMDJSON_PADDING);
+    free(ptr);
+
+    return result;
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeJSONParseFunction, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    JSC::VM& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    auto thisValue = callframe->thisValue();
+    if (UNLIKELY(throwScope.exception()) || !thisValue.isObject())
+        return JSValue::encode(JSC::jsUndefined());
+
+    auto* thisObject = thisValue.getObject();
+
+    if (!thisObject || !thisValue.inherits<JSUint8Array>())
+        return JSValue::encode(JSC::jsUndefined());
+
+    auto* buffer = jsCast<JSUint8Array*>(thisObject);
+    JSC::EnsureStillAliveScope ensureStillAliveScope(buffer);
+    auto res = parseJSONWithInsufficientPadding(globalObject, buffer->vector(), buffer->byteLength());
+    RETURN_IF_EXCEPTION(throwScope, JSValue::encode(JSC::jsUndefined()));
+    return JSValue::encode(res);
+}
 
 static JSUint8Array* allocBuffer(JSC::JSGlobalObject* lexicalGlobalObject, size_t byteLength)
 {
@@ -1902,6 +2342,8 @@ static const HashTableValue JSBufferPrototypeTableValues[]
           { "writeUint32BE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteUInt32BECodeGenerator, 1 } },
           { "writeUint32LE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteUInt32LECodeGenerator, 1 } },
           { "writeUint8"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteUInt8CodeGenerator, 1 } },
+          { "json"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeJSONParseFunction, 0 } },
+
       };
 
 void JSBufferPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalThis)

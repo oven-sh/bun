@@ -527,7 +527,6 @@ declare module "net" {
    * This class is used to create a TCP or `IPC` server.
    * @since v0.1.90
    */
-  // change back to class once implemented
   class Server extends EventEmitter {
     // constructor(connectionListener?: (socket: Socket) => void);
     // constructor(

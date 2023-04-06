@@ -284,16 +284,38 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
 JSC_DEFINE_HOST_FUNCTION(Process_functionUmask,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    if (callFrame->argumentCount() == 0) {
-        return JSC::JSValue::encode(JSC::jsNumber(umask(0)));
+    if (callFrame->argumentCount() == 0 || callFrame->argument(0).isUndefined()) {
+        mode_t currentMask = umask(0);
+        umask(currentMask);
+        return JSC::JSValue::encode(JSC::jsNumber(currentMask));
     }
 
     auto& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    int umaskValue = callFrame->argument(0).toInt32(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
+    JSValue numberValue = callFrame->argument(0);
 
-    return JSC::JSValue::encode(JSC::jsNumber(umask(umaskValue)));
+    if (!numberValue.isNumber()) {
+        throwTypeError(globalObject, throwScope, "The \"mask\" argument must be a number"_s);
+        return JSValue::encode({});
+    }
+
+    if (!numberValue.isAnyInt()) {
+        throwRangeError(globalObject, throwScope, "The \"mask\" argument must be an integer"_s);
+        return JSValue::encode({});
+    }
+
+    double number = numberValue.toNumber(globalObject);
+    int64_t newUmask = isInt52(number) ? tryConvertToInt52(number) : numberValue.toInt32(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
+    if (newUmask < 0 || newUmask > 4294967295) {
+        StringBuilder messageBuilder;
+        messageBuilder.append("The \"mask\" value must be in range [0, 4294967295]. Received value: "_s);
+        messageBuilder.append(int52ToString(vm, newUmask, 10)->getString(globalObject));
+        throwRangeError(globalObject, throwScope, messageBuilder.toString());
+        return JSValue::encode({});
+    }
+
+    return JSC::JSValue::encode(JSC::jsNumber(umask(newUmask)));
 }
 
 extern "C" uint64_t Bun__readOriginTimer(void*);

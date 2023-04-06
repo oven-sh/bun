@@ -2980,31 +2980,41 @@ declare module "bun" {
   ): UnixSocketListener<Data>;
 
   namespace SpawnOptions {
+    /**
+     * Option for stdout/stderr
+     */
     type Readable =
+      | "pipe"
       | "inherit"
       | "ignore"
-      | "pipe"
-      | null
-      | undefined
+      | null // equivalent to "ignore"
+      | undefined // to use default
       | FileBlob
       | ArrayBufferView
       | number;
 
+    /**
+     * Option for stdin
+     */
     type Writable =
+      | "pipe"
       | "inherit"
       | "ignore"
-      | "pipe"
-      | null
-      | ReadableStream // supported by stdin
-      | undefined
+      | null // equivalent to "ignore"
+      | undefined // to use default
       | FileBlob
       | ArrayBufferView
-      | Blob
       | number
+      | ReadableStream
+      | Blob
       | Response
       | Request;
 
-    interface OptionsObject {
+    interface OptionsObject<
+      In extends Writable = Writable,
+      Out extends Readable = Readable,
+      Err extends Readable = Readable,
+    > {
       /**
        * The current working directory of the process
        *
@@ -3020,25 +3030,69 @@ declare module "bun" {
        * Changes to `process.env` at runtime won't automatically be reflected in the default value. For that, you can pass `process.env` explicitly.
        *
        */
-      env?: Record<string, string | number>;
+      env?: Record<string, string>;
 
       /**
-       * The standard file descriptors of the process
-       * - `inherit`: The process will inherit the standard input of the current process
-       * - `pipe`: The process will have a new pipe for standard input
-       * - `null`: The process will have no standard input
+       * The standard file descriptors of the process, in the form [stdin, stdout, stderr].
+       * This overrides the `stdin`, `stdout`, and `stderr` properties.
+       *
+       * For stdin you may pass:
+       *
+       * - `"ignore"`, `null`, `undefined`: The process will have no standard input (default)
+       * - `"pipe"`: The process will have a new {@link FileSink} for standard input
+       * - `"inherit"`: The process will inherit the standard input of the current process
+       * - `ArrayBufferView`, `Blob`, `Bun.file()`, `Response`, `Request`: The process will read from buffer/stream.
+       * - `number`: The process will read from the file descriptor
+       *
+       * For stdout and stdin you may pass:
+       *
+       * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
+       * - `"ignore"`, `null`: The process will have no standard output/error
+       * - `"inherit"`: The process will inherit the standard output/error of the current process
+       * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
+       * - `number`: The process will write to the file descriptor
+       *
+       * @default ["ignore", "pipe", "inherit"] for `spawn`
+       * ["ignore", "pipe", "pipe"] for `spawnSync`
+       */
+      stdio?: [In, Out, Err];
+      /**
+       * The file descriptor for the standard input. It may be:
+       *
+       * - `"ignore"`, `null`, `undefined`: The process will have no standard input
+       * - `"pipe"`: The process will have a new {@link FileSink} for standard input
+       * - `"inherit"`: The process will inherit the standard input of the current process
        * - `ArrayBufferView`, `Blob`: The process will read from the buffer
        * - `number`: The process will read from the file descriptor
-       * - `undefined`: The default value
+       *
+       * @default "ignore"
        */
-      stdio?: [
-        SpawnOptions.Writable,
-        SpawnOptions.Readable,
-        SpawnOptions.Readable,
-      ];
-      stdin?: SpawnOptions.Writable;
-      stdout?: SpawnOptions.Readable;
-      stderr?: SpawnOptions.Readable;
+      stdin?: In;
+      /**
+       * The file descriptor for the standard output. It may be:
+       *
+       * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
+       * - `"ignore"`, `null`: The process will have no standard output/error
+       * - `"inherit"`: The process will inherit the standard output/error of the current process
+       * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
+       * - `number`: The process will write to the file descriptor
+       *
+       * @default "pipe"
+       */
+      stdout?: Out;
+      /**
+       * The file descriptor for the standard error. It may be:
+       *
+       * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
+       * - `"ignore"`, `null`: The process will have no standard output/error
+       * - `"inherit"`: The process will inherit the standard output/error of the current process
+       * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
+       * - `number`: The process will write to the file descriptor
+       *
+       * @default "inherit" for `spawn`
+       * "pipe" for `spawnSync`
+       */
+      stderr?: Err;
 
       /**
        * Callback that runs when the {@link Subprocess} exits
@@ -3061,7 +3115,7 @@ declare module "bun" {
        * ```
        */
       onExit?(
-        subprocess: Subprocess,
+        subprocess: Subprocess<In, Out, Err>,
         exitCode: number | null,
         signalCode: number | null,
         /**
@@ -3070,24 +3124,77 @@ declare module "bun" {
         error?: Errorlike,
       ): void | Promise<void>;
     }
+
+    type OptionsToSubprocess<Opts extends OptionsObject> =
+      Opts extends OptionsObject<infer In, infer Out, infer Err>
+        ? Subprocess<
+            // "Writable extends In" means "if In === Writable",
+            // aka if true that means the user didn't specify anything
+            Writable extends In ? "ignore" : In,
+            Readable extends Out ? "pipe" : Out,
+            Readable extends Err ? "inherit" : Err
+          >
+        : Subprocess<Writable, Readable, Readable>;
+
+    type OptionsToSyncSubprocess<Opts extends OptionsObject> =
+      Opts extends OptionsObject<any, infer Out, infer Err>
+        ? SyncSubprocess<
+            Readable extends Out ? "pipe" : Out,
+            Readable extends Err ? "pipe" : Err
+          >
+        : SyncSubprocess<Readable, Readable>;
+
+    type ReadableIO = ReadableStream<Buffer> | number | undefined;
+
+    type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
+      ? ReadableStream<Buffer>
+      : X extends FileBlob | ArrayBufferView | number
+      ? number
+      : undefined;
+
+    type ReadableToSyncIO<X extends Readable> = X extends "pipe" | undefined
+      ? Buffer
+      : undefined;
+
+    type WritableIO = FileSink | number | undefined;
+
+    type WritableToIO<X extends Writable> = X extends "pipe"
+      ? FileSink
+      : X extends
+          | FileBlob
+          | ArrayBufferView
+          | Blob
+          | Request
+          | Response
+          | number
+      ? number
+      : undefined;
   }
 
-  interface SubprocessIO {
-    readonly stdin?: undefined | number | ReadableStream | FileSink;
-    readonly stdout?: undefined | number | ReadableStream;
-    readonly stderr?: undefined | number | ReadableStream;
-  }
-  interface Subprocess<T extends SubprocessIO = SubprocessIO> {
-    readonly stdin: T["stdin"] | undefined;
-    readonly stdout: T["stdout"] | undefined;
-    readonly stderr: T["stderr"] | undefined;
+  /**
+   * A process created by {@link Bun.spawn}.
+   *
+   * This type accepts 3 optional type parameters which correspond to the `stdio` array from the options object. Instead of specifying these, you should use one of the following utility types instead:
+   * - {@link ReadableSubprocess} (any, pipe, pipe)
+   * - {@link WritableSubprocess} (pipe, any, any)
+   * - {@link PipedSubprocess} (pipe, pipe, pipe)
+   * - {@link NullSubprocess} (ignore, ignore, ignore)
+   */
+  interface Subprocess<
+    In extends SpawnOptions.Writable = SpawnOptions.Writable,
+    Out extends SpawnOptions.Readable = SpawnOptions.Readable,
+    Err extends SpawnOptions.Readable = SpawnOptions.Readable,
+  > {
+    readonly stdin: SpawnOptions.WritableToIO<In>;
+    readonly stdout: SpawnOptions.ReadableToIO<Out>;
+    readonly stderr: SpawnOptions.ReadableToIO<Err>;
 
     /**
      * This returns the same value as {@link Subprocess.stdout}
      *
      * It exists for compatibility with {@link ReadableStream.pipeThrough}
      */
-    readonly readable: T["stdout"] | undefined;
+    readonly readable: SpawnOptions.ReadableToIO<Out>;
 
     /**
      * The process ID of the child process
@@ -3150,6 +3257,168 @@ declare module "bun" {
      */
     unref(): void;
   }
+
+  /**
+   * A process created by {@link Bun.spawnSync}.
+   *
+   * This type accepts 2 optional type parameters which correspond to the `stdout` and `stderr` options. Instead of specifying these, you should use one of the following utility types instead:
+   * - {@link ReadableSyncSubprocess} (pipe, pipe)
+   * - {@link NullSyncSubprocess} (ignore, ignore)
+   */
+  interface SyncSubprocess<
+    Out extends SpawnOptions.Readable = SpawnOptions.Readable,
+    Err extends SpawnOptions.Readable = SpawnOptions.Readable,
+  > {
+    stdout: SpawnOptions.ReadableToSyncIO<Out>;
+    stderr: SpawnOptions.ReadableToSyncIO<Err>;
+    exitCode: number;
+    success: boolean;
+  }
+
+  /**
+   * Spawn a new process
+   *
+   * ```js
+   * const subprocess = Bun.spawn({
+   *  cmd: ["echo", "hello"],
+   *  stdout: "pipe",
+   * });
+   * const text = await readableStreamToText(subprocess.stdout);
+   * console.log(text); // "hello\n"
+   * ```
+   *
+   * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
+   */
+  function spawn<Opts extends SpawnOptions.OptionsObject>(
+    options: Opts & {
+      /**
+       * The command to run
+       *
+       * The first argument will be resolved to an absolute executable path. It must be a file, not a directory.
+       *
+       * If you explicitly set `PATH` in `env`, that `PATH` will be used to resolve the executable instead of the default `PATH`.
+       *
+       * To check if the command exists before running it, use `Bun.which(bin)`.
+       *
+       * @example
+       * ```ts
+       * const subprocess = Bun.spawn(["echo", "hello"]);
+       * ```
+       */
+      cmd: string[]; // to support dynamically constructed commands
+    },
+  ): SpawnOptions.OptionsToSubprocess<Opts>;
+
+  /**
+   * Spawn a new process
+   *
+   * ```js
+   * const {stdout} = Bun.spawn(["echo", "hello"]));
+   * const text = await readableStreamToText(stdout);
+   * console.log(text); // "hello\n"
+   * ```
+   *
+   * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
+   */
+  function spawn<Opts extends SpawnOptions.OptionsObject>(
+    /**
+     * The command to run
+     *
+     * The first argument will be resolved to an absolute executable path. It must be a file, not a directory.
+     *
+     * If you explicitly set `PATH` in `env`, that `PATH` will be used to resolve the executable instead of the default `PATH`.
+     *
+     * To check if the command exists before running it, use `Bun.which(bin)`.
+     *
+     * @example
+     * ```ts
+     * const subprocess = Bun.spawn(["echo", "hello"]);
+     * ```
+     */
+    cmds: string[],
+    options?: Opts,
+  ): SpawnOptions.OptionsToSubprocess<Opts>;
+
+  /**
+   * Spawn a new process
+   *
+   * ```js
+   * const {stdout} = Bun.spawnSync({
+   *  cmd: ["echo", "hello"],
+   * });
+   * console.log(stdout.toString()); // "hello\n"
+   * ```
+   *
+   * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
+   */
+  function spawnSync<Opts extends SpawnOptions.OptionsObject>(
+    options: Opts & {
+      /**
+       * The command to run
+       *
+       * The first argument will be resolved to an absolute executable path. It must be a file, not a directory.
+       *
+       * If you explicitly set `PATH` in `env`, that `PATH` will be used to resolve the executable instead of the default `PATH`.
+       *
+       * To check if the command exists before running it, use `Bun.which(bin)`.
+       *
+       * @example
+       * ```ts
+       * const subprocess = Bun.spawnSync({ cmd: ["echo", "hello"] });
+       * ```
+       */
+      cmd: string[];
+    },
+  ): SpawnOptions.OptionsToSyncSubprocess<Opts>;
+
+  /**
+   * Synchronously spawn a new process
+   *
+   * ```js
+   * const {stdout} = Bun.spawnSync(["echo", "hello"]));
+   * console.log(stdout.toString()); // "hello\n"
+   * ```
+   *
+   * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
+   */
+  function spawnSync<Opts extends SpawnOptions.OptionsObject>(
+    /**
+     * The command to run
+     *
+     * The first argument will be resolved to an absolute executable path. It must be a file, not a directory.
+     *
+     * If you explicitly set `PATH` in `env`, that `PATH` will be used to resolve the executable instead of the default `PATH`.
+     *
+     * To check if the command exists before running it, use `Bun.which(bin)`.
+     *
+     * @example
+     * ```ts
+     * const subprocess = Bun.spawnSync(["echo", "hello"]);
+     * ```
+     */
+    cmds: string[],
+    options?: Opts,
+  ): SpawnOptions.OptionsToSyncSubprocess<Opts>;
+
+  /** Utility type for any process from {@link Bun.spawn()} with both stdout and stderr set to `"pipe"` */
+  type ReadableSubprocess = Subprocess<any, "pipe", "pipe">;
+  /** Utility type for any process from {@link Bun.spawn()} with stdin set to `"pipe"` */
+  type WritableSubprocess = Subprocess<"pipe", any, any>;
+  /** Utility type for any process from {@link Bun.spawn()} with stdin, stdout, stderr all set to `"pipe"`. A combination of {@link ReadableSubprocess} and {@link WritableSubprocess} */
+  type PipedSubprocess = Subprocess<"pipe", "pipe", "pipe">;
+  /** Utility type for any process from {@link Bun.spawn()} with stdin, stdout, stderr all set to `null` or similar. */
+  type NullSubprocess = Subprocess<
+    "ignore" | "inherit" | null | undefined,
+    "ignore" | "inherit" | null | undefined,
+    "ignore" | "inherit" | null | undefined
+  >;
+  /** Utility type for any process from {@link Bun.spawnSync()} with both stdout and stderr set to `"pipe"` */
+  type ReadableSyncSubprocess = SyncSubprocess<"pipe", "pipe">;
+  /** Utility type for any process from {@link Bun.spawnSync()} with both stdout and stderr set to `null` or similar */
+  type NullSyncSubprocess = SyncSubprocess<
+    "ignore" | "inherit" | null | undefined,
+    "ignore" | "inherit" | null | undefined
+  >;
 
   export class FileSystemRouter {
     /**
@@ -3227,128 +3496,6 @@ declare module "bun" {
     readonly kind: "exact" | "catch-all" | "optional-catch-all" | "dynamic";
     readonly src: string;
   }
-
-  interface SyncSubprocess {
-    stdout?: Buffer;
-    stderr?: Buffer;
-    exitCode: number;
-    success: boolean;
-  }
-
-  /**
-   * Spawn a new process
-   *
-   * ```js
-   * const subprocess = Bun.spawn({
-   *  cmd: ["echo", "hello"],
-   *  stdout: "pipe",
-   * });
-   * const text = await readableStreamToText(subprocess.stdout);
-   * console.log(text); // "hello\n"
-   * ```
-   *
-   * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
-   */
-  function spawn<Opts extends SpawnOptions.OptionsObject>(
-    options: Opts & {
-      /**
-       * The command to run
-       *
-       * The first argument will be resolved to an absolute executable path. It must be a file, not a directory.
-       *
-       * If you explicitly set `PATH` in `env`, that `PATH` will be used to resolve the executable instead of the default `PATH`.
-       *
-       * To check if the command exists before running it, use `Bun.which(bin)`.
-       *
-       */
-      cmd: string[]; // to support dynamically constructed commands
-    },
-  ): Subprocess<OptionsToSubprocessIO<Opts>>;
-
-  /**
-   * Spawn a new process
-   *
-   * ```js
-   * const {stdout} = Bun.spawn(["echo", "hello"]));
-   * const text = await readableStreamToText(stdout);
-   * console.log(text); // "hello\n"
-   * ```
-   *
-   * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
-   */
-  function spawn<Opts extends SpawnOptions.OptionsObject>(
-    /**
-     * The command to run
-     * @example
-     * ```ts
-     * const subprocess = Bun.spawn(["echo", "hello"]);
-     */
-    cmds: string[],
-    options?: Opts,
-  ): Subprocess<OptionsToSubprocessIO<Opts>>;
-  type OptionsToSubprocessIO<Opts extends SpawnOptions.OptionsObject> = {
-    stdin?: Opts["stdin"] extends number
-      ? number
-      : Opts["stdin"] extends "pipe"
-      ? FileSink
-      : ReadableStream;
-    stdout?: Opts["stdout"] extends number ? number : ReadableStream;
-    stderr?: Opts["stderr"] extends number ? number : ReadableStream;
-  };
-
-  /**
-   * Spawn a new process
-   *
-   * ```js
-   * const {stdout} = Bun.spawnSync({
-   *  cmd: ["echo", "hello"],
-   * });
-   * console.log(stdout.toString()); // "hello\n"
-   * ```
-   *
-   * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
-   */
-  function spawnSync(
-    options: SpawnOptions.OptionsObject & {
-      /**
-       * The command to run
-       *
-       * The first argument will be resolved to an absolute executable path. It must be a file, not a directory.
-       *
-       * If you explicitly set `PATH` in `env`, that `PATH` will be used to resolve the executable instead of the default `PATH`.
-       *
-       * To check if the command exists before running it, use `Bun.which(bin)`.
-       *
-       */
-      cmd: [string, ...string[]];
-    },
-  ): SyncSubprocess;
-
-  /**
-   * Synchronously spawn a new process
-   *
-   * ```js
-   * const {stdout} = Bun.spawnSync(["echo", "hello"]));
-   * console.log(stdout.toString()); // "hello\n"
-   * ```
-   *
-   * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
-   */
-  function spawnSync(
-    /**
-     * The command to run
-     * @example
-     * ```ts
-     * const subprocess = Bun.spawn(["echo", "hello"]);
-     */
-    cmds: [
-      /** One command is required */
-      string,
-      /** Additional arguments */
-      ...string[],
-    ],
-    options?: SpawnOptions.OptionsObject,
-  ): SyncSubprocess;
 
   /**
    * The current version of Bun

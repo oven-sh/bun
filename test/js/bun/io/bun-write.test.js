@@ -2,6 +2,7 @@ import fs from "fs";
 import { it, expect, describe } from "bun:test";
 import path from "path";
 import { gcTick, withoutAggressiveGC } from "harness";
+import { tmpdir } from "os";
 
 it("Bun.write blob", async () => {
   await Bun.write(Bun.file("/tmp/response-file.test.txt"), Bun.file(path.join(import.meta.dir, "fetch.js.txt")));
@@ -144,6 +145,23 @@ it("Bun.file empty file", async () => {
   await gcTick();
   const buffer = await Bun.file(file).arrayBuffer();
   expect(buffer.byteLength).toBe(0);
+  await gcTick();
+});
+
+it("Bun.file lastModified update", async () => {
+  const file = Bun.file(tmpdir() + "/bun.test.lastModified.txt");
+  await gcTick();
+  // setup
+  await Bun.write(file, "test text.");
+  const lastModified0 = file.lastModified;
+
+  // sleep some time and write the file again.
+  await Bun.sleep(10);
+  await Bun.write(file, "test text2.");
+  const lastModified1 = file.lastModified;
+
+  // ensure the last modified timestamp is updated.
+  expect(lastModified1).toBeGreaterThan(lastModified0);
   await gcTick();
 });
 

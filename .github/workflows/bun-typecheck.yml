@@ -7,6 +7,8 @@ on:
       - "test/**"
 
   pull_request:
+    branches:
+      - main
     paths:
       - "packages/bun-types/**"
       - "test/**"
@@ -15,9 +17,7 @@ jobs:
   tests:
     name: check-tests
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: test
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
@@ -27,5 +27,8 @@ jobs:
           bun-version: canary
       - name: Install dependencies
         run: bun install
+      - name: Install dependencies
+        run: bun install
+        working-directory: test
       - name: Typecheck tests
         run: bun run typecheck

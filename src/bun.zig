@@ -1057,6 +1057,8 @@ pub fn reloadProcess(
 
     // Clear the terminal
     if (clear_terminal) {
+        Output.flush();
+        Output.disableBuffering();
         Output.resetTerminalAll();
     }
 

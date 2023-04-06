@@ -22,7 +22,7 @@ test("spawn can write to stdin multiple chunks", async () => {
       var chunks: any[] = [];
       const prom = (async function () {
         try {
-          for await (var chunk of proc.stdout!) {
+          for await (var chunk of proc.stdout) {
             chunks.push(chunk);
           }
         } catch (e: any) {

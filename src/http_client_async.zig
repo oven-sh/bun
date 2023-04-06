@@ -15,6 +15,7 @@ const Log = bun.logger.Log;
 const DotEnv = @import("./env_loader.zig");
 const std = @import("std");
 const URL = @import("./url.zig").URL;
+const PercentEncoding = @import("./url.zig").PercentEncoding;
 pub const Method = @import("./http/method.zig").Method;
 const Api = @import("./api/schema.zig").Api;
 const Lock = @import("./lock.zig").Lock;
@@ -841,6 +842,11 @@ fn writeProxyRequest(
     _ = writer.write(request.path) catch 0;
     _ = writer.write(" HTTP/1.1\r\nProxy-Connection: Keep-Alive\r\n") catch 0;
 
+    if (client.proxy_authorization) |auth| {
+        _ = writer.write("Proxy-Authorization: ") catch 0;
+        _ = writer.write(auth) catch 0;
+        _ = writer.write("\r\n") catch 0;
+    }
     for (request.headers) |header| {
         _ = writer.write(header.name) catch 0;
         _ = writer.write(": ") catch 0;
@@ -1264,13 +1270,41 @@ pub const AsyncHTTP = struct {
         this.client.async_http_id = this.async_http_id;
         this.client.timeout = timeout;
         this.client.http_proxy = this.http_proxy;
+        this.timeout = timeout;
+
         if (http_proxy) |proxy| {
             //TODO: need to understand how is possible to reuse Proxy with TSL, so disable keepalive if url is HTTPS
             this.client.disable_keepalive = this.url.isHTTPS();
-            if (proxy.username.len > 0) {
-                if (proxy.password.len > 0) {
+            // Username between 0 and 4096 chars
+            if (proxy.username.len > 0 and proxy.username.len < 4096) {
+                // Password between 0 and 4096 chars
+                if (proxy.password.len > 0 and proxy.password.len < 4096) {
+                    // decode password
+                    var password_buffer: [4096]u8 = undefined;
+                    std.mem.set(u8, &password_buffer, 0);
+                    var password_stream = std.io.fixedBufferStream(&password_buffer);
+                    var password_writer = password_stream.writer();
+                    const PassWriter = @TypeOf(password_writer);
+                    const password_len = PercentEncoding.decode(PassWriter, password_writer, proxy.password) catch {
+                        // Invalid proxy authorization
+                        return this;
+                    };
+                    const password = password_buffer[0..password_len];
+
+                    // Decode username
+                    var username_buffer: [4096]u8 = undefined;
+                    std.mem.set(u8, &username_buffer, 0);
+                    var username_stream = std.io.fixedBufferStream(&username_buffer);
+                    var username_writer = username_stream.writer();
+                    const UserWriter = @TypeOf(username_writer);
+                    const username_len = PercentEncoding.decode(UserWriter, username_writer, proxy.username) catch {
+                        // Invalid proxy authorization
+                        return this;
+                    };
+                    const username = username_buffer[0..username_len];
+
                     // concat user and password
-                    const auth = std.fmt.allocPrint(allocator, "{s}:{s}", .{ proxy.username, proxy.password }) catch unreachable;
+                    const auth = std.fmt.allocPrint(allocator, "{s}:{s}", .{ username, password }) catch unreachable;
                     defer allocator.free(auth);
                     const size = std.base64.standard.Encoder.calcSize(auth.len);
                     var buf = this.allocator.alloc(u8, size + "Basic ".len) catch unreachable;
@@ -1278,16 +1312,27 @@ pub const AsyncHTTP = struct {
                     buf[0.."Basic ".len].* = "Basic ".*;
                     this.client.proxy_authorization = buf[0 .. "Basic ".len + encoded.len];
                 } else {
+                    //Decode username
+                    var username_buffer: [4096]u8 = undefined;
+                    std.mem.set(u8, &username_buffer, 0);
+                    var username_stream = std.io.fixedBufferStream(&username_buffer);
+                    var username_writer = username_stream.writer();
+                    const UserWriter = @TypeOf(username_writer);
+                    const username_len = PercentEncoding.decode(UserWriter, username_writer, proxy.username) catch {
+                        // Invalid proxy authorization
+                        return this;
+                    };
+                    const username = username_buffer[0..username_len];
+
                     // only use user
-                    const size = std.base64.standard.Encoder.calcSize(proxy.username.len);
+                    const size = std.base64.standard.Encoder.calcSize(username_len);
                     var buf = allocator.alloc(u8, size + "Basic ".len) catch unreachable;
-                    var encoded = std.base64.url_safe.Encoder.encode(buf["Basic ".len..], proxy.username);
+                    var encoded = std.base64.url_safe.Encoder.encode(buf["Basic ".len..], username);
                     buf[0.."Basic ".len].* = "Basic ".*;
                     this.client.proxy_authorization = buf[0 .. "Basic ".len + encoded.len];
                 }
             }
         }
-        this.timeout = timeout;
         return this;
     }
 
@@ -1301,11 +1346,42 @@ pub const AsyncHTTP = struct {
         this.client = try HTTPClient.init(this.allocator, this.method, this.client.url, this.client.header_entries, this.client.header_buf, aborted);
         this.client.timeout = timeout;
         this.client.http_proxy = this.http_proxy;
+        this.timeout = timeout;
+
         if (this.http_proxy) |proxy| {
-            if (proxy.username.len > 0) {
-                if (proxy.password.len > 0) {
+            //TODO: need to understand how is possible to reuse Proxy with TSL, so disable keepalive if url is HTTPS
+            this.client.disable_keepalive = this.url.isHTTPS();
+            // Username between 0 and 4096 chars
+            if (proxy.username.len > 0 and proxy.username.len < 4096) {
+                // Password between 0 and 4096 chars
+                if (proxy.password.len > 0 and proxy.password.len < 4096) {
+                    // decode password
+                    var password_buffer: [4096]u8 = undefined;
+                    std.mem.set(u8, &password_buffer, 0);
+                    var password_stream = std.io.fixedBufferStream(&password_buffer);
+                    var password_writer = password_stream.writer();
+                    const PassWriter = @TypeOf(password_writer);
+                    const password_len = PercentEncoding.decode(PassWriter, password_writer, proxy.password) catch {
+                        // Invalid proxy authorization
+                        return this;
+                    };
+                    const password = password_buffer[0..password_len];
+
+                    // Decode username
+                    var username_buffer: [4096]u8 = undefined;
+                    std.mem.set(u8, &username_buffer, 0);
+                    var username_stream = std.io.fixedBufferStream(&username_buffer);
+                    var username_writer = username_stream.writer();
+                    const UserWriter = @TypeOf(username_writer);
+                    const username_len = PercentEncoding.decode(UserWriter, username_writer, proxy.username) catch {
+                        // Invalid proxy authorization
+                        return this;
+                    };
+
+                    const username = username_buffer[0..username_len];
+
                     // concat user and password
-                    const auth = std.fmt.allocPrint(this.allocator, "{s}:{s}", .{ proxy.username, proxy.password }) catch unreachable;
+                    const auth = std.fmt.allocPrint(this.allocator, "{s}:{s}", .{ username, password }) catch unreachable;
                     defer this.allocator.free(auth);
                     const size = std.base64.standard.Encoder.calcSize(auth.len);
                     var buf = this.allocator.alloc(u8, size + "Basic ".len) catch unreachable;
@@ -1313,16 +1389,27 @@ pub const AsyncHTTP = struct {
                     buf[0.."Basic ".len].* = "Basic ".*;
                     this.client.proxy_authorization = buf[0 .. "Basic ".len + encoded.len];
                 } else {
+                    //Decode username
+                    var username_buffer: [4096]u8 = undefined;
+                    std.mem.set(u8, &username_buffer, 0);
+                    var username_stream = std.io.fixedBufferStream(&username_buffer);
+                    var username_writer = username_stream.writer();
+                    const UserWriter = @TypeOf(username_writer);
+                    const username_len = PercentEncoding.decode(UserWriter, username_writer, proxy.username) catch {
+                        // Invalid proxy authorization
+                        return this;
+                    };
+                    const username = username_buffer[0..username_len];
+
                     // only use user
-                    const size = std.base64.standard.Encoder.calcSize(proxy.username.len);
+                    const size = std.base64.standard.Encoder.calcSize(username_len);
                     var buf = this.allocator.alloc(u8, size + "Basic ".len) catch unreachable;
-                    var encoded = std.base64.url_safe.Encoder.encode(buf["Basic ".len..], proxy.username);
+                    var encoded = std.base64.url_safe.Encoder.encode(buf["Basic ".len..], username);
                     buf[0.."Basic ".len].* = "Basic ".*;
                     this.client.proxy_authorization = buf[0 .. "Basic ".len + encoded.len];
                 }
             }
         }
-        this.timeout = timeout;
     }
 
     pub fn schedule(this: *AsyncHTTP, _: std.mem.Allocator, batch: *ThreadPool.Batch) void {
@@ -1641,6 +1728,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                     };
                 } else {
                     //HTTP do not need tunneling with CONNECT just a slightly different version of the request
+
                     writeProxyRequest(
                         @TypeOf(writer),
                         writer,

@@ -3100,21 +3100,24 @@ cache = false
   );
   await access(join(package_dir, "bun.lockb"));
   // Perform `bun install` again but with cache & lockfile from before
-  [
-    ".bin",
-    "camel-case",
-    "clean-css",
-    "commander",
-    "he",
-    "html-minifier",
-    "lower-case",
-    "no-case",
-    "param-case",
-    "relateurl",
-    "source-map",
-    "uglify-js",
-    "upper-case",
-  ].forEach(async dir => await rm(join(package_dir, "node_modules", dir), { force: true, recursive: true }));
+  await Promise.all(
+    [
+      ".bin",
+      "camel-case",
+      "clean-css",
+      "commander",
+      "he",
+      "html-minifier",
+      "lower-case",
+      "no-case",
+      "param-case",
+      "relateurl",
+      "source-map",
+      "uglify-js",
+      "upper-case",
+    ].map(async dir => await rm(join(package_dir, "node_modules", dir), { force: true, recursive: true })),
+  );
+
   urls.length = 0;
   const {
     stdout: stdout3,

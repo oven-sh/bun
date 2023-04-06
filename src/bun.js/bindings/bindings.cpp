@@ -488,12 +488,16 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         JSC::JSArray* array1 = JSC::jsCast<JSC::JSArray*>(v1);
         JSC::JSArray* array2 = JSC::jsCast<JSC::JSArray*>(v2);
 
-        size_t length = array1->length();
-        if (length != array2->length()) {
-            return false;
+        size_t array1Length = array1->length();
+        size_t array2Length = array2->length();
+        if constexpr (isStrict) {
+            if (array1Length != array2Length) {
+                return false;
+            }
         }
 
-        for (uint64_t i = 0; i < length; i++) {
+        uint64_t i = 0;
+        for (; i < array1Length; i++) {
             JSValue left = getIndexWithoutAccessors(globalObject, o1, i);
             RETURN_IF_EXCEPTION(*scope, false);
             JSValue right = getIndexWithoutAccessors(globalObject, o2, i);
@@ -519,6 +523,17 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             }
 
             RETURN_IF_EXCEPTION(*scope, false);
+        }
+
+        for (; i < array2Length; i++) {
+            JSValue right = getIndexWithoutAccessors(globalObject, o2, i);
+            RETURN_IF_EXCEPTION(*scope, false);
+
+            if (((right.isEmpty() || right.isUndefined()))) {
+                continue;
+            }
+
+            return false;
         }
 
         JSC::PropertyNameArray a1(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Include);
@@ -3844,7 +3859,7 @@ restart:
     }
 }
 
-inline bool propertyCompare(const std::pair<String, JSValue>& a, const std::pair<String, JSValue>& b)
+inline bool propertyCompare(const std::pair<String, std::pair<Identifier, JSValue>>& a, const std::pair<String, std::pair<Identifier, JSValue>>& b)
 {
     return codePointCompare(a.first.impl(), b.first.impl()) < 0;
 }
@@ -3862,19 +3877,20 @@ void JSC__JSValue__forEachPropertyOrdered(JSC__JSValue JSValue0, JSC__JSGlobalOb
     JSC::PropertyNameArray properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     JSC::JSObject::getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Include);
 
-    Vector<std::pair<String, JSValue>> ordered_properties;
+    Vector<std::pair<String, std::pair<Identifier, JSValue>>> ordered_properties;
     for (auto property : properties) {
         JSValue propertyValue = object->getDirect(vm, property);
-        ordered_properties.append(std::pair<String, JSValue>(property.isSymbol() && !property.isPrivateName() ? property.impl() : property.string(), propertyValue));
+        ordered_properties.append(std::pair<String, std::pair<Identifier, JSValue>>(property.isSymbol() && !property.isPrivateName() ? property.impl() : property.string(), std::pair<Identifier, JSValue>(property, propertyValue)));
     }
 
     std::sort(ordered_properties.begin(), ordered_properties.end(), propertyCompare);
 
     for (auto item : ordered_properties) {
         ZigString key = toZigString(item.first);
-        JSValue propertyValue = item.second;
+        Identifier property = item.second.first;
+        JSValue propertyValue = item.second.second;
         JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
-        iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), propertyValue.isSymbol());
+        iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol());
     }
 }
 

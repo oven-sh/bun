@@ -1095,45 +1095,7 @@ it("fs.constants", () => {
 
 it("fs.promises.constants", () => {
   expect(promises.constants).toBeDefined();
-  expect(promises.constants.F_OK).toBeDefined();
-  expect(promises.constants.R_OK).toBeDefined();
-  expect(promises.constants.W_OK).toBeDefined();
-  expect(promises.constants.X_OK).toBeDefined();
-  expect(promises.constants.O_RDONLY).toBeDefined();
-  expect(promises.constants.O_WRONLY).toBeDefined();
-  expect(promises.constants.O_RDWR).toBeDefined();
-  expect(promises.constants.O_CREAT).toBeDefined();
-  expect(promises.constants.O_EXCL).toBeDefined();
-  expect(promises.constants.O_NOCTTY).toBeDefined();
-  expect(promises.constants.O_TRUNC).toBeDefined();
-  expect(promises.constants.O_APPEND).toBeDefined();
-  expect(promises.constants.O_DIRECTORY).toBeDefined();
-  expect(promises.constants.O_NOATIME).toBeDefined();
-  expect(promises.constants.O_NOFOLLOW).toBeDefined();
-  expect(promises.constants.O_SYNC).toBeDefined();
-  expect(promises.constants.O_DSYNC).toBeDefined();
-  expect(promises.constants.O_SYMLINK).toBeDefined();
-  expect(promises.constants.O_DIRECT).toBeDefined();
-  expect(promises.constants.O_NONBLOCK).toBeDefined();
-  expect(promises.constants.S_IFMT).toBeDefined();
-  expect(promises.constants.S_IFREG).toBeDefined();
-  expect(promises.constants.S_IFDIR).toBeDefined();
-  expect(promises.constants.S_IFCHR).toBeDefined();
-  expect(promises.constants.S_IFBLK).toBeDefined();
-  expect(promises.constants.S_IFIFO).toBeDefined();
-  expect(promises.constants.S_IFLNK).toBeDefined();
-  expect(promises.constants.S_IFSOCK).toBeDefined();
-  expect(promises.constants.S_IRWXU).toBeDefined();
-  expect(promises.constants.S_IRUSR).toBeDefined();
-  expect(promises.constants.S_IWUSR).toBeDefined();
-  expect(promises.constants.S_IXUSR).toBeDefined();
-  expect(promises.constants.S_IRWXG).toBeDefined();
-  expect(promises.constants.S_IRGRP).toBeDefined();
-  expect(promises.constants.S_IWGRP).toBeDefined();
-  expect(promises.constants.S_IXGRP).toBeDefined();
-  expect(promises.constants.S_IRWXO).toBeDefined();
-  expect(promises.constants.S_IROTH).toBeDefined();
-  expect(promises.constants.S_IWOTH).toBeDefined();
+  expect(promises.constants).toBe(fs.constants);
 });
 
 it("fs.Dirent", () => {

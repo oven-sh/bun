@@ -506,7 +506,7 @@ describe("tls.createServer events", () => {
           done();
         }),
       )
-      .listen(0, "0.0.0.0");
+      .listen({ port: 0 }, ()=> {});
   });
 
   it("should call error", done => {

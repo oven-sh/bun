@@ -232,8 +232,8 @@ fn exitOrWatch(watch: bool) void {
     if (watch) {
         // the watcher thread will exit the process
         std.time.sleep(std.math.maxInt(u64) - 1);
-        Global.exit(0);
-    } else {
         Global.exit(1);
+    } else {
+        Global.exit(0);
     }
 }

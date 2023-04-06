@@ -30,3 +30,14 @@ import * as tsd from "tsd";
   tsd.expectType<BunFile>(f);
   tsd.expectType<FileBlob>(f);
 }
+{
+  Bun.spawn(["anything"], {
+    env: process.env,
+  });
+  Bun.spawn(["anything"], {
+    env: { ...process.env },
+  });
+  Bun.spawn(["anything"], {
+    env: { ...process.env, dummy: "" },
+  });
+}

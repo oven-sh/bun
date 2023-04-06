@@ -3011,7 +3011,7 @@ declare module "bun" {
        * Changes to `process.env` at runtime won't automatically be reflected in the default value. For that, you can pass `process.env` explicitly.
        *
        */
-      env?: Record<string, string>;
+      env?: Record<string, string | undefined>;
 
       /**
        * The standard file descriptors of the process, in the form [stdin, stdout, stderr].

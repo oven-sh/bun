@@ -1,7 +1,6 @@
 import assert from "assert";
-import exp from "constants";
 import dedent from "dedent";
-import { bundlerTest, expectBundled, itBundled, testForFile } from "./expectBundled.ts";
+import { bundlerTest, expectBundled, itBundled, testForFile } from "./expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:
@@ -912,6 +911,7 @@ describe("bundler", () => {
         await import('./out/b');
       `,
     },
+    entryNames: "[name].[ext]",
     entryPoints: ["/a.js", "/b.js"],
     external: ["a", "b", "c"],
     run: [
@@ -2376,38 +2376,43 @@ describe("bundler", () => {
       "/entry.js": /* js */ `
         import * as foo from './foo/test'
         import * as bar from './bar/test'
-        console.log(exports, module.exports, foo, bar)
+        console.log(JSON.stringify([exports, module.exports, foo, bar]), exports === module.exports)
       `,
       "/foo/test.js": `export let foo = 123`,
       "/bar/test.js": `export let bar = 123`,
     },
     format: "cjs",
+    run: {
+      stdout: '[{},{},{"foo":123},{"bar":123}] true',
+    },
   });
-  return;
   itBundled("default/MinifiedExportsAndModuleFormatCommonJS", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as foo from './foo/test'
         import * as bar from './bar/test'
-        console.log(exports, module.exports, foo, bar)
+        console.log(JSON.stringify([exports, module.exports, foo, bar]), exports === module.exports)
       `,
       "/foo/test.js": `export let foo = 123`,
       "/bar/test.js": `export let bar = 123`,
     },
     minifyIdentifiers: true,
     format: "cjs",
+    run: {
+      stdout: '[{},{},{"foo":123},{"bar":123}] true',
+    },
   });
   itBundled("default/EmptyExportClauseBundleAsCommonJSIssue910", {
-    // GENERATED
     files: {
-      "/entry.js": `console.log(require('./types.mjs'))`,
+      "/entry.js": `console.log(JSON.stringify(require('./types.mjs')))`,
       "/types.mjs": `export {}`,
     },
     format: "cjs",
+    run: {
+      stdout: "{}",
+    },
   });
   itBundled("default/UseStrictDirectiveMinifyNoBundle", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         'use strict'
@@ -2416,96 +2421,126 @@ describe("bundler", () => {
         b
       `,
     },
+    format: "iife",
     minifySyntax: true,
     minifyWhitespace: true,
     mode: "transform",
+    onAfterBundle(api) {
+      assert(api.readFile("/out.js").includes('"use strict";'), '"use strict"; was emitted');
+    },
   });
   itBundled("default/UseStrictDirectiveBundleIssue1837", {
-    // GENERATED
     files: {
-      "/entry.js": `console.log(require('./cjs'))`,
+      "/entry.js": /* js */ `
+        const p = require('./cjs').foo;
+        console.log(typeof p);
+      `,
       "/cjs.js": /* js */ `
         'use strict'
         exports.foo = process
       `,
       "/shims.js": /* js */ `
-        import process from 'process'
-        export { process }
+        import { readFileSync } from 'fs'
+        export { readFileSync as process }
       `,
     },
     inject: ["/shims.js"],
     platform: "node",
+    run: {
+      stdout: "function",
+    },
   });
   itBundled("default/UseStrictDirectiveBundleIIFEIssue2264", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         'use strict'
         export let a = 1
       `,
+    },
+    format: "iife",
+    onAfterBundle(api) {
+      assert(api.readFile("/out.js").includes('"use strict";'), '"use strict"; should be emitted');
     },
   });
   itBundled("default/UseStrictDirectiveBundleCJSIssue2264", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         'use strict'
         export let a = 1
       `,
+    },
+    format: "cjs",
+    onAfterBundle(api) {
+      assert(api.readFile("/out.js").includes('"use strict";'), '"use strict"; should be emitted');
     },
   });
   itBundled("default/UseStrictDirectiveBundleESMIssue2264", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         'use strict'
         export let a = 1
       `,
     },
-  });
-  itBundled("default/NoOverwriteInputFileError", {
-    // GENERATED
-    files: {
-      "/entry.js": `console.log(123)`,
+    format: "esm",
+    onAfterBundle(api) {
+      assert(!api.readFile("/out.js").includes('"use strict";'), '"use strict"; should not be emitted');
     },
-    /* TODO FIX expectedCompileLog: `ERROR: Refusing to overwrite input file "entry.js" (use "AllowOverwrite: true" to allow this)
-  `, */
   });
+  // itBundled("default/NoOverwriteInputFileError", {
+  //   files: {
+  //     "/entry.js": `console.log(123)`,
+  //   },
+  //   outfile: "/entry.js",
+  //   bundleErrors: {
+  //     "/entry.js": ['Refusing to overwrite input file "entry.js" (use "--allow-overwrite" to allow this)'],
+  //   },
+  // });
   itBundled("default/DuplicateEntryPoint", {
-    // GENERATED
     files: {
       "/entry.js": `console.log(123)`,
     },
     entryPoints: ["/entry.js", "/entry.js"],
+    run: {
+      file: "/out/entry.js",
+      stdout: "123",
+    },
   });
   itBundled("default/RelativeEntryPointError", {
-    // GENERATED
     files: {
       "/entry.js": `console.log(123)`,
     },
-    entryPoints: ["entry"],
-    /* TODO FIX expectedScanLog: `ERROR: Could not resolve "entry"
-  NOTE: Use the relative path "./entry" to reference the file "entry.js". Without the leading "./", the path "entry" is being interpreted as a package path instead.
-  `, */
+    entryPointsRaw: ["entry"],
+    outfile: "/out.js",
+    bundleErrors: {
+      "<bun>": [`ModuleNotFound resolving "entry". Did you mean: "./entry"`],
+    },
   });
   itBundled("default/MultipleEntryPointsSameNameCollision", {
-    // GENERATED
     files: {
       "/a/entry.js": `import {foo} from '../common.js'; console.log(foo)`,
       "/b/entry.js": `import {foo} from '../common.js'; console.log(foo)`,
       "/common.js": `export let foo = 123`,
     },
-    entryPoints: ["/a/entry.js", "/b/entry.js"],
+    entryPoints: ["./a/entry.js", "./b/entry.js"],
+    outdir: "/out/",
+    outputPaths: ["/out/a/entry.js", "/out/b/entry.js"],
   });
   itBundled("default/ReExportCommonJSAsES6", {
-    // GENERATED
     files: {
       "/entry.js": `export {bar} from './foo'`,
       "/foo.js": `exports.bar = 123`,
+
+      "/test.js": /* js */ `
+        import { bar } from './out';
+        console.log(bar);
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "123",
     },
   });
   itBundled("default/ReExportDefaultInternal", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export {default as foo} from './foo'
@@ -2513,10 +2548,18 @@ describe("bundler", () => {
       `,
       "/foo.js": `export default 'foo'`,
       "/bar.js": `export default 'bar'`,
+
+      "/test.js": /* js */ `
+        import { foo, bar } from './out';
+        console.log(foo, bar);
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "foo bar",
     },
   });
   itBundled("default/ReExportDefaultExternalES6", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export {default as foo} from 'foo'
@@ -2524,10 +2567,26 @@ describe("bundler", () => {
       `,
       "/bar.js": `export {default as bar} from 'bar'`,
     },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import { foo, bar } from './out';
+        console.log(foo, bar);
+      `,
+      "/node_modules/foo/index.js": /* js */ `
+        export default 'foo'
+      `,
+      "/node_modules/bar/index.js": /* js */ `
+        export default 'bar'
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "foo bar",
+    },
     format: "esm",
+    external: ["foo", "bar"],
   });
   itBundled("default/ReExportDefaultExternalCommonJS", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export {default as foo} from 'foo'
@@ -2535,68 +2594,83 @@ describe("bundler", () => {
       `,
       "/bar.js": `export {default as bar} from 'bar'`,
     },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        const { foo, bar } = require('./out');
+        console.log(foo.default, bar.default);
+      `,
+      "/node_modules/foo/index.js": /* js */ `
+        module.exports = { default: 'foo' };
+      `,
+      "/node_modules/bar/index.js": /* js */ `
+        module.exports = { default: 'bar' };
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "foo bar",
+    },
     format: "cjs",
+    external: ["foo", "bar"],
   });
   itBundled("default/ReExportDefaultNoBundle", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export {default as foo} from './foo'
         export {default as bar} from './bar'
       `,
+    },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import { foo, bar } from './out';
+        console.log(foo, bar);
+      `,
+      "/foo.js": /* js */ `
+        export default 'foo'
+      `,
+      "/bar.js": /* js */ `
+        export default 'bar'
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "foo bar",
     },
     mode: "transform",
-  });
-  itBundled("default/ReExportDefaultNoBundleES6", {
-    // GENERATED
-    files: {
-      "/entry.js": /* js */ `
-        export {default as foo} from './foo'
-        export {default as bar} from './bar'
-      `,
-    },
-    format: "esm",
-    mode: "convertformat",
-  });
-  itBundled("default/ReExportDefaultNoBundleCommonJS", {
-    // GENERATED
-    files: {
-      "/entry.js": /* js */ `
-        export {default as foo} from './foo'
-        export {default as bar} from './bar'
-      `,
-    },
-    format: "cjs",
-    mode: "convertformat",
   });
   itBundled("default/ImportMetaCommonJS", {
-    // GENERATED
     files: {
       "/entry.js": `console.log(import.meta.url, import.meta.path)`,
     },
     format: "cjs",
-    /* TODO FIX expectedScanLog: `entry.js: WARNING: "import.meta" is not available with the "cjs" output format and will be empty
-  NOTE: You need to set the output format to "esm" for "import.meta" to work correctly.
-  entry.js: WARNING: "import.meta" is not available with the "cjs" output format and will be empty
-  NOTE: You need to set the output format to "esm" for "import.meta" to work correctly.
-  `, */
+    bundleWarnings: {
+      "/entry.js": [`"import.meta" is not available with the "cjs" output format and will be empty`],
+    },
+    run: {
+      stdout: "undefined undefined",
+    },
   });
   itBundled("default/ImportMetaES6", {
-    // GENERATED
     files: {
       "/entry.js": `console.log(import.meta.url, import.meta.path)`,
     },
     format: "esm",
+    run: {
+      stdout: "url_here path_here",
+      bunArgs: ["--define", 'import.meta.url="url_here"', "--define", 'import.meta.path="path_here"'],
+    },
   });
   itBundled("default/ImportMetaNoBundle", {
-    // GENERATED
     files: {
       "/entry.js": `console.log(import.meta.url, import.meta.path)`,
     },
     mode: "transform",
+    run: {
+      stdout: "url_here path_here",
+      bunArgs: ["--define", 'import.meta.url="url_here"', "--define", 'import.meta.path="path_here"'],
+    },
   });
   itBundled("default/LegalCommentsNone", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import './a'
@@ -2615,32 +2689,52 @@ describe("bundler", () => {
       "/b.css": `b { zoom: 2 } /*! Copyright notice 1 */`,
       "/c.css": `c { zoom: 2 } /*! Copyright notice 2 */`,
     },
+    outdir: "/out",
     entryPoints: ["/entry.js", "/entry.css"],
+    legalComments: "none",
+    onAfterBundle(api) {
+      assert(!api.readFile("/out/entry.js").includes("Copyright notice"), "js should not contain copyright notice");
+      assert(!api.readFile("/out/entry.css").includes("Copyright notice"), "css should not contain copyright notice");
+    },
   });
   itBundled("default/LegalCommentsInline", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
+        // Normal Comment
         import './a'
         import './b'
         import './c'
       `,
       "/a.js": `console.log('in a') //! Copyright notice 1`,
-      "/b.js": `console.log('in b') //! Copyright notice 1`,
+      "/b.js": `console.log('in b') //! Copyright notice 1\n// Normal Comment`,
       "/c.js": `console.log('in c') //! Copyright notice 2`,
       "/entry.css": /* css */ `
+        /* Normal Comment */
         @import "./a.css";
         @import "./b.css";
         @import "./c.css";
       `,
       "/a.css": `a { zoom: 2 } /*! Copyright notice 1 */`,
-      "/b.css": `b { zoom: 2 } /*! Copyright notice 1 */`,
+      "/b.css": `b { zoom: 2 } /*! Copyright notice 1 */ /* Normal Comment */`,
       "/c.css": `c { zoom: 2 } /*! Copyright notice 2 */`,
     },
+    outdir: "/out",
     entryPoints: ["/entry.js", "/entry.css"],
+    legalComments: "inline",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const entry = api.readFile("/out/entry.js");
+      assert(entry.match(/Copyright notice 1/g)?.length === 2, "js should contain copyright notice 1 twice");
+      assert(entry.match(/Copyright notice 2/g)?.length === 1, "js should contain copyright notice 2 once");
+      assert(!entry.includes("Normal Comment"), "js should not contain normal comments");
+
+      const entry2 = api.readFile("/out/entry.css");
+      assert(entry2.match(/Copyright notice 1/g)?.length === 2, "css should contain copyright notice 1 twice");
+      assert(entry2.match(/Copyright notice 2/g)?.length === 1, "css should contain copyright notice 2 once");
+      assert(!entry2.includes("Normal Comment"), "css should not contain normal comments");
+    },
   });
   itBundled("default/LegalCommentsEndOfFile", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import './a'
@@ -2659,10 +2753,37 @@ describe("bundler", () => {
       "/b.css": `b { zoom: 2 } /*! Copyright notice 1 */`,
       "/c.css": `c { zoom: 2 } /*! Copyright notice 2 */`,
     },
+    outdir: "/out",
     entryPoints: ["/entry.js", "/entry.css"],
+    legalComments: "eof",
+    onAfterBundle(api) {
+      assert(
+        api
+          .readFile("/out/entry.js")
+          .trim()
+          .endsWith(
+            dedent`
+              //! Copyright notice 1
+              //! Copyright notice 2
+            `,
+          ),
+        'js should end with "Copyright notice 1" and "Copyright notice 2", in that order. No duplicates.',
+      );
+      assert(
+        api
+          .readFile("/out/entry.css")
+          .trim()
+          .endsWith(
+            dedent`
+              /*! Copyright notice 1 */
+              /*! Copyright notice 2 */
+            `,
+          ),
+        'css should end with "Copyright notice 1" and "Copyright notice 2", in that order. No duplicates.',
+      );
+    },
   });
   itBundled("default/LegalCommentsLinked", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import './a'
@@ -2681,10 +2802,35 @@ describe("bundler", () => {
       "/b.css": `b { zoom: 2 } /*! Copyright notice 1 */`,
       "/c.css": `c { zoom: 2 } /*! Copyright notice 2 */`,
     },
+    outdir: "/out",
     entryPoints: ["/entry.js", "/entry.css"],
+    legalComments: "linked",
+    onAfterBundle(api) {
+      assert(
+        api.readFile("/out/entry.js").trim().endsWith(`/*! For license information please see entry.js.LEGAL.txt */`),
+        'js should end with the exact text "/*! For license information please see entry.js.LEGAL.txt */"',
+      );
+      assert(
+        api.readFile("/out/entry.css").trim().endsWith(`/*! For license information please see entry.css.LEGAL.txt */`),
+        'js should end with the exact text "/*! For license information please see entry.js.LEGAL.txt */"',
+      );
+      assert(
+        api.readFile("/out/entry.js.LEGAL.txt").trim() ===
+          dedent`
+            //! Copyright notice 1
+            //! Copyright notice 2
+          `,
+      );
+      assert(
+        api.readFile("/out/entry.css.LEGAL.txt").trim() ===
+          dedent`
+            /*! Copyright notice 1 */
+            /*! Copyright notice 2 */
+          `,
+      );
+    },
   });
   itBundled("default/LegalCommentsExternal", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import './a'
@@ -2704,9 +2850,30 @@ describe("bundler", () => {
       "/c.css": `c { zoom: 2 } /*! Copyright notice 2 */`,
     },
     entryPoints: ["/entry.js", "/entry.css"],
+    legalComments: "external",
+    onAfterBundle(api) {
+      assert(!api.readFile("/out/entry.js").includes(`entry.js.LEGAL.txt`), "js should NOT mention legal information");
+      assert(
+        !api.readFile("/out/entry.css").includes(`entry.css.LEGAL.txt`),
+        "css should NOT mention legal information",
+      );
+      assert(
+        api.readFile("/out/entry.js.LEGAL.txt").trim() ===
+          dedent`
+            //! Copyright notice 1
+            //! Copyright notice 2
+          `,
+      );
+      assert(
+        api.readFile("/out/entry.css.LEGAL.txt").trim() ===
+          dedent`
+            /*! Copyright notice 1 */
+            /*! Copyright notice 2 */
+          `,
+      );
+    },
   });
   itBundled("default/LegalCommentsModifyIndent", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export default () => {
@@ -2724,10 +2891,16 @@ describe("bundler", () => {
         }
       `,
     },
+    outdir: "/out",
+    minifyWhitespace: true,
     entryPoints: ["/entry.js", "/entry.css"],
+    legalComments: "inline",
+    onAfterBundle(api) {
+      assert(api.readFile("/out/entry.js").trim().includes("@preserve"), "js should include the @preserve comment");
+      assert(api.readFile("/out/entry.css").trim().includes("@preserve"), "css should include the @preserve comment");
+    },
   });
   itBundled("default/LegalCommentsAvoidSlashTagInline", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         //! <script>foo</script>
@@ -2738,10 +2911,15 @@ describe("bundler", () => {
         x { y: z }
       `,
     },
+    outdir: "/out",
     entryPoints: ["/entry.js", "/entry.css"],
+    legalComments: "inline",
+    onAfterBundle(api) {
+      assert(api.readFile("/out/entry.js").trim().includes("<script>foo<\\/script>"), "js should have escaped comment");
+      assert(api.readFile("/out/entry.css").trim().includes("<style>foo<\\/style>"), "css should have escaped comment");
+    },
   });
   itBundled("default/LegalCommentsAvoidSlashTagEndOfFile", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         //! <script>foo</script>
@@ -2752,10 +2930,15 @@ describe("bundler", () => {
         x { y: z }
       `,
     },
+    outdir: "/out",
     entryPoints: ["/entry.js", "/entry.css"],
+    legalComments: "eof",
+    onAfterBundle(api) {
+      assert(api.readFile("/out/entry.js").trim().includes("<script>foo<\\/script>"), "js should have escaped comment");
+      assert(api.readFile("/out/entry.css").trim().includes("<style>foo<\\/style>"), "css should have escaped comment");
+    },
   });
   itBundled("default/LegalCommentsAvoidSlashTagExternal", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         //! <script>foo</script>
@@ -2766,10 +2949,21 @@ describe("bundler", () => {
         x { y: z }
       `,
     },
+    outdir: "/out",
     entryPoints: ["/entry.js", "/entry.css"],
+    legalComments: "external",
+    onAfterBundle(api) {
+      assert(
+        api.readFile("/out/entry.js.LEGAL.txt").trim().includes("<script>foo</script>"),
+        "js should NOT have escaped comment",
+      );
+      assert(
+        api.readFile("/out/entry.css.LEGAL.txt").trim().includes("<style>foo</style>"),
+        "css should NOT have escaped comment",
+      );
+    },
   });
   itBundled("default/LegalCommentsManyEndOfFile", {
-    // GENERATED
     files: {
       "/project/entry.js": /* js */ `
         import './a'
@@ -2857,8 +3051,57 @@ describe("bundler", () => {
          */
       `,
     },
+    outdir: "/out",
     entryPoints: ["/project/entry.js", "/project/entry.css"],
     minifyWhitespace: true,
+    legalComments: "eof",
+    onAfterBundle(api) {
+      assert(
+        api
+          .readFile("/out/entry.js")
+          .trim()
+          .endsWith(
+            dedent`
+              /*
+               * @license
+               * Copyright notice 2
+               */
+              /*
+               * @preserve
+               * (c) Evil Software Corp
+               */
+              // @preserve This is another comment
+              //! (c) Good Software Corp
+              //! Copyright notice 1
+              //! Duplicate comment
+              //! Duplicate third-party comment
+            `,
+          ),
+        "js should have all copyright notices in order",
+      );
+      assert(
+        api
+          .readFile("/out/entry.css")
+          .trim()
+          .endsWith(
+            dedent`
+              /*
+               * @license
+               * Copyright notice 2
+               */
+              /* @preserve This is another comment */
+              /*! (c) Good Software Corp */
+              /*! Copyright notice 1 */
+              /*! Duplicate comment */
+              /*! Duplicate third-party comment */
+              /** @preserve
+               * (c) Evil Software Corp
+               */
+            `,
+          ),
+        "css should have all copyright notices in order",
+      );
+    },
   });
   itBundled("default/LegalCommentsEscapeSlashScriptAndStyleEndOfFile", {
     // GENERATED
@@ -2868,46 +3111,38 @@ describe("bundler", () => {
       "/project/entry.css": `@import "css-pkg"; a { b: c } /*! </style> */`,
       "/project/node_modules/css-pkg/index.css": `x { y: z } /*! </style> */`,
     },
+    outdir: "/out",
     entryPoints: ["/project/entry.js", "/project/entry.css"],
     minifyWhitespace: true,
+    legalComments: "eof",
+    onAfterBundle(api) {
+      assert(!api.readFile("/out/entry.js").includes("</script>"), "js should not contain unescaped script tags");
+      assert(!api.readFile("/out/entry.css").includes("</style>"), "css should not contain unescaped style tags");
+    },
   });
   itBundled("default/LegalCommentsEscapeSlashScriptAndStyleExternal", {
-    // GENERATED
     files: {
       "/project/entry.js": `import "js-pkg"; a /*! </script> */`,
       "/project/node_modules/js-pkg/index.js": `x /*! </script> */`,
       "/project/entry.css": `@import "css-pkg"; a { b: c } /*! </style> */`,
       "/project/node_modules/css-pkg/index.css": `x { y: z } /*! </style> */`,
     },
+    outdir: "/out",
     entryPoints: ["/project/entry.js", "/project/entry.css"],
     minifyWhitespace: true,
-  });
-  itBundled("default/LegalCommentsNoEscapeSlashScriptEndOfFile", {
-    // GENERATED
-    files: {
-      "/project/entry.js": `import "js-pkg"; a /*! </script> */`,
-      "/project/node_modules/js-pkg/index.js": `x /*! </script> */`,
-      "/project/entry.css": `@import "css-pkg"; a { b: c } /*! </style> */`,
-      "/project/node_modules/css-pkg/index.css": `x { y: z } /*! </style> */`,
+    legalComments: "external",
+    onAfterBundle(api) {
+      assert(
+        api.readFile("/out/entry.js.LEGAL.txt").includes("</script>"),
+        "js.LEGAL.txt should not escaped the script tags",
+      );
+      assert(
+        api.readFile("/out/entry.css.LEGAL.txt").includes("</style>"),
+        "css.LEGAL.txt should not escaped the style tags",
+      );
     },
-    entryPoints: ["/project/entry.js", "/project/entry.css"],
-    minifyWhitespace: true,
-    legalComments: "eof",
-  });
-  itBundled("default/LegalCommentsNoEscapeSlashStyleEndOfFile", {
-    // GENERATED
-    files: {
-      "/project/entry.js": `import "js-pkg"; a /*! </script> */`,
-      "/project/node_modules/js-pkg/index.js": `x /*! </script> */`,
-      "/project/entry.css": `@import "css-pkg"; a { b: c } /*! </style> */`,
-      "/project/node_modules/css-pkg/index.css": `x { y: z } /*! </style> */`,
-    },
-    entryPoints: ["/project/entry.js", "/project/entry.css"],
-    minifyWhitespace: true,
-    legalComments: "eof",
   });
   itBundled("default/LegalCommentsManyLinked", {
-    // GENERATED
     files: {
       "/project/entry.js": /* js */ `
         import './a'
@@ -2967,9 +3202,53 @@ describe("bundler", () => {
          */
       `,
     },
+    outdir: "/out",
     entryPoints: ["/project/entry.js", "/project/entry.css"],
     minifyWhitespace: true,
+    legalComments: "linked",
+    onAfterBundle(api) {
+      assert(
+        api.readFile("/out/entry.js").endsWith("/*! For license information please see entry.js.LEGAL.txt */\n"),
+        "js should have a legal comment at the end",
+      );
+      assert(
+        api.readFile("/out/entry.css").endsWith("/*! For license information please see entry.css.LEGAL.txt */\n"),
+        "css should have a legal comment at the end",
+      );
+      assert(
+        api.readFile("/out/entry.js.LEGAL.txt").trim(),
+        dedent`
+          /*
+           * @license
+           * Copyright notice 2
+          */
+          /*
+           * @preserve
+           * (c) Evil Software Corp
+          */
+          // @preserve This is another comment
+          //! (c) Good Software Corp
+          //! Copyright notice 1
+        `,
+      );
+      assert.strictEqual(
+        api.readFile("/out/entry.css.LEGAL.txt").trim(),
+        dedent`
+          /*
+           * @license
+           * Copyright notice 2
+           */
+          /* @preserve This is another comment */
+          /*! (c) Good Software Corp */
+          /*! Copyright notice 1 */
+          /** @preserve
+           * (c) Evil Software Corp
+           */
+        `,
+      );
+    },
   });
+  return;
   itBundled("default/IIFE_ES5", {
     // GENERATED
     files: {
@@ -4736,7 +5015,7 @@ describe("bundler", () => {
       { input: "/src/app2/main.ts" },
       { input: "/src/app3/main.ts", output: "customPath" },
     ],
-    entryNames: "[dir]-[name]",
+    entryNames: "[dir]-[name].[ext]",
     mode: "passthrough",
   });
   itBundled("default/EntryNamesNonPortableCharacter", {
@@ -4766,7 +5045,7 @@ describe("bundler", () => {
     entryPoints: ["/src/entries/entry1.js", "/src/entries/entry2.js"],
     outbase: "/src",
     splitting: true,
-    entryNames: "main/[ext]/[name]-[hash]",
+    entryNames: "main/[ext]/[name]-[hash].[ext]",
   });
   itBundled("default/MinifyIdentifiersImportPathFrequencyAnalysis", {
     // GENERATED
@@ -6019,7 +6298,7 @@ describe("bundler", () => {
     },
     stdin: {
       contents: `import "node_modules/fflate"`,
-      resolveDir: "/project",
+      cwd: "/project",
     },
     platform: "neutral",
     /* TODO FIX expectedScanLog: `<stdin>: ERROR: Could not resolve "node_modules/fflate"

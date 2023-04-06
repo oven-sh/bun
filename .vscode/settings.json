@@ -7,10 +7,7 @@
   "search.followSymlinks": false,
   "search.useIgnoreFiles": true,
   "zig.buildOnSave": false,
-  "zig.buildArgs": [
-    "obj",
-    "-Dfor-editor"
-  ],
+  "zig.buildArgs": ["obj", "-Dfor-editor"],
   "zig.buildOption": "build",
   "zig.buildFilePath": "${workspaceFolder}/build.zig",
   "[zig]": {
@@ -28,7 +25,7 @@
     "editor.formatOnSave": true
   },
   "zig.zls.enableInlayHints": false,
-  
+
   "[jsx]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode",
     "editor.formatOnSave": true
@@ -210,9 +207,7 @@
     "__verbose_abort": "cpp"
   },
   "cmake.configureOnOpen": false,
-  "C_Cpp.errorSquiggles": "Enabled",
-  "eslint.workingDirectories": [
-    "packages/bun-types"
-  ],
-  "files.insertFinalNewline": true
+  "C_Cpp.errorSquiggles": "enabled",
+  "eslint.workingDirectories": ["packages/bun-types"],
+  "typescript.tsdk": "node_modules/typescript/lib"
 }

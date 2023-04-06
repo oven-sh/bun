@@ -14,7 +14,7 @@
  * For test debugging, I have a utility script `run-single-test.sh` which gets around bun's inability
  * to run a single test.
  */
-import { existsSync, mkdirSync, mkdtemp, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import path from "path";
 import dedent from "dedent";
 import { bunEnv, bunExe } from "harness";
@@ -43,13 +43,16 @@ const ESBUILD = process.env.BUN_BUNDLER_TEST_USE_ESBUILD;
 const DEBUG = process.env.BUN_BUNDLER_TEST_DEBUG;
 /** Set this to the id of a bundle test to run just that test */
 const FILTER = process.env.BUN_BUNDLER_TEST_FILTER;
+/** Path to the bun bundler. TODO: Once bundler is merged, we should remove the `bun-debug` fallback. */
+const BUN_EXE = process.env.BUN_EXE ?? Bun.which("bun-debug") ?? bunExe();
 
-const outBase = path.join(tmpdir(), mkdtempSync(ESBUILD ? "esbuild" : "bun" ), "./bun-bundler-tests");
+const outBaseTemplate = path.join(tmpdir(), "bun-bundler-tests", `${ESBUILD ? "esbuild" : "bun"}-`);
+if (!existsSync(path.dirname(outBaseTemplate))) mkdirSync(path.dirname(outBaseTemplate), { recursive: true });
+const outBase = mkdtempSync(outBaseTemplate);
 const testsRan = new Set();
-const tempPathToBunDebug =  process.env.BUN_EXE ?? Bun.which("bun-new-bundler") ?? Bun.which("bun-debug") ?? bunExe();
 
 if (ESBUILD) {
-  console.warn("WARNING: using esbuild for bun bundler tests");
+  console.warn("NOTE: using esbuild for bun bundler tests");
 }
 
 export interface BundlerTestInput {
@@ -60,10 +63,14 @@ export interface BundlerTestInput {
   entryPoints?: string[];
   /** ??? */
   entryPointsAdvanced?: Array<{ input: string; output?: string }>;
+  /** These are not path resolved. Used for `default/RelativeEntryPointError` */
+  entryPointsRaw?: string[];
   /** Defaults to bundle */
   mode?: "bundle" | "transform" | "convertformat" | "passthrough";
-  /** Used for one test. Recommend not using this. */
-  stdin?: { contents: string; resolveDir: string };
+  /** Used for `default/ErrorMessageCrashStdinIssue2913`. */
+  stdin?: { contents: string; cwd: string };
+  /** Use when doing something weird with entryPoints and you need to check other output paths. */
+  outputPaths?: string[];
 
   // bundler options
   alias?: Record<string, string>;
@@ -95,7 +102,7 @@ export interface BundlerTestInput {
   platform?: "bun" | "node" | "neutral" | "browser";
   publicPath?: string;
   keepNames?: boolean;
-  legalComments?: undefined | "eof";
+  legalComments?: "none" | "inline" | "eof" | "linked" | "external";
   loader?: Record<string, string>;
   mangleProps?: RegExp;
   mangleQuoted?: boolean;
@@ -107,8 +114,8 @@ export interface BundlerTestInput {
   minifyWhitespace?: boolean;
   splitting?: boolean;
   treeShaking?: boolean;
-  unsupportedCSSFeatures?: string;
-  unsupportedJSFeatures?: string;
+  unsupportedCSSFeatures?: string[];
+  unsupportedJSFeatures?: string[];
   useDefineForClassFields?: boolean;
   sourceMap?: boolean | "inline" | "external";
 
@@ -182,22 +189,25 @@ var testFiles = new Map();
 
 export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boolean) {
   var { expect, it, test } = testForFile(callerSourceOrigin());
-  if (FILTER && id !== FILTER) {
-    return;
-  }
+  if (FILTER && id !== FILTER) return;
 
   let {
+    banner,
     bundleErrors,
     bundleWarnings,
     define,
+    entryNames,
     entryPoints,
+    entryPointsRaw,
     external,
     files,
     format,
     globalName,
+    host,
     inject,
-    metafile,
     jsx = {},
+    legalComments,
+    metafile,
     minifyIdentifiers,
     minifySyntax,
     minifyWhitespace,
@@ -205,14 +215,14 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     onAfterBundle,
     outdir,
     outfile,
+    outputPaths,
     platform,
-    entryNames,
     run,
     runtimeFiles,
-    sourceMap,
-    host,
-    banner,
+    unsupportedJSFeatures,
+    unsupportedCSSFeatures,
     skipOnEsbuild,
+    sourceMap,
     ...unknownProps
   } = opts;
 
@@ -230,7 +240,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
   mode ??= "bundle";
   platform ??= "browser";
   format ??= "esm";
-  entryPoints ??= [Object.keys(files)[0]];
+  entryPoints ??= entryPointsRaw ? [] : [Object.keys(files)[0]];
   if (run === true) run = {};
   if (metafile === true) metafile = "/metafile.json";
   if (bundleErrors === true) bundleErrors = {};
@@ -246,20 +256,27 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
   if (!ESBUILD && metafile) {
     throw new Error("metafile not implemented in bun bun");
   }
-
+  if (!ESBUILD && legalComments) {
+    throw new Error("legalComments not implemented in bun bun");
+  }
+  if (!ESBUILD && unsupportedJSFeatures && unsupportedJSFeatures.length) {
+    throw new Error("unsupportedJSFeatures not implemented in bun bun");
+  }
+  if (!ESBUILD && unsupportedCSSFeatures && unsupportedCSSFeatures.length) {
+    throw new Error("unsupportedCSSFeatures not implemented in bun bun");
+  }
   if (host === "windows") {
     throw new Error('"host: windows" is not implemented in expectBundled');
   }
   if (ESBUILD && skipOnEsbuild) {
     return;
   }
-
   if (dryRun) {
     return;
   }
 
   const root = path.join(outBase, id.replaceAll("/", path.sep));
-  if (DEBUG) console.log(root);
+  if (DEBUG) console.log("root:", root);
 
   const entryPaths = entryPoints.map(file => path.join(root, file));
 
@@ -270,9 +287,16 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
   outfile = useOutFile ? path.join(root, outfile ?? "/out.js") : undefined;
   outdir = !useOutFile ? path.join(root, outdir ?? "/out") : undefined;
   metafile = metafile ? path.join(root, metafile) : undefined;
+  outputPaths = outputPaths
+    ? outputPaths.map(file => path.join(root, file))
+    : entryPaths.map(file => path.join(outdir!, path.basename(file)));
+
+  if (outdir) {
+    entryNames ??= "[name].[ext]";
+  }
 
   // Option validation
-  if (entryPaths.length !== 1 && outfile) {
+  if (entryPaths.length !== 1 && outfile && !entryPointsRaw) {
     throw new Error("Test cannot specify `outfile` when more than one entry path.");
   }
 
@@ -286,16 +310,15 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     writeFileSync(filename, dedent(contents).replace(/\{\{root\}\}/g, root));
   }
 
-  console.log(root)
-
   // Run bun bun cli. In the future we can move to using `Bun.Bundler`
   const cmd = (
     !ESBUILD
       ? [
           ...(process.env.BUN_DEBUGGER ? ["lldb-server", "g:1234", "--"] : []),
-          tempPathToBunDebug,
+          BUN_EXE,
           "bun",
           ...entryPaths,
+          ...(entryPointsRaw ?? []),
           outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
           define && Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
           `--platform=${platform}`,
@@ -310,9 +333,10 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
           jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
           jsx.development && `--jsx-dev`,
           // metafile && `--metafile=${metafile}`,
-          sourceMap && `--sourcemap${sourceMap !== true ? `=${sourceMap}` : ""}`,
-          // entryNames && `--entry-names=${entryNames}`,
+          // sourceMap && `--sourcemap${sourceMap !== true ? `=${sourceMap}` : ""}`,
+          entryNames && entryNames !== "[name].[ext]" && [`--entry-names`, entryNames],
           // `--format=${format}`,
+          // legalComments && `--legal-comments=${legalComments}`,
         ]
       : [
           Bun.which("esbuild"),
@@ -331,11 +355,14 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
           jsx.factory && `--jsx-factory=${jsx.factory}`,
           jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
           jsx.development && `--jsx-dev`,
-          entryNames && `--entry-names=${entryNames}`,
+          entryNames && entryNames !== "[name].[ext]" && `--entry-names=${entryNames.replace(/\.\[ext]$/, "")}`,
           metafile && `--metafile=${metafile}`,
           sourceMap && `--sourcemap${sourceMap !== true ? `=${sourceMap}` : ""}`,
           banner && `--banner:js=${banner}`,
+          legalComments && `--legal-comments=${legalComments}`,
+          [...(unsupportedJSFeatures ?? []), ...(unsupportedCSSFeatures ?? [])].map(x => `--supported:${x}=false`),
           ...entryPaths,
+          ...(entryPointsRaw ?? []),
         ]
   )
     .flat(Infinity)
@@ -391,8 +418,11 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
 
   if (!success) {
     if (!ESBUILD) {
-      const errorRegex = /^error: (.*?)\n.*?\n\s*\^\s*\n(.*?)\n/gms;
+      const errorRegex = /^error: (.*?)\n(?:.*?\n\s*\^\s*\n(.*?)\n)?/gms;
       const allErrors = [...stderr!.toString("utf-8").matchAll(errorRegex)].map(([_str1, error, source]) => {
+        if (!source) {
+          return { error, file: "<bun>" };
+        }
         const [_str2, fullFilename, line, col] = source.match(/bun-bundler-tests\/(.*):(\d+):(\d+)/)!;
         const file = fullFilename.slice(id.length);
         return { error, file, line, col };
@@ -529,8 +559,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
   } else {
     // entryNames makes it so we cannot predict the output file
     if (!entryNames) {
-      for (const file of entryPaths) {
-        const fullpath = path.join(outdir!, path.basename(file));
+      for (const fullpath of outputPaths) {
         if (!existsSync(fullpath)) {
           throw new Error("Bundle was not written to disk: " + fullpath);
         } else if (!ESBUILD) {
@@ -656,7 +685,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
         const result = stdout!.toString("utf-8").trim();
         const expected = dedent(run.stdout).trim();
         if (expected !== result) {
-          console.log({file});
+          console.log({ file });
         }
         expect(result).toBe(expected);
       }

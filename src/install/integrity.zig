@@ -207,7 +207,7 @@ pub const Integrity = extern struct {
 
         try writer.writeAll(Base64.Encoder.encode(&base64_buf, bytes));
 
-        // consistentcy with yarn.lock
+        // consistency with yarn.lock
         switch (this.tag) {
             .sha1 => try writer.writeAll("="),
             else => try writer.writeAll("=="),

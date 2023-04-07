@@ -61,7 +61,7 @@ export var __toESM = (mod, isNodeMode, target) => {
 // Converts the module from ESM to CommonJS. This clones the input module
 // object with the addition of a non-enumerable "__esModule" property set
 // to "true", which overwrites any existing export named "__esModule".
-export var __toCommonJS = /* @__PURE__ */ (from) => {
+export var __toCommonJS = /* @__PURE__ */ from => {
   const moduleCache = (__toCommonJS.moduleCache ??= new WeakMap());
   var cached = moduleCache.get(from);
   if (cached) return cached;
@@ -266,4 +266,3 @@ export var __esm = (fn, res) => () => (fn && (res = fn((fn = 0))), res);
 
 // This is used for JSX inlining with React.
 export var $$typeof = /* @__PURE__ */ Symbol.for("react.element");
-

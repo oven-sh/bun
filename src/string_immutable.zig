@@ -699,8 +699,8 @@ pub fn eql(self: string, other: anytype) bool {
         return eql(self, other.*);
     }
 
-    for (self, 0..) |c, i| {
-        if (other[i] != c) return false;
+    for (self, other) |c1, c2| {
+        if (c1 != c2) return false;
     }
     return true;
 }

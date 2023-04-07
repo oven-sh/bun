@@ -101,7 +101,7 @@ pub const Integrity = extern struct {
 
     /// Matches sha(1|256|384|512) in a manner one could describe as "blazingly fast".
     /// Returns an Integrity object, and leaves the `cur` object pointing after the last equal sign
-    pub fn yarn_parse(cur: *[]u8, equals_sentinel: usize) !Integrity {
+    pub fn yarn_parse(cur: *[]u8, sentinels_start: usize) !Integrity {
         if (!Yarn.advanceOver(cur, " sha")) return error.@"Unknown Integrity type";
         // it would be cool if we made npm use this, but the yarn parser assumes that we overallocate
         // and place sentinels at the end of the buffer pointed into by `cur`. That means we can avoid
@@ -133,7 +133,7 @@ pub const Integrity = extern struct {
         const hash_start = cur.*;
         Yarn.advanceUntilAny(cur, "=", false) catch unreachable;
 
-        if (Yarn.sentinelCmp(@ptrToInt(&cur.*[0]), .@">=", equals_sentinel))
+        if (Yarn.sentinelCmp(@ptrToInt(&cur.*[0]), sentinels_start, '='))
             return error.@"Found unterminated integrity sha hash";
 
         var value: [Integrity.digest_buf_len]u8 = undefined;

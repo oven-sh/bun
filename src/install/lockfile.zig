@@ -3693,27 +3693,17 @@ pub const Yarn = struct {
     pub const over_allocated_space = @max("optionalDependencies".len, ADVANCE_WIDTH);
 
     // we add these sentinels to the end of the file_buffer, just in case someone gives us a malicious file
-    const SENTINELS = [_]u8{ '\n', '"', ':', '=', ' ' };
+    const SENTINELS = [_]u8{ '\n', '"', ':', '=', ' ', '@' };
 
-    /// In debug mode, this function assumes that the sentinel is matched exactly, i.e.
-    /// that we should be able to compare using only the `==` operator, but we still want the safety
-    /// once deployed in case there is a major logical mistake, so we check >= or <=
-    /// This function takes in comparisons like `x >= sentinel`, where we could do
-    /// `x == sentinel` but still want the safety of using `>=` in non-debug modes.
-    /// Likewise `x > sentinel` is substituted for `x == 1 + sentinel`.
-    /// This is only meant to be used when in the above cases! Nothing else.
-    pub inline fn sentinelCmp(x: anytype, comptime b: enum { @">=", @">", @"<", @"<=" }, sentinel: anytype) bool {
+    /// In debug mode, this function assumes that each sentinel is matched exactly.
+    pub inline fn sentinelCmp(x: anytype, sentinels_start: anytype, comptime sentinel: u8) bool {
         return if (Environment.isDebug)
-            x + @boolToInt(.@"<" == b) == sentinel + @boolToInt(.@">" == b)
-        else switch (b) {
-            .@">=" => x >= sentinel,
-            .@"<=" => x <= sentinel,
-            .@">" => x > sentinel,
-            .@"<" => x < sentinel,
-        };
+            x == sentinels_start + comptime std.mem.indexOf(u8, &SENTINELS, &[1]u8{sentinel}).?
+        else
+            x >= sentinels_start;
     }
 
-    /// Force the naive implementation. Useful for branches that should be extremely rare or impossible.
+    /// Force the naive implementation. Use for branches that should be extremely rare or impossible.
     pub inline fn advanceUntilAnyNaive(cur: *[]const u8, comptime chars_: []const u8, comptime advance_over_current: bool) !void {
         return advanceUntilAnyInternal(cur, chars_, advance_over_current, .naive);
     }
@@ -3724,8 +3714,8 @@ pub const Yarn = struct {
 
     inline fn advanceUntilAnyInternal(cur: *[]const u8, comptime chars_: []const u8, comptime advance_over_current: bool, impl: @TypeOf(ADVANCE_IMPL)) !void {
         comptime std.debug.assert(chars_.len > 0);
-        comptime var chars = chars_;
-        const SHOULD_ERROR_ON_BACKSLASH = comptime std.mem.indexOfAny(u8, chars, "\"") != null;
+        const check_for_backslash = comptime std.mem.indexOfAny(u8, chars_, "\"") != null;
+        const chars = comptime if (check_for_backslash) chars_ ++ "\\" else chars_;
 
         // check at comptime to make sure this is safe
         comptime if (std.mem.indexOfAny(u8, &SENTINELS, chars) == null)
@@ -3733,10 +3723,6 @@ pub const Yarn = struct {
                 "Not guaranteed to terminate! Please place {s} at the end of `SENTINELS`.",
                 .{if (chars.len > 1) std.fmt.comptimePrint("one of [{s}]", .{chars}) else chars},
             ));
-
-        if (SHOULD_ERROR_ON_BACKSLASH) {
-            chars = chars ++ "\\";
-        }
 
         if (impl != .naive and advance_over_current) cur.* = cur.*[1..];
         const width = ADVANCE_WIDTH;
@@ -3789,7 +3775,7 @@ pub const Yarn = struct {
             },
         }
 
-        if (SHOULD_ERROR_ON_BACKSLASH and cur.*[0] == '\\') {
+        if (check_for_backslash and cur.*[0] == '\\') {
             return error.@"Found escape character in a quoted string in yarn.lock";
         }
     }
@@ -3820,13 +3806,15 @@ pub const Yarn = struct {
     // We could do that, but I doubt anyone cares. Just error.
     // Btw the yarn parser doesn't handle stacked escapes properly.
     // https://github.com/yarnpkg/yarn/blob/158d96dce95313d9a00218302631cd263877d164/src/lockfile/parse.js#L101
-    fn parseYarnFile(this: *Lockfile, allocator: Allocator, file_buffer: []u8, equals_sentinel: usize) !void {
+    fn parseYarnFile(this: *Lockfile, allocator: Allocator, file_buffer: []u8, sentinels_start: usize) !void {
         if (over_allocated_space < SENTINELS.len)
             @compileError(std.fmt.comptimePrint("Did not overallocate enough space! Should have overallocated {} bytes for \"{s}\", got {}", .{ SENTINELS.len, SENTINELS, over_allocated_space }));
 
         _ = allocator; // TODO: use errdefer when we start using this?
         // TODO: We *could* allow comments in more places, although there really isn't much point.
         // We try to match headers outside of the regular comment matching facilities for speed
+
+        var current_id: PackageID = 0;
 
         var cur = file_buffer;
 
@@ -3856,40 +3844,61 @@ pub const Yarn = struct {
                 found_newline = true;
             }
 
+            // if we hit the sentinels, this is a valid place to stop.
+            if (sentinelCmp(@ptrToInt(cur.ptr), sentinels_start, '"')) return;
+
+            // Otherwise, start matching dependencies
+            if (!found_newline)
+                return error.@"No newline before dependency name";
+
+            var package: Package = .{};
+            var previous_package_name: ?[]u8 = null;
+
+            var dependency: Dependency = .{};
+
             while (true) {
                 const is_quote = cur[0] == '"';
-                var string_start = cur;
+                cur = cur[@boolToInt(is_quote)..];
+                cur = cur[@boolToInt(cur[0] == '@')..]; // skip @ at the beginning
+                const name_start = cur;
+                try advanceUntilAny(&cur, "@", false); // find the <name>@version
 
-                if (is_quote) {
-                    cur = cur["\"".len..];
-                    string_start = cur;
+                if (sentinelCmp(@ptrToInt(cur.ptr), sentinels_start, '@'))
+                    return error.@"Unable to find package name in yarn.lock";
 
-                    comptime std.debug.assert(2 == std.mem.indexOf(u8, &SENTINELS, "=").? - std.mem.indexOf(u8, &SENTINELS, "\"").?);
-                    // if we hit the equals_sentinel, this is a valid place to stop.
-                    if (sentinelCmp(@ptrToInt(string_start[1..].ptr), .@">=", equals_sentinel)) return;
-                    try advanceUntilAny(&cur, "\"", false);
-                } else switch (cur[0]) {
-                    // yarn matches the first non-quoted character as follows:
-                    // /^[a-zA-Z\/.-]/g.test(input)
-                    // The astute reader may note that the escape char does nothing...
-                    // But it's also not possible to have one of these start with '/', '.', '-'
-                    //  because anything that does not start with [a-zA-Z] gets wrapped in quotes.
-                    'A'...'Z', 'a'...'z' => try advanceUntilAny(&cur, ":,", true),
-                    else => break,
+                const name = name_start[0 .. @ptrToInt(&cur[0]) - @ptrToInt(name_start.ptr)];
+
+                if (previous_package_name) |pkg| {
+                    if (!strings.eql(pkg, name)) return error.@"Package names differ in dependency title";
+                } else {
+                    previous_package_name = name;
+                    package.name = String.init(name, name);
+                    package.name_hash = String.Builder.stringHash(name);
+                    current_id += 1;
+                    package.meta.id = current_id;
                 }
 
-                if (!found_newline)
-                    return error.@"No newline before dependency name";
+                cur = cur[1..]; // skip '@'
+                const version_start = cur;
 
-                // NOTE: we might write dependency_name even if we ran over the file_buffer.
-                // We catch the aforementioned case outside this loop. If this is a problem,
-                // check `if (@ptrToInt(&cur[@as(usize, 1) + @boolToInt(is_quote)]) >= equals_sentinel)`
+                switch (is_quote) {
+                    true => try advanceUntilAny(&cur, "\"", false),
+                    false => try advanceUntilAny(&cur, ":,", false),
+                }
 
-                const dependency_name = string_start[0 .. @ptrToInt(&cur[0]) - @ptrToInt(string_start.ptr)];
+                const version = version_start[0 .. @ptrToInt(&cur[0]) - @ptrToInt(version_start.ptr)];
+                dependency.version.literal = String.init(version, version);
+                dependency.version.tag = Dependency.Version.Tag.infer(version);
+                dependency.name = package.name;
+                dependency.name_hash = package.name_hash;
+                // TODO: Don't know dependency.behavior without package.json?
+                // dependency.behavior.setNormal(true);
 
-                std.debug.print("dependency_name: <{s}>\n", .{dependency_name});
+                // Resolution.value.npm.version;
 
-                comptime std.debug.assert(SENTINELS.len - 1 != std.mem.indexOf(u8, &SENTINELS, "\"").?);
+                // For now, just let it point into the file allocation
+                // "@babel/code-frame@^7.0.0", "@babel/code-frame@^7.12.13", "@babel/code-frame@^7.18.6":
+
                 cur = cur[@boolToInt(is_quote)..]; // if we did hit a sentinel, we are now on the ':' sentinel
 
                 if (cur[0] != ',') break;
@@ -3900,14 +3909,12 @@ pub const Yarn = struct {
                 }
             }
 
-            comptime std.debug.assert(SENTINELS.len - 2 >= std.mem.indexOf(u8, &SENTINELS, ":").?);
-
             if (cur[0] != ':')
                 return error.@"Lacking colon after a dependency name or invalid characters were detected";
 
             cur = cur[1..];
 
-            if (sentinelCmp(@ptrToInt(cur.ptr), .@">=", equals_sentinel))
+            if (sentinelCmp(@ptrToInt(cur.ptr), sentinels_start, '='))
                 return error.@"Found unterminated string or dependency name";
 
             if (!advanceOverSkipInsignificant(&cur, "\n" ++ " " ** 2))
@@ -3960,7 +3967,7 @@ pub const Yarn = struct {
             };
 
             if (advanceOver(&cur, "integrity")) {
-                integrity = try @call(.always_inline, Integrity.yarn_parse, .{ &cur, equals_sentinel });
+                integrity = try @call(.always_inline, Integrity.yarn_parse, .{ &cur, sentinels_start });
                 if (!advanceOverSkipInsignificant(&cur, "\n" ++ " " ** 2)) continue :NEXT_DEPENDENCY;
             }
 
@@ -3987,7 +3994,7 @@ pub const Yarn = struct {
                         } else switch (cur[0]) {
                             'A'...'Z', 'a'...'z' => {
                                 try advanceUntilAny(&cur, " ", true);
-                                if (sentinelCmp(@ptrToInt(cur.ptr), .@">", equals_sentinel))
+                                if (sentinelCmp(@ptrToInt(cur.ptr), sentinels_start, ' '))
                                     return error.@"Missing version for dependency";
                             },
                             else => return error.@"Unexpected dependency character",
@@ -4007,7 +4014,7 @@ pub const Yarn = struct {
                             ver_start = cur;
                             try advanceUntilAny(&cur, "\"", false);
                         } else switch (cur[0]) {
-                            'A'...'Z', 'a'...'z' => try advanceUntilAny(&cur, NEWLINES, true),
+                            'A'...'Z', 'a'...'z' => try advanceUntilAnyNaive(&cur, NEWLINES, true),
                             else => return error.@"Missing version for dependency",
                         }
 
@@ -4066,14 +4073,14 @@ pub const Yarn = struct {
         };
         defer allocator.free(file_buffer);
 
-        inline for (SENTINELS, file_size..) |c, i| file_buffer[i] = c;
-        const equals_sentinel = @ptrToInt(&file_buffer[file_size + comptime std.mem.indexOf(u8, &SENTINELS, "=").?]);
+        const sentinels_start = @ptrToInt(&file_buffer[file_size]);
+        inline for (SENTINELS, file_buffer[file_size..alloc_size]) |sentinel, *cur| cur.* = sentinel;
 
         std.debug.assert(file.readAll(file_buffer[0..file_size]) catch |err| {
             return LoadFromDiskResult{ .err = .{ .step = .read_file, .value = err } };
         } == file_size);
 
-        parseYarnFile(this, allocator, file_buffer, equals_sentinel) catch |err| {
+        parseYarnFile(this, allocator, file_buffer, sentinels_start) catch |err| {
             return LoadFromDiskResult{ .err = .{ .step = .parse_file, .value = err } };
         };
 

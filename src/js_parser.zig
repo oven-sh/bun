@@ -4092,6 +4092,8 @@ fn NewParser_(
         has_classic_runtime_warned: bool = false,
         macro_call_count: MacroCallCountType = 0,
 
+        hoisted_ref_for_sloppy_mode_block_fn: RefRefMap = .{},
+
         /// Used for transforming export default -> module.exports
         has_export_default: bool = false,
 
@@ -5849,6 +5851,44 @@ fn NewParser_(
                         var __scope = scope.parent;
                         if (comptime Environment.allow_assert)
                             assert(__scope != null);
+
+                        var is_sloppy_mode_block_level_fn_stmt = false;
+                        const original_member_ref = value.ref;
+
+                        if (symbol.kind == .hoisted_function) {
+                            // Block-level function declarations behave like "let" in strict mode
+                            if (scope.strict_mode != .sloppy_mode) {
+                                continue;
+                            }
+
+                            // In sloppy mode, block level functions behave like "let" except with
+                            // an assignment to "var", sort of. This code:
+                            //
+                            //   if (x) {
+                            //     f();
+                            //     function f() {}
+                            //   }
+                            //   f();
+                            //
+                            // behaves like this code:
+                            //
+                            //   if (x) {
+                            //     let f2 = function() {}
+                            //     var f = f2;
+                            //     f2();
+                            //   }
+                            //   f();
+                            //
+                            const hoisted_ref = p.newSymbol(.hoisted, symbol.original_name) catch unreachable;
+                            symbols = p.symbols.items;
+                            scope.generated.push(p.allocator, hoisted_ref) catch unreachable;
+                            p.hoisted_ref_for_sloppy_mode_block_fn.put(p.allocator, original_member_ref, hoisted_ref) catch unreachable;
+
+                            res.value_ptr.ref = hoisted_ref;
+                            symbol = &symbols[hoisted_ref.innerIndex()];
+                            is_sloppy_mode_block_level_fn_stmt = true;
+                        }
+
                         const name = symbol.original_name;
 
                         const hash: u64 = Scope.getMemberHash(name);
@@ -5893,29 +5933,31 @@ fn NewParser_(
                                     continue :nextMember;
                                 }
 
-                                // An identifier binding from a catch statement and a function
-                                // declaration can both silently shadow another hoisted symbol
-
                                 // Otherwise if this isn't a catch identifier, it's a collision
                                 if (existing_kind != .catch_identifier and existing_kind != .arguments) {
 
                                     // An identifier binding from a catch statement and a function
                                     // declaration can both silently shadow another hoisted symbol
                                     if (symbol.kind != .catch_identifier and symbol.kind != .hoisted_function) {
-                                        const r = js_lexer.rangeOfIdentifier(p.source, value.loc);
-                                        var notes = allocator.alloc(logger.Data, 1) catch unreachable;
-                                        notes[0] =
-                                            logger.rangeData(
-                                            p.source,
-                                            r,
-                                            std.fmt.allocPrint(
-                                                allocator,
-                                                "{s} was originally declared here",
-                                                .{name},
-                                            ) catch unreachable,
-                                        );
+                                        if (!is_sloppy_mode_block_level_fn_stmt) {
+                                            const r = js_lexer.rangeOfIdentifier(p.source, value.loc);
+                                            var notes = allocator.alloc(logger.Data, 1) catch unreachable;
+                                            notes[0] =
+                                                logger.rangeData(
+                                                p.source,
+                                                r,
+                                                std.fmt.allocPrint(
+                                                    allocator,
+                                                    "{s} was originally declared here",
+                                                    .{name},
+                                                ) catch unreachable,
+                                            );
 
-                                        p.log.addRangeErrorFmtWithNotes(p.source, js_lexer.rangeOfIdentifier(p.source, member_in_scope.loc), allocator, notes, "{s} has already been declared", .{name}) catch unreachable;
+                                            p.log.addRangeErrorFmtWithNotes(p.source, js_lexer.rangeOfIdentifier(p.source, member_in_scope.loc), allocator, notes, "{s} has already been declared", .{name}) catch unreachable;
+                                        } else if (_scope == scope.parent) {
+                                            // Never mind about this, turns out it's not needed after all
+                                            _ = p.hoisted_ref_for_sloppy_mode_block_fn.remove(original_member_ref);
+                                        }
                                         continue :nextMember;
                                     }
 
@@ -10164,6 +10206,11 @@ fn NewParser_(
                         },
                         .replace_with_new => {
                             symbol.link = ref;
+
+                            // If these are both functions, remove the overwritten declaration
+                            if (kind.isFunction() and symbol.kind.isFunction()) {
+                                symbol.remove_overwritten_function_declaration = true;
+                            }
                         },
                         .become_private_get_set_pair => {
                             ref = existing.ref;
@@ -16064,7 +16111,7 @@ fn NewParser_(
             }
 
             var value: Expr = Expr{ .loc = logger.Loc.Empty, .data = Expr.Data{ .e_missing = E.Missing{} } };
-            var any_initializers = false;
+
             for (decls) |decl| {
                 const binding = Binding.toExpr(
                     &decl.binding,
@@ -16072,13 +16119,12 @@ fn NewParser_(
                 );
                 if (decl.value) |decl_value| {
                     value = value.joinWithComma(Expr.assign(binding, decl_value, p.allocator), p.allocator);
-                    any_initializers = true;
                 } else if (mode == .for_in_or_for_of) {
                     value = value.joinWithComma(binding, p.allocator);
                 }
             }
 
-            if (std.meta.activeTag(value.data) == .e_missing or !any_initializers) {
+            if (value.data == .e_missing) {
                 return .{ .ok = true };
             }
 
@@ -17188,6 +17234,10 @@ fn NewParser_(
                             .name_loc = data.func.name.?.loc,
                         }, stmt.loc), p.newExpr(E.Identifier{ .ref = data.func.name.?.ref.? }, data.func.name.?.loc), p.allocator));
                     } else if (!mark_as_dead) {
+                        if (p.symbols.items[data.func.name.?.ref.?.innerIndex()].remove_overwritten_function_declaration) {
+                            return;
+                        }
+
                         stmts.append(stmt.*) catch unreachable;
                     } else if (mark_as_dead) {
                         const name = data.func.name.?.ref.?;
@@ -18723,6 +18773,118 @@ fn NewParser_(
                         break :list_getter &visited;
                     };
                     try p.visitAndAppendStmt(list, stmt);
+                }
+
+                // Transform block-level function declarations into variable declarations
+                if (before.items.len > 0) {
+                    var let_decls = ListManaged(G.Decl).init(p.allocator);
+                    var var_decls = ListManaged(G.Decl).init(p.allocator);
+                    var non_fn_stmts = ListManaged(Stmt).init(p.allocator);
+                    var fn_stmts = std.AutoHashMap(Ref, u32).init(p.allocator);
+
+                    defer {
+                        non_fn_stmts.deinit();
+                        fn_stmts.deinit();
+                    }
+
+                    for (before.items) |stmt| {
+                        switch (stmt.data) {
+                            .s_function => |data| {
+                                // This transformation of function declarations in nested scopes is
+                                // intended to preserve the hoisting semantics of the original code. In
+                                // JavaScript, function hoisting works differently in strict mode vs.
+                                // sloppy mode code. We want the code we generate to use the semantics of
+                                // the original environment, not the generated environment. However, if
+                                // direct "eval" is present then it's not possible to preserve the
+                                // semantics because we need two identifiers to do that and direct "eval"
+                                // means neither identifier can be renamed to something else. So in that
+                                // case we give up and do not preserve the semantics of the original code.
+                                const name_ref = data.func.name.?.ref.?;
+                                if (p.current_scope.contains_direct_eval) {
+                                    if (p.hoisted_ref_for_sloppy_mode_block_fn.get(name_ref)) |hoisted_ref| {
+                                        // Merge the two identifiers back into a single one
+                                        p.symbols.items[hoisted_ref.innerIndex()].link = name_ref;
+                                    }
+                                    non_fn_stmts.append(stmt) catch unreachable;
+                                    continue;
+                                }
+
+                                var gpe = fn_stmts.getOrPut(name_ref) catch unreachable;
+                                var index = gpe.value_ptr.*;
+                                if (!gpe.found_existing) {
+                                    index = @intCast(u32, let_decls.items.len);
+                                    gpe.value_ptr.* = index;
+                                    let_decls.append(.{
+                                        .binding = p.b(B.Identifier{
+                                            .ref = name_ref,
+                                        }, data.func.name.?.loc),
+                                    }) catch unreachable;
+
+                                    // Also write the function to the hoisted sibling symbol if applicable
+                                    if (p.hoisted_ref_for_sloppy_mode_block_fn.get(name_ref)) |hoisted_ref| {
+                                        p.recordUsage(name_ref);
+                                        var_decls.append(.{
+                                            .binding = p.b(
+                                                B.Identifier{ .ref = hoisted_ref },
+                                                data.func.name.?.loc,
+                                            ),
+                                            .value = p.newExpr(
+                                                E.Identifier{
+                                                    .ref = name_ref,
+                                                },
+                                                data.func.name.?.loc,
+                                            ),
+                                        }) catch unreachable;
+                                    }
+                                }
+
+                                // The last function statement for a given symbol wins
+                                data.func.name = null;
+                                let_decls.items[index].value = p.newExpr(
+                                    E.Function{
+                                        .func = data.func,
+                                    },
+                                    stmt.loc,
+                                );
+                            },
+                            else => {
+                                non_fn_stmts.append(stmt) catch unreachable;
+                                continue;
+                            },
+                        }
+                    }
+                    before.items.len = 0;
+
+                    before.ensureUnusedCapacity(@as(usize, @boolToInt(let_decls.items.len > 0)) + @as(usize, @boolToInt(var_decls.items.len > 0)) + non_fn_stmts.items.len) catch unreachable;
+
+                    if (let_decls.items.len > 0) {
+                        before.appendAssumeCapacity(p.s(
+                            S.Local{
+                                .kind = .k_let,
+                                .decls = let_decls.items,
+                            },
+                            let_decls.items[0].value.?.loc,
+                        ));
+                    }
+
+                    if (var_decls.items.len > 0) {
+                        const relocated = p.maybeRelocateVarsToTopLevel(var_decls.items, .normal);
+                        if (relocated.ok) {
+                            if (relocated.stmt) |new| {
+                                before.appendAssumeCapacity(new);
+                            }
+                        } else {
+                            before.appendAssumeCapacity(p.s(
+                                S.Local{
+                                    .kind = .k_var,
+                                    .decls = var_decls.items,
+                                },
+                                var_decls.items[0].value.?.loc,
+                            ));
+                        }
+                    }
+
+                    before.appendSliceAssumeCapacity(non_fn_stmts.items);
                 }
 
                 var visited_count = visited.items.len;

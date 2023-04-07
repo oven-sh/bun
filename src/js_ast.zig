@@ -785,6 +785,8 @@ pub const Symbol = struct {
     /// --- Not actually used yet -----------------------------------------------
     private_symbol_must_be_lowered: bool = false,
 
+    remove_overwritten_function_declaration: bool = false,
+
     /// In debug mode, sometimes its helpful to know what source file
     /// A symbol came from. This is used for that.
     ///

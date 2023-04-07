@@ -620,6 +620,9 @@ declare module "bun" {
     slice(begin?: number, end?: number, contentType?: string): BunFile;
 
     /**
+     *
+     */
+    /**
      * Offset any operation on the file starting at `begin`
      *
      * Similar to [`TypedArray.subarray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/subarray). Does not copy the file, open the file, or modify the file.
@@ -644,6 +647,11 @@ declare module "bun" {
     readonly readable: ReadableStream;
 
     // TODO: writable: WritableStream;
+
+    /**
+     * A UNIX timestamp indicating when the file was last modified.
+     */
+    lastModified: number;
   }
 
   /**

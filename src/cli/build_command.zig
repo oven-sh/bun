@@ -132,7 +132,7 @@ pub const BuildCommand = struct {
                 }
 
                 Output.flush();
-                exitOrWatch(ctx.debug.hot_reload == .watch);
+                exitOrWatch(1, ctx.debug.hot_reload == .watch);
                 unreachable;
             };
 
@@ -223,17 +223,15 @@ pub const BuildCommand = struct {
                 }
             }
             try log.printForLogLevel(Output.errorWriter());
-            exitOrWatch(ctx.debug.hot_reload == .watch);
+            exitOrWatch(0, ctx.debug.hot_reload == .watch);
         }
     }
 };
 
-fn exitOrWatch(watch: bool) void {
+fn exitOrWatch(code: u8, watch: bool) void {
     if (watch) {
         // the watcher thread will exit the process
         std.time.sleep(std.math.maxInt(u64) - 1);
-        Global.exit(1);
-    } else {
-        Global.exit(0);
     }
+    Global.exit(code);
 }

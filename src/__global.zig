@@ -7,7 +7,7 @@ const StringTypes = @import("./string_types.zig");
 const Mimalloc = @import("bun").Mimalloc;
 const bun = @import("bun");
 
-const BASE_VERSION = "0.5";
+const BASE_VERSION = "0.6";
 
 pub const build_id = std.fmt.parseInt(u64, std.mem.trim(u8, @embedFile("./build-id"), "\n \r\t"), 10) catch unreachable;
 pub const package_json_version = if (Environment.isDebug)

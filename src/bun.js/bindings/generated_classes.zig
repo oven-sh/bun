@@ -181,21 +181,16 @@ pub const JSBundler = struct {
             @compileLog("Bundler.finalize is not a finalizer");
         }
 
-        if (@TypeOf(Bundler.scan) != CallbackType)
-            @compileLog("Expected Bundler.scan to be a callback but received " ++ @typeName(@TypeOf(Bundler.scan)));
-        if (@TypeOf(Bundler.scanImports) != CallbackType)
-            @compileLog("Expected Bundler.scanImports to be a callback but received " ++ @typeName(@TypeOf(Bundler.scanImports)));
-        if (@TypeOf(Bundler.transform) != CallbackType)
-            @compileLog("Expected Bundler.transform to be a callback but received " ++ @typeName(@TypeOf(Bundler.transform)));
-        if (@TypeOf(Bundler.transformSync) != CallbackType)
-            @compileLog("Expected Bundler.transformSync to be a callback but received " ++ @typeName(@TypeOf(Bundler.transformSync)));
+        if (@TypeOf(Bundler.handleRequest) != CallbackType)
+            @compileLog("Expected Bundler.handleRequest to be a callback but received " ++ @typeName(@TypeOf(Bundler.handleRequest)));
+        if (@TypeOf(Bundler.write) != CallbackType)
+            @compileLog("Expected Bundler.write to be a callback but received " ++ @typeName(@TypeOf(Bundler.write)));
         if (!JSC.is_bindgen) {
             @export(Bundler.constructor, .{ .name = "BundlerClass__construct" });
             @export(Bundler.finalize, .{ .name = "BundlerClass__finalize" });
-            @export(Bundler.scan, .{ .name = "BundlerPrototype__scan" });
-            @export(Bundler.scanImports, .{ .name = "BundlerPrototype__scanImports" });
-            @export(Bundler.transform, .{ .name = "BundlerPrototype__transform" });
-            @export(Bundler.transformSync, .{ .name = "BundlerPrototype__transformSync" });
+            @export(Bundler.handleRequest, .{ .name = "BundlerPrototype__handleRequest" });
+            @export(Bundler.hasPendingActivity, .{ .name = "Bundler__hasPendingActivity" });
+            @export(Bundler.write, .{ .name = "BundlerPrototype__write" });
         }
     }
 };
@@ -3837,6 +3832,86 @@ pub const JSTimeout = struct {
         }
     }
 };
+pub const JSTranspiler = struct {
+    const Transpiler = Classes.Transpiler;
+    const GetterType = fn (*Transpiler, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*Transpiler, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*Transpiler, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*Transpiler, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*Transpiler, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*Transpiler {
+        JSC.markBinding(@src());
+        return Transpiler__fromJS(value);
+    }
+
+    /// Get the Transpiler constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        return Transpiler__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of Transpiler
+    pub fn toJS(this: *Transpiler, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = Transpiler__create(globalObject, this);
+            std.debug.assert(value__.as(Transpiler).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return Transpiler__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of Transpiler.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*Transpiler) bool {
+        JSC.markBinding(@src());
+        return Transpiler__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *Transpiler, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(Transpiler__dangerouslySetPtr(value, null));
+    }
+
+    extern fn Transpiler__fromJS(JSC.JSValue) ?*Transpiler;
+    extern fn Transpiler__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn Transpiler__create(globalObject: *JSC.JSGlobalObject, ptr: ?*Transpiler) JSC.JSValue;
+
+    extern fn Transpiler__dangerouslySetPtr(JSC.JSValue, ?*Transpiler) bool;
+
+    comptime {
+        if (@TypeOf(Transpiler.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*Transpiler)) {
+            @compileLog("Transpiler.constructor is not a constructor");
+        }
+
+        if (@TypeOf(Transpiler.finalize) != (fn (*Transpiler) callconv(.C) void)) {
+            @compileLog("Transpiler.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(Transpiler.scan) != CallbackType)
+            @compileLog("Expected Transpiler.scan to be a callback but received " ++ @typeName(@TypeOf(Transpiler.scan)));
+        if (@TypeOf(Transpiler.scanImports) != CallbackType)
+            @compileLog("Expected Transpiler.scanImports to be a callback but received " ++ @typeName(@TypeOf(Transpiler.scanImports)));
+        if (@TypeOf(Transpiler.transform) != CallbackType)
+            @compileLog("Expected Transpiler.transform to be a callback but received " ++ @typeName(@TypeOf(Transpiler.transform)));
+        if (@TypeOf(Transpiler.transformSync) != CallbackType)
+            @compileLog("Expected Transpiler.transformSync to be a callback but received " ++ @typeName(@TypeOf(Transpiler.transformSync)));
+        if (!JSC.is_bindgen) {
+            @export(Transpiler.constructor, .{ .name = "TranspilerClass__construct" });
+            @export(Transpiler.finalize, .{ .name = "TranspilerClass__finalize" });
+            @export(Transpiler.scan, .{ .name = "TranspilerPrototype__scan" });
+            @export(Transpiler.scanImports, .{ .name = "TranspilerPrototype__scanImports" });
+            @export(Transpiler.transform, .{ .name = "TranspilerPrototype__transform" });
+            @export(Transpiler.transformSync, .{ .name = "TranspilerPrototype__transformSync" });
+        }
+    }
+};
 
 comptime {
     _ = JSBlob;
@@ -3866,4 +3941,5 @@ comptime {
     _ = JSTLSSocket;
     _ = JSTextDecoder;
     _ = JSTimeout;
+    _ = JSTranspiler;
 }

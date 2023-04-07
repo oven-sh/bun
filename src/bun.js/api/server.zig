@@ -4935,4 +4935,11 @@ pub const SSLServer = NewServer(true, false);
 pub const DebugServer = NewServer(false, true);
 pub const DebugSSLServer = NewServer(true, true);
 
+pub const AnyServer = union(enum) {
+    Server: *Server,
+    SSLServer: *SSLServer,
+    DebugServer: *DebugServer,
+    DebugSSLServer: *DebugSSLServer,
+};
+
 const welcome_page_html_gz = @embedFile("welcome-page.html.gz");

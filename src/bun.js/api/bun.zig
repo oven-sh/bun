@@ -71,7 +71,8 @@ const VM = @import("bun").JSC.VM;
 const JSFunction = @import("bun").JSC.JSFunction;
 const Config = @import("../config.zig");
 const URL = @import("../../url.zig").URL;
-const Transpiler = bun.JSC.API.JSBundler;
+const Transpiler = bun.JSC.API.JSTranspiler;
+const JSBundler = bun.JSC.API.JSBundler;
 const VirtualMachine = JSC.VirtualMachine;
 const IOTask = JSC.IOTask;
 const zlib = @import("../../zlib.zig");
@@ -1317,7 +1318,7 @@ pub const Class = NewClass(
             .get = enableANSIColors,
         },
         .Transpiler = .{
-            .get = getBundlerConstructor,
+            .get = getTranspilerConstructor,
         },
         .Bundler = .{
             .get = getBundlerConstructor,
@@ -2349,7 +2350,17 @@ pub fn getBundlerConstructor(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    return JSC.API.Bundler.getConstructor(ctx).asObjectRef();
+    return JSC.API.JSBundler.getConstructor(ctx).asObjectRef();
+}
+
+pub fn getTranspilerConstructor(
+    _: void,
+    ctx: js.JSContextRef,
+    _: js.JSValueRef,
+    _: js.JSStringRef,
+    _: js.ExceptionRef,
+) js.JSValueRef {
+    return JSC.API.JSTranspiler.getConstructor(ctx).asObjectRef();
 }
 
 pub fn getFileSystemRouter(

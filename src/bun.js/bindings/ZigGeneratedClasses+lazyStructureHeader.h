@@ -160,3 +160,9 @@ JSC::Structure* JSTimeoutStructure() { return m_JSTimeout.getInitializedOnMainTh
   JSC::LazyClassStructure m_JSTimeout;
   bool hasJSTimeoutSetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_JSTimeoutSetterValue;
+JSC::Structure* JSTranspilerStructure() { return m_JSTranspiler.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSTranspilerConstructor() { return m_JSTranspiler.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSTranspilerPrototype() { return m_JSTranspiler.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSTranspiler;
+  bool hasJSTranspilerSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSTranspilerSetterValue;

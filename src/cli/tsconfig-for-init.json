@@ -3,18 +3,21 @@
     "lib": [
       "ESNext"
     ],
-    "module": "esnext",
-    "target": "esnext",
+    "target": "ESNext",
+    "module": "ESNext",
     "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "moduleDetection": "force",
     "strict": true,
     "downlevelIteration": true,
     "skipLibCheck": true,
     "jsx": "react-jsx",
+    "allowImportingTsExtensions": true,
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
     "allowJs": true,
     "types": [
-      "bun-types" // add Bun global
+      "bun-types"
     ]
   }
 }

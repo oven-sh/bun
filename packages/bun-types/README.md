@@ -1,4 +1,4 @@
-# Bun TypeScript type definitions
+# TypeScript types for Bun
 
 <p align="center">
   <a href="https://bun.sh"><img src="https://bun.sh/logo@2x.png" alt="Logo"></a>
@@ -21,10 +21,10 @@ Add this to your `tsconfig.json` or `jsconfig.json`:
 
 ```jsonc-diff
   {
-    "compilerOptions": {
-      // ...
-+     "types": ["bun-types"]
-    }
+    
++   "extends": ["bun-types"],
+    
+    // other options...
   }
 ```
 
@@ -32,20 +32,14 @@ Add this to your `tsconfig.json` or `jsconfig.json`:
 
 `bun-types` is generated via [./bundle.ts](./scripts/bundle.ts).
 
-## Adding a new file
+To add a new file, add it under `packages/bun-types`. Then add a [triple-slash directive](https://www.typescriptlang.org/docs/handbook/triple-slash-directives.html) pointing to it inside [./index.d.ts](./index.d.ts).
 
-1. Add it to [./index.d.ts](./index.d.ts)
+```diff
++ /// <reference path="./newfile.d.ts" />
+```
 
-## How to generate types.d.ts
-
-[`./bundle.ts`](./bundle.ts) merges the types in this folder into a single file.
-
-To run it:
+[`./bundle.ts`](./bundle.ts) merges the types in this folder into a single file. To run it:
 
 ```bash
 bun build
 ```
-
-# Generated docs
-
-**[📚 See here for docs](https://oven-sh.github.io/bun-types/)**

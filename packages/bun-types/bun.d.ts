@@ -741,6 +741,26 @@ declare module "bun" {
     strict?: boolean,
   ): boolean;
 
+  /**
+   * tsconfig.json options supported by Bun
+   */
+  interface TSConfig {
+    extends?: string;
+    compilerOptions?: {
+      paths?: Record<string, string[]>;
+      baseUrl?: string;
+      /** "preserve" is not supported yet */
+      jsx?: "preserve" | "react" | "react-jsx" | "react-jsxdev" | "react-native";
+      jsxFactory?: string;
+      jsxFragmentFactory?: string;
+      jsxImportSource?: string;
+      useDefineForClassFields?: boolean;
+      importsNotUsedAsValues?: "remove" | "preserve" | "error";
+      /** moduleSuffixes is not supported yet */
+      moduleSuffixes?: any;
+    };
+  }
+
   export interface TranspilerOptions {
     /**
      * Replace key with value. Value must be a JSON string.
@@ -763,7 +783,7 @@ declare module "bun" {
      *  Use this to set a custom JSX factory, fragment, or import source
      *  For example, if you want to use Preact instead of React. Or if you want to use Emotion.
      */
-    tsconfig?: string;
+    tsconfig?: string | TSConfig;
 
     /**
      *    Replace an import statement with a macro.

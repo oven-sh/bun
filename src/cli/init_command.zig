@@ -282,6 +282,22 @@ pub const InitCommand = struct {
                 break :brk true;
             };
 
+            const needs_typescript_dependency = brk: {
+                if (fields.object.get("devDependencies")) |deps| {
+                    if (deps.hasAnyPropertyNamed(&.{"typescript"})) {
+                        break :brk false;
+                    }
+                }
+
+                if (fields.object.get("peerDependencies")) |deps| {
+                    if (deps.hasAnyPropertyNamed(&.{"typescript"})) {
+                        break :brk false;
+                    }
+                }
+
+                break :brk true;
+            };
+
             if (needs_dev_dependencies) {
                 var dev_dependencies = fields.object.get("devDependencies") orelse js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, logger.Loc.Empty);
                 const version = comptime brk: {
@@ -291,8 +307,13 @@ pub const InitCommand = struct {
                 };
 
                 try dev_dependencies.data.e_object.putString(alloc, "bun-types", comptime std.fmt.comptimePrint("^{any}", .{version.fmt("")}));
-                try dev_dependencies.data.e_object.putString(alloc, "typescript", "^5.0.0");
                 try fields.object.put(alloc, "devDependencies", dev_dependencies);
+            }
+
+            if (needs_typescript_dependency) {
+                var peer_dependencies = fields.object.get("peer_dependencies") orelse js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, logger.Loc.Empty);
+                try peer_dependencies.data.e_object.putString(alloc, "typescript", "^5.0.0");
+                try fields.object.put(alloc, "peerDependencies", peer_dependencies);
             }
         }
 

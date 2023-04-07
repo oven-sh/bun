@@ -1,7 +1,7 @@
 import { expect, it, describe } from "bun:test";
 
-describe("Bun.Bundler", () => {
-  const transpiler = new Bun.Bundler({
+describe("Bun.Transpiler", () => {
+  const transpiler = new Bun.Transpiler({
     loader: "tsx",
     define: {
       "process.env.NODE_ENV": JSON.stringify("development"),
@@ -345,7 +345,7 @@ export default class {
   });
 
   describe("exports.replace", () => {
-    const transpiler = new Bun.Bundler({
+    const transpiler = new Bun.Transpiler({
       exports: {
         replace: {
           // export var foo = function() { }
@@ -454,7 +454,7 @@ export default class {
     });
   });
 
-  const bunTranspiler = new Bun.Bundler({
+  const bunTranspiler = new Bun.Transpiler({
     loader: "tsx",
     define: {
       "process.env.NODE_ENV": JSON.stringify("development"),
@@ -506,7 +506,7 @@ export default class {
   `;
 
   it("jsxFactory (two level)", () => {
-    var bun = new Bun.Bundler({
+    var bun = new Bun.Transpiler({
       loader: "jsx",
       allowBunRuntime: false,
       tsconfig: JSON.stringify({
@@ -531,7 +531,7 @@ export default <>hi</>
   });
 
   it("jsxFactory (one level)", () => {
-    var bun = new Bun.Bundler({
+    var bun = new Bun.Transpiler({
       loader: "jsx",
       allowBunRuntime: false,
       tsconfig: JSON.stringify({
@@ -555,7 +555,7 @@ export default <>hi</>
   });
 
   it("JSX", () => {
-    var bun = new Bun.Bundler({
+    var bun = new Bun.Transpiler({
       loader: "jsx",
       define: {
         "process.env.NODE_ENV": JSON.stringify("development"),
@@ -659,7 +659,7 @@ export default <>hi</>
   });
 
   describe("inline JSX", () => {
-    const inliner = new Bun.Bundler({
+    const inliner = new Bun.Transpiler({
       loader: "tsx",
       define: {
         "process.env.NODE_ENV": JSON.stringify("production"),
@@ -739,12 +739,12 @@ export var ComponentThatHasSpreadCausesDeopt = $jsx(Hello, {
   });
 
   it("require with a dynamic non-string expression", () => {
-    var nodeTranspiler = new Bun.Bundler({ platform: "node" });
+    var nodeTranspiler = new Bun.Transpiler({ platform: "node" });
     expect(nodeTranspiler.transformSync("require('hi' + bar)")).toBe('require("hi" + bar);\n');
   });
 
   it("CommonJS", () => {
-    var nodeTranspiler = new Bun.Bundler({ platform: "node" });
+    var nodeTranspiler = new Bun.Transpiler({ platform: "node" });
     expect(nodeTranspiler.transformSync("module.require('hi' + 123)")).toBe('require("hi" + 123);\n');
 
     expect(nodeTranspiler.transformSync("module.require(1 ? 'foo' : 'bar')")).toBe('require("foo");\n');
@@ -1151,7 +1151,7 @@ console.log(resolve.length)
 
     describe("Browsers", () => {
       it('require.resolve("my-module") -> "/resolved/my-module"', () => {
-        // the module resolver & linker doesn't run with Bun.Bundler
+        // the module resolver & linker doesn't run with Bun.Transpiler
         // so in this test, it becomes the same path string
         expectPrinted_(`export const foo = require.resolve('my-module')`, `export const foo = "my-module"`);
       });
@@ -1540,7 +1540,7 @@ class Foo {
     });
 
     it("const inlining", () => {
-      var transpiler = new Bun.Bundler({
+      var transpiler = new Bun.Transpiler({
         inline: true,
         platform: "bun",
         allowBunRuntime: false,
@@ -1633,7 +1633,7 @@ console.log(foo, array);
     });
 
     it("constant folding scopes", () => {
-      var transpiler = new Bun.Bundler({
+      var transpiler = new Bun.Transpiler({
         inline: true,
         platform: "bun",
         allowBunRuntime: false,
@@ -1681,7 +1681,7 @@ console.log(foo, array);
     });
 
     it("substitution", () => {
-      var transpiler = new Bun.Bundler({
+      var transpiler = new Bun.Transpiler({
         inline: true,
         platform: "bun",
         allowBunRuntime: false,

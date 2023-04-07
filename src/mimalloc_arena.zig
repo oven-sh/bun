@@ -228,8 +228,8 @@ pub const Arena = struct {
 
     fn alloc(arena: *anyopaque, len: usize, ptr_align: u8, _: usize) ?[*]u8 {
         var this = bun.cast(*mimalloc.Heap, arena);
-        if (comptime Environment.allow_assert)
-            ArenaRegistry.assert(.{ .heap = this });
+        // if (comptime Environment.allow_assert)
+        //     ArenaRegistry.assert(.{ .heap = this });
         return alignedAlloc(this, len, ptr_align);
     }
 

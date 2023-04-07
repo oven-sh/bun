@@ -857,13 +857,13 @@ pub const ImportScanner = struct {
 
                             // Make sure the printer prints this as a property access
                             var symbol: *Symbol = &p.symbols.items[name_ref.innerIndex()];
-
-                            symbol.namespace_alias = G.NamespaceAlias{
-                                .namespace_ref = namespace_ref,
-                                .alias = item.alias,
-                                .import_record_index = st.import_record_index,
-                                .was_originally_property_access = st.star_name_loc != null and existing_items.contains(symbol.original_name),
-                            };
+                            if (record.contains_import_star or st.star_name_loc != null)
+                                symbol.namespace_alias = G.NamespaceAlias{
+                                    .namespace_ref = namespace_ref,
+                                    .alias = item.alias,
+                                    .import_record_index = st.import_record_index,
+                                    .was_originally_property_access = st.star_name_loc != null and existing_items.contains(symbol.original_name),
+                                };
                         }
 
                         if (record.was_originally_require) {

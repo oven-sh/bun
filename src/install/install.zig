@@ -4261,6 +4261,8 @@ pub const PackageManager = struct {
             String.Builder.stringHash("turbo"),
             String.Builder.stringHash("bun"),
             String.Builder.stringHash("rome"),
+            String.Builder.stringHash("zig"),
+            String.Builder.stringHash("@oven-sh/zig"),
         };
 
         pub const LogLevel = enum {

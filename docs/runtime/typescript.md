@@ -4,8 +4,14 @@ Bun treats TypeScript as a first-class citizen.
 
 Bun can directly execute `.ts` and `.tsx` files just like vanilla JavaScript, with no extra configuration. If you import a `.ts` or `.tsx` file (or an `npm` module that exports these files), Bun internally transpiles it into JavaScript then executes the file.
 
-{% callout %}
 **Note** — Similar to other build tools, Bun does not typecheck the files. Use [`tsc --noEmit`](https://www.typescriptlang.org/docs/handbook/compiler-options.html) (the official TypeScript CLI) if you're looking to catch static type errors.
+
+{% callout %}
+
+**Is transpiling still necessary?** — Because Bun can directly execute TypeScript, you may not need to transpile your TypeScript to run in production. Bun internally transpiles every file it executes (both `.js` and `.ts`), so the additional overhead of directly executing your `.ts/.tsx` source files is negligible.
+
+That said, if you are using Bun as a development tool but still targeting Node.js or browsers in production, you'll still need to transpile.
+
 {% /callout %}
 
 ## Configuring `tsconfig.json`
@@ -16,7 +22,7 @@ Bun supports a number of features that TypeScript doesn't support by default, su
 If you initialized your project with `bun init`, everything is already configured properly.
 {% /callout %}
 
-To get started, install the `bun-types` package.
+To get started, install the `bun-types` package. If you initialized your project with `bun init`, everything is already configured properly.
 
 ```sh
 $ bun add -d bun-types # dev dependency

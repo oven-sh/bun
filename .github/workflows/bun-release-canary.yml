@@ -39,6 +39,7 @@ jobs:
   npm:
     name: Release to NPM
     runs-on: ubuntu-latest
+    needs: sign
     defaults:
       run:
         working-directory: packages/bun-release
@@ -144,3 +145,31 @@ jobs:
           labels: ${{ steps.metadata.outputs.labels }}
           build-args: |
             BUN_VERSION=canary
+  s3:
+    name: Upload to S3
+    runs-on: ubuntu-latest
+    needs: sign
+    defaults:
+      run:
+        working-directory: packages/bun-release
+    steps:
+      - id: checkout
+        name: Checkout
+        uses: actions/checkout@v3
+      - id: setup-bun
+        name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: canary
+      - id: bun-install
+        name: Install Dependencies
+        run: bun install
+      - id: bun-run
+        name: Release
+        run: bun upload-s3 -- canary
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AWS_KEY_ID: ${{ secrets.AWS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY}}
+          AWS_BUCKET: ${{ secrets.AWS_BUCKET }}
+          AWS_ENDPOINT: ${{ secrets.AWS_ENDPOINT }}

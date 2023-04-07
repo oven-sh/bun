@@ -34,12 +34,7 @@ $ zigup master
 After cloning the repository, prepare bun to be built:
 
 ```bash
-# without --depth=1 this will take 20+ minutes on 1gbps internet
-# mostly due to WebKit
-$ git submodule update --init --recursive --progress --depth=1 --checkout
-$ bun install
-$ make vendor generate-builtins identifier-cache
-$ make bindings -j$(nproc)
+$ make setup
 ```
 
 Then to build Bun:

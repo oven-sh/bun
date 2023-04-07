@@ -77,6 +77,9 @@ ZIG ?= $(shell which zig || echo -e "error: Missing zig. Please make sure zig is
 REAL_CC = $(shell which clang-15 || which clang)
 REAL_CXX = $(shell which clang++-15 || which clang++)
 
+# Linked here so the C++ extension always has the exact compiler.
+$(shell ln -s $(REAL_CXX) .vscode/clang++ 2>/dev/null)
+
 CC = $(REAL_CC)
 CXX = $(REAL_CXX)
 CCACHE_CC_OR_CC := $(REAL_CC)
@@ -675,7 +678,7 @@ require:
 	@echo "You have the dependencies installed! Woo"
 
 init-submodules:
-	git submodule update --init --recursive --progress --depth=1
+	git submodule update --init --recursive --progress --depth=1 --checkout
 
 .PHONY: build-obj
 build-obj:
@@ -1844,3 +1847,15 @@ vendor: require init-submodules vendor-without-check
 
 .PHONY: bun
 bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local
+
+.PHONY: setup
+setup: require
+	make init-submodules
+	cd test && $(NPM_CLIENT) install --production
+	cd packages/bun-types && $(NPM_CLIENT) install --production
+	make vendor-without-check builtins identifier-cache clean-bindings
+	make bindings -j$(CPU_COUNT)
+	@echo ""
+	@echo "Development environment setup complete"
+	@echo "Run \`make dev\` to build \`bun-debug\`"
+	@echo ""

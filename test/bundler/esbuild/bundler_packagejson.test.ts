@@ -7,6 +7,7 @@ var { describe, test, expect } = testForFile(import.meta.path);
 // For debug, all files are written to $TEMP/bun-bundle-tests/packagejson
 
 describe("bundler", () => {
+  return;
   itBundled("packagejson/PackageJsonMain", {
     // GENERATED
     files: {

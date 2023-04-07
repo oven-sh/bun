@@ -3,7 +3,7 @@
  * must be unique across the all tests. See `BundlerTestInput` for all available options.
  *
  * All bundle entry files and their output files are written to disk at:
- * `$TEMP/bun-bundler-tests/{id}`.
+ * `$TEMP/bun-build-tests/{run_id}/{id}`
  * This can be used to inspect and debug bundles, as they are not deleted after runtime.
  *
  * In addition to comparing the bundle outputs against snapshots, most of our test cases run the
@@ -37,22 +37,22 @@ export function testForFile(file: string): BunTestExports {
   return testFile;
 }
 
-/** Use `esbuild` instead of `bun bun` */
+/** Use `esbuild` instead of `bun build` */
 const ESBUILD = process.env.BUN_BUNDLER_TEST_USE_ESBUILD;
 /** Write extra files to disk and log extra info. */
 const DEBUG = process.env.BUN_BUNDLER_TEST_DEBUG;
 /** Set this to the id of a bundle test to run just that test */
 const FILTER = process.env.BUN_BUNDLER_TEST_FILTER;
-/** Path to the bun bundler. TODO: Once bundler is merged, we should remove the `bun-debug` fallback. */
-const BUN_EXE = process.env.BUN_EXE ?? Bun.which("bun-debug") ?? bunExe();
+/** Path to the bun. TODO: Once bundler is merged, we should remove the `bun-debug` fallback. */
+const BUN_EXE = (process.env.BUN_EXE && Bun.which(process.env.BUN_EXE)) ?? Bun.which("bun-debug") ?? bunExe();
 
-const outBaseTemplate = path.join(tmpdir(), "bun-bundler-tests", `${ESBUILD ? "esbuild" : "bun"}-`);
+const outBaseTemplate = path.join(tmpdir(), "bun-build-tests", `${ESBUILD ? "esbuild" : "bun"}-`);
 if (!existsSync(path.dirname(outBaseTemplate))) mkdirSync(path.dirname(outBaseTemplate), { recursive: true });
 const outBase = mkdtempSync(outBaseTemplate);
 const testsRan = new Set();
 
 if (ESBUILD) {
-  console.warn("NOTE: using esbuild for bun bundler tests");
+  console.warn("NOTE: using esbuild for bun build tests");
 }
 
 export interface BundlerTestInput {
@@ -76,7 +76,6 @@ export interface BundlerTestInput {
   alias?: Record<string, string>;
   assetNames?: string;
   banner?: string;
-  customOutputExtension?: string;
   define?: Record<string, string | number>;
   entryNames?: string;
   extensionOrder?: string[];
@@ -162,6 +161,8 @@ export interface BundlerTestEventAPI {
   appendFile(file: string, contents: string): void;
   expectFile(file: string): Expect;
   assertFileExists(file: string): void;
+  warnings: Record<string, { file: string; error: string; line?: string; col?: string }[]>;
+  options: BundlerTestInput;
 }
 
 export interface BundlerTestRunOptions {
@@ -219,10 +220,11 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     platform,
     run,
     runtimeFiles,
-    unsupportedJSFeatures,
-    unsupportedCSSFeatures,
     skipOnEsbuild,
     sourceMap,
+    splitting,
+    unsupportedCSSFeatures,
+    unsupportedJSFeatures,
     ...unknownProps
   } = opts;
 
@@ -248,22 +250,22 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
   const useOutFile = outfile ? true : outdir ? false : entryPoints.length === 1;
 
   if (!ESBUILD && jsx.automaticRuntime) {
-    throw new Error("jsx.automaticRuntime not implemented in bun bun");
+    throw new Error("jsx.automaticRuntime not implemented in bun build");
   }
   if (!ESBUILD && format !== "esm") {
-    throw new Error("formats besides esm not implemented in bun bun");
+    throw new Error("formats besides esm not implemented in bun build");
   }
   if (!ESBUILD && metafile) {
-    throw new Error("metafile not implemented in bun bun");
+    throw new Error("metafile not implemented in bun build");
   }
   if (!ESBUILD && legalComments) {
-    throw new Error("legalComments not implemented in bun bun");
+    throw new Error("legalComments not implemented in bun build");
   }
   if (!ESBUILD && unsupportedJSFeatures && unsupportedJSFeatures.length) {
-    throw new Error("unsupportedJSFeatures not implemented in bun bun");
+    throw new Error("unsupportedJSFeatures not implemented in bun build");
   }
   if (!ESBUILD && unsupportedCSSFeatures && unsupportedCSSFeatures.length) {
-    throw new Error("unsupportedCSSFeatures not implemented in bun bun");
+    throw new Error("unsupportedCSSFeatures not implemented in bun build");
   }
   if (host === "windows") {
     throw new Error('"host: windows" is not implemented in expectBundled');
@@ -310,13 +312,13 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     writeFileSync(filename, dedent(contents).replace(/\{\{root\}\}/g, root));
   }
 
-  // Run bun bun cli. In the future we can move to using `Bun.Bundler`
+  // Run bun build cli. In the future we can move to using `Bun.Bundler`
   const cmd = (
     !ESBUILD
       ? [
           ...(process.env.BUN_DEBUGGER ? ["lldb-server", "g:1234", "--"] : []),
           BUN_EXE,
-          "bun",
+          "build",
           ...entryPaths,
           ...(entryPointsRaw ?? []),
           outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
@@ -337,6 +339,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
           entryNames && entryNames !== "[name].[ext]" && [`--entry-names`, entryNames],
           // `--format=${format}`,
           // legalComments && `--legal-comments=${legalComments}`,
+          splitting && `--splitting`,
         ]
       : [
           Bun.which("esbuild"),
@@ -360,6 +363,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
           sourceMap && `--sourcemap${sourceMap !== true ? `=${sourceMap}` : ""}`,
           banner && `--banner:js=${banner}`,
           legalComments && `--legal-comments=${legalComments}`,
+          splitting && `--splitting`,
           [...(unsupportedJSFeatures ?? []), ...(unsupportedCSSFeatures ?? [])].map(x => `--supported:${x}=false`),
           ...entryPaths,
           ...(entryPointsRaw ?? []),
@@ -423,7 +427,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
         if (!source) {
           return { error, file: "<bun>" };
         }
-        const [_str2, fullFilename, line, col] = source.match(/bun-bundler-tests\/(.*):(\d+):(\d+)/)!;
+        const [_str2, fullFilename, line, col] = source.match(/bun-build-tests\/(.*):(\d+):(\d+)/)!;
         const file = fullFilename.slice(id.length);
         return { error, file, line, col };
       });
@@ -488,26 +492,26 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
   }
 
   // Check for warnings
+  let warningReference: Record<string, { file: string; error: string; line?: string; col?: string }[]> = {};
   if (!ESBUILD) {
     const warningRegex = /^warn: (.*?)\n.*?\n\s*\^\s*\n(.*?)\n/gms;
     const allWarnings = [...stderr!.toString("utf-8").matchAll(warningRegex)].map(([_str1, error, source]) => {
-      const [_str2, fullFilename, line, col] = source.match(/bun-bundler-tests\/(.*):(\d+):(\d+)/)!;
-      const file = fullFilename.slice(id.length);
+      const [_str2, fullFilename, line, col] = source.match(/bun-build-tests\/(.*):(\d+):(\d+)/)!;
+      const file = fullFilename.slice(id.length + path.basename(outBase).length + 1);
       return { error, file, line, col };
     });
     const expectedWarnings = bundleWarnings
       ? Object.entries(bundleWarnings).flatMap(([file, v]) => v.map(error => ({ file, error })))
       : null;
 
+    for (const err of allWarnings) {
+      warningReference[err.file] ??= [];
+      warningReference[err.file].push(err);
+    }
     if (DEBUG && allWarnings.length) {
       console.log("REFERENCE WARNINGS OBJECT");
       console.log("bundleWarnings: {");
-      const files: any = {};
-      for (const err of allWarnings) {
-        files[err.file] ??= [];
-        files[err.file].push(err);
-      }
-      for (const [file, errs] of Object.entries(files)) {
+      for (const [file, errs] of Object.entries(warningReference)) {
         console.log('  "' + file + '": [');
         for (const err of errs as any) {
           console.log("    `" + err.error + "`");
@@ -599,6 +603,8 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
           throw new Error("Expected file to be written: " + file);
         }
       },
+      warnings: warningReference,
+      options: opts,
     });
   }
 
@@ -711,6 +717,10 @@ export function itBundled(id: string, opts: BundlerTestInput) {
 
   it(id, () => expectBundled(id, opts));
 }
+itBundled.skip = (id: string, opts: BundlerTestInput) => {
+  const { it } = testForFile(callerSourceOrigin());
+  return it.skip(id, () => expectBundled(id, opts));
+};
 
 /** version of test that applies filtering */
 export function bundlerTest(id: string, cb: () => void) {
@@ -722,7 +732,6 @@ export function bundlerTest(id: string, cb: () => void) {
 }
 bundlerTest.skip = (id: string, cb: any) => {
   const { it } = testForFile(callerSourceOrigin());
-
   return it.skip(id, cb);
 };
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 rm __snapshots__ -rf
 clear
-printf "bun bun test helper cli: $@"
+printf "bun build test helper cli: $@"
 printf "\n\n"
 export BUN_BUNDLER_TEST_DEBUG=1
 if [ -n "$1" ]; then

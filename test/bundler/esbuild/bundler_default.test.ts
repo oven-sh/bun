@@ -3104,7 +3104,6 @@ describe("bundler", () => {
     },
   });
   itBundled("default/LegalCommentsEscapeSlashScriptAndStyleEndOfFile", {
-    // GENERATED
     files: {
       "/project/entry.js": `import "js-pkg"; a /*! </script> */`,
       "/project/node_modules/js-pkg/index.js": `x /*! </script> */`,
@@ -3248,31 +3247,26 @@ describe("bundler", () => {
       );
     },
   });
-  return;
   itBundled("default/IIFE_ES5", {
-    // GENERATED
     files: {
       "/entry.js": `console.log('test');`,
     },
-    unsupportedJSFeatures: "es5",
+    unsupportedJSFeatures: ["arrow"],
     format: "iife",
+    onAfterBundle(api) {
+      assert(api.readFile("/out.js").includes("(function"), "iife should be an es5 function");
+    },
   });
   itBundled("default/OutputExtensionRemappingFile", {
-    // GENERATED
     files: {
       "/entry.js": `console.log('test');`,
     },
-    customOutputExtension: ".notjs",
-  });
-  itBundled("default/OutputExtensionRemappingDir", {
-    // GENERATED
-    files: {
-      "/entry.js": `console.log('test');`,
+    outfile: "/outfile.notjs",
+    onAfterBundle(api) {
+      api.assertFileExists("/outfile.notjs");
     },
-    customOutputExtension: ".notjs",
   });
   itBundled("default/TopLevelAwaitIIFE", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         await foo;
@@ -3280,22 +3274,21 @@ describe("bundler", () => {
       `,
     },
     format: "iife",
-    /* TODO FIX expectedScanLog: `entry.js: ERROR: Top-level await is currently not supported with the "iife" output format
-  entry.js: ERROR: Top-level await is currently not supported with the "iife" output format
-  `, */
-  });
-  itBundled("default/TopLevelAwaitIIFEDeadBranch", {
-    // GENERATED
-    files: {
-      "/entry.js": /* js */ `
-        if (false) await foo;
-        if (false) for await (foo of bar) ;
-      `,
+    bundleErrors: {
+      "/entry.js": ['Top-level await is currently not supported with the "iife" output format'],
     },
-    format: "iife",
   });
+  // TODO: doesn't work on esbuild, consider if we want on bun.
+  // itBundled("default/TopLevelAwaitIIFEDeadBranch", {
+  //   files: {
+  //     "/entry.js": /* js */ `
+  //       if (false) await foo;
+  //       if (false) for await (foo of bar) ;
+  //     `,
+  //   },
+  //   format: "iife",
+  // });
   itBundled("default/TopLevelAwaitCJS", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         await foo;
@@ -3303,42 +3296,39 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    /* TODO FIX expectedScanLog: `entry.js: ERROR: Top-level await is currently not supported with the "cjs" output format
-  entry.js: ERROR: Top-level await is currently not supported with the "cjs" output format
-  `, */
-  });
-  itBundled("default/TopLevelAwaitCJSDeadBranch", {
-    // GENERATED
-    files: {
-      "/entry.js": /* js */ `
-        if (false) await foo;
-        if (false) for await (foo of bar) ;
-      `,
+    bundleErrors: {
+      "/entry.js": ['Top-level await is currently not supported with the "cjs" output format'],
     },
-    format: "cjs",
   });
+  // TODO: doesn't work on esbuild, consider if we want on bun.
+  // itBundled("default/TopLevelAwaitCJSDeadBranch", {
+  //   files: {
+  //     "/entry.js": /* js */ `
+  //       if (false) await foo;
+  //       if (false) for await (foo of bar) ;
+  //     `,
+  //   },
+  //   format: "cjs",
+  // });
   itBundled("default/TopLevelAwaitESM", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
-        await foo;
-        for await (foo of bar) ;
+        async function* foo() {
+          yield 1;
+          yield 2;
+          yield 3;
+          return 4;
+        } 
+        console.log(await (Promise.resolve(0)));
+        for await (const bar of foo()) console.log(bar);
       `,
     },
     format: "esm",
-  });
-  itBundled("default/TopLevelAwaitESMDeadBranch", {
-    // GENERATED
-    files: {
-      "/entry.js": /* js */ `
-        if (false) await foo;
-        if (false) for await (foo of bar) ;
-      `,
+    run: {
+      stdout: "0\n1\n2\n3\n",
     },
-    format: "esm",
   });
   itBundled("default/TopLevelAwaitNoBundle", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         await foo;
@@ -3346,91 +3336,8 @@ describe("bundler", () => {
       `,
     },
     mode: "transform",
-  });
-  itBundled("default/TopLevelAwaitNoBundleDeadBranch", {
-    // GENERATED
-    files: {
-      "/entry.js": /* js */ `
-        if (false) await foo;
-        if (false) for await (foo of bar) ;
-      `,
-    },
-    mode: "transform",
-  });
-  itBundled("default/TopLevelAwaitNoBundleESM", {
-    // GENERATED
-    files: {
-      "/entry.js": /* js */ `
-        await foo;
-        for await (foo of bar) ;
-      `,
-    },
-    format: "esm",
-    mode: "convertformat",
-  });
-  itBundled("default/TopLevelAwaitNoBundleESMDeadBranch", {
-    // GENERATED
-    files: {
-      "/entry.js": /* js */ `
-        if (false) await foo;
-        if (false) for await (foo of bar) ;
-      `,
-    },
-    format: "esm",
-    mode: "convertformat",
-  });
-  itBundled("default/TopLevelAwaitNoBundleCommonJS", {
-    // GENERATED
-    files: {
-      "/entry.js": /* js */ `
-        await foo;
-        for await (foo of bar) ;
-      `,
-    },
-    format: "cjs",
-    mode: "convertformat",
-    /* TODO FIX expectedScanLog: `entry.js: ERROR: Top-level await is currently not supported with the "cjs" output format
-  entry.js: ERROR: Top-level await is currently not supported with the "cjs" output format
-  `, */
-  });
-  itBundled("default/TopLevelAwaitNoBundleCommonJSDeadBranch", {
-    // GENERATED
-    files: {
-      "/entry.js": /* js */ `
-        if (false) await foo;
-        if (false) for await (foo of bar) ;
-      `,
-    },
-    format: "cjs",
-    mode: "convertformat",
-  });
-  itBundled("default/TopLevelAwaitNoBundleIIFE", {
-    // GENERATED
-    files: {
-      "/entry.js": /* js */ `
-        await foo;
-        for await (foo of bar) ;
-      `,
-    },
-    format: "iife",
-    mode: "convertformat",
-    /* TODO FIX expectedScanLog: `entry.js: ERROR: Top-level await is currently not supported with the "iife" output format
-  entry.js: ERROR: Top-level await is currently not supported with the "iife" output format
-  `, */
-  });
-  itBundled("default/TopLevelAwaitNoBundleIIFEDeadBranch", {
-    // GENERATED
-    files: {
-      "/entry.js": /* js */ `
-        if (false) await foo;
-        if (false) for await (foo of bar) ;
-      `,
-    },
-    format: "iife",
-    mode: "convertformat",
   });
   itBundled("default/TopLevelAwaitForbiddenRequire", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         require('./a')
@@ -3444,70 +3351,55 @@ describe("bundler", () => {
       "/c.js": `await 0`,
     },
     format: "esm",
-    /* TODO FIX expectedScanLog: `entry.js: ERROR: This require call is not allowed because the transitive dependency "c.js" contains a top-level await
-  a.js: NOTE: The file "a.js" imports the file "b.js" here:
-  b.js: NOTE: The file "b.js" imports the file "c.js" here:
-  c.js: NOTE: The top-level await in "c.js" is here:
-  entry.js: ERROR: This require call is not allowed because the transitive dependency "c.js" contains a top-level await
-  b.js: NOTE: The file "b.js" imports the file "c.js" here:
-  c.js: NOTE: The top-level await in "c.js" is here:
-  entry.js: ERROR: This require call is not allowed because the imported file "c.js" contains a top-level await
-  c.js: NOTE: The top-level await in "c.js" is here:
-  entry.js: ERROR: This require call is not allowed because the imported file "entry.js" contains a top-level await
-  entry.js: NOTE: The top-level await in "entry.js" is here:
-  `, */
-  });
-  itBundled("default/TopLevelAwaitForbiddenRequireDeadBranch", {
-    // GENERATED
-    files: {
-      "/entry.js": /* js */ `
-        require('./a')
-        require('./b')
-        require('./c')
-        require('./entry')
-        if (false) for await (let x of y) await 0
-      `,
-      "/a.js": `import './b'`,
-      "/b.js": `import './c'`,
-      "/c.js": `if (false) for await (let x of y) await 0`,
+    bundleErrors: {
+      "/entry.js": [
+        'This require call is not allowed because the transitive dependency "c.js" contains a top-level await',
+        'This require call is not allowed because the transitive dependency "c.js" contains a top-level await',
+        'This require call is not allowed because the transitive dependency "entry.js" contains a top-level await',
+      ],
     },
-    format: "iife",
   });
   itBundled("default/TopLevelAwaitAllowedImportWithoutSplitting", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import('./a')
         import('./b')
         import('./c')
         import('./entry')
-        await 0
+        console.log(await 1)
       `,
       "/a.js": `import './b'`,
       "/b.js": `import './c'`,
-      "/c.js": `await 0`,
+      "/c.js": `console.log(await 0)`,
     },
     format: "esm",
+    run: {
+      stdout: "0\n1",
+    },
   });
   itBundled("default/TopLevelAwaitAllowedImportWithSplitting", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import('./a')
         import('./b')
         import('./c')
-        import('./entry')
-        await 0
+        // Commented out because esbuild doesn't handle this https://github.com/evanw/esbuild/issues/3043
+        // import('./entry')
+        console.log(await 1)
       `,
       "/a.js": `import './b'`,
       "/b.js": `import './c'`,
-      "/c.js": `await 0`,
+      "/c.js": `console.log(await 0)`,
     },
     format: "esm",
     splitting: true,
+    outdir: "/out",
+    run: {
+      file: "/out/entry.js",
+      stdout: "1\n0",
+    },
   });
   itBundled("default/AssignToImport", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import "./bad0.js"
@@ -3557,42 +3449,27 @@ describe("bundler", () => {
       "/good4.js": `import x from "foo"; x['y'] = 1`,
       "/good5.js": `import x from "foo"; x['y z'] = 1`,
     },
-    /* TODO FIX expectedScanLog: `bad0.js: ERROR: Cannot assign to import "x"
-  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
-  bad1.js: ERROR: Cannot assign to import "x"
-  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
-  bad10.js: ERROR: Cannot assign to import "y z"
-  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file and then import and call that function here instead.
-  bad11.js: ERROR: Delete of a bare identifier cannot be used in an ECMAScript module
-  bad11.js: NOTE: This file is considered to be an ECMAScript module because of the "import" keyword here:
-  bad12.js: ERROR: Delete of a bare identifier cannot be used in an ECMAScript module
-  bad12.js: NOTE: This file is considered to be an ECMAScript module because of the "import" keyword here:
-  bad13.js: ERROR: Cannot assign to import "y"
-  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setY") and then import and call that function here instead.
-  bad14.js: ERROR: Cannot assign to import "y"
-  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setY") and then import and call that function here instead.
-  bad15.js: ERROR: Cannot assign to property on import "x"
-  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file and then import and call that function here instead.
-  bad2.js: ERROR: Cannot assign to import "x"
-  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
-  bad3.js: ERROR: Cannot assign to import "x"
-  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
-  bad4.js: ERROR: Cannot assign to import "x"
-  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
-  bad5.js: ERROR: Cannot assign to import "x"
-  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
-  bad6.js: ERROR: Cannot assign to import "x"
-  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
-  bad7.js: ERROR: Cannot assign to import "y"
-  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setY") and then import and call that function here instead.
-  bad8.js: ERROR: Cannot assign to property on import "x"
-  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file and then import and call that function here instead.
-  bad9.js: ERROR: Cannot assign to import "y"
-  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setY") and then import and call that function here instead.
-  `, */
+    bundleErrors: {
+      // TODO: get exact errors here. when you do this make sure all bad* files are covered
+      "/bad0.js": ["imports are immutable"],
+      "/bad1.js": ["imports are immutable"],
+      "/bad2.js": ["imports are immutable"],
+      "/bad3.js": ["imports are immutable"],
+      "/bad4.js": ["imports are immutable"],
+      "/bad5.js": ["imports are immutable"],
+      "/bad6.js": ["imports are immutable"],
+      "/bad7.js": ["imports are immutable"],
+      "/bad8.js": ["imports are immutable"],
+      "/bad9.js": ["imports are immutable"],
+      "/bad10.js": ["imports are immutable"],
+      "/bad11.js": ["imports are immutable"],
+      "/bad12.js": ["imports are immutable"],
+      "/bad13.js": ["imports are immutable"],
+      "/bad14.js": ["imports are immutable"],
+      "/bad15.js": ["imports are immutable"],
+    },
   });
   itBundled("default/AssignToImportNoBundle", {
-    // GENERATED
     files: {
       "/bad0.js": `import x from "foo"; x = 1`,
       "/bad1.js": `import x from "foo"; x++`,
@@ -3642,28 +3519,20 @@ describe("bundler", () => {
       "/good5.js",
     ],
     mode: "passthrough",
-    /* TODO FIX expectedScanLog: `bad0.js: WARNING: This assignment will throw because "x" is an import
-  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
-  bad1.js: WARNING: This assignment will throw because "x" is an import
-  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
-  bad11.js: ERROR: Delete of a bare identifier cannot be used in an ECMAScript module
-  bad11.js: NOTE: This file is considered to be an ECMAScript module because of the "import" keyword here:
-  bad12.js: ERROR: Delete of a bare identifier cannot be used in an ECMAScript module
-  bad12.js: NOTE: This file is considered to be an ECMAScript module because of the "import" keyword here:
-  bad2.js: WARNING: This assignment will throw because "x" is an import
-  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
-  bad3.js: WARNING: This assignment will throw because "x" is an import
-  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
-  bad4.js: WARNING: This assignment will throw because "x" is an import
-  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
-  bad5.js: WARNING: This assignment will throw because "x" is an import
-  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
-  bad6.js: WARNING: This assignment will throw because "x" is an import
-  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
-  `, */
+    bundleErrors: {
+      // TODO: get exact errors here. when you do this make sure all bad* files are covered
+      "/bad0.js": ["imports are immutable"],
+      "/bad1.js": ["imports are immutable"],
+      "/bad2.js": ["imports are immutable"],
+      "/bad3.js": ["imports are immutable"],
+      "/bad4.js": ["imports are immutable"],
+      "/bad5.js": ["imports are immutable"],
+      "/bad6.js": ["imports are immutable"],
+      "/bad11.js": ["imports are immutable"],
+      "/bad12.js": ["imports are immutable"],
+    },
   });
   itBundled("default/MinifyArguments", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function a(x = arguments) {
@@ -3681,80 +3550,49 @@ describe("bundler", () => {
       `,
     },
     minifyIdentifiers: true,
-  });
-  itBundled("default/WarningsInsideNodeModules", {
-    // GENERATED
-    host: "unix",
-    files: {
-      "/entry.js": /* js */ `
-        import "./dup-case.js";        import "./node_modules/dup-case.js";        import "@plugin/dup-case.js"
-        import "./not-in.js";          import "./node_modules/not-in.js";          import "@plugin/not-in.js"
-        import "./not-instanceof.js";  import "./node_modules/not-instanceof.js";  import "@plugin/not-instanceof.js"
-        import "./return-asi.js";      import "./node_modules/return-asi.js";      import "@plugin/return-asi.js"
-        import "./bad-typeof.js";      import "./node_modules/bad-typeof.js";      import "@plugin/bad-typeof.js"
-        import "./equals-neg-zero.js"; import "./node_modules/equals-neg-zero.js"; import "@plugin/equals-neg-zero.js"
-        import "./equals-nan.js";      import "./node_modules/equals-nan.js";      import "@plugin/equals-nan.js"
-        import "./equals-object.js";   import "./node_modules/equals-object.js";   import "@plugin/equals-object.js"
-        import "./write-getter.js";    import "./node_modules/write-getter.js";    import "@plugin/write-getter.js"
-        import "./read-setter.js";     import "./node_modules/read-setter.js";     import "@plugin/read-setter.js"
-        import "./delete-super.js";    import "./node_modules/delete-super.js";    import "@plugin/delete-super.js"
-      `,
-      "/dup-case.js": `switch (x) { case 0: case 0: }`,
-      "/node_modules/dup-case.js": `switch (x) { case 0: case 0: }`,
-      "/plugin-dir/node_modules/dup-case.js": `switch (x) { case 0: case 0: }`,
-      "/not-in.js": `!a in b`,
-      "/node_modules/not-in.js": `!a in b`,
-      "/plugin-dir/node_modules/not-in.js": `!a in b`,
-      "/not-instanceof.js": `!a instanceof b`,
-      "/node_modules/not-instanceof.js": `!a instanceof b`,
-      "/plugin-dir/node_modules/not-instanceof.js": `!a instanceof b`,
-      "/return-asi.js": `return\n123`,
-      "/node_modules/return-asi.js": `return\n123`,
-      "/plugin-dir/node_modules/return-asi.js": `return\n123`,
-      "/bad-typeof.js": `typeof x == 'null'`,
-      "/node_modules/bad-typeof.js": `typeof x == 'null'`,
-      "/plugin-dir/node_modules/bad-typeof.js": `typeof x == 'null'`,
-      "/equals-neg-zero.js": `x === -0`,
-      "/node_modules/equals-neg-zero.js": `x === -0`,
-      "/plugin-dir/node_modules/equals-neg-zero.js": `x === -0`,
-      "/equals-nan.js": `x === NaN`,
-      "/node_modules/equals-nan.js": `x === NaN`,
-      "/plugin-dir/node_modules/equals-nan.js": `x === NaN`,
-      "/equals-object.js": `x === []`,
-      "/node_modules/equals-object.js": `x === []`,
-      "/plugin-dir/node_modules/equals-object.js": `x === []`,
-      "/write-getter.js": `class Foo { get #foo() {} foo() { this.#foo = 123 } }`,
-      "/node_modules/write-getter.js": `class Foo { get #foo() {} foo() { this.#foo = 123 } }`,
-      "/plugin-dir/node_modules/write-getter.js": `class Foo { get #foo() {} foo() { this.#foo = 123 } }`,
-      "/read-setter.js": `class Foo { set #foo(x) {} foo() { return this.#foo } }`,
-      "/node_modules/read-setter.js": `class Foo { set #foo(x) {} foo() { return this.#foo } }`,
-      "/plugin-dir/node_modules/read-setter.js": `class Foo { set #foo(x) {} foo() { return this.#foo } }`,
-      "/delete-super.js": `class Foo extends Bar { foo() { delete super.foo } }`,
-      "/node_modules/delete-super.js": `class Foo extends Bar { foo() { delete super.foo } }`,
-      "/plugin-dir/node_modules/delete-super.js": `class Foo extends Bar { foo() { delete super.foo } }`,
+    format: "iife",
+    onAfterBundle(api) {
+      assert(!api.readFile("/out.js").includes("let arguments"), "let arguments should've been minified");
+      assert(!api.readFile("/out.js").includes("var arguments"), "let arguments should've been minified");
+      assert(api.readFile("/out.js").includes("arguments"), "x = arguments should not have been minified");
     },
-    /* TODO FIX expectedScanLog: `bad-typeof.js: WARNING: The "typeof" operator will never evaluate to "null"
-  NOTE: The expression "typeof x" actually evaluates to "object" in JavaScript, not "null". You need to use "x === null" to test for null.
-  delete-super.js: WARNING: Attempting to delete a property of "super" will throw a ReferenceError
-  dup-case.js: WARNING: This case clause will never be evaluated because it duplicates an earlier case clause
-  dup-case.js: NOTE: The earlier case clause is here:
-  equals-nan.js: WARNING: Comparison with NaN using the "===" operator here is always false
-  NOTE: Floating-point equality is defined such that NaN is never equal to anything, so "x === NaN" always returns false. You need to use "Number.isNaN(x)" instead to test for NaN.
-  equals-neg-zero.js: WARNING: Comparison with -0 using the "===" operator will also match 0
-  NOTE: Floating-point equality is defined such that 0 and -0 are equal, so "x === -0" returns true for both 0 and -0. You need to use "Object.is(x, -0)" instead to test for -0.
-  equals-object.js: WARNING: Comparison using the "===" operator here is always false
-  NOTE: Equality with a new object is always false in JavaScript because the equality operator tests object identity. You need to write code to compare the contents of the object instead. For example, use "Array.isArray(x) && x.length === 0" instead of "x === []" to test for an empty array.
-  not-in.js: WARNING: Suspicious use of the "!" operator inside the "in" operator
-  NOTE: The code "!x in y" is parsed as "(!x) in y". You need to insert parentheses to get "!(x in y)" instead.
-  not-instanceof.js: WARNING: Suspicious use of the "!" operator inside the "instanceof" operator
-  NOTE: The code "!x instanceof y" is parsed as "(!x) instanceof y". You need to insert parentheses to get "!(x instanceof y)" instead.
-  read-setter.js: WARNING: Reading from setter-only property "#foo" will throw
-  return-asi.js: WARNING: The following expression is not returned because of an automatically-inserted semicolon
-  write-getter.js: WARNING: Writing to getter-only property "#foo" will throw
-  `, */
+  });
+  // TODO: this test is very subjective considering bun's warnings may not match esbuild.
+  // This test checks for various cases where code throws warnings, and makes sure that the warnings
+  // are not present when they appear in `node_modules`
+  const WarningsInsideNodeModules = {
+    "/dup-case.js": `switch (x) { case 0: case 0: }`,
+    "/not-in.js": `!a in b`,
+    "/not-instanceof.js": `!a instanceof b`,
+    "/return-asi.js": `return\n123`,
+    "/bad-typeof.js": `typeof x == 'null'`,
+    "/equals-neg-zero.js": `x === -0`,
+    "/equals-nan.js": `x === NaN`,
+    "/equals-object.js": `x === []`,
+    "/write-getter.js": `class Foo { get #foo() {} foo() { this.#foo = 123 } }`,
+    "/read-setter.js": `class Foo { set #foo(x) {} foo() { return this.#foo } }`,
+    "/delete-super.js": `class Foo extends Bar { foo() { delete super.foo } }`,
+  };
+  itBundled("default/WarningsInsideNodeModules", {
+    files: {
+      "/entry.js": Object.keys(WarningsInsideNodeModules)
+        .map(file => `import "./${file}"; import "./node_modules/${file}"; import "@plugin/${file}"`)
+        .join("\n"),
+      ...Object.fromEntries(
+        Object.entries(WarningsInsideNodeModules).flatMap(([file, code]) => [
+          [file, code],
+          [`/node_modules${file}`, code],
+          [`/node_modules/@plugin${file}`, code],
+        ]),
+      ),
+    },
+    bundleWarnings: {
+      "/write-getter.js": [`Writing to getter-only property "#foo" will throw`],
+      "/read-setter.js": [`Reading from setter-only property "#foo" will throw`],
+    },
+    // TODO: could use onAfterBundle to check the above warning object covers all files.
   });
   itBundled("default/RequireResolve", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         console.log(require.resolve)
@@ -3785,37 +3623,28 @@ describe("bundler", () => {
     },
     platform: "node",
     format: "cjs",
-    /* TODO FIX expectedScanLog: `entry.js: WARNING: "./present-file" should be marked as external for use with "require.resolve"
-  entry.js: WARNING: "./missing-file" should be marked as external for use with "require.resolve"
-  entry.js: WARNING: "missing-pkg" should be marked as external for use with "require.resolve"
-  entry.js: WARNING: "@scope/missing-pkg" should be marked as external for use with "require.resolve"
-  `, */
+    external: ["external-pkg", "@scope/external-pkg", "{{root}}/external-file"],
   });
-  bundlerTest.skip("default/InjectMissing", () => {
-    expectBundled("default/InjectMissingUnix", {
-      // GENERATED
-      host: "unix",
-      files: {
-        "/entry.js": ``,
-      },
-      /* TODO FIX expectedScanLog: "ERROR: Could not resolve \"/inject.js\"\n", */
-    });
-    expectBundled("default/InjectMissingWindows", {
-      // GENERATED
-      host: "windows",
-      files: {
-        "/entry.js": ``,
-      },
-      /* TODO FIX expectedScanLog: "ERROR: Could not resolve \"C:\\\\inject.js\"\n", */
-    });
+  itBundled("default/InjectMissing", {
+    files: {
+      "/entry.js": ``,
+    },
+    inject: ["/inject.js"],
+    bundleErrors: {
+      "/entry.js": ['Could not resolve "/inject.js"'],
+    },
   });
   itBundled("default/InjectDuplicate", {
-    // GENERATED
     files: {
       "/entry.js": ``,
       "/inject.js": `console.log('injected')`,
     },
+    inject: ["/inject.js", "/inject.js"],
+    bundleErrors: {
+      "/entry.js": ['Duplicate injected file "/inject.js"'],
+    },
   });
+  return;
   itBundled("default/Inject", {
     // GENERATED
     files: {

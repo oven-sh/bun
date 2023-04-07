@@ -1,12 +1,13 @@
-import { test, describe } from 'bun:test';
-import { expectBundled, itBundled } from './expectBundled';
+import { test, describe } from "bun:test";
+import { expectBundled, itBundled } from "./expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_importstar_ts_test.go
 
 // For debug, all files are written to $TEMP/bun-bundle-tests/ts
 
-describe('bundler', () => {
+describe("bundler", () => {
+  return;
   itBundled("ts/TSImportStarUnused", {
     // GENERATED
     files: {

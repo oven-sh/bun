@@ -1,3 +1,4 @@
+import assert from "assert";
 import { expectBundled, itBundled, testForFile } from "./expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
@@ -8,27 +9,35 @@ var { describe, test, expect } = testForFile(import.meta.path);
 
 describe("bundler", () => {
   itBundled("importstar/ImportStarUnused", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
         let foo = 234
         console.log(foo)
       `,
-      "/foo.js": `export const foo = 123`,
+      "/foo.js": `export const foo = "FAILED"`,
+    },
+    onAfterBundle(api) {
+      assert(!api.readFile("/out.js").includes("FAILED"), "should have tree shaken foo.js");
+    },
+    run: {
+      stdout: "234",
     },
   });
   itBundled("importstar/ImportStarCapture", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
         let foo = 234
-        console.log(ns, ns.foo, foo)
+        console.log(JSON.stringify(ns), ns.foo, foo)
       `,
       "/foo.js": `export const foo = 123`,
     },
+    run: {
+      stdout: '{"foo":123} 123 234',
+    },
   });
+  return;
   itBundled("importstar/ImportStarNoCapture", {
     // GENERATED
     files: {

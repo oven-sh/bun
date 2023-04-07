@@ -7,9 +7,7 @@ var { describe, test, expect } = testForFile(import.meta.path);
 // For debug, all files are written to $TEMP/bun-bundle-tests/splitting
 
 describe("bundler", () => {
-  return;
   itBundled("splitting/SplittingSharedES6IntoES6", {
-    // GENERATED
     files: {
       "/a.js": /* js */ `
         import {foo} from "./shared.js"
@@ -24,7 +22,16 @@ describe("bundler", () => {
     entryPoints: ["/a.js", "/b.js"],
     splitting: true,
     format: "esm",
+    run: [
+      { file: "/out/a.js", stdout: "123" },
+      { file: "/out/b.js", stdout: "123" },
+    ],
+    assertNotPresent: {
+      "/out/a.js": "123",
+      "/out/b.js": "123",
+    },
   });
+  return;
   itBundled("splitting/SplittingSharedCommonJSIntoES6", {
     // GENERATED
     files: {

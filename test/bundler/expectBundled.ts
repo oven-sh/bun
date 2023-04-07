@@ -130,6 +130,11 @@ export interface BundlerTestInput {
    * Checks source code for REMOVE, FAIL, DROP, which will fail the test.
    */
   dce?: boolean;
+  /**
+   * Shorthand for testing splitting cases. Given a list of files, checks that each file doesn't
+   * contain the specified strings. This lets us test that certain values are not bundled.
+   */
+  assertNotPresent?: Record<string, string | string[]>;
 
   /** Used on tests in the esbuild suite that fail and skip. */
   skipOnEsbuild?: boolean;
@@ -182,6 +187,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
   if (FILTER && id !== FILTER) return;
 
   let {
+    assertNotPresent,
     banner,
     bundleErrors,
     bundleWarnings,
@@ -541,6 +547,31 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     }
   }
 
+  const readCache: Record<string, string> = {};
+  const readFile = (file: string) =>
+    readCache[file] || (readCache[file] = readFileSync(path.join(root, file), "utf-8"));
+  const writeFile = (file: string, contents: string) => {
+    readCache[file] = contents;
+    writeFileSync(path.join(root, file), contents);
+  };
+  const api = {
+    root,
+    outfile: outfile!,
+    outdir: outdir!,
+    readFile,
+    writeFile,
+    expectFile: file => expect(readFile(file)),
+    prependFile: (file, contents) => writeFile(file, dedent(contents) + "\n" + readFile(file)),
+    appendFile: (file, contents) => writeFile(file, readFile(file) + "\n" + dedent(contents)),
+    assertFileExists: file => {
+      if (!existsSync(path.join(root, file))) {
+        throw new Error("Expected file to be written: " + file);
+      }
+    },
+    warnings: warningReference,
+    options: opts,
+  } satisfies BundlerTestBundleAPI;
+
   // Check that the bundle failed with status code 0 by verifying all files exist.
   if (outfile) {
     if (!existsSync(outfile)) {
@@ -572,37 +603,26 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     }
   }
 
+  if (assertNotPresent) {
+    for (const [key, value] of Object.entries(assertNotPresent)) {
+      const filepath = path.join(root, key);
+      if (existsSync(filepath)) {
+        const strings = Array.isArray(value) ? value : [value];
+        for (const str of strings) {
+          if (api.readFile(key).includes(str)) throw new Error(`Expected ${key} to not contain "${str}"`);
+        }
+      }
+    }
+  }
+
   // Write runtime files to disk as well as run the post bundle hook.
   for (const [file, contents] of Object.entries(runtimeFiles ?? {})) {
     mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
     writeFileSync(path.join(root, file), dedent(contents).replace(/\{\{root\}\}/g, root));
   }
 
-  const readCache: Record<string, string> = {};
-  const readFile = (file: string) =>
-    readCache[file] || (readCache[file] = readFileSync(path.join(root, file), "utf-8"));
-  const writeFile = (file: string, contents: string) => {
-    readCache[file] = contents;
-    writeFileSync(path.join(root, file), contents);
-  };
   if (onAfterBundle) {
-    onAfterBundle({
-      root,
-      outfile: outfile!,
-      outdir: outdir!,
-      readFile,
-      writeFile,
-      expectFile: file => expect(readFile(file)),
-      prependFile: (file, contents) => writeFile(file, dedent(contents) + "\n" + readFile(file)),
-      appendFile: (file, contents) => writeFile(file, readFile(file) + "\n" + dedent(contents)),
-      assertFileExists: file => {
-        if (!existsSync(path.join(root, file))) {
-          throw new Error("Expected file to be written: " + file);
-        }
-      },
-      warnings: warningReference,
-      options: opts,
-    });
+    onAfterBundle(api);
   }
 
   // Runtime checks!

@@ -484,7 +484,8 @@ PLATFORM_LINKER_FLAGS = $(BUN_CFLAGS) \
 		-static-libgcc \
 		-fno-omit-frame-pointer \
 		-Wl,--compress-debug-sections,zlib \
-		-l:libatomic.a \
+		-Bstatic \
+		-latomic \
 		${STATIC_MUSL_FLAG}  \
 		-Wl,-Bsymbolic-functions \
 		-fno-semantic-interposition \
@@ -1843,4 +1844,3 @@ vendor: require init-submodules vendor-without-check
 
 .PHONY: bun
 bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local
-

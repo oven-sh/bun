@@ -124,7 +124,7 @@ const ProxyTunnel = struct {
             _ = BoringSSL.BIO_set_mem_eof_return(in_bio, -1);
             ssl.setBIO(in_bio, out_bio);
 
-            const hostname = bun.default_allocator.dupeZ(u8, client.url.hostname) catch unreachable;
+            const hostname = bun.default_allocator.dupeZ(u8, client.hostname orelse client.url.hostname) catch unreachable;
             defer bun.default_allocator.free(hostname);
 
             ssl.configureHTTPClient(hostname);
@@ -674,7 +674,7 @@ pub fn onOpen(
     if (comptime is_ssl) {
         var ssl: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, socket.getNativeHandle());
         if (!ssl.isInitFinished()) {
-            var _hostname = client.url.hostname;
+            var _hostname = client.hostname orelse client.url.hostname;
             if (client.http_proxy) |proxy| {
                 _hostname = proxy.hostname;
             }
@@ -1037,8 +1037,8 @@ proxy_tunneling: bool = false,
 proxy_tunnel: ?ProxyTunnel = null,
 aborted: ?*std.atomic.Atomic(bool) = null,
 async_http_id: u32 = 0,
-
-pub fn init(allocator: std.mem.Allocator, method: Method, url: URL, header_entries: Headers.Entries, header_buf: string, signal: ?*std.atomic.Atomic(bool)) HTTPClient {
+hostname: ?[]u8 = null,
+pub fn init(allocator: std.mem.Allocator, method: Method, url: URL, header_entries: Headers.Entries, header_buf: string, signal: ?*std.atomic.Atomic(bool), hostname: ?[]u8) HTTPClient {
     return HTTPClient{
         .allocator = allocator,
         .method = method,
@@ -1046,6 +1046,7 @@ pub fn init(allocator: std.mem.Allocator, method: Method, url: URL, header_entri
         .header_entries = header_entries,
         .header_buf = header_buf,
         .aborted = signal,
+        .hostname = hostname,
     };
 }
 
@@ -1261,10 +1262,11 @@ pub const AsyncHTTP = struct {
         callback: HTTPClientResult.Callback,
         http_proxy: ?URL,
         signal: ?*std.atomic.Atomic(bool),
+        hostname: ?[]u8,
     ) AsyncHTTP {
         var this = AsyncHTTP{ .allocator = allocator, .url = url, .method = method, .request_headers = headers, .request_header_buf = headers_buf, .request_body = request_body, .response_buffer = response_buffer, .completion_callback = callback, .http_proxy = http_proxy, .async_http_id = if (signal != null) async_http_id.fetchAdd(1, .Monotonic) else 0 };
 
-        this.client = HTTPClient.init(allocator, method, url, headers, headers_buf, signal);
+        this.client = HTTPClient.init(allocator, method, url, headers, headers_buf, signal, hostname);
         this.client.async_http_id = this.async_http_id;
         this.client.timeout = timeout;
         this.client.http_proxy = this.http_proxy;
@@ -1334,8 +1336,8 @@ pub const AsyncHTTP = struct {
         return this;
     }
 
-    pub fn initSync(allocator: std.mem.Allocator, method: Method, url: URL, headers: Headers.Entries, headers_buf: string, response_buffer: *MutableString, request_body: []const u8, timeout: usize, http_proxy: ?URL) AsyncHTTP {
-        return @This().init(allocator, method, url, headers, headers_buf, response_buffer, request_body, timeout, undefined, http_proxy, null);
+    pub fn initSync(allocator: std.mem.Allocator, method: Method, url: URL, headers: Headers.Entries, headers_buf: string, response_buffer: *MutableString, request_body: []const u8, timeout: usize, http_proxy: ?URL, hostname: ?[]u8) AsyncHTTP {
+        return @This().init(allocator, method, url, headers, headers_buf, response_buffer, request_body, timeout, undefined, http_proxy, null, hostname);
     }
 
     fn reset(this: *AsyncHTTP) !void {

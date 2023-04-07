@@ -3062,6 +3062,10 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("coerceToInt64", .{ this, globalThis });
     }
 
+    pub fn getIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSValue {
+        return JSC.JSObject.getIndex(this, globalThis, i);
+    }
+
     const PropertyIteratorFn = *const fn (
         globalObject_: *JSGlobalObject,
         ctx_ptr: ?*anyopaque,
@@ -3797,6 +3801,10 @@ pub const JSValue = enum(JSValueReprInt) {
     /// To handle exceptions, use `JSValue.toSliceOrNull`.
     pub inline fn toSlice(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) ZigString.Slice {
         return getZigString(this, global).toSlice(allocator);
+    }
+
+    pub inline fn toSliceZ(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) ZigString.Slice {
+        return getZigString(this, global).toSliceZ(allocator);
     }
 
     // On exception, this returns the empty string.

@@ -1,6 +1,8 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const strings = @import("../string_immutable.zig");
 const Crypto = @import("../sha.zig").Hashers;
+const Yarn = @import("./lockfile.zig").Yarn;
 
 pub const Integrity = extern struct {
     tag: Tag = Tag.unknown,
@@ -95,6 +97,52 @@ pub const Integrity = extern struct {
         };
 
         return Integrity{ .value = out, .tag = tag };
+    }
+
+    /// Matches sha(1|256|384|512) in a manner one could describe as "blazingly fast".
+    /// Returns an Integrity object, and leaves the `cur` object pointing after the last equal sign
+    pub fn yarn_parse(cur: *[]u8, equals_sentinel: usize) !Integrity {
+        if (!Yarn.advanceOver(cur, " sha")) return error.@"Unknown Integrity type";
+        // it would be cool if we made npm use this, but the yarn parser assumes that we overallocate
+        // and place sentinels at the end of the buffer pointed into by `cur`. That means we can avoid
+        // bounds checks.
+
+        // Put this in our instruction cache rather than our data cache, since it is only a u64 :)
+        const matchers = comptime blk: {
+            var data = [4]u16{ @bitCast(u16, [2]u8{ '1', '2' }), @bitCast(u16, [2]u8{ '8', '4' }), @bitCast(u16, [2]u8{ '5', '6' }), @bitCast(u16, [2]u8{ 0, 0 }) };
+
+            if (builtin.target.cpu.arch.endian() == .Big) { // untested, but I think this is right
+                std.mem.reverse(u16, &data);
+            }
+
+            break :blk @bitCast(std.meta.Int(.unsigned, data.len * 16), data);
+        };
+
+        const i = cur.*[0] -% '1';
+        // error for any character that isn't '1', '2', '3', or '5'
+        if (i > 4 or i == 3) return error.@"Unknown Integrity type";
+        const tag = @intToEnum(Integrity.Tag, i + @boolToInt(cur.*[0] != '5'));
+        const matcher = @truncate(u16, matchers >> @intCast(std.math.Log2Int(@TypeOf(matchers)), (4 - @enumToInt(tag)) << 4));
+        comptime std.debug.assert(Yarn.over_allocated_space >= 2);
+        const mismatch = matcher != @bitCast(u16, cur.*[1..3].*);
+        if (i != 0 and mismatch) return error.@"Unknown sha type.";
+        cur.* = cur.*[if (i != 0) 3 else 1..];
+        if (cur.*[0] != '-') return error.@"Missing integrity hash after sha prefix.";
+        cur.* = cur.*[1..];
+
+        const hash_start = cur.*;
+        Yarn.advanceUntilAny(cur, "=", false) catch unreachable;
+
+        if (Yarn.sentinelCmp(@ptrToInt(&cur.*[0]), .@">=", equals_sentinel))
+            return error.@"Found unterminated integrity sha hash";
+
+        var value: [Integrity.digest_buf_len]u8 = undefined;
+        Base64.Decoder.decode(&value, hash_start[0 .. @ptrToInt(&cur.*[0]) - @ptrToInt(hash_start.ptr)]) catch return error.@"Invalid integrity hash";
+        while (true) {
+            cur.* = cur.*[1..]; // skip over '=' characters
+            if (cur.*[0] != '=') break;
+        }
+        return Integrity{ .value = value, .tag = tag };
     }
 
     pub const Tag = enum(u8) {

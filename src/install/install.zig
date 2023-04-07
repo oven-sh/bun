@@ -2766,7 +2766,7 @@ pub const PackageManager = struct {
             .unbuffered_writer = file_writer,
         };
         var writer = buffered_writer.writer();
-        try Lockfile.Printer.Yarn.print(&printer, @TypeOf(writer), writer);
+        try Lockfile.Yarn.print(&printer, @TypeOf(writer), writer);
         try buffered_writer.flush();
 
         _ = C.fchmod(

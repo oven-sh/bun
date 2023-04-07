@@ -18432,7 +18432,9 @@ fn NewParser_(
                             .is_this_nested = true,
                             .is_new_target_allowed = true,
                             .class_name_ref = &shadow_ref,
-                            .should_replace_this_with_class_name_ref = true,
+
+                            // TODO: down transpilation
+                            .should_replace_this_with_class_name_ref = false,
                         };
                         p.pushScopeForVisitPass(.class_static_init, property.class_static_block.?.loc) catch unreachable;
 

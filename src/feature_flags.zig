@@ -123,6 +123,14 @@ pub const react_server_components = true;
 pub const help_catch_memory_issues = @import("bun").Environment.allow_assert;
 
 /// Disabled because we need to handle module scope for CJS better.
+///
+/// The current bugs are:
+/// - We need to handle name collisions in the top-level due to hoisted functions
+///   It breaks when multiple modules bundled together have functions with the
+///   same name at the top-level scope.
+/// - Cyclical requires need to be a de-optimization.
+///
+/// Once fixed, it's a very meaningful bundle size improvement
 pub const commonjs_to_esm = false;
 
 pub const boundary_based_chunking = true;

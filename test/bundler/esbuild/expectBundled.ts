@@ -66,7 +66,7 @@ export interface BundlerTestInput {
   /** These are not path resolved. Used for `default/RelativeEntryPointError` */
   entryPointsRaw?: string[];
   /** Defaults to bundle */
-  mode?: "bundle" | "transform" | "convertformat" | "passthrough";
+  mode?: "bundle" | "transform";
   /** Used for `default/ErrorMessageCrashStdinIssue2913`. */
   stdin?: { contents: string; cwd: string };
   /** Use when doing something weird with entryPoints and you need to check other output paths. */
@@ -225,6 +225,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     splitting,
     unsupportedCSSFeatures,
     unsupportedJSFeatures,
+    dce,
     ...unknownProps
   } = opts;
 
@@ -436,6 +437,10 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
         console.log(stderr!.toString("utf-8"));
       }
 
+      if (stderr!.toString("utf-8").includes("Crash report saved to:")) {
+        throw new Error("Bun crashed during build");
+      }
+
       if (DEBUG && allErrors.length) {
         console.log("REFERENCE ERRORS OBJECT");
         console.log("bundleErrors: {");
@@ -556,6 +561,13 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     if (!existsSync(outfile)) {
       throw new Error("Bundle was not written to disk: " + outfile);
     } else {
+      const content = readFileSync(outfile).toString();
+      if (dce) {
+        const dceFails = [...content.matchAll(/FAIL|FAILED|DROP|REMOVE/g)];
+        if (dceFails.length) {
+          throw new Error("DCE test did not remove all expected code in " + outfile + ".");
+        }
+      }
       if (!ESBUILD) {
         // expect(readFileSync(outfile).toString()).toMatchSnapshot(outfile.slice(root.length));
       }
@@ -631,7 +643,10 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
           file,
           ...(run.args ?? []),
         ] as [string, ...string[]],
-        env: bunEnv,
+        env: {
+          ...bunEnv,
+          FORCE_COLOR: "0",
+        },
         stdio: ["ignore", "pipe", "pipe"],
       });
 

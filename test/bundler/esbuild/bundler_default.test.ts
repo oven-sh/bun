@@ -3518,7 +3518,6 @@ describe("bundler", () => {
       "/good4.js",
       "/good5.js",
     ],
-    mode: "passthrough",
     bundleErrors: {
       // TODO: get exact errors here. when you do this make sure all bad* files are covered
       "/bad0.js": ["imports are immutable"],

@@ -15,11 +15,9 @@ describe("bundler", () => {
         let foo = 234
         console.log(foo)
       `,
-      "/foo.js": `export const foo = "FAILED"`,
+      "/foo.js": `export const foo = "FAIL"`,
     },
-    onAfterBundle(api) {
-      assert(!api.readFile("/out.js").includes("FAILED"), "should have tree shaken foo.js");
-    },
+    dce: true,
     run: {
       stdout: "234",
     },
@@ -37,9 +35,7 @@ describe("bundler", () => {
       stdout: '{"foo":123} 123 234',
     },
   });
-  return;
   itBundled("importstar/ImportStarNoCapture", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -47,25 +43,30 @@ describe("bundler", () => {
         console.log(ns.foo, ns.foo, foo)
       `,
       "/foo.js": `export const foo = 123`,
+    },
+    run: {
+      stdout: "123 123 234",
     },
   });
   itBundled("importstar/ImportStarExportImportStarUnused", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {ns} from './bar'
         let foo = 234
         console.log(foo)
       `,
-      "/foo.js": `export const foo = 123`,
+      "/foo.js": `export const foo = 123; export const bar = "FAILED";`,
       "/bar.js": /* js */ `
         import * as ns from './foo'
         export {ns}
       `,
+    },
+    dce: true,
+    run: {
+      stdout: "234",
     },
   });
   itBundled("importstar/ImportStarExportImportStarNoCapture", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {ns} from './bar'
@@ -77,15 +78,17 @@ describe("bundler", () => {
         import * as ns from './foo'
         export {ns}
       `,
+    },
+    run: {
+      stdout: "123 123 234",
     },
   });
   itBundled("importstar/ImportStarExportImportStarCapture", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {ns} from './bar'
         let foo = 234
-        console.log(ns, ns.foo, foo)
+        console.log(JSON.stringify(ns), ns.foo, foo)
       `,
       "/foo.js": `export const foo = 123`,
       "/bar.js": /* js */ `
@@ -93,21 +96,26 @@ describe("bundler", () => {
         export {ns}
       `,
     },
+    run: {
+      stdout: '{"foo":123} 123 234',
+    },
   });
   itBundled("importstar/ImportStarExportStarAsUnused", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {ns} from './bar'
         let foo = 234
         console.log(foo)
       `,
-      "/foo.js": `export const foo = 123`,
+      "/foo.js": `export const foo = "FAILED"`,
       "/bar.js": `export * as ns from './foo'`,
+    },
+    dce: true,
+    run: {
+      stdout: "234",
     },
   });
   itBundled("importstar/ImportStarExportStarAsNoCapture", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {ns} from './bar'
@@ -116,34 +124,41 @@ describe("bundler", () => {
       `,
       "/foo.js": `export const foo = 123`,
       "/bar.js": `export * as ns from './foo'`,
+    },
+    run: {
+      stdout: "123 123 234",
     },
   });
   itBundled("importstar/ImportStarExportStarAsCapture", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {ns} from './bar'
         let foo = 234
-        console.log(ns, ns.foo, foo)
+        console.log(JSON.stringify(ns), ns.foo, foo)
       `,
       "/foo.js": `export const foo = 123`,
       "/bar.js": `export * as ns from './foo'`,
     },
+    run: {
+      stdout: '{"foo":123} 123 234',
+    },
   });
   itBundled("importstar/ImportStarExportStarUnused", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './bar'
         let foo = 234
         console.log(foo)
       `,
-      "/foo.js": `export const foo = 123`,
+      "/foo.js": `export const foo = "FAILED"`,
       "/bar.js": `export * from './foo'`,
+    },
+    dce: true,
+    run: {
+      stdout: "234",
     },
   });
   itBundled("importstar/ImportStarExportStarNoCapture", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './bar'
@@ -153,21 +168,25 @@ describe("bundler", () => {
       "/foo.js": `export const foo = 123`,
       "/bar.js": `export * from './foo'`,
     },
+    run: {
+      stdout: "123 123 234",
+    },
   });
   itBundled("importstar/ImportStarExportStarCapture", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './bar'
         let foo = 234
-        console.log(ns, ns.foo, foo)
+        console.log(JSON.stringify(ns), ns.foo, foo)
       `,
       "/foo.js": `export const foo = 123`,
       "/bar.js": `export * from './foo'`,
     },
+    run: {
+      stdout: '{"foo":123} 123 234',
+    },
   });
   itBundled("importstar/ImportStarCommonJSUnused", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -176,20 +195,24 @@ describe("bundler", () => {
       `,
       "/foo.js": `exports.foo = 123`,
     },
+    run: {
+      stdout: "234",
+    },
   });
   itBundled("importstar/ImportStarCommonJSCapture", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
         let foo = 234
-        console.log(ns, ns.foo, foo)
+        console.log(JSON.stringify(ns), ns.foo, foo)
       `,
       "/foo.js": `exports.foo = 123`,
     },
+    run: {
+      stdout: '{"default":{"foo":123},"foo":123} 123 234',
+    },
   });
   itBundled("importstar/ImportStarCommonJSNoCapture", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -198,9 +221,11 @@ describe("bundler", () => {
       `,
       "/foo.js": `exports.foo = 123`,
     },
+    run: {
+      stdout: "123 123 234",
+    },
   });
   itBundled("importstar/ImportStarAndCommonJS", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -211,7 +236,6 @@ describe("bundler", () => {
     },
   });
   itBundled("importstar/ImportStarNoBundleUnused", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -220,20 +244,30 @@ describe("bundler", () => {
       `,
     },
     mode: "transform",
+    runtimeFiles: {
+      "/foo.js": `console.log('foo')`,
+    },
+    run: {
+      stdout: "foo\n234",
+    },
   });
   itBundled("importstar/ImportStarNoBundleCapture", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
         let foo = 234
-        console.log(ns, ns.foo, foo)
+        console.log(JSON.stringify(ns), ns.foo, foo)
       `,
     },
     mode: "transform",
+    runtimeFiles: {
+      "/foo.js": `export const foo = 123`,
+    },
+    run: {
+      stdout: '{"foo":123} 123 234',
+    },
   });
   itBundled("importstar/ImportStarNoBundleNoCapture", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -242,9 +276,14 @@ describe("bundler", () => {
       `,
     },
     mode: "transform",
+    runtimeFiles: {
+      "/foo.js": `export const foo = 123`,
+    },
+    run: {
+      stdout: "123 123 234",
+    },
   });
   itBundled("importstar/ImportStarMangleNoBundleUnused", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -254,37 +293,52 @@ describe("bundler", () => {
     },
     minifySyntax: true,
     mode: "transform",
+    runtimeFiles: {
+      "/foo.js": `console.log('foo')`,
+    },
+    run: {
+      stdout: "foo\n234",
+    },
   });
   itBundled("importstar/ImportStarMangleNoBundleCapture", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
         let foo = 234
-        console.log(ns, ns.foo, foo)
+        console.log(JSON.stringify(ns), ns.foo, foo)
       `,
     },
     minifySyntax: true,
     mode: "transform",
+    runtimeFiles: {
+      "/foo.js": `export const foo = 123`,
+    },
+    run: {
+      stdout: '{"foo":123} 123 234',
+    },
   });
   itBundled("importstar/ImportStarMangleNoBundleNoCapture", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
         let foo = 234
-        console.log(ns.foo, ns.foo, foo)
+        console.log(JSON.stringify(ns), ns.foo, foo)
       `,
     },
     minifySyntax: true,
     mode: "transform",
+    runtimeFiles: {
+      "/foo.js": `export const foo = 123`,
+    },
+    run: {
+      stdout: '{"foo":123} 123 234',
+    },
   });
   itBundled("importstar/ImportStarExportStarOmitAmbiguous", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './common'
-        console.log(ns)
+        console.log(JSON.stringify(ns))
       `,
       "/common.js": /* js */ `
         export * from './foo'
@@ -292,16 +346,19 @@ describe("bundler", () => {
       `,
       "/foo.js": /* js */ `
         export const x = 1
-        export const y = 2
+        export const y = "FAILED"
       `,
       "/bar.js": /* js */ `
-        export const y = 3
+        export const y = "FAILED"
         export const z = 4
       `,
     },
+    dce: true,
+    run: {
+      stdout: '{"x":1,"z":4}',
+    },
   });
   itBundled("importstar/ImportExportStarAmbiguousError", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {x, y, z} from './common'
@@ -320,13 +377,11 @@ describe("bundler", () => {
         export const z = 4
       `,
     },
-    /* TODO FIX expectedCompileLog: `entry.js: ERROR: Ambiguous import "y" has multiple matching exports
-  foo.js: NOTE: One matching export is here:
-  bar.js: NOTE: Another matching export is here:
-  `, */
+    bundleErrors: {
+      "/entry.js": ['Ambiguous import "y" has multiple matching exports'],
+    },
   });
-  itBundled("importstar/ImportExportStarAmbiguousWarning", {
-    // GENERATED
+  itBundled("importstar/ImportExportStarAmbiguous", {
     files: {
       "/entry.js": /* js */ `
         import * as ns from './common'
@@ -345,13 +400,14 @@ describe("bundler", () => {
         export const z = 4
       `,
     },
-    /* TODO FIX expectedCompileLog: `entry.js: WARNING: Import "y" will always be undefined because there are multiple matching exports
-  foo.js: NOTE: One matching export is here:
-  bar.js: NOTE: Another matching export is here:
-  `, */
+    bundleWarnings: {
+      "/entry.js": ['Import "y" will always be undefined because there are multiple matching exports'],
+    },
+    run: {
+      stdout: "1 undefined 4",
+    },
   });
   itBundled("importstar/ReExportStarNameCollisionNotAmbiguousImport", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {x, y} from './common'
@@ -365,9 +421,11 @@ describe("bundler", () => {
       "/b.js": `export {x} from './c'`,
       "/c.js": `export let x = 1, y = 2`,
     },
+    run: {
+      stdout: "1 2",
+    },
   });
   itBundled("importstar/ReExportStarNameCollisionNotAmbiguousExport", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export * from './a'
@@ -377,10 +435,17 @@ describe("bundler", () => {
       "/b.js": `export {x} from './c'`,
       "/c.js": `export let x = 1, y = 2`,
     },
-    format: "esm",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import {x, y} from './entry.js'
+        import assert from 'assert'
+        assert.strictEqual(x, 1)
+        assert.strictEqual(y, 2)
+      `,
+    },
+    run: { file: "/test.js" },
   });
   itBundled("importstar/ReExportStarNameShadowingNotAmbiguous", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {x} from './a'
@@ -390,12 +455,14 @@ describe("bundler", () => {
         export * from './b'
         export let x = 1
       `,
-      "/b.js": `export let x = 2`,
+      "/b.js": `export let x = "FAILED"`,
     },
-    format: "esm",
+    dce: true,
+    run: {
+      stdout: "1",
+    },
   });
   itBundled("importstar/ReExportStarNameShadowingNotAmbiguousReExport", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {x} from './a'
@@ -406,23 +473,27 @@ describe("bundler", () => {
         export * from './c'
         export let x = 1
       `,
-      "/c.js": `export let x = 2`,
+      "/c.js": `export let x = "FAILED"`,
     },
-    format: "esm",
+    dce: true,
+    run: {
+      stdout: "1",
+    },
   });
   itBundled("importstar/ImportStarOfExportStarAs", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as foo_ns from './foo'
-        console.log(foo_ns)
+        console.log(JSON.stringify(foo_ns))
       `,
       "/foo.js": `export * as bar_ns from './bar'`,
       "/bar.js": `export const bar = 123`,
     },
+    run: {
+      stdout: '{"bar_ns":{"bar":123}}',
+    },
   });
   itBundled("importstar/ImportOfExportStar", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {bar} from './foo'
@@ -438,9 +509,18 @@ describe("bundler", () => {
         export const bar = 123
       `,
     },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        globalThis.statement = () => {}
+        await import('./out.js')
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "123",
+    },
   });
   itBundled("importstar/ImportOfExportStarOfImport", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {bar} from './foo'
@@ -457,9 +537,18 @@ describe("bundler", () => {
       "/bar.js": `export {value as bar} from './baz'`,
       "/baz.js": `export const value = 123`,
     },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        globalThis.statement = () => {}
+        await import('./out.js')
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "123",
+    },
   });
   itBundled("importstar/ExportSelfIIFE", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export const foo = 123
@@ -469,7 +558,6 @@ describe("bundler", () => {
     format: "iife",
   });
   itBundled("importstar/ExportSelfIIFEWithName", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export const foo = 123
@@ -477,9 +565,15 @@ describe("bundler", () => {
       `,
     },
     format: "iife",
+    globalName: "someName",
+    onAfterBundle(api) {
+      api.writeFile("/out.js", api.readFile("/out.js") + "\nconsole.log(JSON.stringify(someName))");
+    },
+    run: {
+      stdout: '{"foo":123}',
+    },
   });
   itBundled("importstar/ExportSelfES6", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export const foo = 123
@@ -487,9 +581,18 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import * as foo from './out.js'
+        console.log(JSON.stringify(foo));
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: '{"foo":123}',
+    },
   });
   itBundled("importstar/ExportSelfCommonJS", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export const foo = 123
@@ -497,31 +600,49 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        console.log(JSON.stringify(require("./out.js")));
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: '{"foo":123}',
+    },
   });
   itBundled("importstar/ExportSelfCommonJSMinified", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         module.exports = {foo: 123}
-        console.log(require('./entry'))
+        console.log(JSON.stringify(require('./entry')))
       `,
     },
     minifyIdentifiers: true,
     format: "cjs",
+    run: {
+      stdout: '{"foo":123}',
+    },
   });
   itBundled("importstar/ImportSelfCommonJS", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         exports.foo = 123
         import {foo} from './entry'
-        console.log(foo)
+        console.log('1', foo)
       `,
     },
     format: "cjs",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        console.log('2', JSON.stringify(require("./out.js")));
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: '1 undefined\n2 {"foo":123}',
+    },
   });
   itBundled("importstar/ExportSelfAsNamespaceES6", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export const foo = 123
@@ -529,9 +650,18 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import * as foo from './out.js'
+        console.log(foo.foo, foo.ns.ns.ns.foo, foo.ns.ns === foo.ns);
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "123 123 true",
+    },
   });
   itBundled("importstar/ImportExportSelfAsNamespaceES6", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export const foo = 123
@@ -540,9 +670,18 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import * as foo from './out.js'
+        console.log(foo.foo, foo.ns.ns.ns.foo, foo.ns.ns === foo.ns);
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "123 123 true",
+    },
   });
   itBundled("importstar/ReExportOtherFileExportSelfAsNamespaceES6", {
-    // GENERATED
     files: {
       "/entry.js": `export * from './foo'`,
       "/foo.js": /* js */ `
@@ -551,9 +690,18 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import * as foo from './out.js'
+        console.log(foo.foo, foo.ns.ns.ns.foo, foo.ns.ns === foo.ns);
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "123 123 true",
+    },
   });
   itBundled("importstar/ReExportOtherFileImportExportSelfAsNamespaceES6", {
-    // GENERATED
     files: {
       "/entry.js": `export * from './foo'`,
       "/foo.js": /* js */ `
@@ -563,32 +711,61 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import * as foo from './out.js'
+        console.log(foo.foo, foo.ns.ns.ns.foo, foo.ns.ns === foo.ns);
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "123 123 true",
+    },
   });
   itBundled("importstar/OtherFileExportSelfAsNamespaceUnusedES6", {
-    // GENERATED
     files: {
       "/entry.js": `export {foo} from './foo'`,
       "/foo.js": /* js */ `
         export const foo = 123
-        export * as ns from './foo'
+        export * as FAILED from './foo'
       `,
     },
     format: "esm",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import * as foo from './out.js'
+        console.log(JSON.stringify(foo));
+      `,
+    },
+    dce: true,
+    run: {
+      file: "/test.js",
+      stdout: '{"foo":123}',
+    },
   });
   itBundled("importstar/OtherFileImportExportSelfAsNamespaceUnusedES6", {
-    // GENERATED
     files: {
       "/entry.js": `export {foo} from './foo'`,
       "/foo.js": /* js */ `
         export const foo = 123
-        import * as ns from './foo'
-        export {ns}
+        import * as FAILED from './foo'
+        export {FAILED}
       `,
     },
     format: "esm",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import * as foo from './out.js'
+        console.log(JSON.stringify(foo));
+      `,
+    },
+    dce: true,
+    run: {
+      file: "/test.js",
+      stdout: '{"foo":123}',
+    },
   });
   itBundled("importstar/ExportSelfAsNamespaceCommonJS", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export const foo = 123
@@ -596,38 +773,60 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        const foo = require('./out.js')
+        console.log(foo.foo, foo.ns.ns.ns.foo, foo.ns.ns === foo.ns);
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "123 123 true",
+    },
   });
   itBundled("importstar/ExportSelfAndRequireSelfCommonJS", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export const foo = 123
-        console.log(require('./entry'))
+        console.log(JSON.stringify(require('./entry')))
       `,
     },
     format: "cjs",
+    run: {
+      stdout: '{"foo":123}',
+    },
   });
   itBundled("importstar/ExportSelfAndImportSelfCommonJS", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as x from './entry'
         export const foo = 123
-        console.log(x)
+        console.log(JSON.stringify(x))
       `,
     },
     format: "cjs",
+    run: {
+      stdout: '{"foo":123}',
+    },
   });
   itBundled("importstar/ExportOtherAsNamespaceCommonJS", {
-    // GENERATED
     files: {
       "/entry.js": `export * as ns from './foo'`,
       "/foo.js": `exports.foo = 123`,
     },
     format: "cjs",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        const foo = require('./out.js')
+        console.log(JSON.stringify(foo));
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: '{"ns":{"default":{"foo":123},"foo":123}}',
+    },
   });
   itBundled("importstar/ImportExportOtherAsNamespaceCommonJS", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -638,58 +837,81 @@ describe("bundler", () => {
     format: "cjs",
   });
   itBundled("importstar/NamespaceImportMissingES6", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
-        console.log(ns, ns.foo)
+        console.log(JSON.stringify(ns), ns.foo)
       `,
       "/foo.js": `export const x = 123`,
     },
-    /* TODO FIX expectedCompileLog: `entry.js: DEBUG: Import "foo" will always be undefined because there is no matching export in "foo.js"
-  `, */
+    run: {
+      stdout: '{"x":123} undefined',
+    },
   });
   itBundled("importstar/ExportOtherCommonJS", {
-    // GENERATED
     files: {
       "/entry.js": `export {bar} from './foo'`,
       "/foo.js": `exports.foo = 123`,
     },
     format: "cjs",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        const foo = require('./out.js')
+        console.log(...Object.keys(foo));
+        console.log(JSON.stringify(foo));
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "bar\n{}",
+    },
   });
   itBundled("importstar/ExportOtherNestedCommonJS", {
-    // GENERATED
     files: {
       "/entry.js": `export {y} from './bar'`,
       "/bar.js": `export {x as y} from './foo'`,
       "/foo.js": `exports.foo = 123`,
     },
     format: "cjs",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        const foo = require('./out.js')
+        console.log(...Object.keys(foo));
+        console.log(JSON.stringify(foo));
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "y\n{}",
+    },
   });
   itBundled("importstar/NamespaceImportUnusedMissingES6", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
         console.log(ns.foo)
       `,
-      "/foo.js": `export const x = 123`,
+      "/foo.js": `export const x = "FAILED"`,
     },
-    /* TODO FIX expectedCompileLog: `entry.js: DEBUG: Import "foo" will always be undefined because there is no matching export in "foo.js"
-  `, */
+    dce: true,
+    run: {
+      stdout: "undefined",
+    },
   });
   itBundled("importstar/NamespaceImportMissingCommonJS", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
-        console.log(ns, ns.foo)
+        console.log(JSON.stringify(ns), ns.foo)
       `,
       "/foo.js": `exports.x = 123`,
+    },
+    format: "cjs",
+    run: {
+      stdout: '{"default":{"x":123},"x":123} undefined',
     },
   });
   itBundled("importstar/NamespaceImportUnusedMissingCommonJS", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -697,20 +919,24 @@ describe("bundler", () => {
       `,
       "/foo.js": `exports.x = 123`,
     },
+    run: {
+      stdout: "undefined",
+    },
   });
   itBundled("importstar/ReExportNamespaceImportMissingES6", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {ns} from './foo'
-        console.log(ns, ns.foo)
+        console.log(JSON.stringify(ns), ns.foo)
       `,
       "/foo.js": `export * as ns from './bar'`,
       "/bar.js": `export const x = 123`,
+    },
+    run: {
+      stdout: '{"x":123} undefined',
     },
   });
   itBundled("importstar/ReExportNamespaceImportUnusedMissingES6", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {ns} from './foo'
@@ -719,9 +945,11 @@ describe("bundler", () => {
       "/foo.js": `export * as ns from './bar'`,
       "/bar.js": `export const x = 123`,
     },
+    run: {
+      stdout: "undefined",
+    },
   });
   itBundled("importstar/NamespaceImportReExportMissingES6", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -730,12 +958,11 @@ describe("bundler", () => {
       "/foo.js": `export {foo} from './bar'`,
       "/bar.js": `export const x = 123`,
     },
-    /* TODO FIX expectedCompileLog: `foo.js: ERROR: No matching export in "bar.js" for import "foo"
-  foo.js: ERROR: No matching export in "bar.js" for import "foo"
-  `, */
+    bundleErrors: {
+      "/foo.js": ['ERROR: No matching export in "bar.js" for import "foo"'],
+    },
   });
   itBundled("importstar/NamespaceImportReExportUnusedMissingES6", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -744,25 +971,27 @@ describe("bundler", () => {
       "/foo.js": `export {foo} from './bar'`,
       "/bar.js": `export const x = 123`,
     },
-    /* TODO FIX expectedCompileLog: `foo.js: ERROR: No matching export in "bar.js" for import "foo"
-  foo.js: ERROR: No matching export in "bar.js" for import "foo"
-  `, */
+    bundleErrors: {
+      "/foo.js": ['ERROR: No matching export in "bar.js" for import "foo"'],
+    },
   });
   itBundled("importstar/NamespaceImportReExportStarMissingES6", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
-        console.log(ns, ns.foo)
+        console.log(JSON.stringify(ns), ns.foo)
       `,
       "/foo.js": `export * from './bar'`,
       "/bar.js": `export const x = 123`,
     },
-    /* TODO FIX expectedCompileLog: `entry.js: DEBUG: Import "foo" will always be undefined because there is no matching export in "foo.js"
-  `, */
+    bundleWarnings: {
+      "/entry.js": [`Import "foo" will always be undefined because there is no matching export in "foo.js"`],
+    },
+    run: {
+      stdout: '{"x":123} undefined',
+    },
   });
   itBundled("importstar/NamespaceImportReExportStarUnusedMissingES6", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -771,126 +1000,109 @@ describe("bundler", () => {
       "/foo.js": `export * from './bar'`,
       "/bar.js": `export const x = 123`,
     },
-    /* TODO FIX expectedCompileLog: `entry.js: DEBUG: Import "foo" will always be undefined because there is no matching export in "foo.js"
-  `, */
+    bundleWarnings: {
+      "/entry.js": [`Import "foo" will always be undefined because there is no matching export in "foo.js"`],
+    },
+    run: {
+      stdout: "undefined",
+    },
   });
   itBundled("importstar/ExportStarDefaultExportCommonJS", {
-    // GENERATED
     files: {
       "/entry.js": `export * from './foo'`,
       "/foo.js": /* js */ `
-        export default 'default' // This should not be picked up
+        export default 'FAILED' // This should not be picked up
         export let foo = 'foo'
       `,
     },
     format: "cjs",
+    dce: true,
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        const foo = require('./out.js')
+        console.log(JSON.stringify(foo));
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: '{"foo":"foo"}',
+    },
   });
   itBundled("importstar/Issue176", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as things from './folders'
-        console.log(JSON.stringify(things))
+        console.log(JSON.stringify(things), things.foo())
       `,
       "/folders/index.js": `export * from "./child"`,
       "/folders/child/index.js": `export { foo } from './foo'`,
       "/folders/child/foo.js": `export const foo = () => 'hi there'`,
     },
+    run: {
+      stdout: "{} hi there",
+    },
   });
   itBundled("importstar/ReExportStarExternalIIFE", {
-    // GENERATED
     files: {
       "/entry.js": `export * from "foo"`,
     },
     format: "iife",
     globalName: "mod",
+    external: ["foo"],
+    runtimeFiles: {
+      "/node_modules/foo/index.js": /* js */ `
+        export const foo = 'foo'
+        export const bar = 'bar'
+      `,
+    },
+    onAfterBundle(api) {
+      api.writeFile("/out.js", api.readFile("/out.js") + "\nconsole.log(JSON.stringify(mod))");
+    },
+    run: {
+      stdout: '{"bar":"bar","foo":"foo"}',
+    },
   });
   itBundled("importstar/ReExportStarExternalES6", {
-    // GENERATED
     files: {
       "/entry.js": `export * from "foo"`,
     },
+    external: ["foo"],
     format: "esm",
+    runtimeFiles: {
+      "/node_modules/foo/index.js": /* js */ `
+        export const foo = 'foo'
+        export const bar = 'bar'
+      `,
+      "/test.js": /* js */ `
+        import * as mod from './out.js'
+        console.log(JSON.stringify(mod))
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: '{"bar":"bar","foo":"foo"}',
+    },
   });
   itBundled("importstar/ReExportStarExternalCommonJS", {
-    // GENERATED
     files: {
       "/entry.js": `export * from "foo"`,
     },
+    external: ["foo"],
     format: "cjs",
-  });
-  itBundled("importstar/ReExportStarIIFENoBundle", {
-    // GENERATED
-    files: {
-      "/entry.js": `export * from "foo"`,
+    runtimeFiles: {
+      "/node_modules/foo/index.js": /* js */ `
+        module.exports = { bar: 'bar', foo: 'foo' }
+      `,
+      "/test.js": /* js */ `
+        console.log(JSON.stringify(require('./out.js')))
+      `,
     },
-    format: "iife",
-    mode: "convertformat",
-  });
-  itBundled("importstar/ReExportStarES6NoBundle", {
-    // GENERATED
-    files: {
-      "/entry.js": `export * from "foo"`,
+    run: {
+      file: "/test.js",
+      stdout: '{"bar":"bar","foo":"foo"}',
     },
-    format: "esm",
-    mode: "convertformat",
-  });
-  itBundled("importstar/ReExportStarCommonJSNoBundle", {
-    // GENERATED
-    files: {
-      "/entry.js": `export * from "foo"`,
-    },
-    format: "cjs",
-    mode: "convertformat",
-  });
-  itBundled("importstar/ReExportStarAsExternalIIFE", {
-    // GENERATED
-    files: {
-      "/entry.js": `export * as out from "foo"`,
-    },
-    format: "iife",
-    globalName: "mod",
-  });
-  itBundled("importstar/ReExportStarAsExternalES6", {
-    // GENERATED
-    files: {
-      "/entry.js": `export * as out from "foo"`,
-    },
-    format: "esm",
-  });
-  itBundled("importstar/ReExportStarAsExternalCommonJS", {
-    // GENERATED
-    files: {
-      "/entry.js": `export * as out from "foo"`,
-    },
-    format: "cjs",
-  });
-  itBundled("importstar/ReExportStarAsIIFENoBundle", {
-    // GENERATED
-    files: {
-      "/entry.js": `export * as out from "foo"`,
-    },
-    format: "iife",
-    mode: "convertformat",
-  });
-  itBundled("importstar/ReExportStarAsES6NoBundle", {
-    // GENERATED
-    files: {
-      "/entry.js": `export * as out from "foo"`,
-    },
-    format: "esm",
-    mode: "convertformat",
-  });
-  itBundled("importstar/ReExportStarAsCommonJSNoBundle", {
-    // GENERATED
-    files: {
-      "/entry.js": `export * as out from "foo"`,
-    },
-    format: "cjs",
-    mode: "convertformat",
   });
   itBundled("importstar/ImportDefaultNamespaceComboIssue446", {
-    // GENERATED
     files: {
       "/external-default2.js": /* js */ `
         import def, {default as default2} from 'external'
@@ -941,6 +1153,21 @@ describe("bundler", () => {
         console.log(def, ns.def)
       `,
       "/internal.js": `export default 123`,
+
+      "/test.js": /* js */ `
+        import "./external-default2.js";
+        import "./external-default.js";
+        import "./external-def.js";
+        import "./external-ns-default.js";
+        import "./external-ns-def.js";
+        import "./external-ns.js";
+        import "./internal-default2.js";
+        import "./internal-default.js";
+        import "./internal-def.js";
+        import "./internal-ns-default.js";
+        import "./internal-ns-def.js";
+        import "./internal-ns.js";
+      `,
     },
     entryPoints: [
       "/external-default2.js",
@@ -956,12 +1183,32 @@ describe("bundler", () => {
       "/internal-default.js",
       "/internal-def.js",
     ],
-    /* TODO FIX expectedCompileLog: `internal-def.js: DEBUG: Import "def" will always be undefined because there is no matching export in "internal.js"
-  internal-ns-def.js: DEBUG: Import "def" will always be undefined because there is no matching export in "internal.js"
-  `, */
+    external: ["external"],
+    run: {
+      file: "/test.js",
+      stdout: `
+        [Function: child] [Function: child]
+        [Function: child] [Function: child]
+        [Function: child] undefined
+        [Function: child] [Function: child] [Function: child]
+        [Function: child] [Function: child] undefined
+        [Function: child] [Function: child]
+        123 123
+        123 123
+        123 undefined
+        123 Module {
+          "default": 123
+        } 123
+        123 Module {
+          "default": 123
+        } undefined
+        123 Module {
+          "default": 123
+        }
+      `,
+    },
   });
   itBundled("importstar/ImportDefaultNamespaceComboNoDefault", {
-    // GENERATED
     files: {
       "/entry-default-ns-prop.js": `import def, * as ns from './foo'; console.log(def, ns, ns.default)`,
       "/entry-default-ns.js": `import def, * as ns from './foo'; console.log(def, ns)`,
@@ -977,17 +1224,14 @@ describe("bundler", () => {
       "/entry-default.js",
       "/entry-prop.js",
     ],
-    /* TODO FIX expectedCompileLog: `entry-default-ns-prop.js: ERROR: No matching export in "foo.js" for import "default"
-  entry-default-ns-prop.js: DEBUG: Import "default" will always be undefined because there is no matching export in "foo.js"
-  entry-default-ns.js: ERROR: No matching export in "foo.js" for import "default"
-  entry-default-prop.js: ERROR: No matching export in "foo.js" for import "default"
-  entry-default-prop.js: DEBUG: Import "default" will always be undefined because there is no matching export in "foo.js"
-  entry-default.js: ERROR: No matching export in "foo.js" for import "default"
-  entry-prop.js: DEBUG: Import "default" will always be undefined because there is no matching export in "foo.js"
-  `, */
+    bundleErrors: {
+      "/entry-default-ns-prop.js": ['No matching export in "foo.js" for import "default"'],
+      "/entry-default-ns.js": ['No matching export in "foo.js" for import "default"'],
+      "/entry-default-prop.js": ['No matching export in "foo.js" for import "default"'],
+      "/entry-default.js": ['No matching export in "foo.js" for import "default"'],
+    },
   });
   itBundled("importstar/ImportNamespaceUndefinedPropertyEmptyFile", {
-    // GENERATED
     files: {
       "/entry-nope.js": /* js */ `
         import * as js from './empty.js'
@@ -1014,14 +1258,25 @@ describe("bundler", () => {
       "/empty.cjs": ``,
     },
     entryPoints: ["/entry-nope.js", "/entry-default.js"],
-    /* TODO FIX expectedCompileLog: `entry-default.js: DEBUG: Import "default" will always be undefined because there is no matching export in "empty.mjs"
-  entry-nope.js: WARNING: Import "nope" will always be undefined because the file "empty.js" has no exports
-  entry-nope.js: WARNING: Import "nope" will always be undefined because the file "empty.mjs" has no exports
-  entry-nope.js: WARNING: Import "nope" will always be undefined because the file "empty.cjs" has no exports
-  `, */
+    bundleWarnings: {
+      "/entry-nope.js": [
+        'WARNING: Import "nope" will always be undefined because the file "empty.js" has no exports',
+        'WARNING: Import "nope" will always be undefined because the file "empty.mjs" has no exports',
+        'WARNING: Import "nope" will always be undefined because the file "empty.cjs" has no exports',
+      ],
+    },
+    run: [
+      {
+        file: "/out/entry-nope.js",
+        stdout: `undefined undefined undefined`,
+      },
+      {
+        file: "/out/entry-default.js",
+        stdout: `{} undefined {}`,
+      },
+    ],
   });
   itBundled("importstar/ImportNamespaceUndefinedPropertySideEffectFreeFile", {
-    // GENERATED
     files: {
       "/entry-nope.js": /* js */ `
         import * as js from './foo/no-side-effects.js'
@@ -1049,14 +1304,18 @@ describe("bundler", () => {
       "/foo/no-side-effects.cjs": `console.log('cjs')`,
     },
     entryPoints: ["/entry-nope.js", "/entry-default.js"],
-    /* TODO FIX expectedCompileLog: `entry-default.js: DEBUG: Import "default" will always be undefined because there is no matching export in "foo/no-side-effects.mjs"
-  entry-nope.js: WARNING: Import "nope" will always be undefined because the file "foo/no-side-effects.js" has no exports
-  entry-nope.js: WARNING: Import "nope" will always be undefined because the file "foo/no-side-effects.mjs" has no exports
-  entry-nope.js: WARNING: Import "nope" will always be undefined because the file "foo/no-side-effects.cjs" has no exports
-  `, */
+    run: [
+      {
+        file: "/out/entry-nope.js",
+        stdout: `js\ncjs\nundefined undefined undefined`,
+      },
+      {
+        file: "/out/entry-default.js",
+        stdout: `js\ncjs\n{} undefined {}`,
+      },
+    ],
   });
   itBundled("importstar/ReExportStarEntryPointAndInnerFile", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export * from 'a'
@@ -1066,5 +1325,22 @@ describe("bundler", () => {
       "/inner.js": `export * from 'b'`,
     },
     format: "cjs",
+    external: ["a", "b"],
+    runtimeFiles: {
+      "/node_modules/a/index.js": /* js */ `
+        export const a = 123;
+      `,
+      "/node_modules/b/index.js": /* js */ `
+        export const b = 456;
+      `,
+
+      "/test.js": /* js */ `
+        console.log(JSON.stringify(require('./out.js')))
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: '{"inner":{"b":456},"a":123}',
+    },
   });
 });

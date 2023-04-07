@@ -1477,7 +1477,7 @@ pub const ModuleLoader = struct {
             &display_specifier,
         );
         const path = Fs.Path.init(specifier);
-        const loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse options.Loader.js;
+        const loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse options.Loader.file;
         var promise: ?*JSC.JSInternalPromise = null;
         ret.* = ErrorableResolvedSource.ok(
             ModuleLoader.transpileSourceCode(

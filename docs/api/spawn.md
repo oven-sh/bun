@@ -259,7 +259,7 @@ namespace SpawnOptions {
     | "ignore"
     | null // equivalent to "ignore"
     | undefined // to use default
-    | FileBlob
+    | BunFile
     | ArrayBufferView
     | number;
   
@@ -269,7 +269,7 @@ namespace SpawnOptions {
     | "ignore"
     | null // equivalent to "ignore"
     | undefined // to use default
-    | FileBlob
+    | BunFile
     | ArrayBufferView
     | number
     | ReadableStream

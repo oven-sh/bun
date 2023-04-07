@@ -27,6 +27,11 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
         socket: *Socket,
         const ThisSocket = @This();
 
+        pub fn verifyError(this: ThisSocket) us_bun_verify_error_t {
+            const ssl_error: us_bun_verify_error_t = uws.us_socket_verify_error(comptime ssl_int, this.socket);
+            return ssl_error;
+        }
+
         pub fn isEstablished(this: ThisSocket) bool {
             return us_socket_is_established(comptime ssl_int, this.socket) > 0;
         }
@@ -300,6 +305,9 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
                     );
                     return socket;
                 }
+                pub fn on_handshake(socket: *Socket, success: i32, verify_error: us_bun_verify_error_t, _: ?*anyopaque) callconv(.C) void {
+                    Fields.onHandshake(getValue(socket), ThisSocket{ .socket = socket }, success, verify_error);
+                }
             };
 
             if (comptime @hasDecl(@"type", "onOpen") and @typeInfo(@TypeOf(@"type".onOpen)) != .Null)
@@ -316,6 +324,8 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
                 us_socket_context_on_connect_error(ssl_int, ctx, SocketHandler.on_connect_error);
             if (comptime @hasDecl(@"type", "onEnd") and @typeInfo(@TypeOf(@"type".onEnd)) != .Null)
                 us_socket_context_on_end(ssl_int, ctx, SocketHandler.on_end);
+            if (comptime @hasDecl(@"type", "onHandshake") and @typeInfo(@TypeOf(@"type".onHandshake)) != .Null)
+                us_socket_context_on_handshake(ssl_int, ctx, SocketHandler.on_handshake, null);
         }
 
         pub fn from(socket: *Socket) ThisSocket {
@@ -581,17 +591,48 @@ pub const us_socket_context_options_t = extern struct {
     ssl_prefer_low_memory_usage: i32 = 0,
 };
 
+pub const us_bun_socket_context_options_t = extern struct {
+    key_file_name: [*c]const u8 = null,
+    cert_file_name: [*c]const u8 = null,
+    passphrase: [*c]const u8 = null,
+    dh_params_file_name: [*c]const u8 = null,
+    ca_file_name: [*c]const u8 = null,
+    ssl_ciphers: [*c]const u8 = null,
+    ssl_prefer_low_memory_usage: i32 = 0,
+    key: [*c][*c]const u8 = null,
+    key_count: u32 = 0,
+    cert: [*c][*c]const u8 = null,
+    cert_count: u32 = 0,
+    ca: [*c][*c]const u8 = null,
+    ca_count: u32 = 0,
+    secure_options: u32 = 0,
+    reject_unauthorized: i32 = 0,
+    request_cert: i32 = 0,
+};
+
+pub const us_bun_verify_error_t = extern struct {
+    error_no: i32 = 0,
+    code: [*c]const u8 = null,
+    reason: [*c]const u8 = null,
+};
+
+extern fn us_socket_verify_error(ssl: i32, context: *Socket) us_bun_verify_error_t;
 extern fn SocketContextimestamp(ssl: i32, context: ?*SocketContext) c_ushort;
 pub extern fn us_socket_context_add_server_name(ssl: i32, context: ?*SocketContext, hostname_pattern: [*c]const u8, options: us_socket_context_options_t, ?*anyopaque) void;
 extern fn us_socket_context_remove_server_name(ssl: i32, context: ?*SocketContext, hostname_pattern: [*c]const u8) void;
 extern fn us_socket_context_on_server_name(ssl: i32, context: ?*SocketContext, cb: ?*const fn (?*SocketContext, [*c]const u8) callconv(.C) void) void;
 extern fn us_socket_context_get_native_handle(ssl: i32, context: ?*SocketContext) ?*anyopaque;
 pub extern fn us_create_socket_context(ssl: i32, loop: ?*Loop, ext_size: i32, options: us_socket_context_options_t) ?*SocketContext;
+pub extern fn us_create_bun_socket_context(ssl: i32, loop: ?*Loop, ext_size: i32, options: us_bun_socket_context_options_t) ?*SocketContext;
+pub extern fn us_bun_socket_context_add_server_name(ssl: i32, context: ?*SocketContext, hostname_pattern: [*c]const u8, options: us_bun_socket_context_options_t, ?*anyopaque) void;
 pub extern fn us_socket_context_free(ssl: i32, context: ?*SocketContext) void;
 extern fn us_socket_context_on_open(ssl: i32, context: ?*SocketContext, on_open: *const fn (*Socket, i32, [*c]u8, i32) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_close(ssl: i32, context: ?*SocketContext, on_close: *const fn (*Socket, i32, ?*anyopaque) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_data(ssl: i32, context: ?*SocketContext, on_data: *const fn (*Socket, [*c]u8, i32) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_writable(ssl: i32, context: ?*SocketContext, on_writable: *const fn (*Socket) callconv(.C) ?*Socket) void;
+
+extern fn us_socket_context_on_handshake(ssl: i32, context: ?*SocketContext, on_handshake: *const fn (*Socket, i32, us_bun_verify_error_t, ?*anyopaque) callconv(.C) void, ?*anyopaque) void;
+
 extern fn us_socket_context_on_timeout(ssl: i32, context: ?*SocketContext, on_timeout: *const fn (*Socket) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_connect_error(ssl: i32, context: ?*SocketContext, on_connect_error: *const fn (*Socket, i32) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_end(ssl: i32, context: ?*SocketContext, on_end: *const fn (*Socket) callconv(.C) ?*Socket) void;

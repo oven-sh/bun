@@ -3463,6 +3463,9 @@ pub const JSTCPSocket = struct {
             @compileLog("TCPSocket.finalize is not a finalizer");
         }
 
+        if (@TypeOf(TCPSocket.getAuthorized) != GetterType)
+            @compileLog("Expected TCPSocket.getAuthorized to be a getter");
+
         if (@TypeOf(TCPSocket.getData) != GetterType)
             @compileLog("Expected TCPSocket.getData to be a getter");
 
@@ -3472,6 +3475,8 @@ pub const JSTCPSocket = struct {
             @compileLog("Expected TCPSocket.end to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.end)));
         if (@TypeOf(TCPSocket.flush) != CallbackType)
             @compileLog("Expected TCPSocket.flush to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.flush)));
+        if (@TypeOf(TCPSocket.getAuthorizationError) != CallbackType)
+            @compileLog("Expected TCPSocket.getAuthorizationError to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getAuthorizationError)));
         if (@TypeOf(TCPSocket.getListener) != GetterType)
             @compileLog("Expected TCPSocket.getListener to be a getter");
 
@@ -3500,6 +3505,8 @@ pub const JSTCPSocket = struct {
             @export(TCPSocket.end, .{ .name = "TCPSocketPrototype__end" });
             @export(TCPSocket.finalize, .{ .name = "TCPSocketClass__finalize" });
             @export(TCPSocket.flush, .{ .name = "TCPSocketPrototype__flush" });
+            @export(TCPSocket.getAuthorizationError, .{ .name = "TCPSocketPrototype__getAuthorizationError" });
+            @export(TCPSocket.getAuthorized, .{ .name = "TCPSocketPrototype__getAuthorized" });
             @export(TCPSocket.getData, .{ .name = "TCPSocketPrototype__getData" });
             @export(TCPSocket.getListener, .{ .name = "TCPSocketPrototype__getListener" });
             @export(TCPSocket.getLocalPort, .{ .name = "TCPSocketPrototype__getLocalPort" });
@@ -3611,6 +3618,9 @@ pub const JSTLSSocket = struct {
             @compileLog("TLSSocket.finalize is not a finalizer");
         }
 
+        if (@TypeOf(TLSSocket.getAuthorized) != GetterType)
+            @compileLog("Expected TLSSocket.getAuthorized to be a getter");
+
         if (@TypeOf(TLSSocket.getData) != GetterType)
             @compileLog("Expected TLSSocket.getData to be a getter");
 
@@ -3620,6 +3630,8 @@ pub const JSTLSSocket = struct {
             @compileLog("Expected TLSSocket.end to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.end)));
         if (@TypeOf(TLSSocket.flush) != CallbackType)
             @compileLog("Expected TLSSocket.flush to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.flush)));
+        if (@TypeOf(TLSSocket.getAuthorizationError) != CallbackType)
+            @compileLog("Expected TLSSocket.getAuthorizationError to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getAuthorizationError)));
         if (@TypeOf(TLSSocket.getListener) != GetterType)
             @compileLog("Expected TLSSocket.getListener to be a getter");
 
@@ -3648,6 +3660,8 @@ pub const JSTLSSocket = struct {
             @export(TLSSocket.end, .{ .name = "TLSSocketPrototype__end" });
             @export(TLSSocket.finalize, .{ .name = "TLSSocketClass__finalize" });
             @export(TLSSocket.flush, .{ .name = "TLSSocketPrototype__flush" });
+            @export(TLSSocket.getAuthorizationError, .{ .name = "TLSSocketPrototype__getAuthorizationError" });
+            @export(TLSSocket.getAuthorized, .{ .name = "TLSSocketPrototype__getAuthorized" });
             @export(TLSSocket.getData, .{ .name = "TLSSocketPrototype__getData" });
             @export(TLSSocket.getListener, .{ .name = "TLSSocketPrototype__getListener" });
             @export(TLSSocket.getLocalPort, .{ .name = "TLSSocketPrototype__getLocalPort" });

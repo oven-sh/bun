@@ -120,9 +120,25 @@ pub const ServerConfig = struct {
         passphrase: [*c]const u8 = null,
         low_memory_mode: bool = false,
 
-        pub fn asUSockets(this_: ?SSLConfig) uws.us_socket_context_options_t {
-            var ctx_opts: uws.us_socket_context_options_t = undefined;
-            @memset(@ptrCast([*]u8, &ctx_opts), 0, @sizeOf(uws.us_socket_context_options_t));
+        key: ?[][*c]const u8 = null,
+        key_count: u32 = 0,
+
+        cert: ?[][*c]const u8 = null,
+        cert_count: u32 = 0,
+
+        ca: ?[][*c]const u8 = null,
+        ca_count: u32 = 0,
+
+        secure_options: u32 = 0,
+        request_cert: i32 = 0,
+        reject_unauthorized: i32 = 0,
+        ssl_ciphers: [*c]const u8 = null,
+
+        const log = Output.scoped(.SSLConfig, false);
+
+        pub fn asUSockets(this_: ?SSLConfig) uws.us_bun_socket_context_options_t {
+            var ctx_opts: uws.us_bun_socket_context_options_t = undefined;
+            @memset(@ptrCast([*]u8, &ctx_opts), 0, @sizeOf(uws.us_bun_socket_context_options_t));
 
             if (this_) |ssl_config| {
                 if (ssl_config.key_file_name != null)
@@ -136,6 +152,25 @@ pub const ServerConfig = struct {
                 if (ssl_config.passphrase != null)
                     ctx_opts.passphrase = ssl_config.passphrase;
                 ctx_opts.ssl_prefer_low_memory_usage = @boolToInt(ssl_config.low_memory_mode);
+
+                if (ssl_config.key) |key| {
+                    ctx_opts.key = key.ptr;
+                    ctx_opts.key_count = ssl_config.key_count;
+                }
+                if (ssl_config.cert) |cert| {
+                    ctx_opts.cert = cert.ptr;
+                    ctx_opts.cert_count = ssl_config.cert_count;
+                }
+                if (ssl_config.ca) |ca| {
+                    ctx_opts.ca = ca.ptr;
+                    ctx_opts.ca_count = ssl_config.ca_count;
+                }
+
+                if (ssl_config.ssl_ciphers != null) {
+                    ctx_opts.ssl_ciphers = ssl_config.ssl_ciphers;
+                }
+                ctx_opts.request_cert = ssl_config.request_cert;
+                ctx_opts.reject_unauthorized = ssl_config.reject_unauthorized;
             }
 
             return ctx_opts;
@@ -149,6 +184,7 @@ pub const ServerConfig = struct {
                 "ca_file_name",
                 "dh_params_file_name",
                 "passphrase",
+                "ssl_ciphers",
             };
 
             inline for (fields) |field| {
@@ -158,6 +194,45 @@ pub const ServerConfig = struct {
                         bun.default_allocator.free(slice);
                     }
                 }
+            }
+
+            if (this.cert) |cert| {
+                var i: u32 = 0;
+                while (i < this.cert_count) : (i += 1) {
+                    const slice = std.mem.span(cert[i]);
+                    if (slice.len > 0) {
+                        bun.default_allocator.free(slice);
+                    }
+                }
+
+                bun.default_allocator.free(cert);
+                this.cert = null;
+            }
+
+            if (this.key) |key| {
+                var i: u32 = 0;
+                while (i < this.key_count) : (i += 1) {
+                    const slice = std.mem.span(key[i]);
+                    if (slice.len > 0) {
+                        bun.default_allocator.free(slice);
+                    }
+                }
+
+                bun.default_allocator.free(key);
+                this.key = null;
+            }
+
+            if (this.ca) |ca| {
+                var i: u32 = 0;
+                while (i < this.ca_count) : (i += 1) {
+                    const slice = std.mem.span(ca[i]);
+                    if (slice.len > 0) {
+                        bun.default_allocator.free(slice);
+                    }
+                }
+
+                bun.default_allocator.free(ca);
+                this.ca = null;
             }
         }
 
@@ -182,6 +257,52 @@ pub const ServerConfig = struct {
                     any = true;
                 }
             }
+
+            if (obj.getTruthy(global, "key")) |js_obj| {
+                if (js_obj.jsType().isArray()) {
+                    const count = js_obj.getLengthOfArray(global);
+                    if (count > 0) {
+                        const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
+
+                        var i: u32 = 0;
+                        var valid_count: u32 = 0;
+                        var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator);
+                        while (i < count) : (i += 1) {
+                            const item = js_obj.getIndex(global, i);
+                            if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item, exception)) |sb| {
+                                const sliced = sb.slice();
+                                if (sliced.len > 0) {
+                                    native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                                    valid_count += 1;
+                                    any = true;
+                                }
+                            } else {
+                                global.throwInvalidArguments("key argument must be an array containing string, Buffer or TypedArray", .{});
+                                arena.deinit();
+                                // mark and free all keys
+                                result.key = native_array;
+                                result.deinit();
+                                return null;
+                            }
+                        }
+
+                        arena.deinit();
+
+                        if (valid_count == 0) {
+                            bun.default_allocator.free(native_array);
+                        } else {
+                            result.key = native_array;
+                        }
+
+                        result.key_count = valid_count;
+                    }
+                } else {
+                    global.throwInvalidArguments("key argument must be an array containing string, Buffer or TypedArray", .{});
+                    result.deinit();
+                    return null;
+                }
+            }
+
             if (obj.getTruthy(global, "certFile")) |cert_file_name| {
                 var sliced = cert_file_name.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
@@ -196,13 +317,128 @@ pub const ServerConfig = struct {
                 }
             }
 
+            if (obj.getTruthy(global, "cert")) |js_obj| {
+                if (js_obj.jsType().isArray()) {
+                    const count = js_obj.getLengthOfArray(global);
+                    if (count > 0) {
+                        const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
+
+                        var i: u32 = 0;
+                        var valid_count: u32 = 0;
+
+                        var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator);
+                        while (i < count) : (i += 1) {
+                            const item = js_obj.getIndex(global, i);
+                            if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item, exception)) |sb| {
+                                const sliced = sb.slice();
+                                if (sliced.len > 0) {
+                                    native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                                    valid_count += 1;
+                                    any = true;
+                                }
+                            } else {
+                                global.throwInvalidArguments("cert argument must be an array containing string, Buffer or TypedArray", .{});
+                                arena.deinit();
+                                // mark and free all certs
+                                result.cert = native_array;
+                                result.deinit();
+                                return null;
+                            }
+                        }
+
+                        arena.deinit();
+
+                        if (valid_count == 0) {
+                            bun.default_allocator.free(native_array);
+                        } else {
+                            result.cert = native_array;
+                        }
+
+                        result.cert_count = valid_count;
+                    }
+                } else {
+                    global.throwInvalidArguments("cert argument must be an array containing string, Buffer or TypedArray", .{});
+                    result.deinit();
+                    return null;
+                }
+            }
+
+            if (obj.getTruthy(global, "requestCert")) |request_cert| {
+                result.request_cert = if (request_cert.asBoolean()) 1 else 0;
+            }
+
+            if (obj.getTruthy(global, "rejectUnauthorized")) |reject_unauthorized| {
+                result.reject_unauthorized = if (reject_unauthorized.asBoolean()) 1 else 0;
+            }
+
+            if (obj.getTruthy(global, "ciphers")) |ssl_ciphers| {
+                var sliced = ssl_ciphers.toSlice(global, bun.default_allocator);
+                defer sliced.deinit();
+                if (sliced.len > 0) {
+                    result.ssl_ciphers = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    any = true;
+                }
+            }
+
             // Optional
             if (any) {
+                if (obj.getTruthy(global, "secureOptions")) |secure_options| {
+                    if (secure_options.isNumber()) {
+                        result.secure_options = secure_options.toU32();
+                    }
+                }
+
                 if (obj.getTruthy(global, "serverName")) |key_file_name| {
                     var sliced = key_file_name.toSlice(global, bun.default_allocator);
                     defer sliced.deinit();
                     if (sliced.len > 0) {
                         result.server_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    }
+                }
+
+                if (obj.getTruthy(global, "ca")) |js_obj| {
+                    if (js_obj.jsType().isArray()) {
+                        const count = js_obj.getLengthOfArray(global);
+                        if (count > 0) {
+                            const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
+
+                            var i: u32 = 0;
+                            var valid_count: u32 = 0;
+
+                            var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator);
+                            while (i < count) : (i += 1) {
+                                const item = js_obj.getIndex(global, i);
+                                if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item, exception)) |sb| {
+                                    const sliced = sb.slice();
+                                    if (sliced.len > 0) {
+                                        native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                                        valid_count += 1;
+                                        any = true;
+                                    }
+                                } else {
+                                    global.throwInvalidArguments("ca argument must be an array containing string, Buffer or TypedArray", .{});
+                                    arena.deinit();
+                                    // mark and free all CA's
+                                    result.cert = native_array;
+                                    result.deinit();
+                                    return null;
+                                }
+                            }
+
+                            arena.deinit();
+
+                            if (valid_count == 0) {
+                                bun.default_allocator.free(native_array);
+                            } else {
+                                result.ca = native_array;
+                            }
+
+                            result.ca_count = valid_count;
+                        }
+                    } else {
+                        global.throwInvalidArguments("cert argument must be an array containing string, Buffer or TypedArray", .{});
+                        result.deinit();
+                        return null;
                     }
                 }
 
@@ -218,6 +454,7 @@ pub const ServerConfig = struct {
                         }
                     }
                 }
+
                 if (obj.getTruthy(global, "dhParamsFile")) |dh_params_file_name| {
                     var sliced = dh_params_file_name.toSlice(global, bun.default_allocator);
                     defer sliced.deinit();

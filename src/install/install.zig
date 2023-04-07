@@ -339,6 +339,7 @@ const NetworkTask = struct {
             this.getCompletionCallback(),
             this.package_manager.httpProxy(url),
             null,
+            null,
         );
         this.callback = .{
             .package_manifest = .{
@@ -414,6 +415,7 @@ const NetworkTask = struct {
             0,
             this.getCompletionCallback(),
             this.package_manager.httpProxy(url),
+            null,
             null,
         );
         this.callback = .{ .extract = tarball };

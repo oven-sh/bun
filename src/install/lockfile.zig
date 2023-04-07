@@ -3865,7 +3865,7 @@ pub const Yarn = struct {
                 found_newline = true;
             }
 
-            while (true) : (cur = cur[1..]) {
+            while (true) {
                 const is_quote = cur[0] == '"';
                 var string_start = cur;
 

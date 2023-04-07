@@ -1671,7 +1671,7 @@ pub const ModuleLoader = struct {
                     if (comptime Environment.isDebug) {
                         return ResolvedSource{
                             .allocator = null,
-                            .source_code = ZigString.init(strings.append(bun.default_allocator, JSC.Node.fs.constants_string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "fs.exports.js")) catch unreachable),
+                            .source_code = ZigString.init(jsModuleFromFile(jsc_vm.load_builtins_from_path, "fs.exports.js")),
                             .specifier = ZigString.init("node:fs"),
                             .source_url = ZigString.init("node:fs"),
                             .hash = 0,
@@ -1679,7 +1679,7 @@ pub const ModuleLoader = struct {
                     } else if (jsc_vm.load_builtins_from_path.len != 0) {
                         return ResolvedSource{
                             .allocator = null,
-                            .source_code = ZigString.init(strings.append(bun.default_allocator, JSC.Node.fs.constants_string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "fs.exports.js")) catch unreachable),
+                            .source_code = ZigString.init(jsModuleFromFile(jsc_vm.load_builtins_from_path, "fs.exports.js")),
                             .specifier = ZigString.init("node:fs"),
                             .source_url = ZigString.init("node:fs"),
                             .hash = 0,
@@ -1688,7 +1688,7 @@ pub const ModuleLoader = struct {
 
                     return ResolvedSource{
                         .allocator = null,
-                        .source_code = ZigString.init(JSC.Node.fs.constants_string ++ @embedFile("fs.exports.js")),
+                        .source_code = ZigString.init(@embedFile("fs.exports.js")),
                         .specifier = ZigString.init("node:fs"),
                         .source_url = ZigString.init("node:fs"),
                         .hash = 0,
@@ -1732,7 +1732,7 @@ pub const ModuleLoader = struct {
                 .@"node:fs/promises" => {
                     return ResolvedSource{
                         .allocator = null,
-                        .source_code = ZigString.init(@embedFile("fs_promises.exports.js") ++ JSC.Node.fs.constants_string),
+                        .source_code = ZigString.init(JSC.Node.fs.constants_string ++ @embedFile("fs_promises.exports.js")),
                         .specifier = ZigString.init("node:fs/promises"),
                         .source_url = ZigString.init("node:fs/promises"),
                         .hash = 0,

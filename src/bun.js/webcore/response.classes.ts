@@ -141,6 +141,10 @@ export default [
         getter: "getSize",
       },
 
+      lastModified: {
+        getter: "getLastModified",
+      },
+
       writer: {
         fn: "getWriter",
         length: 1,

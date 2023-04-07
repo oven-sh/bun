@@ -777,7 +777,56 @@ test("deepEquals - symbols", () => {
   expect(o).toEqual(k);
 });
 
+test("deepEquals should not segfault", () => {
+  const obj = { ...Object.fromEntries(Object.entries([1, 2, 3, 4])), length: 4 };
+  expect(() => {
+    expect(obj).toEqual([1, 2, 3, 4]);
+  }).toThrow();
+  expect(() => {
+    expect([1, 2, 3, 4]).toEqual(obj);
+  }).toThrow();
+});
+
 test("toEqual objects and arrays", () => {
+  {
+    let obj = { 0: 4, 1: 3, length: 2 };
+    expect(Array.from(obj)).toEqual([4, 3]);
+    expect(Array.from(obj)).toStrictEqual([4, 3]);
+  }
+  {
+    let obj = { 0: 4, 1: 3, length: 4 };
+    expect(Array.from(obj)).toEqual([4, 3]);
+    expect(Array.from(obj)).not.toStrictEqual([4, 3]);
+    expect(Array.from(obj)).toEqual([4, 3, undefined, undefined]);
+    expect(Array.from(obj)).toStrictEqual([4, 3, undefined, undefined]);
+    expect(Array.from(obj)).toEqual([4, 3, , ,]);
+    expect(Array.from(obj)).not.toStrictEqual([4, 3, , ,]);
+  }
+  {
+    let a1 = [1, undefined, 3, , 4, null];
+    let a2 = [1, undefined, 3, , 4, null, , ,];
+    expect(a1).toEqual(a2);
+    expect(a1).not.toStrictEqual(a2);
+    expect(a2).toEqual(a1);
+    expect(a2).not.toStrictEqual(a1);
+  }
+  {
+    let a1 = [, , , , , , , , , , , ,];
+    let a2 = [undefined];
+    expect(a1).toEqual(a2);
+    expect(a1).not.toStrictEqual(a2);
+    expect(a2).toEqual(a1);
+    expect(a2).not.toStrictEqual(a1);
+  }
+  {
+    const a = [1];
+    const b = [1];
+    expect(a).toEqual(b);
+    Object.preventExtensions(b);
+    expect(a).toEqual(b);
+    Object.preventExtensions(a);
+    expect(a).toEqual(b);
+  }
   {
     let o1 = { 1: 4, 6: 3 };
     let o2 = { 1: 4, 6: 3 };

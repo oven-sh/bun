@@ -1,3 +1,4 @@
+// Mocking https://github.com/websockets/ws
 // this just wraps WebSocket to look like an EventEmitter
 // without actually using an EventEmitter polyfill
 
@@ -62,28 +63,37 @@ class BunWebSocket extends globalThis.WebSocket {
 }
 
 BunWebSocket.WebSocket = BunWebSocket;
-var WebSocketServer = (BunWebSocket.WebSocketServer = class WebSocketServer {
-  constructor() {
-    throw new Error("Not implemented yet!");
-  }
-});
 
-var Sender = (BunWebSocket.Sender = class Sender {
+class Server {
   constructor() {
-    throw new Error("Not supported in Bun");
+    throw new Error("Not supported yet in Bun");
   }
-});
+}
 
-var Receiver = (BunWebSocket.Receiver = class Receiver {
+BunWebSocket.WebSocketServer = Server;
+
+class Sender {
   constructor() {
-    throw new Error("Not supported in Bun");
+    throw new Error("Not supported yet in Bun");
   }
-});
+}
 
-var createWebSocketStream = (BunWebSocket.createWebSocketStream = function (ws) {
-  throw new Error("Not supported in Bun");
-});
+BunWebSocket.Sender = Sender;
+
+class Receiver {
+  constructor() {
+    throw new Error("Not supported yet in Bun");
+  }
+}
+
+BunWebSocket.Receiver = Receiver;
+
+var createWebSocketStream = ws => {
+  throw new Error("Not supported yet in Bun");
+};
+
+BunWebSocket.createWebSocketStream = createWebSocketStream;
 
 export default BunWebSocket;
 
-export { createWebSocketStream, Sender, Receiver, BunWebSocket as WebSocket, WebSocketServer };
+export { createWebSocketStream, Server, Receiver, Sender, BunWebSocket as WebSocket, Server as WebSocketServer };

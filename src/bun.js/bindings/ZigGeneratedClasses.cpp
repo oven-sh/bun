@@ -109,6 +109,9 @@ JSC_DECLARE_HOST_FUNCTION(BlobPrototype__formDataCallback);
 extern "C" EncodedJSValue BlobPrototype__getJSON(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(BlobPrototype__jsonCallback);
 
+extern "C" JSC::EncodedJSValue BlobPrototype__getLastModified(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BlobPrototype__lastModifiedGetterWrap);
+
 extern "C" JSC::EncodedJSValue BlobPrototype__getSize(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(BlobPrototype__sizeGetterWrap);
 
@@ -133,6 +136,7 @@ static const HashTableValue JSBlobPrototypeTableValues[] = {
     { "arrayBuffer"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BlobPrototype__arrayBufferCallback, 0 } },
     { "formData"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BlobPrototype__formDataCallback, 0 } },
     { "json"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BlobPrototype__jsonCallback, 0 } },
+    { "lastModified"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BlobPrototype__lastModifiedGetterWrap, 0 } },
     { "size"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BlobPrototype__sizeGetterWrap, 0 } },
     { "slice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BlobPrototype__sliceCallback, 2 } },
     { "stream"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BlobPrototype__streamCallback, 1 } },
@@ -201,6 +205,18 @@ JSC_DEFINE_HOST_FUNCTION(BlobPrototype__jsonCallback, (JSGlobalObject * lexicalG
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
 
     return BlobPrototype__getJSON(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BlobPrototype__lastModifiedGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBlob* thisObject = jsCast<JSBlob*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BlobPrototype__getLastModified(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(BlobPrototype__sizeGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))

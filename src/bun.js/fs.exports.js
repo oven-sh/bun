@@ -925,7 +925,7 @@ export default {
   chownSync,
   close,
   closeSync,
-  constants,
+  constants: promises.constants,
   copyFile,
   copyFileSync,
   createReadStream,

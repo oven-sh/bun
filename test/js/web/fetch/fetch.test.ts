@@ -540,6 +540,7 @@ describe("Bun.file", () => {
     writeFileSync(path, buffer);
     const file = Bun.file(path);
     expect(blob.size).toBe(file.size);
+    expect(file.lastModified).toBeGreaterThan(0);
     return file;
   });
 

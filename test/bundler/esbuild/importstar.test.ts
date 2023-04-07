@@ -1,5 +1,5 @@
 import assert from "assert";
-import { expectBundled, itBundled, testForFile } from "./expectBundled";
+import { expectBundled, itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:
@@ -567,7 +567,7 @@ describe("bundler", () => {
     format: "iife",
     globalName: "someName",
     onAfterBundle(api) {
-      api.writeFile("/out.js", api.readFile("/out.js") + "\nconsole.log(JSON.stringify(someName))");
+      api.appendFile("/out.js", "\nconsole.log(JSON.stringify(someName))");
     },
     run: {
       stdout: '{"foo":123}',
@@ -1056,7 +1056,7 @@ describe("bundler", () => {
       `,
     },
     onAfterBundle(api) {
-      api.writeFile("/out.js", api.readFile("/out.js") + "\nconsole.log(JSON.stringify(mod))");
+      api.appendFile("/out.js", "\nconsole.log(JSON.stringify(mod))");
     },
     run: {
       stdout: '{"bar":"bar","foo":"foo"}',

@@ -1,18 +1,5 @@
 /**
- * Call `expectBundled` within a test to test the bundler. The `id` passed as the first argument
- * must be unique across the all tests. See `BundlerTestInput` for all available options.
- *
- * All bundle entry files and their output files are written to disk at:
- * `$TEMP/bun-build-tests/{run_id}/{id}`
- * This can be used to inspect and debug bundles, as they are not deleted after runtime.
- *
- * In addition to comparing the bundle outputs against snapshots, most of our test cases run the
- * bundle and have additional code to assert the logic is happening properly. This allows the
- * bundler to change exactly how it writes files (optimizations / variable renaming), and still
- * have concrete tests that ensure what the bundler creates will function properly.
- *
- * For test debugging, I have a utility script `run-single-test.sh` which gets around bun's inability
- * to run a single test.
+ * See `./expectBundled.md` for how this works.
  */
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import path from "path";
@@ -56,6 +43,7 @@ if (ESBUILD) {
 }
 
 export interface BundlerTestInput {
+  // file options
   files: Record<string, string>;
   /** Files to be written only after the bundle is done. */
   runtimeFiles?: Record<string, string>;
@@ -77,13 +65,14 @@ export interface BundlerTestInput {
   assetNames?: string;
   banner?: string;
   define?: Record<string, string | number>;
+  /** Default is "[name].[ext]" */
   entryNames?: string;
   extensionOrder?: string[];
+  /** Replaces "{{root}}" with the file root */
   external?: string[];
   /** Defaults to "esm" */
   format?: "esm" | "cjs" | "iife";
   globalName?: string;
-  host?: undefined | "unix" | "windows";
   ignoreDCEAnnotations?: boolean;
   inject?: string[];
   jsx?: {
@@ -123,7 +112,7 @@ export interface BundlerTestInput {
   /**
    * If passed, the bundle should fail with given error messages.
    *
-   * Pass an object containing filenames to a list of errors from that file.
+   * Pass an object mapping filenames to an array of error strings that file should contain.
    */
   bundleErrors?: true | Record<string, string[]>;
   /**
@@ -132,7 +121,7 @@ export interface BundlerTestInput {
   bundleWarnings?: true | Record<string, string[]>;
   /**
    * Setting to true or an object will cause the file to be run with bun.
-   * Options passed can customize and assert behavior about the bundle.
+   * Pass an array to run multiple times with different options.
    */
   run?: boolean | BundlerTestRunOptions | BundlerTestRunOptions[];
 
@@ -145,22 +134,22 @@ export interface BundlerTestInput {
   /** Used on tests in the esbuild suite that fail and skip. */
   skipOnEsbuild?: boolean;
 
-  // hooks
-
   /** Run after bundle happens but before runtime. */
-  onAfterBundle?(api: BundlerTestEventAPI): void;
+  onAfterBundle?(api: BundlerTestBundleAPI): void;
 }
 
-export interface BundlerTestEventAPI {
+export interface BundlerTestBundleAPI {
   root: string;
   outfile: string;
   outdir: string;
+
   readFile(file: string): string;
   writeFile(file: string, contents: string): void;
   prependFile(file: string, contents: string): void;
   appendFile(file: string, contents: string): void;
   expectFile(file: string): Expect;
   assertFileExists(file: string): void;
+
   warnings: Record<string, { file: string; error: string; line?: string; col?: string }[]>;
   options: BundlerTestInput;
 }
@@ -196,6 +185,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     banner,
     bundleErrors,
     bundleWarnings,
+    dce,
     define,
     entryNames,
     entryPoints,
@@ -204,7 +194,6 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     files,
     format,
     globalName,
-    host,
     inject,
     jsx = {},
     legalComments,
@@ -225,7 +214,6 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     splitting,
     unsupportedCSSFeatures,
     unsupportedJSFeatures,
-    dce,
     ...unknownProps
   } = opts;
 
@@ -267,9 +255,6 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
   }
   if (!ESBUILD && unsupportedCSSFeatures && unsupportedCSSFeatures.length) {
     throw new Error("unsupportedCSSFeatures not implemented in bun build");
-  }
-  if (host === "windows") {
-    throw new Error('"host: windows" is not implemented in expectBundled');
   }
   if (ESBUILD && skipOnEsbuild) {
     return;
@@ -429,7 +414,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
           return { error, file: "<bun>" };
         }
         const [_str2, fullFilename, line, col] = source.match(/bun-build-tests\/(.*):(\d+):(\d+)/)!;
-        const file = fullFilename.slice(id.length);
+        const file = fullFilename.slice(id.length + path.basename(outBase).length + 1);
         return { error, file, line, col };
       });
 

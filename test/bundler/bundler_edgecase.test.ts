@@ -9,4 +9,18 @@ describe("bundler", () => {
       "/entry.js": "",
     },
   });
+  itBundled("edgecase/ImportStarFunction", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as foo from "./foo.js";
+        console.log(foo.fn());
+      `,
+      "/foo.js": /* js */ `
+        export function fn() {
+          return "foo";
+        }
+      `,
+    },
+    run: { stdout: "foo" },
+  });
 });

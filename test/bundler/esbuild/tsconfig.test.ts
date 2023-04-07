@@ -1,4 +1,4 @@
-import { bundlerTest, expectBundled, itBundled, testForFile } from "./expectBundled";
+import { bundlerTest, expectBundled, itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:

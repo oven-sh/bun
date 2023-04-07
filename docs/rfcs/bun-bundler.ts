@@ -4,8 +4,8 @@
  * This is a proposal for the JavaScript API for Bun's native bundler.
  */
 
-import { BunPlugin, FileBlob } from "bun";
-
+import { FileBlob } from "bun";
+type BunPlugin = Parameters<(typeof Bun)["plugin"]>[0];
 export type JavaScriptLoader = "jsx" | "js" | "ts" | "tsx";
 export type MacroMap = Record<string, Record<string, string>>;
 export type Target = "bun" | "browser" | "node" | "neutral";
@@ -108,8 +108,10 @@ export interface BundlerOptions {
 
 // `.build(options: BuildOptions)`
 // can override everything specified in Bundler options
-interface BuildOptions extends BundlerOptions {
+export interface BuildOptions extends BundlerOptions {
+  name?: string; // default "default"
   bundle?: boolean; // default true
+  outdir?: string;
   splitting?: boolean;
   plugins?: BunPlugin[];
   cwd?: string;
@@ -169,7 +171,7 @@ interface BuildOptions extends BundlerOptions {
 }
 
 // copied from esbuild
-type BuildManifest = {
+export type BuildManifest = {
   inputs: {
     [path: string]: {
       output: {
@@ -203,7 +205,7 @@ type BuildManifest = {
   };
 };
 
-type BuildResult<T> = {
+export type BuildResult<T> = {
   // only exists if `manifest` is true
   manifest?: BuildManifest;
   // per-build context that can be written to by plugins
@@ -211,7 +213,7 @@ type BuildResult<T> = {
   outputs: { path: string; result: T }[];
 };
 
-type LazyBuildResult = {
+export type LazyBuildResult = {
   then(cb: (context: any) => BuildOptions): LazyBuildResult;
   run(): Promise<BuildResult<Blob>>;
   write(dir: string): Promise<BuildResult<FileBlob>>;

@@ -2709,47 +2709,46 @@ pub const Parser = struct {
             return error.SyntaxError;
         }
 
-        // const uses_dirname = p.symbols.items[p.dirname_ref.innerIndex()].use_count_estimate > 0;
-        // const uses_filename = p.symbols.items[p.filename_ref.innerIndex()].use_count_estimate > 0;
+        const uses_dirname = p.symbols.items[p.dirname_ref.innerIndex()].use_count_estimate > 0;
+        const uses_filename = p.symbols.items[p.filename_ref.innerIndex()].use_count_estimate > 0;
 
-        // if (uses_dirname or uses_filename) {
-        //     const count = @as(usize, @boolToInt(uses_dirname)) + @as(usize, @boolToInt(uses_filename));
-        //     var declared_symbols = try p.allocator.alloc(DeclaredSymbol, count);
-        //     var decls = p.allocator.alloc(G.Decl, count) catch unreachable;
-        //     if (uses_dirname) {
-        //         decls[0] = .{
-        //             .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
-        //             .value = p.newExpr(
-        //                 // TODO: test UTF-8 file paths
-        //                 E.String.init(p.source.path.name.dir),
-        //                 logger.Loc.Empty,
-        //             ),
-        //         };
-        //         declared_symbols[0] = .{ .ref = p.dirname_ref, .is_top_level = true };
-        //     }
-        //     if (uses_filename) {
-        //         decls[@as(usize, @boolToInt(uses_dirname))] = .{
-        //             .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
-        //             .value = p.newExpr(
-        //                 E.String.init(p.source.path.text),
-        //                 logger.Loc.Empty,
-        //             ),
-        //         };
-        //         declared_symbols[@as(usize, @boolToInt(uses_dirname))] = .{ .ref = p.filename_ref, .is_top_level = true };
-        //     }
+        if (uses_dirname or uses_filename) {
+            const count = @as(usize, @boolToInt(uses_dirname)) + @as(usize, @boolToInt(uses_filename));
+            var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, count) catch unreachable;
+            var decls = p.allocator.alloc(G.Decl, count) catch unreachable;
+            if (uses_dirname) {
+                decls[0] = .{
+                    .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
+                    .value = p.newExpr(
+                        // TODO: test UTF-8 file paths
+                        E.String.init(p.source.path.name.dir),
+                        logger.Loc.Empty,
+                    ),
+                };
+                declared_symbols.appendAssumeCapacity(.{ .ref = p.dirname_ref, .is_top_level = true });
+            }
+            if (uses_filename) {
+                decls[@as(usize, @boolToInt(uses_dirname))] = .{
+                    .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
+                    .value = p.newExpr(
+                        E.String.init(p.source.path.text),
+                        logger.Loc.Empty,
+                    ),
+                };
+                declared_symbols.appendAssumeCapacity(.{ .ref = p.filename_ref, .is_top_level = true });
+            }
 
-        //     // TODO: DeclaredSymbol
-        //     var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
-        //     part_stmts[0] = p.s(S.Local{
-        //         .kind = .k_var,
-        //         .decls = decls,
-        //     }, logger.Loc.Empty);
-        //     before.append(js_ast.Part{
-        //         .stmts = part_stmts,
-        //         .declared_symbols = declared_symbols,
-        //         .tag = .dirname_filename,
-        //     }) catch unreachable;
-        // }
+            var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+            part_stmts[0] = p.s(S.Local{
+                .kind = .k_var,
+                .decls = decls,
+            }, logger.Loc.Empty);
+            before.append(js_ast.Part{
+                .stmts = part_stmts,
+                .declared_symbols = declared_symbols,
+                .tag = .dirname_filename,
+            }) catch unreachable;
+        }
 
         var did_import_fast_refresh = false;
 

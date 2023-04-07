@@ -124,7 +124,7 @@ export interface BuildOptions extends BundlerOptions {
   manifest?: boolean;
 
   // inputs
-  entrypoints: string[];
+  entrypoints?: string[];
   rootDir?: string; // equiv. outbase
 
   naming?:

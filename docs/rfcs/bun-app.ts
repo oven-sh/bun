@@ -2,7 +2,7 @@ import { FileBlob, ServeOptions, Server } from "bun";
 
 import { BuildManifest, BuildOptions, BuildResult, BundlerOptions, LazyBuildResult } from "./bun-bundler";
 
-interface EngineOptions extends BuildOptions {
+interface AppOptions extends BuildOptions {
   build?: boolean; // disable building/bundling
   serve?: Array<
     | {
@@ -18,8 +18,8 @@ interface EngineOptions extends BuildOptions {
   >;
 }
 
-export declare class Engine {
-  constructor(options: EngineOptions | (EngineOptions | undefined)[]);
+export declare class App {
+  constructor(options: AppOptions | (AppOptions | undefined)[]);
   // start dev server
   serve(options: Partial<ServeOptions>): Promise<Server>;
   // run full build
@@ -37,7 +37,7 @@ export declare class Engine {
 
 // simple static file server
 {
-  const server = new Engine([
+  const server = new App([
     {
       name: "static server",
       // disable all buildling
@@ -73,7 +73,7 @@ export declare class Engine {
    *   return new Response("hello world");
    * }
    */
-  const app = new Engine([
+  const app = new App([
     {
       name: "simple HTTP server",
       target: "bun",
@@ -118,7 +118,7 @@ export declare class Engine {
     style: "nextjs",
   });
 
-  const app = new Engine([
+  const app = new App([
     {
       name: "SSR'd react, pages dir",
       target: "bun",

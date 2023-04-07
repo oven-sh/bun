@@ -1102,7 +1102,7 @@ export class ChildProcess extends EventEmitter {
     });
     this.pid = this.#handle.pid;
 
-    process.nextTick(onSpawnNT, this);
+    onSpawnNT(this);
 
     // const ipc = stdio.ipc;
     // const ipcFd = stdio.ipcFd;

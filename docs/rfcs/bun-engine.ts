@@ -42,13 +42,12 @@ export declare class Engine {
       name: "static server",
       // disable all buildling
       // this just copies files to outdir on build
-      build: false,
-      entrypoints: ["./public"], // path to static directory
+
       outdir: "./.build/client",
       serve: [
         {
           mode: "static",
-          dir: "./.build/client",
+          dir: "./public",
         },
       ],
       // bundler config
@@ -61,7 +60,7 @@ export declare class Engine {
     port: 3000,
   });
 
-  // writes all files to `.build/client`
+  // copies files from ./public to `.build/client`
   await server.build();
 }
 
@@ -74,7 +73,7 @@ export declare class Engine {
    *   return new Response("hello world");
    * }
    */
-  const bundler = new Engine([
+  const app = new Engine([
     {
       name: "simple HTTP server",
       target: "bun",
@@ -90,7 +89,8 @@ export declare class Engine {
       // bundler config
     },
     //
-  ]).serve({
+  ]);
+  app.serve({
     port: 3000,
   });
 }

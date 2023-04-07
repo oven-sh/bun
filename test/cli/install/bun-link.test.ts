@@ -341,6 +341,6 @@ it("should link dependency without crashing", async () => {
   expect(err4).toContain(`error: FileNotFound installing ${link_name}`);
   expect(stdout4).toBeDefined();
   const out4 = await new Response(stdout4).text();
-  expect(out4.replace(/\[[0-9\.]+m?s\]/, "[]").split(/\r?\n/)).toEqual(["Failed to install 1 packages", "[] done", ""]);
+  expect(out4.replace(/\[[0-9\.]+m?s\]/, "[]").split(/\r?\n/)).toEqual(["Failed to install 1 package", "[] done", ""]);
   expect(await exited4).toBe(0);
 });

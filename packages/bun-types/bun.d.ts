@@ -132,7 +132,7 @@ declare module "bun" {
    */
   // tslint:disable-next-line:unified-signatures
   export function write(
-    destination: FileBlob | PathLike,
+    destination: BunFile | PathLike,
     input: Blob | TypedArray | ArrayBufferLike | string | BlobPart[],
   ): Promise<number>;
 
@@ -147,10 +147,7 @@ declare module "bun" {
    * @param input - `Response` object
    * @returns A promise that resolves with the number of bytes written.
    */
-  export function write(
-    destination: FileBlob,
-    input: Response,
-  ): Promise<number>;
+  export function write(destination: BunFile, input: Response): Promise<number>;
 
   /**
    *
@@ -189,10 +186,7 @@ declare module "bun" {
    * @returns A promise that resolves with the number of bytes written.
    */
   // tslint:disable-next-line:unified-signatures
-  export function write(
-    destination: FileBlob,
-    input: FileBlob,
-  ): Promise<number>;
+  export function write(destination: BunFile, input: BunFile): Promise<number>;
 
   /**
    *
@@ -216,7 +210,7 @@ declare module "bun" {
   // tslint:disable-next-line:unified-signatures
   export function write(
     destinationPath: PathLike,
-    input: FileBlob,
+    input: BunFile,
   ): Promise<number>;
 
   export interface SystemError extends Error {
@@ -586,6 +580,7 @@ declare module "bun" {
     unref(): void;
   }
 
+  export interface FileBlob extends BunFile {}
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
    *
@@ -610,7 +605,7 @@ declare module "bun" {
    * ```
    *
    */
-  export interface FileBlob extends Blob {
+  export interface BunFile extends Blob {
     /**
      * Offset any operation on the file starting at `begin` and ending at `end`. `end` is relative to 0
      *
@@ -620,10 +615,13 @@ declare module "bun" {
      *
      * @param begin - start offset in bytes
      * @param end - absolute offset in bytes (relative to 0)
-     * @param contentType - MIME type for the new FileBlob
+     * @param contentType - MIME type for the new BunFile
      */
-    slice(begin?: number, end?: number, contentType?: string): FileBlob;
+    slice(begin?: number, end?: number, contentType?: string): BunFile;
 
+    /**
+     *
+     */
     /**
      * Offset any operation on the file starting at `begin`
      *
@@ -632,14 +630,14 @@ declare module "bun" {
      * If `begin` > 0, {@link Bun.write()} will be slower on macOS
      *
      * @param begin - start offset in bytes
-     * @param contentType - MIME type for the new FileBlob
+     * @param contentType - MIME type for the new BunFile
      */
-    slice(begin?: number, contentType?: string): FileBlob;
+    slice(begin?: number, contentType?: string): BunFile;
 
     /**
-     * @param contentType - MIME type for the new FileBlob
+     * @param contentType - MIME type for the new BunFile
      */
-    slice(contentType?: string): FileBlob;
+    slice(contentType?: string): BunFile;
 
     /**
      * Incremental writer for files and pipes.
@@ -649,6 +647,11 @@ declare module "bun" {
     readonly readable: ReadableStream;
 
     // TODO: writable: WritableStream;
+
+    /**
+     * A UNIX timestamp indicating when the file was last modified.
+     */
+    lastModified: number;
   }
 
   /**
@@ -1822,7 +1825,7 @@ declare module "bun" {
    *
    */
   // tslint:disable-next-line:unified-signatures
-  export function file(path: string | URL, options?: BlobPropertyBag): FileBlob;
+  export function file(path: string | URL, options?: BlobPropertyBag): BunFile;
 
   /**
    * `Blob` that leverages the fastest system calls available to operate on files.
@@ -1844,7 +1847,7 @@ declare module "bun" {
   export function file(
     path: ArrayBufferLike | Uint8Array,
     options?: BlobPropertyBag,
-  ): FileBlob;
+  ): BunFile;
 
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
@@ -1864,7 +1867,7 @@ declare module "bun" {
   export function file(
     fileDescriptor: number,
     options?: BlobPropertyBag,
-  ): FileBlob;
+  ): BunFile;
 
   /**
    * Allocate a new [`Uint8Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) without zeroing the bytes.
@@ -1916,15 +1919,15 @@ declare module "bun" {
   export function mmap(path: PathLike, opts?: MMapOptions): Uint8Array;
 
   /** Write to stdout */
-  const stdout: FileBlob;
+  const stdout: BunFile;
   /** Write to stderr */
-  const stderr: FileBlob;
+  const stderr: BunFile;
   /**
    * Read from stdin
    *
    * This is read-only
    */
-  const stdin: FileBlob;
+  const stdin: BunFile;
 
   interface unsafe {
     /**
@@ -2617,6 +2620,45 @@ declare module "bun" {
     target: PluginTarget;
   }
 
+  interface BunPlugin {
+    /**
+     * Human-readable name of the plugin
+     *
+     * In a future version of Bun, this will be used in error messages.
+     */
+    name?: string;
+
+    /**
+     * The target JavaScript environment the plugin should be applied to.
+     * - `bun`: The default environment when using `bun run` or `bun` to load a script
+     * - `browser`: The plugin will be applied to browser builds
+     * - `node`: The plugin will be applied to Node.js builds
+     *
+     * If in Bun's runtime, the default target is `bun`.
+     *
+     * If unspecified, it is assumed that the plugin is compatible with the default target.
+     */
+    target?: PluginTarget;
+    /**
+     * A function that will be called when the plugin is loaded.
+     *
+     * This function may be called in the same tick that it is registered, or it may be called later. It could potentially be called multiple times for different targets.
+     */
+    setup(
+      /**
+       * A builder object that can be used to register plugin hooks
+       * @example
+       * ```ts
+       * builder.onLoad({ filter: /\.yaml$/ }, ({ path }) => ({
+       *   loader: "object",
+       *   exports: require("js-yaml").load(fs.readFileSync(path, "utf8")),
+       * }));
+       * ```
+       */
+      builder: PluginBuilder,
+    ): void | Promise<void>;
+  }
+
   /**
    * Extend Bun's module resolution and loading behavior
    *
@@ -2656,45 +2698,8 @@ declare module "bun" {
    *
    * ```
    */
-  interface BunPlugin {
-    (options: {
-      /**
-       * Human-readable name of the plugin
-       *
-       * In a future version of Bun, this will be used in error messages.
-       */
-      name?: string;
-
-      /**
-       * The target JavaScript environment the plugin should be applied to.
-       * - `bun`: The default environment when using `bun run` or `bun` to load a script
-       * - `browser`: The plugin will be applied to browser builds
-       * - `node`: The plugin will be applied to Node.js builds
-       *
-       * If in Bun's runtime, the default target is `bun`.
-       *
-       * If unspecified, it is assumed that the plugin is compatible with the default target.
-       */
-      target?: PluginTarget;
-      /**
-       * A function that will be called when the plugin is loaded.
-       *
-       * This function may be called in the same tick that it is registered, or it may be called later. It could potentially be called multiple times for different targets.
-       */
-      setup(
-        /**
-         * A builder object that can be used to register plugin hooks
-         * @example
-         * ```ts
-         * builder.onLoad({ filter: /\.yaml$/ }, ({ path }) => ({
-         *   loader: "object",
-         *   exports: require("js-yaml").load(fs.readFileSync(path, "utf8")),
-         * }));
-         * ```
-         */
-        builder: PluginBuilder,
-      ): void | Promise<void>;
-    }): ReturnType<(typeof options)["setup"]>;
+  interface BunRegisterPlugin {
+    <T extends BunPlugin>(options: T): ReturnType<T["setup"]>;
 
     /**
      * Deactivate all plugins
@@ -2704,7 +2709,7 @@ declare module "bun" {
     clearAll(): void;
   }
 
-  const plugin: BunPlugin;
+  const plugin: BunRegisterPlugin;
 
   interface Socket<Data = undefined> {
     /**
@@ -2989,7 +2994,7 @@ declare module "bun" {
       | "ignore"
       | null // equivalent to "ignore"
       | undefined // to use default
-      | FileBlob
+      | BunFile
       | ArrayBufferView
       | number;
 
@@ -3002,7 +3007,7 @@ declare module "bun" {
       | "ignore"
       | null // equivalent to "ignore"
       | undefined // to use default
-      | FileBlob
+      | BunFile
       | ArrayBufferView
       | number
       | ReadableStream
@@ -3030,7 +3035,7 @@ declare module "bun" {
        * Changes to `process.env` at runtime won't automatically be reflected in the default value. For that, you can pass `process.env` explicitly.
        *
        */
-      env?: Record<string, string>;
+      env?: Record<string, string | undefined>;
 
       /**
        * The standard file descriptors of the process, in the form [stdin, stdout, stderr].
@@ -3148,7 +3153,7 @@ declare module "bun" {
 
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
       ? ReadableStream<Buffer>
-      : X extends FileBlob | ArrayBufferView | number
+      : X extends BunFile | ArrayBufferView | number
       ? number
       : undefined;
 
@@ -3160,13 +3165,7 @@ declare module "bun" {
 
     type WritableToIO<X extends Writable> = X extends "pipe"
       ? FileSink
-      : X extends
-          | FileBlob
-          | ArrayBufferView
-          | Blob
-          | Request
-          | Response
-          | number
+      : X extends BunFile | ArrayBufferView | Blob | Request | Response | number
       ? number
       : undefined;
   }

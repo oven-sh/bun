@@ -233,7 +233,7 @@ interface Bun {
   file(path: string | number | URL, options?: { type?: string }): BunFile;
 
   write(
-    destination: string | number | FileBlob | URL,
+    destination: string | number | BunFile | URL,
     input: string | Blob | ArrayBuffer | SharedArrayBuffer | TypedArray | Response,
   ): Promise<number>;
 }

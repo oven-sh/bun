@@ -3657,7 +3657,7 @@ pub const Parser = struct {
             }) catch unreachable;
         }
 
-        if (p.has_called_runtime) {
+        if (p.options.bundle and p.has_called_runtime) {
             var runtime_imports: [RuntimeImports.all.len]u8 = undefined;
             var iter = p.runtime_imports.iter();
             var i: usize = 0;

@@ -3690,7 +3690,7 @@ pub const Yarn = struct {
         YARN_LOCK_HEADER_META_HASH.len +
         META_HASH_LEN_IN_FILE;
 
-    pub const over_allocated_space = @max("optionalDependencies".len, ADVANCE_WIDTH);
+    pub const over_allocated_space = @max("optionalDependencies".len, SENTINELS.len + ADVANCE_WIDTH - 1);
 
     // we add these sentinels to the end of the file_buffer, just in case someone gives us a malicious file
     const SENTINELS = [_]u8{ '\n', '"', ':', '=', ' ', '@' };
@@ -3845,7 +3845,8 @@ pub const Yarn = struct {
             }
 
             // if we hit the sentinels, this is a valid place to stop.
-            if (sentinelCmp(@ptrToInt(cur.ptr), sentinels_start, '"')) return;
+            comptime std.debug.assert(SENTINELS[0] == '\n');
+            if (sentinelCmp(@ptrToInt(cur.ptr), sentinels_start, SENTINELS[1])) return;
 
             // Otherwise, start matching dependencies
             if (!found_newline)

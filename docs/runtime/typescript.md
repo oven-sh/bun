@@ -86,14 +86,6 @@ These are the recommended `compilerOptions` for a Bun project.
 }
 ```
 
-You'll also need to set `"type": "module"` in your `package.json` to enable ES modules.
-
-```json-diff
-  {
-+   "type": "module"
-  }
-```
-
 ## Path mapping
 
 When resolving modules, Bun's runtime respects path mappings defined in [`compilerOptions.paths`](https://www.typescriptlang.org/tsconfig#paths) in your `tsconfig.json`. No other runtime does this.

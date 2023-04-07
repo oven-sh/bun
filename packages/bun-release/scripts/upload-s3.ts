@@ -2,7 +2,7 @@ import { AwsClient } from "aws4fetch";
 import { getBuild, getRelease, getSemver } from "../src/github";
 
 const [tag] = process.argv.slice(2);
-const bucketUrl = new URL(env("AWS_BUCKET"), env("AWS_ENDPOINT"));
+const bucketUrl = new URL(`${env("AWS_BUCKET")}/`, env("AWS_ENDPOINT"));
 const aws = new AwsClient({
   accessKeyId: env("AWS_ACCESS_KEY_ID"),
   secretAccessKey: env("AWS_SECRET_ACCESS_KEY"),

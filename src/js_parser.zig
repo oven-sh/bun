@@ -2751,6 +2751,7 @@ pub const Parser = struct {
         }
 
         var did_import_fast_refresh = false;
+        _ = did_import_fast_refresh;
 
         if (comptime FeatureFlags.commonjs_to_esm) {
             if (p.commonjs_named_exports.count() > 0) {
@@ -2991,648 +2992,648 @@ pub const Parser = struct {
         }
 
         // Auto-import & post-process JSX
-        if (!p.options.bundle) {
-            switch (comptime ParserType.jsx_transform_type) {
-                .react => {
-                    // const jsx_filename_symbol = if (p.options.jsx.development)
-                    //     p.symbols.items[p.jsx_filename.ref.innerIndex()]
-                    // else
-                    //     Symbol{ .original_name = "" };
+        // if (!p.options.bundle) {
+        //     switch (comptime ParserType.jsx_transform_type) {
+        //         .react => {
+        //             // const jsx_filename_symbol = if (p.options.jsx.development)
+        //             //     p.symbols.items[p.jsx_filename.ref.innerIndex()]
+        //             // else
+        //             //     Symbol{ .original_name = "" };
 
-                    {
-                        const jsx_symbol = p.symbols.items[p.jsx_runtime.ref.innerIndex()];
+        //             {
+        //                 const jsx_symbol = p.symbols.items[p.jsx_runtime.ref.innerIndex()];
 
-                        const jsx_fragment_symbol = p.symbols.items[p.jsx_fragment.ref.innerIndex()];
-                        const jsx_factory_symbol = p.symbols.items[p.jsx_factory.ref.innerIndex()];
+        //                 const jsx_fragment_symbol = p.symbols.items[p.jsx_fragment.ref.innerIndex()];
+        //                 const jsx_factory_symbol = p.symbols.items[p.jsx_factory.ref.innerIndex()];
 
-                        // Currently, React (and most node_modules) ship a CJS version or a UMD version
-                        // but we should assume that it'll pretty much always be CJS
-                        // Given that, we can't directly call import {jsxDEV} from 'react';
-                        // Instead, we must call require("react").default.jsxDEV
-                        // So a jsx_symbol usage means a jsx_factory_symbol usage
-                        // This is kind of a broken way of doing it because it wouldn't work if it was more than one level deep
-                        if (FeatureFlags.jsx_runtime_is_cjs) {
-                            if (jsx_symbol.use_count_estimate > 0) {
-                                p.recordUsage(p.jsx_automatic.ref);
-                            }
+        //                 // Currently, React (and most node_modules) ship a CJS version or a UMD version
+        //                 // but we should assume that it'll pretty much always be CJS
+        //                 // Given that, we can't directly call import {jsxDEV} from 'react';
+        //                 // Instead, we must call require("react").default.jsxDEV
+        //                 // So a jsx_symbol usage means a jsx_factory_symbol usage
+        //                 // This is kind of a broken way of doing it because it wouldn't work if it was more than one level deep
+        //                 if (FeatureFlags.jsx_runtime_is_cjs) {
+        //                     if (jsx_symbol.use_count_estimate > 0) {
+        //                         p.recordUsage(p.jsx_automatic.ref);
+        //                     }
 
-                            if (FeatureFlags.support_jsxs_in_jsx_transform) {
-                                const jsx_static_symbol = p.symbols.items[p.jsxs_runtime.ref.innerIndex()];
+        //                     if (FeatureFlags.support_jsxs_in_jsx_transform) {
+        //                         const jsx_static_symbol = p.symbols.items[p.jsxs_runtime.ref.innerIndex()];
 
-                                if (jsx_static_symbol.use_count_estimate > 0) {
-                                    p.recordUsage(p.jsx_automatic.ref);
-                                }
-                            }
+        //                         if (jsx_static_symbol.use_count_estimate > 0) {
+        //                             p.recordUsage(p.jsx_automatic.ref);
+        //                         }
+        //                     }
 
-                            if (jsx_fragment_symbol.use_count_estimate > 0) {
-                                p.recordUsage(p.jsx_classic.ref);
-                            }
+        //                     if (jsx_fragment_symbol.use_count_estimate > 0) {
+        //                         p.recordUsage(p.jsx_classic.ref);
+        //                     }
 
-                            if (jsx_factory_symbol.use_count_estimate > 0) {
-                                p.recordUsage(p.jsx_classic.ref);
-                            }
-                        }
-                    }
+        //                     if (jsx_factory_symbol.use_count_estimate > 0) {
+        //                         p.recordUsage(p.jsx_classic.ref);
+        //                     }
+        //                 }
+        //             }
 
-                    p.resolveStaticJSXSymbols();
+        //             p.resolveStaticJSXSymbols();
 
-                    if (p.options.features.auto_import_jsx) {
-                        const jsx_classic_symbol = p.symbols.items[p.jsx_classic.ref.innerIndex()];
-                        const jsx_automatic_symbol = p.symbols.items[p.jsx_automatic.ref.innerIndex()];
-                        const react_element_symbol = if (p.options.features.jsx_optimization_inline) p.symbols.items[p.react_element_type.ref.innerIndex()] else Symbol{
-                            .original_name = "IF_YOU_SEE_THIS_ITS_A_BUG_IN_BUN_WHERE_REACT_ELEMENT_SYMBOL_IS_BEING_ADDED_WHEN_IT_SHOULDNT_BE_PLEASE_REPORT_IT",
-                        };
+        //             if (p.options.features.auto_import_jsx) {
+        //                 const jsx_classic_symbol = p.symbols.items[p.jsx_classic.ref.innerIndex()];
+        //                 const jsx_automatic_symbol = p.symbols.items[p.jsx_automatic.ref.innerIndex()];
+        //                 const react_element_symbol = if (p.options.features.jsx_optimization_inline) p.symbols.items[p.react_element_type.ref.innerIndex()] else Symbol{
+        //                     .original_name = "IF_YOU_SEE_THIS_ITS_A_BUG_IN_BUN_WHERE_REACT_ELEMENT_SYMBOL_IS_BEING_ADDED_WHEN_IT_SHOULDNT_BE_PLEASE_REPORT_IT",
+        //                 };
 
-                        // JSX auto-imports
-                        // The classic runtime is a different import than the main import
-                        // There are cases where you can use both JSX runtimes in the same file.
-                        // 1. If you use a spread operator like this: <div foo bar key="foo" {...props} baz />
-                        // 2. If you use a React.Fragment
-                        // So we have to support both.
-                        if (jsx_classic_symbol.use_count_estimate > 0 or jsx_automatic_symbol.use_count_estimate > 0 or react_element_symbol.use_count_estimate > 0) {
-                            // These must unfortunately be copied
-                            // p.symbols may grow during this scope
-                            // if it grows, the previous pointers are invalidated
-                            const jsx_symbol = p.symbols.items[p.jsx_runtime.ref.innerIndex()];
-                            const jsx_static_symbol: Symbol = if (!FeatureFlags.support_jsxs_in_jsx_transform)
-                                undefined
-                            else
-                                p.symbols.items[p.jsxs_runtime.ref.innerIndex()];
+        //                 // JSX auto-imports
+        //                 // The classic runtime is a different import than the main import
+        //                 // There are cases where you can use both JSX runtimes in the same file.
+        //                 // 1. If you use a spread operator like this: <div foo bar key="foo" {...props} baz />
+        //                 // 2. If you use a React.Fragment
+        //                 // So we have to support both.
+        //                 if (jsx_classic_symbol.use_count_estimate > 0 or jsx_automatic_symbol.use_count_estimate > 0 or react_element_symbol.use_count_estimate > 0) {
+        //                     // These must unfortunately be copied
+        //                     // p.symbols may grow during this scope
+        //                     // if it grows, the previous pointers are invalidated
+        //                     const jsx_symbol = p.symbols.items[p.jsx_runtime.ref.innerIndex()];
+        //                     const jsx_static_symbol: Symbol = if (!FeatureFlags.support_jsxs_in_jsx_transform)
+        //                         undefined
+        //                     else
+        //                         p.symbols.items[p.jsxs_runtime.ref.innerIndex()];
 
-                            const jsx_fragment_symbol = p.symbols.items[p.jsx_fragment.ref.innerIndex()];
-                            const jsx_factory_symbol = p.symbols.items[p.jsx_factory.ref.innerIndex()];
+        //                     const jsx_fragment_symbol = p.symbols.items[p.jsx_fragment.ref.innerIndex()];
+        //                     const jsx_factory_symbol = p.symbols.items[p.jsx_factory.ref.innerIndex()];
 
-                            const classic_namespace_ref = p.jsx_classic.ref;
-                            const automatic_namespace_ref = p.jsx_automatic.ref;
+        //                     const classic_namespace_ref = p.jsx_classic.ref;
+        //                     const automatic_namespace_ref = p.jsx_automatic.ref;
 
-                            const decls_count: u32 =
-                                // "REACT_ELEMENT_TYPE"
-                                // "Symbol.for('react.element')"
-                                @intCast(u32, @boolToInt(react_element_symbol.use_count_estimate > 0)) * 2 +
+        //                     const decls_count: u32 =
+        //                         // "REACT_ELEMENT_TYPE"
+        //                         // "Symbol.for('react.element')"
+        //                         @intCast(u32, @boolToInt(react_element_symbol.use_count_estimate > 0)) * 2 +
 
-                                // "JSX"
-                                @intCast(u32, @boolToInt(jsx_symbol.use_count_estimate > 0)) * 2 +
-                                @intCast(u32, @boolToInt(FeatureFlags.support_jsxs_in_jsx_transform and jsx_static_symbol.use_count_estimate > 0)) * 2 +
-                                @intCast(u32, @boolToInt(jsx_factory_symbol.use_count_estimate > 0)) +
-                                @intCast(u32, @boolToInt(jsx_fragment_symbol.use_count_estimate > 0));
-                            // @intCast(u32, @boolToInt(jsx_filename_symbol.use_count_estimate > 0));
+        //                         // "JSX"
+        //                         @intCast(u32, @boolToInt(jsx_symbol.use_count_estimate > 0)) * 2 +
+        //                         @intCast(u32, @boolToInt(FeatureFlags.support_jsxs_in_jsx_transform and jsx_static_symbol.use_count_estimate > 0)) * 2 +
+        //                         @intCast(u32, @boolToInt(jsx_factory_symbol.use_count_estimate > 0)) +
+        //                         @intCast(u32, @boolToInt(jsx_fragment_symbol.use_count_estimate > 0));
+        //                     // @intCast(u32, @boolToInt(jsx_filename_symbol.use_count_estimate > 0));
 
-                            const imports_count =
-                                @intCast(u32, @boolToInt(jsx_symbol.use_count_estimate > 0)) +
-                                @intCast(u32, @boolToInt(jsx_classic_symbol.use_count_estimate > 0)) +
-                                @intCast(u32, @boolToInt(jsx_fragment_symbol.use_count_estimate > 0)) +
-                                @intCast(u32, @boolToInt(p.options.features.react_fast_refresh)) +
-                                @intCast(u32, @boolToInt(FeatureFlags.support_jsxs_in_jsx_transform and jsx_static_symbol.use_count_estimate > 0));
-                            const stmts_count = imports_count + 1;
-                            const symbols_count: u32 = imports_count + decls_count;
-                            const loc = logger.Loc{ .start = 0 };
+        //                     const imports_count =
+        //                         @intCast(u32, @boolToInt(jsx_symbol.use_count_estimate > 0)) +
+        //                         @intCast(u32, @boolToInt(jsx_classic_symbol.use_count_estimate > 0)) +
+        //                         @intCast(u32, @boolToInt(jsx_fragment_symbol.use_count_estimate > 0)) +
+        //                         @intCast(u32, @boolToInt(p.options.features.react_fast_refresh)) +
+        //                         @intCast(u32, @boolToInt(FeatureFlags.support_jsxs_in_jsx_transform and jsx_static_symbol.use_count_estimate > 0));
+        //                     const stmts_count = imports_count + 1;
+        //                     const symbols_count: u32 = imports_count + decls_count;
+        //                     const loc = logger.Loc{ .start = 0 };
 
-                            // Preallocate everything we'll need here
-                            var declared_symbols = DeclaredSymbol.List{};
-                            try declared_symbols.ensureTotalCapacity(p.allocator, symbols_count);
-                            var decls = try p.allocator.alloc(G.Decl, decls_count);
-                            var jsx_part_stmts = try p.allocator.alloc(Stmt, stmts_count);
-                            // Use the same array for storing the require call target of potentially both JSX runtimes
-                            var require_call_args_base = p.allocator.alloc(Expr, if (p.options.can_import_from_bundle) 0 else imports_count) catch unreachable;
-                            var import_records = try p.allocator.alloc(u32, imports_count);
+        //                     // Preallocate everything we'll need here
+        //                     var declared_symbols = DeclaredSymbol.List{};
+        //                     try declared_symbols.ensureTotalCapacity(p.allocator, symbols_count);
+        //                     var decls = try p.allocator.alloc(G.Decl, decls_count);
+        //                     var jsx_part_stmts = try p.allocator.alloc(Stmt, stmts_count);
+        //                     // Use the same array for storing the require call target of potentially both JSX runtimes
+        //                     var require_call_args_base = p.allocator.alloc(Expr, if (p.options.can_import_from_bundle) 0 else imports_count) catch unreachable;
+        //                     var import_records = try p.allocator.alloc(u32, imports_count);
 
-                            var decl_i: usize = 0;
-                            var import_record_i: usize = 0;
-                            var require_call_args_i: usize = 0;
-                            var stmt_i: usize = 0;
+        //                     var decl_i: usize = 0;
+        //                     var import_record_i: usize = 0;
+        //                     var require_call_args_i: usize = 0;
+        //                     var stmt_i: usize = 0;
 
-                            if (react_element_symbol.use_count_estimate > 0) {
-                                declared_symbols.appendAssumeCapacity(.{ .ref = p.react_element_type.ref, .is_top_level = true });
-                                p.recordUsage(p.es6_symbol_global.ref);
-                                var call_args = p.allocator.alloc(Expr, 1) catch unreachable;
-                                call_args[0] = Expr{ .data = Prefill.Data.REACT_ELEMENT_TYPE, .loc = logger.Loc.Empty };
+        //                     if (react_element_symbol.use_count_estimate > 0) {
+        //                         declared_symbols.appendAssumeCapacity(.{ .ref = p.react_element_type.ref, .is_top_level = true });
+        //                         p.recordUsage(p.es6_symbol_global.ref);
+        //                         var call_args = p.allocator.alloc(Expr, 1) catch unreachable;
+        //                         call_args[0] = Expr{ .data = Prefill.Data.REACT_ELEMENT_TYPE, .loc = logger.Loc.Empty };
 
-                                decls[decl_i] = G.Decl{
-                                    .binding = p.b(
-                                        B.Identifier{
-                                            .ref = p.react_element_type.ref,
-                                        },
-                                        loc,
-                                    ),
-                                    .value = p.newExpr(
-                                        E.Call{
-                                            // Symbol.for
-                                            .target = p.newExpr(
-                                                E.Dot{
-                                                    .name = "for",
-                                                    .name_loc = logger.Loc.Empty,
-                                                    .target = p.newExpr(
-                                                        E.Identifier{
-                                                            .ref = p.es6_symbol_global.ref,
-                                                            .can_be_removed_if_unused = true,
-                                                            .call_can_be_unwrapped_if_unused = true,
-                                                        },
-                                                        logger.Loc.Empty,
-                                                    ),
-                                                    .can_be_removed_if_unused = true,
-                                                    .call_can_be_unwrapped_if_unused = true,
-                                                },
-                                                logger.Loc.Empty,
-                                            ),
-                                            .args = ExprNodeList.init(call_args),
-                                            .close_paren_loc = logger.Loc.Empty,
-                                            .can_be_unwrapped_if_unused = true,
-                                        },
-                                        logger.Loc.Empty,
-                                    ),
-                                };
-                                decl_i += 1;
-                            }
+        //                         decls[decl_i] = G.Decl{
+        //                             .binding = p.b(
+        //                                 B.Identifier{
+        //                                     .ref = p.react_element_type.ref,
+        //                                 },
+        //                                 loc,
+        //                             ),
+        //                             .value = p.newExpr(
+        //                                 E.Call{
+        //                                     // Symbol.for
+        //                                     .target = p.newExpr(
+        //                                         E.Dot{
+        //                                             .name = "for",
+        //                                             .name_loc = logger.Loc.Empty,
+        //                                             .target = p.newExpr(
+        //                                                 E.Identifier{
+        //                                                     .ref = p.es6_symbol_global.ref,
+        //                                                     .can_be_removed_if_unused = true,
+        //                                                     .call_can_be_unwrapped_if_unused = true,
+        //                                                 },
+        //                                                 logger.Loc.Empty,
+        //                                             ),
+        //                                             .can_be_removed_if_unused = true,
+        //                                             .call_can_be_unwrapped_if_unused = true,
+        //                                         },
+        //                                         logger.Loc.Empty,
+        //                                     ),
+        //                                     .args = ExprNodeList.init(call_args),
+        //                                     .close_paren_loc = logger.Loc.Empty,
+        //                                     .can_be_unwrapped_if_unused = true,
+        //                                 },
+        //                                 logger.Loc.Empty,
+        //                             ),
+        //                         };
+        //                         decl_i += 1;
+        //                     }
 
-                            if (jsx_symbol.use_count_estimate > 0 or (FeatureFlags.support_jsxs_in_jsx_transform and jsx_static_symbol.use_count_estimate > 0)) {
-                                declared_symbols.appendAssumeCapacity(.{ .ref = automatic_namespace_ref, .is_top_level = true });
+        //                     if (jsx_symbol.use_count_estimate > 0 or (FeatureFlags.support_jsxs_in_jsx_transform and jsx_static_symbol.use_count_estimate > 0)) {
+        //                         declared_symbols.appendAssumeCapacity(.{ .ref = automatic_namespace_ref, .is_top_level = true });
 
-                                const automatic_identifier = p.newExpr(E.ImportIdentifier{ .ref = automatic_namespace_ref }, loc);
+        //                         const automatic_identifier = p.newExpr(E.ImportIdentifier{ .ref = automatic_namespace_ref }, loc);
 
-                                // We do not mark this as .require becuase we are already wrapping it manually.
-                                // unless it's bun and you're not bundling
-                                const use_automatic_identifier = (p.options.can_import_from_bundle or p.options.enable_legacy_bundling or !p.options.features.allow_runtime);
-                                const import_record_kind = if (use_automatic_identifier) ImportKind.internal else ImportKind.require;
-                                const import_record_id = p.addImportRecord(import_record_kind, loc, p.options.jsx.import_source);
+        //                         // We do not mark this as .require becuase we are already wrapping it manually.
+        //                         // unless it's bun and you're not bundling
+        //                         const use_automatic_identifier = (p.options.can_import_from_bundle or p.options.enable_legacy_bundling or !p.options.features.allow_runtime);
+        //                         const import_record_kind = if (use_automatic_identifier) ImportKind.internal else ImportKind.require;
+        //                         const import_record_id = p.addImportRecord(import_record_kind, loc, p.options.jsx.import_source);
 
-                                const dot_call_target = brk: {
-                                    if (use_automatic_identifier) {
-                                        break :brk automatic_identifier;
-                                    } else if (p.options.features.dynamic_require) {
-                                        break :brk p.newExpr(E.Require{ .import_record_index = import_record_id }, loc);
-                                    } else {
-                                        require_call_args_base[require_call_args_i] = automatic_identifier;
-                                        require_call_args_i += 1;
-                                        break :brk p.callUnbundledRequire(require_call_args_base[0..require_call_args_i]);
-                                    }
-                                };
+        //                         const dot_call_target = brk: {
+        //                             if (use_automatic_identifier) {
+        //                                 break :brk automatic_identifier;
+        //                             } else if (p.options.features.dynamic_require) {
+        //                                 break :brk p.newExpr(E.Require{ .import_record_index = import_record_id }, loc);
+        //                             } else {
+        //                                 require_call_args_base[require_call_args_i] = automatic_identifier;
+        //                                 require_call_args_i += 1;
+        //                                 break :brk p.callUnbundledRequire(require_call_args_base[0..require_call_args_i]);
+        //                             }
+        //                         };
 
-                                if (jsx_symbol.use_count_estimate > 0) {
-                                    declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_runtime.ref, .is_top_level = true });
+        //                         if (jsx_symbol.use_count_estimate > 0) {
+        //                             declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_runtime.ref, .is_top_level = true });
 
-                                    decls[decl_i] = G.Decl{
-                                        .binding = p.b(
-                                            B.Identifier{
-                                                .ref = p.jsx_runtime.ref,
-                                            },
-                                            loc,
-                                        ),
-                                        .value = p.newExpr(
-                                            E.Dot{
-                                                .target = dot_call_target,
-                                                .name = p.options.jsx.jsx,
-                                                .name_loc = loc,
-                                                .can_be_removed_if_unused = true,
-                                            },
-                                            loc,
-                                        ),
-                                    };
-                                    decl_i += 1;
-                                }
+        //                             decls[decl_i] = G.Decl{
+        //                                 .binding = p.b(
+        //                                     B.Identifier{
+        //                                         .ref = p.jsx_runtime.ref,
+        //                                     },
+        //                                     loc,
+        //                                 ),
+        //                                 .value = p.newExpr(
+        //                                     E.Dot{
+        //                                         .target = dot_call_target,
+        //                                         .name = p.options.jsx.jsx,
+        //                                         .name_loc = loc,
+        //                                         .can_be_removed_if_unused = true,
+        //                                     },
+        //                                     loc,
+        //                                 ),
+        //                             };
+        //                             decl_i += 1;
+        //                         }
 
-                                if (FeatureFlags.support_jsxs_in_jsx_transform) {
-                                    if (jsx_static_symbol.use_count_estimate > 0) {
-                                        declared_symbols.appendAssumeCapacity(.{ .ref = p.jsxs_runtime.ref, .is_top_level = true });
+        //                         if (FeatureFlags.support_jsxs_in_jsx_transform) {
+        //                             if (jsx_static_symbol.use_count_estimate > 0) {
+        //                                 declared_symbols.appendAssumeCapacity(.{ .ref = p.jsxs_runtime.ref, .is_top_level = true });
 
-                                        decls[decl_i] = G.Decl{
-                                            .binding = p.b(
-                                                B.Identifier{
-                                                    .ref = p.jsxs_runtime.ref,
-                                                },
-                                                loc,
-                                            ),
-                                            .value = p.newExpr(
-                                                E.Dot{
-                                                    .target = dot_call_target,
-                                                    .name = p.options.jsx.jsx_static,
-                                                    .name_loc = loc,
-                                                    .can_be_removed_if_unused = true,
-                                                },
-                                                loc,
-                                            ),
-                                        };
+        //                                 decls[decl_i] = G.Decl{
+        //                                     .binding = p.b(
+        //                                         B.Identifier{
+        //                                             .ref = p.jsxs_runtime.ref,
+        //                                         },
+        //                                         loc,
+        //                                     ),
+        //                                     .value = p.newExpr(
+        //                                         E.Dot{
+        //                                             .target = dot_call_target,
+        //                                             .name = p.options.jsx.jsx_static,
+        //                                             .name_loc = loc,
+        //                                             .can_be_removed_if_unused = true,
+        //                                         },
+        //                                         loc,
+        //                                     ),
+        //                                 };
 
-                                        decl_i += 1;
-                                    }
-                                }
-                                // if (jsx_filename_symbol.use_count_estimate > 0) {
-                                //     declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_filename.ref, .is_top_level = true });
-                                //     decls[decl_i] = G.Decl{
-                                //         .binding = p.b(
-                                //             B.Identifier{
-                                //                 .ref = p.jsx_filename.ref,
-                                //             },
-                                //             loc,
-                                //         ),
-                                //         .value = p.newExpr(E.String{ .data = p.source.path.pretty }, loc),
-                                //     };
-                                //     decl_i += 1;
-                                // }
+        //                                 decl_i += 1;
+        //                             }
+        //                         }
+        //                         // if (jsx_filename_symbol.use_count_estimate > 0) {
+        //                         //     declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_filename.ref, .is_top_level = true });
+        //                         //     decls[decl_i] = G.Decl{
+        //                         //         .binding = p.b(
+        //                         //             B.Identifier{
+        //                         //                 .ref = p.jsx_filename.ref,
+        //                         //             },
+        //                         //             loc,
+        //                         //         ),
+        //                         //         .value = p.newExpr(E.String{ .data = p.source.path.pretty }, loc),
+        //                         //     };
+        //                         //     decl_i += 1;
+        //                         // }
 
-                                p.import_records.items[import_record_id].tag = .jsx_import;
-                                if (dot_call_target.data != .e_require) {
-                                    // When everything is CommonJS
-                                    // We import JSX like this:
-                                    // var {jsxDev} = require("react/jsx-dev")
-                                    jsx_part_stmts[stmt_i] = p.s(S.Import{
-                                        .namespace_ref = automatic_namespace_ref,
-                                        .star_name_loc = loc,
-                                        .is_single_line = true,
-                                        .import_record_index = import_record_id,
-                                    }, loc);
+        //                         p.import_records.items[import_record_id].tag = .jsx_import;
+        //                         if (dot_call_target.data != .e_require) {
+        //                             // When everything is CommonJS
+        //                             // We import JSX like this:
+        //                             // var {jsxDev} = require("react/jsx-dev")
+        //                             jsx_part_stmts[stmt_i] = p.s(S.Import{
+        //                                 .namespace_ref = automatic_namespace_ref,
+        //                                 .star_name_loc = loc,
+        //                                 .is_single_line = true,
+        //                                 .import_record_index = import_record_id,
+        //                             }, loc);
 
-                                    stmt_i += 1;
-                                }
+        //                             stmt_i += 1;
+        //                         }
 
-                                p.named_imports.put(
-                                    automatic_namespace_ref,
-                                    js_ast.NamedImport{
-                                        .alias = jsx_automatic_symbol.original_name,
-                                        .alias_is_star = true,
-                                        .alias_loc = loc,
-                                        .namespace_ref = automatic_namespace_ref,
-                                        .import_record_index = import_record_id,
-                                    },
-                                ) catch unreachable;
-                                p.is_import_item.put(p.allocator, automatic_namespace_ref, {}) catch unreachable;
-                                import_records[import_record_i] = import_record_id;
-                                import_record_i += 1;
-                            }
+        //                         p.named_imports.put(
+        //                             automatic_namespace_ref,
+        //                             js_ast.NamedImport{
+        //                                 .alias = jsx_automatic_symbol.original_name,
+        //                                 .alias_is_star = true,
+        //                                 .alias_loc = loc,
+        //                                 .namespace_ref = automatic_namespace_ref,
+        //                                 .import_record_index = import_record_id,
+        //                             },
+        //                         ) catch unreachable;
+        //                         p.is_import_item.put(p.allocator, automatic_namespace_ref, {}) catch unreachable;
+        //                         import_records[import_record_i] = import_record_id;
+        //                         import_record_i += 1;
+        //                     }
 
-                            if (jsx_classic_symbol.use_count_estimate > 0) {
-                                const classic_identifier = p.newExpr(E.ImportIdentifier{ .ref = classic_namespace_ref }, loc);
-                                const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.classic_import_source);
-                                const dot_call_target = brk: {
-                                    // var react = $aopaSD123();
+        //                     if (jsx_classic_symbol.use_count_estimate > 0) {
+        //                         const classic_identifier = p.newExpr(E.ImportIdentifier{ .ref = classic_namespace_ref }, loc);
+        //                         const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.classic_import_source);
+        //                         const dot_call_target = brk: {
+        //                             // var react = $aopaSD123();
 
-                                    if (p.options.can_import_from_bundle or p.options.enable_legacy_bundling or !p.options.features.allow_runtime) {
-                                        break :brk classic_identifier;
-                                    } else if (p.options.features.dynamic_require) {
-                                        break :brk p.newExpr(E.Require{ .import_record_index = import_record_id }, loc);
-                                    } else {
-                                        const require_call_args_start = require_call_args_i;
-                                        require_call_args_base[require_call_args_i] = classic_identifier;
-                                        require_call_args_i += 1;
-                                        break :brk p.callUnbundledRequire(require_call_args_base[require_call_args_start..][0..1]);
-                                    }
-                                };
+        //                             if (p.options.can_import_from_bundle or p.options.enable_legacy_bundling or !p.options.features.allow_runtime) {
+        //                                 break :brk classic_identifier;
+        //                             } else if (p.options.features.dynamic_require) {
+        //                                 break :brk p.newExpr(E.Require{ .import_record_index = import_record_id }, loc);
+        //                             } else {
+        //                                 const require_call_args_start = require_call_args_i;
+        //                                 require_call_args_base[require_call_args_i] = classic_identifier;
+        //                                 require_call_args_i += 1;
+        //                                 break :brk p.callUnbundledRequire(require_call_args_base[require_call_args_start..][0..1]);
+        //                             }
+        //                         };
 
-                                if (jsx_factory_symbol.use_count_estimate > 0) {
-                                    declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_factory.ref, .is_top_level = true });
-                                    decls[decl_i] = G.Decl{
-                                        .binding = p.b(
-                                            B.Identifier{
-                                                .ref = p.jsx_factory.ref,
-                                            },
-                                            loc,
-                                        ),
-                                        .value = p.memberExpression(
-                                            loc,
-                                            dot_call_target,
-                                            if (p.options.jsx.factory.len > 1) p.options.jsx.factory[1..] else p.options.jsx.factory,
-                                        ),
-                                    };
-                                    decl_i += 1;
-                                }
+        //                         if (jsx_factory_symbol.use_count_estimate > 0) {
+        //                             declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_factory.ref, .is_top_level = true });
+        //                             decls[decl_i] = G.Decl{
+        //                                 .binding = p.b(
+        //                                     B.Identifier{
+        //                                         .ref = p.jsx_factory.ref,
+        //                                     },
+        //                                     loc,
+        //                                 ),
+        //                                 .value = p.memberExpression(
+        //                                     loc,
+        //                                     dot_call_target,
+        //                                     if (p.options.jsx.factory.len > 1) p.options.jsx.factory[1..] else p.options.jsx.factory,
+        //                                 ),
+        //                             };
+        //                             decl_i += 1;
+        //                         }
 
-                                if (jsx_fragment_symbol.use_count_estimate > 0) {
-                                    declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_fragment.ref, .is_top_level = true });
-                                    decls[decl_i] = G.Decl{
-                                        .binding = p.b(
-                                            B.Identifier{
-                                                .ref = p.jsx_fragment.ref,
-                                            },
-                                            loc,
-                                        ),
-                                        .value = p.memberExpression(
-                                            loc,
-                                            dot_call_target,
-                                            if (p.options.jsx.fragment.len > 1) p.options.jsx.fragment[1..] else p.options.jsx.fragment,
-                                        ),
-                                    };
-                                    decl_i += 1;
-                                }
+        //                         if (jsx_fragment_symbol.use_count_estimate > 0) {
+        //                             declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_fragment.ref, .is_top_level = true });
+        //                             decls[decl_i] = G.Decl{
+        //                                 .binding = p.b(
+        //                                     B.Identifier{
+        //                                         .ref = p.jsx_fragment.ref,
+        //                                     },
+        //                                     loc,
+        //                                 ),
+        //                                 .value = p.memberExpression(
+        //                                     loc,
+        //                                     dot_call_target,
+        //                                     if (p.options.jsx.fragment.len > 1) p.options.jsx.fragment[1..] else p.options.jsx.fragment,
+        //                                 ),
+        //                             };
+        //                             decl_i += 1;
+        //                         }
 
-                                if (dot_call_target.data != .e_require) {
-                                    jsx_part_stmts[stmt_i] = p.s(S.Import{
-                                        .namespace_ref = classic_namespace_ref,
-                                        .star_name_loc = loc,
-                                        .is_single_line = true,
-                                        .import_record_index = import_record_id,
-                                    }, loc);
-                                    stmt_i += 1;
-                                }
+        //                         if (dot_call_target.data != .e_require) {
+        //                             jsx_part_stmts[stmt_i] = p.s(S.Import{
+        //                                 .namespace_ref = classic_namespace_ref,
+        //                                 .star_name_loc = loc,
+        //                                 .is_single_line = true,
+        //                                 .import_record_index = import_record_id,
+        //                             }, loc);
+        //                             stmt_i += 1;
+        //                         }
 
-                                p.import_records.items[import_record_id].tag = .jsx_classic;
+        //                         p.import_records.items[import_record_id].tag = .jsx_classic;
 
-                                p.named_imports.put(
-                                    classic_namespace_ref,
-                                    js_ast.NamedImport{
-                                        .alias = jsx_classic_symbol.original_name,
-                                        .alias_is_star = true,
-                                        .alias_loc = loc,
-                                        .namespace_ref = classic_namespace_ref,
-                                        .import_record_index = import_record_id,
-                                    },
-                                ) catch unreachable;
-                                p.is_import_item.put(p.allocator, classic_namespace_ref, {}) catch unreachable;
-                                import_records[import_record_i] = import_record_id;
-                                declared_symbols.appendAssumeCapacity(.{ .ref = classic_namespace_ref, .is_top_level = true });
-                            }
+        //                         p.named_imports.put(
+        //                             classic_namespace_ref,
+        //                             js_ast.NamedImport{
+        //                                 .alias = jsx_classic_symbol.original_name,
+        //                                 .alias_is_star = true,
+        //                                 .alias_loc = loc,
+        //                                 .namespace_ref = classic_namespace_ref,
+        //                                 .import_record_index = import_record_id,
+        //                             },
+        //                         ) catch unreachable;
+        //                         p.is_import_item.put(p.allocator, classic_namespace_ref, {}) catch unreachable;
+        //                         import_records[import_record_i] = import_record_id;
+        //                         declared_symbols.appendAssumeCapacity(.{ .ref = classic_namespace_ref, .is_top_level = true });
+        //                     }
 
-                            if (p.options.features.react_fast_refresh) {
-                                defer did_import_fast_refresh = true;
-                                p.resolveGeneratedSymbol(&p.jsx_refresh_runtime);
-                                if (!p.options.jsx.use_embedded_refresh_runtime) {
-                                    const refresh_runtime_symbol: *const Symbol = &p.symbols.items[p.jsx_refresh_runtime.ref.innerIndex()];
+        //                     if (p.options.features.react_fast_refresh) {
+        //                         defer did_import_fast_refresh = true;
+        //                         p.resolveGeneratedSymbol(&p.jsx_refresh_runtime);
+        //                         if (!p.options.jsx.use_embedded_refresh_runtime) {
+        //                             const refresh_runtime_symbol: *const Symbol = &p.symbols.items[p.jsx_refresh_runtime.ref.innerIndex()];
 
-                                    declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_refresh_runtime.ref, .is_top_level = true });
+        //                             declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_refresh_runtime.ref, .is_top_level = true });
 
-                                    const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.refresh_runtime);
-                                    p.import_records.items[import_record_id].tag = .react_refresh;
-                                    jsx_part_stmts[stmt_i] = p.s(S.Import{
-                                        .namespace_ref = p.jsx_refresh_runtime.ref,
-                                        .star_name_loc = loc,
-                                        .is_single_line = true,
-                                        .import_record_index = import_record_id,
-                                    }, loc);
+        //                             const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.refresh_runtime);
+        //                             p.import_records.items[import_record_id].tag = .react_refresh;
+        //                             jsx_part_stmts[stmt_i] = p.s(S.Import{
+        //                                 .namespace_ref = p.jsx_refresh_runtime.ref,
+        //                                 .star_name_loc = loc,
+        //                                 .is_single_line = true,
+        //                                 .import_record_index = import_record_id,
+        //                             }, loc);
 
-                                    stmt_i += 1;
-                                    p.named_imports.put(
-                                        p.jsx_refresh_runtime.ref,
-                                        js_ast.NamedImport{
-                                            .alias = refresh_runtime_symbol.original_name,
-                                            .alias_is_star = true,
-                                            .alias_loc = loc,
-                                            .namespace_ref = p.jsx_refresh_runtime.ref,
-                                            .import_record_index = import_record_id,
-                                        },
-                                    ) catch unreachable;
-                                    p.is_import_item.put(p.allocator, p.jsx_refresh_runtime.ref, {}) catch unreachable;
-                                    import_records[import_record_i] = import_record_id;
-                                }
-                                p.recordUsage(p.jsx_refresh_runtime.ref);
-                            }
+        //                             stmt_i += 1;
+        //                             p.named_imports.put(
+        //                                 p.jsx_refresh_runtime.ref,
+        //                                 js_ast.NamedImport{
+        //                                     .alias = refresh_runtime_symbol.original_name,
+        //                                     .alias_is_star = true,
+        //                                     .alias_loc = loc,
+        //                                     .namespace_ref = p.jsx_refresh_runtime.ref,
+        //                                     .import_record_index = import_record_id,
+        //                                 },
+        //                             ) catch unreachable;
+        //                             p.is_import_item.put(p.allocator, p.jsx_refresh_runtime.ref, {}) catch unreachable;
+        //                             import_records[import_record_i] = import_record_id;
+        //                         }
+        //                         p.recordUsage(p.jsx_refresh_runtime.ref);
+        //                     }
 
-                            jsx_part_stmts[stmt_i] = p.s(S.Local{ .kind = .k_var, .decls = decls[0..decl_i] }, loc);
-                            stmt_i += 1;
+        //                     jsx_part_stmts[stmt_i] = p.s(S.Local{ .kind = .k_var, .decls = decls[0..decl_i] }, loc);
+        //                     stmt_i += 1;
 
-                            before.append(js_ast.Part{
-                                .stmts = jsx_part_stmts[0..stmt_i],
-                                .declared_symbols = declared_symbols,
-                                .import_record_indices = bun.BabyList(u32).init(import_records),
-                                .tag = .jsx_import,
-                            }) catch unreachable;
-                        }
-                    } else if (p.options.features.jsx_optimization_inline) {
-                        const react_element_symbol = p.symbols.items[p.react_element_type.ref.innerIndex()];
+        //                     before.append(js_ast.Part{
+        //                         .stmts = jsx_part_stmts[0..stmt_i],
+        //                         .declared_symbols = declared_symbols,
+        //                         .import_record_indices = bun.BabyList(u32).init(import_records),
+        //                         .tag = .jsx_import,
+        //                     }) catch unreachable;
+        //                 }
+        //             } else if (p.options.features.jsx_optimization_inline) {
+        //                 const react_element_symbol = p.symbols.items[p.react_element_type.ref.innerIndex()];
 
-                        if (react_element_symbol.use_count_estimate > 0) {
-                            var declared_symbols = DeclaredSymbol.List{};
-                            try declared_symbols.ensureTotalCapacity(p.allocator, 1);
-                            var decls = try p.allocator.alloc(G.Decl, 1);
-                            var part_stmts = try p.allocator.alloc(Stmt, 1);
+        //                 if (react_element_symbol.use_count_estimate > 0) {
+        //                     var declared_symbols = DeclaredSymbol.List{};
+        //                     try declared_symbols.ensureTotalCapacity(p.allocator, 1);
+        //                     var decls = try p.allocator.alloc(G.Decl, 1);
+        //                     var part_stmts = try p.allocator.alloc(Stmt, 1);
 
-                            declared_symbols.appendAssumeCapacity(.{ .ref = p.react_element_type.ref, .is_top_level = true });
-                            p.recordUsage(p.es6_symbol_global.ref);
-                            var call_args = p.allocator.alloc(Expr, 1) catch unreachable;
-                            call_args[0] = Expr{ .data = Prefill.Data.REACT_ELEMENT_TYPE, .loc = logger.Loc.Empty };
+        //                     declared_symbols.appendAssumeCapacity(.{ .ref = p.react_element_type.ref, .is_top_level = true });
+        //                     p.recordUsage(p.es6_symbol_global.ref);
+        //                     var call_args = p.allocator.alloc(Expr, 1) catch unreachable;
+        //                     call_args[0] = Expr{ .data = Prefill.Data.REACT_ELEMENT_TYPE, .loc = logger.Loc.Empty };
 
-                            decls[0] = G.Decl{
-                                .binding = p.b(
-                                    B.Identifier{
-                                        .ref = p.react_element_type.ref,
-                                    },
-                                    logger.Loc.Empty,
-                                ),
-                                .value = p.newExpr(
-                                    E.Call{
-                                        // Symbol.for
-                                        .target = p.newExpr(
-                                            E.Dot{
-                                                .name = "for",
-                                                .name_loc = logger.Loc.Empty,
-                                                .target = p.newExpr(
-                                                    E.Identifier{
-                                                        .ref = p.es6_symbol_global.ref,
-                                                        .can_be_removed_if_unused = true,
-                                                        .call_can_be_unwrapped_if_unused = true,
-                                                    },
-                                                    logger.Loc.Empty,
-                                                ),
-                                                .can_be_removed_if_unused = true,
-                                                .call_can_be_unwrapped_if_unused = true,
-                                            },
-                                            logger.Loc.Empty,
-                                        ),
-                                        .args = ExprNodeList.init(call_args),
-                                        .close_paren_loc = logger.Loc.Empty,
-                                        .can_be_unwrapped_if_unused = true,
-                                    },
-                                    logger.Loc.Empty,
-                                ),
-                            };
-                            part_stmts[0] = p.s(S.Local{ .kind = .k_var, .decls = decls }, logger.Loc.Empty);
-                            before.append(js_ast.Part{
-                                .stmts = part_stmts,
-                                .declared_symbols = declared_symbols,
-                                .tag = .jsx_import,
-                            }) catch unreachable;
-                        }
-                    } else {
-                        const jsx_fragment_symbol: Symbol = p.symbols.items[p.jsx_fragment.ref.innerIndex()];
-                        const jsx_factory_symbol: Symbol = p.symbols.items[p.jsx_factory.ref.innerIndex()];
+        //                     decls[0] = G.Decl{
+        //                         .binding = p.b(
+        //                             B.Identifier{
+        //                                 .ref = p.react_element_type.ref,
+        //                             },
+        //                             logger.Loc.Empty,
+        //                         ),
+        //                         .value = p.newExpr(
+        //                             E.Call{
+        //                                 // Symbol.for
+        //                                 .target = p.newExpr(
+        //                                     E.Dot{
+        //                                         .name = "for",
+        //                                         .name_loc = logger.Loc.Empty,
+        //                                         .target = p.newExpr(
+        //                                             E.Identifier{
+        //                                                 .ref = p.es6_symbol_global.ref,
+        //                                                 .can_be_removed_if_unused = true,
+        //                                                 .call_can_be_unwrapped_if_unused = true,
+        //                                             },
+        //                                             logger.Loc.Empty,
+        //                                         ),
+        //                                         .can_be_removed_if_unused = true,
+        //                                         .call_can_be_unwrapped_if_unused = true,
+        //                                     },
+        //                                     logger.Loc.Empty,
+        //                                 ),
+        //                                 .args = ExprNodeList.init(call_args),
+        //                                 .close_paren_loc = logger.Loc.Empty,
+        //                                 .can_be_unwrapped_if_unused = true,
+        //                             },
+        //                             logger.Loc.Empty,
+        //                         ),
+        //                     };
+        //                     part_stmts[0] = p.s(S.Local{ .kind = .k_var, .decls = decls }, logger.Loc.Empty);
+        //                     before.append(js_ast.Part{
+        //                         .stmts = part_stmts,
+        //                         .declared_symbols = declared_symbols,
+        //                         .tag = .jsx_import,
+        //                     }) catch unreachable;
+        //                 }
+        //             } else {
+        //                 const jsx_fragment_symbol: Symbol = p.symbols.items[p.jsx_fragment.ref.innerIndex()];
+        //                 const jsx_factory_symbol: Symbol = p.symbols.items[p.jsx_factory.ref.innerIndex()];
 
-                        // inject
-                        //   var jsxFrag =
-                        if (jsx_fragment_symbol.use_count_estimate + jsx_factory_symbol.use_count_estimate > 0) {
-                            const total = @as(usize, @boolToInt(jsx_fragment_symbol.use_count_estimate > 0)) + @as(usize, @boolToInt(jsx_factory_symbol.use_count_estimate > 0));
-                            var declared_symbols = DeclaredSymbol.List{};
-                            try declared_symbols.ensureTotalCapacity(p.allocator, total);
-                            var decls = try std.ArrayList(G.Decl).initCapacity(p.allocator, total);
-                            var part_stmts = try p.allocator.alloc(Stmt, 1);
+        //                 // inject
+        //                 //   var jsxFrag =
+        //                 if (jsx_fragment_symbol.use_count_estimate + jsx_factory_symbol.use_count_estimate > 0) {
+        //                     const total = @as(usize, @boolToInt(jsx_fragment_symbol.use_count_estimate > 0)) + @as(usize, @boolToInt(jsx_factory_symbol.use_count_estimate > 0));
+        //                     var declared_symbols = DeclaredSymbol.List{};
+        //                     try declared_symbols.ensureTotalCapacity(p.allocator, total);
+        //                     var decls = try std.ArrayList(G.Decl).initCapacity(p.allocator, total);
+        //                     var part_stmts = try p.allocator.alloc(Stmt, 1);
 
-                            if (jsx_fragment_symbol.use_count_estimate > 0) declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_fragment.ref, .is_top_level = true });
-                            if (jsx_factory_symbol.use_count_estimate > 0) declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_factory.ref, .is_top_level = true });
+        //                     if (jsx_fragment_symbol.use_count_estimate > 0) declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_fragment.ref, .is_top_level = true });
+        //                     if (jsx_factory_symbol.use_count_estimate > 0) declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_factory.ref, .is_top_level = true });
 
-                            if (jsx_fragment_symbol.use_count_estimate > 0)
-                                decls.appendAssumeCapacity(G.Decl{
-                                    .binding = p.b(
-                                        B.Identifier{
-                                            .ref = p.jsx_fragment.ref,
-                                        },
-                                        logger.Loc.Empty,
-                                    ),
-                                    .value = try p.jsxStringsToMemberExpression(logger.Loc.Empty, p.options.jsx.fragment),
-                                });
+        //                     if (jsx_fragment_symbol.use_count_estimate > 0)
+        //                         decls.appendAssumeCapacity(G.Decl{
+        //                             .binding = p.b(
+        //                                 B.Identifier{
+        //                                     .ref = p.jsx_fragment.ref,
+        //                                 },
+        //                                 logger.Loc.Empty,
+        //                             ),
+        //                             .value = try p.jsxStringsToMemberExpression(logger.Loc.Empty, p.options.jsx.fragment),
+        //                         });
 
-                            if (jsx_factory_symbol.use_count_estimate > 0)
-                                decls.appendAssumeCapacity(G.Decl{
-                                    .binding = p.b(
-                                        B.Identifier{
-                                            .ref = p.jsx_factory.ref,
-                                        },
-                                        logger.Loc.Empty,
-                                    ),
-                                    .value = try p.jsxStringsToMemberExpression(logger.Loc.Empty, p.options.jsx.factory),
-                                });
-                            part_stmts[0] = p.s(S.Local{ .kind = .k_var, .decls = decls.items }, logger.Loc.Empty);
-                            before.append(js_ast.Part{
-                                .stmts = part_stmts,
-                                .declared_symbols = declared_symbols,
-                                .tag = .jsx_import,
-                            }) catch unreachable;
-                        }
-                    }
+        //                     if (jsx_factory_symbol.use_count_estimate > 0)
+        //                         decls.appendAssumeCapacity(G.Decl{
+        //                             .binding = p.b(
+        //                                 B.Identifier{
+        //                                     .ref = p.jsx_factory.ref,
+        //                                 },
+        //                                 logger.Loc.Empty,
+        //                             ),
+        //                             .value = try p.jsxStringsToMemberExpression(logger.Loc.Empty, p.options.jsx.factory),
+        //                         });
+        //                     part_stmts[0] = p.s(S.Local{ .kind = .k_var, .decls = decls.items }, logger.Loc.Empty);
+        //                     before.append(js_ast.Part{
+        //                         .stmts = part_stmts,
+        //                         .declared_symbols = declared_symbols,
+        //                         .tag = .jsx_import,
+        //                     }) catch unreachable;
+        //                 }
+        //             }
 
-                    if (!did_import_fast_refresh and p.options.features.react_fast_refresh) {
-                        p.resolveGeneratedSymbol(&p.jsx_refresh_runtime);
-                        p.recordUsage(p.jsx_refresh_runtime.ref);
+        //             if (!did_import_fast_refresh and p.options.features.react_fast_refresh) {
+        //                 p.resolveGeneratedSymbol(&p.jsx_refresh_runtime);
+        //                 p.recordUsage(p.jsx_refresh_runtime.ref);
 
-                        if (!p.options.jsx.use_embedded_refresh_runtime) {
-                            if (comptime Environment.allow_assert)
-                                assert(!p.options.enable_legacy_bundling);
-                            var declared_symbols = DeclaredSymbol.List{};
-                            try declared_symbols.ensureTotalCapacity(p.allocator, 1);
-                            const loc = logger.Loc.Empty;
-                            const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.refresh_runtime);
-                            p.import_records.items[import_record_id].tag = .react_refresh;
+        //                 if (!p.options.jsx.use_embedded_refresh_runtime) {
+        //                     if (comptime Environment.allow_assert)
+        //                         assert(!p.options.enable_legacy_bundling);
+        //                     var declared_symbols = DeclaredSymbol.List{};
+        //                     try declared_symbols.ensureTotalCapacity(p.allocator, 1);
+        //                     const loc = logger.Loc.Empty;
+        //                     const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.refresh_runtime);
+        //                     p.import_records.items[import_record_id].tag = .react_refresh;
 
-                            var import_stmt = p.s(S.Import{
-                                .namespace_ref = p.jsx_refresh_runtime.ref,
-                                .star_name_loc = loc,
-                                .is_single_line = true,
-                                .import_record_index = import_record_id,
-                            }, loc);
+        //                     var import_stmt = p.s(S.Import{
+        //                         .namespace_ref = p.jsx_refresh_runtime.ref,
+        //                         .star_name_loc = loc,
+        //                         .is_single_line = true,
+        //                         .import_record_index = import_record_id,
+        //                     }, loc);
 
-                            const refresh_runtime_symbol: *const Symbol = &p.symbols.items[p.jsx_refresh_runtime.ref.innerIndex()];
+        //                     const refresh_runtime_symbol: *const Symbol = &p.symbols.items[p.jsx_refresh_runtime.ref.innerIndex()];
 
-                            p.named_imports.put(
-                                p.jsx_refresh_runtime.ref,
-                                js_ast.NamedImport{
-                                    .alias = refresh_runtime_symbol.original_name,
-                                    .alias_is_star = true,
-                                    .alias_loc = loc,
-                                    .namespace_ref = p.jsx_refresh_runtime.ref,
-                                    .import_record_index = import_record_id,
-                                },
-                            ) catch unreachable;
-                            p.is_import_item.put(p.allocator, p.jsx_refresh_runtime.ref, {}) catch unreachable;
-                            var import_records = try p.allocator.alloc(@TypeOf(import_record_id), 1);
-                            import_records[0] = import_record_id;
-                            declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_refresh_runtime.ref, .is_top_level = true });
-                            var part_stmts = try p.allocator.alloc(Stmt, 1);
-                            part_stmts[0] = import_stmt;
+        //                     p.named_imports.put(
+        //                         p.jsx_refresh_runtime.ref,
+        //                         js_ast.NamedImport{
+        //                             .alias = refresh_runtime_symbol.original_name,
+        //                             .alias_is_star = true,
+        //                             .alias_loc = loc,
+        //                             .namespace_ref = p.jsx_refresh_runtime.ref,
+        //                             .import_record_index = import_record_id,
+        //                         },
+        //                     ) catch unreachable;
+        //                     p.is_import_item.put(p.allocator, p.jsx_refresh_runtime.ref, {}) catch unreachable;
+        //                     var import_records = try p.allocator.alloc(@TypeOf(import_record_id), 1);
+        //                     import_records[0] = import_record_id;
+        //                     declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_refresh_runtime.ref, .is_top_level = true });
+        //                     var part_stmts = try p.allocator.alloc(Stmt, 1);
+        //                     part_stmts[0] = import_stmt;
 
-                            before.append(js_ast.Part{
-                                .stmts = part_stmts,
-                                .declared_symbols = declared_symbols,
-                                .import_record_indices = bun.BabyList(u32).init(import_records),
-                                .tag = .react_fast_refresh,
-                            }) catch unreachable;
-                        }
-                    }
-                },
-                else => {},
-            }
+        //                     before.append(js_ast.Part{
+        //                         .stmts = part_stmts,
+        //                         .declared_symbols = declared_symbols,
+        //                         .import_record_indices = bun.BabyList(u32).init(import_records),
+        //                         .tag = .react_fast_refresh,
+        //                     }) catch unreachable;
+        //                 }
+        //             }
+        //         },
+        //         else => {},
+        //     }
 
-            if (p.options.enable_legacy_bundling) p.resolveBundlingSymbols();
-        }
+        //     if (p.options.enable_legacy_bundling) p.resolveBundlingSymbols();
+        // }
 
         const has_cjs_imports = p.cjs_import_stmts.items.len > 0 and p.options.transform_require_to_import;
 
-        if (!p.options.bundle) {
-            // "did they actually use require?"
-            // well, if they didn't, in the linker later, we might need to inject it
-            // but we don't know what name we can use there
-            // so instead, we pessimistically assume they did in fact use require _somewhere_
-            // and we set the name to something that won't conflict.
-            // however, at this stage, we don't want to inject the import statement for the require
-            // since it won't be actually used yet.
-            const had_require = p.runtime_imports.contains("__require");
-            p.resolveCommonJSSymbols();
+        // if (!p.options.bundle) {
+        //     // "did they actually use require?"
+        //     // well, if they didn't, in the linker later, we might need to inject it
+        //     // but we don't know what name we can use there
+        //     // so instead, we pessimistically assume they did in fact use require _somewhere_
+        //     // and we set the name to something that won't conflict.
+        //     // however, at this stage, we don't want to inject the import statement for the require
+        //     // since it won't be actually used yet.
+        //     const had_require = p.runtime_imports.contains("__require");
+        //     p.resolveCommonJSSymbols();
 
-            const copy_of_runtime_require = p.runtime_imports.__require;
-            if (!had_require) {
-                p.runtime_imports.__require = null;
-            }
-            defer {
-                if (!had_require) {
-                    p.runtime_imports.__require = copy_of_runtime_require;
-                }
-            }
+        //     const copy_of_runtime_require = p.runtime_imports.__require;
+        //     if (!had_require) {
+        //         p.runtime_imports.__require = null;
+        //     }
+        //     defer {
+        //         if (!had_require) {
+        //             p.runtime_imports.__require = copy_of_runtime_require;
+        //         }
+        //     }
 
-            // - don't import runtime if we're bundling, it's already included
-            // - when HMR is enabled, we always need to import the runtime for HMRClient and HMRModule.
-            // - when HMR is not enabled, we only need any runtime imports if we're importing require()
-            if (p.options.features.allow_runtime and
-                !p.options.enable_legacy_bundling and
-                (p.has_called_runtime or p.options.features.hot_module_reloading or has_cjs_imports))
-            {
-                var runtime_imports_iter = p.runtime_imports.iter();
+        //     // - don't import runtime if we're bundling, it's already included
+        //     // - when HMR is enabled, we always need to import the runtime for HMRClient and HMRModule.
+        //     // - when HMR is not enabled, we only need any runtime imports if we're importing require()
+        //     if (p.options.features.allow_runtime and
+        //         !p.options.enable_legacy_bundling and
+        //         (p.has_called_runtime or p.options.features.hot_module_reloading or has_cjs_imports))
+        //     {
+        //         var runtime_imports_iter = p.runtime_imports.iter();
 
-                const before_start = before.items.len;
-                if (p.options.features.hot_module_reloading) {
-                    p.resolveHMRSymbols();
+        //         const before_start = before.items.len;
+        //         if (p.options.features.hot_module_reloading) {
+        //             p.resolveHMRSymbols();
 
-                    if (runtime_imports_iter.next()) |entry| {
-                        std.debug.assert(entry.key == 0);
+        //             if (runtime_imports_iter.next()) |entry| {
+        //                 std.debug.assert(entry.key == 0);
 
-                        // HMRClient.activate(true)
-                        var args_list: []Expr = if (Environment.isDebug) &Prefill.HotModuleReloading.DebugEnabledArgs else &Prefill.HotModuleReloading.DebugDisabled;
+        //                 // HMRClient.activate(true)
+        //                 var args_list: []Expr = if (Environment.isDebug) &Prefill.HotModuleReloading.DebugEnabledArgs else &Prefill.HotModuleReloading.DebugDisabled;
 
-                        var hmr_module_class_ident = p.newExpr(E.Identifier{ .ref = p.runtime_imports.__HMRClient.?.ref }, logger.Loc.Empty);
-                        const imports = [_]u16{entry.key};
-                        // TODO: remove these unnecessary allocations
-                        p.generateImportStmt(
-                            RuntimeImports.Name,
-                            &imports,
-                            &before,
-                            p.runtime_imports,
-                            p.s(
-                                S.SExpr{
-                                    .value = p.newExpr(E.Call{
-                                        .target = p.newExpr(E.Dot{
-                                            .target = hmr_module_class_ident,
-                                            .name = "activate",
-                                            .name_loc = logger.Loc.Empty,
-                                        }, logger.Loc.Empty),
-                                        .args = ExprNodeList.init(args_list),
-                                    }, logger.Loc.Empty),
-                                },
-                                logger.Loc.Empty,
-                            ),
-                            "import_",
-                            true,
-                        ) catch unreachable;
-                    }
-                }
+        //                 var hmr_module_class_ident = p.newExpr(E.Identifier{ .ref = p.runtime_imports.__HMRClient.?.ref }, logger.Loc.Empty);
+        //                 const imports = [_]u16{entry.key};
+        //                 // TODO: remove these unnecessary allocations
+        //                 p.generateImportStmt(
+        //                     RuntimeImports.Name,
+        //                     &imports,
+        //                     &before,
+        //                     p.runtime_imports,
+        //                     p.s(
+        //                         S.SExpr{
+        //                             .value = p.newExpr(E.Call{
+        //                                 .target = p.newExpr(E.Dot{
+        //                                     .target = hmr_module_class_ident,
+        //                                     .name = "activate",
+        //                                     .name_loc = logger.Loc.Empty,
+        //                                 }, logger.Loc.Empty),
+        //                                 .args = ExprNodeList.init(args_list),
+        //                             }, logger.Loc.Empty),
+        //                         },
+        //                         logger.Loc.Empty,
+        //                     ),
+        //                     "import_",
+        //                     true,
+        //                 ) catch unreachable;
+        //             }
+        //         }
 
-                while (runtime_imports_iter.next()) |entry| {
-                    const imports = [_]u16{entry.key};
-                    // TODO: remove these unnecessary allocations
-                    p.generateImportStmt(
-                        RuntimeImports.Name,
-                        &imports,
-                        &before,
-                        p.runtime_imports,
-                        null,
-                        "import_",
-                        true,
-                    ) catch unreachable;
-                }
-                // If we import JSX, we might call require.
-                // We need to import require before importing JSX.
-                // But a runtime import may not be necessary until we import JSX.
-                // So we have to swap it after the fact, instead of just moving this above the JSX import.
-                if (before_start > 0) {
-                    var j: usize = 0;
-                    while (j < before_start) : (j += 1) {
-                        std.mem.swap(js_ast.Part, &before.items[j], &before.items[before.items.len - j - 1]);
-                    }
-                }
-            }
-        }
+        //         while (runtime_imports_iter.next()) |entry| {
+        //             const imports = [_]u16{entry.key};
+        //             // TODO: remove these unnecessary allocations
+        //             p.generateImportStmt(
+        //                 RuntimeImports.Name,
+        //                 &imports,
+        //                 &before,
+        //                 p.runtime_imports,
+        //                 null,
+        //                 "import_",
+        //                 true,
+        //             ) catch unreachable;
+        //         }
+        //         // If we import JSX, we might call require.
+        //         // We need to import require before importing JSX.
+        //         // But a runtime import may not be necessary until we import JSX.
+        //         // So we have to swap it after the fact, instead of just moving this above the JSX import.
+        //         if (before_start > 0) {
+        //             var j: usize = 0;
+        //             while (j < before_start) : (j += 1) {
+        //                 std.mem.swap(js_ast.Part, &before.items[j], &before.items[before.items.len - j - 1]);
+        //             }
+        //         }
+        //     }
+        // }
 
         if (has_cjs_imports) {
             var import_records = try bun.BabyList(u32).initCapacity(p.allocator, p.cjs_import_stmts.items.len);
@@ -3656,7 +3657,7 @@ pub const Parser = struct {
             }) catch unreachable;
         }
 
-        if (p.options.bundle and p.has_called_runtime) {
+        if (p.has_called_runtime) {
             var runtime_imports: [RuntimeImports.all.len]u8 = undefined;
             var iter = p.runtime_imports.iter();
             var i: usize = 0;
@@ -19412,28 +19413,36 @@ fn NewParser_(
             // }
 
             if (commonjs_wrapper_expr) |commonjs_wrapper| {
-                var part = &parts[parts.len - 1];
-
                 var require_function_args = allocator.alloc(Arg, 2) catch unreachable;
+                var final_part_stmts_count: usize = 0;
 
                 var imports_count: u32 = 0;
                 // We have to also move export from, since we will preserve those
                 var exports_from_count: u32 = 0;
 
                 // Two passes. First pass just counts.
-                for (parts[parts.len - 1].stmts) |stmt| {
-                    imports_count += switch (stmt.data) {
-                        .s_import => @as(u32, 1),
-                        else => @as(u32, 0),
-                    };
+                for (parts) |part| {
+                    for (part.stmts) |stmt| {
+                        imports_count += switch (stmt.data) {
+                            .s_import => @as(u32, 1),
+                            else => @as(u32, 0),
+                        };
 
-                    exports_from_count += switch (stmt.data) {
-                        .s_export_star, .s_export_from => @as(u32, 1),
-                        else => @as(u32, 0),
-                    };
+                        exports_from_count += switch (stmt.data) {
+                            .s_export_star, .s_export_from => @as(u32, 1),
+                            else => @as(u32, 0),
+                        };
+
+                        final_part_stmts_count += switch (stmt.data) {
+                            .s_import, .s_export_star, .s_export_from => @as(usize, 0),
+                            else => @as(usize, 1),
+                        };
+                    }
                 }
 
                 var new_stmts_list = allocator.alloc(Stmt, exports_from_count + imports_count + 1) catch unreachable;
+                var final_stmts_list = allocator.alloc(Stmt, final_part_stmts_count) catch unreachable;
+                var remaining_final_stmts = final_stmts_list;
                 var imports_list = new_stmts_list[0..imports_count];
 
                 var exports_list: []Stmt = if (exports_from_count > 0) new_stmts_list[imports_list.len + 1 ..] else &[_]Stmt{};
@@ -19444,22 +19453,26 @@ fn NewParser_(
                 var imports_list_i: u32 = 0;
                 var exports_list_i: u32 = 0;
 
-                for (part.stmts) |*stmt| {
-                    switch (stmt.data) {
-                        .s_import => {
-                            imports_list[imports_list_i] = stmt.*;
-                            stmt.* = Stmt.empty();
-                            stmt.loc = imports_list[imports_list_i].loc;
-                            imports_list_i += 1;
-                        },
+                for (parts) |part| {
+                    for (part.stmts) |*stmt| {
+                        switch (stmt.data) {
+                            .s_import => {
+                                imports_list[imports_list_i] = stmt.*;
+                                stmt.loc = imports_list[imports_list_i].loc;
+                                imports_list_i += 1;
+                            },
 
-                        .s_export_star, .s_export_from => {
-                            exports_list[exports_list_i] = stmt.*;
-                            stmt.* = Stmt.empty();
-                            stmt.loc = exports_list[exports_list_i].loc;
-                            exports_list_i += 1;
-                        },
-                        else => {},
+                            .s_export_star, .s_export_from => {
+                                exports_list[exports_list_i] = stmt.*;
+                                stmt.loc = exports_list[exports_list_i].loc;
+                                exports_list_i += 1;
+                            },
+                            else => {
+                                remaining_final_stmts[0] = stmt.*;
+                                remaining_final_stmts = remaining_final_stmts[1..];
+                            },
+                        }
+                        stmt.* = Stmt.empty();
                     }
                 }
 
@@ -19468,7 +19481,7 @@ fn NewParser_(
                         .name = null,
                         .open_parens_loc = logger.Loc.Empty,
                         .args = require_function_args,
-                        .body = .{ .loc = logger.Loc.Empty, .stmts = parts[parts.len - 1].stmts },
+                        .body = .{ .loc = logger.Loc.Empty, .stmts = final_stmts_list },
                         .flags = Flags.Function.init(.{ .is_export = true }),
                     } },
                     logger.Loc.Empty,
@@ -19493,7 +19506,7 @@ fn NewParser_(
                     },
                     logger.Loc.Empty,
                 );
-                part.stmts = new_stmts_list;
+                parts[parts.len - 1].stmts = new_stmts_list;
             } else if (p.options.features.hot_module_reloading and p.options.features.allow_runtime) {
                 var named_exports_count: usize = p.named_exports.count();
                 const named_imports: js_ast.Ast.NamedImports = p.named_imports;

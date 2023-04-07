@@ -1,6 +1,7 @@
 {
   "private": true,
   "dependencies": {
+    "aws4fetch": "^1.0.17",
     "esbuild": "^0.17.3",
     "jszip": "^3.10.1",
     "octokit": "^2.0.14"
@@ -14,6 +15,7 @@
     "format": "prettier --write src scripts",
     "get-version": "bun scripts/get-version.ts",
     "upload-npm": "bun scripts/upload-npm.ts",
-    "upload-assets": "bun scripts/upload-assets.ts"
+    "upload-assets": "bun scripts/upload-assets.ts",
+    "upload-s3": "bun scripts/upload-s3.ts"
   }
 }

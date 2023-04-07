@@ -769,25 +769,25 @@ pub const HelpCommand = struct {
     pub fn printWithReason(comptime reason: Reason) void {
         // the spacing between commands here is intentional
         const fmt =
-            \\> <r> <b><magenta>run     <r><d>  ./my-script.ts        <r>Run JavaScript with bun, a package.json script, or a bin<r>
-            \\> <r> <b><magenta>build     <r><d>  ./a.ts ./b.jsx<r>        Bundle TypeScript & JavaScript into a single file <r>
-            \\> <r> <b><green>x     <r>    <d>bun-repl        <r>      Install and execute a package bin <d>(bunx)<r>
+            \\>  <r><b><magenta>run<r>       <d>./my-script.ts<r>        Run JavaScript with bun, a package.json script, or a bin
+            \\>  <b><magenta>build<r>     <d>./a.ts ./b.jsx<r>        Bundle TypeScript & JavaScript into a single file
+            \\>  <b><green>x<r>         <d>bun-repl<r>              Install and execute a package bin <d>(bunx)<r>
             \\
-            \\> <r> <b><cyan>init<r>                            Start an empty Bun project from a blank template<r>
-            \\> <r> <b><cyan>create    <r><d>next ./app<r>            Create a new project from a template <d>(bun c)<r>
-            \\> <r> <b><green>install<r>                         Install dependencies for a package.json <d>(bun i)<r>
-            \\> <r> <b><blue>add     <r><d>  {s:<16}<r>      Add a dependency to package.json <d>(bun a)<r>
-            \\> <r> <b><blue>link <r>                           Link an npm package globally<r>
-            \\> <r> remove  <r><d>  {s:<16}<r>      Remove a dependency from package.json <d>(bun rm)<r>
-            \\> <r> unlink  <r>                        Globally unlink an npm package
-            \\> <r> pm  <r>                            More commands for managing packages
+            \\>  <b><cyan>init<r>                            Start an empty Bun project from a blank template
+            \\>  <b><cyan>create<r>    <d>next ./app<r>            Create a new project from a template <d>(bun c)<r>
+            \\>  <b><green>install<r>                         Install dependencies for a package.json <d>(bun i)<r>
+            \\>  <b><blue>add<r>       <d>{s:<16}<r>      Add a dependency to package.json <d>(bun a)<r>
+            \\>  <b><blue>link<r>                            Link an npm package globally
+            \\>  remove<r>    <d>{s:<16}<r>      Remove a dependency from package.json <d>(bun rm)<r>
+            \\>  unlink<r>                          Globally unlink an npm package
+            \\>  pm<r>                              More commands for managing packages
             \\
-            \\> <r> <b><green>dev     <r><d>  ./a.ts ./b.jsx<r>        Start a bun (frontend) Dev Server
+            \\>  <b><green>dev<r>       <d>./a.ts ./b.jsx<r>        Start a bun (frontend) Dev Server
             \\
-            \\> <r> <b><blue>upgrade <r>                        Get the latest version of bun
-            \\> <r> <b><d>completions<r>                     Install shell completions for tab-completion
-            \\> <r> <b><d>discord <r>                        Open bun's Discord server
-            \\> <r> <b><d>help      <r>                      Print this help menu
+            \\>  <b><blue>upgrade<r>                         Get the latest version of bun
+            \\>  <b><d>completions<r>                     Install shell completions for tab-completion
+            \\>  <b><d>discord<r>                         Open bun's Discord server
+            \\>  <b><d>help<r>                            Print this help menu
             \\
         ;
 

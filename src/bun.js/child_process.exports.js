@@ -1080,7 +1080,6 @@ export class ChildProcess extends EventEmitter {
 
     this.#encoding = options.encoding || undefined;
     this.#stdioOptions = bunStdio;
-    var hasEmittedSpawn = false;
     this.#handle = Bun.spawn({
       cmd: spawnargs,
       stdin: bunStdio[0],
@@ -1092,22 +1091,18 @@ export class ChildProcess extends EventEmitter {
         this.#handle = handle;
         this.pid = this.#handle.pid;
 
-        if (!hasEmittedSpawn) {
-          hasEmittedSpawn = true;
-          process.nextTick(onSpawnNT, this);
-          process.nextTick((exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err));
-        } else {
-          this.#handleOnExit(exitCode, signalCode, err);
-        }
+        process.nextTick(
+          (exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err),
+          exitCode,
+          signalCode,
+          err,
+        );
       },
       lazy: true,
     });
     this.pid = this.#handle.pid;
 
-    if (!hasEmittedSpawn) {
-      process.nextTick(onSpawnNT, this);
-      hasEmittedSpawn = true;
-    }
+    process.nextTick(onSpawnNT, this);
 
     // const ipc = stdio.ipc;
     // const ipcFd = stdio.ipcFd;

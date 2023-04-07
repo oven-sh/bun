@@ -51,7 +51,7 @@ namespace WebCore {
 const JSC::ConstructAbility s_nodeEventsOnAsyncIteratorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_nodeEventsOnAsyncIteratorCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_nodeEventsOnAsyncIteratorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_nodeEventsOnAsyncIteratorCodeLength = 4455;
+const int s_nodeEventsOnAsyncIteratorCodeLength = 4565;
 static const JSC::Intrinsic s_nodeEventsOnAsyncIteratorCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_nodeEventsOnAsyncIteratorCode =
     "(function (emitter, event, options) {\n" \
@@ -59,18 +59,21 @@ const char* const s_nodeEventsOnAsyncIteratorCode =
     "\n" \
     "  var { AbortSignal, Symbol, Number, Error } = globalThis;\n" \
     "\n" \
-    "  var AbortError = class AbortError extends Error {\n" \
-    "    constructor(message = \"The operation was aborted\", options = void 0) {\n" \
-    "      if (options !== void 0 && typeof options !== \"object\") {\n" \
-    "        throw new Error(`Invalid AbortError options:\\n" \
+    "  function makeAbortError(msg, opts = void 0) {\n" \
+    "    var AbortError = class AbortError extends Error {\n" \
+    "      constructor(message = \"The operation was aborted\", options = void 0) {\n" \
+    "        if (options !== void 0 && typeof options !== \"object\") {\n" \
+    "          throw new Error(`Invalid AbortError options:\\n" \
     "\\n" \
     "${JSON.stringify(options, null, 2)}`);\n" \
+    "        }\n" \
+    "        super(message, options);\n" \
+    "        this.code = \"ABORT_ERR\";\n" \
+    "        this.name = \"AbortError\";\n" \
     "      }\n" \
-    "      super(message, options);\n" \
-    "      this.code = \"ABORT_ERR\";\n" \
-    "      this.name = \"AbortError\";\n" \
-    "    }\n" \
-    "  };\n" \
+    "    };\n" \
+    "    return new AbortError(msg, opts);\n" \
+    "  }\n" \
     "\n" \
     "  if (@isUndefinedOrNull(emitter)) @throwTypeError(\"emitter is required\");\n" \
     "  //\n" \
@@ -86,7 +89,7 @@ const char* const s_nodeEventsOnAsyncIteratorCode =
     "\n" \
     "  if (signal?.aborted) {\n" \
     "    //\n" \
-    "    throw new AbortError(@undefined, { cause: signal?.reason });\n" \
+    "    throw makeAbortError(@undefined, { cause: signal?.reason });\n" \
     "  }\n" \
     "\n" \
     "  var highWatermark = options.highWatermark ?? Number.MAX_SAFE_INTEGER;\n" \
@@ -107,7 +110,7 @@ const char* const s_nodeEventsOnAsyncIteratorCode =
     "  var listeners = [];\n" \
     "\n" \
     "  function abortListener() {\n" \
-    "    errorHandler(new AbortError(@undefined, { cause: signal?.reason }));\n" \
+    "    errorHandler(makeAbortError(@undefined, { cause: signal?.reason }));\n" \
     "  }\n" \
     "\n" \
     "  function eventHandler(value) {\n" \
@@ -219,6 +222,90 @@ const char* const s_nodeEventsOnAsyncIteratorCode =
     "    },\n" \
     "  });\n" \
     "  return iterator;\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_nodeEventsOncePromiseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_nodeEventsOncePromiseCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_nodeEventsOncePromiseCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_nodeEventsOncePromiseCodeLength = 2418;
+static const JSC::Intrinsic s_nodeEventsOncePromiseCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_nodeEventsOncePromiseCode =
+    "(function (emitter, name, options) {\n" \
+    "  \"use strict\";\n" \
+    "\n" \
+    "  var { AbortSignal, Error } = globalThis;\n" \
+    "\n" \
+    "  function makeAbortError(msg, opts = void 0) {\n" \
+    "    var AbortError = class AbortError extends Error {\n" \
+    "      constructor(message = \"The operation was aborted\", options = void 0) {\n" \
+    "        if (options !== void 0 && typeof options !== \"object\") {\n" \
+    "          throw new Error(`Invalid AbortError options:\\n" \
+    "\\n" \
+    "${JSON.stringify(options, null, 2)}`);\n" \
+    "        }\n" \
+    "        super(message, options);\n" \
+    "        this.code = \"ABORT_ERR\";\n" \
+    "        this.name = \"AbortError\";\n" \
+    "      }\n" \
+    "    };\n" \
+    "    return new AbortError(msg, opts);\n" \
+    "  }\n" \
+    "\n" \
+    "  if (@isUndefinedOrNull(emitter)) return @Promise.@reject(@makeTypeError(\"emitter is required\"));\n" \
+    "  //\n" \
+    "  if (!(@isObject(emitter) && @isCallable(emitter.emit) && @isCallable(emitter.on)))\n" \
+    "    return @Promise.@reject(@makeTypeError(\"emitter must be an EventEmitter\"));\n" \
+    "\n" \
+    "  if (@isUndefinedOrNull(options)) options = {};\n" \
+    "\n" \
+    "  //\n" \
+    "  var signal = options.signal;\n" \
+    "  if (signal !== @undefined && (!@isObject(signal) || !(signal instanceof AbortSignal)))\n" \
+    "    return @Promise.@reject(@makeTypeError(\"options.signal must be an AbortSignal\"));\n" \
+    "\n" \
+    "  if (signal?.aborted) {\n" \
+    "    //\n" \
+    "    return @Promise.@reject(makeAbortError(@undefined, { cause: signal?.reason }));\n" \
+    "  }\n" \
+    "\n" \
+    "  var eventPromiseCapability = @newPromiseCapability(@Promise);\n" \
+    "\n" \
+    "  var errorListener = (err) => {\n" \
+    "    emitter.removeListener(name, resolver);\n" \
+    "    if (!@isUndefinedOrNull(signal)) {\n" \
+    "      signal.removeEventListener(\"abort\", abortListener);\n" \
+    "    }\n" \
+    "    eventPromiseCapability.@reject.@call(@undefined, err);\n" \
+    "  };\n" \
+    "\n" \
+    "  var resolver = (...args) => {\n" \
+    "    if (@isCallable(emitter.removeListener)) {\n" \
+    "      emitter.removeListener(\"error\", errorListener);\n" \
+    "    }\n" \
+    "    if (!@isUndefinedOrNull(signal)) {\n" \
+    "      signal.removeEventListener(\"abort\", abortListener);\n" \
+    "    }\n" \
+    "    eventPromiseCapability.@resolve.@call(@undefined, args);\n" \
+    "  };\n" \
+    "  \n" \
+    "  emitter.once(name, resolver);\n" \
+    "  if (name !== \"error\" && @isCallable(emitter.once)) {\n" \
+    "    //\n" \
+    "    //\n" \
+    "    emitter.once(\"error\", errorListener);\n" \
+    "  }\n" \
+    "\n" \
+    "  function abortListener() {\n" \
+    "    emitter.removeListener(name, resolver);\n" \
+    "    emitter.removeListener(\"error\", errorListener);\n" \
+    "    eventPromiseCapability.@reject.@call(@undefined, makeAbortError(@undefined, { cause: signal?.reason }));\n" \
+    "  }\n" \
+    "\n" \
+    "  if (!@isUndefinedOrNull(signal))\n" \
+    "    signal.addEventListener(\"abort\", abortListener, { once: true });\n" \
+    "\n" \
+    "  return eventPromiseCapability.@promise;\n" \
     "})\n" \
 ;
 

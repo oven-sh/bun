@@ -24,10 +24,6 @@ inline void generateEventsSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
   exportValues.append(JSC::JSFunction::create(
       vm, lexicalGlobalObject, 0, MAKE_STATIC_STRING_IMPL("listenerCount"),
       Events_functionListenerCount, ImplementationVisibility::Public));
-  exportNames.append(JSC::Identifier::fromString(vm, "once"_s));
-  exportValues.append(JSC::JSFunction::create(
-      vm, lexicalGlobalObject, 0, MAKE_STATIC_STRING_IMPL("once"),
-      Events_functionOnce, ImplementationVisibility::Public));
   exportNames.append(
       JSC::Identifier::fromString(vm, "captureRejectionSymbol"_s));
   exportValues.append(Symbol::create(
@@ -47,6 +43,13 @@ inline void generateEventsSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
       nodeEventsOnAsyncIteratorCodeGenerator(vm),
       PropertyAttribute::Builtin | PropertyAttribute::DontDelete);
   exportValues.append(onAsyncIterFnPtr);
+
+  exportNames.append(JSC::Identifier::fromString(vm, "once"_s));
+  auto *oncePromiseFnPtr = eventEmitterModuleCJS->putDirectBuiltinFunction(
+      vm, globalObject, JSC::Identifier::fromString(vm, "once"_s),
+      nodeEventsOncePromiseCodeGenerator(vm),
+      PropertyAttribute::Builtin | PropertyAttribute::DontDelete);
+  exportValues.append(oncePromiseFnPtr);
 
   eventEmitterModuleCJS->putDirect(
       vm,

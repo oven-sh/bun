@@ -28,16 +28,19 @@ function onAsyncIterator(emitter, event, options) {
 
   var { AbortSignal, Symbol, Number, Error } = globalThis;
 
-  var AbortError = class AbortError extends Error {
-    constructor(message = "The operation was aborted", options = void 0) {
-      if (options !== void 0 && typeof options !== "object") {
-        throw new Error(`Invalid AbortError options:\n\n${JSON.stringify(options, null, 2)}`);
+  function makeAbortError(msg, opts = void 0) {
+    var AbortError = class AbortError extends Error {
+      constructor(message = "The operation was aborted", options = void 0) {
+        if (options !== void 0 && typeof options !== "object") {
+          throw new Error(`Invalid AbortError options:\n\n${JSON.stringify(options, null, 2)}`);
+        }
+        super(message, options);
+        this.code = "ABORT_ERR";
+        this.name = "AbortError";
       }
-      super(message, options);
-      this.code = "ABORT_ERR";
-      this.name = "AbortError";
-    }
-  };
+    };
+    return new AbortError(msg, opts);
+  }
 
   if (@isUndefinedOrNull(emitter)) @throwTypeError("emitter is required");
   // TODO: Do a more accurate check
@@ -53,7 +56,7 @@ function onAsyncIterator(emitter, event, options) {
 
   if (signal?.aborted) {
     // TODO: Make this a builtin
-    throw new AbortError(@undefined, { cause: signal?.reason });
+    throw makeAbortError(@undefined, { cause: signal?.reason });
   }
 
   var highWatermark = options.highWatermark ?? Number.MAX_SAFE_INTEGER;
@@ -74,7 +77,7 @@ function onAsyncIterator(emitter, event, options) {
   var listeners = [];
 
   function abortListener() {
-    errorHandler(new AbortError(@undefined, { cause: signal?.reason }));
+    errorHandler(makeAbortError(@undefined, { cause: signal?.reason }));
   }
 
   function eventHandler(value) {
@@ -186,4 +189,79 @@ function onAsyncIterator(emitter, event, options) {
     },
   });
   return iterator;
+}
+
+function oncePromise(emitter, name, options) {
+  "use strict";
+
+  var { AbortSignal, Error } = globalThis;
+
+  function makeAbortError(msg, opts = void 0) {
+    var AbortError = class AbortError extends Error {
+      constructor(message = "The operation was aborted", options = void 0) {
+        if (options !== void 0 && typeof options !== "object") {
+          throw new Error(`Invalid AbortError options:\n\n${JSON.stringify(options, null, 2)}`);
+        }
+        super(message, options);
+        this.code = "ABORT_ERR";
+        this.name = "AbortError";
+      }
+    };
+    return new AbortError(msg, opts);
+  }
+
+  if (@isUndefinedOrNull(emitter)) return @Promise.@reject(@makeTypeError("emitter is required"));
+  // TODO: Do a more accurate check
+  if (!(@isObject(emitter) && @isCallable(emitter.emit) && @isCallable(emitter.on)))
+    return @Promise.@reject(@makeTypeError("emitter must be an EventEmitter"));
+
+  if (@isUndefinedOrNull(options)) options = {};
+
+  // Parameters validation
+  var signal = options.signal;
+  if (signal !== @undefined && (!@isObject(signal) || !(signal instanceof AbortSignal)))
+    return @Promise.@reject(@makeTypeError("options.signal must be an AbortSignal"));
+
+  if (signal?.aborted) {
+    // TODO: Make this a builtin
+    return @Promise.@reject(makeAbortError(@undefined, { cause: signal?.reason }));
+  }
+
+  var eventPromiseCapability = @newPromiseCapability(@Promise);
+
+  var errorListener = (err) => {
+    emitter.removeListener(name, resolver);
+    if (!@isUndefinedOrNull(signal)) {
+      signal.removeEventListener("abort", abortListener);
+    }
+    eventPromiseCapability.@reject.@call(@undefined, err);
+  };
+
+  var resolver = (...args) => {
+    if (@isCallable(emitter.removeListener)) {
+      emitter.removeListener("error", errorListener);
+    }
+    if (!@isUndefinedOrNull(signal)) {
+      signal.removeEventListener("abort", abortListener);
+    }
+    eventPromiseCapability.@resolve.@call(@undefined, args);
+  };
+  
+  emitter.once(name, resolver);
+  if (name !== "error" && @isCallable(emitter.once)) {
+    // EventTarget does not have `error` event semantics like Node
+    // EventEmitters, we listen to `error` events only on EventEmitters.
+    emitter.once("error", errorListener);
+  }
+
+  function abortListener() {
+    emitter.removeListener(name, resolver);
+    emitter.removeListener("error", errorListener);
+    eventPromiseCapability.@reject.@call(@undefined, makeAbortError(@undefined, { cause: signal?.reason }));
+  }
+
+  if (!@isUndefinedOrNull(signal))
+    signal.addEventListener("abort", abortListener, { once: true });
+
+  return eventPromiseCapability.@promise;
 }

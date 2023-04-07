@@ -52,17 +52,26 @@ extern const int s_nodeEventsOnAsyncIteratorCodeLength;
 extern const JSC::ConstructAbility s_nodeEventsOnAsyncIteratorCodeConstructAbility;
 extern const JSC::ConstructorKind s_nodeEventsOnAsyncIteratorCodeConstructorKind;
 extern const JSC::ImplementationVisibility s_nodeEventsOnAsyncIteratorCodeImplementationVisibility;
+extern const char* const s_nodeEventsOncePromiseCode;
+extern const int s_nodeEventsOncePromiseCodeLength;
+extern const JSC::ConstructAbility s_nodeEventsOncePromiseCodeConstructAbility;
+extern const JSC::ConstructorKind s_nodeEventsOncePromiseCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_nodeEventsOncePromiseCodeImplementationVisibility;
 
 #define WEBCORE_FOREACH_NODEEVENTS_BUILTIN_DATA(macro) \
     macro(onAsyncIterator, nodeEventsOnAsyncIterator, 3) \
+    macro(oncePromise, nodeEventsOncePromise, 3) \
 
 #define WEBCORE_BUILTIN_NODEEVENTS_ONASYNCITERATOR 1
+#define WEBCORE_BUILTIN_NODEEVENTS_ONCEPROMISE 1
 
 #define WEBCORE_FOREACH_NODEEVENTS_BUILTIN_CODE(macro) \
     macro(nodeEventsOnAsyncIteratorCode, onAsyncIterator, ASCIILiteral(), s_nodeEventsOnAsyncIteratorCodeLength) \
+    macro(nodeEventsOncePromiseCode, oncePromise, ASCIILiteral(), s_nodeEventsOncePromiseCodeLength) \
 
 #define WEBCORE_FOREACH_NODEEVENTS_BUILTIN_FUNCTION_NAME(macro) \
     macro(onAsyncIterator) \
+    macro(oncePromise) \
 
 #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
     JSC::FunctionExecutable* codeName##Generator(JSC::VM&);

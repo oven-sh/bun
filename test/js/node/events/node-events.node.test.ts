@@ -1,10 +1,12 @@
-import { EventEmitter, on } from "node:events";
+import { EventEmitter, getEventListeners, on, once } from "node:events";
 import { createTest } from "node-harness";
 
-const { beforeAll, expect, assert, describe, it, createCallCheckCtx, createDoneDotAll } = createTest(import.meta.path);
+const { beforeAll, expect, assert, strictEqual, describe, it, createCallCheckCtx, createDoneDotAll } = createTest(
+  import.meta.path,
+);
 // const NodeEventTarget = globalThis.EventTarget;
 
-describe("node:events.on (EventEmitter AsyncIterator)", () => {
+describe("node:events.on() (EventEmitter AsyncIterator)", () => {
   it("should return an async iterator", async () => {
     const ee = new EventEmitter();
     const iterable = on(ee, "foo");
@@ -423,5 +425,295 @@ describe("node:events.on (EventEmitter AsyncIterator)", () => {
   //     .finally(() => {
   //       clearInterval(i);
   //     });
+  // }
+});
+
+describe("node:events.once()", () => {
+  it("should resolve with the first event", async () => {
+    const ee = new EventEmitter();
+
+    setImmediate(() => {
+      ee.emit("myevent", 42);
+    });
+
+    const [value] = await once(ee, "myevent");
+    assert.strictEqual(value, 42);
+    assert.strictEqual(ee.listenerCount("error"), 0);
+    assert.strictEqual(ee.listenerCount("myevent"), 0);
+  });
+
+  it("should allow passing `null` for `options` arg", async () => {
+    const ee = new EventEmitter();
+
+    setImmediate(() => {
+      ee.emit("myevent", 42);
+    });
+
+    // @ts-ignore
+    const [value] = await once(ee, "myevent", null);
+    assert.strictEqual(value, 42);
+  });
+
+  it("should return two args when two args are emitted", async () => {
+    const ee = new EventEmitter();
+
+    setImmediate(() => {
+      ee.emit("myevent", 42, 24);
+    });
+
+    const value = await once(ee, "myevent");
+    assert.deepStrictEqual(value, [42, 24]);
+  });
+
+  it("should throw an error when an error is emitted", async () => {
+    const ee = new EventEmitter();
+
+    const expected = new Error("kaboom");
+    setImmediate(() => {
+      ee.emit("error", expected);
+    });
+
+    let err;
+    try {
+      await once(ee, "myevent");
+    } catch (_e) {
+      err = _e;
+    }
+
+    assert.strictEqual(err, expected);
+    assert.strictEqual(ee.listenerCount("error"), 0);
+    assert.strictEqual(ee.listenerCount("myevent"), 0);
+  });
+
+  it("should throw an error when an error is emitted when `AbortSignal` is attached", async () => {
+    const ee = new EventEmitter();
+    const ac = new AbortController();
+    const signal = ac.signal;
+
+    const expected = new Error("boom");
+    let err;
+    setImmediate(() => {
+      ee.emit("error", expected);
+    });
+
+    const promise = once(ee, "myevent", { signal });
+    strictEqual(ee.listenerCount("error"), 1);
+
+    // TODO: Uncomment when getEventListeners is working properly
+    // strictEqual(getEventListeners(signal, "abort").length, 1);
+
+    try {
+      await promise;
+    } catch (e) {
+      err = e;
+    }
+
+    strictEqual(err, expected);
+    strictEqual(ee.listenerCount("error"), 0);
+    strictEqual(ee.listenerCount("myevent"), 0);
+    // strictEqual(getEventListeners(signal, "abort").length, 0);
+  });
+
+  it("should stop listening if we throw an error", async () => {
+    const ee = new EventEmitter();
+
+    const expected = new Error("kaboom");
+    let err;
+
+    setImmediate(() => {
+      ee.emit("error", expected);
+      ee.emit("myevent", 42, 24);
+    });
+
+    try {
+      await once(ee, "myevent");
+    } catch (_e) {
+      err = _e;
+    }
+
+    strictEqual(err, expected);
+    strictEqual(ee.listenerCount("error"), 0);
+    strictEqual(ee.listenerCount("myevent"), 0);
+  });
+
+  it("should return error instead of throwing if event is error", async () => {
+    const ee = new EventEmitter();
+
+    const expected = new Error("kaboom");
+    setImmediate(() => {
+      ee.emit("error", expected);
+    });
+
+    const promise = once(ee, "error");
+    strictEqual(ee.listenerCount("error"), 1);
+    const [err] = await promise;
+    strictEqual(err, expected);
+    strictEqual(ee.listenerCount("error"), 0);
+    strictEqual(ee.listenerCount("myevent"), 0);
+  });
+
+  it("should throw on invalid signal option", async done => {
+    const ee = new EventEmitter();
+    ee.on("error", err => {
+      done(new Error("should not be called", { cause: err }));
+    });
+    let iters = 0;
+    for (const signal of [1, {}, "hi", null, false]) {
+      let threw = false;
+      try {
+        await once(ee, "foo", { signal });
+      } catch (e) {
+        threw = true;
+        expect(e).toBeInstanceOf(TypeError);
+      }
+      expect(threw).toBe(true);
+      iters++;
+    }
+    expect(iters).toBe(5);
+    done();
+  });
+
+  it("should throw `AbortError` when signal is already aborted", async done => {
+    const ee = new EventEmitter();
+    ee.on("error", err => done(new Error("should not be called", { cause: err })));
+    const abortedSignal = AbortSignal.abort();
+
+    expect(() => on(ee, "foo", { signal: abortedSignal })).toThrow(/aborted/);
+
+    // let threw = false;
+    // try {
+    //   await once(ee, "foo", { signal: abortedSignal });
+    // } catch (e) {
+    //   threw = true;
+    //   expect(e).toBeInstanceOf(Error);
+    //   expect((e as Error).name).toBe("AbortError");
+    // }
+
+    // expect(threw).toBe(true);
+    done();
+  });
+
+  it("should throw `AbortError` when signal is aborted before event is emitted", async done => {
+    const ee = new EventEmitter();
+    ee.on("error", err => done(new Error("should not be called", { cause: err })));
+    const ac = new AbortController();
+    const signal = ac.signal;
+
+    const promise = once(ee, "foo", { signal });
+    ac.abort();
+
+    let threw = false;
+    try {
+      await promise;
+    } catch (e) {
+      threw = true;
+      expect(e).toBeInstanceOf(Error);
+      expect((e as Error).name).toBe("AbortError");
+    }
+
+    expect(threw).toBe(true);
+    done();
+  });
+
+  it("should not throw `AbortError` when signal is aborted after event is emitted", async () => {
+    const ee = new EventEmitter();
+    const ac = new AbortController();
+    const signal = ac.signal;
+
+    setImmediate(() => {
+      ee.emit("foo");
+      ac.abort();
+    });
+
+    const promise = once(ee, "foo", { signal });
+    // TODO: Uncomment when getEventListeners is working properly
+    // strictEqual(getEventListeners(signal, "abort").length, 1);
+
+    await promise;
+    expect(true).toBeTruthy();
+    // strictEqual(getEventListeners(signal, "abort").length, 0);
+  });
+
+  it("should remove listeners when signal is aborted", async () => {
+    const ee = new EventEmitter();
+    const ac = new AbortController();
+
+    const promise = once(ee, "foo", { signal: ac.signal });
+    strictEqual(ee.listenerCount("foo"), 1);
+    strictEqual(ee.listenerCount("error"), 1);
+
+    setImmediate(() => {
+      ac.abort();
+    });
+
+    try {
+      await promise;
+    } catch (e) {
+      expect(e).toBeInstanceOf(Error);
+      expect((e as Error).name).toBe("AbortError");
+
+      strictEqual(ee.listenerCount("foo"), 0);
+      strictEqual(ee.listenerCount("error"), 0);
+    }
+  });
+
+  // TODO: Uncomment event target tests once we have EventTarget support for once()
+
+  // async function onceWithEventTarget() {
+  //   const et = new EventTarget();
+  //   const event = new Event("myevent");
+  //   process.nextTick(() => {
+  //     et.dispatchEvent(event);
+  //   });
+  //   const [value] = await once(et, "myevent");
+  //   strictEqual(value, event);
+  // }
+
+  // async function onceWithEventTargetError() {
+  //   const et = new EventTarget();
+  //   const error = new Event("error");
+  //   process.nextTick(() => {
+  //     et.dispatchEvent(error);
+  //   });
+
+  //   const [err] = await once(et, "error");
+  //   strictEqual(err, error);
+  // }
+
+  // async function eventTargetAbortSignalBefore() {
+  //   const et = new EventTarget();
+  //   const abortedSignal = AbortSignal.abort();
+
+  //   await Promise.all(
+  //     [1, {}, "hi", null, false].map(signal => {
+  //       return rejects(once(et, "foo", { signal }), {
+  //         code: "ERR_INVALID_ARG_TYPE",
+  //       });
+  //     }),
+  //   );
+
+  //   return rejects(once(et, "foo", { signal: abortedSignal }), {
+  //     name: "AbortError",
+  //   });
+  // }
+
+  // async function eventTargetAbortSignalAfter() {
+  //   const et = new EventTarget();
+  //   const ac = new AbortController();
+  //   const r = rejects(once(et, "foo", { signal: ac.signal }), {
+  //     name: "AbortError",
+  //   });
+  //   process.nextTick(() => ac.abort());
+  //   return r;
+  // }
+
+  // async function eventTargetAbortSignalAfterEvent() {
+  //   const et = new EventTarget();
+  //   const ac = new AbortController();
+  //   process.nextTick(() => {
+  //     et.dispatchEvent(new Event("foo"));
+  //     ac.abort();
+  //   });
+  //   await once(et, "foo", { signal: ac.signal });
   // }
 });

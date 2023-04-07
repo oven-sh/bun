@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { resolve, join } from "path";
 import MyPNG from "./test-png.png";
-import theData from "./data.anything";
+import data from "./data.anything";
+import moreData from "../more-data.any";
 import js from "./no-extension-js";
 
 test("png import", () => {
@@ -9,6 +10,7 @@ test("png import", () => {
 });
 
 test("random import", () => {
-  expect(theData).toBe(join(import.meta.dir, "data.anything"));
+  expect(data).toBe(join(import.meta.dir, "data.anything"));
+  expect(moreData).toBe(join(import.meta.dir, "../more-data.any"));
   expect(js()).toBe("success!");
 });

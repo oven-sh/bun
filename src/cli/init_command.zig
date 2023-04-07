@@ -293,6 +293,7 @@ pub const InitCommand = struct {
                 try dev_dependencies.data.e_object.putString(alloc, "bun-types", comptime std.fmt.comptimePrint("^{any}", .{version.fmt("")}));
                 try fields.object.put(alloc, "devDependencies", dev_dependencies);
             }
+            
         }
 
         write_package_json: {

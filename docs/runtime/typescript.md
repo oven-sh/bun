@@ -10,7 +10,7 @@ Bun can directly execute `.ts` and `.tsx` files just like vanilla JavaScript, wi
 
 ## Configuring `tsconfig.json`
 
-Bun supports a number of features that TypeScript doesn't support by default, such as extensioned imports and top-level await. It also implements the `Bun` global . To enable these features, your `tsconfig.json` must be configured properly.
+Bun supports a number of features that TypeScript doesn't support by default, such as extensioned imports, top-level await, and `exports` conditions. It also implements global APIs like the `Bun`. To enable these features, your `tsconfig.json` must be configured properly.
 
 {% callout %}
 If you initialized your project with `bun init`, everything is already configured properly.
@@ -33,7 +33,7 @@ $ bun add -d bun-types@canary
 
 {% callout %}
 
-**Note** —  Requires TypeScript 5.0+.
+**Note** — This approach requires TypeScript 5.0 or later!
 
 {% /callout %}
 

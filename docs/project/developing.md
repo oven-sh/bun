@@ -135,7 +135,7 @@ $ make bindings -j12
 To verify the build worked, lets print the version number on the development build of Bun.
 
 ```bash
-$ packages/debug-bun-darwin-*/bun-debug --version
+$ packages/debug-bun-*/bun-debug --version
 bun 0.x.y__dev
 ```
 

@@ -174,7 +174,7 @@ pub const ExternalModules = struct {
         return result;
     }
 
-    pub const NodeBuiltinPatterns = [_]string{
+    const NodeBuiltinPatternsRaw = [_]string{
         "_http_agent",
         "_http_client",
         "_http_common",
@@ -231,6 +231,14 @@ pub const ExternalModules = struct {
         "wasi",
         "worker_threads",
         "zlib",
+    };
+
+    pub const NodeBuiltinPatterns = NodeBuiltinPatternsRaw ++ brk: {
+        var builtins = NodeBuiltinPatternsRaw;
+        for (&builtins) |*builtin| {
+            builtin.* = "node:" ++ builtin.*;
+        }
+        break :brk builtins;
     };
 
     pub const BunNodeBuiltinPatternsCompat = [_]string{

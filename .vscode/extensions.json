@@ -4,6 +4,7 @@
     "esbenp.prettier-vscode",
     "xaver.clang-format",
     "vadimcn.vscode-lldb",
-    "bierner.comment-tagged-templates"
+    "bierner.comment-tagged-templates",
+    "ms-vscode.cpptools"
   ]
 }

@@ -7,3 +7,6 @@ if [ -d ./node_modules/bun-webkit ]; then
     # get the first matching bun-webkit-* directory name
     ln -s ./node_modules/$(ls ./node_modules | grep bun-webkit- | head -n 1) ./bun-webkit
 fi
+
+# sets up vscode C++ intellisense
+ln -s $(which clang++-15 || which clang++) .vscode/clang++ 2>/dev/null

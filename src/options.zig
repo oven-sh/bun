@@ -376,6 +376,32 @@ pub const Platform = enum {
     bun_macro,
     node,
 
+    pub const Map = ComptimeStringMap(
+        Platform,
+        .{
+            .{
+                "neutral",
+                Platform.neutral,
+            },
+            .{
+                "browser",
+                Platform.browser,
+            },
+            .{
+                "bun",
+                Platform.bun,
+            },
+            .{
+                "bun_macro",
+                Platform.bun_macro,
+            },
+            .{
+                "node",
+                Platform.node,
+            },
+        },
+    );
+
     pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Platform {
         if (!value.jsType().isStringLike()) {
             JSC.throwInvalidArguments("platform must be a string", .{}, global, exception);
@@ -635,6 +661,13 @@ pub const Loader = enum(u4) {
     toml,
     wasm,
     napi,
+
+    pub fn canHaveSourceMap(this: Loader) bool {
+        return switch (this) {
+            .jsx, .js, .ts, .tsx => true,
+            else => false,
+        };
+    }
 
     pub fn canBeRunByBun(this: Loader) bool {
         return switch (this) {
@@ -1185,6 +1218,29 @@ pub const SourceMapOption = enum {
     });
 };
 
+pub const OutputFormat = enum {
+    preserve,
+
+    /// ES module format
+    /// This is the default format
+    esm,
+    /// Immediately-invoked function expression
+    /// (
+    ///   function(){}
+    /// )();
+    iife,
+    /// CommonJS
+    cjs,
+
+    pub fn keepES6ImportExportSyntax(this: OutputFormat) bool {
+        return this == .esm;
+    }
+
+    pub inline fn isESM(this: OutputFormat) bool {
+        return this == .esm;
+    }
+};
+
 /// BundleOptions is used when ResolveMode is not set to "disable".
 /// BundleOptions is effectively webpack + babel
 pub const BundleOptions = struct {
@@ -1198,7 +1254,9 @@ pub const BundleOptions = struct {
     allow_runtime: bool = true,
 
     trim_unused_imports: ?bool = null,
-
+    mark_bun_builtins_as_external: bool = false,
+    react_server_components: bool = false,
+    react_server_components_boundary: string = "",
     hot_module_reloading: bool = false,
     inject: ?[]string = null,
     origin: URL = URL{},
@@ -1216,6 +1274,9 @@ pub const BundleOptions = struct {
     production: bool = false,
     serve: bool = false,
 
+    // only used by bundle_v2
+    output_format: OutputFormat = .esm,
+
     append_package_version_in_query_string: bool = false,
 
     jsx_optimization_inline: ?bool = null,
@@ -1228,6 +1289,7 @@ pub const BundleOptions = struct {
     log: *logger.Log,
     external: ExternalModules = ExternalModules{},
     entry_points: []const string,
+    entry_names: []const u8 = "",
     extension_order: []const string = &Defaults.ExtensionOrder,
     esm_extension_order: []const string = &Defaults.ModuleExtensionOrder,
     out_extensions: bun.StringHashMap(string),
@@ -1245,6 +1307,7 @@ pub const BundleOptions = struct {
 
     conditions: ESMConditions = undefined,
     tree_shaking: bool = false,
+    code_splitting: bool = false,
     sourcemap: SourceMapOption = SourceMapOption.none,
 
     disable_transpilation: bool = false,
@@ -2328,3 +2391,90 @@ pub const RouteConfig = struct {
 };
 
 pub const GlobalCache = @import("./resolver/resolver.zig").GlobalCache;
+
+pub const PathTemplate = struct {
+    data: string = "",
+    placeholder: Placeholder = .{},
+
+    pub fn format(self: PathTemplate, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        var remain = self.data;
+        while (strings.indexOfChar(remain, '[')) |j| {
+            try writer.writeAll(remain[0..j]);
+            remain = remain[j + 1 ..];
+            if (remain.len == 0) {
+                // TODO: throw error
+                try writer.writeAll("[");
+                break;
+            }
+
+            var count: isize = 1;
+            var end_len: usize = remain.len;
+            for (remain) |*c| {
+                count += switch (c.*) {
+                    '[' => 1,
+                    ']' => -1,
+                    else => 0,
+                };
+
+                if (count == 0) {
+                    end_len = @ptrToInt(c) - @ptrToInt(remain.ptr);
+                    std.debug.assert(end_len <= remain.len);
+                    break;
+                }
+            }
+
+            const placeholder = remain[0..end_len];
+
+            const field = PathTemplate.Placeholder.map.get(placeholder) orelse {
+                try writer.writeAll(placeholder);
+                remain = remain[end_len..];
+                continue;
+            };
+
+            switch (field) {
+                .dir => try writer.writeAll(self.placeholder.dir),
+                .name => try writer.writeAll(self.placeholder.name),
+                .ext => try writer.writeAll(self.placeholder.ext),
+                .hash => {
+                    if (self.placeholder.hash) |hash| {
+                        try writer.print("{any}", .{bun.fmt.hexIntLower(hash)});
+                    }
+                },
+            }
+            remain = remain[end_len + 1 ..];
+        }
+
+        try writer.writeAll(remain);
+    }
+
+    pub const Placeholder = struct {
+        dir: []const u8 = "",
+        name: []const u8 = "",
+        ext: []const u8 = "",
+        hash: ?u64 = null,
+
+        pub const map = bun.ComptimeStringMap(
+            std.meta.FieldEnum(Placeholder),
+            .{
+                .{ "dir", .dir },
+                .{ "name", .name },
+                .{ "ext", .ext },
+                .{ "hash", .hash },
+            },
+        );
+    };
+
+    pub const chunk = PathTemplate{
+        .data = "./chunk-[hash].[ext]",
+        .placeholder = .{
+            .name = "chunk",
+            .ext = "js",
+            .dir = "",
+        },
+    };
+
+    pub const file = PathTemplate{
+        .data = "./[name]-[hash].[ext]",
+        .placeholder = .{},
+    };
+};

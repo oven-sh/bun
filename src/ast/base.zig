@@ -1,4 +1,5 @@
 const std = @import("std");
+const bun = @import("bun");
 const unicode = std.unicode;
 
 pub const JavascriptString = []u16;
@@ -126,94 +127,142 @@ pub inline fn getBits(comptime TargetType: type, target: anytype, comptime start
     return @truncate(TargetType, target >> start_bit);
 }
 
-pub const Ref = enum(TotalSize) {
-    default = std.math.maxInt(TotalSize),
-    _,
+/// In some parts of Bun, we have many different IDs pointing to different things.
+/// It's easy for them to get mixed up, so we use this type to make sure we don't.
+///
+pub const Index = packed struct(u32) {
+    value: Int,
 
-    pub const TotalSize = u62;
+    pub fn set(this: *Index, val: Int) void {
+        this.value = val;
+    }
+
+    pub inline fn isRuntime(this: Index) bool {
+        return this.value == runtime.value;
+    }
+
+    pub const invalid = Index{ .value = std.math.maxInt(Int) };
+    pub const runtime = Index{
+        .value = 0,
+    };
+
+    pub const Int = u32;
+
+    pub inline fn source(num: anytype) Index {
+        return .{ .value = @truncate(Int, num) };
+    }
+
+    pub inline fn part(num: anytype) Index {
+        return .{ .value = @truncate(Int, num) };
+    }
+
+    pub fn init(num: anytype) Index {
+        const NumType = @TypeOf(num);
+        if (comptime @typeInfo(NumType) == .Pointer) {
+            return init(num.*);
+        }
+
+        if (comptime bun.Environment.allow_assert) {
+            return .{
+                .value = @intCast(Int, num),
+            };
+        }
+
+        return .{
+            .value = @intCast(Int, num),
+        };
+    }
+
+    pub inline fn isValid(this: Index) bool {
+        return this.value != invalid.value;
+    }
+
+    pub inline fn isInvalid(this: Index) bool {
+        return !this.isValid();
+    }
+
+    pub inline fn get(this: Index) Int {
+        return this.value;
+    }
+};
+
+pub const Ref = packed struct(u64) {
+    inner_index: Int = 0,
+
+    tag: enum(u2) {
+        invalid,
+        allocated_name,
+        source_contents_slice,
+        symbol,
+    } = .invalid,
+
+    source_index: Int = 0,
+
+    pub inline fn isEmpty(this: Ref) bool {
+        return this.asU64() == 0;
+    }
+
+    pub const ArrayHashCtx = RefHashCtx;
+
+    pub const Int = std.meta.Int(.unsigned, (64 - 2) / 2);
+
+    pub fn toInt(value: anytype) Int {
+        return @intCast(Int, value);
+    }
+
+    pub fn isSourceIndexNull(this: anytype) bool {
+        return this == std.math.maxInt(Int);
+    }
+
+    pub fn isSymbol(this: Ref) bool {
+        return this.tag == .symbol;
+    }
 
     pub fn format(ref: Ref, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         try std.fmt.format(
             writer,
-            "Ref: sourceIndex = {d}, innerIndex = {d}, is_source_contents_slice = {}",
+            "Ref[{d}, {d}, {s}]",
             .{
                 ref.sourceIndex(),
                 ref.innerIndex(),
-                ref.isSourceContentsSlice(),
+                @tagName(ref.tag),
             },
         );
     }
 
-    const max_ref_int = std.math.maxInt(Ref.Int);
-    pub const BitInt = std.meta.Int(.unsigned, @bitSizeOf(Ref));
-
-    pub inline fn asBitInt(this: Ref) BitInt {
-        return @bitCast(BitInt, this);
+    pub fn isValid(this: Ref) bool {
+        return this.tag != .invalid;
     }
 
     // 2 bits of padding for whatever is the parent
-    pub const Int = u30;
-    pub const None = Ref.init(std.math.maxInt(u30), std.math.maxInt(u30), false);
-    pub const RuntimeRef = Ref.init(std.math.maxInt(u30), std.math.maxInt(u30) - 1, false);
-
-    const source_index_offset = 1;
-    const inner_index_offset = 1 + 30;
+    pub const None = Ref{ .inner_index = 0, .source_index = 0, .tag = .invalid };
 
     pub inline fn sourceIndex(this: Ref) Int {
-        return @truncate(Int, getBits(TotalSize, @enumToInt(this), source_index_offset, 30));
+        return this.source_index;
     }
 
     pub inline fn innerIndex(this: Ref) Int {
-        return @truncate(Int, getBits(TotalSize, @enumToInt(this), inner_index_offset, 30));
+        return this.inner_index;
     }
 
     pub inline fn isSourceContentsSlice(this: Ref) bool {
-        return (getBits(TotalSize, @enumToInt(this), 0, 1) & 1) != 0;
+        return this.tag == .source_contents_slice;
     }
 
-    pub fn atIndex(value: anytype) Ref {
-        return @intToEnum(Ref, setBits(TotalSize, 0, inner_index_offset, 30, @truncate(Int, value)));
+    pub fn init(inner_index: Int, source_index: usize, is_source_contents_slice: bool) Ref {
+        return .{
+            .inner_index = inner_index,
+
+            // if we overflow, we want a panic
+            .source_index = @intCast(Int, source_index),
+
+            .tag = if (is_source_contents_slice) .source_contents_slice else .allocated_name,
+        };
     }
 
-    pub fn init(inner_index: Int, source_index: Int, is_source_contents_slice: bool) Ref {
-        return @intToEnum(
-            Ref,
-            setBits(
-                TotalSize,
-                0,
-                0,
-                1,
-                @as(
-                    TotalSize,
-                    @boolToInt(is_source_contents_slice),
-                ),
-            ) | setBits(
-                TotalSize,
-                0,
-                source_index_offset,
-                30,
-                source_index,
-            ) | setBits(
-                TotalSize,
-                0,
-                inner_index_offset,
-                30,
-                inner_index,
-            ),
-        );
-    }
-
-    const Old = struct {
-        inner_index: Int = 0,
-        source_index: Int = std.math.maxInt(Int),
-        is_source_contents_slice: bool = false,
-    };
-    pub fn initSourceEnd(old: Old) Ref {
-        return init(old.inner_index, old.source_index, old.is_source_contents_slice);
-    }
-
-    pub fn toInt(int: anytype) Int {
-        return @intCast(Int, int);
+    pub fn initSourceEnd(old: Ref) Ref {
+        std.debug.assert(old.tag != .invalid);
+        return init(old.inner_index, old.source_index, old.tag == .source_contents_slice);
     }
 
     pub fn hash(key: Ref) u32 {
@@ -221,13 +270,7 @@ pub const Ref = enum(TotalSize) {
     }
 
     pub inline fn asU64(key: Ref) u64 {
-        // This type isn't quite a u64 because it is used in a few other packed structs which have variables in them
-        // But, there are some footguns with the stage1 implementation of packed structs
-        // so it is safer to do comparisons as u64
-        // but we want to ensure that the value of the unused bits in the u64 are 0
-        // i have not looked at the assembly to verify that the unused bits default to 0
-        // so we set it to u64 0 just to be sure
-        return @as(u64, @enumToInt(key));
+        return @bitCast(u64, key);
     }
 
     pub inline fn hash64(key: Ref) u64 {
@@ -238,11 +281,7 @@ pub const Ref = enum(TotalSize) {
         return asU64(ref) == b.asU64();
     }
     pub inline fn isNull(self: Ref) bool {
-        return self.eql(Ref.None);
-    }
-
-    pub fn isSourceIndexNull(int: anytype) bool {
-        return int == max_ref_int;
+        return self.tag == .invalid;
     }
 
     pub fn jsonStringify(self: *const Ref, options: anytype, writer: anytype) !void {

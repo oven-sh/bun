@@ -6,7 +6,7 @@ const QueryStringMap = @import("../../url.zig").QueryStringMap;
 const CombinedScanner = @import("../../url.zig").CombinedScanner;
 const bun = @import("bun");
 const string = bun.string;
-const JSC = @import("bun").JSC;
+const JSC = bun.JSC;
 const js = JSC.C;
 const WebCore = @import("../webcore/response.zig");
 const Bundler = bun.bundler;
@@ -19,9 +19,9 @@ const Base = @import("../base.zig");
 const getAllocator = Base.getAllocator;
 const JSObject = JSC.JSObject;
 const JSError = Base.JSError;
-const JSValue = JSC.JSValue;
+const JSValue = bun.JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const strings = @import("bun").strings;
+const strings = bun.strings;
 const NewClass = Base.NewClass;
 const To = Base.To;
 const Request = WebCore.Request;
@@ -30,7 +30,7 @@ const FetchEvent = WebCore.FetchEvent;
 const MacroMap = @import("../../resolver/package_json.zig").MacroMap;
 const TSConfigJSON = @import("../../resolver/tsconfig_json.zig").TSConfigJSON;
 const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
-const logger = @import("bun").logger;
+const logger = bun.logger;
 const Loader = options.Loader;
 const Platform = options.Platform;
 const JSAst = bun.JSAst;
@@ -838,7 +838,7 @@ fn getParseResult(this: *Transpiler, allocator: std.mem.Allocator, code: []const
 
     // necessary because we don't run the linker
     if (parse_result) |*res| {
-        for (res.ast.import_records) |*import| {
+        for (res.ast.import_records.slice()) |*import| {
             if (import.kind.isCommonJS()) {
                 import.do_commonjs_transform_in_printer = true;
                 import.module_id = @truncate(u32, std.hash.Wyhash.hash(0, import.path.pretty));
@@ -923,7 +923,7 @@ pub fn scan(
     const imports_label = JSC.ZigString.static("imports");
     const named_imports_value = namedImportsToJS(
         globalThis,
-        parse_result.ast.import_records,
+        parse_result.ast.import_records.slice(),
         exception,
     );
     if (exception.* != null) {

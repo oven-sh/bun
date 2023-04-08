@@ -70,7 +70,6 @@ const VM = @import("bun").JSC.VM;
 const JSFunction = @import("bun").JSC.JSFunction;
 const Config = @import("../config.zig");
 const URL = @import("../../url.zig").URL;
-const Transpiler = @import("./transpiler.zig");
 const VirtualMachine = JSC.VirtualMachine;
 const IOTask = JSC.IOTask;
 const is_bindgen = JSC.is_bindgen;
@@ -5172,5 +5171,12 @@ pub const Server = NewServer(false, false);
 pub const SSLServer = NewServer(true, false);
 pub const DebugServer = NewServer(false, true);
 pub const DebugSSLServer = NewServer(true, true);
+
+pub const AnyServer = union(enum) {
+    Server: *Server,
+    SSLServer: *SSLServer,
+    DebugServer: *DebugServer,
+    DebugSSLServer: *DebugSSLServer,
+};
 
 const welcome_page_html_gz = @embedFile("welcome-page.html.gz");

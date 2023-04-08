@@ -1,7 +1,9 @@
-const fs = @import("fs.zig");
+const fs = @import("bun").fs;
+const bun = @import("bun");
 const logger = @import("bun").logger;
 const std = @import("std");
 const Ref = @import("ast/base.zig").Ref;
+const Index = @import("ast/base.zig").Index;
 const Api = @import("./api/schema.zig").Api;
 
 pub const ImportKind = enum(u8) {
@@ -34,7 +36,7 @@ pub const ImportKind = enum(u8) {
 
     pub const Label = std.EnumArray(ImportKind, []const u8);
     pub const all_labels: Label = brk: {
-        var labels = Label.initFill("internal");
+        var labels = Label.initFill("");
         labels.set(ImportKind.entry_point, "entry-point");
         labels.set(ImportKind.stmt, "import-statement");
         labels.set(ImportKind.require, "require-call");
@@ -85,7 +87,7 @@ pub const ImportRecord = struct {
     /// 0 is invalid
     module_id: u32 = 0,
 
-    source_index: Ref.Int = std.math.maxInt(Ref.Int),
+    source_index: Index = Index.invalid,
 
     print_mode: PrintMode = .normal,
 
@@ -102,6 +104,8 @@ pub const ImportRecord = struct {
     handles_import_errors: bool = false,
 
     is_internal: bool = false,
+
+    calls_runtime_require: bool = false,
 
     /// This tells the printer that we should print as export var $moduleID = ...
     /// Instead of using the path.
@@ -121,9 +125,11 @@ pub const ImportRecord = struct {
     /// either via the "import x from" or "import {default as x} from" syntax.
     contains_default_alias: bool = false,
 
+    contains_es_module_alias: bool = false,
+
     /// If true, this "export * from 'path'" statement is evaluated at run-time by
     /// calling the "__reExport()" helper function
-    calls_run_time_re_export_fn: bool = false,
+    calls_runtime_re_export_fn: bool = false,
 
     /// Tell the printer to use runtime code to resolve this import/export
     do_commonjs_transform_in_printer: bool = false,
@@ -140,6 +146,9 @@ pub const ImportRecord = struct {
     /// If a macro used <import>, it will be tracked here.
     was_injected_by_macro: bool = false,
 
+    /// If true, this import can be removed if it's unused
+    is_external_without_side_effects: bool = false,
+
     kind: ImportKind,
 
     tag: Tag = Tag.none,
@@ -150,14 +159,60 @@ pub const ImportRecord = struct {
     /// Used to prevent running resolve plugins multiple times for the same path
     print_namespace_in_path: bool = false,
 
+    wrap_with_to_esm: bool = false,
+    wrap_with_to_commonjs: bool = false,
+
+    pub const List = bun.BabyList(ImportRecord);
+
     pub const Tag = enum {
         none,
+        /// JSX auto-import for React Fast Refresh
         react_refresh,
+        /// JSX auto-import for jsxDEV or jsx
         jsx_import,
+        /// JSX auto-import for Fragment or createElement
         jsx_classic,
+        /// Uses the `bun` import specifier
+        ///     import {foo} from "bun";
         bun,
+        /// Uses the `bun:test` import specifier
+        ///     import {expect} from "bun:test";
         bun_test,
+        runtime,
         hardcoded,
+        /// A macro: import specifier OR a macro import
+        macro,
+        internal,
+
+        /// Referenced "use client"; at the start of the file
+        react_client_component,
+
+        /// A file starting with "use client"; imported a server entry point
+        /// We don't actually support this right now.
+        react_server_component,
+
+        pub fn isReactReference(this: Tag) bool {
+            return switch (this) {
+                .react_client_component, .react_server_component => true,
+                else => false,
+            };
+        }
+
+        pub inline fn isRuntime(this: Tag) bool {
+            return this == .runtime;
+        }
+
+        pub inline fn isInternal(this: Tag) bool {
+            return @enumToInt(this) >= @enumToInt(Tag.runtime);
+        }
+
+        pub fn useDirective(this: Tag) bun.JSAst.UseDirective {
+            return switch (this) {
+                .react_client_component => .@"use client",
+                .react_server_component => .@"use server",
+                else => .none,
+            };
+        }
     };
 
     pub const PrintMode = enum {

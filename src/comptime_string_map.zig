@@ -69,6 +69,18 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
         const len_indexes = precomputed.len_indexes;
         pub const kvs = precomputed.sorted_kvs;
 
+        const keys_list: []const []const KeyType = blk: {
+            var k: [kvs.len][]const KeyType = undefined;
+            for (kvs, 0..) |kv, i| {
+                k[i] = kv.key;
+            }
+            break :blk k[0..];
+        };
+
+        pub fn keys() []const []const KeyType {
+            return keys_list;
+        }
+
         pub fn has(str: []const KeyType) bool {
             return get(str) != null;
         }

@@ -79,7 +79,6 @@ const VM = @import("bun").JSC.VM;
 const JSFunction = @import("bun").JSC.JSFunction;
 const Config = @import("./config.zig");
 const URL = @import("../url.zig").URL;
-const Transpiler = @import("./api/transpiler.zig");
 const Bun = JSC.API.Bun;
 const EventLoop = JSC.EventLoop;
 const PendingResolution = @import("../resolver/resolver.zig").PendingResolution;
@@ -172,8 +171,8 @@ pub const ModuleLoader = struct {
 
         // This is all the state used by the printer to print the module
         parse_result: ParseResult,
-        stmt_blocks: []*js_ast.Stmt.Data.Store.All.Block = &[_]*js_ast.Stmt.Data.Store.All.Block{},
-        expr_blocks: []*js_ast.Expr.Data.Store.All.Block = &[_]*js_ast.Expr.Data.Store.All.Block{},
+        // stmt_blocks: []*js_ast.Stmt.Data.Store.All.Block = &[_]*js_ast.Stmt.Data.Store.All.Block{},
+        // expr_blocks: []*js_ast.Expr.Data.Store.All.Block = &[_]*js_ast.Expr.Data.Store.All.Block{},
         promise: JSC.Strong = .{},
         path: Fs.Path,
         specifier: string = "",
@@ -485,8 +484,8 @@ pub const ModuleLoader = struct {
 
         pub fn init(opts: anytype, globalObject: *JSC.JSGlobalObject) !AsyncModule {
             var promise = JSC.Strong{};
-            var stmt_blocks = js_ast.Stmt.Data.Store.toOwnedSlice();
-            var expr_blocks = js_ast.Expr.Data.Store.toOwnedSlice();
+            // var stmt_blocks = js_ast.Stmt.Data.toOwnedSlice();
+            // var expr_blocks = js_ast.Expr.Data.toOwnedSlice();
             const this_promise = JSValue.createInternalPromise(globalObject);
             promise.set(globalObject, this_promise);
 
@@ -511,9 +510,9 @@ pub const ModuleLoader = struct {
                 .package_json = opts.package_json,
                 .loader = opts.loader.toAPI(),
                 .string_buf = buf.allocatedSlice(),
-                .stmt_blocks = stmt_blocks,
+                // .stmt_blocks = stmt_blocks,
+                // .expr_blocks = expr_blocks,
                 .globalThis = globalObject,
-                .expr_blocks = expr_blocks,
             };
         }
 
@@ -636,7 +635,7 @@ pub const ModuleLoader = struct {
             error_instance.put(globalThis, ZigString.static("name"), ZigString.init(name).withEncoding().toValueGC(globalThis));
             error_instance.put(globalThis, ZigString.static("pkg"), ZigString.init(result.name).withEncoding().toValueGC(globalThis));
             error_instance.put(globalThis, ZigString.static("specifier"), ZigString.init(this.specifier).withEncoding().toValueGC(globalThis));
-            const location = logger.rangeData(&this.parse_result.source, this.parse_result.ast.import_records[import_record_id].range, "").location.?;
+            const location = logger.rangeData(&this.parse_result.source, this.parse_result.ast.import_records.at(import_record_id).range, "").location.?;
             error_instance.put(globalThis, ZigString.static("sourceURL"), ZigString.init(this.parse_result.source.path.text).withEncoding().toValueGC(globalThis));
             error_instance.put(globalThis, ZigString.static("line"), JSValue.jsNumber(location.line));
             if (location.line_text) |line_text| {
@@ -730,9 +729,9 @@ pub const ModuleLoader = struct {
                 error_instance.put(globalThis, ZigString.static("referrer"), ZigString.init(this.specifier).withEncoding().toValueGC(globalThis));
             }
 
-            const location = logger.rangeData(&this.parse_result.source, this.parse_result.ast.import_records[import_record_id].range, "").location.?;
+            const location = logger.rangeData(&this.parse_result.source, this.parse_result.ast.import_records.at(import_record_id).range, "").location.?;
             error_instance.put(globalThis, ZigString.static("specifier"), ZigString.init(
-                this.parse_result.ast.import_records[import_record_id].path.text,
+                this.parse_result.ast.import_records.at(import_record_id).path.text,
             ).withEncoding().toValueGC(globalThis));
             error_instance.put(globalThis, ZigString.static("sourceURL"), ZigString.init(this.parse_result.source.path.text).withEncoding().toValueGC(globalThis));
             error_instance.put(globalThis, ZigString.static("line"), JSValue.jsNumber(location.line));
@@ -837,8 +836,8 @@ pub const ModuleLoader = struct {
 
         pub fn deinit(this: *AsyncModule) void {
             this.parse_result.deinit();
-            bun.default_allocator.free(this.stmt_blocks);
-            bun.default_allocator.free(this.expr_blocks);
+            // bun.default_allocator.free(this.stmt_blocks);
+            // bun.default_allocator.free(this.expr_blocks);
             this.promise.deinit();
             bun.default_allocator.free(this.string_buf);
         }
@@ -1301,10 +1300,10 @@ pub const ModuleLoader = struct {
         if (!was_printing_plugin) jsc_vm.bundler.resolver.caches.fs.use_alternate_source_cache = !prev;
 
         // this is a bad idea, but it should work for now.
-        const original_name = parse_result.ast.symbols[parse_result.ast.bun_plugin.ref.innerIndex()].original_name;
-        parse_result.ast.symbols[parse_result.ast.bun_plugin.ref.innerIndex()].original_name = "globalThis.Bun.plugin";
+        const original_name = parse_result.ast.symbols.mut(parse_result.ast.bun_plugin.ref.innerIndex()).original_name;
+        parse_result.ast.symbols.mut(parse_result.ast.bun_plugin.ref.innerIndex()).original_name = "globalThis.Bun.plugin";
         defer {
-            parse_result.ast.symbols[parse_result.ast.bun_plugin.ref.innerIndex()].original_name = original_name;
+            parse_result.ast.symbols.mut(parse_result.ast.bun_plugin.ref.innerIndex()).original_name = original_name;
         }
         const hoisted_stmts = parse_result.ast.bun_plugin.hoisted_stmts.items;
 
@@ -1314,9 +1313,9 @@ pub const ModuleLoader = struct {
             },
         };
         var ast_copy = parse_result.ast;
-        ast_copy.import_records = try jsc_vm.allocator.dupe(ImportRecord, ast_copy.import_records);
-        defer jsc_vm.allocator.free(ast_copy.import_records);
-        ast_copy.parts = &parts;
+        ast_copy.import_records.set(try jsc_vm.allocator.dupe(ImportRecord, ast_copy.import_records.slice()));
+        defer ast_copy.import_records.deinitWithAllocator(jsc_vm.allocator);
+        ast_copy.parts.set(&parts);
         ast_copy.prepend_part = null;
         var temporary_source = parse_result.source;
         var source_name = try std.fmt.allocPrint(jsc_vm.allocator, "{s}.plugin.{s}", .{ temporary_source.path.text, temporary_source.path.name.ext[1..] });
@@ -1587,7 +1586,7 @@ pub const ModuleLoader = struct {
                     var jsx = bundler.options.jsx;
                     jsx.parse = false;
                     var opts = js_parser.Parser.Options.init(jsx, .js);
-                    opts.enable_bundling = false;
+                    opts.enable_legacy_bundling = false;
                     opts.transform_require_to_import = false;
                     opts.features.dynamic_require = true;
                     opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;

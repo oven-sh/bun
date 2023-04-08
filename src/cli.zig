@@ -36,27 +36,8 @@ const Router = @import("./router.zig");
 
 const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 
-const AddCommand = @import("./cli/add_command.zig").AddCommand;
-const BuildCommand = @import("./cli/build_command.zig").BuildCommand;
-const BunCommand = @import("./cli/bun_command.zig").BunCommand;
-const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
-const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
-const DevCommand = @import("./cli/dev_command.zig").DevCommand;
-const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
-const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
-const LinkCommand = @import("./cli/link_command.zig").LinkCommand;
-const UnlinkCommand = @import("./cli/unlink_command.zig").UnlinkCommand;
-const InstallCompletionsCommand = @import("./cli/install_completions_command.zig").InstallCompletionsCommand;
-const PackageManagerCommand = @import("./cli/package_manager_command.zig").PackageManagerCommand;
-const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
-const RunCommand = @import("./cli/run_command.zig").RunCommand;
-const ShellCompletions = @import("./cli/shell_completions.zig");
-const TestCommand = @import("./cli/test_command.zig").TestCommand;
-const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
-const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
-
 const MacroMap = @import("./resolver/package_json.zig").MacroMap;
-
+const TestCommand = @import("./cli/test_command.zig").TestCommand;
 const Reporter = @import("./report.zig");
 pub var start_time: i128 = undefined;
 const Bunfig = @import("./bunfig.zig").Bunfig;
@@ -213,6 +194,10 @@ pub const Arguments = struct {
     const build_only_params = [_]ParamType{
         clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'inline', 'external', or 'none'") catch unreachable,
         clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
+        clap.parseParam("--entry-names <STR>              Pattern to use for entry point filenames") catch unreachable,
+        clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
+        clap.parseParam("--server-components        Enable React Server Components (experimental)") catch unreachable,
+        clap.parseParam("--splitting                      Split up code!") catch unreachable,
     };
 
     // TODO: update test completions
@@ -437,7 +422,6 @@ pub const Arguments = struct {
         }
         opts.serve = cmd == .DevCommand;
         opts.main_fields = args.options("--main-fields");
-        opts.generate_node_module_bundle = cmd == .BunCommand;
         // we never actually supported inject.
         // opts.inject = args.options("--inject");
         opts.extension_order = args.options("--extension-order");
@@ -510,11 +494,30 @@ pub const Arguments = struct {
         // var output_dir = args.option("--outdir");
         var output_dir: ?string = null;
         const production = false;
+        var output_file: ?string = null;
 
         if (cmd == .BuildCommand) {
             if (args.option("--outdir")) |outdir| {
                 if (outdir.len > 0) {
-                    output_dir = outdir;
+                    ctx.bundler_options.outdir = outdir;
+                }
+            } else if (args.option("--outfile")) |outfile| {
+                if (outfile.len > 0) {
+                    ctx.bundler_options.outfile = outfile;
+                }
+            }
+
+            if (args.flag("--splitting")) {
+                ctx.bundler_options.code_splitting = true;
+            }
+
+            if (args.option("--entry-names")) |entry_names| {
+                ctx.bundler_options.entry_names = entry_names;
+            }
+
+            if (comptime FeatureFlags.react_server_components) {
+                if (args.flag("--server-components")) {
+                    ctx.bundler_options.react_server_components = true;
                 }
             }
 
@@ -536,11 +539,11 @@ pub const Arguments = struct {
             var entry_points = ctx.positionals;
 
             switch (comptime cmd) {
-                .BunCommand => {
+                .BuildCommand => {
                     if (entry_points.len > 0 and (strings.eqlComptime(
                         entry_points[0],
-                        "bun",
-                    ))) {
+                        "build",
+                    ) or strings.eqlComptime(entry_points[0], "bun"))) {
                         entry_points = entry_points[1..];
                     }
                 },
@@ -553,24 +556,6 @@ pub const Arguments = struct {
                         "d",
                     ))) {
                         entry_points = entry_points[1..];
-                    }
-                },
-                .BuildCommand => {
-                    if (entry_points.len > 0 and (strings.eqlComptime(
-                        entry_points[0],
-                        "build",
-                    ) or strings.eqlComptime(
-                        entry_points[0],
-                        "b",
-                    ))) {
-                        entry_points = entry_points[1..];
-                    }
-
-                    opts.write = entry_points.len > 1 or
-                        output_dir != null or
-                        @enumToInt(opts.source_map orelse Api.SourceMapMode._none) > 0;
-                    if ((opts.write orelse false) and (output_dir orelse "").len == 0) {
-                        output_dir = "out";
                     }
                 },
                 .RunCommand => {
@@ -596,7 +581,7 @@ pub const Arguments = struct {
         var jsx_runtime = args.option("--jsx-runtime");
         var jsx_production = args.flag("--jsx-production");
         const react_fast_refresh = switch (comptime cmd) {
-            .BunCommand, .DevCommand => !(args.flag("--disable-react-fast-refresh") or jsx_production),
+            .BuildCommand, .DevCommand => !(args.flag("--disable-react-fast-refresh") or jsx_production),
             else => true,
         };
 
@@ -615,7 +600,10 @@ pub const Arguments = struct {
         }
 
         switch (comptime cmd) {
-            .AutoCommand, .DevCommand, .BuildCommand, .BunCommand => {
+            .AutoCommand,
+            .DevCommand,
+            .BuildCommand,
+            => {
                 if (args.option("--public-dir")) |public_dir| {
                     if (public_dir.len > 0) {
                         opts.router = Api.RouteConfig{ .extensions = &.{}, .dir = &.{}, .static_dir = public_dir };
@@ -710,7 +698,7 @@ pub const Arguments = struct {
             };
         }
 
-        if (cmd == .BunCommand or !FeatureFlags.dev_only) {
+        if (cmd == .BuildCommand) {
             if (opts.entry_points.len == 0 and opts.framework == null and opts.node_modules_bundle_path == null) {
                 return error.MissingEntryPoint;
             }
@@ -727,6 +715,9 @@ pub const Arguments = struct {
         }
 
         opts.output_dir = output_dir;
+        if (output_file != null)
+            ctx.debug.output_file = output_file.?;
+
         return opts;
     }
 };
@@ -778,25 +769,25 @@ pub const HelpCommand = struct {
     pub fn printWithReason(comptime reason: Reason) void {
         // the spacing between commands here is intentional
         const fmt =
-            \\> <r> <b><magenta>run     <r><d>  ./my-script.ts        <r>Run JavaScript with bun, a package.json script, or a bin<r>
-            \\> <r> <b><green>x     <r>    <d>bun-repl        <r>      Install and execute a package bin <d>(bunx)<r>
+            \\>  <r><b><magenta>run<r>       <d>./my-script.ts<r>        Run JavaScript with bun, a package.json script, or a bin
+            \\>  <b><magenta>build<r>     <d>./a.ts ./b.jsx<r>        Bundle TypeScript & JavaScript into a single file
+            \\>  <b><green>x<r>         <d>bun-repl<r>              Install and execute a package bin <d>(bunx)<r>
             \\
-            \\> <r> <b><cyan>init<r>                            Start an empty Bun project from a blank template<r>
-            \\> <r> <b><cyan>create    <r><d>next ./app<r>            Create a new project from a template <d>(bun c)<r>
-            \\> <r> <b><green>install<r>                         Install dependencies for a package.json <d>(bun i)<r>
-            \\> <r> <b><blue>add     <r><d>  {s:<16}<r>      Add a dependency to package.json <d>(bun a)<r>
-            \\> <r> <b><blue>link <r>                           Link an npm package globally<r>
-            \\> <r> remove  <r><d>  {s:<16}<r>      Remove a dependency from package.json <d>(bun rm)<r>
-            \\> <r> unlink  <r>                        Globally unlink an npm package
-            \\> <r> pm  <r>                            More commands for managing packages
+            \\>  <b><cyan>init<r>                            Start an empty Bun project from a blank template
+            \\>  <b><cyan>create<r>    <d>next ./app<r>            Create a new project from a template <d>(bun c)<r>
+            \\>  <b><green>install<r>                         Install dependencies for a package.json <d>(bun i)<r>
+            \\>  <b><blue>add<r>       <d>{s:<16}<r>      Add a dependency to package.json <d>(bun a)<r>
+            \\>  <b><blue>link<r>                            Link an npm package globally
+            \\>  remove<r>    <d>{s:<16}<r>      Remove a dependency from package.json <d>(bun rm)<r>
+            \\>  unlink<r>                          Globally unlink an npm package
+            \\>  pm<r>                              More commands for managing packages
             \\
-            \\> <r> <b><green>dev     <r><d>  ./a.ts ./b.jsx<r>        Start a bun (frontend) Dev Server
-            \\> <r> <b><magenta>bun     <r><d>  ./a.ts ./b.jsx<r>        Bundle dependencies of input files into a <r><magenta>.bun<r>
+            \\>  <b><green>dev<r>       <d>./a.ts ./b.jsx<r>        Start a bun (frontend) Dev Server
             \\
-            \\> <r> <b><blue>upgrade <r>                        Get the latest version of bun
-            \\> <r> <b><d>completions<r>                     Install shell completions for tab-completion
-            \\> <r> <b><d>discord <r>                        Open bun's Discord server
-            \\> <r> <b><d>help      <r>                      Print this help menu
+            \\>  <b><blue>upgrade<r>                         Get the latest version of bun
+            \\>  <b><d>completions<r>                     Install shell completions for tab-completion
+            \\>  <b><d>discord<r>                         Open bun's Discord server
+            \\>  <b><d>help<r>                            Print this help menu
             \\
         ;
 
@@ -882,6 +873,7 @@ pub const Command = struct {
         package_bundle_map: bun.StringArrayHashMapUnmanaged(options.BundlePackage) = bun.StringArrayHashMapUnmanaged(options.BundlePackage){},
 
         test_directory: []const u8 = "",
+        output_file: []const u8 = "",
     };
 
     pub const HotReload = enum {
@@ -906,9 +898,18 @@ pub const Command = struct {
 
         debug: DebugOptions = DebugOptions{},
         test_options: TestOptions = TestOptions{},
+        bundler_options: BundlerOptions = BundlerOptions{},
 
         preloads: []const string = &[_]string{},
         has_loaded_global_config: bool = false,
+
+        pub const BundlerOptions = struct {
+            outdir: []const u8 = "",
+            outfile: []const u8 = "",
+            entry_names: []const u8 = "./[name].[ext]",
+            react_server_components: bool = false,
+            code_splitting: bool = false,
+        };
 
         const _ctx = Command.Context{
             .args = std.mem.zeroes(Api.TransformOptions),
@@ -976,7 +977,7 @@ pub const Command = struct {
 
         return switch (RootCommandMatcher.match(first_arg_name)) {
             RootCommandMatcher.case("init") => .InitCommand,
-            RootCommandMatcher.case("bun") => .BunCommand,
+            RootCommandMatcher.case("build"), RootCommandMatcher.case("bun") => .BuildCommand,
             RootCommandMatcher.case("discord") => .DiscordCommand,
             RootCommandMatcher.case("upgrade") => .UpgradeCommand,
             RootCommandMatcher.case("completions") => .InstallCompletionsCommand,
@@ -1004,7 +1005,6 @@ pub const Command = struct {
             RootCommandMatcher.case("add"), RootCommandMatcher.case("update"), RootCommandMatcher.case("a") => .AddCommand,
             RootCommandMatcher.case("r"), RootCommandMatcher.case("remove"), RootCommandMatcher.case("rm"), RootCommandMatcher.case("uninstall") => .RemoveCommand,
 
-            RootCommandMatcher.case("b"), RootCommandMatcher.case("build") => .BuildCommand,
             RootCommandMatcher.case("run") => .RunCommand,
             RootCommandMatcher.case("d"), RootCommandMatcher.case("dev") => .DevCommand,
 
@@ -1037,84 +1037,130 @@ pub const Command = struct {
     };
 
     pub fn start(allocator: std.mem.Allocator, log: *logger.Log) !void {
+        const BuildCommand = @import("./cli/build_command.zig").BuildCommand;
+
+        const AddCommand = @import("./cli/add_command.zig").AddCommand;
+        const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
+        const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
+        const DevCommand = @import("./cli/dev_command.zig").DevCommand;
+        const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
+        const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
+        const LinkCommand = @import("./cli/link_command.zig").LinkCommand;
+        const UnlinkCommand = @import("./cli/unlink_command.zig").UnlinkCommand;
+        const InstallCompletionsCommand = @import("./cli/install_completions_command.zig").InstallCompletionsCommand;
+        const PackageManagerCommand = @import("./cli/package_manager_command.zig").PackageManagerCommand;
+        const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
+        const RunCommand = @import("./cli/run_command.zig").RunCommand;
+        const ShellCompletions = @import("./cli/shell_completions.zig");
+
+        const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
+        const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
+
+        if (comptime bun.fast_debug_build_mode) {
+            // _ = AddCommand;
+            // _ = BuildCommand;
+            // _ = CreateCommand;
+            _ = CreateListExamplesCommand;
+            // _ = DevCommand;
+            _ = DiscordCommand;
+            // _ = InstallCommand;
+            // _ = LinkCommand;
+            // _ = UnlinkCommand;
+            // _ = InstallCompletionsCommand;
+            // _ = PackageManagerCommand;
+            // _ = RemoveCommand;
+            // _ = RunCommand;
+            // _ = ShellCompletions;
+            // _ = TestCommand;
+            // _ = UpgradeCommand;
+            // _ = BunxCommand;
+        }
+
         const tag = which();
 
         switch (tag) {
-            .DiscordCommand => return try DiscordCommand.exec(allocator),
-            .HelpCommand => return try HelpCommand.exec(allocator),
-            .InitCommand => return try InitCommand.exec(allocator, std.os.argv),
+            // .DiscordCommand => return try DiscordCommand.exec(allocator),
+            // .HelpCommand => return try HelpCommand.exec(allocator),
+            // .InitCommand => return try InitCommand.exec(allocator, std.os.argv),
             else => {},
         }
 
         switch (tag) {
-            .BunCommand => {
-                const ctx = try Command.Context.create(allocator, log, .BunCommand);
-
-                try BunCommand.exec(ctx);
-            },
-            .DevCommand => {
-                const ctx = try Command.Context.create(allocator, log, .DevCommand);
-
-                try DevCommand.exec(ctx);
-            },
             .BuildCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BuildCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .BuildCommand);
 
                 try BuildCommand.exec(ctx);
             },
+            .DevCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .DevCommand) unreachable;
+                const ctx = try Command.Context.create(allocator, log, .DevCommand);
+
+                try DevCommand.exec(ctx);
+            },
             .InstallCompletionsCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .InstallCompletionsCommand) unreachable;
                 try InstallCompletionsCommand.exec(allocator);
                 return;
             },
             .InstallCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .InstallCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .InstallCommand);
 
                 try InstallCommand.exec(ctx);
                 return;
             },
             .AddCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .AddCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .AddCommand);
 
                 try AddCommand.exec(ctx);
                 return;
             },
             .BunxCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .BunxCommand);
 
                 try BunxCommand.exec(ctx);
                 return;
             },
             .RemoveCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RemoveCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .RemoveCommand);
 
                 try RemoveCommand.exec(ctx);
                 return;
             },
             .LinkCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .LinkCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .LinkCommand);
 
                 try LinkCommand.exec(ctx);
                 return;
             },
             .UnlinkCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .UnlinkCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .UnlinkCommand);
 
                 try UnlinkCommand.exec(ctx);
                 return;
             },
             .PackageManagerCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .PackageManagerCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .PackageManagerCommand);
 
                 try PackageManagerCommand.exec(ctx);
                 return;
             },
             .TestCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .TestCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .TestCommand);
 
                 try TestCommand.exec(ctx);
                 return;
             },
             .GetCompletionsCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .GetCompletionsCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .GetCompletionsCommand);
                 var filter = ctx.positionals;
 
@@ -1201,6 +1247,7 @@ pub const Command = struct {
                 return;
             },
             .CreateCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .CreateCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .CreateCommand);
                 var positionals: [2]string = undefined;
                 var positional_i: usize = 0;
@@ -1224,6 +1271,7 @@ pub const Command = struct {
                 return;
             },
             .RunCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RunCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .RunCommand);
                 if (ctx.positionals.len > 0) {
                     if (try RunCommand.exec(ctx, false, true)) {
@@ -1234,11 +1282,13 @@ pub const Command = struct {
                 }
             },
             .UpgradeCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .UpgradeCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .UpgradeCommand);
                 try UpgradeCommand.exec(ctx);
                 return;
             },
             .AutoCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .AutoCommand) unreachable;
                 var ctx = Command.Context.create(allocator, log, .AutoCommand) catch |e| {
                     switch (e) {
                         error.MissingEntryPoint => {
@@ -1434,7 +1484,6 @@ pub const Command = struct {
         AddCommand,
         AutoCommand,
         BuildCommand,
-        BunCommand,
         BunxCommand,
         CreateCommand,
         DevCommand,
@@ -1476,8 +1525,7 @@ pub const Command = struct {
 
         pub const cares_about_bun_file: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
             .AutoCommand = true,
-            .BuildCommand = true,
-            .BunCommand = true,
+            .BuildCommand = false,
             .DevCommand = true,
             .RunCommand = true,
             .TestCommand = true,
@@ -1495,7 +1543,6 @@ pub const Command = struct {
         };
         pub const always_loads_config: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
             .BuildCommand = true,
-            .BunCommand = true,
             .DevCommand = true,
             .TestCommand = true,
             .InstallCommand = true,

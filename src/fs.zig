@@ -1092,6 +1092,25 @@ pub const PathName = struct {
     ext: string,
     filename: string,
 
+    pub fn nonUniqueNameStringBase(self: *const PathName) string {
+        // /bar/foo/index.js -> foo
+        if (self.dir.len > 0 and strings.eqlComptime(self.base, "index")) {
+            // "/index" -> "index"
+            return Fs.PathName.init(self.dir).base;
+        }
+
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(!strings.includes(self.base, "/"));
+        }
+
+        // /bar/foo.js -> foo
+        return self.base;
+    }
+
+    pub fn fmtIdentifier(self: *const PathName) strings.FormatValidIdentifier {
+        return strings.fmtIdentifier(self.nonUniqueNameStringBase());
+    }
+
     // For readability, the names of certain automatically-generated symbols are
     // derived from the file name. For example, instead of the CommonJS wrapper for
     // a file being called something like "require273" it can be called something
@@ -1104,13 +1123,7 @@ pub const PathName = struct {
     // through the renaming logic that all other symbols go through to avoid name
     // collisions.
     pub fn nonUniqueNameString(self: *const PathName, allocator: std.mem.Allocator) !string {
-        if (strings.eqlComptime(self.base, "index")) {
-            if (self.dir.len > 0) {
-                return MutableString.ensureValidIdentifier(PathName.init(self.dir).base, allocator);
-            }
-        }
-
-        return MutableString.ensureValidIdentifier(self.base, allocator);
+        return MutableString.ensureValidIdentifier(self.nonUniqueNameStringBase(), allocator);
     }
 
     pub inline fn dirWithTrailingSlash(this: *const PathName) string {

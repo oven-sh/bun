@@ -588,3 +588,19 @@ message BunInstall {
   string global_dir = 17;
   string global_bin_dir = 18;
 }
+
+struct ClientServerModule {
+  uint32 moduleId;
+  StringPointer inputName;
+  StringPointer assetName;
+  StringPointer exportNames;
+}
+
+struct ClientServerModuleManifest {
+  uint32 version;
+  ClientServerModule[] clientModules;
+  ClientServerModule[] serverModules;
+  ClientServerModule[] ssrModules;
+  StringPointer[] exportNames;
+  byte[] contents;
+}

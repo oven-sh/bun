@@ -27,14 +27,24 @@ export default [
         length: 2,
       },
     },
-    custom: {
-      onLoadPlugins: {
-        extraHeaderIncludes: ["BunPlugin.h"],
-        impl: "JSTranspiler+BunPlugin-impl.h",
-        type: `WTF::Vector<std::unique_ptr<BunPlugin::OnLoad>>`,
+  }),
+
+  define({
+    name: "Bundler",
+    construct: true,
+    finalize: true,
+    hasPendingActivity: true,
+    configurable: false,
+    klass: {},
+    JSType: "0b11101110",
+    proto: {
+      handle: {
+        fn: "handleRequest",
+        length: 2,
       },
-      onResolvePlugins: {
-        type: `WTF::Vector<std::unique_ptr<BunPlugin::OnResolve>>`,
+      write: {
+        fn: "write",
+        length: 1,
       },
     },
   }),

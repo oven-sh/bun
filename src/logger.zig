@@ -15,12 +15,12 @@ const C = bun.C;
 const JSC = @import("bun").JSC;
 const fs = @import("fs.zig");
 const unicode = std.unicode;
-
+const Ref = @import("./ast/base.zig").Ref;
 const expect = std.testing.expect;
 const assert = std.debug.assert;
 const ArrayList = std.ArrayList;
 const StringBuilder = @import("./string_builder.zig");
-
+const Index = @import("./ast/base.zig").Index;
 pub const Kind = enum(i8) {
     err,
     warn,
@@ -581,6 +581,10 @@ pub const Log = struct {
     errors: usize = 0,
     msgs: ArrayList(Msg),
     level: Level = if (Environment.isDebug) Level.info else Level.warn,
+
+    pub inline fn hasErrors(this: *const Log) bool {
+        return this.errors > 0;
+    }
 
     pub fn reset(this: *Log) void {
         this.msgs.clearRetainingCapacity();
@@ -1147,9 +1151,35 @@ pub inline fn usize2Loc(loc: usize) Loc {
 pub const Source = struct {
     path: fs.Path,
     key_path: fs.Path,
-    index: u32 = 0,
+
     contents: string,
     contents_is_recycled: bool = false,
+
+    /// Lazily-generated human-readable identifier name that is non-unique
+    /// Avoid accessing this directly most of the  time
+    identifier_name: string = "",
+
+    index: Index = Index.source(0),
+
+    pub fn fmtIdentifier(this: *const Source) strings.FormatValidIdentifier {
+        return this.path.name.fmtIdentifier();
+    }
+
+    pub fn identifierName(this: *Source, allocator: std.mem.Allocator) !string {
+        if (this.identifier_name.len > 0) {
+            return this.identifier_name;
+        }
+
+        std.debug.assert(this.path.text.len > 0);
+        const name = try this.path.name.nonUniqueNameString(allocator);
+        this.identifier_name = name;
+        return name;
+    }
+
+    pub fn rangeOfIdentifier(this: *const Source, loc: Loc) Range {
+        const js_lexer = @import("./js_lexer.zig");
+        return js_lexer.rangeOfIdentifier(this, loc);
+    }
 
     pub fn isWebAssembly(this: *const Source) bool {
         if (this.contents.len < 4) return false;
@@ -1167,7 +1197,7 @@ pub const Source = struct {
 
     pub fn initEmptyFile(filepath: string) Source {
         const path = fs.Path.init(filepath);
-        return Source{ .path = path, .key_path = path, .index = 0, .contents = "" };
+        return Source{ .path = path, .key_path = path, .contents = "" };
     }
 
     pub fn initFile(file: fs.File, _: std.mem.Allocator) !Source {

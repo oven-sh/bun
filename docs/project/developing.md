@@ -1,4 +1,3 @@
-
 Configuring a development environment for Bun usually takes 30-90 minutes depending on your operating system.
 
 ## Linux/Windows
@@ -206,4 +205,22 @@ While Bun is in beta, you can modify them at runtime in release builds via the e
 
 ## Troubleshooting
 
-If you encounter `error: the build command failed with exit code 9` during the build process, this means you ran out of memory or swap. Bun currently needs about 22 GB of RAM to compile.
+If you encounter `error: the build command failed with exit code 9` during the build process, this means you ran out of memory or swap. Bun currently needs about 8 GB of RAM to compile.
+
+## Valgrind
+
+On Linux, valgrind can help find memory issues.
+
+Keep in mind:
+
+- JavaScriptCore doesn't support valgrind. It will report spurious errors.
+- Valgrind is slow
+- Mimalloc will sometimes cause spurious errors when debug build is enabled
+
+You'll need a very recent version of Valgrind due to DWARF 5 debug symbols. You may need to manually compile Valgrind instead of using it from your Linux package manager.
+
+`--fair-sched=try` is necessary if running multithreaded code in Bun (such as the bundler). Otherwise it will hang.
+
+```bash
+valgrind --fair-sched=try --track-origins=yes bun-debug <args>
+```

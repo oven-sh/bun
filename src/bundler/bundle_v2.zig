@@ -1858,12 +1858,12 @@ const LinkerGraph = struct {
                 stable_source_indices[source_index.get()] = Index.source(i);
             }
 
-            const file = comptime LinkerGraph.File{};
+            const file = LinkerGraph.File{};
             // TODO: verify this outputs efficient code
             std.mem.set(
                 @TypeOf(file.distance_from_entry_point),
                 files.items(.distance_from_entry_point),
-                comptime file.distance_from_entry_point,
+                file.distance_from_entry_point,
             );
             this.stable_source_indices = @ptrCast([]const u32, stable_source_indices);
         }
@@ -7522,7 +7522,9 @@ pub const Chunk = struct {
         /// equidistant to an entry point, then break the tie by sorting on the
         /// stable source index derived from the DFS over all entry points.
         pub fn sort(a: []Order) void {
-            std.sort.sort(Order, a, Order{}, lessThan);
+            // https://github.com/ziglang/zig/issues/15204
+            // Possibly switch to std.sort.sort when this is fixed
+            std.sort.insertionSort(Order, a, Order{}, lessThan);
         }
     };
 

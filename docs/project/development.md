@@ -15,7 +15,7 @@ $ brew install llvm@15
 ```bash#Ubuntu/Debian
 # On Ubuntu 22.04 and newer, LLVM 15 is available in the default repositories
 $ sudo apt install llvm-15 lld-15
-# On older versions, 
+# On older versions,
 $ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 15 all
 ```
 
@@ -114,7 +114,7 @@ That inlines the JavaScript code into C++ headers using the same builtins genera
 
 {% callout %}
 Make sure you have `ccache` installed, otherwise regeneration will take much longer than it should.
-{% endcallout %}
+{% /callout %}
 
 ## Code generation scripts
 

@@ -1,5 +1,7 @@
 Configuring a development environment for Bun can take 10-30 minutes depending on your internet connection and computer speed. You will need ~10GB of free disk space for the repository and build artifacts.
 
+If you are using Windows, you must use a WSL environment as Bun does not yet compile on Windows natively.
+
 ## Install LLVM
 
 Bun requires LLVM 15 and Clang 15 (`clang` is part of LLVM). This version requirement is to match WebKit (precompiled), as mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
@@ -18,7 +20,7 @@ $ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 15 all
 ```
 
 ```bash#Arch
-$ sudo pacman -S llvm
+$ sudo pacman -S llvm clang lld
 ```
 
 {% /codetabs %}
@@ -51,15 +53,15 @@ Using your system's package manager, install the rest of Bun's dependencies:
 {% codetabs %}
 
 ```bash#macOS (Homebrew)
-$ brew install automake cmake coreutils esbuild gnu-sed go libiconv libtool ninja pkg-config rust
+$ brew install automake ccache cmake coreutils esbuild gnu-sed go libiconv libtool ninja pkg-config rust
 ```
 
 ```bash#Ubuntu/Debian
-$ sudo apt install cargo cmake esbuild git golang libtool ninja-build pkg-config rustc
+$ sudo apt install cargo ccache cmake esbuild git golang libtool ninja-build pkg-config rustc
 ```
 
 ```bash#Arch
-$ pacman -S base-devel ccache clang cmake esbuild git go libiconv libtool lld make ninja pkg-config python rust sed unzip
+$ pacman -S base-devel ccache cmake esbuild git go libiconv libtool make ninja pkg-config python rust sed unzip
 ```
 
 {% /codetabs %}
@@ -68,7 +70,7 @@ In addition to this, you will need either `bun` or `npm` installed to install th
 
 ## Install Zig
 
-Zig can installed either with our npm package [`@oven/zig`](https://www.npmjs.com/package/@oven/zig), or using [zigup](https://github.com/marler8997/zigup).
+Zig can installed either with our npm package [`@oven/zig`](https://www.npmjs.com/package/@oven/zig), or by using [zigup](https://github.com/marler8997/zigup).
 
 ```
 $ bun install -g @oven/zig
@@ -100,16 +102,23 @@ $ packages/debug-bun-*/bun-debug --version
 bun 0.x.y__dev
 ```
 
+## VSCode
+
+VSCode is the recommended IDE for working on Bun, as it has been configured. Once opening, you can run `Extensions: Show Recommended Extensions` to install the recommended extensions for Zig and C++. ZLS is automatically configured.
+
 ## JavaScript builtins
 
-When you change anything in `src/bun.js/builtins/js/*`, run this:
+When you change anything in `src/bun.js/builtins/js/*` or switch branches, run this:
 
 ```bash
-$ make clean-bindings generate-builtins && make bindings -j$(nproc)
+$ make regenerate-bindings
 ```
 
 That inlines the JavaScript code into C++ headers using the same builtins generator script that Safari uses.
 
+{% callout %}
+Make sure you have `ccache` installed, otherwise regeneration will take much longer than it should.
+{% endcallout %}
 
 ## Code generation scripts
 
@@ -148,6 +157,85 @@ You probably won't need to run that one much.
 Certain modules like `node:fs`, `node:path`, `node:stream`, and `bun:sqlite` are implemented in JavaScript. These live in `src/bun.js/*.exports.js` files.
 
 While Bun is in beta, you can modify them at runtime in release builds via the environment variable `BUN_OVERRIDE_MODULE_PATH`. When set, Bun will look in the override directory for `<name>.exports.js` before checking the files from `src/bun.js` (which are now baked in to the binary). This lets you test changes to the ESM modules without needing to re-compile Bun.
+
+## Release build
+
+To build a release build of Bun, run:
+
+```bash
+make release-bindings -j12
+
+```
+
+## Docker Devcontainer
+
+Bun has a [Dev Container](https://containers.dev), which can be used to quickly get a development environment. We do not recommend using this, as the setup instructions above are much more complete.
+
+To develop on Linux/Windows, [Docker](https://www.docker.com) is required. If using WSL on Windows, it is recommended to use [Docker Desktop](https://docs.microsoft.com/en-us/windows/wsl/tutorials/wsl-containers) for its WSL2 integration.
+
+### VSCode
+
+If you're using VSCode, you'll need to have the [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) extension installed.
+
+To get started, open VS Code in the `bun` repository. The first time you try to open the dev container, the extension will automatically build it for you, based on [`Dockerfile.devcontainer`](https://github.com/oven-sh/bun/blob/main/Dockerfile.devcontainer).
+
+To open the dev container, open the command palette (`Ctrl` + `Shift` + `P`) and run: `Dev Containers: Reopen in Container`. To later rebuild it (only needed when the devcontainer itself changes, not the Bun code), run: `Dev Containers: Rebuild and Reopen in Container`.
+
+### Other editors and CLI
+
+If you're using another editor or want to manually control the dev container from the command line or a script, you'll need to install the [Dev Container CLI](https://www.npmjs.com/package/@devcontainers/cli): `npm install -g @devcontainers/cli`.
+
+To create and start the dev container, in the `bun` repository, locally run:
+
+```bash
+# `make devcontainer-<command>` should be equivalent
+# to `devcontainer <command>`, it just sets the architecture
+# so if you're on ARM64, it'll do the right thing
+$ make devcontainer-up
+```
+
+To just build the dev container image, run:
+
+```bash
+$ make devcontainer-build
+```
+
+To start a shell inside the container, run:
+
+```bash
+$ make devcontainer-sh
+
+# if it attaches to the container non-interactively,
+# instead use the regular docker exec command:
+$ docker exec -it <container-name/id> zsh
+```
+
+### Cloning
+
+You will then need to clone the GitHub repository inside that container.
+
+```bash
+# First time setup
+$ gh auth login # if it fails to open a browser, use Personal Access Token instead
+$ gh repo clone oven-sh/bun . -- --depth=1 --progress -j8
+```
+
+### Building
+
+```bash
+# Compile Bun dependencies (zig is already compiled)
+$ make devcontainer
+
+# It initializes and updates all submodules except WebKit, because WebKit
+# takes a while and it's already compiled for you. To do it manually, use:
+$ git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress
+
+# Build Bun for development
+$ make dev
+
+# Run Bun
+$ bun-debug
+```
 
 ## Troubleshooting
 

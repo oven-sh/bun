@@ -1,4 +1,4 @@
-SHELL :=  $(shell which bash) # Use bash syntax to be consistent
+SHELL := $(shell which bash) # Use bash syntax to be consistent
 
 OS_NAME := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 ARCH_NAME_RAW := $(shell uname -m)
@@ -43,7 +43,7 @@ BUN_BASE_VERSION = 0.6
 
 AR=
 
-BUN_OR_NODE = $(shell which bun || which node)
+BUN_OR_NODE = $(shell which bun 2>/dev/null || which node 2>/dev/null)
 
 CXX_VERSION=c++2a
 TRIPLET = $(OS_NAME)-$(ARCH_NAME)
@@ -52,33 +52,31 @@ PACKAGES_REALPATH = $(realpath packages)
 PACKAGE_DIR = $(PACKAGES_REALPATH)/$(PACKAGE_NAME)
 DEBUG_PACKAGE_DIR = $(PACKAGES_REALPATH)/debug-$(PACKAGE_NAME)
 RELEASE_BUN = $(PACKAGE_DIR)/bun
-DEBUG_BIN = $(DEBUG_PACKAGE_DIR)/
+DEBUG_BIN = $(DEBUG_PACKAGE_DIR)
 DEBUG_BUN = $(DEBUG_BIN)/bun-debug
 BUILD_ID = $(shell cat ./src/build-id)
 PACKAGE_JSON_VERSION = $(BUN_BASE_VERSION).$(BUILD_ID)
 BUN_BUILD_TAG = bun-v$(PACKAGE_JSON_VERSION)
 BUN_RELEASE_BIN = $(PACKAGE_DIR)/bun
-PRETTIER ?= $(shell which prettier || echo "./node_modules/.bin/prettier")
-DSYMUTIL ?= $(shell which dsymutil || which dsymutil-15)
+PRETTIER ?= $(shell which prettier 2>/dev/null || echo "./node_modules/.bin/prettier")
+ESBUILD = $(shell which esbuild 2>/dev/null || echo "./node_modules/.bin/esbuild")
+DSYMUTIL ?= $(shell which dsymutil 2>/dev/null || which dsymutil-15 2>/dev/null)
 WEBKIT_DIR ?= $(realpath src/bun.js/WebKit)
 WEBKIT_RELEASE_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Release
 WEBKIT_DEBUG_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Debug
 WEBKIT_RELEASE_DIR_LTO ?= $(WEBKIT_DIR)/WebKitBuild/ReleaseLTO
 
 
-NPM_CLIENT ?= $(shell which bun || which npm)
-ZIG ?= $(shell which zig || echo -e "error: Missing zig. Please make sure zig is in PATH. Or set ZIG=/path/to-zig-executable")
+NPM_CLIENT ?= $(shell which bun 2>/dev/null || which npm 2>/dev/null)
+ZIG ?= $(shell which zig 2>/dev/null || echo -e "error: Missing zig. Please make sure zig is in PATH. Or set ZIG=/path/to-zig-executable")
 
 # We must use the same compiler version for the JavaScriptCore bindings and JavaScriptCore
 # If we don't do this, strange memory allocation failures occur.
 # This is easier to happen than you'd expect.
 # Using realpath here causes issues because clang uses clang++ as a symlink
 # so if that's resolved, it won't build for C++
-REAL_CC = $(shell which clang-15 || which clang)
-REAL_CXX = $(shell which clang++-15 || which clang++)
-
-# Linked here so the C++ extension always has the exact compiler.
-$(shell ln -s $(REAL_CXX) .vscode/clang++ 2>/dev/null)
+REAL_CC = $(shell which clang-15 2>/dev/null || which clang 2>/dev/null)
+REAL_CXX = $(shell which clang++-15 2>/dev/null || which clang++ 2>/dev/null)
 
 CC = $(REAL_CC)
 CXX = $(REAL_CXX)
@@ -88,7 +86,7 @@ CCACHE_PATH := $(shell which ccache 2>/dev/null)
 
 CCACHE_CC_FLAG = CC=$(CCACHE_CC_OR_CC)
 
-ifeq (,$(findstring,$(shell which ccache),ccache))
+ifeq (,$(findstring,$(shell which ccache 2>/dev/null),ccache))
 	CMAKE_CXX_COMPILER_LAUNCHER_FLAG := -DCMAKE_CXX_COMPILER_LAUNCHER=$(CCACHE_PATH) -DCMAKE_C_COMPILER_LAUNCHER=$(CCACHE_PATH)
 	CCACHE_CC_OR_CC := "$(CCACHE_PATH) $(REAL_CC)"
 	export CCACHE_COMPILERTYPE = clang
@@ -120,9 +118,7 @@ ifeq ($(OS_NAME),darwin)
 endif
 
 # macOS sed is different
-SED = $(shell which gsed || which sed)
-
-ESBUILD = $(shell PATH="$(shell pwd)/node_modules/.bin:$(PATH)" which esbuild)
+SED = $(shell which gsed 2>/dev/null || which sed 2>/dev/null)
 
 BUN_DIR ?= $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
 BUN_DEPS_DIR ?= $(shell pwd)/src/deps
@@ -151,7 +147,7 @@ CMAKE_FLAGS_WITHOUT_RELEASE = -DCMAKE_C_COMPILER=$(CC) \
 	-DCMAKE_OSX_DEPLOYMENT_TARGET=$(MIN_MACOS_VERSION) \
 	$(CMAKE_CXX_COMPILER_LAUNCHER_FLAG) \
 	-DCMAKE_AR=$(AR) \
-    -DCMAKE_RANLIB=$(which llvm-15-ranlib || which llvm-ranlib)
+    -DCMAKE_RANLIB=$(which llvm-15-ranlib 2>/dev/null || which llvm-ranlib 2>/dev/null)
 
 
 
@@ -173,7 +169,7 @@ endif
 
 ifeq ($(OS_NAME),linux)
 LIBICONV_PATH =
-AR = $(shell which llvm-ar-15 || which llvm-ar || which ar)
+AR = $(shell which llvm-ar-15 2>/dev/null || which llvm-ar 2>/dev/null || which ar 2>/dev/null)
 endif
 
 OPTIMIZATION_LEVEL=-O3 $(MARCH_NATIVE)
@@ -271,7 +267,7 @@ STRIP=/usr/bin/strip
 endif
 
 ifeq ($(OS_NAME),linux)
-STRIP=$(shell which llvm-strip || which llvm-strip-15 || which strip || echo "Missing strip")
+STRIP=$(shell which llvm-strip 2>/dev/null || which llvm-strip-15 2>/dev/null || which strip 2>/dev/null || echo "Missing strip")
 endif
 
 
@@ -1852,6 +1848,11 @@ vendor: require init-submodules vendor-without-check
 
 .PHONY: bun
 bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local
+
+.PHONY: regenerate-bindings
+regenerate-bindings:
+	@make clean-bindings builtins
+	@make bindings -j$(CPU_COUNT)
 
 .PHONY: setup
 setup: require

@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "esbuild": "^0.17.15",
     "eslint": "^8.20.0",
     "eslint-config-prettier": "^8.5.0",
     "mitata": "^0.1.3",

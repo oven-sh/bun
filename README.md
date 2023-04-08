@@ -130,7 +130,7 @@ bun upgrade --canary
 
 ## Contributing
 
-Refer to the [Project > Contributing](https://bun.sh/docs/project/developing) guide to start contributing to Bun.
+Refer to the [Project > Development](https://bun.sh/docs/project/development) guide to start contributing to Bun.
 
 ## License
 

@@ -18,7 +18,7 @@ The JavaScript transpiler & module resolver is mostly independent from the runti
 
 ## Getting started
 
-Please refer to [Bun's Development Guide](https://bun.sh/docs/project/developing) to get your dev environment setup!
+Please refer to [Bun's Development Guide](https://bun.sh/docs/project/development) to get your dev environment setup!
 
 ## Memory management in Bun
 

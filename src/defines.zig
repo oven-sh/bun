@@ -17,6 +17,7 @@ const C = bun.C;
 const Ref = @import("ast/base.zig").Ref;
 
 const GlobalDefinesKey = @import("./defines-table.zig").GlobalDefinesKey;
+const table = @import("./defines-table.zig");
 
 const Globals = struct {
     pub const Undefined = js_ast.E.Undefined{};
@@ -36,13 +37,6 @@ const defines_path = fs.Path.initWithNamespace("defines.json", "internal");
 pub const RawDefines = bun.StringArrayHashMap(string);
 pub const UserDefines = bun.StringHashMap(DefineData);
 pub const UserDefinesArray = bun.StringArrayHashMap(DefineData);
-
-const Rewrites = struct {
-    pub const global = "global";
-    pub const globalThis = "globalThis";
-};
-
-var globalThisIdentifier = js_ast.E.Identifier{};
 
 pub const DefineData = struct {
     value: js_ast.Expr.Data,
@@ -193,16 +187,24 @@ pub const DotDefine = struct {
 };
 
 // var nan_val = try allocator.create(js_ast.E.Number);
-var nan_val = js_ast.E.Number{ .value = std.math.nan_f64 };
-var inf_val = js_ast.E.Number{ .value = std.math.inf_f64 };
+const nan_val = js_ast.E.Number{ .value = std.math.nan_f64 };
+const inf_val = js_ast.E.Number{ .value = std.math.inf_f64 };
 
 pub const Define = struct {
     identifiers: bun.StringHashMap(IdentifierDefine),
     dots: bun.StringHashMap([]DotDefine),
     allocator: std.mem.Allocator,
 
+    pub fn forIdentifier(this: *const Define, name: []const u8) ?IdentifierDefine {
+        if (this.identifiers.get(name)) |data| {
+            return data;
+        }
+
+        return table.pure_global_identifier_map.get(name);
+    }
+
     pub fn insertFromIterator(define: *Define, allocator: std.mem.Allocator, comptime Iterator: type, iter: Iterator) !void {
-        while (iter.next()) |user_define| {
+        outer: while (iter.next()) |user_define| {
             const user_define_key = user_define.key_ptr.*;
             // If it has a dot, then it's a DotDefine.
             // e.g. process.env.NODE_ENV
@@ -217,36 +219,34 @@ pub const Define = struct {
                     parts[i] = split;
                 }
                 parts[i] = tail;
-                var didFind = false;
                 var initial_values: []DotDefine = &([_]DotDefine{});
 
                 // "NODE_ENV"
-                if (define.dots.getEntry(tail)) |entry| {
-                    for (entry.value_ptr.*) |*part| {
+                var gpe_entry = try define.dots.getOrPut(tail);
+
+                if (gpe_entry.found_existing) {
+                    for (gpe_entry.value_ptr.*) |*part| {
                         // ["process", "env"] === ["process", "env"] (if that actually worked)
                         if (arePartsEqual(part.parts, parts)) {
                             part.data = part.data.merge(user_define.value_ptr.*);
-                            didFind = true;
-                            break;
+                            continue :outer;
                         }
                     }
 
-                    initial_values = entry.value_ptr.*;
+                    initial_values = gpe_entry.value_ptr.*;
                 }
 
-                if (!didFind) {
-                    var list = try std.ArrayList(DotDefine).initCapacity(allocator, initial_values.len + 1);
-                    if (initial_values.len > 0) {
-                        list.appendSliceAssumeCapacity(initial_values);
-                    }
-
-                    list.appendAssumeCapacity(DotDefine{
-                        .data = user_define.value_ptr.*,
-                        // TODO: do we need to allocate this?
-                        .parts = parts,
-                    });
-                    try define.dots.put(tail, try list.toOwnedSlice());
+                var list = try std.ArrayList(DotDefine).initCapacity(allocator, initial_values.len + 1);
+                if (initial_values.len > 0) {
+                    list.appendSliceAssumeCapacity(initial_values);
                 }
+
+                list.appendAssumeCapacity(DotDefine{
+                    .data = user_define.value_ptr.*,
+                    // TODO: do we need to allocate this?
+                    .parts = parts,
+                });
+                gpe_entry.value_ptr.* = try list.toOwnedSlice();
             } else {
 
                 // e.g. IS_BROWSER
@@ -260,54 +260,36 @@ pub const Define = struct {
         define.allocator = allocator;
         define.identifiers = bun.StringHashMap(IdentifierDefine).init(allocator);
         define.dots = bun.StringHashMap([]DotDefine).init(allocator);
-        try define.identifiers.ensureTotalCapacity(641 + 2 + 1);
-        try define.dots.ensureTotalCapacity(64);
+        try define.dots.ensureTotalCapacity(124);
 
-        var val = js_ast.Expr.Data{
-            .e_undefined = .{},
+        const value_define = DefineData{
+            .value = .{ .e_undefined = .{} },
+            .valueless = true,
+            .can_be_removed_if_unused = true,
         };
-
-        var value_define = DefineData{ .value = val, .valueless = true };
         // Step 1. Load the globals into the hash tables
         for (GlobalDefinesKey) |global| {
-            if (global.len == 1) {
-                define.identifiers.putAssumeCapacityNoClobber(global[0], value_define);
+            const key = global[global.len - 1];
+            var gpe = try define.dots.getOrPut(key);
+            if (gpe.found_existing) {
+                var list = try std.ArrayList(DotDefine).initCapacity(allocator, gpe.value_ptr.*.len + 1);
+                list.appendSliceAssumeCapacity(gpe.value_ptr.*);
+                list.appendAssumeCapacity(DotDefine{
+                    .parts = global[0..global.len],
+                    .data = value_define,
+                });
+
+                gpe.value_ptr.* = try list.toOwnedSlice();
             } else {
-                const key = global[global.len - 1];
-                // TODO: move this to comptime
-                if (define.dots.getEntry(key)) |entry| {
-                    var list = try std.ArrayList(DotDefine).initCapacity(allocator, entry.value_ptr.*.len + 1);
-                    list.appendSliceAssumeCapacity(entry.value_ptr.*);
-                    list.appendAssumeCapacity(DotDefine{
-                        .parts = global[0..global.len],
-                        .data = value_define,
-                    });
+                var list = try std.ArrayList(DotDefine).initCapacity(allocator, 1);
+                list.appendAssumeCapacity(DotDefine{
+                    .parts = global[0..global.len],
+                    .data = value_define,
+                });
 
-                    define.dots.putAssumeCapacity(key, try list.toOwnedSlice());
-                } else {
-                    var list = try std.ArrayList(DotDefine).initCapacity(allocator, 1);
-                    list.appendAssumeCapacity(DotDefine{
-                        .parts = global[0..global.len],
-                        .data = value_define,
-                    });
-
-                    define.dots.putAssumeCapacity(key, try list.toOwnedSlice());
-                }
+                gpe.value_ptr.* = try list.toOwnedSlice();
             }
         }
-
-        // Step 2. Swap in certain literal values because those can be constant folded
-        define.identifiers.putAssumeCapacity("undefined", .{
-            .value = val,
-            .valueless = false,
-            .can_be_removed_if_unused = true,
-        });
-        define.identifiers.putAssumeCapacity("NaN", DefineData{
-            .value = js_ast.Expr.Data{ .e_number = nan_val },
-        });
-        define.identifiers.putAssumeCapacity("Infinity", DefineData{
-            .value = js_ast.Expr.Data{ .e_number = inf_val },
-        });
 
         // Step 3. Load user data into hash tables
         // At this stage, user data has already been validated.
@@ -321,13 +303,6 @@ pub const Define = struct {
         if (string_defines) |string_defines_| {
             var iter = string_defines_.iterator();
             try define.insertFromIterator(allocator, @TypeOf(&iter), &iter);
-        }
-
-        {
-            var global_entry = define.identifiers.getOrPutAssumeCapacity(Rewrites.global);
-            if (!global_entry.found_existing) {
-                global_entry.value_ptr.* = DefineData{ .value = js_ast.Expr.Data{ .e_identifier = globalThisIdentifier }, .original_name = Rewrites.globalThis };
-            }
         }
 
         return define;

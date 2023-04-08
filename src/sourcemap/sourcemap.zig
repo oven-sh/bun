@@ -315,9 +315,60 @@ pub const Mapping = struct {
     };
 };
 
-pub const LineColumnOffset = struct {
+pub const LineColumnOffset = packed struct {
     lines: i32 = 0,
     columns: i32 = 0,
+
+    pub const Optional = union(enum) {
+        null: void,
+        value: LineColumnOffset,
+
+        pub fn advance(this: *Optional, input: []const u8) void {
+            switch (this.*) {
+                .null => {},
+                .value => this.value.advance(input),
+            }
+        }
+    };
+
+    pub fn advance(this: *LineColumnOffset, input: []const u8) void {
+        var columns = this.columns;
+        defer this.columns = columns;
+        var offset: u32 = 0;
+        while (strings.indexOfNewlineOrNonASCII(input, offset)) |i| {
+            std.debug.assert(i >= offset);
+            std.debug.assert(i < input.len);
+
+            columns += @intCast(i32, i - offset);
+            offset = i;
+
+            var cp = strings.CodepointIterator.initOffset(input, offset);
+            var cursor = strings.CodepointIterator.Cursor{};
+            _ = cp.next(&cursor);
+            switch (cursor.c) {
+                '\r', '\n', 0x2028, 0x2029 => {
+                    // Handle Windows-specific "\r\n" newlines
+                    if (cp.c == '\r' and input.len > offset + 1 and input[offset + 1] == '\n') {
+                        columns += 1;
+                        offset += 1;
+                        continue;
+                    }
+
+                    this.lines += 1;
+                    columns = 0;
+                },
+                else => |c| {
+                    // Mozilla's "source-map" library counts columns using UTF-16 code units
+                    columns += switch (c) {
+                        0...0xFFFF => 1,
+                        else => 2,
+                    };
+                },
+            }
+        }
+
+        columns += @intCast(i32, input.len - offset);
+    }
 
     pub fn cmp(_: void, a: LineColumnOffset, b: LineColumnOffset) std.math.Order {
         if (a.lines != b.lines) {

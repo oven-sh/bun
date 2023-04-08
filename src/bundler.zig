@@ -381,6 +381,7 @@ pub const Bundler = struct {
         to.log.* = logger.Log.init(allocator);
         to.setLog(to.log);
         to.macro_context = null;
+        to.linker.resolver = &to.resolver;
     }
 
     pub inline fn getPackageManager(this: *Bundler) *PackageManager {
@@ -1145,7 +1146,7 @@ pub const Bundler = struct {
         comptime enable_source_map: bool,
         source_map_context: ?js_printer.SourceMapHandler,
     ) !usize {
-        var symbols: [][]js_ast.Symbol = &([_][]js_ast.Symbol{ast.symbols});
+        var symbols = js_ast.Symbol.NestedList.init(&[_]js_ast.Symbol.List{ast.symbols});
 
         return switch (format) {
             .cjs => try js_printer.printCommonJS(
@@ -1156,7 +1157,6 @@ pub const Bundler = struct {
                 source,
                 false,
                 js_printer.Options{
-                    .to_module_ref = Ref.RuntimeRef,
                     .externals = ast.externals,
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
@@ -1165,8 +1165,6 @@ pub const Bundler = struct {
                     .rewrite_require_resolve = bundler.options.platform != .node,
                     .minify_whitespace = bundler.options.minify_whitespace,
                 },
-                Linker,
-                &bundler.linker,
                 enable_source_map,
             ),
 
@@ -1178,7 +1176,6 @@ pub const Bundler = struct {
                 source,
                 false,
                 js_printer.Options{
-                    .to_module_ref = Ref.RuntimeRef,
                     .externals = ast.externals,
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
@@ -1187,98 +1184,40 @@ pub const Bundler = struct {
                     .rewrite_require_resolve = bundler.options.platform != .node,
                     .minify_whitespace = bundler.options.minify_whitespace,
                 },
-                Linker,
-                &bundler.linker,
                 enable_source_map,
             ),
-            .esm_ascii => if (bundler.options.platform.isBun())
-                try js_printer.printAst(
-                    Writer,
-                    writer,
-                    ast,
-                    js_ast.Symbol.Map.initList(symbols),
-                    source,
-                    true,
-                    js_printer.Options{
-                        .to_module_ref = Ref.RuntimeRef,
-                        .externals = ast.externals,
-                        .runtime_imports = ast.runtime_imports,
-                        .require_ref = ast.require_ref,
-                        .css_import_behavior = bundler.options.cssImportBehavior(),
-                        .source_map_handler = source_map_context,
-                        .rewrite_require_resolve = bundler.options.platform != .node,
-                        .minify_whitespace = bundler.options.minify_whitespace,
-                    },
-                    Linker,
-                    &bundler.linker,
-                    enable_source_map,
-                )
-            else
-                try js_printer.printAst(
-                    Writer,
-                    writer,
-                    ast,
-                    js_ast.Symbol.Map.initList(symbols),
-                    source,
-                    false,
-                    js_printer.Options{
-                        .to_module_ref = Ref.RuntimeRef,
-                        .externals = ast.externals,
-                        .runtime_imports = ast.runtime_imports,
-                        .require_ref = ast.require_ref,
-                        .css_import_behavior = bundler.options.cssImportBehavior(),
-                        .source_map_handler = source_map_context,
-                        .rewrite_require_resolve = bundler.options.platform != .node,
-                        .minify_whitespace = bundler.options.minify_whitespace,
-                    },
-                    Linker,
-                    &bundler.linker,
-                    enable_source_map,
-                ),
-            .cjs_ascii => if (bundler.options.platform.isBun())
-                try js_printer.printCommonJS(
-                    Writer,
-                    writer,
-                    ast,
-                    js_ast.Symbol.Map.initList(symbols),
-                    source,
-                    true,
-                    js_printer.Options{
-                        .to_module_ref = Ref.RuntimeRef,
-                        .externals = ast.externals,
-                        .runtime_imports = ast.runtime_imports,
-                        .require_ref = ast.require_ref,
-                        .css_import_behavior = bundler.options.cssImportBehavior(),
-                        .source_map_handler = source_map_context,
-                        .rewrite_require_resolve = bundler.options.platform != .node,
-                        .minify_whitespace = bundler.options.minify_whitespace,
-                    },
-                    Linker,
-                    &bundler.linker,
-                    enable_source_map,
-                )
-            else
-                try js_printer.printCommonJS(
-                    Writer,
-                    writer,
-                    ast,
-                    js_ast.Symbol.Map.initList(symbols),
-                    source,
-                    false,
-                    js_printer.Options{
-                        .to_module_ref = Ref.RuntimeRef,
-                        .externals = ast.externals,
-                        .runtime_imports = ast.runtime_imports,
-                        .require_ref = ast.require_ref,
-                        .css_import_behavior = bundler.options.cssImportBehavior(),
-                        .source_map_handler = source_map_context,
-                        .rewrite_require_resolve = bundler.options.platform != .node,
-                        .minify_whitespace = bundler.options.minify_whitespace,
-                    },
-                    Linker,
-                    &bundler.linker,
-                    enable_source_map,
-                ),
+            .esm_ascii => try js_printer.printAst(
+                Writer,
+                writer,
+                ast,
+                js_ast.Symbol.Map.initList(symbols),
+                source,
+                true,
+                js_printer.Options{
+                    .externals = ast.externals,
+                    .runtime_imports = ast.runtime_imports,
+                    .require_ref = ast.require_ref,
+                    .css_import_behavior = bundler.options.cssImportBehavior(),
+                    .source_map_handler = source_map_context,
+                },
+                enable_source_map,
+            ),
+            .cjs_ascii => try js_printer.printCommonJS(
+                Writer,
+                writer,
+                ast,
+                js_ast.Symbol.Map.initList(symbols),
+                source,
+                true,
+                js_printer.Options{
+                    .externals = ast.externals,
+                    .runtime_imports = ast.runtime_imports,
+                    .require_ref = ast.require_ref,
+                    .css_import_behavior = bundler.options.cssImportBehavior(),
+                    .source_map_handler = source_map_context,
+                },
+                enable_source_map,
+            ),
         };
     }
 
@@ -1437,7 +1376,7 @@ pub const Bundler = struct {
                 jsx.parse = loader.isJSX();
 
                 var opts = js_parser.Parser.Options.init(jsx, loader);
-                opts.enable_bundling = false;
+                opts.enable_legacy_bundling = false;
                 opts.transform_require_to_import = bundler.options.allow_runtime and !bundler.options.platform.isBun();
                 opts.features.allow_runtime = bundler.options.allow_runtime;
                 opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();

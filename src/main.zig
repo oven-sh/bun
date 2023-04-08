@@ -12,6 +12,7 @@ pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, addr
 const CrashReporter = @import("./crash_reporter.zig");
 
 pub fn main() void {
+    const bun = @import("root").bun;
     const Output = bun.Output;
     const Environment = bun.Environment;
 
@@ -42,4 +43,3 @@ test "panic" {
 }
 
 pub const build_options = @import("build_options");
-pub const bun = @import("./bun.zig");

@@ -2173,7 +2173,6 @@ const Expect = Test.Expect;
 const DescribeScope = Test.DescribeScope;
 const TestScope = Test.TestScope;
 const NodeFS = JSC.Node.NodeFS;
-const Transpiler = @import("./api/transpiler.zig");
 const TextEncoder = WebCore.TextEncoder;
 const TextDecoder = WebCore.TextDecoder;
 const HTMLRewriter = JSC.Cloudflare.HTMLRewriter;

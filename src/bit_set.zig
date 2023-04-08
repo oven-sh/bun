@@ -500,14 +500,14 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
         /// in the toggles bit set.
         pub fn toggleSet(self: *Self, toggles: *const Self) void {
             const other = &toggles.masks;
-            for (&self.masks, 0..) |*mask, i| {
-                mask.* ^= other[i];
+            for (self.masks, other) |*mask, b| {
+                mask.* ^= b;
             }
         }
 
         /// Flips every bit in the bit set.
         pub fn toggleAll(self: *Self) void {
-            for (&self.masks) |*mask| {
+            for (self.masks) |*mask| {
                 mask.* = ~mask.*;
             }
 
@@ -521,8 +521,8 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
         /// result in the first one.  Bits in the result are
         /// set if the corresponding bits were set in either input.
         pub fn setUnion(self: *Self, other: *const Self) void {
-            for (&self.masks, 0..) |*mask, i| {
-                mask.* |= other.masks[i];
+            for (&self.masks, other[0..self.masks.len]) |*mask, alt| {
+                mask.* |= alt;
             }
         }
 
@@ -530,8 +530,8 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
         /// the result in the first one.  Bits in the result are
         /// set if the corresponding bits were set in both inputs.
         pub fn setIntersection(self: *Self, other: *const Self) void {
-            for (&self.masks, 0..) |*mask, i| {
-                mask.* &= other.masks[i];
+            for (&self.masks, other.masks[0..self.masks.len]) |*mask, alt| {
+                mask.* &= alt;
             }
         }
 
@@ -606,6 +606,14 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
             var result = self.*;
             result.setIntersection(other);
             return result;
+        }
+
+        pub fn hasIntersection(self: *const Self, other: *const Self) bool {
+            for (self.masks, other.masks) |a, b| {
+                if (a & b != 0) return true;
+            }
+
+            return false;
         }
 
         /// Returns the xor of two bit sets. Bits in the
@@ -770,7 +778,7 @@ pub const DynamicBitSetUnmanaged = struct {
         const num_masks = numMasks(self.bit_length);
         var copy = Self{};
         try copy.resize(new_allocator, self.bit_length, false);
-        bun.copy(MaskInt, copy.masks, self.masks[0..num_masks]);
+        bun.copy(MaskInt, copy.masks[0..num_masks], self.masks[0..num_masks]);
         return copy;
     }
 
@@ -786,6 +794,10 @@ pub const DynamicBitSetUnmanaged = struct {
         return (self.masks[maskIndex(index)] & maskBit(index)) != 0;
     }
 
+    pub fn bytes(self: Self) []const u8 {
+        return std.mem.sliceAsBytes(self.masks[0 .. numMasks(self.bit_length) + 1]);
+    }
+
     /// Returns the total number of set bits in this bit set.
     pub fn count(self: Self) usize {
         const num_masks = (self.bit_length + (@bitSizeOf(MaskInt) - 1)) / @bitSizeOf(MaskInt);
@@ -795,6 +807,15 @@ pub const DynamicBitSetUnmanaged = struct {
             total += @popCount(mask);
         }
         return total;
+    }
+
+    pub fn hasIntersection(self: Self, other: Self) bool {
+        const num_masks = (self.bit_length + (@bitSizeOf(MaskInt) - 1)) / @bitSizeOf(MaskInt);
+        for (self.masks[0..num_masks], other.masks[0..num_masks]) |mask, other_mask| {
+            if ((mask & other_mask) != 0) return true;
+        }
+
+        return false;
     }
 
     /// Changes the value of the specified bit of the bit
@@ -845,8 +866,8 @@ pub const DynamicBitSetUnmanaged = struct {
                 bulk_mask_index = start_mask_index;
             }
 
-            while (bulk_mask_index < end_mask_index) : (bulk_mask_index += 1) {
-                self.masks[bulk_mask_index] = std.math.boolMask(MaskInt, value);
+            for (self.masks[bulk_mask_index..end_mask_index]) |*mask| {
+                mask.* = std.math.boolMask(MaskInt, value);
             }
 
             if (end_bit > 0) {
@@ -874,10 +895,29 @@ pub const DynamicBitSetUnmanaged = struct {
     /// same bit_length.
     pub fn toggleSet(self: *Self, toggles: Self) void {
         if (comptime Environment.allow_assert) std.debug.assert(toggles.bit_length == self.bit_length);
+        const bit_length = self.bit_length;
+        if (bit_length == 0) return;
         const num_masks = numMasks(self.bit_length);
-        for (&self.masks[0..num_masks], 0..) |*mask, i| {
-            mask.* ^= toggles.masks[i];
+        for (self.masks[0..num_masks], toggles.masks[0..num_masks]) |*mask, other_mask| {
+            mask.* ^= other_mask;
         }
+
+        const padding_bits = num_masks * @bitSizeOf(MaskInt) - bit_length;
+        const last_item_mask = (~@as(MaskInt, 0)) >> @intCast(ShiftInt, padding_bits);
+        self.masks[num_masks - 1] &= last_item_mask;
+    }
+
+    pub fn setAll(self: *Self, value: bool) void {
+        const bit_length = self.bit_length;
+        if (bit_length == 0) return;
+        const num_masks = numMasks(self.bit_length);
+        for (self.masks[0..num_masks]) |*mask| {
+            mask.* = std.math.boolMask(MaskInt, value);
+        }
+
+        const padding_bits = num_masks * @bitSizeOf(MaskInt) - bit_length;
+        const last_item_mask = (~@as(MaskInt, 0)) >> @intCast(ShiftInt, padding_bits);
+        self.masks[num_masks - 1] &= last_item_mask;
     }
 
     /// Flips every bit in the bit set.
@@ -887,7 +927,7 @@ pub const DynamicBitSetUnmanaged = struct {
         if (bit_length == 0) return;
 
         const num_masks = numMasks(self.bit_length);
-        for (&self.masks[0..num_masks]) |*mask| {
+        for (self.masks[0..num_masks]) |*mask| {
             mask.* = ~mask.*;
         }
 
@@ -902,8 +942,8 @@ pub const DynamicBitSetUnmanaged = struct {
         if (bit_length == 0) return;
 
         const num_masks = numMasks(self.bit_length);
-        for (&self.masks[0..num_masks], 0..) |*mask, i| {
-            mask.* = other.masks[i];
+        for (self.masks[0..num_masks], other.masks) |*mask, other_mask| {
+            mask.* = other_mask;
         }
 
         const padding_bits = num_masks * @bitSizeOf(MaskInt) - bit_length;
@@ -918,8 +958,8 @@ pub const DynamicBitSetUnmanaged = struct {
     pub fn setUnion(self: *Self, other: Self) void {
         if (comptime Environment.allow_assert) std.debug.assert(other.bit_length == self.bit_length);
         const num_masks = numMasks(self.bit_length);
-        for (&self.masks[0..num_masks], 0..) |*mask, i| {
-            mask.* |= other.masks[i];
+        for (self.masks[0..num_masks], other.masks) |*mask, other_mask| {
+            mask.* |= other_mask;
         }
     }
 
@@ -930,25 +970,25 @@ pub const DynamicBitSetUnmanaged = struct {
     pub fn setIntersection(self: *Self, other: Self) void {
         if (comptime Environment.allow_assert) std.debug.assert(other.bit_length == self.bit_length);
         const num_masks = numMasks(self.bit_length);
-        for (&self.masks[0..num_masks], 0..) |*mask, i| {
-            mask.* &= other.masks[i];
+        for (self.masks[0..num_masks], other.masks) |*mask, other_mask| {
+            mask.* &= other_mask;
         }
     }
 
     pub fn setExcludeTwo(self: *Self, other: Self, third: Self) void {
         if (comptime Environment.allow_assert) std.debug.assert(other.bit_length == self.bit_length);
         const num_masks = numMasks(self.bit_length);
-        for (&self.masks[0..num_masks], 0..) |*mask, i| {
-            mask.* &= ~other.masks[i];
-            mask.* &= ~third.masks[i];
+        for (self.masks[0..num_masks], other.masks[0..num_masks], third.masks[0..num_masks]) |*mask, other_mask, third_mask| {
+            mask.* &= ~other_mask;
+            mask.* &= ~third_mask;
         }
     }
 
     pub fn setExclude(self: *Self, other: Self) void {
         if (comptime Environment.allow_assert) std.debug.assert(other.bit_length == self.bit_length);
         const num_masks = numMasks(self.bit_length);
-        for (&self.masks[0..num_masks], 0..) |*mask, i| {
-            mask.* &= ~other.masks[i];
+        for (self.masks[0..num_masks], other.masks) |*mask, other_mask| {
+            mask.* &= ~other_mask;
         }
     }
 
@@ -1052,6 +1092,103 @@ pub const DynamicBitSetUnmanaged = struct {
     }
     fn numMasks(bit_length: usize) usize {
         return (bit_length + (@bitSizeOf(MaskInt) - 1)) / @bitSizeOf(MaskInt);
+    }
+};
+
+pub const AutoBitSet = union(enum) {
+    pub const Static = ArrayBitSet(usize, (@bitSizeOf(DynamicBitSetUnmanaged) - 1));
+
+    static: Static,
+    dynamic: DynamicBitSetUnmanaged,
+
+    pub inline fn needsDynamic(bit_length: usize) bool {
+        return bit_length > Static.bit_length;
+    }
+
+    pub fn initEmpty(allocator: Allocator, bit_length: usize) !AutoBitSet {
+        if (bit_length <= Static.bit_length) {
+            return AutoBitSet{ .static = Static.initEmpty() };
+        } else {
+            return AutoBitSet{ .dynamic = try DynamicBitSetUnmanaged.initEmpty(allocator, bit_length) };
+        }
+    }
+
+    pub fn isSet(this: *const AutoBitSet, index: usize) bool {
+        return switch (std.meta.activeTag(this.*)) {
+            .static => this.static.isSet(index),
+            .dynamic => this.dynamic.isSet(index),
+        };
+    }
+
+    /// Are any of the bits in `this` also set in `other`?
+    pub fn hasIntersection(this: *const AutoBitSet, other: *const AutoBitSet) bool {
+        if (std.meta.activeTag(this.*) != std.meta.activeTag(other.*)) {
+            return false;
+        }
+
+        return switch (std.meta.activeTag(this.*)) {
+            .static => this.static.hasIntersection(&other.static),
+            .dynamic => this.dynamic.hasIntersection(other.dynamic),
+        };
+    }
+
+    pub fn clone(this: *const AutoBitSet, allocator: std.mem.Allocator) !AutoBitSet {
+        return switch (std.meta.activeTag(this.*)) {
+            .static => AutoBitSet{ .static = this.static },
+            .dynamic => AutoBitSet{ .dynamic = try this.dynamic.clone(allocator) },
+        };
+    }
+
+    pub fn set(this: *AutoBitSet, index: usize) void {
+        switch (std.meta.activeTag(this.*)) {
+            .static => this.static.set(index),
+            .dynamic => this.dynamic.set(index),
+        }
+    }
+
+    pub fn rawBytes(this: *const AutoBitSet) []const u8 {
+        return switch (std.meta.activeTag(this.*)) {
+            .static => std.mem.asBytes(&this.static.masks),
+            .dynamic => this.dynamic.bytes(),
+        };
+    }
+
+    pub fn bytes(this: *const AutoBitSet, _: usize) []const u8 {
+        return this.rawBytes();
+    }
+
+    pub fn eql(this: *const AutoBitSet, b: *const AutoBitSet) bool {
+        return bun.strings.eqlLong(this.rawBytes(), b.rawBytes(), true);
+    }
+
+    pub fn hash(this: *const AutoBitSet) u64 {
+        return bun.hash(this.rawBytes());
+    }
+
+    pub fn forEach(this: *const AutoBitSet, comptime Ctx: type, ctx: *Ctx, comptime Function: fn (*Ctx, usize) void) void {
+        return switch (std.meta.activeTag(this.*)) {
+            .static => {
+                var iter = this.static.iterator(.{});
+                while (iter.next()) |index| {
+                    Function(ctx, index);
+                }
+            },
+            .dynamic => {
+                var iter = this.dynamic.iterator(.{});
+                while (iter.next()) |index| {
+                    Function(ctx, index);
+                }
+            },
+        };
+    }
+
+    pub fn deinit(this: *AutoBitSet, allocator: std.mem.Allocator) void {
+        switch (std.meta.activeTag(this.*)) {
+            .static => {},
+            .dynamic => {
+                this.dynamic.deinit(allocator);
+            },
+        }
     }
 };
 
@@ -1235,7 +1372,7 @@ pub const IteratorOptions = struct {
 };
 
 // The iterator is reusable between several bit set types
-fn BitSetIterator(comptime MaskInt: type, comptime options: IteratorOptions) type {
+pub fn BitSetIterator(comptime MaskInt: type, comptime options: IteratorOptions) type {
     const ShiftInt = std.math.Log2Int(MaskInt);
     const kind = options.kind;
     const direction = options.direction;

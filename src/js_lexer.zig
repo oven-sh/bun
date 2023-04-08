@@ -1069,6 +1069,7 @@ fn NewLexer_(
 
         pub fn next(lexer: *LexerType) !void {
             lexer.has_newline_before = lexer.end == 0;
+            lexer.has_pure_comment_before = false;
 
             while (true) {
                 lexer.start = lexer.end;
@@ -1784,16 +1785,17 @@ fn NewLexer_(
 
         fn scanCommentText(lexer: *LexerType) void {
             const text = lexer.source.contents[lexer.start..lexer.end];
-            const has_preserve_annotation = text.len > 2 and text[2] == '!';
-            const is_multiline_comment = text[1] == '*';
+            const has_legal_annotation = text.len > 2 and text[2] == '!';
+            const is_multiline_comment = text.len > 1 and text[1] == '*';
 
             // Omit the trailing "*/" from the checks below
-            var endCommentText = text.len;
-            if (is_multiline_comment) {
-                endCommentText -= 2;
-            }
+            const end_comment_text =
+                if (is_multiline_comment)
+                text.len - 2
+            else
+                text.len;
 
-            if (has_preserve_annotation or lexer.preserve_all_comments_before) {
+            if (has_legal_annotation or lexer.preserve_all_comments_before) {
                 if (is_multiline_comment) {
                     // text = lexer.removeMultilineCommentIndent(lexer.source.contents[0..lexer.start], text);
                 }
@@ -1803,10 +1805,98 @@ fn NewLexer_(
                     .loc = lexer.loc(),
                 }) catch unreachable;
             }
+
+            // tsconfig.json doesn't care about annotations
+            if (comptime is_json)
+                return;
+
+            // TODO: @jsx annotations
+            if (lexer.has_pure_comment_before)
+                return;
+
+            var rest = text[0..end_comment_text];
+            const end = rest.ptr + rest.len;
+
+            if (comptime Environment.enableSIMD) {
+                const wrapped_len = rest.len - (rest.len % strings.ascii_vector_size);
+                const comment_end = rest.ptr + wrapped_len;
+                while (rest.ptr != comment_end) {
+                    const vec: strings.AsciiVector = rest.ptr[0..strings.ascii_vector_size].*;
+
+                    // lookahead for any # or @ characters
+                    const hashtag = @bitCast(strings.AsciiVectorU1, vec == @splat(strings.ascii_vector_size, @as(u8, '#')));
+                    const at = @bitCast(strings.AsciiVectorU1, vec == @splat(strings.ascii_vector_size, @as(u8, '@')));
+
+                    if (@reduce(.Max, hashtag + at) == 1) {
+                        rest.len = @ptrToInt(end) - @ptrToInt(rest.ptr);
+                        if (comptime Environment.allow_assert) {
+                            std.debug.assert(
+                                strings.containsChar(&@as([strings.ascii_vector_size]u8, vec), '#') or
+                                    strings.containsChar(&@as([strings.ascii_vector_size]u8, vec), '@'),
+                            );
+                        }
+
+                        for (@as([strings.ascii_vector_size]u8, vec), 0..) |c, i| {
+                            switch (c) {
+                                '@', '#' => {
+                                    if (!lexer.has_pure_comment_before) {
+                                        if (strings.indexOf(rest[i + 1 ..], "__PURE__")) |pure_i| {
+                                            const pure_prefix = rest[i + 1 ..][0..pure_i];
+                                            const pure_suffix = rest[i + 1 ..][pure_i + "__PURE__".len ..];
+                                            const has_prefix = pure_prefix.len == 0 or (strings.isAllASCII(pure_prefix) and !isIdentifierStart(pure_prefix[pure_prefix.len - 1]));
+
+                                            // TODO: unicode whitespace for pure comments
+                                            // This misses non-ascii whitespace, but that's fine for now
+                                            const has_suffix = pure_suffix.len == 0 or !isIdentifierContinue(pure_suffix[0]);
+                                            lexer.has_pure_comment_before = has_prefix and has_suffix;
+
+                                            // TODO: handle JSX annotations
+                                            if (lexer.has_pure_comment_before)
+                                                return;
+                                        }
+                                    }
+                                },
+                                else => {},
+                            }
+                        }
+                    }
+
+                    rest.ptr += strings.ascii_vector_size;
+                }
+                rest.len = @ptrToInt(end) - @ptrToInt(rest.ptr);
+            }
+
+            if (comptime Environment.allow_assert)
+                std.debug.assert(rest.len == 0 or bun.isSliceInBuffer(rest, text));
+
+            while (rest.len > 0) {
+                const c = rest[0];
+                rest = rest[1..];
+                switch (c) {
+                    '@', '#' => {
+                        if (!lexer.has_pure_comment_before) {
+                            if (strings.indexOf(rest, "__PURE__")) |pure_i| {
+                                const pure_prefix = rest[0..pure_i];
+                                const pure_suffix = rest[pure_i + "__PURE__".len ..];
+                                const has_prefix = pure_prefix.len == 0 or (strings.isAllASCII(pure_prefix) and !isIdentifierStart(pure_prefix[pure_prefix.len - 1]));
+
+                                // TODO: unicode whitespace for pure comments
+                                // This misses non-ascii whitespace, but that's fine for now
+                                const has_suffix = pure_suffix.len == 0 or !isIdentifierContinue(pure_suffix[0]);
+                                lexer.has_pure_comment_before = (has_prefix and has_suffix);
+
+                                // TODO: handle JSX annotations
+                                if (lexer.has_pure_comment_before)
+                                    return;
+                            }
+                        }
+                    },
+                    else => {},
+                }
+            }
         }
 
         // TODO: implement this
-        // it's too complicated to handle all the edgecases right now given the state of Zig's standard library
         pub fn removeMultilineCommentIndent(_: *LexerType, _: string, text: string) string {
             return text;
         }
@@ -3079,6 +3169,7 @@ fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usi
 
     return null;
 }
+
 test "isIdentifier" {
     const expect = std.testing.expect;
     try expect(!isIdentifierStart(0x2029));

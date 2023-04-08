@@ -56,7 +56,7 @@ const assert = std.debug.assert;
 
 threadlocal var imported_module_ids_list: std.ArrayList(u32) = undefined;
 threadlocal var imported_module_ids_list_unset: bool = true;
-const ImportRecord = importRecord.ImportRecord;
+const ImportRecord = bun.ImportRecord;
 const SourceMap = @import("./sourcemap/sourcemap.zig");
 
 /// For support JavaScriptCore
@@ -475,7 +475,8 @@ pub const SourceMapHandler = struct {
 
 pub const Options = struct {
     transform_imports: bool = true,
-    to_module_ref: Ref = Ref.None,
+    to_commonjs_ref: Ref = Ref.None,
+    to_esm_ref: Ref = Ref.None,
     require_ref: ?Ref = null,
     indent: usize = 0,
     externals: []u32 = &[_]u32{},
@@ -488,7 +489,14 @@ pub const Options = struct {
     source_map_handler: ?SourceMapHandler = null,
     css_import_behavior: Api.CssInJsBehavior = Api.CssInJsBehavior.facade,
 
+    commonjs_named_exports: js_ast.Ast.CommonJSNamedExports = .{},
+    commonjs_named_exports_ref: Ref = Ref.None,
+
     minify_whitespace: bool = false,
+
+    require_or_import_meta_for_source_callback: RequireOrImportMeta.Callback = .{},
+
+    module_type: options.OutputFormat = .preserve,
 
     // TODO: remove this
     // The reason for this is:
@@ -513,11 +521,69 @@ pub const Options = struct {
     pub inline fn unindent(self: *Options) void {
         self.indent -|= 1;
     }
+
+    pub fn requireOrImportMetaForSource(self: *const Options, id: u32) RequireOrImportMeta {
+        if (self.require_or_import_meta_for_source_callback.ctx == null)
+            return .{};
+
+        return self.require_or_import_meta_for_source_callback.call(id);
+    }
 };
 
-pub const PrintResult = struct {
-    js: string,
-    source_map: ?SourceMap.Chunk = null,
+pub const RequireOrImportMeta = struct {
+    // CommonJS files will return the "require_*" wrapper function and an invalid
+    // exports object reference. Lazily-initialized ESM files will return the
+    // "init_*" wrapper function and the exports object for that file.
+    wrapper_ref: Ref = Ref.None,
+    exports_ref: Ref = Ref.None,
+    is_wrapper_async: bool = false,
+
+    pub const Callback = struct {
+        const Fn = fn (*anyopaque, u32) RequireOrImportMeta;
+
+        ctx: ?*anyopaque = null,
+        callback: *const Fn = undefined,
+
+        pub fn call(self: Callback, id: u32) RequireOrImportMeta {
+            return self.callback(self.ctx.?, id);
+        }
+
+        pub fn init(
+            comptime Type: type,
+            comptime callback: (fn (t: *Type, id: u32) RequireOrImportMeta),
+            ctx: *Type,
+        ) Callback {
+            return Callback{
+                .ctx = bun.cast(*anyopaque, ctx),
+                .callback = @ptrCast(*const Fn, &callback),
+            };
+        }
+    };
+};
+
+pub const PrintResult = union(enum) {
+    result: struct {
+        code: []u8,
+        source_map: ?SourceMap.Chunk = null,
+    },
+    err: anyerror,
+
+    pub fn clone(
+        this: PrintResult,
+        allocator: std.mem.Allocator,
+    ) !PrintResult {
+        return switch (this) {
+            .result => PrintResult{
+                .result = .{
+                    .code = try allocator.dupe(u8, this.result.code),
+                    .source_map = this.result.source_map,
+                },
+            },
+            .err => PrintResult{
+                .err = this.err,
+            },
+        };
+    }
 };
 
 // do not make this a packed struct
@@ -588,7 +654,7 @@ const ImportVariant = enum {
         };
     }
 
-    pub fn determine(record: *const importRecord.ImportRecord, s_import: *const S.Import) ImportVariant {
+    pub fn determine(record: *const ImportRecord, s_import: *const S.Import) ImportVariant {
         var variant = ImportVariant.path_only;
 
         if (record.contains_import_star) {
@@ -615,10 +681,9 @@ const ImportVariant = enum {
     }
 };
 
-pub fn NewPrinter(
+fn NewPrinter(
     comptime ascii_only: bool,
     comptime Writer: type,
-    comptime Linker: type,
     comptime rewrite_esm_to_cjs: bool,
     comptime is_bun_platform: bool,
     comptime is_inside_bundle: bool,
@@ -626,9 +691,7 @@ pub fn NewPrinter(
     comptime generate_source_map: bool,
 ) type {
     return struct {
-        symbols: Symbol.Map,
-        import_records: []importRecord.ImportRecord,
-        linker: ?*Linker,
+        import_records: []const ImportRecord,
 
         needs_semicolon: bool = false,
         stmt_start: i32 = -1,
@@ -651,6 +714,8 @@ pub fn NewPrinter(
         source_map_builder: SourceMap.Chunk.Builder = undefined,
 
         symbol_counter: u32 = 0,
+
+        temporary_bindings: std.ArrayListUnmanaged(B.Property) = .{},
 
         const Printer = @This();
 
@@ -941,14 +1006,127 @@ pub fn NewPrinter(
             p.print("}");
         }
 
-        pub fn printDecls(p: *Printer, comptime keyword: string, decls: []G.Decl, flags: ExprFlag.Set) void {
+        pub fn printDecls(p: *Printer, comptime keyword: string, decls_: []G.Decl, flags: ExprFlag.Set) void {
             p.print(keyword);
             p.printSpace();
+            var decls = decls_;
 
             if (decls.len == 0) {
                 // "var ;" is invalid syntax
                 // assert we never reach it
                 unreachable;
+            }
+
+            if (comptime FeatureFlags.same_target_becomes_destructuring) {
+                // Minify
+                //
+                //    var a = obj.foo, b = obj.bar, c = obj.baz;
+                //
+                // to
+                //
+                //    var {a, b, c} = obj;
+                //
+                // Caveats:
+                //   - Same consecutive target
+                //   - No optional chaining
+                //   - No computed property access
+                //   - Identifier bindings only
+                if (decls.len > 1) brk: {
+                    const first_decl = &decls[0];
+                    const second_decl = &decls[1];
+
+                    if (first_decl.binding.data != .b_identifier) break :brk;
+                    if (second_decl.value == null or
+                        second_decl.value.?.data != .e_dot or
+                        second_decl.binding.data != .b_identifier)
+                    {
+                        break :brk;
+                    }
+
+                    const target_value = first_decl.value orelse break :brk;
+                    const target_e_dot: *E.Dot = if (target_value.data == .e_dot)
+                        target_value.data.e_dot
+                    else
+                        break :brk;
+                    const target_ref = if (target_e_dot.target.data == .e_identifier and target_e_dot.optional_chain == null)
+                        target_e_dot.target.data.e_identifier.ref
+                    else
+                        break :brk;
+
+                    const second_e_dot = second_decl.value.?.data.e_dot;
+                    if (second_e_dot.target.data != .e_identifier or second_e_dot.optional_chain != null) {
+                        break :brk;
+                    }
+
+                    const second_ref = second_e_dot.target.data.e_identifier.ref;
+                    if (!second_ref.eql(target_ref)) {
+                        break :brk;
+                    }
+
+                    {
+                        // Reset the temporary bindings array early on
+                        var temp_bindings = p.temporary_bindings;
+                        p.temporary_bindings = .{};
+                        defer {
+                            if (p.temporary_bindings.capacity > 0) {
+                                temp_bindings.deinit(bun.default_allocator);
+                            } else {
+                                temp_bindings.clearRetainingCapacity();
+                                p.temporary_bindings = temp_bindings;
+                            }
+                        }
+                        temp_bindings.ensureUnusedCapacity(bun.default_allocator, 2) catch unreachable;
+                        temp_bindings.appendAssumeCapacity(.{
+                            .key = Expr.init(E.String, E.String.init(target_e_dot.name), target_e_dot.name_loc),
+                            .value = decls[0].binding,
+                        });
+                        temp_bindings.appendAssumeCapacity(.{
+                            .key = Expr.init(E.String, E.String.init(second_e_dot.name), second_e_dot.name_loc),
+                            .value = decls[1].binding,
+                        });
+
+                        decls = decls[2..];
+                        while (decls.len > 0) {
+                            const decl = &decls[0];
+
+                            if (decl.value == null or decl.value.?.data != .e_dot or decl.binding.data != .b_identifier) {
+                                break;
+                            }
+
+                            const e_dot = decl.value.?.data.e_dot;
+                            if (e_dot.target.data != .e_identifier or e_dot.optional_chain != null) {
+                                break;
+                            }
+
+                            const ref = e_dot.target.data.e_identifier.ref;
+                            if (!ref.eql(target_ref)) {
+                                break;
+                            }
+
+                            temp_bindings.append(bun.default_allocator, .{
+                                .key = Expr.init(E.String, E.String.init(e_dot.name), e_dot.name_loc),
+                                .value = decl.binding,
+                            }) catch unreachable;
+                            decls = decls[1..];
+                        }
+                        var b_object = B.Object{
+                            .properties = temp_bindings.items,
+                            .is_single_line = true,
+                        };
+                        const binding = Binding.init(&b_object, target_e_dot.target.loc);
+                        p.printBinding(binding);
+                    }
+
+                    p.printWhitespacer(ws(" = "));
+                    p.printExpr(second_e_dot.target, .comma, flags);
+
+                    if (decls.len == 0) {
+                        return;
+                    }
+
+                    p.print(",");
+                    p.printSpace();
+                }
             }
 
             {
@@ -973,7 +1151,6 @@ pub fn NewPrinter(
             }
         }
 
-        // noop for now
         pub inline fn addSourceMapping(printer: *Printer, location: logger.Loc) void {
             if (comptime !generate_source_map) {
                 return;
@@ -983,6 +1160,7 @@ pub fn NewPrinter(
         }
 
         pub fn printSymbol(p: *Printer, ref: Ref) void {
+            std.debug.assert(!ref.isNull());
             const name = p.renamer.nameForSymbol(ref);
 
             p.printIdentifier(name);
@@ -1442,7 +1620,7 @@ pub fn NewPrinter(
                 .e_identifier => |ident| {
                     if (ident.ref.isSourceContentsSlice()) return false;
 
-                    const symbol = p.symbols.get(p.symbols.follow(ident.ref)) orelse return false;
+                    const symbol = p.symbols().get(p.symbols().follow(ident.ref)) orelse return false;
                     return symbol.kind == .unbound and strings.eqlComptime(symbol.original_name, "eval");
                 },
                 else => {
@@ -1451,25 +1629,37 @@ pub fn NewPrinter(
             }
         }
 
+        inline fn symbols(p: *Printer) js_ast.Symbol.Map {
+            return p.renamer.symbols();
+        }
+
         pub fn printRequireError(p: *Printer, text: string) void {
             p.print("(() => { throw (new Error(`Cannot require module ");
             p.printQuotedUTF8(text, false);
             p.print("`)); } )()");
         }
 
+        pub inline fn importRecord(
+            p: *const Printer,
+            import_record_index: usize,
+        ) *const ImportRecord {
+            return &p.import_records[import_record_index];
+        }
+
         pub fn printRequireOrImportExpr(
             p: *Printer,
             import_record_index: u32,
             leading_interior_comments: []G.Comment,
-            level: Level,
+            level_: Level,
             flags: ExprFlag.Set,
         ) void {
+            var level = level_;
             const wrap = level.gte(.new) or flags.contains(.forbid_call);
             if (wrap) p.print("(");
             defer if (wrap) p.print(")");
 
             assert(p.import_records.len > import_record_index);
-            const record = &p.import_records[import_record_index];
+            const record = p.importRecord(import_record_index);
 
             if (comptime is_bun_platform) {
                 // "bun" is not a real module. It's just globalThis.Bun.
@@ -1490,6 +1680,86 @@ pub fn NewPrinter(
                     }
                     return;
                 }
+            }
+
+            if (record.source_index.isValid()) {
+                var meta = p.options.requireOrImportMetaForSource(record.source_index.get());
+
+                // Don't need the namespace object if the result is unused anyway
+                if (flags.contains(.expr_result_is_unused)) {
+                    meta.exports_ref = Ref.None;
+                }
+
+                // Internal "import()" of async ESM
+                if (record.kind == .dynamic and meta.is_wrapper_async) {
+                    p.printSpaceBeforeIdentifier();
+                    p.printSymbol(meta.wrapper_ref);
+                    p.print("()");
+                    if (meta.exports_ref.isValid()) {
+                        _ = p.printDotThenPrefix();
+                        p.printSpaceBeforeIdentifier();
+                        p.printSymbol(meta.exports_ref);
+                        p.printDotThenSuffix();
+                    }
+                    return;
+                }
+
+                // Internal "require()" or "import()"
+                if (record.kind == .dynamic) {
+                    p.printSpaceBeforeIdentifier();
+                    p.print("Promise.resolve()");
+
+                    level = p.printDotThenPrefix();
+                }
+                defer if (record.kind == .dynamic) p.printDotThenSuffix();
+
+                // Make sure the comma operator is propertly wrapped
+
+                if (meta.exports_ref.isValid() and level.gte(.comma)) {
+                    p.print("(");
+                }
+                defer if (meta.exports_ref.isValid() and level.gte(.comma)) p.print(")");
+
+                // Wrap this with a call to "__toESM()" if this is a CommonJS file
+                const wrap_with_to_esm = record.wrap_with_to_esm;
+                if (wrap_with_to_esm) {
+                    p.printSpaceBeforeIdentifier();
+                    p.printSymbol(p.options.to_esm_ref);
+                    p.print("(");
+                }
+
+                // Call the wrapper
+                p.printSpaceBeforeIdentifier();
+                p.printSymbol(meta.wrapper_ref);
+                p.print("()");
+
+                // Return the namespace object if this is an ESM file
+                if (meta.exports_ref.isValid()) {
+                    p.print(",");
+                    p.printSpace();
+
+                    // Wrap this with a call to "__toCommonJS()" if this is an ESM file
+                    const wrap_with_to_cjs = record.wrap_with_to_commonjs;
+                    if (wrap_with_to_cjs) {
+                        p.printSymbol(p.options.to_commonjs_ref);
+                        p.print("(");
+                    }
+                    p.printSymbol(meta.exports_ref);
+                    if (wrap_with_to_cjs) {
+                        p.print(")");
+                    }
+                }
+
+                if (wrap_with_to_esm) {
+                    if (p.options.module_type.isESM()) {
+                        p.print(",");
+                        p.printSpace();
+                        p.print("1");
+                    }
+                    p.print(")");
+                }
+
+                return;
             }
 
             const is_external = std.mem.indexOfScalar(
@@ -1531,6 +1801,7 @@ pub fn NewPrinter(
             p.addSourceMapping(record.range.loc);
 
             p.printSpaceBeforeIdentifier();
+
             // Allow it to fail at runtime, if it should
             p.print("import(");
             p.printImportRecordPath(record);
@@ -1657,6 +1928,23 @@ pub fn NewPrinter(
                     p.addSourceMapping(expr.loc);
                     p.print("import.meta");
                 },
+                .e_commonjs_export_identifier => |id| {
+                    p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(expr.loc);
+
+                    for (p.options.commonjs_named_exports.keys(), p.options.commonjs_named_exports.values()) |key, value| {
+                        if (value.loc_ref.ref.?.eql(id.ref)) {
+                            if (value.needs_decl) {
+                                p.printSymbol(p.options.commonjs_named_exports_ref);
+                                p.print(".");
+                                p.print(key);
+                            } else {
+                                p.printSymbol(value.loc_ref.ref.?);
+                            }
+                            break;
+                        }
+                    }
+                },
                 .e_new => |e| {
                     const has_pure_comment = e.can_be_unwrapped_if_unused;
                     const wrap = level.gte(.call) or (has_pure_comment and level.gte(.postfix));
@@ -1779,14 +2067,14 @@ pub fn NewPrinter(
                     }
                 },
                 .e_require => |e| {
-                    if (rewrite_esm_to_cjs and p.import_records[e.import_record_index].is_bundled) {
+                    if (rewrite_esm_to_cjs and p.importRecord(e.import_record_index).is_bundled) {
                         p.printIndent();
                         p.printBundledRequire(e);
                         p.printSemicolonIfNeeded();
                         return;
                     }
 
-                    if (!rewrite_esm_to_cjs or !p.import_records[e.import_record_index].is_bundled) {
+                    if (!rewrite_esm_to_cjs or !p.importRecord(e.import_record_index).is_bundled) {
                         p.printRequireOrImportExpr(e.import_record_index, &([_]G.Comment{}), level, flags);
                     }
                 },
@@ -1794,7 +2082,7 @@ pub fn NewPrinter(
                     if (p.options.rewrite_require_resolve) {
                         // require.resolve("../src.js") => "../src.js"
                         p.printSpaceBeforeIdentifier();
-                        p.printQuotedUTF8(p.import_records[e.import_record_index].path.text, true);
+                        p.printQuotedUTF8(p.importRecord(e.import_record_index).path.text, true);
                     } else {
                         const wrap = level.gte(.new) or flags.contains(.forbid_call);
                         if (wrap) {
@@ -1803,7 +2091,7 @@ pub fn NewPrinter(
 
                         p.printSpaceBeforeIdentifier();
                         p.print("require.resolve(");
-                        p.printQuotedUTF8(p.import_records[e.import_record_index].path.text, true);
+                        p.printQuotedUTF8(p.importRecord(e.import_record_index).path.text, true);
                         p.print(")");
 
                         if (wrap) {
@@ -1814,7 +2102,7 @@ pub fn NewPrinter(
                 .e_import => |e| {
 
                     // Handle non-string expressions
-                    if (Ref.isSourceIndexNull(e.import_record_index)) {
+                    if (e.isImportRecordNull()) {
                         const wrap = level.gte(.new) or flags.contains(.forbid_call);
                         if (wrap) {
                             p.print("(");
@@ -2285,40 +2573,76 @@ pub fn NewPrinter(
                     // Potentially use a property access instead of an identifier
                     var didPrint = false;
 
-                    if (p.symbols.getWithLink(e.ref)) |symbol| {
+                    if (p.symbols().getWithLink(e.ref)) |symbol| {
                         if (symbol.import_item_status == .missing) {
                             p.addSourceMapping(expr.loc);
                             p.printUndefined(level);
                             didPrint = true;
                         } else if (symbol.namespace_alias) |namespace| {
-                            const import_record = p.import_records[namespace.import_record_index];
-                            if ((comptime is_inside_bundle) or import_record.is_bundled or namespace.was_originally_property_access) {
-                                var wrap = false;
+                            if (namespace.import_record_index < p.import_records.len) {
+                                const import_record = p.importRecord(namespace.import_record_index);
+                                if ((comptime is_inside_bundle) or import_record.is_bundled or namespace.was_originally_property_access) {
+                                    var wrap = false;
+                                    didPrint = true;
+
+                                    if (p.call_target) |target| {
+                                        wrap = e.was_originally_identifier and (target == .e_identifier and
+                                            target.e_identifier.ref.eql(expr.data.e_import_identifier.ref));
+                                    }
+
+                                    if (wrap) {
+                                        p.printWhitespacer(ws("(0, "));
+                                    }
+                                    p.addSourceMapping(expr.loc);
+                                    p.printNamespaceAlias(import_record.*, namespace);
+
+                                    if (wrap) {
+                                        p.print(")");
+                                    }
+                                } else if (import_record.was_originally_require and import_record.path.is_disabled) {
+                                    p.addSourceMapping(expr.loc);
+
+                                    if (import_record.handles_import_errors) {
+                                        p.printRequireError(import_record.path.text);
+                                    } else {
+                                        p.printDisabledImport();
+                                    }
+                                    didPrint = true;
+                                }
+                            }
+
+                            if (!didPrint) {
                                 didPrint = true;
 
-                                if (p.call_target) |target| {
-                                    wrap = e.was_originally_identifier and (target == .e_identifier and
-                                        target.e_identifier.ref.eql(expr.data.e_import_identifier.ref));
-                                }
+                                const wrap = if (p.call_target) |target|
+                                    e.was_originally_identifier and (target == .e_identifier and
+                                        target.e_identifier.ref.eql(expr.data.e_import_identifier.ref))
+                                else
+                                    false;
 
                                 if (wrap) {
                                     p.printWhitespacer(ws("(0, "));
                                 }
+
+                                p.printSpaceBeforeIdentifier();
                                 p.addSourceMapping(expr.loc);
-                                p.printNamespaceAlias(import_record, namespace);
+                                p.printSymbol(namespace.namespace_ref);
+                                const alias = namespace.alias;
+                                if (p.canPrintIdentifier(alias)) {
+                                    p.print(".");
+                                    // TODO: addSourceMappingForName
+                                    p.printIdentifier(alias);
+                                } else {
+                                    p.print("[");
+                                    // TODO: addSourceMappingForName
+                                    // p.addSourceMappingForName(alias);
+                                    p.printQuotedUTF8(alias, true);
+                                    p.print("]");
+                                }
 
                                 if (wrap) {
                                     p.print(")");
                                 }
-                            } else if (import_record.was_originally_require and import_record.path.is_disabled) {
-                                p.addSourceMapping(expr.loc);
-
-                                if (import_record.handles_import_errors) {
-                                    p.printRequireError(import_record.path.text);
-                                } else {
-                                    p.printDisabledImport();
-                                }
-                                didPrint = true;
                             }
                         }
                     }
@@ -2500,6 +2824,12 @@ pub fn NewPrinter(
 
                     p.printSpace();
                     flags.insert(.forbid_in);
+
+                    // this feels like a hack? I think something is wrong here.
+                    if (e.op == .bin_assign) {
+                        flags.remove(.expr_result_is_unused);
+                    }
+
                     p.printExpr(e.right, right_level, flags);
 
                     if (wrap) {
@@ -2840,8 +3170,8 @@ pub fn NewPrinter(
                                     }
                                 },
                                 .e_import_identifier => |e| {
-                                    const ref = p.symbols.follow(e.ref);
-                                    if (p.symbols.get(ref)) |symbol| {
+                                    const ref = p.symbols().follow(e.ref);
+                                    if (p.symbols().get(ref)) |symbol| {
                                         if (symbol.namespace_alias == null and strings.eql(key.data, p.renamer.nameForSymbol(e.ref))) {
                                             if (item.initializer) |initial| {
                                                 p.printInitializer(initial);
@@ -2877,8 +3207,8 @@ pub fn NewPrinter(
                                     // if (strings) {}
                                 },
                                 .e_import_identifier => |e| {
-                                    const ref = p.symbols.follow(e.ref);
-                                    if (p.symbols.get(ref)) |symbol| {
+                                    const ref = p.symbols().follow(e.ref);
+                                    if (p.symbols().get(ref)) |symbol| {
                                         if (symbol.namespace_alias == null and strings.utf16EqlString(key.slice16(), p.renamer.nameForSymbol(e.ref))) {
                                             if (item.initializer) |initial| {
                                                 p.printInitializer(initial);
@@ -3363,7 +3693,7 @@ pub fn NewPrinter(
                     }
 
                     p.printWhitespacer(ws("from "));
-                    p.printImportRecordPath(&p.import_records[s.import_record_index]);
+                    p.printImportRecordPath(p.importRecord(s.import_record_index));
                     p.printSemicolonAfterStatement();
                 },
                 .s_export_clause => |s| {
@@ -3393,16 +3723,16 @@ pub fn NewPrinter(
                                 p.printSpace();
                                 const last = s.items.len - 1;
                                 for (s.items, 0..) |item, i| {
-                                    const symbol = p.symbols.getWithLink(item.name.ref.?).?;
+                                    const symbol = p.symbols().getWithLink(item.name.ref.?).?;
                                     const name = symbol.original_name;
                                     var did_print = false;
 
                                     if (symbol.namespace_alias) |namespace| {
-                                        const import_record = p.import_records[namespace.import_record_index];
+                                        const import_record = p.importRecord(namespace.import_record_index);
                                         if (import_record.is_bundled or (comptime is_inside_bundle) or namespace.was_originally_property_access) {
                                             p.printIdentifier(name);
                                             p.print(": () => ");
-                                            p.printNamespaceAlias(import_record, namespace);
+                                            p.printNamespaceAlias(import_record.*, namespace);
                                             did_print = true;
                                         }
                                     }
@@ -3467,14 +3797,14 @@ pub fn NewPrinter(
                             const item: js_ast.ClauseItem = array.items[i];
 
                             if (item.original_name.len > 0) {
-                                if (p.symbols.get(item.name.ref.?)) |symbol| {
+                                if (p.symbols().get(item.name.ref.?)) |symbol| {
                                     if (symbol.namespace_alias) |namespace| {
-                                        const import_record = p.import_records[namespace.import_record_index];
+                                        const import_record = p.importRecord(namespace.import_record_index);
                                         if (import_record.is_bundled or (comptime is_inside_bundle) or namespace.was_originally_property_access) {
                                             p.print("var ");
                                             p.printSymbol(item.name.ref.?);
                                             p.@"print = "();
-                                            p.printNamespaceAlias(import_record, namespace);
+                                            p.printNamespaceAlias(import_record.*, namespace);
                                             p.printSemicolonAfterStatement();
                                             _ = array.swapRemove(i);
 
@@ -3583,7 +3913,7 @@ pub fn NewPrinter(
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
 
-                    const import_record = p.import_records[s.import_record_index];
+                    const import_record = p.importRecord(s.import_record_index);
 
                     if (comptime is_bun_platform) {
                         if (import_record.do_commonjs_transform_in_printer) {
@@ -3610,7 +3940,7 @@ pub fn NewPrinter(
                             }
 
                             p.print("}=import.meta.require(");
-                            p.printImportRecordPath(&import_record);
+                            p.printImportRecordPath(import_record);
                             p.print(")");
                             p.printSemicolonAfterStatement();
                             p.printWhitespacer(ws("export {"));
@@ -3673,7 +4003,7 @@ pub fn NewPrinter(
                     }
 
                     p.printWhitespacer(ws("} from "));
-                    p.printImportRecordPath(&import_record);
+                    p.printImportRecordPath(import_record);
                     p.printSemicolonAfterStatement();
                 },
                 .s_local => |s| {
@@ -3895,7 +4225,7 @@ pub fn NewPrinter(
                 .s_import => |s| {
                     std.debug.assert(s.import_record_index < p.import_records.len);
 
-                    const record: *const ImportRecord = &p.import_records[s.import_record_index];
+                    const record: *const ImportRecord = p.importRecord(s.import_record_index);
 
                     switch (record.print_mode) {
                         .css => {
@@ -4003,6 +4333,71 @@ pub fn NewPrinter(
                         const require_ref = p.options.require_ref;
 
                         const module_id = record.module_id;
+
+                        if (comptime is_bun_platform) {
+                            if (!record.path.is_disabled) {
+                                if (record.contains_import_star) {
+                                    p.print("var ");
+                                    p.printSymbol(s.namespace_ref);
+                                    p.@"print = "();
+                                    p.print("import.meta.require(");
+                                    p.printImportRecordPath(record);
+                                    p.print(")");
+                                    p.printSemicolonAfterStatement();
+                                }
+
+                                if (s.items.len > 0 or s.default_name != null) {
+                                    p.printIndent();
+                                    p.printSpaceBeforeIdentifier();
+                                    p.printWhitespacer(ws("var {"));
+
+                                    if (s.default_name) |default_name| {
+                                        p.printSpace();
+                                        p.print("default:");
+                                        p.printSpace();
+                                        p.printSymbol(default_name.ref.?);
+
+                                        if (s.items.len > 0) {
+                                            p.printSpace();
+                                            p.print(",");
+                                            p.printSpace();
+                                            for (s.items, 0..) |item, i| {
+                                                p.printClauseItemAs(item, .@"var");
+
+                                                if (i < s.items.len - 1) {
+                                                    p.print(",");
+                                                    p.printSpace();
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        for (s.items, 0..) |item, i| {
+                                            p.printClauseItemAs(item, .@"var");
+
+                                            if (i < s.items.len - 1) {
+                                                p.print(",");
+                                                p.printSpace();
+                                            }
+                                        }
+                                    }
+
+                                    p.print("}");
+                                    p.@"print = "();
+
+                                    if (record.contains_import_star) {
+                                        p.printSymbol(s.namespace_ref);
+                                        p.printSemicolonAfterStatement();
+                                    } else {
+                                        p.print("import.meta.require(");
+                                        p.printImportRecordPath(record);
+                                        p.print(")");
+                                        p.printSemicolonAfterStatement();
+                                    }
+                                }
+
+                                return;
+                            }
+                        }
 
                         if (!record.path.is_disabled and std.mem.indexOfScalar(u32, p.imported_module_ids.items, module_id) == null) {
                             p.printWhitespacer(ws("import * as "));
@@ -4293,7 +4688,13 @@ pub fn NewPrinter(
                 unreachable;
 
             const quote = bestQuoteCharForString(u8, import_record.path.text, false);
-            if (import_record.print_namespace_in_path and import_record.path.namespace.len > 0 and !strings.eqlComptime(import_record.path.namespace, "file")) {
+            if (import_record.print_namespace_in_path and import_record.module_id != 0) {
+                p.print(quote);
+                p.print(import_record.path.namespace);
+                p.print(":");
+                p.printModuleIdAssumeEnabled(import_record.module_id);
+                p.print(quote);
+            } else if (import_record.print_namespace_in_path and import_record.path.namespace.len > 0 and !strings.eqlComptime(import_record.path.namespace, "file")) {
                 p.print(quote);
                 p.print(import_record.path.namespace);
                 p.print(":");
@@ -4306,12 +4707,12 @@ pub fn NewPrinter(
             }
         }
 
-        pub fn printBundledImport(p: *Printer, record: importRecord.ImportRecord, s: *S.Import) void {
+        pub fn printBundledImport(p: *Printer, record: ImportRecord, s: *S.Import) void {
             if (record.is_internal) {
                 return;
             }
 
-            const import_record = p.import_records[s.import_record_index];
+            const import_record = p.importRecord(s.import_record_index);
             const is_disabled = import_record.path.is_disabled;
             const module_id = import_record.module_id;
 
@@ -4319,7 +4720,7 @@ pub fn NewPrinter(
             // we can skip it
 
             if (record.path.is_disabled) {
-                if (p.symbols.get(s.namespace_ref) == null)
+                if (p.symbols().get(s.namespace_ref) == null)
                     return;
             }
 
@@ -4417,13 +4818,13 @@ pub fn NewPrinter(
         }
 
         pub fn printLoadFromBundleWithoutCall(p: *Printer, import_record_index: u32) void {
-            const record = p.import_records[import_record_index];
+            const record = p.importRecord(import_record_index);
             if (record.path.is_disabled) {
                 p.printDisabledImport();
                 return;
             }
 
-            @call(.always_inline, printModuleId, .{ p, p.import_records[import_record_index].module_id });
+            @call(.always_inline, printModuleId, .{ p, p.importRecord(import_record_index).module_id });
         }
 
         pub fn printCallModuleID(p: *Printer, module_id: u32) void {
@@ -4442,7 +4843,7 @@ pub fn NewPrinter(
         }
 
         pub fn printBundledRequire(p: *Printer, require: E.Require) void {
-            if (p.import_records[require.import_record_index].is_internal) {
+            if (p.importRecord(require.import_record_index).is_internal) {
                 return;
             }
 
@@ -4821,13 +5222,11 @@ pub fn NewPrinter(
 
         pub fn init(
             writer: Writer,
-            tree: *const Ast,
-            source: *const logger.Source,
-            symbols: Symbol.Map,
+            import_records: []const ImportRecord,
             opts: Options,
-            linker: ?*Linker,
-            allocator: std.mem.Allocator,
-        ) !Printer {
+            renamer: bun.renamer.Renamer,
+            source_map_builder: SourceMap.Chunk.Builder,
+        ) Printer {
             if (imported_module_ids_list_unset) {
                 imported_module_ids_list = std.ArrayList(u32).init(default_allocator);
                 imported_module_ids_list_unset = false;
@@ -4835,30 +5234,23 @@ pub fn NewPrinter(
 
             imported_module_ids_list.clearRetainingCapacity();
 
-            var source_map_builder: SourceMap.Chunk.Builder = undefined;
-
-            if (comptime generate_source_map) {
-                source_map_builder = SourceMap.Chunk.Builder{
-                    .source_map = SourceMap.Chunk.Builder.SourceMapper.init(allocator, is_bun_platform),
-                    .cover_lines_without_mappings = true,
-                    .prepend_count = is_bun_platform,
-                };
-                source_map_builder.line_offset_tables = SourceMap.LineOffsetTable.generate(allocator, source.contents, @intCast(i32, tree.approximate_newline_count));
-            }
-
             return Printer{
-                .import_records = tree.import_records,
+                .import_records = import_records,
                 .options = opts,
-                .symbols = symbols,
                 .writer = writer,
-                .linker = linker,
                 .imported_module_ids = imported_module_ids_list,
-                .renamer = rename.Renamer.init(symbols, source),
+                .renamer = renamer,
                 .source_map_builder = source_map_builder,
             };
         }
     };
 }
+
+pub const WriteResult = struct {
+    off: u32,
+    len: usize,
+    end_off: u32,
+};
 
 pub fn NewWriter(
     comptime ContextType: type,
@@ -5252,6 +5644,34 @@ pub const Format = enum {
     cjs_ascii,
 };
 
+fn getSourceMapBuilder(
+    comptime generate_source_map: bool,
+    comptime is_bun_platform: bool,
+    opts: Options,
+    source: *const logger.Source,
+    tree: *const Ast,
+) SourceMap.Chunk.Builder {
+    if (comptime !generate_source_map)
+        return undefined;
+
+    return .{
+        .source_map = SourceMap.Chunk.Builder.SourceMapper.init(
+            opts.allocator,
+            is_bun_platform,
+        ),
+        .cover_lines_without_mappings = true,
+        .prepend_count = is_bun_platform,
+        .line_offset_tables = SourceMap.LineOffsetTable.generate(
+            opts.allocator,
+            source.contents,
+            @intCast(
+                i32,
+                tree.approximate_newline_count,
+            ),
+        ),
+    };
+}
+
 pub fn printAst(
     comptime Writer: type,
     _writer: Writer,
@@ -5260,14 +5680,13 @@ pub fn printAst(
     source: *const logger.Source,
     comptime ascii_only: bool,
     opts: Options,
-    comptime LinkerType: type,
-    linker: ?*LinkerType,
     comptime generate_source_map: bool,
 ) !usize {
+    var renamer = rename.NoOpRenamer.init(symbols, source);
+
     const PrinterType = NewPrinter(
         ascii_only,
         Writer,
-        LinkerType,
         false,
         // if it's ascii_only, it is also bun
         ascii_only,
@@ -5277,14 +5696,12 @@ pub fn printAst(
     );
     var writer = _writer;
 
-    var printer = try PrinterType.init(
+    var printer = PrinterType.init(
         writer,
-        &tree,
-        source,
-        symbols,
+        tree.import_records.slice(),
         opts,
-        linker,
-        opts.allocator,
+        renamer.toRenamer(),
+        getSourceMapBuilder(generate_source_map, ascii_only, opts, source, &tree),
     );
     defer {
         imported_module_ids_list = printer.imported_module_ids;
@@ -5299,7 +5716,7 @@ pub fn printAst(
         }
     }
 
-    for (tree.parts) |part| {
+    for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
             printer.printSemicolonIfNeeded();
             try printer.printStmt(stmt);
@@ -5326,7 +5743,7 @@ pub fn printJSON(
     expr: Expr,
     source: *const logger.Source,
 ) !usize {
-    const PrinterType = NewPrinter(false, Writer, void, false, false, false, true, false);
+    const PrinterType = NewPrinter(false, Writer, false, false, false, true, false);
     var writer = _writer;
     var s_expr = S.SExpr{ .value = expr };
     var stmt = Stmt{ .loc = logger.Loc.Empty, .data = .{
@@ -5335,17 +5752,16 @@ pub fn printJSON(
     var stmts = &[_]js_ast.Stmt{stmt};
     var parts = &[_]js_ast.Part{.{ .stmts = stmts }};
     const ast = Ast.initTest(parts);
-    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
-    defer arena.deinit();
-    var allocator = arena.allocator();
-    var printer = try PrinterType.init(
+    var list = js_ast.Symbol.List.init(ast.symbols.slice());
+    var nested_list = js_ast.Symbol.NestedList.init(&[_]js_ast.Symbol.List{list});
+    var renamer = rename.NoOpRenamer.init(js_ast.Symbol.Map.initList(nested_list), source);
+
+    var printer = PrinterType.init(
         writer,
-        &ast,
-        source,
-        std.mem.zeroes(Symbol.Map),
+        ast.import_records.slice(),
         .{},
-        null,
-        allocator,
+        renamer.toRenamer(),
+        undefined,
     );
 
     printer.printExpr(expr, Level.lowest, ExprFlag.Set{});
@@ -5357,6 +5773,105 @@ pub fn printJSON(
     return @intCast(usize, @max(printer.writer.written, 0));
 }
 
+pub fn print(
+    allocator: std.mem.Allocator,
+    platform: options.Platform,
+    opts: Options,
+    import_records: []const ImportRecord,
+    parts: []const js_ast.Part,
+    renamer: bun.renamer.Renamer,
+) PrintResult {
+    var buffer_writer = BufferWriter.init(allocator) catch |err| return .{ .err = err };
+    var buffer_printer = BufferPrinter.init(buffer_writer);
+
+    return printWithWriter(
+        *BufferPrinter,
+        &buffer_printer,
+        platform,
+        opts,
+        import_records,
+        parts,
+        renamer,
+    );
+}
+
+pub fn printWithWriter(
+    comptime Writer: type,
+    _writer: Writer,
+    platform: options.Platform,
+    opts: Options,
+    import_records: []const ImportRecord,
+    parts: []const js_ast.Part,
+    renamer: bun.renamer.Renamer,
+) PrintResult {
+    return switch (platform.isBun()) {
+        inline else => |is_bun_platform| printWithWriterAndPlatform(
+            Writer,
+            _writer,
+            is_bun_platform,
+            opts,
+            import_records,
+            parts,
+            renamer,
+        ),
+    };
+}
+
+/// The real one
+pub fn printWithWriterAndPlatform(
+    comptime Writer: type,
+    _writer: Writer,
+    comptime is_bun_platform: bool,
+    opts: Options,
+    import_records: []const ImportRecord,
+    parts: []const js_ast.Part,
+    renamer: bun.renamer.Renamer,
+) PrintResult {
+    const PrinterType = NewPrinter(
+        false,
+        Writer,
+        false,
+        is_bun_platform,
+        false,
+        false,
+        false,
+    );
+    var writer = _writer;
+    var printer = PrinterType.init(
+        writer,
+        import_records,
+        opts,
+        renamer,
+        undefined,
+    );
+    defer printer.temporary_bindings.deinit(bun.default_allocator);
+    defer _writer.* = printer.writer.*;
+    defer {
+        imported_module_ids_list = printer.imported_module_ids;
+    }
+
+    for (parts) |part| {
+        for (part.stmts) |stmt| {
+            printer.printSemicolonIfNeeded();
+            printer.printStmt(stmt) catch |err| {
+                return .{ .err = err };
+            };
+            if (printer.writer.getError()) {} else |err| {
+                return .{ .err = err };
+            }
+        }
+    }
+
+    printer.writer.done() catch |err|
+        return .{ .err = err };
+
+    return .{
+        .result = .{
+            .code = writer.ctx.getWritten(),
+        },
+    };
+}
+
 pub fn printCommonJS(
     comptime Writer: type,
     _writer: Writer,
@@ -5365,20 +5880,17 @@ pub fn printCommonJS(
     source: *const logger.Source,
     comptime ascii_only: bool,
     opts: Options,
-    comptime LinkerType: type,
-    linker: ?*LinkerType,
     comptime generate_source_map: bool,
 ) !usize {
-    const PrinterType = NewPrinter(ascii_only, Writer, LinkerType, true, false, false, false, generate_source_map);
+    const PrinterType = NewPrinter(ascii_only, Writer, true, false, false, false, generate_source_map);
     var writer = _writer;
-    var printer = try PrinterType.init(
+    var renamer = rename.NoOpRenamer.init(symbols, source);
+    var printer = PrinterType.init(
         writer,
-        &tree,
-        source,
-        symbols,
+        tree.import_records.slice(),
         opts,
-        linker,
-        opts.allocator,
+        renamer.toRenamer(),
+        getSourceMapBuilder(generate_source_map, false, opts, source, &tree),
     );
     defer {
         imported_module_ids_list = printer.imported_module_ids;
@@ -5393,7 +5905,7 @@ pub fn printCommonJS(
             }
         }
     }
-    for (tree.parts) |part| {
+    for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
             printer.printSemicolonIfNeeded();
             try printer.printStmt(stmt);
@@ -5417,11 +5929,23 @@ pub fn printCommonJS(
     return @intCast(usize, @max(printer.writer.written, 0));
 }
 
-pub const WriteResult = struct {
-    off: u32,
-    len: usize,
-    end_off: u32,
-};
+// pub fn printChunk(
+//     comptime Writer: type,
+//     _writer: Writer,
+//     tree: Ast,
+//     symbols: js_ast.Symbol.Map,
+//     opts: Options,
+// ) PrintResult {
+//     var writer = _writer;
+//     var printer =  PrinterType.init(
+//         writer,
+//         &tree,
+//         source,
+//         symbols,
+//         opts,
+//         undefined,
+//     );
+// }
 
 pub fn printCommonJSThreaded(
     comptime Writer: type,
@@ -5431,23 +5955,20 @@ pub fn printCommonJSThreaded(
     source: *const logger.Source,
     comptime ascii_only: bool,
     opts: Options,
-    comptime LinkerType: type,
-    linker: ?*LinkerType,
     lock: *Lock,
     comptime GetPosType: type,
     getter: GetPosType,
     comptime getPos: fn (ctx: GetPosType) anyerror!u64,
     end_off_ptr: *u32,
 ) !WriteResult {
-    const PrinterType = NewPrinter(ascii_only, Writer, LinkerType, true, ascii_only, true, false, false);
+    const PrinterType = NewPrinter(ascii_only, Writer, true, ascii_only, true, false, false);
     var writer = _writer;
-    var printer = try PrinterType.init(
+    var renamer = rename.NoOpRenamer.init(symbols, source);
+    var printer = PrinterType.init(
         writer,
-        &tree,
-        source,
-        symbols,
+        tree.import_records.slice(),
         opts,
-        linker,
+        renamer.toRenamer(),
         undefined,
     );
 
@@ -5464,7 +5985,7 @@ pub fn printCommonJSThreaded(
         }
     }
 
-    for (tree.parts) |part| {
+    for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
             printer.printSemicolonIfNeeded();
             try printer.printStmt(stmt);

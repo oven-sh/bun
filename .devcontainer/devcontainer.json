@@ -25,7 +25,8 @@
     "/home/ubuntu/vscode-zig.vsix",
     "vadimcn.vscode-lldb",
     "esbenp.prettier-vscode",
-    "xaver.clang-format"
+    "xaver.clang-format",
+    "bierner.comment-tagged-templates"
   ],
   "postCreateCommand": "cd /build/bun; bash /build/getting-started.sh; cat /build/README.md",
 

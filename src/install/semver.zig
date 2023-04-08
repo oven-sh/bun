@@ -96,7 +96,7 @@ pub const String = extern struct {
         lhs_buf: []const u8,
         rhs_buf: []const u8,
     ) std.math.Order {
-        return std.mem.order(u8, lhs.slice(lhs_buf), rhs.slice(rhs_buf));
+        return strings.order(lhs.slice(lhs_buf), rhs.slice(rhs_buf));
     }
 
     pub inline fn canInline(buf: []const u8) bool {

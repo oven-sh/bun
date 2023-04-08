@@ -8,6 +8,7 @@ const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
+const Formatter = std.fmt.Formatter;
 const string_immutable = @import("../string_immutable.zig");
 const ascii_vector_size = string_immutable.ascii_vector_size;
 const stringZ = bun.stringZ;
@@ -3933,15 +3934,6 @@ pub const Yarn = struct {
                         try advanceUntilAny(&cur, "\"", false);
                     } else switch (cur[0]) {
                         'A'...'Z', 'a'...'z' => try advanceUntilAnyNaive(&cur, NEWLINES, true),
-                        // Zig allows this, but the error does not print properly...?
-                        // Maybe comptime stack deallocation is messing this up...?
-                        // else => return @Type(.{
-                        //     .ErrorSet = &[_]std.builtin.Type.Error{
-                        //         .{ .name = "Unable to parse " ++ field },
-                        //     },
-                        // }).ErrorSet,
-
-                        // Do it the dumb way
                         else => return switch (@intToEnum(YarnFields, field.value)) {
                             .version => error.@"Unable to parse version",
                             .resolved => error.@"Unable to parse resolved",
@@ -4118,6 +4110,55 @@ pub const Yarn = struct {
         }
     }
 
+    fn needsQuote(name: string, comptime kind: enum { name, version }) !bool {
+        // We don't support escaped characters. Throw up our hands.
+        // https://github.com/yarnpkg/yarn/blob/158d96dce95313d9a00218302631cd263877d164/src/lockfile/stringify.js#L9
+        if (std.mem.indexOfAny(u8, name, "\t\r\n\x0B\x0C\\\"")) |_|
+            return error.@"Unable to print name with [\\t\\r\\n\\x0B\\x0C\\\"]";
+
+        return switch (name[0]) {
+            'A'...'Z', 'a'...'z' => return std.mem.indexOfAnyPos(u8, name, 1, ": ,[]") != null or
+                (kind == .name and
+                (strings.hasPrefixComptime(name, "true") or
+                strings.hasPrefixComptime(name, "false"))),
+
+            else => true,
+        };
+    }
+
+    /// A Writer that counts how many bytes has been written to it.
+    pub fn NeedsQuoteCheckingWriter(comptime WriterType: type) type {
+        return struct {
+            needs_quote: bool,
+            child_stream: WriterType,
+
+            pub const Error = WriterType.Error || @typeInfo(@typeInfo(@TypeOf(needsQuote)).Fn.return_type.?).ErrorUnion.error_set;
+            pub const Writer = std.io.Writer(*Self, Error, write);
+
+            const Self = @This();
+
+            pub fn write(self: *Self, bytes: []const u8) Error!usize {
+                const amt = try self.child_stream.write(bytes);
+                self.needs_quote = self.needs_quote or try needsQuote(bytes, .name);
+                return amt;
+            }
+
+            pub fn writer(self: *Self) Writer {
+                return .{ .context = self };
+            }
+        };
+    }
+
+    fn needsQuoteCheckingWriter(child_stream: anytype) NeedsQuoteCheckingWriter(@TypeOf(child_stream)) {
+        return .{ .needs_quote = false, .child_stream = child_stream };
+    }
+
+    fn fmtNeedsQuote(comptime fmt: []const u8, args: anytype) !bool {
+        var writer = needsQuoteCheckingWriter(std.io.null_writer);
+        try std.fmt.format(writer.writer(), fmt, args);
+        return writer.needs_quote;
+    }
+
     pub fn print(
         this: *Printer,
         comptime Writer: type,
@@ -4231,17 +4272,7 @@ pub const Yarn = struct {
                 try writer.writeAll("\n");
                 const dependency_versions = requested_versions.get(i).?;
 
-                // We don't support escaped characters. Throw up our hands.
-                // https://github.com/yarnpkg/yarn/blob/158d96dce95313d9a00218302631cd263877d164/src/lockfile/stringify.js#L9
-                if (std.mem.indexOfAny(u8, name, "\t\r\n\x0B\x0C\\\"")) |_|
-                    return error.@"Unable to print name with [\\t\\r\\n\\x0B\\x0C\\\"]";
-
-                const always_needs_quote = switch (name[0]) {
-                    'A'...'Z', 'a'...'z' => strings.hasPrefixComptime(name, "true") or
-                        strings.hasPrefixComptime(name, "false") or
-                        std.mem.indexOfAnyPos(u8, name, 1, ": ,[]") != null,
-                    else => true,
-                };
+                const always_needs_quote = try needsQuote(name, .name);
 
                 var prev_dependency_version: ?Dependency.Version = null;
                 var needs_comma = false;
@@ -4256,7 +4287,7 @@ pub const Yarn = struct {
                         needs_comma = false;
                     }
                     const version_name = dependency_version.literal.slice(string_buf);
-                    const needs_quote = always_needs_quote or std.mem.indexOfAny(u8, version_name, " |\t-/!") != null;
+                    const needs_quote = always_needs_quote or try needsQuote(version_name, .version);
 
                     if (needs_quote) {
                         try writer.writeByte('"');
@@ -4281,20 +4312,26 @@ pub const Yarn = struct {
             }
 
             {
-                try writer.writeAll("  version ");
-
-                // Version is always quoted
-                try std.fmt.format(writer, "\"{any}\"\n", .{version_formatter});
-
-                try writer.writeAll("  resolved ");
-
                 const url_formatter = resolution.fmtURL(&this.options, string_buf);
+                const YarnFields = enum { version, resolved };
+                inline for (@typeInfo(YarnFields).Enum.fields) |field| {
+                    const format = "{any}";
+                    const formatter = switch (@intToEnum(YarnFields, field.value)) {
+                        .version => version_formatter,
+                        .resolved => url_formatter,
+                    };
 
-                // Resolved URL is always quoted
-                try std.fmt.format(writer, "\"{any}\"\n", .{url_formatter});
+                    try writer.writeAll(" " ** 2 ++ field.name ++ " ");
+                    const needs_quote = try fmtNeedsQuote(format, .{formatter});
+                    if (needs_quote) try writer.writeByte('"');
+                    try std.fmt.format(writer, format, .{formatter});
+                    if (needs_quote) try writer.writeByte('"');
+                    try writer.writeByte('\n');
+                }
 
                 if (meta.integrity.tag != .unknown) {
-                    // Integrity is...never quoted?
+                    // Integrity is never quoted because it always starts with sha and contains only base64
+                    // followed by equal signs
                     try std.fmt.format(writer, "  integrity {any}\n", .{&meta.integrity});
                 }
 
@@ -4303,41 +4340,40 @@ pub const Yarn = struct {
                     var dependency_behavior_change_count: u8 = 0;
                     for (dependencies) |dep| {
                         if (dep.behavior != behavior) {
-                            behavior = dep.behavior;
-
-                            if (behavior.isOptional()) {
+                            if (dep.behavior.isOptional()) {
                                 try writer.writeAll("  optionalDependencies:\n");
                                 if (comptime Environment.allow_assert) dependency_behavior_change_count += 1;
-                            } else if (behavior.isNormal()) {
+                            } else if (dep.behavior.isNormal()) {
                                 try writer.writeAll("  dependencies:\n");
                                 if (comptime Environment.allow_assert) dependency_behavior_change_count += 1;
-                            } else if (behavior.isDev()) {
+                            } else if (dep.behavior.isDev()) {
                                 try writer.writeAll("  devDependencies:\n");
                                 if (comptime Environment.allow_assert) dependency_behavior_change_count += 1;
-                            } else if (behavior.isPeer()) {
+                            } else if (dep.behavior.isPeer()) {
                                 try writer.writeAll("  peerDependencies:\n");
                                 if (comptime Environment.allow_assert) dependency_behavior_change_count += 1;
                             } else {
                                 continue;
                             }
+                            behavior = dep.behavior;
 
                             // assert its sorted
-                            if (comptime Environment.allow_assert) std.debug.assert(dependency_behavior_change_count < 3);
+                            if (comptime Environment.allow_assert) std.debug.assert(dependency_behavior_change_count < 4);
                         }
 
-                        try writer.writeAll("    ");
-                        const dependency_name = dep.name.slice(string_buf);
-                        const needs_quote = dependency_name[0] == '@';
-                        if (needs_quote) {
-                            try writer.writeByte('"');
+                        try writer.writeAll(" " ** 4);
+
+                        inline for (
+                            [_]string{ dep.name.slice(string_buf), dep.version.literal.slice(string_buf) },
+                            [_]@typeInfo(@TypeOf(needsQuote)).Fn.params[1].type.?{ .name, .version },
+                            [_]u8{ ' ', '\n' },
+                        ) |bytes, kind, delim| {
+                            const needs_quote = try needsQuote(bytes, kind);
+                            if (needs_quote) try writer.writeByte('"');
+                            try writer.writeAll(bytes);
+                            if (needs_quote) try writer.writeByte('"');
+                            try writer.writeByte(delim);
                         }
-                        try writer.writeAll(dependency_name);
-                        if (needs_quote) {
-                            try writer.writeByte('"');
-                        }
-                        try writer.writeAll(" \"");
-                        try writer.writeAll(dep.version.literal.slice(string_buf));
-                        try writer.writeAll("\"\n");
                     }
                 }
             }

@@ -255,14 +255,33 @@ $ bun-debug
 
 ## Troubleshooting
 
+### libarchive
+
 If you see an error when compiling `libarchive`, run this:
 
 ```bash
 $ brew install pkg-config
 ```
 
+### missing files on `zig build obj`
+
 If you see an error about missing files on `zig build obj`, make sure you built the headers.
 
 ```bash
 $ make headers
+```
+
+### cmakeconfig.h not found
+
+If you see an error about `cmakeconfig.h` not being found, this is because the precompiled WebKit did not install properly.
+
+```bash
+$ bun install
+```
+
+Check to see the command installed webkit, and you can manully look for `node_modules/bun-webkit-{platform}-{arch}`:
+
+```bash
+# this should reveal two directories. if not, something went wrong
+$ echo node_modules/bun-webkit*
 ```

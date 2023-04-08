@@ -91,7 +91,7 @@ Then to build Bun:
 $ make dev
 ```
 
-The binary will be located at `packages/debug-bun-{platform}-{arch}/bun/bun-debug`. It is recommended to add this to your `$PATH`.
+The binary will be located at `packages/debug-bun-{platform}-{arch}/bun-debug`. It is recommended to add this to your `$PATH`.
 
 If you're building on a macOS device, you'll need to have a valid Developer Certificate, or else the code signing step will fail. To check if you have one, open the `Keychain Access` app, go to the `login` profile and search for `Apple Development`. You should have at least one certificate with a name like `Apple Development: user@example.com (WDYABC123)`. If you don't have one, follow [this guide](https://ioscodesigning.com/generating-code-signing-files/#generate-a-code-signing-certificate-using-xcode) to get one. You can still work with the generated binary locally at `packages/debug-bun-*/bun-debug` even if the code signing fails.
 
@@ -164,8 +164,10 @@ To build a release build of Bun, run:
 
 ```bash
 make release-bindings -j12
-
+make release
 ```
+
+The binary will be located at `packages/bun-{platform}-{arch}/bun`.
 
 ## Docker Devcontainer
 

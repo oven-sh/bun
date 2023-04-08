@@ -169,6 +169,24 @@ make release
 
 The binary will be located at `packages/bun-{platform}-{arch}/bun`.
 
+## Valgrind
+
+On Linux, valgrind can help find memory issues.
+
+Keep in mind:
+
+- JavaScriptCore doesn't support valgrind. It will report spurious errors.
+- Valgrind is slow
+- Mimalloc will sometimes cause spurious errors when debug build is enabled
+
+You'll need a very recent version of Valgrind due to DWARF 5 debug symbols. You may need to manually compile Valgrind instead of using it from your Linux package manager.
+
+`--fair-sched=try` is necessary if running multithreaded code in Bun (such as the bundler). Otherwise it will hang.
+
+```bash
+valgrind --fair-sched=try --track-origins=yes bun-debug <args>
+```
+
 ## Docker Devcontainer
 
 Bun has a [Dev Container](https://containers.dev), which can be used to quickly get a development environment. We do not recommend using this, as the setup instructions above are much more complete.

@@ -4287,11 +4287,9 @@ pub const Yarn = struct {
                         needs_comma = false;
                     }
                     const version_name = dependency_version.literal.slice(string_buf);
-                    const needs_quote = always_needs_quote or try needsQuote(version_name, .version);
+                    const needs_quote = version_name.len == 0 or always_needs_quote or try needsQuote(version_name, .version);
 
-                    if (needs_quote) {
-                        try writer.writeByte('"');
-                    }
+                    if (needs_quote) try writer.writeByte('"');
 
                     try writer.writeAll(name);
                     try writer.writeByte('@');
@@ -4301,9 +4299,7 @@ pub const Yarn = struct {
                         try writer.writeAll(version_name);
                     }
 
-                    if (needs_quote) {
-                        try writer.writeByte('"');
-                    }
+                    if (needs_quote) try writer.writeByte('"');
                     prev_dependency_version = dependency_version.*;
                     needs_comma = true;
                 }
@@ -4353,7 +4349,8 @@ pub const Yarn = struct {
                             behavior = dep.behavior;
 
                             // assert its sorted
-                            if (comptime Environment.allow_assert) std.debug.assert(dependency_behavior_change_count < 2);
+                            if (comptime Environment.allow_assert)
+                                std.debug.assert(dependency_behavior_change_count <= 2);
                         }
 
                         try writer.writeAll(" " ** 4);

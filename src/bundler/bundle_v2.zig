@@ -7513,18 +7513,15 @@ pub const Chunk = struct {
         tie_breaker: u32 = 0,
 
         pub fn lessThan(_: @This(), a: Order, b: Order) bool {
-            if (a.distance < b.distance) return true;
-
-            return a.tie_breaker < b.tie_breaker;
+            return (a.distance < b.distance) or
+                (a.distance == b.distance and a.tie_breaker < b.tie_breaker);
         }
 
         /// Sort so files closest to an entry point come first. If two files are
         /// equidistant to an entry point, then break the tie by sorting on the
         /// stable source index derived from the DFS over all entry points.
         pub fn sort(a: []Order) void {
-            // https://github.com/ziglang/zig/issues/15204
-            // Possibly switch to std.sort.sort when this is fixed
-            std.sort.insertionSort(Order, a, Order{}, lessThan);
+            std.sort.sort(Order, a, Order{}, lessThan);
         }
     };
 

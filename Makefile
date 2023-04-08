@@ -487,6 +487,7 @@ PLATFORM_LINKER_FLAGS = $(BUN_CFLAGS) \
 		-Wl,--compress-debug-sections,zlib \
 		-Bstatic \
 		-latomic \
+		-Bdynamic \
 		${STATIC_MUSL_FLAG}  \
 		-Wl,-Bsymbolic-functions \
 		-fno-semantic-interposition \
@@ -546,6 +547,7 @@ PYTHON=$(shell which python 2>/dev/null || which python3 2>/dev/null || which py
 
 .PHONY: builtins
 builtins: ## to generate builtins
+	@if [ -z "$(WEBKIT_DIR)" ] || [ ! -d "$(WEBKIT_DIR)/Source" ]; then echo "WebKit is not cloned. Please run make init-submodules"; exit 1; fi
 	rm -f src/bun.js/bindings/*Builtin*.cpp src/bun.js/bindings/*Builtin*.h src/bun.js/bindings/*Builtin*.cpp
 	rm -rf src/bun.js/builtins/cpp
 	mkdir -p src/bun.js/builtins/cpp

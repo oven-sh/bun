@@ -4340,17 +4340,12 @@ pub const Yarn = struct {
                     var dependency_behavior_change_count: u8 = 0;
                     for (dependencies) |dep| {
                         if (dep.behavior != behavior) {
+                            // Emit ONLY dependencies + optionalDependencies
                             if (dep.behavior.isOptional()) {
                                 try writer.writeAll("  optionalDependencies:\n");
                                 if (comptime Environment.allow_assert) dependency_behavior_change_count += 1;
                             } else if (dep.behavior.isNormal()) {
                                 try writer.writeAll("  dependencies:\n");
-                                if (comptime Environment.allow_assert) dependency_behavior_change_count += 1;
-                            } else if (dep.behavior.isDev()) {
-                                try writer.writeAll("  devDependencies:\n");
-                                if (comptime Environment.allow_assert) dependency_behavior_change_count += 1;
-                            } else if (dep.behavior.isPeer()) {
-                                try writer.writeAll("  peerDependencies:\n");
                                 if (comptime Environment.allow_assert) dependency_behavior_change_count += 1;
                             } else {
                                 continue;
@@ -4358,7 +4353,7 @@ pub const Yarn = struct {
                             behavior = dep.behavior;
 
                             // assert its sorted
-                            if (comptime Environment.allow_assert) std.debug.assert(dependency_behavior_change_count < 4);
+                            if (comptime Environment.allow_assert) std.debug.assert(dependency_behavior_change_count < 2);
                         }
 
                         try writer.writeAll(" " ** 4);

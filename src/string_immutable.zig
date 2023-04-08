@@ -121,6 +121,11 @@ pub inline fn indexAny(in: anytype, target: string) ?usize {
     return null;
 }
 
+pub inline fn containsAnyComptime(target: string, comptime chars: string) bool {
+    for (target) |chr1| inline for (chars) |chr2| if (chr1 == chr2) return true;
+    return false;
+}
+
 pub inline fn indexAnyComptime(target: string, comptime chars: string) ?usize {
     for (target, 0..) |parent, i| {
         inline for (chars) |char| {
@@ -178,6 +183,33 @@ pub inline fn indexOf(self: string, str: string) ?usize {
     const start = bun.C.memmem(self_ptr, self_len, str_ptr, str_len) orelse return null;
 
     return @ptrToInt(start) - @ptrToInt(self_ptr);
+}
+
+/// Writer that checks each string of bytes as they are written to it.
+pub fn CheckingWriter(comptime WriterType: type, comptime Checker: type) type {
+    return struct {
+        checker: Checker = .{},
+        child_stream: WriterType,
+
+        pub const Error = switch (@typeInfo(@typeInfo(@TypeOf(Checker.check)).Fn.return_type.?)) {
+            .ErrorUnion => |e| WriterType.Error || e.error_set,
+            else => WriterType.Error,
+        };
+
+        const Self = @This();
+        pub const Writer = std.io.Writer(*Self, Error, write);
+
+        pub fn write(self: *Self, name: string) Error!usize {
+            const amt = try self.child_stream.write(name);
+            const potential_error = self.checker.check(name);
+            if (@typeInfo(@TypeOf(potential_error)) == .ErrorUnion) try potential_error;
+            return amt;
+        }
+
+        pub fn writer(self: *Self) Writer {
+            return .{ .context = self };
+        }
+    };
 }
 
 pub fn split(self: string, delimiter: string) SplitIterator {

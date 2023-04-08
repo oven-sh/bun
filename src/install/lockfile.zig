@@ -11,6 +11,7 @@ const MutableString = bun.MutableString;
 const Formatter = std.fmt.Formatter;
 const string_immutable = @import("../string_immutable.zig");
 const ascii_vector_size = string_immutable.ascii_vector_size;
+const CheckingWriter = string_immutable.CheckingWriter;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
@@ -3671,7 +3672,7 @@ pub const Yarn = struct {
     const ADVANCE_WIDTH = switch (ADVANCE_IMPL) {
         .naive => 1,
         .SIMD => ascii_vector_size,
-        // Assumes that usize is the biggest native int size, which may be true on a machine without SIMD
+        // Assumes usize is the biggest native int size, which is probably true on a machine without SIMD
         .SWAR => @typeInfo(usize).Int.bits / 8,
     };
 
@@ -3705,15 +3706,15 @@ pub const Yarn = struct {
     }
 
     /// Force the naive implementation. Use for branches that should be extremely rare or impossible.
-    pub inline fn advanceUntilAnyNaive(cur: *[]const u8, comptime chars_: []const u8, comptime advance_over_current: bool) !void {
+    pub inline fn advanceUntilAnyNaive(cur: *string, comptime chars_: string, comptime advance_over_current: bool) !void {
         return advanceUntilAnyInternal(cur, chars_, advance_over_current, .naive);
     }
 
-    pub fn advanceUntilAny(cur: *[]const u8, comptime chars_: []const u8, comptime advance_over_current: bool) !void {
+    pub fn advanceUntilAny(cur: *string, comptime chars_: string, comptime advance_over_current: bool) !void {
         return advanceUntilAnyInternal(cur, chars_, advance_over_current, ADVANCE_IMPL);
     }
 
-    inline fn advanceUntilAnyInternal(cur: *[]const u8, comptime chars_: []const u8, comptime advance_over_current: bool, impl: @TypeOf(ADVANCE_IMPL)) !void {
+    inline fn advanceUntilAnyInternal(cur: *string, comptime chars_: string, comptime advance_over_current: bool, impl: @TypeOf(ADVANCE_IMPL)) !void {
         comptime std.debug.assert(chars_.len > 0);
         const check_for_backslash = comptime std.mem.indexOfAny(u8, chars_, "\"") != null;
         const chars = comptime if (check_for_backslash) chars_ ++ "\\" else chars_;
@@ -3727,6 +3728,7 @@ pub const Yarn = struct {
 
         if (impl != .naive and advance_over_current) cur.* = cur.*[1..];
         const width = ADVANCE_WIDTH;
+        const width_int = std.meta.Int(.unsigned, width * 8);
         comptime std.debug.assert(over_allocated_space >= width);
 
         switch (impl) {
@@ -3742,18 +3744,17 @@ pub const Yarn = struct {
             },
 
             .SWAR => while (true) {
-                const word = @bitCast(u64, cur.*[0..width].*);
-
-                // Algorithm from here: http://0x80.pl/notesen/2023-03-06-swar-find-any.html
-                comptime var one_in_each_byte: std.meta.Int(.unsigned, width * 8) = 0;
+                comptime var one_in_each_byte: width_int = 0;
                 comptime for (0..width) |i| {
                     one_in_each_byte |= 1 << (i * 8);
                 };
 
-                const mask: usize = one_in_each_byte * 0x7F;
-                const mask2: usize = one_in_each_byte * 0x80;
-                const lo7bits: usize = word & mask;
-                var t0: usize = std.math.maxInt(usize);
+                // Algorithm from here: http://0x80.pl/notesen/2023-03-06-swar-find-any.html
+                const word = std.mem.readIntSliceLittle(width_int, cur.*);
+                const mask = one_in_each_byte * 0x7F;
+                const mask2 = one_in_each_byte * 0x80;
+                const lo7bits = word & mask;
+                var t0: width_int = std.math.maxInt(width_int);
 
                 inline for (chars) |chr| {
                     comptime if (chr >= 0x80)
@@ -3781,7 +3782,7 @@ pub const Yarn = struct {
         }
     }
 
-    pub inline fn advanceOver(cur: *[]u8, comptime delim: []const u8) bool {
+    pub inline fn advanceOver(cur: *[]u8, comptime delim: string) bool {
         comptime if (!std.mem.eql(u8, delim, YARN_LOCK_HEADER_0) and
             !std.mem.eql(u8, delim, YARN_LOCK_HEADER_1) and
             !std.mem.eql(u8, delim, YARN_LOCK_HEADER_META_HASH) and
@@ -3793,7 +3794,7 @@ pub const Yarn = struct {
         return has_prefix;
     }
 
-    pub inline fn advanceOverSkipInsignificant(cur: *[]u8, comptime delim: []const u8) bool {
+    pub inline fn advanceOverSkipInsignificant(cur: *[]u8, comptime delim: string) bool {
         while (ALLOW_INLINE_COMMENTS and cur.*[0] == ' ') cur.* = cur.*[1..];
         if (ALLOW_INLINE_COMMENTS and cur.*[0] == '#') advanceUntilAny(cur, "\n", true);
         if (ALLOW_CARRIAGE_RETURNS and cur.*[0] == '\r') cur.* = cur.*[1..];
@@ -4110,53 +4111,61 @@ pub const Yarn = struct {
         }
     }
 
-    fn needsQuote(name: string, comptime kind: enum { name, version }) !bool {
-        // We don't support escaped characters. Throw up our hands.
-        // https://github.com/yarnpkg/yarn/blob/158d96dce95313d9a00218302631cd263877d164/src/lockfile/stringify.js#L9
-        if (std.mem.indexOfAny(u8, name, "\t\r\n\x0B\x0C\\\"")) |_|
-            return error.@"Unable to print name with [\\t\\r\\n\\x0B\\x0C\\\"]";
+    const IncrementalShouldWrapInQuotesChecker = struct {
+        const Self = @This();
+        // Used to incrementally match "true" or "false", character by character.
+        const FSM = std.mem.readIntLittle(u64, &[8]u8{ 0, 'l', 'u', 'e', 's', 'e', 0, 0 });
+        // FSM['t'] -> 'r', FSM['r'] -> 'u', FSM['u'] -> 'e', FSM['e'] -> 'e'
+        // FSM['f'] -> 'a', FSM['a'] -> 'l', FSM['l'] -> 's', FSM['s'] -> 'e', FSM['e'] -> 'e'
 
-        return switch (name[0]) {
-            'A'...'Z', 'a'...'z' => return std.mem.indexOfAnyPos(u8, name, 1, ": ,[]") != null or
-                (kind == .name and
-                (strings.hasPrefixComptime(name, "true") or
-                strings.hasPrefixComptime(name, "false"))),
+        // if we change this to 0, we are done.
+        match_char: u8 = 't' | 'f',
+        needs_quote: bool = false,
 
-            else => true,
-        };
+        pub fn check(self: *Self, name: string) !void {
+            for (name) |chr| switch (chr) {
+                // Characters that yarn allows in strings that require post-processing are verboten.
+                // Let's see if anyone complains in favor of '\\'
+                // https://github.com/yarnpkg/yarn/blob/158d96dce95313d9a00218302631cd263877d164/src/lockfile/stringify.js#L13
+                0...31, '\\', '"' => return error.@"Unable to print characters that must be escaped",
+
+                else => if (!self.needs_quote) switch (chr) {
+                    ':', ' ', ',', '[', ']' => self.needs_quote = true,
+                    else => if (self.match_char != 0) {
+                        if (self.match_char == 't' | 'f') {
+                            switch (chr) {
+                                'A'...'Z', 'a'...'z' => self.match_char = switch (chr) {
+                                    't' => 'r',
+                                    'f' => 'a',
+                                    else => 0,
+                                },
+                                else => self.needs_quote = true,
+                            }
+                        } else {
+                            const next_state = @truncate(u8, FSM >> @intCast(u6, (chr % 8) * 8));
+                            var next_expected_char: u8 = 0;
+                            if (self.match_char == chr) next_expected_char = next_state;
+                            self.match_char = next_expected_char;
+                            self.needs_quote = chr == next_expected_char;
+                        }
+                    },
+                },
+            };
+        }
+    };
+
+    fn needsQuote(name: string) !bool {
+        var checker: IncrementalShouldWrapInQuotesChecker = .{};
+        try checker.check(name);
+        return checker.needs_quote;
     }
 
-    /// A Writer that counts how many bytes has been written to it.
-    pub fn NeedsQuoteCheckingWriter(comptime WriterType: type) type {
-        return struct {
-            needs_quote: bool,
-            child_stream: WriterType,
-
-            pub const Error = WriterType.Error || @typeInfo(@typeInfo(@TypeOf(needsQuote)).Fn.return_type.?).ErrorUnion.error_set;
-            pub const Writer = std.io.Writer(*Self, Error, write);
-
-            const Self = @This();
-
-            pub fn write(self: *Self, bytes: []const u8) Error!usize {
-                const amt = try self.child_stream.write(bytes);
-                self.needs_quote = self.needs_quote or try needsQuote(bytes, .name);
-                return amt;
-            }
-
-            pub fn writer(self: *Self) Writer {
-                return .{ .context = self };
-            }
-        };
-    }
-
-    fn needsQuoteCheckingWriter(child_stream: anytype) NeedsQuoteCheckingWriter(@TypeOf(child_stream)) {
-        return .{ .needs_quote = false, .child_stream = child_stream };
-    }
-
-    fn fmtNeedsQuote(comptime fmt: []const u8, args: anytype) !bool {
-        var writer = needsQuoteCheckingWriter(std.io.null_writer);
+    fn fmtNeedsQuote(comptime fmt: string, args: anytype) !bool {
+        const child_stream = std.io.null_writer;
+        const WriterType = CheckingWriter(@TypeOf(child_stream), IncrementalShouldWrapInQuotesChecker);
+        var writer: WriterType = .{ .child_stream = child_stream };
         try std.fmt.format(writer.writer(), fmt, args);
-        return writer.needs_quote;
+        return writer.checker.needs_quote;
     }
 
     pub fn print(
@@ -4272,7 +4281,7 @@ pub const Yarn = struct {
                 try writer.writeAll("\n");
                 const dependency_versions = requested_versions.get(i).?;
 
-                const always_needs_quote = try needsQuote(name, .name);
+                const always_needs_quote = try needsQuote(name);
 
                 var prev_dependency_version: ?Dependency.Version = null;
                 var needs_comma = false;
@@ -4287,7 +4296,7 @@ pub const Yarn = struct {
                         needs_comma = false;
                     }
                     const version_name = dependency_version.literal.slice(string_buf);
-                    const needs_quote = version_name.len == 0 or always_needs_quote or try needsQuote(version_name, .version);
+                    const needs_quote = version_name.len == 0 or always_needs_quote or try needsQuote(version_name);
 
                     if (needs_quote) try writer.writeByte('"');
 
@@ -4357,10 +4366,9 @@ pub const Yarn = struct {
 
                         inline for (
                             [_]string{ dep.name.slice(string_buf), dep.version.literal.slice(string_buf) },
-                            [_]@typeInfo(@TypeOf(needsQuote)).Fn.params[1].type.?{ .name, .version },
                             [_]u8{ ' ', '\n' },
-                        ) |bytes, kind, delim| {
-                            const needs_quote = try needsQuote(bytes, kind);
+                        ) |bytes, delim| {
+                            const needs_quote = try needsQuote(bytes);
                             if (needs_quote) try writer.writeByte('"');
                             try writer.writeAll(bytes);
                             if (needs_quote) try writer.writeByte('"');

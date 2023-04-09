@@ -15,7 +15,7 @@ $ brew install llvm@15
 ```bash#Ubuntu/Debian
 # On Ubuntu 22.04 and newer, LLVM 15 is available in the default repositories
 $ sudo apt install llvm-15 lld-15
-# On older versions, 
+# On older versions,
 $ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 15 all
 ```
 
@@ -114,7 +114,7 @@ That inlines the JavaScript code into C++ headers using the same builtins genera
 
 {% callout %}
 Make sure you have `ccache` installed, otherwise regeneration will take much longer than it should.
-{% endcallout %}
+{% /callout %}
 
 ## Code generation scripts
 
@@ -255,14 +255,33 @@ $ bun-debug
 
 ## Troubleshooting
 
+### libarchive
+
 If you see an error when compiling `libarchive`, run this:
 
 ```bash
 $ brew install pkg-config
 ```
 
+### missing files on `zig build obj`
+
 If you see an error about missing files on `zig build obj`, make sure you built the headers.
 
 ```bash
 $ make headers
+```
+
+### cmakeconfig.h not found
+
+If you see an error about `cmakeconfig.h` not being found, this is because the precompiled WebKit did not install properly.
+
+```bash
+$ bun install
+```
+
+Check to see the command installed webkit, and you can manully look for `node_modules/bun-webkit-{platform}-{arch}`:
+
+```bash
+# this should reveal two directories. if not, something went wrong
+$ echo node_modules/bun-webkit*
 ```

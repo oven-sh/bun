@@ -1037,6 +1037,23 @@ fn NewLexer_(
                         try lexer.next();
                     }
                 },
+
+                .t_greater_than_equals => {
+                    lexer.token = .t_equals;
+                    lexer.start += 1;
+                    try lexer.maybeExpandEquals();
+                },
+
+                .t_greater_than_greater_than_equals => {
+                    lexer.token = .t_greater_than_equals;
+                    lexer.start += 1;
+                },
+
+                .t_greater_than_greater_than_greater_than_equals => {
+                    lexer.token = .t_greater_than_greater_than_equals;
+                    lexer.start += 1;
+                },
+
                 .t_greater_than_greater_than => {
                     lexer.token = .t_greater_than;
                     lexer.start += 1;
@@ -1047,20 +1064,6 @@ fn NewLexer_(
                     lexer.start += 1;
                 },
 
-                .t_greater_than_equals => {
-                    lexer.token = .t_equals;
-                    lexer.start += 1;
-                    try lexer.maybeExpandEquals();
-                },
-
-                .t_greater_than_greater_than_equals => {
-                    lexer.token = .t_greater_than_greater_than;
-                    lexer.start += 1;
-                },
-                .t_greater_than_greater_than_greater_than_equals => {
-                    lexer.token = .t_greater_than_greater_than_equals;
-                    lexer.start += 1;
-                },
                 else => {
                     try lexer.expected(.t_greater_than);
                 },
@@ -1772,15 +1775,21 @@ fn NewLexer_(
         }
 
         pub fn expectedString(self: *LexerType, text: string) !void {
-            const found = finder: {
-                if (self.source.contents.len != self.start) {
-                    break :finder self.raw();
-                } else {
-                    break :finder "end of file";
-                }
-            };
-
-            try self.addRangeError(self.range(), "Expected {s} but found \"{s}\"", .{ text, found }, true);
+            if (self.source.contents.len != self.start) {
+                try self.addRangeError(
+                    self.range(),
+                    "Expected {s} but found \"{s}\"",
+                    .{ text, self.raw() },
+                    true,
+                );
+            } else {
+                try self.addRangeError(
+                    self.range(),
+                    "Expected {s} but found end of file",
+                    .{text},
+                    true,
+                );
+            }
         }
 
         fn scanCommentText(lexer: *LexerType) void {

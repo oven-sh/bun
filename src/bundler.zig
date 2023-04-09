@@ -1186,22 +1186,24 @@ pub const Bundler = struct {
                 },
                 enable_source_map,
             ),
-            .esm_ascii => try js_printer.printAst(
-                Writer,
-                writer,
-                ast,
-                js_ast.Symbol.Map.initList(symbols),
-                source,
-                true,
-                js_printer.Options{
-                    .externals = ast.externals,
-                    .runtime_imports = ast.runtime_imports,
-                    .require_ref = ast.require_ref,
-                    .css_import_behavior = bundler.options.cssImportBehavior(),
-                    .source_map_handler = source_map_context,
-                },
-                enable_source_map,
-            ),
+            .esm_ascii => switch (bundler.options.platform.isBun()) {
+                inline else => |is_bun| try js_printer.printAst(
+                    Writer,
+                    writer,
+                    ast,
+                    js_ast.Symbol.Map.initList(symbols),
+                    source,
+                    is_bun,
+                    js_printer.Options{
+                        .externals = ast.externals,
+                        .runtime_imports = ast.runtime_imports,
+                        .require_ref = ast.require_ref,
+                        .css_import_behavior = bundler.options.cssImportBehavior(),
+                        .source_map_handler = source_map_context,
+                    },
+                    enable_source_map,
+                ),
+            },
             .cjs_ascii => try js_printer.printCommonJS(
                 Writer,
                 writer,
@@ -1380,7 +1382,7 @@ pub const Bundler = struct {
                 opts.transform_require_to_import = bundler.options.allow_runtime and !bundler.options.platform.isBun();
                 opts.features.allow_runtime = bundler.options.allow_runtime;
                 opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
-                opts.features.should_fold_numeric_constants = platform.isBun();
+                opts.features.should_fold_typescript_constant_expressions = loader.isTypeScript() or platform.isBun();
                 opts.features.dynamic_require = platform.isBun();
 
                 opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;

@@ -12059,7 +12059,7 @@ fn NewParser_(
                                     .optional_chain = optional_start,
                                 }, left.loc);
                             },
-                            .t_less_than => {
+                            .t_less_than, .t_less_than_less_than => {
                                 // "a?.<T>()"
                                 if (comptime !is_typescript_enabled) {
                                     try p.lexer.expected(.t_identifier);
@@ -12440,6 +12440,14 @@ fn NewParser_(
                         left = p.newExpr(E.Binary{ .op = .bin_ge, .left = left, .right = try p.parseExpr(.compare) }, left.loc);
                     },
                     .t_less_than_less_than => {
+                        // TypeScript allows type arguments to be specified with angle brackets
+                        // inside an expression. Unlike in other languages, this unfortunately
+                        // appears to require backtracking to parse.
+                        if (is_typescript_enabled and p.trySkipTypeScriptTypeArgumentsWithBacktracking()) {
+                            optional_chain = old_optional_chain;
+                            continue;
+                        }
+
                         if (level.gte(.shift)) {
                             return left;
                         }

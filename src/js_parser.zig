@@ -412,8 +412,8 @@ const JSXTag = struct {
 pub const TypeScript = struct {
     // This function is taken from the official TypeScript compiler source code:
     // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
-    pub fn canFollowTypeArgumentsInExpression(token: js_lexer.T, p: anytype) bool {
-        return switch (token) {
+    pub fn canFollowTypeArgumentsInExpression(p: anytype) bool {
+        return switch (p.lexer.token) {
             // These are the only tokens can legally follow a type argument list. So we
             // definitely want to treat them as type arg lists.
             .t_open_paren, // foo<x>(
@@ -428,9 +428,9 @@ pub const TypeScript = struct {
             .t_greater_than,
             .t_plus,
             .t_minus,
-            // TypeScript always sees "TGreaterThan" instead of these tokens since
+            // TypeScript always sees "t_greater_than" instead of these tokens since
             // their scanner works a little differently than our lexer. So since
-            // "TGreaterThan" is forbidden above, we also forbid these too.
+            // "t_greater_than" is forbidden above, we also forbid these too.
             .t_greater_than_equals,
             .t_greater_than_greater_than,
             .t_greater_than_greater_than_equals,
@@ -439,10 +439,152 @@ pub const TypeScript = struct {
             .t_end_of_file,
             => false,
 
-            // TODO: finish these
-            else => p.lexer.has_newline_before or isBinaryOperatorForTypeScript() or isStartOfExpressionForTypeScript(),
+            // We favor the type argument list interpretation when it is immediately followed by
+            // a line break, a binary operator, or something that can't start an expression.
+            else => p.lexer.has_newline_before or isBinaryOperator(p) or !isStartOfExpression(p),
         };
     }
+
+    // This function is taken from the official TypeScript compiler source code:
+    // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
+    fn isBinaryOperator(p: anytype) bool {
+        return switch (p.lexer.token) {
+            .t_in => p.allow_in,
+            .t_question_question,
+            .t_bar_bar,
+            .t_ampersand_ampersand,
+            .t_bar,
+            .t_caret,
+            .t_ampersand,
+            .t_equals_equals,
+            .t_exclamation_equals,
+            .t_equals_equals_equals,
+            .t_exclamation_equals_equals,
+            .t_less_than,
+            .t_greater_than,
+            .t_less_than_equals,
+            .t_greater_than_equals,
+            .t_instanceof,
+            .t_less_than_less_than,
+            .t_greater_than_greater_than,
+            .t_greater_than_greater_than_greater_than,
+            .t_plus,
+            .t_minus,
+            .t_asterisk,
+            .t_slash,
+            .t_percent,
+            .t_asterisk_asterisk,
+            => true,
+            .t_identifier => p.lexer.isContextualKeyword("as") or p.lexer.isContextualKeyword("satisfies"),
+            else => false,
+        };
+    }
+
+    // This function is taken from the official TypeScript compiler source code:
+    // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
+    fn isStartOfLeftHandSideExpression(p: anytype) bool {
+        return switch (p.lexer.token) {
+            .t_this,
+            .t_super,
+            .t_null,
+            .t_true,
+            .t_false,
+            .t_numeric_literal,
+            .t_big_integer_literal,
+            .t_string_literal,
+            .t_no_substitution_template_literal,
+            .t_template_head,
+            .t_open_paren,
+            .t_open_bracket,
+            .t_open_brace,
+            .t_function,
+            .t_class,
+            .t_new,
+            .t_slash,
+            .t_slash_equals,
+            .t_identifier,
+            => true,
+            .t_import => lookAheadNextTokenIsOpenParenOrLessThanOrDot(p),
+            else => isIdentifier(p),
+        };
+    }
+
+    fn lookAheadNextTokenIsOpenParenOrLessThanOrDot(p: anytype) bool {
+        var old_lexer = std.mem.toBytes(p.lexer);
+        const old_log_disabled = p.lexer.is_log_disabled;
+        p.lexer.is_log_disabled = true;
+        defer p.lexer.is_log_disabled = old_log_disabled;
+        defer p.lexer = std.mem.bytesToValue(@TypeOf(p.lexer), &old_lexer);
+
+        return switch (p.lexer.token) {
+            .t_open_paren, .t_less_than, .t_dot => true,
+            else => false,
+        };
+    }
+
+    // This function is taken from the official TypeScript compiler source code:
+    // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
+    fn isIdentifier(p: anytype) bool {
+        if (p.lexer.token == .t_identifier) {
+            // If we have a 'yield' keyword, and we're in the [yield] context, then 'yield' is
+            // considered a keyword and is not an identifier.
+            if (p.fn_or_arrow_data_parse.allow_yield != .allow_ident and strings.eqlComptime(p.lexer.identifier, "yield")) {
+                return false;
+            }
+
+            // If we have a 'yield' keyword, and we're in the [yield] context, then 'yield' is
+            // considered a keyword and is not an identifier.
+            if (p.fn_or_arrow_data_parse.allow_await != .allow_ident and strings.eqlComptime(p.lexer.identifier, "await")) {
+                return false;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    fn isStartOfExpression(p: anytype) bool {
+        if (isStartOfLeftHandSideExpression(p))
+            return true;
+
+        switch (p.lexer.token) {
+            .t_plus,
+            .t_minus,
+            .t_tilde,
+            .t_exclamation,
+            .t_delete,
+            .t_typeof,
+            .t_void,
+            .t_plus_plus,
+            .t_minus_minus,
+            .t_less_than,
+            .t_private_identifier,
+            .t_at,
+            => return true,
+            else => {
+                if (p.lexer.token == .t_identifier and (strings.eqlComptime(p.lexer.identifier, "await") or strings.eqlComptime(p.lexer.identifier, "yield"))) {
+                    // Yield/await always starts an expression.  Either it is an identifier (in which case
+                    // it is definitely an expression).  Or it's a keyword (either because we're in
+                    // a generator or async function, or in strict mode (or both)) and it started a yield or await expression.
+                    return true;
+                }
+
+                // Error tolerance.  If we see the start of some binary operator, we consider
+                // that the start of an expression.  That way we'll parse out a missing identifier,
+                // give a good message about an identifier being missing, and then consume the
+                // rest of the binary expression.
+                if (isBinaryOperator(p)) {
+                    return true;
+                }
+
+                return isIdentifier(p);
+            },
+        }
+
+        unreachable;
+    }
+
     pub const Identifier = struct {
         pub const StmtIdentifier = enum {
             s_type,
@@ -7058,7 +7200,6 @@ fn NewParser_(
                             return;
                         }
 
-                        try p.lexer.unexpected();
                         return error.Backtrack;
                     },
                 }
@@ -10749,7 +10890,6 @@ fn NewParser_(
                 var old_lexer = std.mem.toBytes(p.lexer);
                 const old_log_disabled = p.lexer.is_log_disabled;
                 p.lexer.is_log_disabled = true;
-
                 defer p.lexer.is_log_disabled = old_log_disabled;
                 var backtrack = false;
                 const FnReturnType = bun.meta.ReturnOf(func);
@@ -10769,6 +10909,14 @@ fn NewParser_(
 
                 if (backtrack) {
                     p.lexer = std.mem.bytesToValue(@TypeOf(p.lexer), &old_lexer);
+
+                    if (comptime FnReturnType == anyerror!bool) {
+                        return false;
+                    }
+                }
+
+                if (comptime FnReturnType == anyerror!bool) {
+                    return true;
                 }
 
                 if (comptime ReturnType == void or ReturnType == bool) return backtrack;
@@ -10828,20 +10976,24 @@ fn NewParser_(
                 return true;
             }
 
-            pub fn skipTypeScriptArrowArgsWithBacktracking(p: *P) anyerror!void {
+            pub fn skipTypeScriptArrowArgsWithBacktracking(p: *P) anyerror!bool {
                 try p.skipTypescriptFnArgs();
                 p.lexer.expect(.t_equals_greater_than) catch
                     return error.Backtrack;
+
+                return true;
             }
 
-            pub fn skipTypeScriptTypeArgumentsWithBacktracking(p: *P) anyerror!void {
-                _ = try p.skipTypeScriptTypeArguments(false);
-
-                // Check the token after this and backtrack if it's the wrong one
-                if (!TypeScript.canFollowTypeArgumentsInExpression(p.lexer.token)) {
-                    // try p.lexer.unexpected(); return error.SyntaxError;
-                    return error.Backtrack;
+            pub fn skipTypeScriptTypeArgumentsWithBacktracking(p: *P) anyerror!bool {
+                if (try p.skipTypeScriptTypeArguments(false)) {
+                    // Check the token after this and backtrack if it's the wrong one
+                    if (!TypeScript.canFollowTypeArgumentsInExpression(p)) {
+                        // try p.lexer.unexpected(); return error.SyntaxError;
+                        return error.Backtrack;
+                    }
                 }
+
+                return true;
             }
 
             pub fn skipTypeScriptArrowReturnTypeWithBacktracking(p: *P) anyerror!void {

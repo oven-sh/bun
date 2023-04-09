@@ -1062,7 +1062,6 @@ pub const Command = struct {
             // _ = CreateCommand;
             _ = CreateListExamplesCommand;
             // _ = DevCommand;
-            _ = DiscordCommand;
             // _ = InstallCommand;
             // _ = LinkCommand;
             // _ = UnlinkCommand;
@@ -1079,9 +1078,9 @@ pub const Command = struct {
         const tag = which();
 
         switch (tag) {
-            // .DiscordCommand => return try DiscordCommand.exec(allocator),
-            // .HelpCommand => return try HelpCommand.exec(allocator),
-            // .InitCommand => return try InitCommand.exec(allocator, std.os.argv),
+            .DiscordCommand => return try DiscordCommand.exec(allocator),
+            .HelpCommand => return try HelpCommand.exec(allocator),
+            .InitCommand => return try InitCommand.exec(allocator, std.os.argv),
             else => {},
         }
 

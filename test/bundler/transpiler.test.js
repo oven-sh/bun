@@ -94,6 +94,162 @@ describe("Bun.Transpiler", () => {
       ts.expectPrinted_("import Foo = Baz.Bar;\nexport default Foo;", "const Foo = Baz.Bar;\nexport default Foo");
     });
 
+    it("instantiation expressions", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      // TODO: fix Unexpected end of file in these cases
+      // exp("f<number>", "f;\n");
+      // exp("f<number, boolean>", "f;\n");
+      // exp("f.g<number>", "f.g;\n");
+      exp("f<number>.g", "f.g;\n");
+      // exp("f<number>.g<number>", "f.g;\n");
+      // exp("f['g']<number>", 'f["g"];\n');
+      // exp("(f<number>)<number>", "f;\n");
+
+      // Function call
+      exp("const x1 = f<true>\n(true);", "const x1 = f(true);\n");
+      // Relational expression
+      // exp("const x1 = f<true>\ntrue;", "const x1 = f;\ntrue;\n");
+      // Instantiation expression
+      // exp("const x1 = f<true>;\n(true);", "const x1 = f;\ntrue;\n");
+
+      // Trailing commas are not allowed
+      exp("const x = Array<number>\n(0);", "const x = Array(0);\n");
+      // TODO: make these errors
+      // exp("const x = Array<number>;\n(0);", "const x = Array;\n0;\n");
+      // err("const x = Array<number,>\n(0);", 'Expected identifier but found ">"');
+      // err("const x = Array<number,>;\n(0);", 'Expected identifier but found ">"');
+
+      exp("f<number>?.();", "f?.();\n");
+      exp("f?.<number>();", "f?.();\n");
+      exp("f<<T>() => T>?.();", "f?.();\n");
+      exp("f?.<<T>() => T>();", "f?.();\n");
+
+      exp("f<number>['g'];", 'f < number > ["g"];\n');
+
+      exp("type T21 = typeof Array<string>; f();", "f();\n");
+      exp("type T22 = typeof Array<string, number>; f();", "f();\n");
+
+      exp("f<x>, g<y>;", "f, g;\n");
+      exp("f<<T>() => T>;", "f;\n");
+      exp("f.x<<T>() => T>;", "f.x;\n");
+      exp("f['x']<<T>() => T>;", 'f["x"];\n');
+      exp("f<x>g<y>;", "f < x > g;\n");
+      exp("f<x>=g<y>;", "f = g;\n");
+      exp("f<x>>g<y>;", "f < x >> g;\n");
+      exp("f<x>>>g<y>;", "f < x >>> g;\n");
+      err("f<x>>=g<y>;", "Invalid assignment target");
+      err("f<x>>>=g<y>;", "Invalid assignment target");
+      exp("f<x> = g<y>;", "f = g;\n");
+      err("f<x> > g<y>;", "Unexpected >");
+      err("f<x> >> g<y>;", "Unexpected >>");
+      err("f<x> >>> g<y>;", "Unexpected >>>");
+      err("f<x> >= g<y>;", "Unexpected >=");
+      err("f<x> >>= g<y>;", "Unexpected >>=");
+      err("f<x> >>>= g<y>;", "Unexpected >>>=");
+      exp("a([f<x>]);", "a([f]);\n");
+      exp("f<x> ? g<y> : h<z>;", "f ? g : h;\n");
+      exp("{ f<x> }", "f");
+      exp("f<x> + g<y>;", "f < x > +g;\n");
+      exp("f<x> - g<y>;", "f < x > -g;\n");
+      exp("f<x> * g<y>;", "f * g;\n");
+      exp("f<x> *= g<y>;", "f *= g;\n");
+      exp("f<x> == g<y>;", "f == g;\n");
+      exp("f<x> ?? g<y>;", "f ?? g;\n");
+      exp("f<x> in g<y>;", "f in g;\n");
+      exp("f<x> instanceof g<y>;", "f instanceof g;\n");
+      exp("f<x> as g<y>;", "f;\n");
+      exp("f<x> satisfies g<y>;", "f;\n");
+
+      err("const a8 = f<number><number>;", "Unexpected ;");
+      err("const b1 = f?.<number>;", "Parse error");
+      // err("const b1 = f?.<number>;", 'Expected "(" but found ";"');
+
+      // TODO: why are the JSX tests failing but only in Bun.Transpiler? They
+      // work when run manually
+
+      // See: https://github.com/microsoft/TypeScript/issues/48711
+      // exp("type x = y\n<number>\nz", "z;\n");
+      // exp("type x = y\n<number>\nz\n</number>", '/* @__PURE__ */ React.createElement("number", null, "z");\n');
+      exp("type x = typeof y\n<number>\nz", "z;\n");
+      // exp("type x = typeof y\n<number>\nz\n</number>", '/* @__PURE__ */ React.createElement("number", null, "z");\n');
+      exp("interface Foo { \n (a: number): a \n <T>(): void \n }", "");
+      exp("interface Foo { \n (a: number): a \n <T>(): void \n }", "");
+      exp("interface Foo { \n (a: number): typeof a \n <T>(): void \n }", "");
+      exp("interface Foo { \n (a: number): typeof a \n <T>(): void \n }", "");
+      // err("type x = y\n<number>\nz\n</number>", "Unterminated regular expression");
+      // errX(
+      //   "type x = y\n<number>\nz",
+      //   'Unexpected end of file before a closing "number" tag\n<stdin>: NOTE: The opening "number" tag is here:',
+      // );
+      err("type x = typeof y\n<number>\nz\n</number>", "Syntax Error!!");
+      // errX(
+      //   "type x = typeof y\n<number>\nz",
+      //   'Unexpected end of file before a closing "number" tag\n<stdin>: NOTE: The opening "number" tag is here:',
+      // );
+
+      // See: https://github.com/microsoft/TypeScript/issues/48654
+      exp("x<true> y", "x < true > y;\n");
+      exp("x<true>\ny", "x;\ny;\n");
+      exp("x<true>\nif (y) {}", "x;\nif (y)");
+      exp("x<true>\nimport 'y'", 'x;\nimport"y";\n');
+      exp("x<true>\nimport('y')", 'x;\nimport("y");\n');
+      exp("x<true>\na(import.meta)", "x;\na(import.meta);\n");
+      exp("x<true> import('y')", 'x < true > import("y");\n');
+      exp("x<true> import.meta", "x < true > import.meta;\n");
+      exp("new x<number> y", "new x < number > y");
+      exp("new x<number>\ny", "new x;\ny");
+      exp("new x<number>\nif (y) {}", "new x;\nif (y)");
+      exp("new x<true>\nimport 'y'", 'new x;\nimport"y"');
+      exp("new x<true>\nimport('y')", 'new x;\nimport("y")');
+      exp("new x<true>\na(import.meta)", "new x;\na(import.meta)");
+      exp("new x<true> import('y')", 'new x < true > import("y")');
+      exp("new x<true> import.meta", "new x < true > import.meta");
+
+      // See: https://github.com/microsoft/TypeScript/issues/48759
+      err("x<true>\nimport<T>('y')", "Unexpected <");
+      err("new x<true>\nimport<T>('y')", "Unexpected <");
+
+      // See: https://github.com/evanw/esbuild/issues/2201
+      // err("return Array < ;", "Unexpected ;");
+      // err("return Array < > ;", "Unexpected >");
+      // err("return Array < , > ;", "Unexpected ,");
+      exp("return Array < number > ;", "return Array;\n");
+      exp("return Array < number > 1;", "return Array < number > 1;\n");
+      exp("return Array < number > +1;", "return Array < number > 1;\n");
+      exp("return Array < number > (1);", "return Array(1);\n");
+      exp("return Array < number >> 1;", "return Array < number >> 1;\n");
+      exp("return Array < number >>> 1;", "return Array < number >>> 1;\n");
+      exp("return Array < Array < number >> ;", "return Array;\n");
+      exp("return Array < Array < number > > ;", "return Array;\n");
+      err("return Array < Array < number > > 1;", "Unexpected >");
+      exp("return Array < Array < number >> 1;", "return Array < Array < number >> 1;\n");
+      err("return Array < Array < number > > +1;", "Unexpected >");
+      exp("return Array < Array < number >> +1;", "return Array < Array < number >> 1;\n");
+      exp("return Array < Array < number >> (1);", "return Array(1);\n");
+      exp("return Array < Array < number > > (1);", "return Array(1);\n");
+      exp("return Array < number > in x;", "return Array in x;\n");
+      exp("return Array < Array < number >> in x;", "return Array in x;\n");
+      exp("return Array < Array < number > > in x;", "return Array in x;\n");
+      exp("for (var x = Array < number > in y) ;", "x = Array;\nfor (x in y)\n  ;\nvar x;\n");
+      // exp("for (var x = Array < Array < number >> in y) ;", "x = Array;\nfor (var x in y)\n  ;\n");
+      exp("for (var x = Array < Array < number >> in y) ;", "x = Array;\nfor (x in y)\n  ;\nvar x;\n");
+      // exp("for (var x = Array < Array < number > > in y) ;", "x = Array;\nfor (var x in y)\n  ;\n");
+      exp("for (var x = Array < Array < number > > in y) ;", "x = Array;\nfor (x in y)\n  ;\nvar x;\n");
+
+      // See: https://github.com/microsoft/TypeScript/pull/49353
+      exp("F<{}> 0", "F < {} > 0;\n");
+      exp("F<{}> class F<T> {}", "F < {} > class F {\n};\n");
+      exp("f<{}> function f<T>() {}", "f < {} > function f() {\n};\n");
+      exp("F<{}>\nabc()", "F;\nabc();\n");
+
+      // TODO: why are there two newlines here?
+      exp("F<{}>()\nclass F<T> {}", "F();\n\nclass F {\n}");
+
+      exp("f<{}>()\nfunction f<T>() {}", "f();\nfunction f() {\n}");
+    });
+
     // TODO: fix all the cases that report generic "Parse error"
     it("types", () => {
       const exp = ts.expectPrinted_;

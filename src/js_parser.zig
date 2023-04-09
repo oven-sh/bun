@@ -15318,7 +15318,8 @@ fn NewParser_(
                         target.data.e_array.items.len == 1 and
                         e_.index.data == .e_number and
                         e_.index.data.e_number.value == 0.0 and
-                        e_.optional_chain == null)
+                        e_.optional_chain == null and
+                        target.data.e_array.items.ptr[0].canBeInlinedFromPropertyAccess())
                     {
                         return target.data.e_array.items.ptr[0];
                     }

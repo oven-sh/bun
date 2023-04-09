@@ -312,7 +312,7 @@ pub const Runtime = struct {
         jsx_optimization_hoist: bool = false,
 
         trim_unused_imports: bool = false,
-        should_fold_numeric_constants: bool = false,
+        should_fold_typescript_constant_expressions: bool = false,
 
         /// Use `import.meta.require()` instead of require()?
         /// This is only supported in Bun.

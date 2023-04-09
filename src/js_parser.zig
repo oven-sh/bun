@@ -76,6 +76,25 @@ const NodeFallbackModules = @import("./node_fallbacks.zig");
 
 const RefExprMap = std.ArrayHashMapUnmanaged(Ref, Expr, RefHashCtx, false);
 
+const SkipTypeParameterResult = enum {
+    did_not_skip_anything,
+    could_be_type_cast,
+    definitely_type_parameters,
+};
+
+const TypeParameterFlag = packed struct {
+    /// TypeScript 4.7
+    allow_in_out_variance_annoatations: bool = false,
+
+    /// TypeScript 5.0
+    allow_const_modifier: bool = false,
+
+    pub const all = TypeParameterFlag{
+        .allow_in_out_variance_annoatations = true,
+        .allow_const_modifier = true,
+    };
+};
+
 const JSXImport = enum {
     jsx,
     jsxDEV,
@@ -138,15 +157,25 @@ const JSXImport = enum {
             pub const Fragment_: []const string = &[_]string{"Fragment"};
         };
 
-        pub fn legacyImportNames(this: *const Symbols) []const string {
-            if (this.Fragment != null and this.createElement != null)
-                return Legacy.full;
+        pub fn legacyImportNames(this: *const Symbols, jsx: *const options.JSX.Pragma, buf: *[2]string) []const string {
+            if (this.Fragment != null and this.createElement != null) {
+                buf[0..2].* = .{
+                    jsx.fragment[jsx.fragment.len - 1],
+                    jsx.factory[jsx.factory.len - 1],
+                };
+                return buf[0..2];
+            }
 
-            if (this.createElement != null)
-                return Legacy.createElement_;
+            if (this.createElement != null) {
+                buf[0] =
+                    jsx.factory[jsx.factory.len - 1];
+                return buf[0..1];
+            }
 
-            if (this.Fragment != null)
-                return Legacy.Fragment_;
+            if (this.Fragment != null) {
+                buf[0] = jsx.fragment[jsx.fragment.len - 1];
+                return buf[0..1];
+            }
 
             return &[_]string{};
         }
@@ -393,56 +422,204 @@ const JSXTag = struct {
 pub const TypeScript = struct {
     // This function is taken from the official TypeScript compiler source code:
     // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
-    pub fn canFollowTypeArgumentsInExpression(token: js_lexer.T) bool {
-        switch (token) {
+    pub fn canFollowTypeArgumentsInExpression(p: anytype) bool {
+        return switch (p.lexer.token) {
             // These are the only tokens can legally follow a type argument list. So we
             // definitely want to treat them as type arg lists.
             .t_open_paren, // foo<x>(
             .t_no_substitution_template_literal, // foo<T> `...`
             // foo<T> `...${100}...`
             .t_template_head,
-            => {
-                return true;
-            },
-            // These cases can't legally follow a type arg list. However, they're not
-            // legal expressions either. The user is probably in the middle of a
-            // generic type. So treat it as such.
-            .t_dot, // foo<x>.
-            .t_close_paren, // foo<x>)
-            .t_close_bracket, // foo<x>]
-            .t_colon, // foo<x>:
-            .t_semicolon, // foo<x>;
-            .t_question, // foo<x>?
-            .t_equals_equals, // foo<x> ==
-            .t_equals_equals_equals, // foo<x> ===
-            .t_exclamation_equals, // foo<x> !=
-            .t_exclamation_equals_equals, // foo<x> !==
-            .t_ampersand_ampersand, // foo<x> &&
-            .t_bar_bar, // foo<x> ||
-            .t_question_question, // foo<x> ??
-            .t_caret, // foo<x> ^
-            .t_ampersand, // foo<x> &
-            .t_bar, // foo<x> |
-            .t_close_brace, // foo<x> }
-            .t_end_of_file, // foo<x>
-            => {
-                return true;
-            },
+            => true,
 
-            // We don't want to treat these as type arguments. Otherwise we'll parse
-            // this as an invocation expression. Instead, we want to parse out the
-            // expression in isolation from the type arguments.
-            .t_comma, // foo<x>,
-            .t_open_brace, // foo<x> {
-            => {
+            // A type argument list followed by `<` never makes sense, and a type argument list followed
+            // by `>` is ambiguous with a (re-scanned) `>>` operator, so we disqualify both. Also, in
+            // this context, `+` and `-` are unary operators, not binary operators.
+            .t_less_than,
+            .t_greater_than,
+            .t_plus,
+            .t_minus,
+            // TypeScript always sees "t_greater_than" instead of these tokens since
+            // their scanner works a little differently than our lexer. So since
+            // "t_greater_than" is forbidden above, we also forbid these too.
+            .t_greater_than_equals,
+            .t_greater_than_greater_than,
+            .t_greater_than_greater_than_equals,
+            .t_greater_than_greater_than_greater_than,
+            .t_greater_than_greater_than_greater_than_equals,
+            .t_end_of_file,
+            => false,
+
+            // We favor the type argument list interpretation when it is immediately followed by
+            // a line break, a binary operator, or something that can't start an expression.
+            else => p.lexer.has_newline_before or isBinaryOperator(p) or !isStartOfExpression(p),
+        };
+    }
+
+    pub fn isTSArrowFnJSX(p: anytype) !bool {
+        var oldLexer = std.mem.toBytes(p.lexer);
+
+        try p.lexer.next();
+        // Look ahead to see if this should be an arrow function instead
+        var is_ts_arrow_fn = false;
+
+        if (p.lexer.token == .t_identifier) {
+            try p.lexer.next();
+            if (p.lexer.token == .t_comma) {
+                is_ts_arrow_fn = true;
+            } else if (p.lexer.token == .t_extends) {
+                try p.lexer.next();
+                is_ts_arrow_fn = p.lexer.token != .t_equals and p.lexer.token != .t_greater_than;
+            }
+        }
+
+        // Restore the lexer
+        p.lexer = std.mem.bytesToValue(@TypeOf(p.lexer), &oldLexer);
+        return is_ts_arrow_fn;
+    }
+
+    // This function is taken from the official TypeScript compiler source code:
+    // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
+    fn isBinaryOperator(p: anytype) bool {
+        return switch (p.lexer.token) {
+            .t_in => p.allow_in,
+
+            .t_question_question,
+            .t_bar_bar,
+            .t_ampersand_ampersand,
+            .t_bar,
+            .t_caret,
+            .t_ampersand,
+            .t_equals_equals,
+            .t_exclamation_equals,
+            .t_equals_equals_equals,
+            .t_exclamation_equals_equals,
+            .t_less_than,
+            .t_greater_than,
+            .t_less_than_equals,
+            .t_greater_than_equals,
+            .t_instanceof,
+            .t_less_than_less_than,
+            .t_greater_than_greater_than,
+            .t_greater_than_greater_than_greater_than,
+            .t_plus,
+            .t_minus,
+            .t_asterisk,
+            .t_slash,
+            .t_percent,
+            .t_asterisk_asterisk,
+            => true,
+            .t_identifier => p.lexer.isContextualKeyword("as") or p.lexer.isContextualKeyword("satisfies"),
+            else => false,
+        };
+    }
+
+    // This function is taken from the official TypeScript compiler source code:
+    // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
+    fn isStartOfLeftHandSideExpression(p: anytype) bool {
+        return switch (p.lexer.token) {
+            .t_this,
+            .t_super,
+            .t_null,
+            .t_true,
+            .t_false,
+            .t_numeric_literal,
+            .t_big_integer_literal,
+            .t_string_literal,
+            .t_no_substitution_template_literal,
+            .t_template_head,
+            .t_open_paren,
+            .t_open_bracket,
+            .t_open_brace,
+            .t_function,
+            .t_class,
+            .t_new,
+            .t_slash,
+            .t_slash_equals,
+            .t_identifier,
+            => true,
+            .t_import => lookAheadNextTokenIsOpenParenOrLessThanOrDot(p),
+            else => isIdentifier(p),
+        };
+    }
+
+    fn lookAheadNextTokenIsOpenParenOrLessThanOrDot(p: anytype) bool {
+        var old_lexer = std.mem.toBytes(p.lexer);
+        const old_log_disabled = p.lexer.is_log_disabled;
+        p.lexer.is_log_disabled = true;
+        defer p.lexer.is_log_disabled = old_log_disabled;
+        defer p.lexer = std.mem.bytesToValue(@TypeOf(p.lexer), &old_lexer);
+        p.lexer.next() catch {};
+
+        return switch (p.lexer.token) {
+            .t_open_paren, .t_less_than, .t_dot => true,
+            else => false,
+        };
+    }
+
+    // This function is taken from the official TypeScript compiler source code:
+    // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
+    fn isIdentifier(p: anytype) bool {
+        if (p.lexer.token == .t_identifier) {
+            // If we have a 'yield' keyword, and we're in the [yield] context, then 'yield' is
+            // considered a keyword and is not an identifier.
+            if (p.fn_or_arrow_data_parse.allow_yield != .allow_ident and strings.eqlComptime(p.lexer.identifier, "yield")) {
                 return false;
-            },
+            }
+
+            // If we have a 'yield' keyword, and we're in the [yield] context, then 'yield' is
+            // considered a keyword and is not an identifier.
+            if (p.fn_or_arrow_data_parse.allow_await != .allow_ident and strings.eqlComptime(p.lexer.identifier, "await")) {
+                return false;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    fn isStartOfExpression(p: anytype) bool {
+        if (isStartOfLeftHandSideExpression(p))
+            return true;
+
+        switch (p.lexer.token) {
+            .t_plus,
+            .t_minus,
+            .t_tilde,
+            .t_exclamation,
+            .t_delete,
+            .t_typeof,
+            .t_void,
+            .t_plus_plus,
+            .t_minus_minus,
+            .t_less_than,
+            .t_private_identifier,
+            .t_at,
+            => return true,
             else => {
-                // Anything else treat as an expression
-                return false;
+                if (p.lexer.token == .t_identifier and (strings.eqlComptime(p.lexer.identifier, "await") or strings.eqlComptime(p.lexer.identifier, "yield"))) {
+                    // Yield/await always starts an expression.  Either it is an identifier (in which case
+                    // it is definitely an expression).  Or it's a keyword (either because we're in
+                    // a generator or async function, or in strict mode (or both)) and it started a yield or await expression.
+                    return true;
+                }
+
+                // Error tolerance.  If we see the start of some binary operator, we consider
+                // that the start of an expression.  That way we'll parse out a missing identifier,
+                // give a good message about an identifier being missing, and then consume the
+                // rest of the binary expression.
+                if (isBinaryOperator(p)) {
+                    return true;
+                }
+
+                return isIdentifier(p);
             },
         }
+
+        unreachable;
     }
+
     pub const Identifier = struct {
         pub const StmtIdentifier = enum {
             s_type,
@@ -500,9 +677,10 @@ pub const TypeScript = struct {
             .{ "unique", .unique },
             .{ "abstract", .abstract },
             .{ "asserts", .asserts },
+
             .{ "keyof", .prefix },
             .{ "readonly", .prefix },
-            .{ "infer", .prefix },
+
             .{ "any", .primitive },
             .{ "never", .primitive },
             .{ "unknown", .primitive },
@@ -513,6 +691,8 @@ pub const TypeScript = struct {
             .{ "boolean", .primitive },
             .{ "bigint", .primitive },
             .{ "symbol", .primitive },
+
+            .{ "infer", .infer },
         });
         pub const Kind = enum {
             normal,
@@ -521,11 +701,15 @@ pub const TypeScript = struct {
             asserts,
             prefix,
             primitive,
+            infer,
         };
     };
 
     pub const SkipTypeOptions = struct {
         is_return_type: bool = false,
+        is_index_signature: bool = false,
+        allow_tuple_labels: bool = false,
+        disallow_conditional_types: bool = false,
     };
 };
 
@@ -2576,7 +2760,7 @@ pub const Parser = struct {
         var p: ParserType = undefined;
         const orig_error_count = self.log.errors;
         try ParserType.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
-        p.should_fold_numeric_constants = self.options.features.should_fold_numeric_constants;
+        p.should_fold_typescript_constant_expressions = self.options.features.should_fold_typescript_constant_expressions;
         defer p.lexer.deinit();
         var result: js_ast.Result = undefined;
 
@@ -3694,9 +3878,10 @@ pub const Parser = struct {
         }
 
         // handle new way to do automatic JSX imports which fixes symbol collision issues
-        if (p.options.jsx.parse) {
+        if (p.options.jsx.parse and p.options.features.auto_import_jsx) {
+            var legacy_import_names_buf = [2]string{ "", "" };
             const runtime_import_names = p.jsx_imports.runtimeImportNames();
-            const legacy_import_names = p.jsx_imports.legacyImportNames();
+            const legacy_import_names = p.jsx_imports.legacyImportNames(&p.options.jsx, &legacy_import_names_buf);
 
             if (runtime_import_names.len > 0) {
                 p.generateImportStmt(
@@ -4127,8 +4312,35 @@ fn NewParser_(
         // private_getters: RefRefMap,
         // private_setters: RefRefMap,
 
-        // These are for TypeScript
-        should_fold_numeric_constants: bool = false,
+        /// When this flag is enabled, we attempt to fold all expressions that
+        /// TypeScript would consider to be "constant expressions". This flag is
+        /// enabled inside each enum body block since TypeScript requires numeric
+        /// constant folding in enum definitions.
+        ///
+        /// We also enable this flag in certain cases in JavaScript files such as when
+        /// parsing "const" declarations at the top of a non-ESM file, but we still
+        /// reuse TypeScript's notion of "constant expressions" for our own convenience.
+        ///
+        /// As of TypeScript 5.0, a "constant expression" is defined as follows:
+        ///
+        ///   An expression is considered a constant expression if it is
+        ///
+        ///   * a number or string literal,
+        ///   * a unary +, -, or ~ applied to a numeric constant expression,
+        ///   * a binary +, -, *, /, %, **, <<, >>, >>>, |, &, ^ applied to two numeric constant expressions,
+        ///   * a binary + applied to two constant expressions whereof at least one is a string,
+        ///   * a template expression where each substitution expression is a constant expression,
+        ///   * a parenthesized constant expression,
+        ///   * a dotted name (e.g. x.y.z) that references a const variable with a constant expression initializer and no type annotation,
+        ///   * a dotted name that references an enum member with an enum literal type, or
+        ///   * a dotted name indexed by a string literal (e.g. x.y["z"]) that references an enum member with an enum literal type.
+        ///
+        /// More detail: https://github.com/microsoft/TypeScript/pull/50528. Note that
+        /// we don't implement certain items in this list. For example, we don't do all
+        /// number-to-string conversions since ours might differ from how JavaScript
+        /// would do it, which would be a correctness issue.
+        should_fold_typescript_constant_expressions: bool = false,
+
         emitted_namespace_vars: RefMap = RefMap{},
         is_exported_inside_namespace: RefRefMap = .{},
         known_enum_values: Map(Ref, StringHashMapUnamanged(f64)) = .{},
@@ -6286,7 +6498,7 @@ fn NewParser_(
 
             // Even anonymous functions can have TypeScript type parameters
             if (is_typescript_enabled) {
-                try p.skipTypeScriptTypeParameters();
+                _ = try p.skipTypeScriptTypeParameters(.{ .allow_const_modifier = true });
             }
 
             // Introduce a fake block scope for function declarations inside if statements
@@ -6616,6 +6828,11 @@ fn NewParser_(
                     }
                     // "[a, b]"
                     while (p.lexer.token != .t_close_bracket) {
+                        // "[...a]"
+                        if (p.lexer.token == .t_dot_dot_dot) {
+                            try p.lexer.next();
+                        }
+
                         try p.skipTypeScriptBinding();
 
                         if (p.lexer.token != .t_comma) {
@@ -6662,7 +6879,6 @@ fn NewParser_(
                                     try p.lexer.next();
                                 } else {
                                     try p.lexer.unexpected();
-                                    return error.Backtrack;
                                 }
                             },
                         }
@@ -6763,9 +6979,18 @@ fn NewParser_(
                     .t_false,
                     .t_null,
                     .t_void,
-                    .t_const,
                     => {
                         try p.lexer.next();
+                    },
+
+                    .t_const => {
+                        const r = p.lexer.range();
+                        try p.lexer.next();
+
+                        // ["const: number]"
+                        if (opts.allow_tuple_labels and p.lexer.token == .t_colon) {
+                            try p.log.addRangeError(p.source, r, "Unexpected \"const\"");
+                        }
                     },
 
                     .t_this => {
@@ -6797,20 +7022,46 @@ fn NewParser_(
                     .t_import => {
                         // "import('fs')"
                         try p.lexer.next();
+
+                        // "[import: number]"
+                        if (opts.allow_tuple_labels and p.lexer.token == .t_colon) {
+                            return;
+                        }
+
                         try p.lexer.expect(.t_open_paren);
                         try p.lexer.expect(.t_string_literal);
+
+                        // "import('./foo.json', { assert: { type: 'json' } })"
+                        // "import('./foo.json', { with: { type: 'json' } })"
+                        if (p.lexer.token == .t_comma) {
+                            try p.lexer.next();
+                            try p.skipTypeScriptObjectType();
+
+                            // "import('./foo.json', { assert: { type: 'json' } }, )"
+                            // "import('./foo.json', { with: { type: 'json' } }, )"
+                            if (p.lexer.token == .t_comma) {
+                                try p.lexer.next();
+                            }
+                        }
+
                         try p.lexer.expect(.t_close_paren);
                     },
                     .t_new => {
                         // "new () => Foo"
                         // "new <T>() => Foo<T>"
                         try p.lexer.next();
-                        try p.skipTypeScriptTypeParameters();
+
+                        // "[new: number]"
+                        if (opts.allow_tuple_labels and p.lexer.token == .t_colon) {
+                            return;
+                        }
+
+                        _ = try p.skipTypeScriptTypeParameters(.{ .allow_const_modifier = true });
                         try p.skipTypeScriptParenOrFnType();
                     },
                     .t_less_than => {
                         // "<T>() => Foo<T>"
-                        try p.skipTypeScriptTypeParameters();
+                        _ = try p.skipTypeScriptTypeParameters(.{ .allow_const_modifier = true });
                         try p.skipTypeScriptParenOrFnType();
                     },
                     .t_open_paren => {
@@ -6820,20 +7071,46 @@ fn NewParser_(
                     .t_identifier => {
                         const kind = TypeScript.Identifier.IMap.get(p.lexer.identifier) orelse .normal;
 
-                        if (kind == .prefix) {
-                            try p.lexer.next();
-                            try p.skipTypeScriptType(.prefix);
-                            break;
-                        }
-
                         var check_type_parameters = true;
 
                         switch (kind) {
+                            .prefix => {
+                                try p.lexer.next();
+
+                                // Valid:
+                                //   "[keyof: string]"
+                                //   "{[keyof: string]: number}"
+                                //   "{[keyof in string]: number}"
+                                //
+                                // Invalid:
+                                //   "A extends B ? keyof : string"
+                                //
+                                if ((p.lexer.token != .t_colon and p.lexer.token != .t_in) or (!opts.is_index_signature and !opts.allow_tuple_labels)) {
+                                    try p.skipTypeScriptType(.prefix);
+                                }
+
+                                break;
+                            },
+                            .infer => {
+                                try p.lexer.next();
+
+                                // "type Foo = Bar extends [infer T] ? T : null"
+                                // "type Foo = Bar extends [infer T extends string] ? T : null"
+                                // "type Foo = Bar extends [infer T extends string ? infer T : never] ? T : null"
+                                // "type Foo = { [infer in Bar]: number }"
+                                if ((p.lexer.token != .t_colon and p.lexer.token != .t_in) or (!opts.is_index_signature and !opts.allow_tuple_labels)) {
+                                    try p.lexer.expect(.t_identifier);
+                                    if (p.lexer.token == .t_extends) {
+                                        _ = p.trySkipTypeScriptConstraintOfInferTypeWithBacktracking(opts);
+                                    }
+                                }
+
+                                break;
+                            },
                             .unique => {
                                 try p.lexer.next();
 
                                 // "let foo: unique symbol"
-
                                 if (p.lexer.isContextualKeyword("symbol")) {
                                     try p.lexer.next();
                                     break;
@@ -6852,7 +7129,6 @@ fn NewParser_(
 
                                 // "function assert(x: boolean): asserts x"
                                 // "function assert(x: boolean): asserts x is boolean"
-
                                 if (opts.is_return_type and !p.lexer.has_newline_before and (p.lexer.token == .t_identifier or p.lexer.token == .t_this)) {
                                     try p.lexer.next();
                                 }
@@ -6867,7 +7143,6 @@ fn NewParser_(
                         }
 
                         // "function assert(x: any): x is boolean"
-
                         if (p.lexer.isContextualKeyword("is") and !p.lexer.has_newline_before) {
                             try p.lexer.next();
                             try p.skipTypeScriptType(.lowest);
@@ -6881,24 +7156,35 @@ fn NewParser_(
                     },
                     .t_typeof => {
                         try p.lexer.next();
+
+                        // "[typeof: number]"
+                        if (opts.allow_tuple_labels and p.lexer.token == .t_colon) {
+                            return;
+                        }
+
                         if (p.lexer.token == .t_import) {
                             // "typeof import('fs')"
                             continue;
                         } else {
                             // "typeof x"
-                            // "typeof x.y"
+                            if (!p.lexer.isIdentifierOrKeyword()) {
+                                try p.lexer.expected(.t_identifier);
+                            }
+                            try p.lexer.next();
 
-                            while (true) {
-                                if (!p.lexer.isIdentifierOrKeyword()) {
+                            // "typeof x.#y"
+                            // "typeof x.y"
+                            while (p.lexer.token == .t_dot) {
+                                try p.lexer.next();
+
+                                if (!p.lexer.isIdentifierOrKeyword() and p.lexer.token != .t_private_identifier) {
                                     try p.lexer.expected(.t_identifier);
                                 }
-
                                 try p.lexer.next();
-                                if (p.lexer.token != .t_dot) {
-                                    break;
-                                }
+                            }
 
-                                try p.lexer.next();
+                            if (!p.lexer.has_newline_before) {
+                                _ = try p.skipTypeScriptTypeArguments(false);
                             }
                         }
                     },
@@ -6911,7 +7197,9 @@ fn NewParser_(
                             if (p.lexer.token == .t_dot_dot_dot) {
                                 try p.lexer.next();
                             }
-                            try p.skipTypeScriptType(.lowest);
+                            try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions{
+                                .allow_tuple_labels = true,
+                            });
                             if (p.lexer.token == .t_question) {
                                 try p.lexer.next();
                             }
@@ -6945,8 +7233,21 @@ fn NewParser_(
                     },
 
                     else => {
+                        // "[function: number]"
+                        if (opts.allow_tuple_labels and p.lexer.isIdentifierOrKeyword()) {
+                            if (p.lexer.token != .t_function) {
+                                try p.lexer.unexpected();
+                            }
+                            try p.lexer.next();
+
+                            if (p.lexer.token != .t_colon) {
+                                try p.lexer.expect(.t_colon);
+                            }
+
+                            return;
+                        }
+
                         try p.lexer.unexpected();
-                        return error.Backtrack;
                     },
                 }
                 break;
@@ -6987,7 +7288,11 @@ fn NewParser_(
                             try p.lexer.expect(.t_identifier);
                         }
                         try p.lexer.next();
-                        _ = try p.skipTypeScriptTypeArguments(false);
+
+                        // "{ <A extends B>(): c.d \n <E extends F>(): g.h }" must not become a single type
+                        if (!p.lexer.has_newline_before) {
+                            _ = try p.skipTypeScriptTypeArguments(false);
+                        }
                     },
                     .t_open_bracket => {
                         // "{ ['x']: string \n ['y']: string }" must not become a single type
@@ -7002,14 +7307,15 @@ fn NewParser_(
                     },
                     .t_extends => {
                         // "{ x: number \n extends: boolean }" must not become a single type
-                        if (p.lexer.has_newline_before or level.gte(.conditional)) {
+                        if (p.lexer.has_newline_before or opts.disallow_conditional_types) {
                             return;
                         }
 
                         try p.lexer.next();
 
                         // The type following "extends" is not permitted to be another conditional type
-                        try p.skipTypeScriptType(.conditional);
+                        try p.skipTypeScriptTypeWithOpts(.lowest, .{ .disallow_conditional_types = true });
+
                         try p.lexer.expect(.t_question);
                         try p.skipTypeScriptType(.lowest);
                         try p.lexer.expect(.t_colon);
@@ -7043,7 +7349,7 @@ fn NewParser_(
                 if (p.lexer.token == .t_open_bracket) {
                     // Index signature or computed property
                     try p.lexer.next();
-                    try p.skipTypeScriptType(.lowest);
+                    try p.skipTypeScriptTypeWithOpts(.lowest, .{ .is_index_signature = true });
 
                     // "{ [key: string]: number }"
                     // "{ readonly [K in keyof T]: T[K] }"
@@ -7085,7 +7391,9 @@ fn NewParser_(
                 }
 
                 // Type parameters come right after the optional mark
-                try p.skipTypeScriptTypeParameters();
+                _ = try p.skipTypeScriptTypeParameters(.{
+                    .allow_const_modifier = true,
+                });
 
                 switch (p.lexer.token) {
                     .t_colon => {
@@ -7336,35 +7644,134 @@ fn NewParser_(
 
         // This is the type parameter declarations that go with other symbol
         // declarations (class, function, type, etc.)
-        fn skipTypeScriptTypeParameters(p: *P) anyerror!void {
+        fn skipTypeScriptTypeParameters(p: *P, flags: TypeParameterFlag) anyerror!SkipTypeParameterResult {
             p.markTypeScriptOnly();
 
-            if (p.lexer.token == .t_less_than) {
+            if (p.lexer.token != .t_less_than) {
+                return .did_not_skip_anything;
+            }
+
+            var result = SkipTypeParameterResult.could_be_type_cast;
+            try p.lexer.next();
+
+            while (true) {
+                var has_in = false;
+                var has_out = false;
+                var expect_identifier = true;
+
+                var invalid_modifier_range = logger.Range.None;
+
+                // Scan over a sequence of "in" and "out" modifiers (a.k.a. optional
+                // variance annotations) as well as "const" modifiers
+                while (true) {
+                    if (p.lexer.token == .t_const) {
+                        if (invalid_modifier_range.len == 0 and !flags.allow_const_modifier) {
+                            // Valid:
+                            //   "class Foo<const T> {}"
+                            // Invalid:
+                            //   "interface Foo<const T> {}"
+                            invalid_modifier_range = p.lexer.range();
+                        }
+
+                        result = .definitely_type_parameters;
+                        try p.lexer.next();
+                        expect_identifier = true;
+                        continue;
+                    }
+
+                    if (p.lexer.token == .t_in) {
+                        if (invalid_modifier_range.len == 0 and (!flags.allow_in_out_variance_annoatations or has_in or has_out)) {
+                            // Valid:
+                            //   "type Foo<in T> = T"
+                            // Invalid:
+                            //   "type Foo<in in T> = T"
+                            //   "type Foo<out in T> = T"
+                            invalid_modifier_range = p.lexer.range();
+                        }
+
+                        try p.lexer.next();
+                        has_in = true;
+                        expect_identifier = true;
+                        continue;
+                    }
+
+                    if (p.lexer.isContextualKeyword("out")) {
+                        const r = p.lexer.range();
+                        if (invalid_modifier_range.len == 0 and !flags.allow_in_out_variance_annoatations) {
+                            // Valid:
+                            //   "type Foo<out T> = T"
+                            // Invalid:
+                            //   "type Foo<out out T> = T"
+                            //   "type Foo<in out T> = T"
+                            invalid_modifier_range = r;
+                        }
+
+                        try p.lexer.next();
+                        if (invalid_modifier_range.len == 0 and has_out and (p.lexer.token == .t_in or p.lexer.token == .t_identifier)) {
+                            // Valid:
+                            //   "type Foo<out T> = T"
+                            //   "type Foo<out out> = T"
+                            //   "type Foo<out out, T> = T"
+                            //   "type Foo<out out = T> = T"
+                            //   "type Foo<out out extends T> = T"
+                            // Invalid:
+                            //   "type Foo<out out in T> = T"
+                            //   "type Foo<out out T> = T"
+                            invalid_modifier_range = r;
+                        }
+                        has_out = true;
+                        expect_identifier = false;
+                        continue;
+                    }
+
+                    break;
+                }
+
+                // Only report an error for the first invalid modifier
+                if (invalid_modifier_range.len > 0) {
+                    try p.log.addRangeErrorFmt(
+                        p.source,
+                        invalid_modifier_range,
+                        p.allocator,
+                        "The modifier \"{s}\" is not valid here",
+                        .{p.source.textForRange(invalid_modifier_range)},
+                    );
+                }
+
+                // expectIdentifier => Mandatory identifier (e.g. after "type Foo <in ___")
+                // !expectIdentifier => Optional identifier (e.g. after "type Foo <out ___" since "out" may be the identifier)
+                if (expect_identifier or p.lexer.token == .t_identifier) {
+                    try p.lexer.expect(.t_identifier);
+                }
+
+                // "class Foo<T extends number> {}"
+                if (p.lexer.token == .t_extends) {
+                    result = .definitely_type_parameters;
+                    try p.lexer.next();
+                    try p.skipTypeScriptType(.lowest);
+                }
+
+                // "class Foo<T = void> {}"
+                if (p.lexer.token == .t_equals) {
+                    result = .definitely_type_parameters;
+                    try p.lexer.next();
+                    try p.skipTypeScriptType(.lowest);
+                }
+
+                if (p.lexer.token != .t_comma) {
+                    break;
+                }
+
                 try p.lexer.next();
 
-                while (true) {
-                    try p.lexer.expect(.t_identifier);
-                    // "class Foo<T extends number> {}"
-                    if (p.lexer.token == .t_extends) {
-                        try p.lexer.next();
-                        try p.skipTypeScriptType(.lowest);
-                    }
-                    // "class Foo<T = void> {}"
-                    if (p.lexer.token == .t_equals) {
-                        try p.lexer.next();
-                        try p.skipTypeScriptType(.lowest);
-                    }
-
-                    if (p.lexer.token != .t_comma) {
-                        break;
-                    }
-                    try p.lexer.next();
-                    if (p.lexer.token == .t_greater_than) {
-                        break;
-                    }
+                if (p.lexer.token == .t_greater_than) {
+                    result = .definitely_type_parameters;
+                    break;
                 }
-                try p.lexer.expectGreaterThan(false);
             }
+
+            try p.lexer.expectGreaterThan(false);
+            return result;
         }
 
         fn createDefaultName(p: *P, loc: logger.Loc) !js_ast.LocRef {
@@ -7445,7 +7852,10 @@ fn NewParser_(
 
             // Even anonymous classes can have TypeScript type parameters
             if (is_typescript_enabled) {
-                try p.skipTypeScriptTypeParameters();
+                _ = try p.skipTypeScriptTypeParameters(.{
+                    .allow_in_out_variance_annoatations = true,
+                    .allow_const_modifier = true,
+                });
             }
             var class_opts = ParseClassOptions{
                 .allow_ts_decorators = true,
@@ -8848,7 +9258,8 @@ fn NewParser_(
                 p.local_type_names.put(p.allocator, name, true) catch unreachable;
             }
 
-            try p.skipTypeScriptTypeParameters();
+            _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annoatations = true });
+
             try p.lexer.expect(.t_equals);
             try p.skipTypeScriptType(.lowest);
             try p.lexer.expectOrInsertSemicolon();
@@ -8975,7 +9386,7 @@ fn NewParser_(
                 p.local_type_names.put(p.allocator, name, true) catch unreachable;
             }
 
-            try p.skipTypeScriptTypeParameters();
+            _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annoatations = true });
 
             if (p.lexer.token == .t_extends) {
                 try p.lexer.next();
@@ -9563,7 +9974,7 @@ fn NewParser_(
                 // Skip over types
                 if (comptime is_typescript_enabled) {
                     // "let foo!"
-                    var is_definite_assignment_assertion = p.lexer.token == .t_exclamation;
+                    const is_definite_assignment_assertion = p.lexer.token == .t_exclamation and !p.lexer.has_newline_before;
                     if (is_definite_assignment_assertion) {
                         try p.lexer.next();
                     }
@@ -9572,11 +9983,6 @@ fn NewParser_(
                     if (is_definite_assignment_assertion or p.lexer.token == .t_colon) {
                         try p.lexer.expect(.t_colon);
                         try p.skipTypeScriptType(.lowest);
-                    }
-
-                    if (p.lexer.token == .t_close_paren) {
-                        p.log.addRangeError(p.source, p.lexer.range(), "Unexpected \")\"") catch unreachable;
-                        return error.SyntaxError;
                     }
                 }
 
@@ -10288,7 +10694,7 @@ fn NewParser_(
 
             // Even anonymous functions can have TypeScript type parameters
             if (comptime is_typescript_enabled) {
-                try p.skipTypeScriptTypeParameters();
+                _ = try p.skipTypeScriptTypeParameters(.{ .allow_const_modifier = true });
             }
 
             const func = try p.parseFn(name, FnOrArrowDataParse{
@@ -10504,9 +10910,18 @@ fn NewParser_(
                     // "async<T>()"
                     // "async <T>() => {}"
                     .t_less_than => {
-                        if (is_typescript_enabled and p.trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking()) {
-                            try p.lexer.next();
-                            return p.parseParenExpr(async_range.loc, level, ParenExprOpts{ .is_async = true, .async_range = async_range });
+                        if (is_typescript_enabled and (!is_jsx_enabled or try TypeScript.isTSArrowFnJSX(p))) {
+                            switch (p.trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking()) {
+                                .did_not_skip_anything => {},
+                                else => |result| {
+                                    try p.lexer.next();
+                                    return p.parseParenExpr(async_range.loc, level, ParenExprOpts{
+                                        .is_async = true,
+                                        .async_range = async_range,
+                                        .force_arrow_fn = result == .definitely_type_parameters,
+                                    });
+                                },
+                            }
                         }
                     },
 
@@ -10523,7 +10938,48 @@ fn NewParser_(
         }
 
         pub const Backtracking = struct {
-            pub inline fn lexerBacktracker(p: *P, func: anytype) bool {
+            pub inline fn lexerBacktracker(p: *P, func: anytype, comptime ReturnType: type) ReturnType {
+                p.markTypeScriptOnly();
+                var old_lexer = std.mem.toBytes(p.lexer);
+                const old_log_disabled = p.lexer.is_log_disabled;
+                p.lexer.is_log_disabled = true;
+                defer p.lexer.is_log_disabled = old_log_disabled;
+                var backtrack = false;
+                const FnReturnType = bun.meta.ReturnOf(func);
+                const result = func(p) catch |err| brk: {
+                    switch (err) {
+                        error.Backtrack => {
+                            backtrack = true;
+                        },
+                        else => {},
+                    }
+                    if (comptime FnReturnType == anyerror!bool or FnReturnType == anyerror!void)
+                        // we are not using the value
+                        break :brk undefined;
+
+                    break :brk SkipTypeParameterResult.did_not_skip_anything;
+                };
+
+                if (backtrack) {
+                    p.lexer = std.mem.bytesToValue(@TypeOf(p.lexer), &old_lexer);
+
+                    if (comptime FnReturnType == anyerror!bool) {
+                        return false;
+                    }
+                }
+
+                if (comptime FnReturnType == anyerror!bool) {
+                    return true;
+                }
+
+                if (comptime ReturnType == void or ReturnType == bool)
+                    // If we did not backtrack, then we skipped successfully.
+                    return !backtrack;
+
+                return result;
+            }
+
+            pub inline fn lexerBacktrackerWithArgs(p: *P, func: anytype, args: anytype, comptime ReturnType: type) ReturnType {
                 p.markTypeScriptOnly();
                 var old_lexer = std.mem.toBytes(p.lexer);
                 const old_log_disabled = p.lexer.is_log_disabled;
@@ -10531,73 +10987,105 @@ fn NewParser_(
 
                 defer p.lexer.is_log_disabled = old_log_disabled;
                 var backtrack = false;
-                func(p) catch |err| {
+                const FnReturnType = bun.meta.ReturnOf(func);
+                const result = @call(.auto, func, args) catch |err| brk: {
                     switch (err) {
                         error.Backtrack => {
                             backtrack = true;
                         },
                         else => {},
                     }
+                    if (comptime FnReturnType == anyerror!bool or FnReturnType == anyerror!void)
+                        // we are not using the value
+                        break :brk undefined;
+                    break :brk SkipTypeParameterResult.did_not_skip_anything;
                 };
 
                 if (backtrack) {
                     p.lexer = std.mem.bytesToValue(@TypeOf(p.lexer), &old_lexer);
+                    if (comptime FnReturnType == anyerror!bool) {
+                        return false;
+                    }
                 }
 
-                return !backtrack;
+                if (comptime FnReturnType == anyerror!bool) {
+                    return true;
+                }
+
+                if (comptime ReturnType == void or ReturnType == bool) return backtrack;
+                return result;
             }
 
-            pub fn skipTypeScriptTypeParametersThenOpenParenWithBacktracking(p: *P) anyerror!void {
-                try p.skipTypeScriptTypeParameters();
+            pub fn skipTypeScriptTypeParametersThenOpenParenWithBacktracking(p: *P) anyerror!SkipTypeParameterResult {
+                const result = try p.skipTypeScriptTypeParameters(.{ .allow_const_modifier = true });
                 if (p.lexer.token != .t_open_paren) {
-                    // try p.lexer.unexpected(); return error.SyntaxError;
                     return error.Backtrack;
                 }
+
+                return result;
             }
 
-            pub fn skipTypeScriptArrowArgsWithBacktracking(p: *P) anyerror!void {
+            pub fn skipTypeScriptConstraintOfInferTypeWithBacktracking(p: *P, flags: TypeScript.SkipTypeOptions) anyerror!bool {
+                try p.lexer.expect(.t_extends);
+                try p.skipTypeScriptTypeWithOpts(.prefix, TypeScript.SkipTypeOptions{
+                    .disallow_conditional_types = true,
+                });
+
+                if (!flags.disallow_conditional_types and p.lexer.token == .t_question) {
+                    return error.Backtrack;
+                }
+
+                return true;
+            }
+
+            pub fn skipTypeScriptArrowArgsWithBacktracking(p: *P) anyerror!bool {
                 try p.skipTypescriptFnArgs();
                 p.lexer.expect(.t_equals_greater_than) catch
                     return error.Backtrack;
+
+                return true;
             }
 
-            pub fn skipTypeScriptTypeArgumentsWithBacktracking(p: *P) anyerror!void {
-                _ = try p.skipTypeScriptTypeArguments(false);
-
-                // Check the token after this and backtrack if it's the wrong one
-                if (!TypeScript.canFollowTypeArgumentsInExpression(p.lexer.token)) {
-                    // try p.lexer.unexpected(); return error.SyntaxError;
-                    return error.Backtrack;
+            pub fn skipTypeScriptTypeArgumentsWithBacktracking(p: *P) anyerror!bool {
+                if (try p.skipTypeScriptTypeArguments(false)) {
+                    // Check the token after this and backtrack if it's the wrong one
+                    if (!TypeScript.canFollowTypeArgumentsInExpression(p)) {
+                        return error.Backtrack;
+                    }
                 }
+
+                return true;
             }
 
             pub fn skipTypeScriptArrowReturnTypeWithBacktracking(p: *P) anyerror!void {
-                p.lexer.expect(.t_colon) catch
-                    return error.Backtrack;
+                try p.lexer.expect(.t_colon);
 
                 try p.skipTypescriptReturnType();
                 // Check the token after this and backtrack if it's the wrong one
                 if (p.lexer.token != .t_equals_greater_than) {
-                    // try p.lexer.unexpected(); return error.SyntaxError;
                     return error.Backtrack;
                 }
             }
         };
 
-        pub fn trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking(p: *P) bool {
-            return Backtracking.lexerBacktracker(p, Backtracking.skipTypeScriptTypeParametersThenOpenParenWithBacktracking);
+        pub fn trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking(p: *P) SkipTypeParameterResult {
+            return Backtracking.lexerBacktracker(p, Backtracking.skipTypeScriptTypeParametersThenOpenParenWithBacktracking, SkipTypeParameterResult);
         }
 
         pub fn trySkipTypeScriptTypeArgumentsWithBacktracking(p: *P) bool {
-            return Backtracking.lexerBacktracker(p, Backtracking.skipTypeScriptTypeArgumentsWithBacktracking);
+            return Backtracking.lexerBacktracker(p, Backtracking.skipTypeScriptTypeArgumentsWithBacktracking, bool);
         }
 
         pub fn trySkipTypeScriptArrowReturnTypeWithBacktracking(p: *P) bool {
-            return Backtracking.lexerBacktracker(p, Backtracking.skipTypeScriptArrowReturnTypeWithBacktracking);
+            return Backtracking.lexerBacktracker(p, Backtracking.skipTypeScriptArrowReturnTypeWithBacktracking, bool);
         }
 
         pub fn trySkipTypeScriptArrowArgsWithBacktracking(p: *P) bool {
-            return Backtracking.lexerBacktracker(p, Backtracking.skipTypeScriptArrowArgsWithBacktracking);
+            return Backtracking.lexerBacktracker(p, Backtracking.skipTypeScriptArrowArgsWithBacktracking, bool);
+        }
+
+        pub fn trySkipTypeScriptConstraintOfInferTypeWithBacktracking(p: *P, flags: TypeScript.SkipTypeOptions) bool {
+            return Backtracking.lexerBacktrackerWithArgs(p, Backtracking.skipTypeScriptConstraintOfInferTypeWithBacktracking, .{ p, flags }, bool);
         }
 
         pub inline fn parseExprOrBindings(p: *P, level: Level, errors: ?*DeferredErrors) anyerror!Expr {
@@ -10988,20 +11476,42 @@ fn NewParser_(
                 },
             }
 
+            var has_type_parameters = false;
+            var has_definite_assignment_assertion_operator = false;
+
             if (comptime is_typescript_enabled) {
-                // "class X { foo?: number }"
-                // "class X { foo!: number }"
-                if (opts.is_class and (p.lexer.token == .t_question or p.lexer.token == .t_exclamation)) {
-                    try p.lexer.next();
+                if (opts.is_class) {
+                    if (p.lexer.token == .t_question) {
+                        // "class X { foo?: number }"
+                        // "class X { foo!: number }"
+                        try p.lexer.next();
+                    } else if (p.lexer.token == .t_exclamation and
+                        !p.lexer.has_newline_before and
+                        kind == .normal and
+                        !opts.is_async and
+                        !opts.is_generator)
+                    {
+                        // "class X { foo!: number }"
+                        try p.lexer.next();
+                        has_definite_assignment_assertion_operator = true;
+                    }
                 }
 
                 // "class X { foo?<T>(): T }"
                 // "const x = { foo<T>(): T {} }"
-                try p.skipTypeScriptTypeParameters();
+                if (!has_definite_assignment_assertion_operator) {
+                    has_type_parameters = try p.skipTypeScriptTypeParameters(.{ .allow_const_modifier = true }) != .did_not_skip_anything;
+                }
             }
 
             // Parse a class field with an optional initial value
-            if (opts.is_class and kind == .normal and !opts.is_async and !opts.is_generator and p.lexer.token != .t_open_paren) {
+            if (opts.is_class and
+                kind == .normal and !opts.is_async and
+                !opts.is_generator and
+                p.lexer.token != .t_open_paren and
+                !has_type_parameters and
+                (p.lexer.token != .t_open_paren or has_definite_assignment_assertion_operator))
+            {
                 var initializer: ?Expr = null;
 
                 // Forbid the names "constructor" and "prototype" in some cases
@@ -12590,7 +13100,7 @@ fn NewParser_(
 
                     // Even anonymous classes can have TypeScript type parameters
                     if (is_typescript_enabled) {
-                        try p.skipTypeScriptTypeParameters();
+                        _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annoatations = true, .allow_const_modifier = true });
                     }
 
                     const class = try p.parseClass(classKeyword, name, ParseClassOptions{});
@@ -12829,27 +13339,10 @@ fn NewParser_(
                     //     <A>(x) => {}
                     //     <A = B>(x) => {}
                     if (comptime is_typescript_enabled and is_jsx_enabled) {
-                        var oldLexer = std.mem.toBytes(p.lexer);
-
-                        try p.lexer.next();
-                        // Look ahead to see if this should be an arrow function instead
-                        var is_ts_arrow_fn = false;
-
-                        if (p.lexer.token == .t_identifier) {
-                            try p.lexer.next();
-                            if (p.lexer.token == .t_comma) {
-                                is_ts_arrow_fn = true;
-                            } else if (p.lexer.token == .t_extends) {
-                                try p.lexer.next();
-                                is_ts_arrow_fn = p.lexer.token != .t_equals and p.lexer.token != .t_greater_than;
-                            }
-                        }
-
-                        // Restore the lexer
-                        p.lexer = std.mem.bytesToValue(@TypeOf(p.lexer), &oldLexer);
-
-                        if (is_ts_arrow_fn) {
-                            try p.skipTypeScriptTypeParameters();
+                        if (try TypeScript.isTSArrowFnJSX(p)) {
+                            _ = try p.skipTypeScriptTypeParameters(TypeParameterFlag{
+                                .allow_const_modifier = true,
+                            });
                             try p.lexer.expect(.t_open_paren);
                             return try p.parseParenExpr(loc, level, ParenExprOpts{ .force_arrow_fn = true });
                         }
@@ -12873,9 +13366,14 @@ fn NewParser_(
 
                         // "<T>(x)"
                         // "<T>(x) => {}"
-                        if (p.trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking()) {
-                            try p.lexer.expect(.t_open_paren);
-                            return p.parseParenExpr(loc, level, ParenExprOpts{});
+                        switch (p.trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking()) {
+                            .did_not_skip_anything => {},
+                            else => |result| {
+                                try p.lexer.expect(.t_open_paren);
+                                return p.parseParenExpr(loc, level, ParenExprOpts{
+                                    .force_arrow_fn = result == .definitely_type_parameters,
+                                });
+                            },
                         }
 
                         // "<T>x"
@@ -14556,7 +15054,7 @@ fn NewParser_(
                             // "(1 && this.fn)()" => "(0, this.fn)()"
                         },
                         .bin_add => {
-                            if (p.should_fold_numeric_constants) {
+                            if (p.should_fold_typescript_constant_expressions) {
                                 if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
                                     return p.newExpr(E.Number{ .value = vals[0] + vals[1] }, expr.loc);
                                 }
@@ -14567,28 +15065,28 @@ fn NewParser_(
                             }
                         },
                         .bin_sub => {
-                            if (p.should_fold_numeric_constants) {
+                            if (p.should_fold_typescript_constant_expressions) {
                                 if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
                                     return p.newExpr(E.Number{ .value = vals[0] - vals[1] }, expr.loc);
                                 }
                             }
                         },
                         .bin_mul => {
-                            if (p.should_fold_numeric_constants) {
+                            if (p.should_fold_typescript_constant_expressions) {
                                 if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
                                     return p.newExpr(E.Number{ .value = vals[0] * vals[1] }, expr.loc);
                                 }
                             }
                         },
                         .bin_div => {
-                            if (p.should_fold_numeric_constants) {
+                            if (p.should_fold_typescript_constant_expressions) {
                                 if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
                                     return p.newExpr(E.Number{ .value = vals[0] / vals[1] }, expr.loc);
                                 }
                             }
                         },
                         .bin_rem => {
-                            if (p.should_fold_numeric_constants) {
+                            if (p.should_fold_typescript_constant_expressions) {
                                 if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
                                     // is this correct?
                                     return p.newExpr(E.Number{ .value = std.math.mod(f64, vals[0], vals[1]) catch 0.0 }, expr.loc);
@@ -14596,7 +15094,7 @@ fn NewParser_(
                             }
                         },
                         .bin_pow => {
-                            if (p.should_fold_numeric_constants) {
+                            if (p.should_fold_typescript_constant_expressions) {
                                 if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
                                     return p.newExpr(E.Number{ .value = std.math.pow(f64, vals[0], vals[1]) }, expr.loc);
                                 }
@@ -14604,7 +15102,7 @@ fn NewParser_(
                         },
                         .bin_shl => {
                             // TODO:
-                            // if (p.should_fold_numeric_constants) {
+                            // if (p.should_fold_typescript_constant_expressions) {
                             //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
                             //         return p.newExpr(E.Number{ .value = ((@floatToInt(i32, vals[0]) << @floatToInt(u32, vals[1])) & 31) }, expr.loc);
                             //     }
@@ -14612,7 +15110,7 @@ fn NewParser_(
                         },
                         .bin_shr => {
                             // TODO:
-                            // if (p.should_fold_numeric_constants) {
+                            // if (p.should_fold_typescript_constant_expressions) {
                             //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
                             //         return p.newExpr(E.Number{ .value = ((@floatToInt(i32, vals[0]) >> @floatToInt(u32, vals[1])) & 31) }, expr.loc);
                             //     }
@@ -14620,7 +15118,7 @@ fn NewParser_(
                         },
                         .bin_u_shr => {
                             // TODO:
-                            // if (p.should_fold_numeric_constants) {
+                            // if (p.should_fold_typescript_constant_expressions) {
                             //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
                             //         return p.newExpr(E.Number{ .value = ((@floatToInt(i32, vals[0]) >> @floatToInt(u32, vals[1])) & 31) }, expr.loc);
                             //     }
@@ -14628,7 +15126,7 @@ fn NewParser_(
                         },
                         .bin_bitwise_and => {
                             // TODO:
-                            // if (p.should_fold_numeric_constants) {
+                            // if (p.should_fold_typescript_constant_expressions) {
                             //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
                             //         return p.newExpr(E.Number{ .value = ((@floatToInt(i32, vals[0]) >> @floatToInt(u32, vals[1])) & 31) }, expr.loc);
                             //     }
@@ -14636,7 +15134,7 @@ fn NewParser_(
                         },
                         .bin_bitwise_or => {
                             // TODO:
-                            // if (p.should_fold_numeric_constants) {
+                            // if (p.should_fold_typescript_constant_expressions) {
                             //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
                             //         return p.newExpr(E.Number{ .value = ((@floatToInt(i32, vals[0]) >> @floatToInt(u32, vals[1])) & 31) }, expr.loc);
                             //     }
@@ -14644,7 +15142,7 @@ fn NewParser_(
                         },
                         .bin_bitwise_xor => {
                             // TODO:
-                            // if (p.should_fold_numeric_constants) {
+                            // if (p.should_fold_typescript_constant_expressions) {
                             //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
                             //         return p.newExpr(E.Number{ .value = ((@floatToInt(i32, vals[0]) >> @floatToInt(u32, vals[1])) & 31) }, expr.loc);
                             //     }
@@ -16815,6 +17313,7 @@ fn NewParser_(
                 .s_local => |data| {
                     // Local statements do not end the const local prefix
                     p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
+
                     const decls_len = if (!(data.is_export and p.options.features.replace_exports.entries.len > 0))
                         p.visitDecls(data.decls, data.kind == .k_const, false)
                     else
@@ -17352,8 +17851,8 @@ fn NewParser_(
                     // We normally don't fold numeric constants because they might increase code
                     // size, but it's important to fold numeric constants inside enums since
                     // that's what the TypeScript compiler does.
-                    const old_should_fold_numeric_constants = p.should_fold_numeric_constants;
-                    p.should_fold_numeric_constants = true;
+                    const old_should_fold_typescript_constant_expressions = p.should_fold_typescript_constant_expressions;
+                    p.should_fold_typescript_constant_expressions = true;
                     for (data.values) |*enum_value| {
                         // gotta allocate here so it lives after this function stack frame goes poof
                         const name = enum_value.name;
@@ -17418,7 +17917,7 @@ fn NewParser_(
                         p.recordUsage(data.arg);
                     }
 
-                    p.should_fold_numeric_constants = old_should_fold_numeric_constants;
+                    p.should_fold_typescript_constant_expressions = old_should_fold_typescript_constant_expressions;
 
                     var value_stmts = ListManaged(Stmt).initCapacity(allocator, value_exprs.items.len) catch unreachable;
                     // Generate statements from expressions

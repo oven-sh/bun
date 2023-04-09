@@ -17623,6 +17623,28 @@ fn NewParser_(
                         data.value = p.visitExpr(data.value);
                         data.body = p.visitLoopBody(data.body);
 
+                        // Check for a variable initializer
+                        if (data.init.data == .s_local and data.init.data.s_local.kind == .k_var) {
+
+                            // Lower for-in variable initializers in case the output is used in strict mode
+                            var local = data.init.data.s_local;
+                            if (local.decls.len == 1) {
+                                var decl: *G.Decl = &local.decls[0];
+                                if (decl.binding.data == .b_identifier) {
+                                    if (decl.value) |val| {
+                                        stmts.append(
+                                            Stmt.assign(
+                                                Expr.initIdentifier(decl.binding.data.b_identifier.ref, decl.binding.loc),
+                                                val,
+                                                p.allocator,
+                                            ),
+                                        ) catch unreachable;
+                                        decl.value = null;
+                                    }
+                                }
+                            }
+                        }
+
                         if (data.init.data == .s_local and data.init.data.s_local.kind == .k_var) {
                             const relocate = p.maybeRelocateVarsToTopLevel(data.init.data.s_local.decls, RelocateVars.Mode.for_in_or_for_of);
                             if (relocate.stmt) |relocated_stmt| {

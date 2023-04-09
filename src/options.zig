@@ -300,62 +300,62 @@ pub const ExternalModules = struct {
     };
 
     pub const NodeBuiltinsMap = ComptimeStringMap(void, .{
-        .{ "_http_agent", void{} },
-        .{ "_http_client", void{} },
-        .{ "_http_common", void{} },
-        .{ "_http_incoming", void{} },
-        .{ "_http_outgoing", void{} },
-        .{ "_http_server", void{} },
-        .{ "_stream_duplex", void{} },
-        .{ "_stream_passthrough", void{} },
-        .{ "_stream_readable", void{} },
-        .{ "_stream_transform", void{} },
-        .{ "_stream_wrap", void{} },
-        .{ "_stream_writable", void{} },
-        .{ "_tls_common", void{} },
-        .{ "_tls_wrap", void{} },
-        .{ "assert", void{} },
-        .{ "async_hooks", void{} },
-        .{ "buffer", void{} },
-        .{ "child_process", void{} },
-        .{ "cluster", void{} },
-        .{ "console", void{} },
-        .{ "constants", void{} },
-        .{ "crypto", void{} },
-        .{ "dgram", void{} },
-        .{ "diagnostics_channel", void{} },
-        .{ "dns", void{} },
-        .{ "domain", void{} },
-        .{ "events", void{} },
-        .{ "fs", void{} },
-        .{ "http", void{} },
-        .{ "http2", void{} },
-        .{ "https", void{} },
-        .{ "inspector", void{} },
-        .{ "module", void{} },
-        .{ "net", void{} },
-        .{ "os", void{} },
-        .{ "path", void{} },
-        .{ "perf_hooks", void{} },
-        .{ "process", void{} },
-        .{ "punycode", void{} },
-        .{ "querystring", void{} },
-        .{ "readline", void{} },
-        .{ "repl", void{} },
-        .{ "stream", void{} },
-        .{ "string_decoder", void{} },
-        .{ "sys", void{} },
-        .{ "timers", void{} },
-        .{ "tls", void{} },
-        .{ "trace_events", void{} },
-        .{ "tty", void{} },
-        .{ "url", void{} },
-        .{ "util", void{} },
-        .{ "v8", void{} },
-        .{ "vm", void{} },
-        .{ "wasi", void{} },
-        .{ "worker_threads", void{} },
-        .{ "zlib", void{} },
+        .{ "_http_agent", {} },
+        .{ "_http_client", {} },
+        .{ "_http_common", {} },
+        .{ "_http_incoming", {} },
+        .{ "_http_outgoing", {} },
+        .{ "_http_server", {} },
+        .{ "_stream_duplex", {} },
+        .{ "_stream_passthrough", {} },
+        .{ "_stream_readable", {} },
+        .{ "_stream_transform", {} },
+        .{ "_stream_wrap", {} },
+        .{ "_stream_writable", {} },
+        .{ "_tls_common", {} },
+        .{ "_tls_wrap", {} },
+        .{ "assert", {} },
+        .{ "async_hooks", {} },
+        .{ "buffer", {} },
+        .{ "child_process", {} },
+        .{ "cluster", {} },
+        .{ "console", {} },
+        .{ "constants", {} },
+        .{ "crypto", {} },
+        .{ "dgram", {} },
+        .{ "diagnostics_channel", {} },
+        .{ "dns", {} },
+        .{ "domain", {} },
+        .{ "events", {} },
+        .{ "fs", {} },
+        .{ "http", {} },
+        .{ "http2", {} },
+        .{ "https", {} },
+        .{ "inspector", {} },
+        .{ "module", {} },
+        .{ "net", {} },
+        .{ "os", {} },
+        .{ "path", {} },
+        .{ "perf_hooks", {} },
+        .{ "process", {} },
+        .{ "punycode", {} },
+        .{ "querystring", {} },
+        .{ "readline", {} },
+        .{ "repl", {} },
+        .{ "stream", {} },
+        .{ "string_decoder", {} },
+        .{ "sys", {} },
+        .{ "timers", {} },
+        .{ "tls", {} },
+        .{ "trace_events", {} },
+        .{ "tty", {} },
+        .{ "url", {} },
+        .{ "util", {} },
+        .{ "v8", {} },
+        .{ "vm", {} },
+        .{ "wasi", {} },
+        .{ "worker_threads", {} },
+        .{ "zlib", {} },
     });
 };
 
@@ -847,14 +847,14 @@ pub const ESMConditions = struct {
         try import_condition_map.ensureTotalCapacity(defaults.len + 1);
         try require_condition_map.ensureTotalCapacity(defaults.len + 1);
 
-        import_condition_map.putAssumeCapacityNoClobber(Platform.default_conditions_strings.import, void{});
-        require_condition_map.putAssumeCapacityNoClobber(Platform.default_conditions_strings.require, void{});
-        default_condition_amp.putAssumeCapacityNoClobber(Platform.default_conditions_strings.default, void{});
+        import_condition_map.putAssumeCapacityNoClobber(Platform.default_conditions_strings.import, {});
+        require_condition_map.putAssumeCapacityNoClobber(Platform.default_conditions_strings.require, {});
+        default_condition_amp.putAssumeCapacityNoClobber(Platform.default_conditions_strings.default, {});
 
         for (defaults) |default| {
-            default_condition_amp.putAssumeCapacityNoClobber(default, void{});
-            import_condition_map.putAssumeCapacityNoClobber(default, void{});
-            require_condition_map.putAssumeCapacityNoClobber(default, void{});
+            default_condition_amp.putAssumeCapacityNoClobber(default, {});
+            import_condition_map.putAssumeCapacityNoClobber(default, {});
+            require_condition_map.putAssumeCapacityNoClobber(default, {});
         }
 
         return ESMConditions{

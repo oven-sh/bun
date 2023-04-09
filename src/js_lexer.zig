@@ -92,7 +92,7 @@ fn NewLexer_(
         const is_json = json_options.is_json;
         const json = json_options;
         const JSONBool = if (is_json) bool else void;
-        const JSONBoolDefault: JSONBool = if (is_json) true else void{};
+        const JSONBoolDefault: JSONBool = if (is_json) true else {};
 
         pub const Error = error{
             UTF8Fail,

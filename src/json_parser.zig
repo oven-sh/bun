@@ -242,13 +242,11 @@ fn JSONLikeParser_(
 
                     var duplicates_node: DuplicateNodeType = if (comptime opts.json_warn_duplicate_keys)
                         HashMapPool.get(p.allocator)
-                    else
-                        void{};
+                    else {};
 
                     var duplicates: HashMapType = if (comptime opts.json_warn_duplicate_keys)
                         duplicates_node.data
-                    else
-                        void{};
+                    else {};
 
                     defer {
                         if (comptime opts.json_warn_duplicate_keys) {

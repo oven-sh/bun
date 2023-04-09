@@ -1079,7 +1079,7 @@ pub fn NewApp(comptime ssl: bool) type {
                             .always_inline,
                             handler,
                             .{
-                                void{},
+                                {},
                                 req,
                                 @ptrCast(*Response, @alignCast(@alignOf(*Response), res)),
                             },
@@ -1253,7 +1253,7 @@ pub fn NewApp(comptime ssl: bool) type {
             const Wrapper = struct {
                 pub fn handle(socket: ?*uws.ListenSocket, conf: uws_app_listen_config_t, data: ?*anyopaque) callconv(.C) void {
                     if (comptime UserData == void) {
-                        @call(.always_inline, handler, .{ void{}, @ptrCast(?*ThisApp.ListenSocket, socket), conf });
+                        @call(.always_inline, handler, .{ {}, @ptrCast(?*ThisApp.ListenSocket, socket), conf });
                     } else {
                         @call(.always_inline, handler, .{
                             @ptrCast(UserData, @alignCast(@alignOf(UserData), data.?)),
@@ -1276,7 +1276,7 @@ pub fn NewApp(comptime ssl: bool) type {
             const Wrapper = struct {
                 pub fn handle(socket: ?*uws.ListenSocket, data: ?*anyopaque) callconv(.C) void {
                     if (comptime UserData == void) {
-                        @call(.always_inline, handler, .{ void{}, @ptrCast(?*ThisApp.ListenSocket, socket) });
+                        @call(.always_inline, handler, .{ {}, @ptrCast(?*ThisApp.ListenSocket, socket) });
                     } else {
                         @call(.always_inline, handler, .{
                             @ptrCast(UserData, @alignCast(@alignOf(UserData), data.?)),
@@ -1396,7 +1396,7 @@ pub fn NewApp(comptime ssl: bool) type {
                 const Wrapper = struct {
                     pub fn handle(this: *uws_res, amount: uintmax_t, data: ?*anyopaque) callconv(.C) bool {
                         if (comptime UserDataType == void) {
-                            return @call(.always_inline, handler, .{ void{}, amount, castRes(this) });
+                            return @call(.always_inline, handler, .{ {}, amount, castRes(this) });
                         } else {
                             return @call(.always_inline, handler, .{
                                 @ptrCast(UserDataType, @alignCast(@alignOf(UserDataType), data.?)),
@@ -1417,7 +1417,7 @@ pub fn NewApp(comptime ssl: bool) type {
                 const Wrapper = struct {
                     pub fn handle(this: *uws_res, user_data: ?*anyopaque) callconv(.C) void {
                         if (comptime UserDataType == void) {
-                            @call(.always_inline, handler, .{ void{}, castRes(this), void{} });
+                            @call(.always_inline, handler, .{ {}, castRes(this), {} });
                         } else {
                             @call(.always_inline, handler, .{ @ptrCast(UserDataType, @alignCast(@alignOf(UserDataType), user_data.?)), castRes(this) });
                         }
@@ -1440,7 +1440,7 @@ pub fn NewApp(comptime ssl: bool) type {
                     pub fn handle(this: *uws_res, chunk_ptr: [*c]const u8, len: usize, last: bool, user_data: ?*anyopaque) callconv(.C) void {
                         if (comptime UserDataType == void) {
                             @call(.always_inline, handler, .{
-                                void{},
+                                {},
                                 castRes(this),
                                 if (len > 0) chunk_ptr[0..len] else "",
                                 last,
@@ -1493,7 +1493,7 @@ pub fn NewApp(comptime ssl: bool) type {
                     pub fn handle(user_data: ?*anyopaque) callconv(.C) void {
                         if (comptime UserDataType == void) {
                             @call(.always_inline, handler, .{
-                                void{},
+                                {},
                             });
                         } else {
                             @call(.always_inline, handler, .{
@@ -1516,7 +1516,7 @@ pub fn NewApp(comptime ssl: bool) type {
             //         pub fn handle(user_data: ?*anyopaque, fd: i32) callconv(.C) void {
             //             if (comptime UserDataType == void) {
             //                 @call(.always_inline, handler, .{
-            //                     void{},
+            //                     {},
             //                     fd,
             //                 });
             //             } else {
@@ -1535,7 +1535,7 @@ pub fn NewApp(comptime ssl: bool) type {
             //         pub fn handle(socket: *Socket) callconv(.C) ?*Socket {
             //             if (comptime UserDataType == void) {
             //                 @call(.always_inline, handler, .{
-            //                     void{},
+            //                     {},
             //                     fd,
             //                 });
             //             } else {

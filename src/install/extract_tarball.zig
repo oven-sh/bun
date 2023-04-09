@@ -259,7 +259,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                         extract_destination,
                         null,
                         void,
-                        void{},
+                        {},
                         // for npm packages, the root dir is always "package"
                         1,
                         true,
@@ -271,7 +271,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                         extract_destination,
                         null,
                         void,
-                        void{},
+                        {},
                         // for npm packages, the root dir is always "package"
                         1,
                         true,

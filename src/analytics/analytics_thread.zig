@@ -202,7 +202,7 @@ pub const Event = struct {
 
         const timestamp = if (millis < 0) 0 else @intCast(u64, millis);
 
-        return Event{ .timestamp = timestamp, .data = @unionInit(Data, @tagName(name), void{}) };
+        return Event{ .timestamp = timestamp, .data = @unionInit(Data, @tagName(name), {}) };
     }
 };
 

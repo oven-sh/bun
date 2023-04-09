@@ -444,7 +444,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn cmpDesc(_: void, a: ZigString, b: ZigString) bool {
-        return strings.cmpStringsDesc(void{}, a.slice(), b.slice());
+        return strings.cmpStringsDesc({}, a.slice(), b.slice());
     }
 
     pub fn sortAsc(slice_: []ZigString) void {
@@ -452,7 +452,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn cmpAsc(_: void, a: ZigString, b: ZigString) bool {
-        return strings.cmpStringsAsc(void{}, a.slice(), b.slice());
+        return strings.cmpStringsAsc({}, a.slice(), b.slice());
     }
 
     pub inline fn init(slice_: []const u8) ZigString {

@@ -213,7 +213,7 @@ pub const Body = struct {
         onStartStreaming: ?*const fn (ctx: *anyopaque) JSC.WebCore.DrainResult = null,
 
         deinit: bool = false,
-        action: Action = Action{ .none = void{} },
+        action: Action = Action{ .none = {} },
 
         pub fn toAnyBlob(this: *PendingValue) ?AnyBlob {
             if (this.promise != null)
@@ -364,7 +364,7 @@ pub const Body = struct {
             Null,
         };
 
-        // pub const empty = Value{ .Empty = void{} };
+        // pub const empty = Value{ .Empty = {} };
 
         pub fn toReadableStream(this: *Value, globalThis: *JSGlobalObject) JSValue {
             JSC.markBinding(@src());
@@ -410,7 +410,7 @@ pub const Body = struct {
                     }
 
                     if (drain_result == .empty or drain_result == .aborted) {
-                        this.* = .{ .Null = void{} };
+                        this.* = .{ .Null = {} };
                         return JSC.WebCore.ReadableStream.empty(globalThis);
                     }
 
@@ -451,7 +451,7 @@ pub const Body = struct {
 
             if (value.isEmptyOrUndefinedOrNull()) {
                 return Body.Value{
-                    .Null = void{},
+                    .Null = {},
                 };
             }
 
@@ -976,7 +976,7 @@ pub fn BodyMixin(comptime Type: type) type {
                     return handleBodyAlreadyUsed(globalObject);
                 }
 
-                return value.Locked.setPromise(globalObject, .{ .getText = void{} });
+                return value.Locked.setPromise(globalObject, .{ .getText = {} });
             }
 
             var blob = value.useAsAnyBlob();
@@ -1018,7 +1018,7 @@ pub fn BodyMixin(comptime Type: type) type {
                 if (value.Locked.promise != null) {
                     return handleBodyAlreadyUsed(globalObject);
                 }
-                return value.Locked.setPromise(globalObject, .{ .getJSON = void{} });
+                return value.Locked.setPromise(globalObject, .{ .getJSON = {} });
             }
 
             var blob = value.useAsAnyBlob();
@@ -1047,7 +1047,7 @@ pub fn BodyMixin(comptime Type: type) type {
                 if (value.Locked.promise != null) {
                     return handleBodyAlreadyUsed(globalObject);
                 }
-                return value.Locked.setPromise(globalObject, .{ .getArrayBuffer = void{} });
+                return value.Locked.setPromise(globalObject, .{ .getArrayBuffer = {} });
             }
 
             var blob: AnyBlob = value.useAsAnyBlob();
@@ -1126,7 +1126,7 @@ pub fn BodyMixin(comptime Type: type) type {
                     return handleBodyAlreadyUsed(globalObject);
                 }
 
-                return value.Locked.setPromise(globalObject, .{ .getBlob = void{} });
+                return value.Locked.setPromise(globalObject, .{ .getBlob = {} });
             }
 
             var blob = value.use();

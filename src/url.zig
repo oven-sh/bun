@@ -870,7 +870,7 @@ pub const FormData = struct {
 
         pub fn get(content_type: []const u8) ?Encoding {
             if (strings.indexOf(content_type, "application/x-www-form-urlencoded") != null)
-                return Encoding{ .URLEncoded = void{} };
+                return Encoding{ .URLEncoded = {} };
 
             if (strings.indexOf(content_type, "multipart/form-data") == null) return null;
 

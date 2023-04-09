@@ -280,11 +280,11 @@ pub noinline fn printElapsedTo(elapsed: f64, comptime printerFn: anytype, ctx: a
 }
 
 pub fn printElapsed(elapsed: f64) void {
-    printElapsedToWithCtx(elapsed, Output.prettyError, false, void{});
+    printElapsedToWithCtx(elapsed, Output.prettyError, false, {});
 }
 
 pub fn printElapsedStdout(elapsed: f64) void {
-    printElapsedToWithCtx(elapsed, Output.pretty, false, void{});
+    printElapsedToWithCtx(elapsed, Output.pretty, false, {});
 }
 
 pub fn printStartEnd(start: i128, end: i128) void {

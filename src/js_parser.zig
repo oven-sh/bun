@@ -9507,8 +9507,7 @@ fn NewParser_(
             // this variable should not exist if we're not in a typescript file
             var had_type_only_imports = if (comptime is_typescript_enabled)
                 false
-            else
-                void{};
+            else {};
 
             while (p.lexer.token != .t_close_brace) {
                 // The alias may be a keyword;

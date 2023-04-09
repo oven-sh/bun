@@ -1732,11 +1732,11 @@ pub const E = struct {
         }
 
         pub fn alphabetizeProperties(this: *Object) void {
-            std.sort.sort(G.Property, this.properties.slice(), void{}, Sorter.isLessThan);
+            std.sort.sort(G.Property, this.properties.slice(), {}, Sorter.isLessThan);
         }
 
         pub fn packageJSONSort(this: *Object) void {
-            std.sort.sort(G.Property, this.properties.slice(), void{}, PackageJSONSort.Fields.isLessThan);
+            std.sort.sort(G.Property, this.properties.slice(), {}, PackageJSONSort.Fields.isLessThan);
         }
 
         const PackageJSONSort = struct {

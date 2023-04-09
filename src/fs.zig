@@ -860,7 +860,7 @@ pub const FileSystem = struct {
         threadlocal var temp_entries_option: EntriesOption = undefined;
 
         pub fn readDirectory(fs: *RealFS, _dir: string, _handle: ?std.fs.Dir) !*EntriesOption {
-            return readDirectoryWithIterator(fs, _dir, _handle, void, void{});
+            return readDirectoryWithIterator(fs, _dir, _handle, void, {});
         }
 
         pub fn readDirectoryWithIterator(fs: *RealFS, _dir: string, _handle: ?std.fs.Dir, comptime Iterator: type, iterator: Iterator) !*EntriesOption {

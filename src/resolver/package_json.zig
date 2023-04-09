@@ -1043,7 +1043,7 @@ pub const ExportsMap = struct {
 
             switch (expr.data) {
                 .e_null => {
-                    return Entry{ .first_token = js_lexer.rangeOfIdentifier(this.source, expr.loc), .data = .{ .null = void{} } };
+                    return Entry{ .first_token = js_lexer.rangeOfIdentifier(this.source, expr.loc), .data = .{ .null = {} } };
                 },
                 .e_string => |str| {
                     return Entry{
@@ -1103,7 +1103,7 @@ pub const ExportsMap = struct {
                             map_data.deinit(this.allocator);
                             this.allocator.free(expansion_keys);
                             return Entry{
-                                .data = .{ .invalid = void{} },
+                                .data = .{ .invalid = {} },
                                 .first_token = first_token,
                             };
                         }
@@ -1157,7 +1157,7 @@ pub const ExportsMap = struct {
 
             this.log.addRangeWarning(this.source, first_token, "This value must be a string, an object, an array, or null") catch unreachable;
             return Entry{
-                .data = .{ .invalid = void{} },
+                .data = .{ .invalid = {} },
                 .first_token = first_token,
             };
         }
@@ -1509,7 +1509,7 @@ pub const ESModule = struct {
         }
 
         if (strings.eqlComptime(subpath, ".")) {
-            var main_export = ExportsMap.Entry{ .data = .{ .null = void{} }, .first_token = logger.Range.None };
+            var main_export = ExportsMap.Entry{ .data = .{ .null = {} }, .first_token = logger.Range.None };
             if (switch (exports.data) {
                 .string,
                 .array,

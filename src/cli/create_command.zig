@@ -540,7 +540,7 @@ pub const CreateCommand = struct {
                     destination,
                     &archive_context,
                     void,
-                    void{},
+                    {},
                     1,
                     false,
                     false,
@@ -757,17 +757,17 @@ pub const CreateCommand = struct {
 
                 const Prune = struct {
                     pub const packages = ComptimeStringMap(void, .{
-                        .{ "@parcel/babel-preset", void{} },
-                        .{ "@parcel/core", void{} },
-                        .{ "@swc/cli", void{} },
-                        .{ "@swc/core", void{} },
-                        .{ "@webpack/cli", void{} },
-                        .{ "react-scripts", void{} },
-                        .{ "webpack-cli", void{} },
-                        .{ "webpack", void{} },
+                        .{ "@parcel/babel-preset", {} },
+                        .{ "@parcel/core", {} },
+                        .{ "@swc/cli", {} },
+                        .{ "@swc/core", {} },
+                        .{ "@webpack/cli", {} },
+                        .{ "react-scripts", {} },
+                        .{ "webpack-cli", {} },
+                        .{ "webpack", {} },
 
                         // one of cosmic config's imports breaks stuff
-                        .{ "cosmiconfig", void{} },
+                        .{ "cosmiconfig", {} },
                     });
                     pub var prune_count: u16 = 0;
 

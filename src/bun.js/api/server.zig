@@ -2742,7 +2742,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn onStartStreamingRequestBody(this: *RequestContext) JSC.WebCore.DrainResult {
             if (this.aborted) {
                 return JSC.WebCore.DrainResult{
-                    .aborted = void{},
+                    .aborted = {},
                 };
             }
 

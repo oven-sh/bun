@@ -193,15 +193,15 @@ pub const Keywords = ComptimeStringMap(T, .{
 });
 
 pub const StrictModeReservedWords = ComptimeStringMap(void, .{
-    .{ "implements", void{} },
-    .{ "interface", void{} },
-    .{ "let", void{} },
-    .{ "package", void{} },
-    .{ "private", void{} },
-    .{ "protected", void{} },
-    .{ "public", void{} },
-    .{ "static", void{} },
-    .{ "yield", void{} },
+    .{ "implements", {} },
+    .{ "interface", {} },
+    .{ "let", {} },
+    .{ "package", {} },
+    .{ "private", {} },
+    .{ "protected", {} },
+    .{ "public", {} },
+    .{ "static", {} },
+    .{ "yield", {} },
 });
 
 pub const StrictModeReservedWordsRemap = ComptimeStringMap(string, .{

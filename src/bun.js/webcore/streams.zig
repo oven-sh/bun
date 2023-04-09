@@ -1664,7 +1664,7 @@ pub const FileSink = struct {
         }
 
         if (this.requested_end or this.done)
-            return .{ .result = void{} };
+            return .{ .result = {} };
 
         this.requested_end = true;
 
@@ -3226,7 +3226,7 @@ pub const ByteStream = struct {
 
     pub fn onStart(this: *@This()) StreamStart {
         if (this.has_received_last_chunk and this.buffer.items.len == 0) {
-            return .{ .empty = void{} };
+            return .{ .empty = {} };
         }
 
         if (this.has_received_last_chunk) {
@@ -3234,7 +3234,7 @@ pub const ByteStream = struct {
         }
 
         if (this.highWaterMark == 0) {
-            return .{ .ready = void{} };
+            return .{ .ready = {} };
         }
 
         return .{ .chunk_size = @max(this.highWaterMark, std.mem.page_size) };
@@ -3412,7 +3412,7 @@ pub const ByteStream = struct {
 
         if (this.has_received_last_chunk) {
             return .{
-                .done = void{},
+                .done = {},
             };
         }
 

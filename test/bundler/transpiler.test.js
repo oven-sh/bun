@@ -73,6 +73,22 @@ describe("Bun.Transpiler", () => {
     ts.expectPrinted_("console.log(`\r\n\r\n\r\n`)", "console.log(`\n\n\n`);\n");
   });
 
+  describe("property access inlining", () => {
+    it("bails out with spread", () => {
+      ts.expectPrinted_("const a = [...b][0];", "const a = [...b][0]");
+      ts.expectPrinted_("const a = {...b}[0];", "const a = { ...b }[0]");
+    });
+    it("bails out with multiple items", () => {
+      ts.expectPrinted_("const a = [b, c][0];", "const a = [b, c][0]");
+    });
+    it("works", () => {
+      ts.expectPrinted_('const a = ["hey"][0];', 'const a = "hey"');
+    });
+    it("works nested", () => {
+      ts.expectPrinted_('const a = ["hey"][0][0];', 'const a = "h"');
+    });
+  });
+
   describe("TypeScript", () => {
     it("import Foo = Baz.Bar", () => {
       ts.expectPrinted_("import Foo = Baz.Bar;\nexport default Foo;", "const Foo = Baz.Bar;\nexport default Foo");

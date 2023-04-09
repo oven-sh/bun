@@ -2526,6 +2526,16 @@ pub const Expr = struct {
         }, this.loc);
     }
 
+    pub fn canBeInlinedFromPropertyAccess(this: Expr) bool {
+        return switch (this.data) {
+            // if the array has a spread we must keep it
+            // https://github.com/oven-sh/bun/issues/2594
+            .e_spread => false,
+
+            .e_missing => false,
+            else => true,
+        };
+    }
     pub fn canBeConstValue(this: Expr) bool {
         return this.data.canBeConstValue();
     }

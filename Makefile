@@ -1858,10 +1858,10 @@ regenerate-bindings:
 
 .PHONY: setup
 setup: require
-	# make init-submodules
-	# cd test && $(NPM_CLIENT) install --production
-	# cd packages/bun-types && $(NPM_CLIENT) install --production
-	# make vendor-without-check builtins identifier-cache clean-bindings
+	make init-submodules
+	cd test && $(NPM_CLIENT) install --production
+	cd packages/bun-types && $(NPM_CLIENT) install --production
+	make vendor-without-check builtins identifier-cache clean-bindings
 	make bindings -j$(CPU_COUNT)
 	@echo ""
 	@echo "Development environment setup complete"

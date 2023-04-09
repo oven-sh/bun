@@ -157,15 +157,25 @@ const JSXImport = enum {
             pub const Fragment_: []const string = &[_]string{"Fragment"};
         };
 
-        pub fn legacyImportNames(this: *const Symbols) []const string {
-            if (this.Fragment != null and this.createElement != null)
-                return Legacy.full;
+        pub fn legacyImportNames(this: *const Symbols, jsx: *const options.JSX.Pragma, buf: *[2]string) []const string {
+            if (this.Fragment != null and this.createElement != null) {
+                buf[0..2].* = .{
+                    jsx.fragment[jsx.fragment.len - 1],
+                    jsx.factory[jsx.factory.len - 1],
+                };
+                return buf[0..2];
+            }
 
-            if (this.createElement != null)
-                return Legacy.createElement_;
+            if (this.createElement != null) {
+                buf[0] =
+                    jsx.factory[jsx.factory.len - 1];
+                return buf[0..1];
+            }
 
-            if (this.Fragment != null)
-                return Legacy.Fragment_;
+            if (this.Fragment != null) {
+                buf[0] = jsx.fragment[jsx.fragment.len - 1];
+                return buf[0..1];
+            }
 
             return &[_]string{};
         }
@@ -421,6 +431,7 @@ pub const TypeScript = struct {
             // foo<T> `...${100}...`
             .t_template_head,
             => true,
+
             // A type argument list followed by `<` never makes sense, and a type argument list followed
             // by `>` is ambiguous with a (re-scanned) `>>` operator, so we disqualify both. Also, in
             // this context, `+` and `-` are unary operators, not binary operators.
@@ -445,11 +456,34 @@ pub const TypeScript = struct {
         };
     }
 
+    pub fn isTSArrowFnJSX(p: anytype) !bool {
+        var oldLexer = std.mem.toBytes(p.lexer);
+
+        try p.lexer.next();
+        // Look ahead to see if this should be an arrow function instead
+        var is_ts_arrow_fn = false;
+
+        if (p.lexer.token == .t_identifier) {
+            try p.lexer.next();
+            if (p.lexer.token == .t_comma) {
+                is_ts_arrow_fn = true;
+            } else if (p.lexer.token == .t_extends) {
+                try p.lexer.next();
+                is_ts_arrow_fn = p.lexer.token != .t_equals and p.lexer.token != .t_greater_than;
+            }
+        }
+
+        // Restore the lexer
+        p.lexer = std.mem.bytesToValue(@TypeOf(p.lexer), &oldLexer);
+        return is_ts_arrow_fn;
+    }
+
     // This function is taken from the official TypeScript compiler source code:
     // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
     fn isBinaryOperator(p: anytype) bool {
         return switch (p.lexer.token) {
             .t_in => p.allow_in,
+
             .t_question_question,
             .t_bar_bar,
             .t_ampersand_ampersand,
@@ -515,6 +549,7 @@ pub const TypeScript = struct {
         p.lexer.is_log_disabled = true;
         defer p.lexer.is_log_disabled = old_log_disabled;
         defer p.lexer = std.mem.bytesToValue(@TypeOf(p.lexer), &old_lexer);
+        p.lexer.next() catch {};
 
         return switch (p.lexer.token) {
             .t_open_paren, .t_less_than, .t_dot => true,
@@ -645,7 +680,6 @@ pub const TypeScript = struct {
 
             .{ "keyof", .prefix },
             .{ "readonly", .prefix },
-            .{ "infer", .infer },
 
             .{ "any", .primitive },
             .{ "never", .primitive },
@@ -657,6 +691,8 @@ pub const TypeScript = struct {
             .{ "boolean", .primitive },
             .{ "bigint", .primitive },
             .{ "symbol", .primitive },
+
+            .{ "infer", .infer },
         });
         pub const Kind = enum {
             normal,
@@ -3842,9 +3878,10 @@ pub const Parser = struct {
         }
 
         // handle new way to do automatic JSX imports which fixes symbol collision issues
-        if (p.options.jsx.parse) {
+        if (p.options.jsx.parse and p.options.features.auto_import_jsx) {
+            var legacy_import_names_buf = [2]string{ "", "" };
             const runtime_import_names = p.jsx_imports.runtimeImportNames();
-            const legacy_import_names = p.jsx_imports.legacyImportNames();
+            const legacy_import_names = p.jsx_imports.legacyImportNames(&p.options.jsx, &legacy_import_names_buf);
 
             if (runtime_import_names.len > 0) {
                 p.generateImportStmt(
@@ -6791,6 +6828,11 @@ fn NewParser_(
                     }
                     // "[a, b]"
                     while (p.lexer.token != .t_close_bracket) {
+                        // "[...a]"
+                        if (p.lexer.token == .t_dot_dot_dot) {
+                            try p.lexer.next();
+                        }
+
                         try p.skipTypeScriptBinding();
 
                         if (p.lexer.token != .t_comma) {
@@ -6837,7 +6879,6 @@ fn NewParser_(
                                     try p.lexer.next();
                                 } else {
                                     try p.lexer.unexpected();
-                                    return error.Backtrack;
                                 }
                             },
                         }
@@ -6981,6 +7022,12 @@ fn NewParser_(
                     .t_import => {
                         // "import('fs')"
                         try p.lexer.next();
+
+                        // "[import: number]"
+                        if (opts.allow_tuple_labels and p.lexer.token == .t_colon) {
+                            return;
+                        }
+
                         try p.lexer.expect(.t_open_paren);
                         try p.lexer.expect(.t_string_literal);
 
@@ -7010,7 +7057,6 @@ fn NewParser_(
                         }
 
                         _ = try p.skipTypeScriptTypeParameters(.{ .allow_const_modifier = true });
-
                         try p.skipTypeScriptParenOrFnType();
                     },
                     .t_less_than => {
@@ -7034,11 +7080,12 @@ fn NewParser_(
                                 // Valid:
                                 //   "[keyof: string]"
                                 //   "{[keyof: string]: number}"
+                                //   "{[keyof in string]: number}"
                                 //
                                 // Invalid:
                                 //   "A extends B ? keyof : string"
                                 //
-                                if (p.lexer.token != .t_colon or (!opts.is_index_signature and !opts.allow_tuple_labels)) {
+                                if ((p.lexer.token != .t_colon and p.lexer.token != .t_in) or (!opts.is_index_signature and !opts.allow_tuple_labels)) {
                                     try p.skipTypeScriptType(.prefix);
                                 }
 
@@ -7050,9 +7097,9 @@ fn NewParser_(
                                 // "type Foo = Bar extends [infer T] ? T : null"
                                 // "type Foo = Bar extends [infer T extends string] ? T : null"
                                 // "type Foo = Bar extends [infer T extends string ? infer T : never] ? T : null"
-                                if (p.lexer.token != .t_colon or (!opts.is_index_signature and !opts.allow_tuple_labels)) {
+                                // "type Foo = { [infer in Bar]: number }"
+                                if ((p.lexer.token != .t_colon and p.lexer.token != .t_in) or (!opts.is_index_signature and !opts.allow_tuple_labels)) {
                                     try p.lexer.expect(.t_identifier);
-
                                     if (p.lexer.token == .t_extends) {
                                         _ = p.trySkipTypeScriptConstraintOfInferTypeWithBacktracking(opts);
                                     }
@@ -7064,7 +7111,6 @@ fn NewParser_(
                                 try p.lexer.next();
 
                                 // "let foo: unique symbol"
-
                                 if (p.lexer.isContextualKeyword("symbol")) {
                                     try p.lexer.next();
                                     break;
@@ -7083,7 +7129,6 @@ fn NewParser_(
 
                                 // "function assert(x: boolean): asserts x"
                                 // "function assert(x: boolean): asserts x is boolean"
-
                                 if (opts.is_return_type and !p.lexer.has_newline_before and (p.lexer.token == .t_identifier or p.lexer.token == .t_this)) {
                                     try p.lexer.next();
                                 }
@@ -7152,7 +7197,9 @@ fn NewParser_(
                             if (p.lexer.token == .t_dot_dot_dot) {
                                 try p.lexer.next();
                             }
-                            try p.skipTypeScriptType(.lowest);
+                            try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions{
+                                .allow_tuple_labels = true,
+                            });
                             if (p.lexer.token == .t_question) {
                                 try p.lexer.next();
                             }
@@ -7200,7 +7247,7 @@ fn NewParser_(
                             return;
                         }
 
-                        return error.Backtrack;
+                        try p.lexer.unexpected();
                     },
                 }
                 break;
@@ -7241,7 +7288,11 @@ fn NewParser_(
                             try p.lexer.expect(.t_identifier);
                         }
                         try p.lexer.next();
-                        _ = try p.skipTypeScriptTypeArguments(false);
+
+                        // "{ <A extends B>(): c.d \n <E extends F>(): g.h }" must not become a single type
+                        if (!p.lexer.has_newline_before) {
+                            _ = try p.skipTypeScriptTypeArguments(false);
+                        }
                     },
                     .t_open_bracket => {
                         // "{ ['x']: string \n ['y']: string }" must not become a single type
@@ -7263,7 +7314,8 @@ fn NewParser_(
                         try p.lexer.next();
 
                         // The type following "extends" is not permitted to be another conditional type
-                        try p.skipTypeScriptTypeWithOpts(.conditional, .{ .disallow_conditional_types = true });
+                        try p.skipTypeScriptTypeWithOpts(.lowest, .{ .disallow_conditional_types = true });
+
                         try p.lexer.expect(.t_question);
                         try p.skipTypeScriptType(.lowest);
                         try p.lexer.expect(.t_colon);
@@ -7297,7 +7349,7 @@ fn NewParser_(
                 if (p.lexer.token == .t_open_bracket) {
                     // Index signature or computed property
                     try p.lexer.next();
-                    try p.skipTypeScriptType(.lowest);
+                    try p.skipTypeScriptTypeWithOpts(.lowest, .{ .is_index_signature = true });
 
                     // "{ [key: string]: number }"
                     // "{ readonly [K in keyof T]: T[K] }"
@@ -9207,6 +9259,7 @@ fn NewParser_(
             }
 
             _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annoatations = true });
+
             try p.lexer.expect(.t_equals);
             try p.skipTypeScriptType(.lowest);
             try p.lexer.expectOrInsertSemicolon();
@@ -10857,7 +10910,7 @@ fn NewParser_(
                     // "async<T>()"
                     // "async <T>() => {}"
                     .t_less_than => {
-                        if (is_typescript_enabled) {
+                        if (is_typescript_enabled and (!is_jsx_enabled or try TypeScript.isTSArrowFnJSX(p))) {
                             switch (p.trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking()) {
                                 .did_not_skip_anything => {},
                                 else => |result| {
@@ -10919,7 +10972,10 @@ fn NewParser_(
                     return true;
                 }
 
-                if (comptime ReturnType == void or ReturnType == bool) return backtrack;
+                if (comptime ReturnType == void or ReturnType == bool)
+                    // If we did not backtrack, then we skipped successfully.
+                    return !backtrack;
+
                 return result;
             }
 
@@ -10947,6 +11003,13 @@ fn NewParser_(
 
                 if (backtrack) {
                     p.lexer = std.mem.bytesToValue(@TypeOf(p.lexer), &old_lexer);
+                    if (comptime FnReturnType == anyerror!bool) {
+                        return false;
+                    }
+                }
+
+                if (comptime FnReturnType == anyerror!bool) {
+                    return true;
                 }
 
                 if (comptime ReturnType == void or ReturnType == bool) return backtrack;
@@ -10956,7 +11019,6 @@ fn NewParser_(
             pub fn skipTypeScriptTypeParametersThenOpenParenWithBacktracking(p: *P) anyerror!SkipTypeParameterResult {
                 const result = try p.skipTypeScriptTypeParameters(.{ .allow_const_modifier = true });
                 if (p.lexer.token != .t_open_paren) {
-                    // try p.lexer.unexpected(); return error.SyntaxError;
                     return error.Backtrack;
                 }
 
@@ -10988,7 +11050,6 @@ fn NewParser_(
                 if (try p.skipTypeScriptTypeArguments(false)) {
                     // Check the token after this and backtrack if it's the wrong one
                     if (!TypeScript.canFollowTypeArgumentsInExpression(p)) {
-                        // try p.lexer.unexpected(); return error.SyntaxError;
                         return error.Backtrack;
                     }
                 }
@@ -10997,13 +11058,11 @@ fn NewParser_(
             }
 
             pub fn skipTypeScriptArrowReturnTypeWithBacktracking(p: *P) anyerror!void {
-                p.lexer.expect(.t_colon) catch
-                    return error.Backtrack;
+                try p.lexer.expect(.t_colon);
 
                 try p.skipTypescriptReturnType();
                 // Check the token after this and backtrack if it's the wrong one
                 if (p.lexer.token != .t_equals_greater_than) {
-                    // try p.lexer.unexpected(); return error.SyntaxError;
                     return error.Backtrack;
                 }
             }
@@ -13280,26 +13339,7 @@ fn NewParser_(
                     //     <A>(x) => {}
                     //     <A = B>(x) => {}
                     if (comptime is_typescript_enabled and is_jsx_enabled) {
-                        var oldLexer = std.mem.toBytes(p.lexer);
-
-                        try p.lexer.next();
-                        // Look ahead to see if this should be an arrow function instead
-                        var is_ts_arrow_fn = false;
-
-                        if (p.lexer.token == .t_identifier) {
-                            try p.lexer.next();
-                            if (p.lexer.token == .t_comma) {
-                                is_ts_arrow_fn = true;
-                            } else if (p.lexer.token == .t_extends) {
-                                try p.lexer.next();
-                                is_ts_arrow_fn = p.lexer.token != .t_equals and p.lexer.token != .t_greater_than;
-                            }
-                        }
-
-                        // Restore the lexer
-                        p.lexer = std.mem.bytesToValue(@TypeOf(p.lexer), &oldLexer);
-
-                        if (is_ts_arrow_fn) {
+                        if (try TypeScript.isTSArrowFnJSX(p)) {
                             _ = try p.skipTypeScriptTypeParameters(TypeParameterFlag{
                                 .allow_const_modifier = true,
                             });

@@ -10309,7 +10309,7 @@ fn NewParser_(
             // But some code may still use "assert"
             // We support both and treat them identically.
             // Once Prettier & TypeScript support import attributes, we will add runtime support
-                p.lexer.isContextualKeyword("assert") or p.lexer.isContextualKeyword("with")))
+                p.lexer.isContextualKeyword("assert") or p.lexer.token == .t_with))
             {
                 try p.lexer.next();
                 try p.lexer.expect(.t_open_brace);

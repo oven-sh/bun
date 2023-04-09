@@ -219,7 +219,7 @@ pub const HTMLRewriter = opaque {
                 text_chunk_handler_data,
             )) {
                 -1 => error.Fail,
-                0 => void{},
+                0 => {},
                 else => unreachable,
             };
         }
@@ -411,7 +411,7 @@ pub const Element = opaque {
     pub fn setAttribute(element: *Element, name: []const u8, value: []const u8) Error!void {
         auto_disable();
         return switch (lol_html_element_set_attribute(element, ptrWithoutPanic(name), name.len, ptrWithoutPanic(value), value.len)) {
-            0 => void{},
+            0 => {},
             -1 => error.Fail,
             else => unreachable,
         };
@@ -419,7 +419,7 @@ pub const Element = opaque {
     pub fn removeAttribute(element: *Element, name: []const u8) Error!void {
         auto_disable();
         return switch (lol_html_element_remove_attribute(element, ptrWithoutPanic(name), name.len)) {
-            0 => void{},
+            0 => {},
             -1 => error.Fail,
             else => unreachable,
         };
@@ -427,7 +427,7 @@ pub const Element = opaque {
     pub fn before(element: *Element, content: []const u8, is_html: bool) Error!void {
         auto_disable();
         return switch (lol_html_element_before(element, ptrWithoutPanic(content), content.len, is_html)) {
-            0 => void{},
+            0 => {},
             -1 => error.Fail,
             else => unreachable,
         };
@@ -435,7 +435,7 @@ pub const Element = opaque {
     pub fn prepend(element: *Element, content: []const u8, is_html: bool) Error!void {
         auto_disable();
         return switch (lol_html_element_prepend(element, ptrWithoutPanic(content), content.len, is_html)) {
-            0 => void{},
+            0 => {},
             -1 => error.Fail,
             else => unreachable,
         };
@@ -443,7 +443,7 @@ pub const Element = opaque {
     pub fn append(element: *Element, content: []const u8, is_html: bool) Error!void {
         auto_disable();
         return switch (lol_html_element_append(element, ptrWithoutPanic(content), content.len, is_html)) {
-            0 => void{},
+            0 => {},
             -1 => error.Fail,
             else => unreachable,
         };
@@ -451,7 +451,7 @@ pub const Element = opaque {
     pub fn after(element: *Element, content: []const u8, is_html: bool) Error!void {
         auto_disable();
         return switch (lol_html_element_after(element, ptrWithoutPanic(content), content.len, is_html)) {
-            0 => void{},
+            0 => {},
             -1 => error.Fail,
             else => unreachable,
         };
@@ -460,7 +460,7 @@ pub const Element = opaque {
         auto_disable();
 
         return switch (lol_html_element_set_inner_content(element, ptrWithoutPanic(content), content.len, is_html)) {
-            0 => void{},
+            0 => {},
             -1 => error.Fail,
             else => unreachable,
         };
@@ -474,7 +474,7 @@ pub const Element = opaque {
     pub fn replace(element: *Element, content: []const u8, is_html: bool) Error!void {
         auto_disable();
         return switch (lol_html_element_replace(element, ptrWithoutPanic(content), content.len, is_html)) {
-            0 => void{},
+            0 => {},
             -1 => error.Fail,
             else => unreachable,
         };
@@ -503,7 +503,7 @@ pub const Element = opaque {
     pub fn onEndTag(element: *Element, end_tag_handler: lol_html_end_tag_handler_t, user_data: ?*anyopaque) Error!void {
         auto_disable();
         return switch (lol_html_element_on_end_tag(element, end_tag_handler, user_data)) {
-            0 => void{},
+            0 => {},
             -1 => error.Fail,
             else => unreachable,
         };
@@ -520,7 +520,7 @@ pub const Element = opaque {
 
     pub fn setTagName(element: *Element, name: []const u8) Error!void {
         return switch (lol_html_element_tag_name_set(element, ptrWithoutPanic(name), name.len)) {
-            0 => void{},
+            0 => {},
             -1 => error.Fail,
             else => unreachable,
         };
@@ -571,7 +571,7 @@ pub const EndTag = opaque {
     pub fn before(end_tag: *EndTag, content: []const u8, is_html: bool) Error!void {
         auto_disable();
         return switch (lol_html_end_tag_before(end_tag, ptrWithoutPanic(content), content.len, is_html)) {
-            0 => void{},
+            0 => {},
             -1 => error.Fail,
             else => unreachable,
         };
@@ -580,7 +580,7 @@ pub const EndTag = opaque {
     pub fn after(end_tag: *EndTag, content: []const u8, is_html: bool) Error!void {
         auto_disable();
         return switch (lol_html_end_tag_after(end_tag, ptrWithoutPanic(content), content.len, is_html)) {
-            0 => void{},
+            0 => {},
             -1 => error.Fail,
             else => unreachable,
         };
@@ -598,7 +598,7 @@ pub const EndTag = opaque {
     pub fn setName(end_tag: *EndTag, name: []const u8) Error!void {
         auto_disable();
         return switch (lol_html_end_tag_name_set(end_tag, ptrWithoutPanic(name), name.len)) {
-            0 => void{},
+            0 => {},
             -1 => error.Fail,
             else => unreachable,
         };
@@ -652,7 +652,7 @@ pub const Comment = opaque {
     pub fn setText(comment: *Comment, text: []const u8) Error!void {
         auto_disable();
         return switch (lol_html_comment_text_set(comment, ptrWithoutPanic(text), text.len)) {
-            0 => void{},
+            0 => {},
             -1 => error.Fail,
             else => unreachable,
         };
@@ -661,7 +661,7 @@ pub const Comment = opaque {
     pub fn before(comment: *Comment, content: []const u8, is_html: bool) Error!void {
         auto_disable();
         return switch (lol_html_comment_before(comment, ptrWithoutPanic(content), content.len, is_html)) {
-            0 => void{},
+            0 => {},
             -1 => error.Fail,
             else => unreachable,
         };
@@ -670,7 +670,7 @@ pub const Comment = opaque {
     pub fn replace(comment: *Comment, content: []const u8, is_html: bool) Error!void {
         auto_disable();
         return switch (lol_html_comment_before(comment, ptrWithoutPanic(content), content.len, is_html)) {
-            0 => void{},
+            0 => {},
             -1 => error.Fail,
             else => unreachable,
         };
@@ -679,7 +679,7 @@ pub const Comment = opaque {
     pub fn after(comment: *Comment, content: []const u8, is_html: bool) Error!void {
         auto_disable();
         return switch (lol_html_comment_after(comment, ptrWithoutPanic(content), content.len, is_html)) {
-            0 => void{},
+            0 => {},
             -1 => error.Fail,
             else => unreachable,
         };
@@ -704,7 +704,7 @@ pub const DocEnd = opaque {
     pub fn append(this: *DocEnd, content: []const u8, is_html: bool) Error!void {
         auto_disable();
         return switch (lol_html_doc_end_append(this, ptrWithoutPanic(content), content.len, is_html)) {
-            0 => void{},
+            0 => {},
             -1 => error.Fail,
             else => unreachable,
         };

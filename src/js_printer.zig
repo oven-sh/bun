@@ -840,7 +840,7 @@ fn NewPrinter(
 
         fn printHardcodedImportStatement(p: *Printer, import: S.Import) void {
             if (comptime !is_bun_platform) unreachable;
-            printInternalBunImport(p, import, void, void{});
+            printInternalBunImport(p, import, void, {});
         }
 
         fn printInternalBunImport(p: *Printer, import: S.Import, comptime Statement: type, statement: Statement) void {

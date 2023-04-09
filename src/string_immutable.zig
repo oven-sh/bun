@@ -1992,7 +1992,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
             }
 
             if (total == len) {
-                return .{ .original = void{} };
+                return .{ .original = {} };
             }
 
             var output = allo.alloc(u8, total) catch unreachable;
@@ -2013,7 +2013,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
             '\'' => Escaped(u8){ .static = "&#x27;" },
             '<' => Escaped(u8){ .static = "&lt;" },
             '>' => Escaped(u8){ .static = "&gt;" },
-            else => Escaped(u8){ .original = void{} },
+            else => Escaped(u8){ .original = {} },
         },
         2 => {
             const first: []const u8 = switch (latin1[0]) {
@@ -2254,7 +2254,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
 
             if (!any_needs_escape) {
                 if (comptime Environment.allow_assert) std.debug.assert(buf.capacity == 0);
-                return Escaped(u8){ .original = void{} };
+                return Escaped(u8){ .original = {} };
             }
 
             return Escaped(u8){ .allocated = try buf.toOwnedSlice() };

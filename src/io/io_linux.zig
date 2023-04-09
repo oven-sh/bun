@@ -954,7 +954,7 @@ pub const Completion = struct {
                     os.ECANCELED => error.Canceled,
                     os.ETIME => {}, // A success.
                     else => |errno| asError(errno),
-                } else void{};
+                } else {};
                 completion.callback(completion.context, completion, &result);
             },
             .write => {

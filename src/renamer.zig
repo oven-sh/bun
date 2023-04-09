@@ -205,7 +205,7 @@ pub const NumberRenamer = struct {
                 remaining = remaining[1..];
             }
             std.debug.assert(remaining.len == 0);
-            std.sort.sort(u32, sorted.items, void{}, std.sort.asc(u32));
+            std.sort.sort(u32, sorted.items, {}, std.sort.asc(u32));
 
             for (sorted.items) |inner_index| {
                 r.assignName(s, Ref.init(@intCast(Ref.Int, inner_index), source_index, false));
@@ -321,11 +321,11 @@ pub const NumberRenamer = struct {
 
                 while (s) |scope| : (s = scope.parent) {
                     if (scope.name_counts.containsAdapted(name, ctx)) {
-                        return .{ .used = void{} };
+                        return .{ .used = {} };
                     }
                 }
 
-                return .{ .unused = void{} };
+                return .{ .unused = {} };
             }
         };
 

@@ -2254,7 +2254,7 @@ pub const Package = extern struct {
         source: logger.Source,
         comptime features: Features,
     ) !void {
-        return package.parse(lockfile, allocator, log, source, void, void{}, features);
+        return package.parse(lockfile, allocator, log, source, void, {}, features);
     }
 
     pub fn parse(

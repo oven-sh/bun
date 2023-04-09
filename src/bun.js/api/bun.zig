@@ -2437,7 +2437,7 @@ pub const Hash = struct {
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSObjectRef {
-        return hashWrap(std.hash.Wyhash).hash(void{}, ctx, null, null, arguments, exception);
+        return hashWrap(std.hash.Wyhash).hash({}, ctx, null, null, arguments, exception);
     }
     fn hashWrap(comptime Hasher: anytype) type {
         return struct {

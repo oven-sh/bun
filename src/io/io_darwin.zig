@@ -334,7 +334,7 @@ pub const OpenError = error{
 pub const Syscall = struct {
     pub fn close(fd: std.os.fd_t) CloseError!void {
         return switch (darwin.getErrno(darwin.@"close$NOCANCEL"(fd))) {
-            .SUCCESS => void{},
+            .SUCCESS => {},
             .BADF => error.FileDescriptorInvalid,
             .IO => error.InputOutput,
             else => |err| asError(err),
@@ -1203,7 +1203,7 @@ pub fn connect(
                         assert(size == 4);
                         break :brk switch (darwin.getErrno(rc)) {
                             .SUCCESS => switch (@intToEnum(os.E, err_code)) {
-                                .SUCCESS => void{},
+                                .SUCCESS => {},
                                 .ACCES => error.PermissionDenied,
                                 .PERM => error.PermissionDenied,
                                 .ADDRINUSE => error.AddressInUse,
@@ -1225,7 +1225,7 @@ pub fn connect(
                         };
                     },
                     else => switch (darwin.getErrno(darwin.@"connect$NOCANCEL"(op.socket, &op.address.any, op.address.getOsSockLen()))) {
-                        .SUCCESS => void{},
+                        .SUCCESS => {},
                         .ACCES => error.PermissionDenied,
                         .PERM => error.PermissionDenied,
                         .ADDRINUSE => error.AddressInUse,

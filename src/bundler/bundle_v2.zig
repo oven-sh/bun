@@ -3700,7 +3700,7 @@ const LinkerContext = struct {
                             // include its hash when we're calculating the hashes of all
                             // dependencies of this chunk.
                             if (other_chunk_index != chunk_index)
-                                chunk_meta.dynamic_imports.put(other_chunk_index, void{}) catch unreachable;
+                                chunk_meta.dynamic_imports.put(other_chunk_index, {}) catch unreachable;
                         }
                     }
 
@@ -3764,7 +3764,7 @@ const LinkerContext = struct {
                         // be moved to a separate chunk than the use of a symbol even if
                         // the definition and use of that symbol are originally from the
                         // same source file.
-                        imports.put(ref_to_use, void{}) catch unreachable;
+                        imports.put(ref_to_use, {}) catch unreachable;
                     }
                 }
             }
@@ -3795,18 +3795,18 @@ const LinkerContext = struct {
                             if (comptime Environment.allow_assert)
                                 debug("Cross-chunk export: {s}", .{deps.symbols.get(target_ref).?.original_name});
 
-                            imports.put(target_ref, void{}) catch unreachable;
+                            imports.put(target_ref, {}) catch unreachable;
                         }
                     }
 
                     // Ensure "exports" is included if the current output format needs it
                     if (flags.force_include_exports_for_entry_point) {
-                        imports.put(deps.wrapper_refs[chunk.entry_point.source_index].?, void{}) catch unreachable;
+                        imports.put(deps.wrapper_refs[chunk.entry_point.source_index].?, {}) catch unreachable;
                     }
 
                     // Include the wrapper if present
                     if (flags.wrap != .none) {
-                        imports.put(deps.wrapper_refs[chunk.entry_point.source_index].?, void{}) catch unreachable;
+                        imports.put(deps.wrapper_refs[chunk.entry_point.source_index].?, {}) catch unreachable;
                     }
                 }
             }
@@ -3932,7 +3932,7 @@ const LinkerContext = struct {
             // of hash calculation.
             if (chunk_meta.dynamic_imports.count() > 0) {
                 var dynamic_chunk_indices = chunk_meta.dynamic_imports.keys();
-                std.sort.sort(Index.Int, dynamic_chunk_indices, void{}, std.sort.asc(Index.Int));
+                std.sort.sort(Index.Int, dynamic_chunk_indices, {}, std.sort.asc(Index.Int));
 
                 var imports = chunk.cross_chunk_imports.listManaged(c.allocator);
                 defer chunk.cross_chunk_imports.update(imports);
@@ -4144,7 +4144,7 @@ const LinkerContext = struct {
                     }
                 }
 
-                std.sort.sort(StableRef, list.items, void{}, StableRef.isLessThan);
+                std.sort.sort(StableRef, list.items, {}, StableRef.isLessThan);
                 break :brk list;
             };
             defer sorted_imports_from_other_chunks.deinit();
@@ -6293,7 +6293,7 @@ const LinkerContext = struct {
                 .ref = export_ref,
             };
         }
-        std.sort.sort(StableRef, result.items, void{}, StableRef.isLessThan);
+        std.sort.sort(StableRef, result.items, {}, StableRef.isLessThan);
     }
 
     pub fn markFileReachableForCodeSplitting(
@@ -7116,7 +7116,7 @@ const LinkerContext = struct {
                     c.graph.meta.items(.probably_typescript_type)[source_index].put(
                         c.allocator,
                         import_ref,
-                        void{},
+                        {},
                     ) catch unreachable;
                 },
                 .ambiguous => {
@@ -7706,7 +7706,7 @@ pub const CrossChunkImport = struct {
                 item.export_alias = exports_to_other_chunks.get(item.ref).?;
                 std.debug.assert(item.export_alias.len > 0);
             }
-            std.sort.sort(CrossChunkImport.Item, import_items.slice(), void{}, CrossChunkImport.Item.lessThan);
+            std.sort.sort(CrossChunkImport.Item, import_items.slice(), {}, CrossChunkImport.Item.lessThan);
 
             result.append(CrossChunkImport{
                 .chunk_index = chunk_index,
@@ -7714,7 +7714,7 @@ pub const CrossChunkImport = struct {
             }) catch unreachable;
         }
 
-        std.sort.sort(CrossChunkImport, result.items, void{}, CrossChunkImport.lessThan);
+        std.sort.sort(CrossChunkImport, result.items, {}, CrossChunkImport.lessThan);
     }
 };
 

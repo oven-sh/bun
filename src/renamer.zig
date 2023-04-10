@@ -121,20 +121,19 @@ pub const NumberRenamer = struct {
         }
 
         r.name_stack_fallback.fixed_buffer_allocator.end_index = 0;
-        switch (scope.findUnusedName(r.allocator, r.name_temp_allocator, symbol.original_name)) {
-            .renamed => |name| {
-                const new_len = @max(inner.len, ref.innerIndex() + 1);
-                if (inner.cap <= new_len) {
-                    const prev_cap = inner.len;
-                    inner.ensureUnusedCapacity(r.allocator, new_len - prev_cap) catch unreachable;
-                    const to_write = inner.ptr[prev_cap..inner.cap];
-                    @memset(std.mem.sliceAsBytes(to_write).ptr, 0, std.mem.sliceAsBytes(to_write).len);
-                }
-                inner.len = new_len;
-                inner.mut(ref.innerIndex()).* = name;
-            },
-            .no_collision => {},
+        const name = switch (scope.findUnusedName(r.allocator, r.name_temp_allocator, symbol.original_name)) {
+            .renamed => |name| name,
+            .no_collision => symbol.original_name,
+        };
+        const new_len = @max(inner.len, ref.innerIndex() + 1);
+        if (inner.cap <= new_len) {
+            const prev_cap = inner.len;
+            inner.ensureUnusedCapacity(r.allocator, new_len - prev_cap) catch unreachable;
+            const to_write = inner.ptr[prev_cap..inner.cap];
+            @memset(std.mem.sliceAsBytes(to_write).ptr, 0, std.mem.sliceAsBytes(to_write).len);
         }
+        inner.len = new_len;
+        inner.mut(ref.innerIndex()).* = name;
     }
 
     pub fn init(

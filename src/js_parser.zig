@@ -852,7 +852,6 @@ pub const ImportScanner = struct {
                                 if (p.import_items_for_namespace.get(st.namespace_ref)) |entry| {
                                     if (entry.count() > 0) {
                                         has_any = true;
-                                        break;
                                     }
                                 }
 
@@ -924,7 +923,7 @@ pub const ImportScanner = struct {
                     }
 
                     const namespace_ref = st.namespace_ref;
-                    const convert_star_to_clause = !p.options.bundle or (!p.options.enable_legacy_bundling and !p.options.can_import_from_bundle and p.symbols.items[namespace_ref.innerIndex()].use_count_estimate == 0);
+                    const convert_star_to_clause = !p.options.bundle and (!p.options.enable_legacy_bundling and !p.options.can_import_from_bundle and p.symbols.items[namespace_ref.innerIndex()].use_count_estimate == 0);
 
                     if (convert_star_to_clause and !keep_unused_imports) {
                         st.star_name_loc = null;
@@ -985,11 +984,21 @@ pub const ImportScanner = struct {
                         }
 
                         p.named_imports.ensureUnusedCapacity(
-                            st.items.len + @as(
-                                usize,
-                                @boolToInt(st.default_name != null),
-                            ),
+                            st.items.len + @as(usize, @boolToInt(st.default_name != null)) + @as(usize, @boolToInt(st.star_name_loc != null)),
                         ) catch unreachable;
+
+                        if (st.star_name_loc) |loc| {
+                            p.named_imports.putAssumeCapacity(
+                                namespace_ref,
+                                js_ast.NamedImport{
+                                    .alias_is_star = true,
+                                    .alias = "",
+                                    .alias_loc = loc,
+                                    .namespace_ref = Ref.None,
+                                    .import_record_index = st.import_record_index,
+                                },
+                            );
+                        }
 
                         if (st.default_name) |default| {
                             p.named_imports.putAssumeCapacity(
@@ -2762,12 +2771,10 @@ pub const Parser = struct {
         var part = js_ast.Part{
             .stmts = stmts,
             .symbol_uses = p.symbol_uses,
-            .can_be_removed_if_unused = true,
         };
         p.symbol_uses = .{};
         var parts = try p.allocator.alloc(js_ast.Part, 2);
-        parts[0] = ns_export_part;
-        parts[1] = part;
+        parts[0..2].* = .{ ns_export_part, part };
 
         result.ast = try p.toAST(parts, js_ast.ExportsKind.none, null);
         result.ok = true;

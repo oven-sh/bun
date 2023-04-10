@@ -1476,7 +1476,13 @@ pub const ModuleLoader = struct {
             &display_specifier,
         );
         const path = Fs.Path.init(specifier);
-        const loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse options.Loader.file;
+        const loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk: {
+            if (strings.eqlLong(specifier, jsc_vm.main, true)) {
+                break :brk options.Loader.js;
+            }
+
+            break :brk options.Loader.file;
+        };
         var promise: ?*JSC.JSInternalPromise = null;
         ret.* = ErrorableResolvedSource.ok(
             ModuleLoader.transpileSourceCode(

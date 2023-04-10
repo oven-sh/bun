@@ -54,6 +54,12 @@ pub const BuildCommand = struct {
         this_bundler.options.code_splitting = ctx.bundler_options.code_splitting;
         this_bundler.resolver.opts.code_splitting = ctx.bundler_options.code_splitting;
 
+        if (this_bundler.options.entry_points.len > 1 and ctx.bundler_options.outdir.len == 0) {
+            Output.prettyErrorln("<red>error<r>: must use \"outdir\" when there are multiple input files", .{});
+            Global.exit(1);
+            return;
+        }
+
         this_bundler.configureLinker();
 
         // This step is optional

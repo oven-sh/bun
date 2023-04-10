@@ -1331,18 +1331,9 @@ pub const Command = struct {
                 }
 
                 var was_js_like = false;
-                // If we start bun with:
-                // 1. `bun foo.js`, assume it's a JavaScript file.
-                // 2. `bun /absolute/path/to/bin/foo` assume its a JavaScript file.
-                //                                  ^ no file extension
-                //
-                // #!/usr/bin/env bun
-                // will pass us an absolute path to the script.
-                // This means a non-standard file extension will not work, but that is better than the current state
-                // which is file extension-less doesn't work
-                const default_loader = options.defaultLoaders.get(extension) orelse brk: {
+                const default_loader: options.Loader = options.defaultLoaders.get(extension) orelse brk: {
                     if (extension.len == 0 and ctx.args.entry_points.len > 0 and ctx.args.entry_points[0].len > 0 and std.fs.path.isAbsolute(ctx.args.entry_points[0])) {
-                        break :brk options.Loader.js;
+                        break :brk .js;
                     }
 
                     if (extension.len > 0) {
@@ -1351,22 +1342,20 @@ pub const Command = struct {
                         }
 
                         if (ctx.preloads.len > 0)
-                            break :brk options.Loader.js;
+                            break :brk .js;
                     }
 
-                    break :brk null;
+                    break :brk .js;
                 };
 
                 const force_using_bun = ctx.debug.run_in_bun;
                 var did_check = false;
-                if (default_loader) |loader| {
-                    if (loader.canBeRunByBun()) {
-                        was_js_like = true;
-                        if (maybeOpenWithBunJS(&ctx)) {
-                            return;
-                        }
-                        did_check = true;
+                if (default_loader.canBeRunByBun()) {
+                    was_js_like = true;
+                    if (maybeOpenWithBunJS(&ctx)) {
+                        return;
                     }
+                    did_check = true;
                 }
 
                 if (force_using_bun and !did_check) {

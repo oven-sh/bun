@@ -1952,9 +1952,9 @@ fn NewLexer_(
             return lex;
         }
 
-        pub fn init(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) !LexerType {
+        pub fn initWithoutReading(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) LexerType {
             var empty_string_literal: JavascriptString = &emptyJavaScriptString;
-            var lex = LexerType{
+            return LexerType{
                 .log = log,
                 .source = source,
                 .string_literal = empty_string_literal,
@@ -1963,6 +1963,10 @@ fn NewLexer_(
                 .allocator = allocator,
                 .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
             };
+        }
+
+        pub fn init(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) !LexerType {
+            var lex = initWithoutReading(log, source, allocator);
             lex.step();
             try lex.next();
 

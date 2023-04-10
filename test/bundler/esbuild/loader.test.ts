@@ -7,6 +7,62 @@ var { describe, test, expect } = testForFile(import.meta.path);
 // For debug, all files are written to $TEMP/bun-bundle-tests/loader
 
 describe("bundler", () => {
+  itBundled("loader/LoaderJSONCommonJSAndES6", {
+    // GENERATED
+    files: {
+      "/entry.js": /* js */ `
+        const x_json = require('./x.json')
+        import y_json from './y.json'
+        import {small, if as fi} from './z.json'
+        console.log(JSON.stringify(x_json), JSON.stringify(y_json), small, fi)
+      `,
+      "/x.json": `{"x": true}`,
+      "/y.json": `{"y1": true, "y2": false}`,
+      "/z.json": /* json */ `
+        {
+        "big": "this is a big long line of text that should be discarded",
+        "small": "some small text",
+        "if": "test keyword imports"
+      }
+      `,
+    },
+    run: {
+      stdout: '{"x":true} {} some small text test keyword imports',
+    },
+  });
+
+  itBundled("loader/LoaderJSONSharedWithMultipleEntriesIssue413", {
+    // GENERATED
+    files: {
+      "/a.js": /* js */ `
+        import data from './data.json'
+        import {test} from './data.json';
+        import * as NSData from './data.json';
+
+        console.log('a:', JSON.stringify(data), data.test, test === data.test, NSData.test === data.test, NSData.default === data, NSData.default.test === data.test, JSON.stringify(NSData))
+      `,
+      "/b.js": /* js */ `
+        import data from './data.json'
+        import {test} from './data.json';
+        import * as NSData from './data.json';
+        console.log('b:', JSON.stringify(data), data.test, test === data.test, NSData.test === data.test, NSData.default === data, NSData.default.test === data.test, JSON.stringify(NSData))
+      `,
+      "/data.json": `{"test": 123}`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    format: "esm",
+    run: [
+      {
+        file: "/out/a.js",
+        stdout: 'a: {"test":123} 123 true true true true {"test":123,"default":{"test":123}}',
+      },
+      {
+        file: "/out/b.js",
+        stdout: 'b: {"test":123} 123 true true true true {"test":123,"default":{"test":123}}',
+      },
+    ],
+  });
+
   return;
   itBundled("loader/LoaderFile", {
     // GENERATED
@@ -103,26 +159,6 @@ describe("bundler", () => {
     files: {
       "/entry.js": `console.log(require('./test.svg'))`,
       "/test.svg": `a\x00b\x80c\xFFd`,
-    },
-  });
-  itBundled("loader/LoaderJSONCommonJSAndES6", {
-    // GENERATED
-    files: {
-      "/entry.js": /* js */ `
-        const x_json = require('./x.json')
-        import y_json from './y.json'
-        import {small, if as fi} from './z.json'
-        console.log(x_json, y_json, small, fi)
-      `,
-      "/x.json": `{"x": true}`,
-      "/y.json": `{"y1": true, "y2": false}`,
-      "/z.json": /* json */ `
-        {
-        "big": "this is a big long line of text that should be discarded",
-        "small": "some small text",
-        "if": "test keyword imports"
-      }
-      `,
     },
   });
   itBundled("loader/LoaderJSONInvalidIdentifierES6", {
@@ -376,22 +412,6 @@ describe("bundler", () => {
     },
     format: "iife",
     mode: "convertformat",
-  });
-  itBundled("loader/LoaderJSONSharedWithMultipleEntriesIssue413", {
-    // GENERATED
-    files: {
-      "/a.js": /* js */ `
-        import data from './data.json'
-        console.log('a:', data)
-      `,
-      "/b.js": /* js */ `
-        import data from './data.json'
-        console.log('b:', data)
-      `,
-      "/data.json": `{"test": 123}`,
-    },
-    entryPoints: ["/a.js", "/b.js"],
-    format: "esm",
   });
   itBundled("loader/LoaderFileWithQueryParameter", {
     // GENERATED

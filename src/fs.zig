@@ -1193,6 +1193,21 @@ pub const Path = struct {
     is_disabled: bool = false,
     is_symlink: bool = false,
 
+    pub fn loader(this: *const Path, loaders: *const bun.options.Loader.HashTable) ?bun.options.Loader {
+        if (this.isDataURL()) {
+            return bun.options.Loader.dataurl;
+        }
+
+        // without the leading .
+        const ext = strings.trimLeadingChar(this.name.ext, '.');
+
+        return loaders.get(ext) orelse bun.options.Loader.fromString(ext);
+    }
+
+    pub fn isDataURL(this: *const Path) bool {
+        return strings.eqlComptime(this.namespace, "dataurl");
+    }
+
     pub fn isBun(this: *const Path) bool {
         return strings.eqlComptime(this.namespace, "bun");
     }

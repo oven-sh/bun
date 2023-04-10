@@ -852,7 +852,6 @@ pub const ImportScanner = struct {
                                 if (p.import_items_for_namespace.get(st.namespace_ref)) |entry| {
                                     if (entry.count() > 0) {
                                         has_any = true;
-                                        break;
                                     }
                                 }
 
@@ -924,7 +923,7 @@ pub const ImportScanner = struct {
                     }
 
                     const namespace_ref = st.namespace_ref;
-                    const convert_star_to_clause = !p.options.bundle or (!p.options.enable_legacy_bundling and !p.options.can_import_from_bundle and p.symbols.items[namespace_ref.innerIndex()].use_count_estimate == 0);
+                    const convert_star_to_clause = !p.options.bundle and (!p.options.enable_legacy_bundling and !p.options.can_import_from_bundle and p.symbols.items[namespace_ref.innerIndex()].use_count_estimate == 0);
 
                     if (convert_star_to_clause and !keep_unused_imports) {
                         st.star_name_loc = null;
@@ -985,11 +984,21 @@ pub const ImportScanner = struct {
                         }
 
                         p.named_imports.ensureUnusedCapacity(
-                            st.items.len + @as(
-                                usize,
-                                @boolToInt(st.default_name != null),
-                            ),
+                            st.items.len + @as(usize, @boolToInt(st.default_name != null)) + @as(usize, @boolToInt(st.star_name_loc != null)),
                         ) catch unreachable;
+
+                        if (st.star_name_loc) |loc| {
+                            p.named_imports.putAssumeCapacity(
+                                namespace_ref,
+                                js_ast.NamedImport{
+                                    .alias_is_star = true,
+                                    .alias = "",
+                                    .alias_loc = loc,
+                                    .namespace_ref = Ref.None,
+                                    .import_record_index = st.import_record_index,
+                                },
+                            );
+                        }
 
                         if (st.default_name) |default| {
                             p.named_imports.putAssumeCapacity(
@@ -2729,6 +2738,48 @@ pub const Parser = struct {
         }
 
         scan_pass.approximate_newline_count = p.lexer.approximate_newline_count;
+    }
+
+    pub fn toLazyExportAST(this: *Parser, expr: Expr, comptime runtime_api_call: []const u8) !js_ast.Result {
+        var p: JavaScriptParser = undefined;
+        try JavaScriptParser.init(this.allocator, this.log, this.source, this.define, this.lexer, this.options, &p);
+        p.should_fold_typescript_constant_expressions = this.options.features.should_fold_typescript_constant_expressions;
+        defer p.lexer.deinit();
+        var result: js_ast.Result = undefined;
+        try p.prepareForVisitPass();
+
+        var final_expr = expr;
+
+        // Optionally call a runtime API function to transform the expression
+        if (runtime_api_call.len > 0) {
+            var args = try p.allocator.alloc(Expr, 1);
+            args[0] = expr;
+            final_expr = try p.callRuntime(expr.loc, runtime_api_call, args);
+        }
+
+        var ns_export_part = js_ast.Part{
+            .can_be_removed_if_unused = true,
+        };
+
+        var stmts = try p.allocator.alloc(js_ast.Stmt, 1);
+        stmts[0] = Stmt{
+            .data = .{
+                .s_lazy_export = expr.data,
+            },
+            .loc = expr.loc,
+        };
+        var part = js_ast.Part{
+            .stmts = stmts,
+            .symbol_uses = p.symbol_uses,
+        };
+        p.symbol_uses = .{};
+        var parts = try p.allocator.alloc(js_ast.Part, 2);
+        parts[0..2].* = .{ ns_export_part, part };
+
+        result.ast = try p.toAST(parts, js_ast.ExportsKind.none, null);
+        result.ok = true;
+
+        return result;
     }
 
     pub fn parse(self: *Parser) !js_ast.Result {
@@ -20686,3 +20737,40 @@ const DeferredArrowArgErrors = struct {
     invalid_expr_await: logger.Range = logger.Range.None,
     invalid_expr_yield: logger.Range = logger.Range.None,
 };
+
+pub fn newLazyExportAST(
+    allocator: std.mem.Allocator,
+    define: *Define,
+    opts: Parser.Options,
+    log_to_copy_into: *logger.Log,
+    expr: Expr,
+    source: *const logger.Source,
+    comptime runtime_api_call: []const u8,
+) anyerror!?js_ast.Ast {
+    var temp_log = logger.Log.init(allocator);
+    var log = &temp_log;
+    var parser = Parser{
+        .options = opts,
+        .allocator = allocator,
+        .lexer = js_lexer.Lexer.initWithoutReading(log, source.*, allocator),
+        .define = define,
+        .source = source,
+        .log = log,
+    };
+
+    var result = parser.toLazyExportAST(
+        expr,
+        runtime_api_call,
+    ) catch |err| {
+        if (temp_log.errors == 0) {
+            log_to_copy_into.addRangeError(source, parser.lexer.range(), @errorName(err)) catch unreachable;
+        }
+
+        temp_log.appendToMaybeRecycled(log_to_copy_into, source) catch {};
+        return null;
+    };
+
+    temp_log.appendToMaybeRecycled(log_to_copy_into, source) catch {};
+    result.ast.has_lazy_export = true;
+    return if (result.ok) result.ast else null;
+}

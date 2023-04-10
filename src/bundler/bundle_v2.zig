@@ -2509,7 +2509,7 @@ const LinkerContext = struct {
             @panic("Internal error: expected at least one part for lazy export");
         }
 
-        var part: *js_ast.Part = &parts.ptr[parts.len - 1];
+        var part: *js_ast.Part = &parts.ptr[1];
 
         if (part.stmts.len == 0) {
             @panic("Internal error: expected at least one statement in the lazy export");
@@ -2604,29 +2604,27 @@ const LinkerContext = struct {
                 }
 
                 {
-                    const generated = try this.generateNamedExportInFile(source_index, module_ref, "default", "default");
+                    const generated = try this.generateNamedExportInFile(
+                        source_index,
+                        module_ref,
+                        std.fmt.allocPrint(
+                            this.allocator,
+                            "{}_default",
+                            .{this.parse_graph.input_files.items(.source)[source_index].fmtIdentifier()},
+                        ) catch unreachable,
+                        "default",
+                    );
                     parts.ptr[generated[1]].stmts = this.allocator.alloc(Stmt, 1) catch unreachable;
                     parts.ptr[generated[1]].stmts[0] = Stmt.alloc(
-                        S.Local,
-                        S.Local{
-                            .is_export = true,
-                            .decls = bun.fromSlice(
-                                []js_ast.G.Decl,
-                                this.allocator,
-                                []const js_ast.G.Decl,
-                                &.{
-                                    .{
-                                        .binding = Binding.alloc(
-                                            this.allocator,
-                                            B.Identifier{
-                                                .ref = generated[0],
-                                            },
-                                            expr.loc,
-                                        ),
-                                        .value = expr,
-                                    },
-                                },
-                            ) catch unreachable,
+                        S.ExportDefault,
+                        S.ExportDefault{
+                            .default_name = .{
+                                .ref = generated[0],
+                                .loc = stmt.loc,
+                            },
+                            .value = .{
+                                .expr = expr,
+                            },
                         },
                         stmt.loc,
                     );
@@ -2650,6 +2648,7 @@ const LinkerContext = struct {
             var export_star_import_records: [][]u32 = this.graph.ast.items(.export_star_import_records);
             var exports_refs: []Ref = this.graph.ast.items(.exports_ref);
             var module_refs: []?Ref = this.graph.ast.items(.module_ref);
+            var lazy_exports: []bool = this.graph.ast.items(.has_lazy_export);
             var symbols = &this.graph.symbols;
             defer this.graph.symbols = symbols.*;
 
@@ -2694,7 +2693,7 @@ const LinkerContext = struct {
                             // In that case the module *is* considered a CommonJS module because
                             // the namespace object must be created.
                             if ((record.contains_import_star or record.contains_default_alias) and
-                                // TODO: hasLazyExport
+                                !lazy_exports[other_file] and
                                 exports_kind[other_file] == .none)
                             {
                                 exports_kind[other_file] = .cjs;
@@ -5985,6 +5984,9 @@ const LinkerContext = struct {
 
                 const stmt = part_stmts[0];
 
+                if (stmt.data != .s_export_default)
+                    @panic("expected Lazy default export to be an export default statement");
+
                 var default_export = stmt.data.s_export_default;
                 var default_expr = default_export.value.expr;
 
@@ -7223,7 +7225,7 @@ const LinkerContext = struct {
 
         // Is this a named import of a file without any exports?
         if (!named_import.alias_is_star and
-            // TODO hasLazyExport
+            !c.parse_graph.ast.items(.has_lazy_export)[other_id] and
 
             // CommonJS exports
             c.graph.ast.items(.export_keyword)[other_id].len == 0 and !strings.eqlComptime(named_import.alias orelse "", "default") and

@@ -278,7 +278,13 @@ pub const AssignTarget = enum(u2) {
     }
 };
 
-pub const LocRef = struct { loc: logger.Loc = logger.Loc.Empty, ref: ?Ref = null };
+pub const LocRef = struct {
+    loc: logger.Loc = logger.Loc.Empty,
+
+    // TODO: remove this optional and make Ref a function getter
+    // That will make this struct 128 bits instead of 192 bits and we can remove some heap allocations
+    ref: ?Ref = null,
+};
 
 pub const Flags = struct {
     pub const JSXElement = enum {
@@ -2171,7 +2177,6 @@ pub const Stmt = struct {
             S.Debugger => Stmt.comptime_init("s_debugger", S.Debugger, origData, loc),
             S.Directive => Stmt.comptime_init("s_directive", S.Directive, origData, loc),
             S.DoWhile => Stmt.comptime_init("s_do_while", S.DoWhile, origData, loc),
-            S.Empty => Stmt.comptime_init("s_empty", S.Empty, origData, loc),
             S.Enum => Stmt.comptime_init("s_enum", S.Enum, origData, loc),
             S.ExportClause => Stmt.comptime_init("s_export_clause", S.ExportClause, origData, loc),
             S.ExportDefault => Stmt.comptime_init("s_export_default", S.ExportDefault, origData, loc),
@@ -2186,7 +2191,6 @@ pub const Stmt = struct {
             S.If => Stmt.comptime_init("s_if", S.If, origData, loc),
             S.Import => Stmt.comptime_init("s_import", S.Import, origData, loc),
             S.Label => Stmt.comptime_init("s_label", S.Label, origData, loc),
-            S.LazyExport => Stmt.comptime_init("s_lazy_export", S.LazyExport, origData, loc),
             S.Local => Stmt.comptime_init("s_local", S.Local, origData, loc),
             S.Namespace => Stmt.comptime_init("s_namespace", S.Namespace, origData, loc),
             S.Return => Stmt.comptime_init("s_return", S.Return, origData, loc),
@@ -2252,7 +2256,6 @@ pub const Stmt = struct {
             S.If => Stmt.comptime_alloc("s_if", S.If, origData, loc),
             S.Import => Stmt.comptime_alloc("s_import", S.Import, origData, loc),
             S.Label => Stmt.comptime_alloc("s_label", S.Label, origData, loc),
-            S.LazyExport => Stmt.comptime_alloc("s_lazy_export", S.LazyExport, origData, loc),
             S.Local => Stmt.comptime_alloc("s_local", S.Local, origData, loc),
             S.Namespace => Stmt.comptime_alloc("s_namespace", S.Namespace, origData, loc),
             S.Return => Stmt.comptime_alloc("s_return", S.Return, origData, loc),
@@ -2299,7 +2302,6 @@ pub const Stmt = struct {
             S.If => Stmt.allocateData(allocator, "s_if", S.If, origData, loc),
             S.Import => Stmt.allocateData(allocator, "s_import", S.Import, origData, loc),
             S.Label => Stmt.allocateData(allocator, "s_label", S.Label, origData, loc),
-            S.LazyExport => Stmt.allocateData(allocator, "s_lazy_export", S.LazyExport, origData, loc),
             S.Local => Stmt.allocateData(allocator, "s_local", S.Local, origData, loc),
             S.Namespace => Stmt.allocateData(allocator, "s_namespace", S.Namespace, origData, loc),
             S.Return => Stmt.allocateData(allocator, "s_return", S.Return, origData, loc),
@@ -2330,9 +2332,9 @@ pub const Stmt = struct {
         s_export_from,
         s_export_star,
         s_expr,
+        s_for,
         s_for_in,
         s_for_of,
-        s_for,
         s_function,
         s_if,
         s_import,
@@ -2382,7 +2384,6 @@ pub const Stmt = struct {
         s_if: *S.If,
         s_import: *S.Import,
         s_label: *S.Label,
-        s_lazy_export: *S.LazyExport,
         s_local: *S.Local,
         s_namespace: *S.Namespace,
         s_return: *S.Return,
@@ -2395,6 +2396,8 @@ pub const Stmt = struct {
         s_type_script: S.TypeScript,
         s_empty: S.Empty, // special case, its a zero value type
         s_debugger: S.Debugger,
+
+        s_lazy_export: Expr.Data,
 
         pub const Store = struct {
             const Union = [_]type{
@@ -2419,7 +2422,6 @@ pub const Stmt = struct {
                 S.If,
                 S.Import,
                 S.Label,
-                S.LazyExport,
                 S.Local,
                 S.Namespace,
                 S.Return,
@@ -4779,10 +4781,6 @@ pub const S = struct {
     // This is an "export = value;" statement in TypeScript
     pub const ExportEquals = struct { value: ExprNodeIndex };
 
-    // The decision of whether to export an expression using "module.exports" or
-    // "export default" is deferred until linking using this statement kind
-    pub const LazyExport = struct { value: ExprNodeIndex };
-
     pub const Label = struct { name: LocRef, stmt: StmtNodeIndex };
 
     // This is a stand-in for a TypeScript type declaration
@@ -5263,8 +5261,8 @@ pub const Ast = struct {
     export_keyword: logger.Range = logger.Range.None, // Does not include TypeScript-specific syntax
     top_level_await_keyword: logger.Range = logger.Range.None,
 
-    // These are stored at the AST level instead of on individual AST nodes so
-    // they can be manipulated efficiently without a full AST traversal
+    /// These are stored at the AST level instead of on individual AST nodes so
+    /// they can be manipulated efficiently without a full AST traversal
     import_records: ImportRecord.List = .{},
 
     hashbang: ?string = null,

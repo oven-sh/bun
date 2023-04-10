@@ -3,8 +3,9 @@ import { heapStats } from "bun:jsc";
 import { expectMaxObjectTypeCount, gc } from "harness";
 // this is also testing that imports with default and named imports in the same statement work
 // our transpiler transform changes this to a var with import.meta.require
-// import EventEmitter, { getEventListeners, captureRejectionSymbol } from "node:events";
-import EventEmitter, { getEventListeners, captureRejectionSymbol } from "../../../../src/bun.js/events.exports.mjs";
+import EventEmitter, { getEventListeners, captureRejectionSymbol, IT_WORKED } from "node:events";
+// import EventEmitter, { getEventListeners, captureRejectionSymbol } from "../../../../src/bun.js/events.exports.mjs";
+console.log(IT_WORKED);
 
 describe("EventEmitter", () => {
   it("captureRejectionSymbol", () => {

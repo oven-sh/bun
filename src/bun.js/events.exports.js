@@ -29,7 +29,7 @@ EventEmitter.prototype._events = undefined;
 EventEmitter.prototype._eventsCount = 0;
 EventEmitter.prototype._maxListeners = undefined;
 EventEmitter.prototype.setMaxListeners = function setMaxListeners(n) {
-  // validateMaxListeners(n, "setMaxListeners");
+  validateNumber(n, "setMaxListeners", 0);
   this._maxListeners = n;
   return this;
 };
@@ -177,10 +177,14 @@ EventEmitter.prototype.listenerCount = function listenerCount(type) {
   return events[type]?.length ?? 0;
 };
 
+EventEmitter.prototype.eventNames = function eventNames() {
+  return this._eventsCount > 0 ? Reflect.ownKeys(this._events) : [];
+};
+
 EventEmitter.prototype[kCapture] = false;
 
 export function once(emitter, type, { signal } = {}) {
-  // validateAbortSignal(signal, "options.signal");
+  validateAbortSignal(signal, "options.signal");
   if (signal?.aborted) {
     throw new AbortError(undefined, { cause: signal?.reason });
   }
@@ -228,7 +232,7 @@ export function getEventListeners(emitter, type) {
 }
 
 export function setMaxListeners(n, ...eventTargets) {
-  // validateMaxListeners(n, "setMaxListeners");
+  validateNumber(n, "setMaxListeners", 0);
   if (eventTargets) {
     var { length } = eventTargets;
     for (let i = 0; i < length; i++) {
@@ -248,16 +252,35 @@ EventEmitter.EventEmitter = EventEmitter;
 EventEmitter.captureRejectionSymbol = captureRejectionSymbol;
 // EventEmitter.captureRejections = captureRejections; // TODO: getter/setter?
 EventEmitter.errorMonitor = errorMonitor;
-Object.defineProperty(EventEmitter, "defaultMaxListeners", {
-  enumerable: true,
-  get: () => {
-    return defaultMaxListeners;
+Object.defineProperties(EventEmitter, {
+  defaultMaxListeners: {
+    enumerable: true,
+    get: () => {
+      return defaultMaxListeners;
+    },
+    set: arg => {
+      validateNumber(arg, "defaultMaxListeners", 0);
+      defaultMaxListeners = arg;
+    },
   },
-  set: arg => {
-    // validateMaxListeners(arg, "defaultMaxListeners");
-    defaultMaxListeners = arg;
+  kMaxEventTargetListeners: {
+    __proto__: null,
+    value: kMaxEventTargetListeners,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  },
+  kMaxEventTargetListenersWarned: {
+    __proto__: null,
+    value: kMaxEventTargetListenersWarned,
+    enumerable: false,
+    configurable: false,
+    writable: false,
   },
 });
+
+export const init = EventEmitter;
+export default EventEmitter;
 
 function eventTargetAgnosticRemoveListener(emitter, name, listener, flags) {
   if (typeof emitter.removeListener === "function") {
@@ -275,8 +298,38 @@ function eventTargetAgnosticAddListener(emitter, name, listener, flags) {
   }
 }
 
-export const init = EventEmitter;
-export default EventEmitter;
+function ERR_INVALID_ARG_TYPE(name, type, value) {
+  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value}`);
+  err.code = "ERR_INVALID_ARG_TYPE";
+  return err;
+}
+
+function ERR_OUT_OF_RANGE(name, range, value) {
+  const err = new RangeError(`The "${name}" argument is out of range. It must be ${range}. Received ${value}`);
+  err.code = "ERR_OUT_OF_RANGE";
+  return err;
+}
+
+function validateAbortSignal(signal, name) {
+  if (signal !== undefined && (signal === null || typeof signal !== "object" || !("aborted" in signal))) {
+    throw new ERR_INVALID_ARG_TYPE(name, "AbortSignal", signal);
+  }
+}
+
+function validateNumber(value, name, min = undefined, max) {
+  if (typeof value !== "number") throw new ERR_INVALID_ARG_TYPE(name, "number", value);
+  if (
+    (min != null && value < min) ||
+    (max != null && value > max) ||
+    ((min != null || max != null) && Number.isNaN(value))
+  ) {
+    throw new ERR_OUT_OF_RANGE(
+      name,
+      `${min != null ? `>= ${min}` : ""}${min != null && max != null ? " && " : ""}${max != null ? `<= ${max}` : ""}`,
+      value,
+    );
+  }
+}
 
 export class EventEmitterAsyncResource extends EventEmitter {
   constructor(options = undefined) {
@@ -285,3 +338,5 @@ export class EventEmitterAsyncResource extends EventEmitter {
 }
 
 EventEmitter.EventEmitterAsyncResource = EventEmitterAsyncResource;
+
+export const IT_WORKED = true;

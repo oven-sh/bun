@@ -394,13 +394,31 @@ pub const Timer = opaque {
         return @ptrCast(*?Type, @alignCast(@alignOf(Type), us_timer_ext(this))).*.?;
     }
 };
+
 pub const SocketContext = opaque {
     pub fn getNativeHandle(this: *SocketContext, comptime ssl: bool) *anyopaque {
         return us_socket_context_get_native_handle(comptime @as(i32, @boolToInt(ssl)), this).?;
     }
 
+    fn _deinit_ssl(this: *SocketContext) void {
+        us_socket_context_free(@as(i32, 1), this);
+    }
+
+    fn _deinit(this: *SocketContext) void {
+        us_socket_context_free(@as(i32, 0), this);
+    }
+
+    /// closes and deinit the SocketContexts
     pub fn deinit(this: *SocketContext, ssl: bool) void {
-        us_socket_context_free(@as(i32, @boolToInt(ssl)), this);
+        this.close(ssl);
+        //always deinit in next iteration
+        if (Loop.get()) |loop| {
+            if (ssl) {
+                loop.nextTick(*SocketContext, this, SocketContext._deinit_ssl);
+            } else {
+                loop.nextTick(*SocketContext, this, SocketContext._deinit);
+            }
+        }
     }
 
     pub fn close(this: *SocketContext, ssl: bool) void {

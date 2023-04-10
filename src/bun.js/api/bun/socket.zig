@@ -694,7 +694,6 @@ pub const Listener = struct {
         std.debug.assert(this.handlers.active_connections == 0);
 
         if (this.socket_context) |ctx| {
-            ctx.close(this.ssl);
             ctx.deinit(this.ssl);
         }
 
@@ -1049,14 +1048,17 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn markInactive(this: *This) void {
             if (this.reffer.has) {
-                var vm = this.handlers.vm;
-                this.reffer.unref(vm);
-
                 // we have to close the socket before the socket context is closed
                 // otherwise we will get a segfault
                 // uSockets will defer closing the TCP socket until the next tick
-                if (!this.socket.isClosed())
+                if (!this.socket.isClosed()) {
                     this.socket.close(0, null);
+                    // onClose will call markInactive again
+                    return;
+                }
+
+                var vm = this.handlers.vm;
+                this.reffer.unref(vm);
 
                 this.handlers.markInactive(ssl, this.socket.context());
                 this.poll_ref.unref(vm);

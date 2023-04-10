@@ -2731,6 +2731,50 @@ pub const Parser = struct {
         scan_pass.approximate_newline_count = p.lexer.approximate_newline_count;
     }
 
+    pub fn toLazyExportAST(this: *Parser, expr: Expr, comptime runtime_api_call: []const u8) !js_ast.Result {
+        var p: JavaScriptParser = undefined;
+        try JavaScriptParser.init(this.allocator, this.log, this.source, this.define, this.lexer, this.options, &p);
+        p.should_fold_typescript_constant_expressions = this.options.features.should_fold_typescript_constant_expressions;
+        defer p.lexer.deinit();
+        var result: js_ast.Result = undefined;
+        try p.prepareForVisitPass();
+
+        var final_expr = expr;
+
+        // Optionally call a runtime API function to transform the expression
+        if (runtime_api_call.len > 0) {
+            var args = try p.allocator.alloc(Expr, 1);
+            args[0] = expr;
+            final_expr = try p.callRuntime(expr.loc, runtime_api_call, args);
+        }
+
+        var ns_export_part = js_ast.Part{
+            .can_be_removed_if_unused = true,
+        };
+
+        var stmts = try p.allocator.alloc(js_ast.Stmt, 1);
+        stmts[0] = Stmt{
+            .data = .{
+                .s_lazy_export = expr.data,
+            },
+            .loc = expr.loc,
+        };
+        var part = js_ast.Part{
+            .stmts = stmts,
+            .symbol_uses = p.symbol_uses,
+            .can_be_removed_if_unused = true,
+        };
+        p.symbol_uses = .{};
+        var parts = try p.allocator.alloc(js_ast.Part, 2);
+        parts[0] = ns_export_part;
+        parts[1] = part;
+
+        result.ast = try p.toAST(parts, js_ast.ExportsKind.none, null);
+        result.ok = true;
+
+        return result;
+    }
+
     pub fn parse(self: *Parser) !js_ast.Result {
         if (comptime Environment.isWasm) {
             self.options.ts = true;
@@ -20686,3 +20730,40 @@ const DeferredArrowArgErrors = struct {
     invalid_expr_await: logger.Range = logger.Range.None,
     invalid_expr_yield: logger.Range = logger.Range.None,
 };
+
+pub fn newLazyExportAST(
+    allocator: std.mem.Allocator,
+    define: *Define,
+    opts: Parser.Options,
+    log_to_copy_into: *logger.Log,
+    expr: Expr,
+    source: *const logger.Source,
+    comptime runtime_api_call: []const u8,
+) anyerror!?js_ast.Ast {
+    var temp_log = logger.Log.init(allocator);
+    var log = &temp_log;
+    var parser = Parser{
+        .options = opts,
+        .allocator = allocator,
+        .lexer = js_lexer.Lexer.initWithoutReading(log, source.*, allocator),
+        .define = define,
+        .source = source,
+        .log = log,
+    };
+
+    var result = parser.toLazyExportAST(
+        expr,
+        runtime_api_call,
+    ) catch |err| {
+        if (temp_log.errors == 0) {
+            log_to_copy_into.addRangeError(source, parser.lexer.range(), @errorName(err)) catch unreachable;
+        }
+
+        temp_log.appendToMaybeRecycled(log_to_copy_into, source) catch {};
+        return null;
+    };
+
+    temp_log.appendToMaybeRecycled(log_to_copy_into, source) catch {};
+    result.ast.has_lazy_export = true;
+    return if (result.ok) result.ast else null;
+}

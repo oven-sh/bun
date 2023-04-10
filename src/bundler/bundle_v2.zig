@@ -572,7 +572,7 @@ pub const BundleV2 = struct {
                                 result.watcher_data.fd,
                                 result.source.path.text,
                                 bun.hash32(result.source.path.text),
-                                this.bundler.options.loader(result.source.path.name.ext),
+                                result.source.path.loader(&this.bundler.options.loaders) orelse options.Loader.file,
                                 result.watcher_data.dir_fd,
                                 result.watcher_data.package_json,
                                 false,
@@ -771,6 +771,7 @@ const ParseTask = struct {
 
             use_directive: UseDirective = .none,
             watcher_data: WatcherData = .{},
+            side_effects: ?_resolver.SideEffects = null,
         };
 
         pub const Error = struct {
@@ -794,6 +795,37 @@ const ParseTask = struct {
     };
 
     threadlocal var override_file_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+
+    fn getAST(
+        log: *Logger.Log,
+        bundler: *Bundler,
+        opts: js_parser.Parser.Options,
+        allocator: std.mem.Allocator,
+        resolver: *Resolver,
+        source: Logger.Source,
+        loader: Loader,
+    ) !js_ast.Ast {
+        switch (loader) {
+            .jsx, .tsx, .js, .ts => {
+                return (try resolver.caches.js.parse(
+                    bundler.allocator,
+                    opts,
+                    bundler.options.define,
+                    log,
+                    &source,
+                )) orelse return js_ast.Ast.empty;
+            },
+            .json => {
+                const root = (try resolver.caches.json.parseJSON(log, source, allocator)) orelse Expr.init(E.Object, E.Object{}, Logger.Loc.Empty);
+                return (try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?;
+            },
+            .toml => {
+                const root = try TOML.parse(&source, log, allocator);
+                return (try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?;
+            },
+            else => return js_ast.Ast.empty,
+        }
+    }
 
     fn run_(
         task: *ParseTask,
@@ -874,12 +906,9 @@ const ParseTask = struct {
         };
         step.* = .parse;
 
-        if (entry.contents.len == 0 or (entry.contents.len < 33 and strings.trim(entry.contents, " \n\r").len == 0)) {
-            debug("skipping empty file: {s}", .{file_path.text});
-            return null;
-        }
+        const is_empty = entry.contents.len == 0 or (entry.contents.len < 33 and strings.trim(entry.contents, " \n\r").len == 0);
 
-        const use_directive = if (this.ctx.bundler.options.react_server_components)
+        const use_directive = if (!is_empty and this.ctx.bundler.options.react_server_components)
             UseDirective.parse(entry.contents)
         else
             .none;
@@ -893,7 +922,7 @@ const ParseTask = struct {
         };
 
         const source_dir = file_path.sourceDir();
-        const loader = task.loader orelse bundler.options.loader(file_path.name.ext);
+        const loader = task.loader orelse file_path.loader(&bundler.options.loaders) orelse options.Loader.file;
         const platform = use_directive.platform(task.known_platform orelse bundler.options.platform);
 
         var resolve_queue = ResolveQueue.init(bun.default_allocator);
@@ -901,248 +930,255 @@ const ParseTask = struct {
 
         errdefer resolve_queue.clearAndFree();
 
-        switch (loader) {
-            .jsx, .tsx, .js, .ts => {
-                task.jsx.parse = loader.isJSX();
+        var opts = js_parser.Parser.Options.init(task.jsx, loader);
+        opts.transform_require_to_import = false;
+        opts.can_import_from_bundle = false;
+        opts.features.allow_runtime = !source.index.isRuntime();
+        opts.features.dynamic_require = platform.isBun();
+        opts.warn_about_unbundled_modules = false;
+        opts.macro_context = &this.data.macro_context;
+        opts.bundle = true;
+        opts.features.top_level_await = true;
+        opts.features.jsx_optimization_inline = platform.isBun() and (bundler.options.jsx_optimization_inline orelse !task.jsx.development);
+        opts.features.auto_import_jsx = !opts.features.jsx_optimization_inline and task.jsx.parse and bundler.options.auto_import_jsx;
+        opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
+        opts.tree_shaking = task.tree_shaking;
+        opts.module_type = task.module_type;
+        task.jsx.parse = loader.isJSX();
 
-                var opts = js_parser.Parser.Options.init(task.jsx, loader);
-                opts.transform_require_to_import = false;
-                opts.can_import_from_bundle = false;
-                opts.features.allow_runtime = !source.index.isRuntime();
-                opts.features.dynamic_require = platform.isBun();
-                opts.warn_about_unbundled_modules = false;
-                opts.macro_context = &this.data.macro_context;
-                opts.bundle = true;
-                opts.features.top_level_await = true;
-                opts.features.jsx_optimization_inline = platform.isBun() and (bundler.options.jsx_optimization_inline orelse !task.jsx.development);
-                opts.features.auto_import_jsx = !opts.features.jsx_optimization_inline and task.jsx.parse and bundler.options.auto_import_jsx;
-                opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
-                opts.tree_shaking = task.tree_shaking;
-                opts.module_type = task.module_type;
+        var ast: js_ast.Ast = if (!is_empty)
+            try getAST(log, bundler, opts, allocator, resolver, source, loader)
+        else brk: {
+            var empty = js_ast.Ast.empty;
+            empty.named_imports.allocator = allocator;
+            empty.named_exports.allocator = allocator;
+            var _parts = allocator.alloc(js_ast.Part, 1) catch unreachable;
+            _parts[0] = js_ast.Part{
+                .can_be_removed_if_unused = true,
+            };
+            empty.parts = BabyList(js_ast.Part).init(_parts[0..1]);
+            break :brk empty;
+        };
 
-                var ast = (try resolver.caches.js.parse(
-                    bundler.allocator,
-                    opts,
-                    bundler.options.define,
-                    log,
-                    &source,
-                )) orelse return error.EmptyAST;
-
-                step.* = .resolve;
-                ast.platform = platform;
-                var estimated_resolve_queue_count: usize = 0;
-                for (ast.import_records.slice()) |*import_record| {
-                    if (import_record.is_internal) {
-                        import_record.tag = .runtime;
-                        import_record.source_index = Index.runtime;
-                    }
-
-                    if (import_record.is_unused) {
-                        import_record.source_index = Index.invalid;
-                    }
-
-                    // Don't resolve the runtime
-                    if (import_record.is_internal or import_record.is_unused) {
-                        continue;
-                    }
-                    estimated_resolve_queue_count += 1;
-                }
-
-                try resolve_queue.ensureUnusedCapacity(estimated_resolve_queue_count);
-                var last_error: ?anyerror = null;
-                for (ast.import_records.slice()) |*import_record| {
-                    // Don't resolve the runtime
-                    if (import_record.is_unused or import_record.is_internal) {
-                        continue;
-                    }
-
-                    if (platform.isBun()) {
-                        if (JSC.HardcodedModule.Aliases.get(import_record.path.text)) |replacement| {
-                            import_record.path.text = replacement.path;
-                            import_record.tag = replacement.tag;
-                            import_record.source_index = Index.invalid;
-                            continue;
-                        }
-
-                        if (JSC.DisabledModule.has(import_record.path.text)) {
-                            import_record.path.is_disabled = true;
-                            import_record.do_commonjs_transform_in_printer = true;
-                            import_record.source_index = Index.invalid;
-                            continue;
-                        }
-
-                        if (bundler.options.rewrite_jest_for_tests) {
-                            if (strings.eqlComptime(
-                                import_record.path.text,
-                                "@jest/globals",
-                            ) or strings.eqlComptime(
-                                import_record.path.text,
-                                "vitest",
-                            )) {
-                                import_record.path.namespace = "bun";
-                                import_record.tag = .bun_test;
-                                import_record.path.text = "test";
-                                continue;
-                            }
-                        }
-
-                        if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
-                            import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
-                            import_record.path.namespace = "bun";
-                            import_record.source_index = Index.invalid;
-
-                            if (strings.eqlComptime(import_record.path.text, "test")) {
-                                import_record.tag = .bun_test;
-                            }
-
-                            // don't link bun
-                            continue;
-                        }
-                    }
-
-                    if (resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |_resolved_import| {
-                        var resolve_result = _resolved_import;
-                        // if there were errors, lets go ahead and collect them all
-                        if (last_error != null) continue;
-
-                        var path: *Fs.Path = resolve_result.path() orelse {
-                            import_record.path.is_disabled = true;
-                            import_record.source_index = Index.invalid;
-
-                            continue;
-                        };
-
-                        if (resolve_result.is_external) {
-                            continue;
-                        }
-
-                        var resolve_entry = try resolve_queue.getOrPut(wyhash(0, path.text));
-                        if (resolve_entry.found_existing) {
-                            import_record.path = resolve_entry.value_ptr.path;
-
-                            continue;
-                        }
-
-                        if (path.pretty.ptr == path.text.ptr) {
-                            // TODO: outbase
-                            const rel = bun.path.relative(bundler.fs.top_level_dir, path.text);
-                            if (rel.len > 0 and rel[0] != '.') {
-                                path.pretty = rel;
-                            }
-                        }
-
-                        var secondary_path_to_copy: ?Fs.Path = null;
-                        if (resolve_result.path_pair.secondary) |*secondary| {
-                            if (!secondary.is_disabled and
-                                secondary != path and
-                                !strings.eqlLong(secondary.text, path.text, true))
-                            {
-                                secondary_path_to_copy = try secondary.dupeAlloc(allocator);
-                            }
-                        }
-
-                        path.* = try path.dupeAlloc(allocator);
-                        import_record.path = path.*;
-                        debug("created ParseTask: {s}", .{path.text});
-
-                        resolve_entry.value_ptr.* = ParseTask.init(&resolve_result, null);
-                        resolve_entry.value_ptr.secondary_path_for_commonjs_interop = secondary_path_to_copy;
-                        if (use_directive != .none) {
-                            resolve_entry.value_ptr.known_platform = platform;
-                        } else if (task.known_platform) |known_platform| {
-                            resolve_entry.value_ptr.known_platform = known_platform;
-                        }
-
-                        resolve_entry.value_ptr.jsx.development = task.jsx.development;
-
-                        if (resolve_entry.value_ptr.loader == null) {
-                            resolve_entry.value_ptr.loader = bundler.options.loader(path.name.ext);
-                            resolve_entry.value_ptr.tree_shaking = task.tree_shaking;
-                        }
-                    } else |err| {
-                        // Disable failing packages from being printed.
-                        // This may cause broken code to write.
-                        // However, doing this means we tell them all the resolve errors
-                        // Rather than just the first one.
-                        import_record.path.is_disabled = true;
-
-                        switch (err) {
-                            error.ModuleNotFound => {
-                                const addError = Logger.Log.addResolveErrorWithTextDupe;
-
-                                if (!import_record.handles_import_errors) {
-                                    last_error = err;
-                                    if (isPackagePath(import_record.path.text)) {
-                                        if (platform.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
-                                            try addError(
-                                                log,
-                                                &source,
-                                                import_record.range,
-                                                this.allocator,
-                                                "Could not resolve Node.js builtin: \"{s}\".",
-                                                .{import_record.path.text},
-                                                import_record.kind,
-                                            );
-                                        } else {
-                                            try addError(
-                                                log,
-                                                &source,
-                                                import_record.range,
-                                                this.allocator,
-                                                "Could not resolve: \"{s}\". Maybe you need to \"bun install\"?",
-                                                .{import_record.path.text},
-                                                import_record.kind,
-                                            );
-                                        }
-                                    } else {
-                                        try addError(
-                                            log,
-                                            &source,
-                                            import_record.range,
-                                            this.allocator,
-                                            "Could not resolve: \"{s}\"",
-                                            .{
-                                                import_record.path.text,
-                                            },
-                                            import_record.kind,
-                                        );
-                                    }
-                                }
-                            },
-                            // assume other errors are already in the log
-                            else => {
-                                last_error = err;
-                            },
-                        }
-                    }
-                }
-
-                if (last_error) |err| {
-                    debug("failed with error: {s}", .{@errorName(err)});
-                    return err;
-                }
-
-                // Allow the AST to outlive this call
-                _ = js_ast.Expr.Data.Store.toOwnedSlice();
-                _ = js_ast.Stmt.Data.Store.toOwnedSlice();
-
-                // never a react client component if RSC is not enabled.
-                std.debug.assert(use_directive == .none or bundler.options.react_server_components);
-
-                return Result.Success{
-                    .ast = ast,
-                    .source = source,
-                    .resolve_queue = resolve_queue,
-                    .log = log.*,
-                    .use_directive = use_directive,
-                    .watcher_data = .{
-                        .fd = if (task.contents_or_fd == .fd) task.contents_or_fd.fd.file else 0,
-                        .dir_fd = if (task.contents_or_fd == .fd) task.contents_or_fd.fd.dir else 0,
-                    },
-                };
-            },
-            else => return null,
+        ast.platform = platform;
+        if (ast.parts.len <= 1) {
+            task.side_effects = _resolver.SideEffects.no_side_effects__empty_ast;
         }
+
+        var estimated_resolve_queue_count: usize = 0;
+        for (ast.import_records.slice()) |*import_record| {
+            if (import_record.is_internal) {
+                import_record.tag = .runtime;
+                import_record.source_index = Index.runtime;
+            }
+
+            if (import_record.is_unused) {
+                import_record.source_index = Index.invalid;
+            }
+
+            // Don't resolve the runtime
+            if (import_record.is_internal or import_record.is_unused) {
+                continue;
+            }
+            estimated_resolve_queue_count += 1;
+        }
+
+        try resolve_queue.ensureUnusedCapacity(estimated_resolve_queue_count);
+        var last_error: ?anyerror = null;
+        for (ast.import_records.slice()) |*import_record| {
+            // Don't resolve the runtime
+            if (import_record.is_unused or import_record.is_internal) {
+                continue;
+            }
+
+            if (platform.isBun()) {
+                if (JSC.HardcodedModule.Aliases.get(import_record.path.text)) |replacement| {
+                    import_record.path.text = replacement.path;
+                    import_record.tag = replacement.tag;
+                    import_record.source_index = Index.invalid;
+                    continue;
+                }
+
+                if (JSC.DisabledModule.has(import_record.path.text)) {
+                    import_record.path.is_disabled = true;
+                    import_record.do_commonjs_transform_in_printer = true;
+                    import_record.source_index = Index.invalid;
+                    continue;
+                }
+
+                if (bundler.options.rewrite_jest_for_tests) {
+                    if (strings.eqlComptime(
+                        import_record.path.text,
+                        "@jest/globals",
+                    ) or strings.eqlComptime(
+                        import_record.path.text,
+                        "vitest",
+                    )) {
+                        import_record.path.namespace = "bun";
+                        import_record.tag = .bun_test;
+                        import_record.path.text = "test";
+                        continue;
+                    }
+                }
+
+                if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
+                    import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
+                    import_record.path.namespace = "bun";
+                    import_record.source_index = Index.invalid;
+
+                    if (strings.eqlComptime(import_record.path.text, "test")) {
+                        import_record.tag = .bun_test;
+                    }
+
+                    // don't link bun
+                    continue;
+                }
+            }
+
+            if (resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |_resolved_import| {
+                var resolve_result = _resolved_import;
+                // if there were errors, lets go ahead and collect them all
+                if (last_error != null) continue;
+
+                var path: *Fs.Path = resolve_result.path() orelse {
+                    import_record.path.is_disabled = true;
+                    import_record.source_index = Index.invalid;
+
+                    continue;
+                };
+
+                if (resolve_result.is_external) {
+                    continue;
+                }
+
+                var resolve_entry = try resolve_queue.getOrPut(wyhash(0, path.text));
+                if (resolve_entry.found_existing) {
+                    import_record.path = resolve_entry.value_ptr.path;
+
+                    continue;
+                }
+
+                if (path.pretty.ptr == path.text.ptr) {
+                    // TODO: outbase
+                    const rel = bun.path.relative(bundler.fs.top_level_dir, path.text);
+                    if (rel.len > 0 and rel[0] != '.') {
+                        path.pretty = rel;
+                    }
+                }
+
+                var secondary_path_to_copy: ?Fs.Path = null;
+                if (resolve_result.path_pair.secondary) |*secondary| {
+                    if (!secondary.is_disabled and
+                        secondary != path and
+                        !strings.eqlLong(secondary.text, path.text, true))
+                    {
+                        secondary_path_to_copy = try secondary.dupeAlloc(allocator);
+                    }
+                }
+
+                path.* = try path.dupeAlloc(allocator);
+                import_record.path = path.*;
+                debug("created ParseTask: {s}", .{path.text});
+
+                resolve_entry.value_ptr.* = ParseTask.init(&resolve_result, null);
+                resolve_entry.value_ptr.secondary_path_for_commonjs_interop = secondary_path_to_copy;
+
+                if (use_directive != .none) {
+                    resolve_entry.value_ptr.known_platform = platform;
+                } else if (task.known_platform) |known_platform| {
+                    resolve_entry.value_ptr.known_platform = known_platform;
+                }
+
+                resolve_entry.value_ptr.jsx.development = task.jsx.development;
+
+                if (resolve_entry.value_ptr.loader == null) {
+                    resolve_entry.value_ptr.loader = path.loader(&bundler.options.loaders);
+                    resolve_entry.value_ptr.tree_shaking = task.tree_shaking;
+                }
+            } else |err| {
+                // Disable failing packages from being printed.
+                // This may cause broken code to write.
+                // However, doing this means we tell them all the resolve errors
+                // Rather than just the first one.
+                import_record.path.is_disabled = true;
+
+                switch (err) {
+                    error.ModuleNotFound => {
+                        const addError = Logger.Log.addResolveErrorWithTextDupe;
+
+                        if (!import_record.handles_import_errors) {
+                            last_error = err;
+                            if (isPackagePath(import_record.path.text)) {
+                                if (platform.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
+                                    try addError(
+                                        log,
+                                        &source,
+                                        import_record.range,
+                                        this.allocator,
+                                        "Could not resolve Node.js builtin: \"{s}\".",
+                                        .{import_record.path.text},
+                                        import_record.kind,
+                                    );
+                                } else {
+                                    try addError(
+                                        log,
+                                        &source,
+                                        import_record.range,
+                                        this.allocator,
+                                        "Could not resolve: \"{s}\". Maybe you need to \"bun install\"?",
+                                        .{import_record.path.text},
+                                        import_record.kind,
+                                    );
+                                }
+                            } else {
+                                try addError(
+                                    log,
+                                    &source,
+                                    import_record.range,
+                                    this.allocator,
+                                    "Could not resolve: \"{s}\"",
+                                    .{
+                                        import_record.path.text,
+                                    },
+                                    import_record.kind,
+                                );
+                            }
+                        }
+                    },
+                    // assume other errors are already in the log
+                    else => {
+                        last_error = err;
+                    },
+                }
+            }
+        }
+
+        if (last_error) |err| {
+            debug("failed with error: {s}", .{@errorName(err)});
+            return err;
+        }
+
+        // Allow the AST to outlive this call
+        _ = js_ast.Expr.Data.Store.toOwnedSlice();
+        _ = js_ast.Stmt.Data.Store.toOwnedSlice();
+
+        // never a react client component if RSC is not enabled.
+        std.debug.assert(use_directive == .none or bundler.options.react_server_components);
+
+        step.* = .resolve;
+        ast.platform = platform;
+
+        return Result.Success{
+            .ast = ast,
+            .source = source,
+            .resolve_queue = resolve_queue,
+            .log = log.*,
+            .use_directive = use_directive,
+            .watcher_data = .{
+                .fd = if (task.contents_or_fd == .fd) task.contents_or_fd.fd.file else 0,
+                .dir_fd = if (task.contents_or_fd == .fd) task.contents_or_fd.fd.dir else 0,
+            },
+        };
     }
 
     pub fn callback(this: *ThreadPoolLib.Task) void {
@@ -1417,6 +1453,7 @@ pub const Graph = struct {
         source: Logger.Source,
         loader: options.Loader = options.Loader.file,
         side_effects: _resolver.SideEffects = _resolver.SideEffects.has_side_effects,
+        additional_files: BabyList(Index.Int) = .{},
 
         pub const List = MultiArrayList(InputFile);
     };
@@ -2435,6 +2472,169 @@ const LinkerContext = struct {
         chunk.content.javascript.parts_in_chunk_in_order = parts_in_chunk_order;
     }
 
+    pub fn generateNamedExportInFile(this: *LinkerContext, source_index: Index.Int, module_ref: Ref, name: []const u8, alias: []const u8) !struct { Ref, u32 } {
+        const ref = this.graph.generateNewSymbol(source_index, .other, name);
+        const part_index = this.graph.addPartToFile(source_index, .{
+            .declared_symbols = js_ast.DeclaredSymbol.List.fromSlice(
+                this.allocator,
+                &[_]js_ast.DeclaredSymbol{
+                    .{ .ref = ref, .is_top_level = true },
+                },
+            ) catch unreachable,
+            .can_be_removed_if_unused = true,
+        }) catch unreachable;
+
+        try this.graph.generateSymbolImportAndUse(source_index, part_index, module_ref, 1, Index.init(source_index));
+        var top_level = &this.graph.meta.items(.top_level_symbol_to_parts_overlay)[source_index];
+        var parts_list = this.allocator.alloc(u32, 1) catch unreachable;
+        parts_list[0] = part_index;
+
+        top_level.put(this.allocator, ref, BabyList(u32).init(parts_list)) catch unreachable;
+
+        var resolved_exports = &this.graph.meta.items(.resolved_exports)[source_index];
+        resolved_exports.put(this.allocator, alias, ExportData{
+            .data = ImportTracker{
+                .source_index = Index.init(source_index),
+                .import_ref = ref,
+            },
+        }) catch unreachable;
+        return .{ ref, part_index };
+    }
+
+    fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) !void {
+        const exports_kind = this.graph.ast.items(.exports_kind)[source_index];
+        var parts = &this.graph.ast.items(.parts)[source_index];
+
+        if (parts.len < 1) {
+            @panic("Internal error: expected at least one part for lazy export");
+        }
+
+        var part: *js_ast.Part = &parts.ptr[parts.len - 1];
+
+        if (part.stmts.len == 0) {
+            @panic("Internal error: expected at least one statement in the lazy export");
+        }
+
+        const stmt: Stmt = part.stmts[0];
+        if (stmt.data != .s_lazy_export) {
+            @panic("Internal error: expected top-level lazy export statement");
+        }
+
+        const expr = Expr{
+            .data = stmt.data.s_lazy_export,
+            .loc = stmt.loc,
+        };
+        const module_ref = this.graph.ast.items(.module_ref)[source_index].?;
+
+        switch (exports_kind) {
+            .cjs => {
+                part.stmts[0] = Stmt.assign(
+                    Expr.init(
+                        E.Dot,
+                        E.Dot{
+                            .target = Expr.initIdentifier(module_ref, stmt.loc),
+                            .name = "exports",
+                            .name_loc = stmt.loc,
+                        },
+                        stmt.loc,
+                    ),
+                    expr,
+                    this.allocator,
+                );
+                try this.graph.generateSymbolImportAndUse(source_index, 0, module_ref, 1, Index.init(source_index));
+            },
+            else => {
+                // Otherwise, generate ES6 export statements. These are added as additional
+                // parts so they can be tree shaken individually.
+                part.stmts.len = 0;
+
+                if (expr.data == .e_object) {
+                    for (expr.data.e_object.properties.slice()) |property_| {
+                        const property: G.Property = property_;
+                        if (property.key == null or property.key.?.data != .e_string or property.value == null or
+                            property.key.?.data.e_string.eqlComptime("default") or property.key.?.data.e_string.eqlComptime("__esModule"))
+                        {
+                            continue;
+                        }
+
+                        const name = property.key.?.data.e_string.slice(this.allocator);
+
+                        // TODO: support non-identifier names
+                        if (!bun.js_lexer.isIdentifier(name))
+                            continue;
+
+                        // This initializes the generated variable with a copy of the property
+                        // value, which is INCORRECT for values that are objects/arrays because
+                        // they will have separate object identity. This is fixed up later in
+                        // "generateCodeForFileInChunkJS" by changing the object literal to
+                        // reference this generated variable instead.
+                        //
+                        // Changing the object literal is deferred until that point instead of
+                        // doing it now because we only want to do this for top-level variables
+                        // that actually end up being used, and we don't know which ones will
+                        // end up actually being used at this point (since import binding hasn't
+                        // happened yet). So we need to wait until after tree shaking happens.
+                        const generated = try this.generateNamedExportInFile(source_index, module_ref, name, name);
+                        parts.ptr[generated[1]].stmts = this.allocator.alloc(Stmt, 1) catch unreachable;
+                        parts.ptr[generated[1]].stmts[0] = Stmt.alloc(
+                            S.Local,
+                            S.Local{
+                                .is_export = true,
+                                .decls = bun.fromSlice(
+                                    []js_ast.G.Decl,
+                                    this.allocator,
+                                    []const js_ast.G.Decl,
+                                    &.{
+                                        .{
+                                            .binding = Binding.alloc(
+                                                this.allocator,
+                                                B.Identifier{
+                                                    .ref = generated[0],
+                                                },
+                                                expr.loc,
+                                            ),
+                                            .value = property.value.?,
+                                        },
+                                    },
+                                ) catch unreachable,
+                            },
+                            property.key.?.loc,
+                        );
+                    }
+                }
+
+                {
+                    const generated = try this.generateNamedExportInFile(source_index, module_ref, "default", "default");
+                    parts.ptr[generated[1]].stmts = this.allocator.alloc(Stmt, 1) catch unreachable;
+                    parts.ptr[generated[1]].stmts[0] = Stmt.alloc(
+                        S.Local,
+                        S.Local{
+                            .is_export = true,
+                            .decls = bun.fromSlice(
+                                []js_ast.G.Decl,
+                                this.allocator,
+                                []const js_ast.G.Decl,
+                                &.{
+                                    .{
+                                        .binding = Binding.alloc(
+                                            this.allocator,
+                                            B.Identifier{
+                                                .ref = generated[0],
+                                            },
+                                            expr.loc,
+                                        ),
+                                        .value = expr,
+                                    },
+                                },
+                            ) catch unreachable,
+                        },
+                        stmt.loc,
+                    );
+                }
+            },
+        }
+    }
+
     pub fn scanImportsAndExports(this: *LinkerContext) !void {
         const reachable = this.graph.reachable_files;
         const output_format = this.options.output_format;
@@ -2619,13 +2819,16 @@ const LinkerContext = struct {
                 var export_star_ctx: ?ExportStarContext = null;
                 var resolved_exports: []ResolvedExports = this.graph.meta.items(.resolved_exports);
                 var resolved_export_stars: []ExportData = this.graph.meta.items(.resolved_export_star);
+                var has_lazy_export: []bool = this.graph.ast.items(.has_lazy_export);
 
                 for (reachable) |source_index_| {
                     const source_index = source_index_.get();
                     const id = source_index;
 
                     // --
-                    // TODO: generateCodeForLazyExport here!
+                    if (has_lazy_export[id]) {
+                        try this.generateCodeForLazyExport(id);
+                    }
                     // --
 
                     // Propagate exports for export star statements
@@ -2871,8 +3074,7 @@ const LinkerContext = struct {
                     if (named_imports[id].get(ref)) |named_import| {
                         for (named_import.local_parts_with_uses.slice()) |part_index| {
                             var part: *js_ast.Part = &parts[part_index];
-                            const parts_declaring_symbol: []u32 =
-                                this.graph.ast.items(.top_level_symbols_to_parts)[import_id].get(import.data.import_ref).?.slice();
+                            const parts_declaring_symbol: []u32 = this.graph.topLevelSymbolToParts(import_id, import.data.import_ref);
 
                             part.dependencies.ensureUnusedCapacity(
                                 this.allocator,
@@ -5692,6 +5894,14 @@ const LinkerContext = struct {
 
         stmts.reset();
 
+        const part_index_for_lazy_default_export: u32 = if (ast.has_lazy_export) brk: {
+            if (c.graph.meta.items(.resolved_exports)[part_range.source_index.get()].get("default")) |default| {
+                break :brk c.graph.topLevelSymbolToParts(part_range.source_index.get(), default.data.import_ref)[0];
+            }
+
+            break :brk std.math.maxInt(u32);
+        } else std.math.maxInt(u32);
+
         // TODO: handle directive
         if (namespace_export_part_index >= part_range.part_index_begin and
             namespace_export_part_index < part_range.part_index_end and
@@ -5720,8 +5930,6 @@ const LinkerContext = struct {
             stmts.inside_wrapper_suffix.clearRetainingCapacity();
         }
 
-        // TODO: defaultLazyExport
-
         // Add all other parts in this chunk
         for (parts, 0..) |part, index_| {
             const index = part_range.part_index_begin + @truncate(u32, index_);
@@ -5742,13 +5950,98 @@ const LinkerContext = struct {
                 continue;
             }
 
-            // TODO: lazy default export
+            var single_stmts_list = [1]Stmt{undefined};
+            var part_stmts = part.stmts;
 
-            // convert
+            // If this could be a JSON or TOML file that exports a top-level object literal, go
+            // over the non-default top-level properties that ended up being imported
+            // and substitute references to them into the main top-level object literal.
+            // So this JSON file:
+            //
+            //   {
+            //     "foo": [1, 2, 3],
+            //     "bar": [4, 5, 6],
+            //   }
+            //
+            // is initially compiled into this:
+            //
+            //   export var foo = [1, 2, 3];
+            //   export var bar = [4, 5, 6];
+            //   export default {
+            //     foo: [1, 2, 3],
+            //     bar: [4, 5, 6],
+            //   };
+            //
+            // But we turn it into this if both "foo" and "default" are imported:
+            //
+            //   export var foo = [1, 2, 3];
+            //   export default {
+            //     foo,
+            //     bar: [4, 5, 6],
+            //   };
+            //
+            if (index == part_index_for_lazy_default_export) {
+                std.debug.assert(index != std.math.maxInt(u32));
+
+                const stmt = part_stmts[0];
+
+                var default_export = stmt.data.s_export_default;
+                var default_expr = default_export.value.expr;
+
+                // Be careful: the top-level value in a JSON file is not necessarily an object
+                if (default_expr.data == .e_object) {
+                    var new_properties = std.ArrayList(js_ast.G.Property).initCapacity(temp_allocator, default_expr.data.e_object.properties.len) catch unreachable;
+                    var resolved_exports = c.graph.meta.items(.resolved_exports)[part_range.source_index.get()];
+
+                    // If any top-level properties ended up being imported directly, change
+                    // the property to just reference the corresponding variable instead
+                    for (default_expr.data.e_object.properties.slice()) |prop| {
+                        if (prop.key == null or prop.key.?.data != .e_string or prop.value == null) continue;
+                        const name = prop.key.?.data.e_string.slice(temp_allocator);
+                        if (strings.eqlComptime(name, "default") or
+                            strings.eqlComptime(name, "__esModule") or
+                            !bun.js_lexer.isIdentifier(name)) continue;
+
+                        if (resolved_exports.get(name)) |export_data| {
+                            const export_ref = export_data.data.import_ref;
+                            const export_part = ast.parts.slice()[c.graph.topLevelSymbolToParts(part_range.source_index.get(), export_ref)[0]];
+                            if (export_part.is_live) {
+                                new_properties.appendAssumeCapacity(
+                                    .{
+                                        .key = prop.key,
+                                        .value = Expr.initIdentifier(export_ref, prop.value.?.loc),
+                                    },
+                                );
+                            }
+                        }
+                    }
+
+                    default_expr = Expr.allocate(
+                        temp_allocator,
+                        E.Object,
+                        E.Object{
+                            .properties = BabyList(G.Property).init(new_properties.items),
+                        },
+                        default_expr.loc,
+                    );
+                }
+
+                single_stmts_list[0] = Stmt.allocate(
+                    temp_allocator,
+                    S.ExportDefault,
+                    .{
+                        .default_name = default_export.default_name,
+                        .value = .{ .expr = default_expr },
+                    },
+                    stmt.loc,
+                );
+                part_stmts = single_stmts_list[0..];
+            }
+
             c.convertStmtsForChunk(
                 part_range.source_index.get(),
                 stmts,
-                part.stmts,
+                part_stmts,
                 chunk,
                 temp_allocator,
                 flags.wrap,

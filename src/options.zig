@@ -658,7 +658,7 @@ pub const Platform = enum {
     };
 };
 
-pub const Loader = enum(u4) {
+pub const Loader = enum {
     jsx,
     js,
     ts,
@@ -669,6 +669,11 @@ pub const Loader = enum(u4) {
     toml,
     wasm,
     napi,
+    base64,
+    dataurl,
+    text,
+
+    pub const HashTable = bun.StringArrayHashMap(Loader);
 
     pub fn canHaveSourceMap(this: Loader) bool {
         return switch (this) {
@@ -697,6 +702,7 @@ pub const Loader = enum(u4) {
         map.set(Loader.toml, "input.toml");
         map.set(Loader.wasm, "input.wasm");
         map.set(Loader.napi, "input.node");
+        map.set(Loader.text, "input.txt");
         break :brk map;
     };
 
@@ -722,26 +728,28 @@ pub const Loader = enum(u4) {
         };
     }
 
+    pub const names = bun.ComptimeStringMap(Loader, .{
+        .{ "js", Loader.js },
+        .{ "jsx", Loader.jsx },
+        .{ "ts", Loader.ts },
+        .{ "tsx", Loader.tsx },
+        .{ "css", Loader.css },
+        .{ "file", Loader.file },
+        .{ "json", Loader.json },
+        .{ "toml", Loader.toml },
+        .{ "wasm", Loader.wasm },
+        .{ "node", Loader.napi },
+        .{ "dataurl", Loader.dataurl },
+        .{ "base64", Loader.base64 },
+    });
+
     pub fn fromString(slice_: string) ?Loader {
-        const LoaderMatcher = strings.ExactSizeMatcher(4);
         var slice = slice_;
         if (slice.len > 0 and slice[0] == '.') {
             slice = slice[1..];
         }
 
-        return switch (LoaderMatcher.matchLower(slice)) {
-            LoaderMatcher.case("js") => Loader.js,
-            LoaderMatcher.case("jsx") => Loader.jsx,
-            LoaderMatcher.case("ts") => Loader.ts,
-            LoaderMatcher.case("tsx") => Loader.tsx,
-            LoaderMatcher.case("css") => Loader.css,
-            LoaderMatcher.case("file") => Loader.file,
-            LoaderMatcher.case("json") => Loader.json,
-            LoaderMatcher.case("toml") => Loader.toml,
-            LoaderMatcher.case("wasm") => Loader.wasm,
-            LoaderMatcher.case("node") => Loader.napi,
-            else => null,
-        };
+        return names.getWithEql(slice, strings.eqlCaseInsensitiveASCIIICheckLength);
     }
 
     pub fn supportsClientEntryPoint(this: Loader) bool {
@@ -798,6 +806,10 @@ pub const Loader = enum(u4) {
     pub fn isJavaScriptLikeOrJSON(loader: Loader) bool {
         return switch (loader) {
             .jsx, .js, .ts, .tsx, .json => true,
+
+            // toml is included because we can serialize to the same AST as JSON
+            .toml => true,
+
             else => false,
         };
     }
@@ -1251,7 +1263,7 @@ pub const BundleOptions = struct {
     footer: string = "",
     banner: string = "",
     define: *defines.Define,
-    loaders: bun.StringArrayHashMap(Loader),
+    loaders: Loader.HashTable,
     resolve_dir: string = "/",
     jsx: JSX.Pragma = JSX.Pragma{},
     auto_import_jsx: bool = true,

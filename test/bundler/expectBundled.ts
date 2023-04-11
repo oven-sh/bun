@@ -223,6 +223,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     unsupportedJSFeatures,
     treeShaking,
     outbase,
+    mainFields,
     ...unknownProps
   } = opts;
 
@@ -247,9 +248,6 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
   if (bundleWarnings === true) bundleWarnings = {};
   const useOutFile = outfile ? true : outdir ? false : entryPoints.length === 1;
 
-  if (!ESBUILD && jsx.automaticRuntime) {
-    throw new Error("jsx.automaticRuntime not implemented in bun build");
-  }
   if (!ESBUILD && format !== "esm") {
     throw new Error("formats besides esm not implemented in bun build");
   }
@@ -272,6 +270,9 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     throw new Error("keepNames not implemented in bun build");
   }
   if (!ESBUILD && minifyIdentifiers) {
+    throw new Error("minifyIdentifiers not implemented in bun build");
+  }
+  if (!ESBUILD && mainFields) {
     throw new Error("minifyIdentifiers not implemented in bun build");
   }
   if (ESBUILD && skipOnEsbuild) {
@@ -347,6 +348,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
           // treeShaking && `--tree-shaking`,
           // outbase && `--outbase=${outbase}`,
           // keepNames && `--keep-names`,
+          // mainFields && `--main-fields=${mainFields}`,
         ]
       : [
           Bun.which("esbuild"),
@@ -374,6 +376,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
           treeShaking && `--tree-shaking`,
           outbase && `--outbase=${path.join(root, outbase)}`,
           keepNames && `--keep-names`,
+          mainFields && `--main-fields=${mainFields.join(",")}`,
           [...(unsupportedJSFeatures ?? []), ...(unsupportedCSSFeatures ?? [])].map(x => `--supported:${x}=false`),
           ...entryPaths,
           ...(entryPointsRaw ?? []),

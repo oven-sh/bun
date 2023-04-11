@@ -23,7 +23,7 @@ describe("bundler", () => {
     },
     run: { stdout: "foo" },
   });
-  itBundled("default/ImportStarSyntaxErrorBug", {
+  itBundled("edgecase/ImportStarSyntaxErrorBug", {
     // bug: 'import {ns}, * as import_x from "x";'
     files: {
       "/entry.js": /* js */ `
@@ -37,4 +37,18 @@ describe("bundler", () => {
     },
     run: true,
   });
+  // itBundled("edgecase/PureCommentInLineComment", {
+  //   files: {
+  //     "/entry.js": /* js */ `
+  //       (function () {
+  //         // Some text that contains a pure comment in it like /* @__PURE__ */, with other text around it.
+
+  //         // console.log;
+
+  //         fn2("TODO: should this call be kept?");
+  //       })();
+  //     `,
+  //   },
+  //   dce: true,
+  // });
 });

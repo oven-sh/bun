@@ -1,3 +1,4 @@
+import assert from "assert";
 import { expectBundled, itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
@@ -5,6 +6,8 @@ var { describe, test, expect } = testForFile(import.meta.path);
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_dce_test.go
 
 // For debug, all files are written to $TEMP/bun-bundle-tests/dce
+
+// To understand what `dce: true` is doing, see ../expectBundled.md's "dce: true" section
 
 describe("bundler", () => {
   itBundled("dce/PackageJsonSideEffectsFalseKeepNamedImportES6", {
@@ -108,9 +111,7 @@ describe("bundler", () => {
       stdout: "hello\nunused import",
     },
   });
-  return;
   itBundled("dce/PackageJsonSideEffectsTrueKeepCommonJS", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
@@ -126,9 +127,12 @@ describe("bundler", () => {
         }
       `,
     },
+    dce: true,
+    run: {
+      stdout: "hello\nunused import",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsFalseKeepBareImportAndRequireES6", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
@@ -145,12 +149,12 @@ describe("bundler", () => {
         }
       `,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: WARNING: Ignoring this import because "Users/user/project/node_modules/demo-pkg/index.js" was marked as having no side effects
-  Users/user/project/node_modules/demo-pkg/package.json: NOTE: "sideEffects" is false in the enclosing "package.json" file:
-  `, */
+    dce: true,
+    run: {
+      stdout: "hello\nunused import",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsFalseKeepBareImportAndRequireCommonJS", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
@@ -167,20 +171,20 @@ describe("bundler", () => {
         }
       `,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: WARNING: Ignoring this import because "Users/user/project/node_modules/demo-pkg/index.js" was marked as having no side effects
-  Users/user/project/node_modules/demo-pkg/package.json: NOTE: "sideEffects" is false in the enclosing "package.json" file:
-  `, */
+    dce: true,
+    run: {
+      stdout: "hello\nunused import",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveBareImportES6", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
-        export const foo = 123
-        console.log('hello')
+        export const foo = "TEST FAILED"
+        console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
         {
@@ -188,20 +192,20 @@ describe("bundler", () => {
         }
       `,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: WARNING: Ignoring this import because "Users/user/project/node_modules/demo-pkg/index.js" was marked as having no side effects
-  Users/user/project/node_modules/demo-pkg/package.json: NOTE: "sideEffects" is false in the enclosing "package.json" file:
-  `, */
+    dce: true,
+    run: {
+      stdout: "unused import",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveBareImportCommonJS", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
-        exports.foo = 123
-        console.log('hello')
+        exports.foo = "TEST FAILED"
+        console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
         {
@@ -209,74 +213,83 @@ describe("bundler", () => {
         }
       `,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: WARNING: Ignoring this import because "Users/user/project/node_modules/demo-pkg/index.js" was marked as having no side effects
-  Users/user/project/node_modules/demo-pkg/package.json: NOTE: "sideEffects" is false in the enclosing "package.json" file:
-  `, */
+    dce: true,
+    run: {
+      stdout: "unused import",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveNamedImportES6", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
-        export const foo = 123
-        console.log('hello')
+        export const foo = "TEST FAILED"
+        console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
         {
           "sideEffects": false
         }
       `,
+    },
+    dce: true,
+    run: {
+      stdout: "unused import",
     },
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveNamedImportCommonJS", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
-        exports.foo = 123
-        console.log('hello')
+        exports.foo = "TEST FAILED"
+        console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
         {
           "sideEffects": false
         }
       `,
+    },
+    dce: true,
+    run: {
+      stdout: "unused import",
     },
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveStarImportES6", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import * as ns from "demo-pkg"
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
-        export const foo = 123
-        console.log('hello')
+        export const foo = "TEST FAILED"
+        console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
         {
           "sideEffects": false
         }
       `,
+    },
+    dce: true,
+    run: {
+      stdout: "unused import",
     },
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveStarImportCommonJS", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import * as ns from "demo-pkg"
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
-        exports.foo = 123
-        console.log('hello')
+        exports.foo = "TEST FAILED"
+        console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
         {
@@ -284,16 +297,19 @@ describe("bundler", () => {
         }
       `,
     },
+    dce: true,
+    run: {
+      stdout: "unused import",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsArrayRemove", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
-        export const foo = 123
+        export const foo = "TEST FAILED"
         console.log('hello')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
@@ -302,17 +318,20 @@ describe("bundler", () => {
         }
       `,
     },
+    dce: true,
+    run: {
+      stdout: "unused import",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeep", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
-        export const foo = 123
-        console.log('hello')
+        export const foo = "TEST FAILED"
+        console.log("TEST FAILED")
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
         {
@@ -320,20 +339,23 @@ describe("bundler", () => {
         }
       `,
     },
+    dce: true,
+    run: {
+      stdout: "unused import",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepMainUseModule", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg/index-main.js": /* js */ `
-        export const foo = 123
+        export const foo = "TEST FAILED"
         console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/index-module.js": /* js */ `
-        export const foo = 123
+        export const foo = "TEST FAILED"
         console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
@@ -343,21 +365,25 @@ describe("bundler", () => {
           "sideEffects": ["./index-main.js"]
         }
       `,
+    },
+    dce: true,
+    mainFields: ["module"],
+    run: {
+      stdout: "unused import",
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepMainUseMain", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg/index-main.js": /* js */ `
-        export const foo = 123
+        export const foo = "TEST FAILED"
         console.log('this should be kept')
       `,
       "/Users/user/project/node_modules/demo-pkg/index-module.js": /* js */ `
-        export const foo = 123
+        export const foo = "TEST FAILED"
         console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
@@ -367,21 +393,25 @@ describe("bundler", () => {
           "sideEffects": ["./index-main.js"]
         }
       `,
+    },
+    dce: true,
+    mainFields: ["main"],
+    run: {
+      stdout: "this should be kept\nunused import",
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepMainImplicitModule", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg/index-main.js": /* js */ `
-        export const foo = 123
+        export const foo = "TEST FAILED"
         console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/index-module.js": /* js */ `
-        export const foo = 123
+        export const foo = "TEST FAILED"
         console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
@@ -391,10 +421,13 @@ describe("bundler", () => {
           "sideEffects": ["./index-main.js"]
         }
       `,
+    },
+    dce: true,
+    run: {
+      stdout: "unused import",
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepMainImplicitMain", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -406,11 +439,11 @@ describe("bundler", () => {
         require('demo-pkg')
       `,
       "/Users/user/project/node_modules/demo-pkg/index-main.js": /* js */ `
-        export const foo = 123
+        export const foo = "POSSIBLE_REMOVAL"
         console.log('this should be kept')
       `,
       "/Users/user/project/node_modules/demo-pkg/index-module.js": /* js */ `
-        export const foo = 123
+        export const foo = "TEST FAILED"
         console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
@@ -421,20 +454,23 @@ describe("bundler", () => {
         }
       `,
     },
+    dce: true,
+    run: {
+      stdout: "this should be kept\nunused import",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleUseModule", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg/index-main.js": /* js */ `
-        export const foo = 123
+        export const foo = "TEST FAILED"
         console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/index-module.js": /* js */ `
-        export const foo = 123
+        export const foo = "TEST FAILED"
         console.log('this should be kept')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
@@ -444,10 +480,13 @@ describe("bundler", () => {
           "sideEffects": ["./index-module.js"]
         }
       `,
+    },
+    dce: true,
+    run: {
+      stdout: "unused import",
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleUseMain", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -469,9 +508,12 @@ describe("bundler", () => {
         }
       `,
     },
+    dce: true,
+    run: {
+      stdout: "unused import",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleImplicitModule", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -493,9 +535,12 @@ describe("bundler", () => {
         }
       `,
     },
+    dce: true,
+    run: {
+      stdout: "unused import",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleImplicitMain", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -507,11 +552,11 @@ describe("bundler", () => {
         require('demo-pkg')
       `,
       "/Users/user/project/node_modules/demo-pkg/index-main.js": /* js */ `
-        export const foo = 123
+        export const foo = "POSSIBLE_REMOVAL"
         console.log('this should be kept')
       `,
       "/Users/user/project/node_modules/demo-pkg/index-module.js": /* js */ `
-        export const foo = 123
+        export const foo = "TEST FAILED"
         console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
@@ -522,9 +567,12 @@ describe("bundler", () => {
         }
       `,
     },
+    dce: true,
+    run: {
+      stdout: "this should be kept\nunused import",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsArrayGlob", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg/keep/this/file"
@@ -542,12 +590,12 @@ describe("bundler", () => {
         }
       `,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: WARNING: Ignoring this import because "Users/user/project/node_modules/demo-pkg/remove/this/file.js" was marked as having no side effects
-  Users/user/project/node_modules/demo-pkg/package.json: NOTE: It was excluded from the "sideEffects" array in the enclosing "package.json" file:
-  `, */
+    dce: true,
+    run: {
+      stdout: "this should be kept",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsNestedDirectoryRemove", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg/a/b/c"
@@ -559,13 +607,16 @@ describe("bundler", () => {
         }
       `,
       "/Users/user/project/node_modules/demo-pkg/a/b/c/index.js": /* js */ `
-        export const foo = 123
-        console.log('hello')
+        export const foo = "TEST FAILED"
+        console.log('TEST FAILED')
       `,
+    },
+    dce: true,
+    run: {
+      stdout: "unused import",
     },
   });
   itBundled("dce/PackageJsonSideEffectsKeepExportDefaultExpr", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import foo from "demo-pkg"
@@ -578,9 +629,18 @@ describe("bundler", () => {
         }
       `,
     },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        globalThis.exprWithSideEffects = () => 1;
+        await import('./out');
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "1",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsFalseNoWarningInNodeModulesIssue999", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
@@ -591,8 +651,8 @@ describe("bundler", () => {
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg2/index.js": /* js */ `
-        export const foo = 123
-        console.log('hello')
+        export const foo = "FAILED"
+        console.log('FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg2/package.json": /* json */ `
         {
@@ -600,9 +660,12 @@ describe("bundler", () => {
         }
       `,
     },
+    dce: true,
+    run: {
+      stdout: "unused import\nused import",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsFalseIntermediateFilesUnused", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import {foo} from "demo-pkg"`,
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
@@ -612,9 +675,12 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/foo.js": `export const foo = 123`,
       "/Users/user/project/node_modules/demo-pkg/package.json": `{ "sideEffects": false }`,
     },
+    dce: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toBe("");
+    },
   });
   itBundled("dce/PackageJsonSideEffectsFalseIntermediateFilesUsed", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -622,10 +688,14 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
         export {foo} from "./foo.js"
-        throw 'keep this'
+        console.log('keep this')
       `,
       "/Users/user/project/node_modules/demo-pkg/foo.js": `export const foo = 123`,
       "/Users/user/project/node_modules/demo-pkg/package.json": `{ "sideEffects": false }`,
+    },
+    dce: true,
+    run: {
+      stdout: "keep this\n123",
     },
   });
   itBundled("dce/PackageJsonSideEffectsFalseIntermediateFilesChainAll", {
@@ -639,7 +709,7 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/a/package.json": `{ "sideEffects": false }`,
       "/Users/user/project/node_modules/b/index.js": /* js */ `
         export {foo} from "c"
-        throw 'keep this'
+        console.log('keep this')
       `,
       "/Users/user/project/node_modules/b/package.json": `{ "sideEffects": false }`,
       "/Users/user/project/node_modules/c/index.js": `export {foo} from "d"`,
@@ -647,9 +717,12 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/d/index.js": `export const foo = 123`,
       "/Users/user/project/node_modules/d/package.json": `{ "sideEffects": false }`,
     },
+    dce: true,
+    run: {
+      stdout: "keep this\n123",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsFalseIntermediateFilesChainOne", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "a"
@@ -658,15 +731,18 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/a/index.js": `export {foo} from "b"`,
       "/Users/user/project/node_modules/b/index.js": /* js */ `
         export {foo} from "c"
-        throw 'keep this'
+        console.log('keep this')
       `,
       "/Users/user/project/node_modules/b/package.json": `{ "sideEffects": false }`,
       "/Users/user/project/node_modules/c/index.js": `export {foo} from "d"`,
       "/Users/user/project/node_modules/d/index.js": `export const foo = 123`,
     },
+    dce: true,
+    run: {
+      stdout: "keep this\n123",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsFalseIntermediateFilesDiamond", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "a"
@@ -678,22 +754,25 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/b1/index.js": /* js */ `
         export {foo} from "c"
-        throw 'keep this 1'
+        console.log('keep this 1')
       `,
       "/Users/user/project/node_modules/b1/package.json": `{ "sideEffects": false }`,
       "/Users/user/project/node_modules/b2/index.js": /* js */ `
         export {foo} from "c"
-        throw 'keep this 2'
+        console.log('keep this 2')
       `,
       "/Users/user/project/node_modules/b2/package.json": `{ "sideEffects": false }`,
       "/Users/user/project/node_modules/c/index.js": `export {foo} from "d"`,
       "/Users/user/project/node_modules/d/index.js": `export const foo = 123`,
     },
+    dce: true,
+    run: {
+      stdout: "keep this 1\nkeep this 2\n123",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsFalseOneFork", {
-    // GENERATED
     files: {
-      "/Users/user/project/src/entry.js": `import("a").then(x => assert(x.foo === "foo"))`,
+      "/Users/user/project/src/entry.js": `import("a").then(x => console.log(x.foo))`,
       "/Users/user/project/node_modules/a/index.js": `export {foo} from "b"`,
       "/Users/user/project/node_modules/b/index.js": /* js */ `
         export {foo, bar} from "c"
@@ -706,11 +785,14 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/d/index.js": `export let baz = "baz"`,
     },
+    dce: true,
+    run: {
+      stdout: "foo",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsFalseAllFork", {
-    // GENERATED
     files: {
-      "/Users/user/project/src/entry.js": `import("a").then(x => assert(x.foo === "foo"))`,
+      "/Users/user/project/src/entry.js": `import("a").then(x => console.log(x.foo))`,
       "/Users/user/project/node_modules/a/index.js": `export {foo} from "b"`,
       "/Users/user/project/node_modules/b/index.js": /* js */ `
         export {foo, bar} from "c"
@@ -725,70 +807,93 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/d/index.js": `export let baz = "baz"`,
       "/Users/user/project/node_modules/d/package.json": `{ "sideEffects": false }`,
     },
+    dce: true,
+    run: {
+      stdout: "foo",
+    },
   });
   itBundled("dce/JSONLoaderRemoveUnused", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import unused from "./example.json"
         console.log('unused import')
       `,
-      "/example.json": `{"data": true}`,
+      "/example.json": `{"data": "FAILED"}`,
+    },
+    dce: true,
+    run: {
+      stdout: "unused import",
     },
   });
   itBundled("dce/TextLoaderRemoveUnused", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import unused from "./example.txt"
         console.log('unused import')
       `,
-      "/example.txt": `some data`,
+      "/example.txt": `TEST FAILED`,
+    },
+    dce: true,
+    run: {
+      stdout: "unused import",
     },
   });
   itBundled("dce/Base64LoaderRemoveUnused", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import unused from "./example.data"
         console.log('unused import')
       `,
-      "/example.data": `some data`,
+      "/example.data": `TEST FAILED`,
+    },
+    dce: true,
+    run: {
+      stdout: "unused import",
     },
   });
   itBundled("dce/DataURLLoaderRemoveUnused", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import unused from "./example.data"
         console.log('unused import')
       `,
-      "/example.data": `some data`,
+      "/example.data": `TEST FAILED`,
+    },
+    dce: true,
+    run: {
+      stdout: "unused import",
     },
   });
   itBundled("dce/FileLoaderRemoveUnused", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import unused from "./example.data"
         console.log('unused import')
       `,
-      "/example.data": `some data`,
+      "/example.data": `TEST FAILED`,
+    },
+    dce: true,
+    run: {
+      stdout: "unused import",
     },
   });
   itBundled("dce/RemoveUnusedImportMeta", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function foo() {
-          console.log(import.meta.url, import.meta.path)
+          console.log(import.meta.url, import.meta.path, 'FAILED')
         }
         console.log('foo is unused')
       `,
     },
+    dce: true,
+    run: {
+      stdout: "foo is unused",
+    },
   });
   itBundled("dce/RemoveUnusedPureCommentCalls", {
-    // GENERATED
+    // in this test, the bundler must drop all `_yes` variables entirely, and then
+    // preserve the pure comments in the same way esbuild does
     files: {
       "/entry.js": /* js */ `
         function bar() {}
@@ -852,54 +957,100 @@ describe("bundler", () => {
         let new_exp_no = /* @__PURE__ */ new foo() ** foo();
       `,
     },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      assert(!code.includes("_yes"), "should not contain any *_yes variables");
+      assert(code.includes("var bare = foo(bar)"), "should contain `var bare = foo(bar)`");
+      const keep = [
+        ["at_no", true],
+        ["new_at_no", true],
+        ["nospace_at_no", true],
+        ["nospace_new_at_no", true],
+        ["num_no", true],
+        ["new_num_no", true],
+        ["nospace_num_no", true],
+        ["nospace_new_num_no", true],
+        ["dot_no", true],
+        ["new_dot_no", true],
+        ["nested_no", true],
+        ["new_nested_no", true],
+        ["single_at_no", true],
+        ["new_single_at_no", true],
+        ["single_num_no", true],
+        ["new_single_num_no", true],
+        ["bad_no", false],
+        ["new_bad_no", false],
+        ["parens_no", false],
+        ["new_parens_no", false],
+        ["exp_no", true],
+        ["new_exp_no", true],
+      ];
+      for (const [name, pureComment] of keep) {
+        const regex = new RegExp(`${name}\\s*=[^\/\n]*(\\/\\*.*?\\*\\/)?`, "g");
+        const match = regex.exec(code);
+        assert(!!match, `should contain ${name}`);
+        assert(pureComment ? !!match[1] : !match[1], `should contain a pure comment for ${name}`);
+      }
+    },
   });
   itBundled("dce/TreeShakingReactElements", {
-    // GENERATED
     files: {
       "/entry.jsx": /* jsx */ `
         function Foo() {}
   
-        let a = <div/>
-        let b = <Foo>{a}</Foo>
-        let c = <>{b}</>
+        let DROP_a = <div/>
+        let DROP_b = <Foo>{DROP_a}</Foo>
+        let DROP_c = <>{DROP_b}</>
   
         let d = <div/>
         let e = <Foo>{d}</Foo>
         let f = <>{e}</>
-        console.log(f)
+        console.log(JSON.stringify(f))
       `,
+
+      "/node_modules/react/index.js": `export const Fragment = 'F'`,
+      "/node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = (a,b) => [a,b]; export const Fragment = 'F'`,
+    },
+    jsx: {
+      development: true,
+      automaticRuntime: true,
+    },
+    dce: true,
+    run: {
+      stdout: `["F",{"children":[null,{"children":["div",{}]}]}]`,
     },
   });
-  itBundled("dce/DisableTreeShaking", {
-    // GENERATED
-    files: {
-      "/entry.jsx": /* jsx */ `
-        import './remove-me'
-        function RemoveMe1() {}
-        let removeMe2 = 0
-        class RemoveMe3 {}
-  
-        import './keep-me'
-        function KeepMe1() {}
-        let keepMe2 = <KeepMe1/>
-        function keepMe3() { console.log('side effects') }
-        let keepMe4 = /* @__PURE__ */ keepMe3()
-        let keepMe5 = pure()
-        let keepMe6 = some.fn()
-      `,
-      "/remove-me.js": `export default 'unused'`,
-      "/keep-me/index.js": `console.log('side effects')`,
-      "/keep-me/package.json": `{ "sideEffects": false }`,
-    },
-    // TODO: Unsure how to port this: https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_dce_test.go#L1249
-    ignoreDCEAnnotations: true,
-    define: {
-      pure: "???",
-      "some.fn": "???",
-    },
-  });
+  // itBundled("dce/DisableTreeShaking", {
+  //   // GENERATED
+  //   files: {
+  //     "/entry.jsx": /* jsx */ `
+  //       import './remove-me'
+  //       function RemoveMe1() {}
+  //       let removeMe2 = 0
+  //       class RemoveMe3 {}
+
+  //       import './keep-me'
+  //       function KeepMe1() {}
+  //       let keepMe2 = <KeepMe1/>
+  //       function keepMe3() { console.log('side effects') }
+  //       let keepMe4 = /* @__PURE__ */ keepMe3()
+  //       let keepMe5 = pure()
+  //       let keepMe6 = some.fn()
+  //     `,
+  //     "/remove-me.js": `export default 'unused'`,
+  //     "/keep-me/index.js": `console.log('side effects')`,
+  //     "/keep-me/package.json": `{ "sideEffects": false }`,
+  //   },
+  //   // TODO: Unsure how to port this: https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_dce_test.go#L1249
+  //   ignoreDCEAnnotations: true,
+  //   define: {
+  //     pure: "???",
+  //     "some.fn": "???",
+  //   },
+  // });
+  0; // the commented out test has a pure comment which unless this 0 line is here, that test will be removed
+
   itBundled("dce/DeadCodeFollowingJump", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function testReturn() {
@@ -982,9 +1133,10 @@ describe("bundler", () => {
         testStmts()
       `,
     },
+    dce: true,
+    minifySyntax: true,
   });
   itBundled("dce/RemoveTrailingReturn", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function foo() {
@@ -1018,9 +1170,16 @@ describe("bundler", () => {
       `,
     },
     minifySyntax: true,
+    dce: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      assert(
+        [...code.matchAll(/return/g)].length === 2,
+        "should remove 3 trailing returns and the arrow function return",
+      );
+    },
   });
   itBundled("dce/ImportReExportOfNamespaceImport", {
-    // GENERATED
     files: {
       "/Users/user/project/entry.js": /* js */ `
         import * as ns from 'pkg'
@@ -1032,9 +1191,14 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/pkg/package.json": `{ "sideEffects": false }`,
       "/Users/user/project/node_modules/pkg/foo.js": `module.exports = 123`,
-      "/Users/user/project/node_modules/pkg/bar.js": `module.exports = 'abc'`,
+      "/Users/user/project/node_modules/pkg/bar.js": `module.exports = 'FAILED'`,
+    },
+    dce: true,
+    run: {
+      stdout: "123",
     },
   });
+  return;
   itBundled("dce/TreeShakingImportIdentifier", {
     // GENERATED
     files: {

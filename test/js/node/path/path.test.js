@@ -428,3 +428,14 @@ it("path.resolve", () => {
   });
   strictEqual(failures.length, 0, failures.join("\n"));
 });
+
+it("path.parse", () => {
+  const parsed = path.parse("/a/b/c/index.html");
+  assert.deepStrictEqual(parsed, {
+    root: "/",
+    dir: "/a/b/c",
+    base: "index.html",
+    ext: ".html",
+    name: "index",
+  });
+});

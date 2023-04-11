@@ -2944,4 +2944,8 @@ console.log(foo, array);
       expect(exports).toHaveLength(3);
     });
   });
+
+  it("import statement with quoted specifier", () => {
+    expectPrinted_(`import { "x.y" as xy } from "bar";`, `import {"x.y" as xy} from "bar"`);
+  });
 });

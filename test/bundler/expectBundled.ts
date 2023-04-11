@@ -220,6 +220,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     splitting,
     unsupportedCSSFeatures,
     unsupportedJSFeatures,
+    treeShaking,
     ...unknownProps
   } = opts;
 
@@ -332,6 +333,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
           // `--format=${format}`,
           // legalComments && `--legal-comments=${legalComments}`,
           splitting && `--splitting`,
+          // treeShaking && `--tree-shaking`,
         ]
       : [
           Bun.which("esbuild"),
@@ -356,6 +358,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
           banner && `--banner:js=${banner}`,
           legalComments && `--legal-comments=${legalComments}`,
           splitting && `--splitting`,
+          treeShaking && `--tree-shaking`,
           [...(unsupportedJSFeatures ?? []), ...(unsupportedCSSFeatures ?? [])].map(x => `--supported:${x}=false`),
           ...entryPaths,
           ...(entryPointsRaw ?? []),

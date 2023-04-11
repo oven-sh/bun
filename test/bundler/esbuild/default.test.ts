@@ -3643,9 +3643,8 @@ describe("bundler", () => {
       "/entry.js": ['Duplicate injected file "/inject.js"'],
     },
   });
-  return;
+  // TODO: runtime checks for these next two. i think esbuild is doing this one wrong.
   itBundled("default/Inject", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         let sideEffects = console.log('this should be renamed')
@@ -3664,12 +3663,12 @@ describe("bundler", () => {
         export let obj = {}
         export let sideEffects = console.log('side effects')
         export let noSideEffects = /* @__PURE__ */ console.log('side effects')
-        export let injectedAndDefined = 'should not be used'
-        let injected_and_defined = 'should not be used'
+        export let injectedAndDefined = 'should not be used FAILED'
+        let injected_and_defined = 'should not be used FAILED'
         export { injected_and_defined as 'injected.and.defined' }
       `,
       "/node_modules/unused/index.js": `console.log('This is unused but still has side effects')`,
-      "/node_modules/sideEffects-false/index.js": `console.log('This is unused and has no side effects')`,
+      "/node_modules/sideEffects-false/index.js": `console.log('This is unused and has no side effects. FAILED')`,
       "/node_modules/sideEffects-false/package.json": /* json */ `
         {
         "sideEffects": false
@@ -3684,13 +3683,13 @@ describe("bundler", () => {
         }
         export { replace2 as 'chain2.prop2' }
       `,
-      "/collision.js": `export let collide = 123`,
+      "/collision.js": `export let collide = "FAILED"`,
       "/re-export.js": /* js */ `
         export {re_export} from 'external-pkg'
         export {'re.export'} from 'external-pkg2'
       `,
     },
-    format: "cjs",
+    format: "esm",
     inject: [
       "/inject.js",
       "/node_modules/unused/index.js",
@@ -3705,12 +3704,33 @@ describe("bundler", () => {
       injectedAndDefined: JSON.stringify("should be used"),
       "injected.and.defined": JSON.stringify("should be used"),
     },
+    external: ["external-pkg", "external-pkg2"],
+    runtimeFiles: {
+      "/node_modules/external-pkg/index.js": `export let re_export = '1'`,
+      "/node_modules/external-pkg2/index.js": `export let x = '2'; export { x as 're.export' }`,
+    },
+    dce: true,
+    run: {
+      stdout: `
+        side effects
+        This is unused but still has side effects
+        this should be renamed
+        undefined
+        defined
+        should be used
+        should be used
+        [Function: test]
+        [Function: test]
+        123
+        1
+        2
+      `,
+    },
   });
   itBundled("default/InjectNoBundle", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
-        let sideEffects = console.log('side effects')
+        let sideEffects = console.log('this should be renamed')
         let collide = 123
         console.log(obj.prop)
         console.log(obj.defined)
@@ -3720,18 +3740,18 @@ describe("bundler", () => {
         console.log(chain2.prop2.test)
         console.log(collide)
         console.log(re_export)
-        console.log(reexpo.rt)
+        console.log(re.export)
       `,
       "/inject.js": /* js */ `
         export let obj = {}
-        export let sideEffects = console.log('this should be renamed')
+        export let sideEffects = console.log('side effects')
         export let noSideEffects = /* @__PURE__ */ console.log('side effects')
-        export let injectedAndDefined = 'should not be used'
-        let injected_and_defined = 'should not be used'
+        export let injectedAndDefined = 'should not be used FAILED'
+        let injected_and_defined = 'should not be used FAILED'
         export { injected_and_defined as 'injected.and.defined' }
       `,
       "/node_modules/unused/index.js": `console.log('This is unused but still has side effects')`,
-      "/node_modules/sideEffects-false/index.js": `console.log('This is unused and has no side effects')`,
+      "/node_modules/sideEffects-false/index.js": `console.log('This is unused and has no side effects. FAILED')`,
       "/node_modules/sideEffects-false/package.json": /* json */ `
         {
         "sideEffects": false
@@ -3741,28 +3761,58 @@ describe("bundler", () => {
         export let replace = {
           test() {}
         }
-        let replaceDot = {
+        let replace2 = {
           test() {}
         }
-        export { replaceDot as 'chain2.prop2' }
+        export { replace2 as 'chain2.prop2' }
       `,
-      "/collision.js": `export let collide = 123`,
+      "/collision.js": `export let collide = "FAILED"`,
       "/re-export.js": /* js */ `
         export {re_export} from 'external-pkg'
-        export {'reexpo.rt'} from 'external-pkg2'
+        export {'re.export'} from 'external-pkg2'
       `,
     },
-    treeShaking: true,
-    mode: "passthrough",
+    format: "esm",
+    inject: [
+      "/inject.js",
+      "/node_modules/unused/index.js",
+      "/node_modules/sideEffects-false/index.js",
+      "/replacement.js",
+      "/collision.js",
+      "/re-export.js",
+    ],
     define: {
       "chain.prop": "replace",
-      "obj.defined": '"defined"',
-      injectedAndDefined: '"should be used"',
-      "injected.and.defined": '"should be used"',
+      "obj.defined": JSON.stringify("defined"),
+      injectedAndDefined: JSON.stringify("should be used"),
+      "injected.and.defined": JSON.stringify("should be used"),
+    },
+    runtimeFiles: {
+      "/node_modules/external-pkg/index.js": `export let re_export = '1'`,
+      "/node_modules/external-pkg2/index.js": `export let x = '2'; export { x as 're.export' }`,
+    },
+    dce: true,
+    treeShaking: true,
+    mode: "transform",
+    run: {
+      stdout: `
+        side effects
+        This is unused but still has side effects
+        this should be renamed
+        undefined
+        defined
+        should be used
+        should be used
+        [Function: test]
+        [Function: test]
+        123
+        1
+        2
+      `,
     },
   });
+  return;
   itBundled("default/InjectJSX", {
-    // GENERATED
     files: {
       "/entry.jsx": `console.log(<><div/></>)`,
       "/inject.js": /* js */ `
@@ -3774,6 +3824,7 @@ describe("bundler", () => {
       "React.createElement": "el",
       "React.Fragment": "frag",
     },
+    inject: ["/inject.js"],
   });
   itBundled("default/InjectJSXDotNames", {
     // GENERATED
@@ -3803,7 +3854,6 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
-    mode: "convertformat",
   });
   itBundled("default/InjectImportOrder", {
     // GENERATED

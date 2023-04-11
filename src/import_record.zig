@@ -109,7 +109,7 @@ pub const ImportRecord = struct {
 
     /// This tells the printer that we should print as export var $moduleID = ...
     /// Instead of using the path.
-    is_bundled: bool = false,
+    is_legacy_bundled: bool = false,
 
     /// Sometimes the parser creates an import record and decides it isn't needed.
     /// For example, TypeScript code may have import statements that later turn

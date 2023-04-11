@@ -419,8 +419,10 @@ jobs:
           cd ${{matrix.tag}}
           chmod +x bun
           sudo mv bun /usr/local/bin/bun
-          curl -L -o ./http_proxy https://github.com/cirospaciari/http-proxy/raw/main/bin/macos-arm64/http_proxy
-          chmod +x ./http_proxy
+          mkdir -p ~/proxy/
+          curl -L -o ~/proxy/http_proxy https://github.com/cirospaciari/http-proxy/raw/main/bin/macos-arm64/http_proxy
+          chmod +x ~/proxy/http_proxy
+          echo -e "\nexport PATH=$PATH:~/proxy" >> ~/.bashrc
           sudo mv ./http_proxy /usr/local/bin/http_proxy
           bun --version
       - id: test

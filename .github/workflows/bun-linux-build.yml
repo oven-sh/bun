@@ -182,9 +182,11 @@ jobs:
           cd bun-${{matrix.tag}}
           chmod +x bun
           sudo mv bun /usr/local/bin/bun
-          curl -L -o ./http_proxy https://github.com/cirospaciari/http-proxy/raw/main/bin/linux/http_proxy
-          chmod +x ./http_proxy
-          sudo mv ./http_proxy /usr/local/bin/http_proxy
+          curl -L -o ~/proxy/http_proxy https://github.com/cirospaciari/http-proxy/raw/main/bin/linux/http_proxy
+          chmod +x ~/proxy/http_proxy
+          echo -e "\nexport PATH=$PATH:~/proxy" >> ~/.bashrc
+          echo -e "\nexport PATH=$PATH:~/proxy" >> ~/.zshrc
+          source ~/.bashrc
           bun --version
       - id: test
         name: Test (node runner)

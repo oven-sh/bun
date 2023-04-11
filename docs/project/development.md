@@ -180,7 +180,7 @@ You'll need a very recent version of Valgrind due to DWARF 5 debug symbols. You 
 `--fair-sched=try` is necessary if running multithreaded code in Bun (such as the bundler). Otherwise it will hang.
 
 ```bash
-valgrind --fair-sched=try --track-origins=yes bun-debug <args>
+$ valgrind --fair-sched=try --track-origins=yes bun-debug <args>
 ```
 
 ## Troubleshooting

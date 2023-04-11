@@ -3811,131 +3811,134 @@ describe("bundler", () => {
       `,
     },
   });
-  return;
-  itBundled("default/InjectJSX", {
-    files: {
-      "/entry.jsx": `console.log(<><div/></>)`,
-      "/inject.js": /* js */ `
-        export function el() {}
-        export function frag() {}
-      `,
-    },
-    define: {
-      "React.createElement": "el",
-      "React.Fragment": "frag",
-    },
-    inject: ["/inject.js"],
-  });
-  itBundled("default/InjectJSXDotNames", {
-    // GENERATED
-    files: {
-      "/entry.jsx": `console.log(<><div/></>)`,
-      "/inject.js": /* js */ `
-        function el() {}
-        function frag() {}
-        export {
-          el as 'React.createElement',
-          frag as 'React.Fragment',
-        }
-      `,
-    },
-  });
-  itBundled("default/InjectImportTS", {
-    // GENERATED
-    files: {
-      "/entry.ts": `console.log('here')`,
-      "/inject.js": /* js */ `
-        // Unused imports are automatically removed in TypeScript files (this
-        // is a mis-feature of the TypeScript language). However, injected
-        // imports are an esbuild feature so we get to decide what the
-        // semantics are. We do not want injected imports to disappear unless
-        // they have been explicitly marked as having no side effects.
-        console.log('must be present')
-      `,
-    },
-    format: "esm",
-  });
-  itBundled("default/InjectImportOrder", {
-    // GENERATED
-    files: {
-      "/entry.ts": /* ts */ `
-        import 'third'
-        console.log('third')
-      `,
-      "/inject-1.js": /* js */ `
-        import 'first'
-        console.log('first')
-      `,
-      "/inject-2.js": /* js */ `
-        import 'second'
-        console.log('second')
-      `,
-    },
-    inject: ["/inject-1.js", "/inject-2.js"],
-  });
-  itBundled("default/InjectAssign", {
-    // GENERATED
-    files: {
-      "/entry.js": /* js */ `
-        test = true
-        foo.bar = true
-        defined = true
-      `,
-      "/inject.js": /* js */ `
-        export let test = 0
-        let fooBar = 1
-        let someDefine = 2
-        export { fooBar as 'foo.bar' }
-        export { someDefine as 'some.define' }
-      `,
-    },
-    inject: ["/inject.js"],
-    define: {
-      defined: "some.define",
-    },
-  });
-  itBundled("default/InjectWithDefine", {
-    files: {
-      "/entry.js": /* js */ `
-        console.log(
-          // define wins over inject
-          both === 'define',
-          bo.th === 'defi.ne',
-          // define forwards to inject
-          first === 'success (identifier)',
-          fir.st === 'success (dot name)',
-        )
-      `,
-      "/inject.js": /* js */ `
-        export let both = 'inject'
-        export let first = 'TEST FAILED!'
-        export let second = 'success (identifier)'
-  
-        let both2 = 'inject'
-        let first2 = 'TEST FAILED!'
-        let second2 = 'success (dot name)'
-        export {
-          both2 as 'bo.th',
-          first2 as 'fir.st',
-          second2 as 'seco.nd',
-        }
-      `,
-    },
-    inject: ["/inject.js"],
-    define: {
-      "both": '"define"',
-      "bo.th": '"defi.ne"',
-      "first": "second",
-      "fir.st": "seco.nd",
-    },
-  });
+  // itBundled("default/InjectJSX", {
+  //   files: {
+  //     "/entry.jsx": `console.log(<><div/></>)`,
+  //     "/inject.js": /* js */ `
+  //       export function el() {}
+  //       export function frag() {}
+  //     `,
+  //   },
+  //   define: {
+  //     "React.createElement": "el",
+  //     "React.Fragment": "frag",
+  //   },
+  //   inject: ["/inject.js"],
+  // });
+  // itBundled("default/InjectJSXDotNames", {
+  //   // GENERATED
+  //   files: {
+  //     "/entry.jsx": `console.log(<><div/></>)`,
+  //     "/inject.js": /* js */ `
+  //       function el() {}
+  //       function frag() {}
+  //       export {
+  //         el as 'React.createElement',
+  //         frag as 'React.Fragment',
+  //       }
+  //     `,
+  //   },
+  // });
+  // itBundled("default/InjectImportTS", {
+  //   // GENERATED
+  //   files: {
+  //     "/entry.ts": `console.log('here')`,
+  //     "/inject.js": /* js */ `
+  //       // Unused imports are automatically removed in TypeScript files (this
+  //       // is a mis-feature of the TypeScript language). However, injected
+  //       // imports are an esbuild feature so we get to decide what the
+  //       // semantics are. We do not want injected imports to disappear unless
+  //       // they have been explicitly marked as having no side effects.
+  //       console.log('must be present')
+  //     `,
+  //   },
+  //   format: "esm",
+  // });
+  // itBundled("default/InjectImportOrder", {
+  //   // GENERATED
+  //   files: {
+  //     "/entry.ts": /* ts */ `
+  //       import 'third'
+  //       console.log('third')
+  //     `,
+  //     "/inject-1.js": /* js */ `
+  //       import 'first'
+  //       console.log('first')
+  //     `,
+  //     "/inject-2.js": /* js */ `
+  //       import 'second'
+  //       console.log('second')
+  //     `,
+  //   },
+  //   inject: ["/inject-1.js", "/inject-2.js"],
+  // });
+  // itBundled("default/InjectAssign", {
+  //   // GENERATED
+  //   files: {
+  //     "/entry.js": /* js */ `
+  //       test = true
+  //       foo.bar = true
+  //       defined = true
+  //     `,
+  //     "/inject.js": /* js */ `
+  //       export let test = 0
+  //       let fooBar = 1
+  //       let someDefine = 2
+  //       export { fooBar as 'foo.bar' }
+  //       export { someDefine as 'some.define' }
+  //     `,
+  //   },
+  //   inject: ["/inject.js"],
+  //   define: {
+  //     defined: "some.define",
+  //   },
+  // });
+  // itBundled("default/InjectWithDefine", {
+  //   files: {
+  //     "/entry.js": /* js */ `
+  //       console.log(
+  //         // define wins over inject
+  //         both === 'define',
+  //         bo.th === 'defi.ne',
+  //         // define forwards to inject
+  //         first === 'success (identifier)',
+  //         fir.st === 'success (dot name)',
+  //       )
+  //     `,
+  //     "/inject.js": /* js */ `
+  //       export let both = 'inject'
+  //       export let first = 'TEST FAILED!'
+  //       export let second = 'success (identifier)'
+
+  //       let both2 = 'inject'
+  //       let first2 = 'TEST FAILED!'
+  //       let second2 = 'success (dot name)'
+  //       export {
+  //         both2 as 'bo.th',
+  //         first2 as 'fir.st',
+  //         second2 as 'seco.nd',
+  //       }
+  //     `,
+  //   },
+  //   inject: ["/inject.js"],
+  //   define: {
+  //     "both": '"define"',
+  //     "bo.th": '"defi.ne"',
+  //     "first": "second",
+  //     "fir.st": "seco.nd",
+  //   },
+  // });
   itBundled("default/Outbase", {
-    // GENERATED
     files: {
       "/a/b/c.js": `console.log('c')`,
       "/a/b/d.js": `console.log('d')`,
     },
     entryPoints: ["/a/b/c.js", "/a/b/d.js"],
+    outbase: "/",
+    onAfterBundle(api) {
+      api.assertFileExists("/out/a/b/c.js");
+      api.assertFileExists("/out/a/b/d.js");
+    },
   });
   itBundled("default/AvoidTDZ", {
     // GENERATED
@@ -3945,14 +3948,23 @@ describe("bundler", () => {
           static foo = new Foo
         }
         let foo = Foo.foo
-        console.log(foo)
+        console.log(JSON.stringify(foo))
         export class Bar {}
         export let bar = 123
       `,
     },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import * as mod from './out';
+        console.log(JSON.stringify(mod));
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: '{}\n{"bar":123}',
+    },
   });
   itBundled("default/AvoidTDZNoBundle", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -3964,7 +3976,17 @@ describe("bundler", () => {
         export let bar = 123
       `,
     },
-    mode: "passthrough",
+    mode: "transform",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import * as mod from './out';
+        console.log(JSON.stringify(mod));
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: '{}\n{"bar":123}',
+    },
   });
   itBundled("default/DefineImportMeta", {
     files: {
@@ -3993,7 +4015,6 @@ describe("bundler", () => {
     },
   });
   itBundled("default/DefineImportMetaES5", {
-    // GENERATED
     files: {
       "/replaced.js": `console.log(import.meta.x)`,
       "/kept.js": `console.log(import.meta.y)`,
@@ -4003,41 +4024,45 @@ describe("bundler", () => {
     define: {
       "import.meta.x": 1,
     },
-    /* TODO FIX expectedScanLog: `dead-code.js: WARNING: "import.meta" is not available in the configured target environment and will be empty
-  kept.js: WARNING: "import.meta" is not available in the configured target environment and will be empty
-  `, */
-  });
-  itBundled("default/InjectImportMeta", {
-    // GENERATED
-    files: {
-      "/entry.js": /* js */ `
-        console.log(
-          // These should be fully substituted
-          import.meta,
-          import.meta.foo,
-          import.meta.foo.bar,
-  
-          // Should just substitute "import.meta.foo"
-          import.meta.foo.baz,
-  
-          // This should not be substituted
-          import.meta.bar,
-        )
-      `,
-      "/inject.js": /* js */ `
-        let foo = 1
-        let bar = 2
-        let baz = 3
-        export {
-          foo as 'import.meta',
-          bar as 'import.meta.foo',
-          baz as 'import.meta.foo.bar',
-        }
-      `,
+    unsupportedJSFeatures: ["import-meta"],
+    run: [
+      { file: "/out/replaced.js", stdout: "1" },
+      { file: "/out/kept.js", stdout: "undefined" },
+    ],
+    onAfterBundle(api) {
+      api.expectFile("/out/dead-code.js").toBe("");
     },
   });
+  // itBundled("default/InjectImportMeta", {
+  //   // GENERATED
+  //   files: {
+  //     "/entry.js": /* js */ `
+  //       console.log(
+  //         // These should be fully substituted
+  //         import.meta,
+  //         import.meta.foo,
+  //         import.meta.foo.bar,
+
+  //         // Should just substitute "import.meta.foo"
+  //         import.meta.foo.baz,
+
+  //         // This should not be substituted
+  //         import.meta.bar,
+  //       )
+  //     `,
+  //     "/inject.js": /* js */ `
+  //       let foo = 1
+  //       let bar = 2
+  //       let baz = 3
+  //       export {
+  //         foo as 'import.meta',
+  //         bar as 'import.meta.foo',
+  //         baz as 'import.meta.foo.bar',
+  //       }
+  //     `,
+  //   },
+  // });
   itBundled("default/DefineThis", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         ok(
@@ -4065,7 +4090,7 @@ describe("bundler", () => {
         })();
   
         // Nothing should be substituted in this code
-        (function() {
+        export default function() {
           doNotSubstitute(
             this,
             this.foo,
@@ -4073,20 +4098,52 @@ describe("bundler", () => {
             this.foo.baz,
             this.bar,
           );
-        })();
+        };
       `,
     },
     define: {
-      this: 1,
-      "this.foo": 2,
-      "this.foo.bar": 3,
+      this: "_replaced",
+      "this.foo": "_replaced_foo",
+      "this.foo.bar": "_replaced_foo_bar",
+    },
+    onAfterBundle(api) {
+      const split = api.readFile("/out.js").split("doNotSubstitute");
+      expect(split.length).toBe(2);
+      assert(!split[0].includes("this"), "this should not be substituted in the first two cases");
+      assert([...split[1].matchAll(/this/g)].length === 5, "there should be 5 mentions of this in the third case");
+    },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        globalThis.ok = (...args) => console.log(JSON.stringify(args));
+        globalThis.doNotSubstitute = (...args) => console.log(JSON.stringify(args));
+        globalThis._replaced = { foo: 1 };
+        globalThis._replaced_foo = { baz: 2 };
+        globalThis._replaced_foo_bar = 3;
+        const { default: fn } = await import('./out.js');
+
+        fn.call({
+          foo: {
+            bar: 4,
+            baz: 5,
+          },
+          bar: 6,
+        });
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: `
+        [{"foo":1},{"baz":2},3,2,null]
+        [{"foo":1},{"baz":2},3,2,null]
+        [{"foo":{"bar":4,"baz":5},"bar":6},{"bar":4,"baz":5},4,5,6]
+      `,
     },
   });
   itBundled("default/DefineOptionalChain", {
     // GENERATED
     files: {
       "/entry.js": /* js */ `
-        console.log([
+        log([
           a.b.c,
           a?.b.c,
           a.b?.c,
@@ -4103,13 +4160,25 @@ describe("bundler", () => {
     },
     define: {
       "a.b.c": 1,
+    },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        globalThis.log = (...args) => console.log(JSON.stringify(args));
+        globalThis.a = { B: { C: 2 } };
+        globalThis.b = "B";
+        globalThis.c = "C";
+        await import('./out.js');
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: `[[1,1,1],[1,1,1],[2,2,2]]`,
     },
   });
   itBundled("default/DefineOptionalChainLowered", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
-        console.log([
+        log([
           a.b.c,
           a?.b.c,
           a.b?.c,
@@ -4121,15 +4190,36 @@ describe("bundler", () => {
           a[b][c],
           a?.[b][c],
           a[b]?.[c],
+          a?.[d][c],
+          a[d]?.[e],
         ])
       `,
     },
+    unsupportedJSFeatures: ["optional-chain"],
     define: {
       "a.b.c": 1,
     },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        globalThis.log = (...args) => console.log(JSON.stringify(args));
+        globalThis.a = { B: { C: 2 }, D: { } };
+        globalThis.b = "B";
+        globalThis.c = "C";
+        globalThis.d = "D";
+        globalThis.e = "E";
+        await import('./out.js');
+      `,
+    },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      assert(!code.includes("?."), "code should not contain optional chaining");
+    },
+    run: {
+      file: "/test.js",
+      stdout: `[[1,1,1],[1,1,1],[2,2,2,null,null]]`,
+    },
   });
   itBundled("default/DefineInfiniteLoopIssue2407", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         a.b()
@@ -4142,88 +4232,143 @@ describe("bundler", () => {
       "c.a": "a.b",
       "x.y": "y",
     },
-  });
-  itBundled("default/DefineAssignWarning", {
-    // GENERATED
-    files: {
-      "/read.js": /* js */ `
-        console.log(
-          [a, b.c, b['c']],
-          [d, e.f, e['f']],
-          [g, h.i, h['i']],
-        )
-      `,
-      "/write.js": /* js */ `
-        console.log(
-          [a = 0, b.c = 0, b['c'] = 0],
-          [d = 0, e.f = 0, e['f'] = 0],
-          [g = 0, h.i = 0, h['i'] = 0],
-        )
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        globalThis.b = { c: () => console.log('1') };
+        globalThis.y = () => console.log('2');
+        await import('./out.js');
       `,
     },
-    entryPoints: ["/read.js", "/write.js"],
-    define: {
-      a: "null",
-      "b.c": "null",
-      d: "ident",
-      "e.f": "ident",
-      g: "dot.chain",
-      "h.i": "dot.chain",
+    run: {
+      file: "/test.js",
+      stdout: "1\n2",
     },
   });
+  // TODO: this doesnt warn in esbuild ???
+  // itBundled("default/DefineAssignWarning", {
+  //   // GENERATED
+  //   files: {
+  //     "/read.js": /* js */ `
+  //       console.log(
+  //         [a, b.c, b['c']],
+  //         [d, e.f, e['f']],
+  //         [g, h.i, h['i']],
+  //       )
+  //     `,
+  //     "/write.js": /* js */ `
+  //       console.log(
+  //         [a = 0, b.c = 0, b['c'] = 0],
+  //         [d = 0, e.f = 0, e['f'] = 0],
+  //         [g = 0, h.i = 0, h['i'] = 0],
+  //       )
+  //     `,
+  //   },
+  //   entryPoints: ["/read.js", "/write.js"],
+  //   define: {
+  //     a: "null",
+  //     "b.c": "null",
+  //     d: "ident",
+  //     "e.f": "ident",
+  //     g: "dot.chain",
+  //     "h.i": "dot.chain",
+  //   },
+  // });
   itBundled("default/KeepNamesTreeShaking", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
-        function fnStmtRemove() {}
-        function fnStmtKeep() {}
-        x = fnStmtKeep
-  
-        let fnExprRemove = function remove() {}
-        let fnExprKeep = function keep() {}
-        x = fnExprKeep
-  
-        class clsStmtRemove {}
-        class clsStmtKeep {}
-        new clsStmtKeep()
-  
-        let clsExprRemove = class remove {}
-        let clsExprKeep = class keep {}
-        new clsExprKeep()
+        (function() {
+          function fnStmtRemove() {}
+          function fnStmtKeep() {}
+          x = fnStmtKeep
+    
+          let fnExprRemove = function remove() {}
+          let fnExprKeep = function keepFn() {}
+          x = fnExprKeep
+    
+          class clsStmtRemove {}
+          class clsStmtKeep {}
+          new clsStmtKeep()
+    
+          let clsExprRemove = class remove {}
+          let clsExprKeep = class keepClass {}
+          new clsExprKeep()
+        })();
       `,
     },
     keepNames: true,
+    dce: true,
+    onAfterBundle(api) {
+      // to properly check that keep names actually worked, we need to minify the
+      // file and THEN check for the names. we do this separatly just so that we know that
+      // the bundler's minifier doesn't mess anything up.
+      Bun.spawnSync(["esbuild", "--minify-identifiers", "--outfile=out.min.js", "out.js"], { cwd: api.root });
+      const code = api.readFile("/out.min.js");
+      const checks = ["fnStmtKeep", "keepFn", "clsStmtKeep", "keepClass"];
+      for (const check of checks) {
+        assert(code.includes(check), `code should contain ${check} past minifying`);
+      }
+    },
   });
   itBundled("default/KeepNamesClassStaticName", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
-        class A { static foo }
-        class B { static name }
-        class C { static name() {} }
-        class D { static get name() {} }
-        class E { static set name(x) {} }
-        class F { static ['name'] = 0 }
+        class ClassName1A { static foo = 1 }
+        class ClassName1B { static name = 2 }
+        class ClassName1C { static name() {} }
+        class ClassName1D { static get name() {} }
+        class ClassName1E { static set name(x) {} }
+        class ClassName1F { static ['name'] = 0 }
   
-        let a = class a { static foo }
-        let b = class b { static name }
-        let c = class c { static name() {} }
-        let d = class d { static get name() {} }
-        let e = class e { static set name(x) {} }
-        let f = class f { static ['name'] = 0 }
+        let a = class ClassName2a { static foo }
+        let b = class ClassName2b { static name }
+        let c = class ClassName2c { static name() {} }
+        let d = class ClassName2d { static get name() {} }
+        let e = class ClassName2e { static set name(x) {} }
+        let f = class ClassName2f { static ['name'] = 0 }
   
-        let a2 = class { static foo }
-        let b2 = class { static name }
-        let c2 = class { static name() {} }
-        let d2 = class { static get name() {} }
-        let e2 = class { static set name(x) {} }
-        let f2 = class { static ['name'] = 0 }
+        let ClassName_a2 = class { static foo }
+        let ClassName_b2 = class { static name }
+        let ClassName_c2 = class { static name() {} }
+        let ClassName_d2 = class { static get name() {} }
+        let ClassName_e2 = class { static set name(x) {} }
+        let ClassName_f2 = class { static ['name'] = 0 }
+
+        export { ClassName1A, ClassName1B, ClassName1C, ClassName1D, ClassName1E, ClassName1F, a, b, c, d, e, f, ClassName_a2 as a2, ClassName_b2 as b2,ClassName_c2 as c2,ClassName_d2 as d2,ClassName_e2 as e2,ClassName_f2 as f2 }
       `,
     },
-    mode: "passthrough",
+    keepNames: true,
+    onAfterBundle(api) {
+      // to properly check that keep names actually worked, we need to minify the
+      // file and THEN check for the names. we do this separatly just so that we know that
+      // the bundler's minifier doesn't mess anything up.
+      Bun.spawnSync(["esbuild", "--minify-identifiers", "--outfile=out.min.js", "out.js"], { cwd: api.root });
+      const code = api.readFile("/out.min.js");
+      const checks = [
+        "ClassName1A",
+        "ClassName1B",
+        "ClassName1C",
+        "ClassName1D",
+        "ClassName1E",
+        "ClassName1F",
+        "ClassName2a",
+        "ClassName2b",
+        "ClassName2c",
+        "ClassName2d",
+        "ClassName2e",
+        "ClassName2f",
+        "ClassName_a2",
+        "ClassName_b2",
+        "ClassName_c2",
+        "ClassName_d2",
+        "ClassName_e2",
+        "ClassName_f2",
+      ];
+      for (const check of checks) {
+        assert(code.includes(check), `code should contain ${check} past minifying`);
+      }
+    },
   });
   itBundled("default/CharFreqIgnoreComments", {
-    // GENERATED
     files: {
       "/a.js": /* js */ `
         export default function(one, two, three, four) {
@@ -4243,32 +4388,39 @@ describe("bundler", () => {
         // LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL
       `,
     },
+    minifyIdentifiers: true,
     entryPoints: ["/a.js", "/b.js"],
+    onAfterBundle(api) {
+      function capture(str: string) {
+        return str.match(/function.*?\(\s*(\w+),\s*(\w+),\s*(\w+),\s*(\w+)\)/)!.slice(1);
+      }
+      const a = capture(api.readFile("/out/a.js"));
+      const b = capture(api.readFile("/out/b.js"));
+      expect(a).toEqual(b);
+      expect(a).not.toEqual(["one", "two", "three", "four"]);
+    },
   });
   itBundled("default/ImportRelativeAsPackage", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import 'some/other/file'`,
       "/Users/user/project/src/some/other/file.js": ``,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: ERROR: Could not resolve "some/other/file"
-  NOTE: Use the relative path "./some/other/file" to reference the file "Users/user/project/src/some/other/file.js". Without the leading "./", the path "some/other/file" is being interpreted as a package path instead.
-  `, */
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [`Could not resolve: "some/other/file". Maybe you need to "bun install"?`],
+    },
   });
   itBundled("default/ForbidConstAssignWhenBundling", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         const x = 1
         x = 2
       `,
     },
-    /* TODO FIX expectedScanLog: `entry.js: ERROR: Cannot assign to "x" because it is a constant
-  entry.js: NOTE: The symbol "x" was declared a constant here:
-  `, */
+    bundleErrors: {
+      "/entry.js": [`Cannot assign to "x" because it is a constant`],
+    },
   });
   itBundled("default/ConstWithLet", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         const a = 1; console.log(a)
@@ -4279,7 +4431,14 @@ describe("bundler", () => {
         for (const e of x) console.log(e)
       `,
     },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).not.toContain("const");
+      assert([...code.matchAll(/let/g)].length === 3, "should have 3 let statements");
+    },
   });
+  // TODO: this fails on esbuild ???
   itBundled("default/ConstWithLetNoBundle", {
     // GENERATED
     files: {
@@ -4292,41 +4451,36 @@ describe("bundler", () => {
         for (const e of x) console.log(e)
       `,
     },
-    mode: "passthrough",
-  });
-  itBundled("default/ConstWithLetNoMangle", {
-    // GENERATED
-    files: {
-      "/entry.js": /* js */ `
-        const a = 1; console.log(a)
-        if (true) { const b = 2; console.log(b) }
-        for (const c = x;;) console.log(c)
-        for (const d in x) console.log(d)
-        for (const e of x) console.log(e)
-      `,
+    minifySyntax: true,
+    mode: "transform",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).not.toContain("const");
+      assert([...code.matchAll(/let/g)].length === 3, "should have 3 let statements");
     },
   });
-  itBundled("default/RequireMainCacheCommonJS", {
-    // GENERATED
-    files: {
-      "/entry.js": /* js */ `
-        console.log('is main:', require.main === module)
-        console.log(require('./is-main'))
-        console.log('cache:', require.cache);
-      `,
-      "/is-main.js": `module.exports = require.main === module`,
-    },
-    platform: "node",
-  });
+  // TODO: this is hard to test since bun runtime doesn't support require.main and require.cache
+  // i'm not even sure what we want our behavior to be for this case.
+  // itBundled("default/RequireMainCacheCommonJS", {
+  //   files: {
+  //     "/entry.js": /* js */ `
+  //       console.log('is main:', require.main === module)
+  //       console.log(require('./is-main'))
+  //       console.log('cache:', require.cache);
+  //     `,
+  //     "/is-main.js": `module.exports = require.main === module`,
+  //   },
+  //   format: "cjs",
+  //   platform: "node",
+  // });
   itBundled("default/ExternalES6ConvertedToCommonJS", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
-        require('./a')
-        require('./b')
-        require('./c')
-        require('./d')
-        require('./e')
+        console.log(JSON.stringify(require('./a')));
+        console.log(JSON.stringify(require('./b')));
+        console.log(JSON.stringify(require('./c')));
+        console.log(JSON.stringify(require('./d')));
+        console.log(JSON.stringify(require('./e')));
       `,
       "/a.js": /* js */ `
         import * as ns from 'x'
@@ -4340,88 +4494,87 @@ describe("bundler", () => {
       "/d.js": `export {ns} from 'x'`,
       "/e.js": `export * from 'x'`,
     },
+    external: ["x"],
     format: "esm",
-  });
-  itBundled("default/CallImportNamespaceWarning", {
-    // GENERATED
-    files: {
-      "/js.js": /* js */ `
-        import * as a from "a"
-        import {b} from "b"
-        import c from "c"
-        a()
-        b()
-        c()
-        new a()
-        new b()
-        new c()
-      `,
-      "/ts.ts": /* ts */ `
-        import * as a from "a"
-        import {b} from "b"
-        import c from "c"
-        a()
-        b()
-        c()
-        new a()
-        new b()
-        new c()
-      `,
-      "/jsx-components.jsx": /* jsx */ `
-        import * as A from "a"
-        import {B} from "b"
-        import C from "c"
-        <A/>;
-        <B/>;
-        <C/>;
-      `,
-      "/jsx-a.jsx": /* jsx */ `
-        // @jsx a
-        import * as a from "a"
-        <div/>
-      `,
-      "/jsx-b.jsx": /* jsx */ `
-        // @jsx b
-        import {b} from "b"
-        <div/>
-      `,
-      "/jsx-c.jsx": /* jsx */ `
-        // @jsx c
-        import c from "c"
-        <div/>
+    runtimeFiles: {
+      "/node_modules/x/index.js": /* js */ `
+        export const ns = 123
+        export const ns2 = 456
       `,
     },
-    entryPoints: ["/js.js", "/ts.ts", "/jsx-components.jsx", "/jsx-a.jsx", "/jsx-b.jsx", "/jsx-c.jsx"],
-    mode: "convertformat",
-    /* TODO FIX expectedScanLog: `js.js: WARNING: Calling "a" will crash at run-time because it's an import namespace object, not a function
-  js.js: NOTE: Consider changing "a" to a default import instead:
-  js.js: WARNING: Constructing "a" will crash at run-time because it's an import namespace object, not a constructor
-  js.js: NOTE: Consider changing "a" to a default import instead:
-  jsx-a.jsx: WARNING: Calling "a" will crash at run-time because it's an import namespace object, not a function
-  jsx-a.jsx: NOTE: Consider changing "a" to a default import instead:
-  jsx-components.jsx: WARNING: Using "A" in a JSX expression will crash at run-time because it's an import namespace object, not a component
-  jsx-components.jsx: NOTE: Consider changing "A" to a default import instead:
-  ts.ts: WARNING: Calling "a" will crash at run-time because it's an import namespace object, not a function
-  ts.ts: NOTE: Consider changing "a" to a default import instead:
-  NOTE: Make sure to enable TypeScript's "esModuleInterop" setting so that TypeScript's type checker generates an error when you try to do this. You can read more about this setting here: https://www.typescriptlang.org/tsconfig#esModuleInterop
-  ts.ts: WARNING: Constructing "a" will crash at run-time because it's an import namespace object, not a constructor
-  ts.ts: NOTE: Consider changing "a" to a default import instead:
-  NOTE: Make sure to enable TypeScript's "esModuleInterop" setting so that TypeScript's type checker generates an error when you try to do this. You can read more about this setting here: https://www.typescriptlang.org/tsconfig#esModuleInterop
-  `, */
+    run: {
+      stdout: `
+        {"ns":{"ns":123,"ns2":456}}
+        {"ns":{"ns":123,"ns2":456}}
+        {"ns":{"ns":123,"ns2":456}}
+        {"ns":123}
+        {"ns":123,"ns2":456}
+      `,
+    },
   });
+  // TODO:
+  // itBundled("default/CallImportNamespaceWarning", {
+  //   files: {
+  //     "/js.js": /* js */ `
+  //       import * as a from "a"
+  //       import {b} from "b"
+  //       import c from "c"
+  //       a()
+  //       b()
+  //       c()
+  //       new a()
+  //       new b()
+  //       new c()
+  //     `,
+  //     "/ts.ts": /* ts */ `
+  //       import * as a from "a"
+  //       import {b} from "b"
+  //       import c from "c"
+  //       a()
+  //       b()
+  //       c()
+  //       new a()
+  //       new b()
+  //       new c()
+  //     `,
+  //     "/jsx-components.jsx": /* jsx */ `
+  //       import * as A from "a"
+  //       import {B} from "b"
+  //       import C from "c"
+  //       <A/>;
+  //       <B/>;
+  //       <C/>;
+  //     `,
+  //     "/jsx-a.jsx": /* jsx */ `
+  //       // @jsx a
+  //       import * as a from "a"
+  //       <div/>
+  //     `,
+  //     "/jsx-b.jsx": /* jsx */ `
+  //       // @jsx b
+  //       import {b} from "b"
+  //       <div/>
+  //     `,
+  //     "/jsx-c.jsx": /* jsx */ `
+  //       // @jsx c
+  //       import c from "c"
+  //       <div/>
+  //     `,
+  //   },
+  //   entryPoints: ["/js.js", "/ts.ts", "/jsx-components.jsx", "/jsx-a.jsx", "/jsx-b.jsx", "/jsx-c.jsx"],
+  //   mode: "transform",
+  //   external: ["a", "b", "c", "react/jsx-dev-runtime"],
+  // });
+  return;
+  // I cant get bun to use `this` as the JSX runtime. It's a pretty silly idea anyways.
   itBundled("default/JSXThisValueCommonJS", {
-    // GENERATED
     files: {
       "/factory.jsx": /* jsx */ `
-        console.log([
-          <x />,
-          /* @__PURE__ */ this('x', null),
-        ])
+        CHECK1(<x />);
+        CHECK1(/* @__PURE__ */ this('x', null));
         f = function() {
-          console.log([
-            <y />,
-            /* @__PURE__ */ this('y', null),
-          ])
+          CHECK2(<y />);
+          CHECK2(/* @__PURE__ */ this('y', null));
         }
       `,
       "/fragment.jsx": /* jsx */ `
@@ -4438,7 +4591,10 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/factory.jsx", "/fragment.jsx"],
+    external: ["react/jsx-dev-runtime", "react"],
     jsx: {
+      development: false,
+      automaticRuntime: false,
       factory: "this",
       fragment: "this",
     },

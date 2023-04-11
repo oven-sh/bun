@@ -7,9 +7,7 @@ var { describe, test, expect } = testForFile(import.meta.path);
 // For debug, all files are written to $TEMP/bun-bundle-tests/dce
 
 describe("bundler", () => {
-  return;
   itBundled("dce/PackageJsonSideEffectsFalseKeepNamedImportES6", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -24,10 +22,12 @@ describe("bundler", () => {
           "sideEffects": false
         }
       `,
+    },
+    run: {
+      stdout: "hello\n123",
     },
   });
   itBundled("dce/PackageJsonSideEffectsFalseKeepNamedImportCommonJS", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -43,9 +43,11 @@ describe("bundler", () => {
         }
       `,
     },
+    run: {
+      stdout: "hello\n123",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsFalseKeepStarImportES6", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import * as ns from "demo-pkg"
@@ -61,9 +63,11 @@ describe("bundler", () => {
         }
       `,
     },
+    run: {
+      stdout: "hello\n{foo:123}",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsFalseKeepStarImportCommonJS", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import * as ns from "demo-pkg"
@@ -79,16 +83,18 @@ describe("bundler", () => {
         }
       `,
     },
+    run: {
+      stdout: "hello\n{foo:123}",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsTrueKeepES6", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
-        export const foo = 123
+        export const foo = "FAILED"
         console.log('hello')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
@@ -97,7 +103,12 @@ describe("bundler", () => {
         }
       `,
     },
+    dce: true,
+    run: {
+      stdout: "hello\nunused import",
+    },
   });
+  return;
   itBundled("dce/PackageJsonSideEffectsTrueKeepCommonJS", {
     // GENERATED
     files: {

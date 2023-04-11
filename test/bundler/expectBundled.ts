@@ -209,6 +209,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     minifyWhitespace,
     mode,
     onAfterBundle,
+    keepNames,
     outdir,
     outfile,
     outputPaths,
@@ -221,6 +222,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     unsupportedCSSFeatures,
     unsupportedJSFeatures,
     treeShaking,
+    outbase,
     ...unknownProps
   } = opts;
 
@@ -262,6 +264,15 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
   }
   if (!ESBUILD && unsupportedCSSFeatures && unsupportedCSSFeatures.length) {
     throw new Error("unsupportedCSSFeatures not implemented in bun build");
+  }
+  if (!ESBUILD && outbase) {
+    throw new Error("outbase not implemented in bun build");
+  }
+  if (!ESBUILD && keepNames) {
+    throw new Error("keepNames not implemented in bun build");
+  }
+  if (!ESBUILD && minifyIdentifiers) {
+    throw new Error("minifyIdentifiers not implemented in bun build");
   }
   if (ESBUILD && skipOnEsbuild) {
     return;
@@ -323,10 +334,10 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
           globalName && `--global-name=${globalName}`,
           external && external.map(x => ["--external", x]),
           inject && inject.map(x => ["--inject", path.join(root, x)]),
-          jsx.automaticRuntime && "--jsx=automatic",
+          jsx.automaticRuntime === false && "--jsx=classic",
           jsx.factory && `--jsx-factory=${jsx.factory}`,
           jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
-          jsx.development && `--jsx-dev`,
+          jsx.development === false && `--jsx-production`,
           // metafile && `--metafile=${metafile}`,
           // sourceMap && `--sourcemap${sourceMap !== true ? `=${sourceMap}` : ""}`,
           entryNames && entryNames !== "[name].[ext]" && [`--entry-names`, entryNames],
@@ -334,6 +345,8 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
           // legalComments && `--legal-comments=${legalComments}`,
           splitting && `--splitting`,
           // treeShaking && `--tree-shaking`,
+          // outbase && `--outbase=${outbase}`,
+          // keepNames && `--keep-names`,
         ]
       : [
           Bun.which("esbuild"),
@@ -359,6 +372,8 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
           legalComments && `--legal-comments=${legalComments}`,
           splitting && `--splitting`,
           treeShaking && `--tree-shaking`,
+          outbase && `--outbase=${path.join(root, outbase)}`,
+          keepNames && `--keep-names`,
           [...(unsupportedJSFeatures ?? []), ...(unsupportedCSSFeatures ?? [])].map(x => `--supported:${x}=false`),
           ...entryPaths,
           ...(entryPointsRaw ?? []),

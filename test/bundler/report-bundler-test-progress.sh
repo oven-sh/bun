@@ -37,3 +37,5 @@ printf "\n"
 printf "  %s%% Refined\n" $(echo "scale=1; $total_total / $total_defined * 100" | bc)
 printf "  %s%% Passing\n" $(echo "scale=1; $total_pass / $total_total * 100" | bc)
 printf "  %s%% Passing including what we skip\n" $(echo "scale=1; $total_pass / $total_total * 100" | bc)
+printf "\n"
+printf "dave's status: %s/%s tests\n" $total_total $total_defined

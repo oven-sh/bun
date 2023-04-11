@@ -128,6 +128,7 @@ const ErrorCode = enum(i32) {
     unsupported_control_frame,
     unexpected_opcode,
     invalid_utf8,
+    tls_handshake_error,
 };
 extern fn WebSocket__didConnect(
     websocket_context: *anyopaque,
@@ -185,6 +186,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 HTTPClient,
                 struct {
                     pub const onOpen = handleOpen;
+                    pub const onHandshake = handleHandshake;
                     pub const onClose = handleClose;
                     pub const onData = handleData;
                     pub const onWritable = handleWritable;
@@ -304,6 +306,22 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 this.tcp.close(0, null);
         }
 
+        pub fn handleHandshake(this: *HTTPClient, socket: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
+            _ = ssl_error;
+            log("onHandshake", .{});
+            if (success == 1) {
+                const wrote = socket.write(this.input_body_buf, true);
+                if (wrote < 0) {
+                    this.terminate(ErrorCode.failed_to_write);
+                    return;
+                }
+
+                this.to_send = this.input_body_buf[@intCast(usize, wrote)..];
+            } else {
+                this.terminate(ErrorCode.tls_handshake_error);
+            }
+        }
+
         pub fn handleOpen(this: *HTTPClient, socket: Socket) void {
             log("onOpen", .{});
             std.debug.assert(socket.socket == this.tcp.socket);
@@ -317,6 +335,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     bun.default_allocator.free(this.hostname);
                     this.hostname = "";
                 }
+                return;
             }
 
             const wrote = socket.write(this.input_body_buf, true);

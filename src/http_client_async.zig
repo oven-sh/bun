@@ -236,9 +236,9 @@ fn NewHTTPContext(comptime ssl: bool) type {
         }
 
         pub fn init(this: *@This()) !void {
-            var opts: uws.us_socket_context_options_t = undefined;
-            @memset(@ptrCast([*]u8, &opts), 0, @sizeOf(uws.us_socket_context_options_t));
-            this.us_socket_context = uws.us_create_socket_context(ssl_int, http_thread.loop, @sizeOf(usize), opts).?;
+            var opts: uws.us_bun_socket_context_options_t = undefined;
+            @memset(@ptrCast([*]u8, &opts), 0, @sizeOf(uws.us_bun_socket_context_options_t));
+            this.us_socket_context = uws.us_create_bun_socket_context(ssl_int, http_thread.loop, @sizeOf(usize), opts).?;
             if (comptime ssl) {
                 this.sslCtx().setup();
             }
@@ -291,7 +291,36 @@ fn NewHTTPContext(comptime ssl: bool) type {
             ) void {
                 const active = ActiveSocket.from(bun.cast(**anyopaque, ptr).*);
                 if (active.get(HTTPClient)) |client| {
-                    return client.onOpen(comptime ssl, socket);
+                    if (comptime ssl == false) {
+                        return client.onOpen(comptime ssl, socket);
+                    } else {
+                        var native_ssl: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, socket.getNativeHandle());
+                        if (!native_ssl.isInitFinished()) {
+                            var _hostname = client.hostname orelse client.url.hostname;
+                            if (client.http_proxy) |proxy| {
+                                _hostname = proxy.hostname;
+                            }
+
+                            var hostname: [:0]const u8 = "";
+                            var hostname_needs_free = false;
+                            if (!strings.isIPAddress(_hostname)) {
+                                if (_hostname.len < temp_hostname.len) {
+                                    @memcpy(&temp_hostname, _hostname.ptr, _hostname.len);
+                                    temp_hostname[_hostname.len] = 0;
+                                    hostname = temp_hostname[0.._hostname.len :0];
+                                } else {
+                                    hostname = bun.default_allocator.dupeZ(u8, _hostname) catch unreachable;
+                                    hostname_needs_free = true;
+                                }
+                            }
+
+                            defer if (hostname_needs_free) bun.default_allocator.free(hostname);
+
+                            native_ssl.configureHTTPClient(hostname);
+                        }
+                        // when ssl wait handshake before open
+                        return;
+                    }
                 }
 
                 if (active.get(PooledSocket)) |pooled| {
@@ -304,6 +333,20 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     std.debug.assert(false);
                 }
             }
+
+            pub fn onHandshake(ptr: *anyopaque, socket: HTTPSocket, success: i32, _: uws.us_bun_verify_error_t) void {
+                log("onHandshake {d}", .{success});
+
+                const active = ActiveSocket.from(bun.cast(**anyopaque, ptr).*);
+                if (active.get(HTTPClient)) |client| {
+                    if (success == 1) {
+                        return client.onOpen(comptime ssl, socket);
+                    }
+                    // Fail with TLSHandshakeError
+                    client.onTLSHandshakeError(comptime ssl, socket);
+                }
+            }
+
             pub fn onClose(
                 ptr: *anyopaque,
                 socket: HTTPSocket,
@@ -661,6 +704,7 @@ pub const HTTPThread = struct {
 const log = Output.scoped(.fetch, false);
 
 var temp_hostname: [8096]u8 = undefined;
+
 pub fn onOpen(
     client: *HTTPClient,
     comptime is_ssl: bool,
@@ -681,33 +725,6 @@ pub fn onOpen(
     if (client.hasSignalAborted()) {
         client.closeAndAbort(comptime is_ssl, socket);
         return;
-    }
-
-    if (comptime is_ssl) {
-        var ssl: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, socket.getNativeHandle());
-        if (!ssl.isInitFinished()) {
-            var _hostname = client.hostname orelse client.url.hostname;
-            if (client.http_proxy) |proxy| {
-                _hostname = proxy.hostname;
-            }
-
-            var hostname: [:0]const u8 = "";
-            var hostname_needs_free = false;
-            if (!strings.isIPAddress(_hostname)) {
-                if (_hostname.len < temp_hostname.len) {
-                    @memcpy(&temp_hostname, _hostname.ptr, _hostname.len);
-                    temp_hostname[_hostname.len] = 0;
-                    hostname = temp_hostname[0.._hostname.len :0];
-                } else {
-                    hostname = bun.default_allocator.dupeZ(u8, _hostname) catch unreachable;
-                    hostname_needs_free = true;
-                }
-            }
-
-            defer if (hostname_needs_free) bun.default_allocator.free(hostname);
-
-            ssl.configureHTTPClient(hostname);
-        }
     }
 
     if (client.state.request_stage == .pending) {
@@ -769,6 +786,14 @@ pub fn onConnectError(
     if (client.state.stage != .done and client.state.stage != .fail)
         client.fail(error.ConnectionRefused);
 }
+
+pub fn onTLSHandshakeError(client: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    log("onTLSHandshakeError  {s}\n", .{client.url.href});
+
+    if (client.state.stage != .done and client.state.stage != .fail)
+        client.closeAndFail(error.TLSHandshakeError, is_ssl, socket);
+}
+
 pub fn onEnd(
     client: *HTTPClient,
     comptime is_ssl: bool,

@@ -38,9 +38,9 @@ us_socket_context_t* ScriptExecutionContext::webSocketContextSSL()
 {
     if (!m_ssl_client_websockets_ctx) {
         us_loop_t* loop = (us_loop_t*)uws_get_loop();
-        us_socket_context_options_t opts;
-        memset(&opts, 0, sizeof(us_socket_context_options_t));
-        this->m_ssl_client_websockets_ctx = us_create_socket_context(1, loop, sizeof(size_t), opts);
+        us_bun_socket_context_options_t opts;
+        memset(&opts, 0, sizeof(us_bun_socket_context_options_t));
+        this->m_ssl_client_websockets_ctx = us_create_bun_socket_context(1, loop, sizeof(size_t), opts);
         void** ptr = reinterpret_cast<void**>(us_socket_context_ext(1, m_ssl_client_websockets_ctx));
         *ptr = this;
         registerHTTPContextForWebSocket<true, false>(this, m_ssl_client_websockets_ctx, loop);
@@ -65,9 +65,9 @@ us_socket_context_t* ScriptExecutionContext::webSocketContextNoSSL()
 {
     if (!m_client_websockets_ctx) {
         us_loop_t* loop = (us_loop_t*)uws_get_loop();
-        us_socket_context_options_t opts;
-        memset(&opts, 0, sizeof(us_socket_context_options_t));
-        this->m_client_websockets_ctx = us_create_socket_context(0, loop, sizeof(size_t), opts);
+        us_bun_socket_context_options_t opts;
+        memset(&opts, 0, sizeof(us_bun_socket_context_options_t));
+        this->m_client_websockets_ctx = us_create_bun_socket_context(0, loop, sizeof(size_t), opts);
         void** ptr = reinterpret_cast<void**>(us_socket_context_ext(0, m_client_websockets_ctx));
         *ptr = this;
         registerHTTPContextForWebSocket<false, false>(this, m_client_websockets_ctx, loop);

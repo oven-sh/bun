@@ -159,8 +159,8 @@ While Bun is in beta, you can modify them at runtime in release builds via the e
 To build a release build of Bun, run:
 
 ```bash
-make release-bindings -j12
-make release
+$ make release-bindings -j12
+$ make release
 ```
 
 The binary will be located at `packages/bun-{platform}-{arch}/bun`.

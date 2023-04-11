@@ -5861,7 +5861,7 @@ pub const PackageManager = struct {
                 };
                 if (alias) |name| {
                     request.is_aliased = true;
-                    request.name = allocator.dupe(u8, name) catch unreachable;
+                    request.name = name;
                     request.name_hash = String.Builder.stringHash(name);
                 } else {
                     request.name_hash = String.Builder.stringHash(version.literal.slice(input));

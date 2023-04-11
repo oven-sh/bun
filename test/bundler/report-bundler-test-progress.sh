@@ -11,8 +11,7 @@ total_fail=0
 total_skip=0
 
 for test in $tests; do
-  defined=$(grep -Ec "expectBundled|itBundled" $test)
-  defined=$((defined - 1))
+  defined=$(grep "^import" $test -v | grep -v expectBundled.md | grep -Ec "expectBundled|itBundled")
   output=$(bun test $test 2>&1 | tail -n 5)
   pass=$(echo "$output" | grep "pass" | cut -d " " -f 2)
   fail=$(echo "$output" | grep "fail" | cut -d " " -f 2)

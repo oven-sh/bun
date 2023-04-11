@@ -918,25 +918,6 @@ jsc-bindings: headers bindings
 clone-submodules:
 	git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress
 
-.PHONY: devcontainer
-devcontainer: $(OBJ_DIR) $(DEBUG_OBJ_DIR) clone-submodules mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks npm-install api analytics bun_error fallback_decoder bindings uws lolhtml usockets tinycc c-ares runtime_js_dev sqlite
-
-.PHONY: devcontainer-build
-devcontainer-build:
-	DOCKER_BUILDARCH="$(DOCKER_BUILDARCH)" devcontainer build --workspace-folder .
-
-.PHONY: devcontainer-up
-devcontainer-up:
-	DOCKER_BUILDARCH="$(DOCKER_BUILDARCH)" devcontainer up --workspace-folder .
-
-.PHONY: devcontainer-rebuild
-devcontainer-rebuild:
-	DOCKER_BUILDARCH="$(DOCKER_BUILDARCH)" devcontainer up --workspace-folder . --remove-existing-container
-
-.PHONY: devcontainer-sh
-devcontainer-sh:
-	DOCKER_BUILDARCH="$(DOCKER_BUILDARCH)" devcontainer exec --workspace-folder . zsh
-
 CLANG_FORMAT := $(shell command -v clang-format 2> /dev/null)
 
 .PHONY: headers

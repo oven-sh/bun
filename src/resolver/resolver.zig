@@ -798,7 +798,8 @@ pub const Resolver = struct {
             const data_url: DataURL = _data_url;
             // "import 'data:text/javascript,console.log(123)';"
             // "@import 'data:text/css,body{background:white}';"
-            if (data_url.decode_mime_type() != .Unsupported) {
+            const mime = data_url.decodeMimeType();
+            if (mime.category == .javascript or mime.category == .css or mime.category == .json or mime.category == .text) {
                 if (r.debug_logs) |*debug| {
                     debug.addNote("Putting this path in the \"dataurl\" namespace");
                     r.flushDebugLogs(.success) catch {};

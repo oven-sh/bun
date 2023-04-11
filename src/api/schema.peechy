@@ -11,6 +11,8 @@ smol Loader {
     toml = 8;
     wasm = 9;
     napi = 10;
+    base64 = 11;
+    dataurl = 12;
 }
 
 smol FrameworkEntryPointType {

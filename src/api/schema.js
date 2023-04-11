@@ -9,6 +9,8 @@ const Loader = {
   "8": 8,
   "9": 9,
   "10": 10,
+  "11": 11,
+  "12": 12,
   "jsx": 1,
   "js": 2,
   "ts": 3,
@@ -19,6 +21,8 @@ const Loader = {
   "toml": 8,
   "wasm": 9,
   "napi": 10,
+  "base64": 11,
+  "dataurl": 12,
 };
 const LoaderKeys = {
   "1": "jsx",
@@ -31,6 +35,8 @@ const LoaderKeys = {
   "8": "toml",
   "9": "wasm",
   "10": "napi",
+  "11": "base64",
+  "12": "dataurl",
   "jsx": "jsx",
   "js": "js",
   "ts": "ts",
@@ -41,6 +47,8 @@ const LoaderKeys = {
   "toml": "toml",
   "wasm": "wasm",
   "napi": "napi",
+  "base64": "base64",
+  "dataurl": "dataurl",
 };
 const FrameworkEntryPointType = {
   "1": 1,

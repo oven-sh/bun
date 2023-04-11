@@ -2,7 +2,7 @@
 
 tests="$(echo esbuild/* bundler*.test.ts)"
 
-printf "%40s %7s %7s | %5s %5s %5s\n" "TEST" "defined" "refined" "pass" "fail" "skip"
+printf "%40s %7s %7s | %5s %5s %5s | %5s\n" "TEST" "defined" "refined" "pass" "fail" "skip" "%pass"
 
 total_defined=0
 total_total=0
@@ -21,7 +21,8 @@ for test in $tests; do
   if [ -z "$fail" ]; then fail=0; fi
   if [ -z "$pass" ]; then pass=0; fi
   total=$((pass + fail + skip))
-  printf "%40s %7s %7s | %5s %5s %5s\n" "$test" "$defined" "$total" "$pass" "$fail" "$skip"
+  percent_pass=$(echo "scale=1; ($pass * 100) / ($pass + $fail) " | bc 2>/dev/null || echo "-")
+  printf "%40s %7s %7s | %5s %5s %5s | %5s%%\n" "$test" "$defined" "$total" "$pass" "$fail" "$skip" "$percent_pass"
 
   total_defined=$((total_defined + defined))
   total_total=$((total_total + total))
@@ -30,8 +31,10 @@ for test in $tests; do
   total_skip=$((total_skip + skip))
 done
 
+total_pass_percent=$(echo "scale=1; ($total_pass * 100) / ($total_pass + $total_fail)")
+
 printf -- "\n"
-printf "%40s %7s %7s | %5s %5s %5s\n" "TOTAL" "$total_defined" "$total_total" "$total_pass" "$total_fail" "$total_skip"
+printf "%40s %7s %7s | %5s %5s %5s | %5s\n" "TOTAL" "$total_defined" "$total_total" "$total_pass" "$total_fail" "$total_skip" "$total_pass_percent"
 printf "\n"
 printf "\n"
 printf "  %s%% Refined\n" $(echo "scale=1; $total_total / $total_defined * 100" | bc)

@@ -42,6 +42,8 @@ if (ESBUILD) {
   console.warn("NOTE: using esbuild for bun build tests");
 }
 
+export const ESBUILD_PATH = import.meta.resolveSync("esbuild/bin/esbuild");
+
 export interface BundlerTestInput {
   // file options
   files: Record<string, string>;
@@ -131,6 +133,11 @@ export interface BundlerTestInput {
    */
   dce?: boolean;
   /**
+   * Override the number of keep markers, which is auto detected by default.
+   * Does nothing if dce is false.
+   */
+  dceKeepMarkerCount?: number | Record<string, number> | false;
+  /**
    * Shorthand for testing splitting cases. Given a list of files, checks that each file doesn't
    * contain the specified strings. This lets us test that certain values are not bundled.
    */
@@ -192,6 +199,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     bundleErrors,
     bundleWarnings,
     dce,
+    dceKeepMarkerCount,
     define,
     entryNames,
     entryPoints,
@@ -202,14 +210,17 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     globalName,
     inject,
     jsx = {},
+    keepNames,
     legalComments,
+    loader,
+    mainFields,
     metafile,
     minifyIdentifiers,
     minifySyntax,
     minifyWhitespace,
     mode,
     onAfterBundle,
-    keepNames,
+    outbase,
     outdir,
     outfile,
     outputPaths,
@@ -219,11 +230,9 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     skipOnEsbuild,
     sourceMap,
     splitting,
+    treeShaking,
     unsupportedCSSFeatures,
     unsupportedJSFeatures,
-    treeShaking,
-    outbase,
-    mainFields,
     ...unknownProps
   } = opts;
 
@@ -273,7 +282,10 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     throw new Error("minifyIdentifiers not implemented in bun build");
   }
   if (!ESBUILD && mainFields) {
-    throw new Error("minifyIdentifiers not implemented in bun build");
+    throw new Error("mainFields not implemented in bun build");
+  }
+  if (!ESBUILD && loader) {
+    throw new Error("loader not implemented in bun build");
   }
   if (ESBUILD && skipOnEsbuild) {
     return;
@@ -294,9 +306,11 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
   outfile = useOutFile ? path.join(root, outfile ?? "/out.js") : undefined;
   outdir = !useOutFile ? path.join(root, outdir ?? "/out") : undefined;
   metafile = metafile ? path.join(root, metafile) : undefined;
-  outputPaths = outputPaths
-    ? outputPaths.map(file => path.join(root, file))
-    : entryPaths.map(file => path.join(outdir!, path.basename(file)));
+  outputPaths = (
+    outputPaths
+      ? outputPaths.map(file => path.join(root, file))
+      : entryPaths.map(file => path.join(outdir!, path.basename(file)))
+  ).map(x => x.replace(/\.ts$/, ".js"));
 
   if (outdir) {
     entryNames ??= "[name].[ext]";
@@ -329,12 +343,12 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
           outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
           define && Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
           `--platform=${platform}`,
+          external && external.map(x => ["--external", x]),
           minifyIdentifiers && `--minify-identifiers`,
           minifySyntax && `--minify-syntax`,
           minifyWhitespace && `--minify-whitespace`,
           globalName && `--global-name=${globalName}`,
-          external && external.map(x => ["--external", x]),
-          inject && inject.map(x => ["--inject", path.join(root, x)]),
+          // inject && inject.map(x => ["--inject", path.join(root, x)]),
           jsx.automaticRuntime === false && "--jsx=classic",
           jsx.factory && `--jsx-factory=${jsx.factory}`,
           jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
@@ -349,9 +363,10 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
           // outbase && `--outbase=${outbase}`,
           // keepNames && `--keep-names`,
           // mainFields && `--main-fields=${mainFields}`,
+          // loader && Object.entries(loader).map(([k, v]) => ["--loader", `${k}=${v}`]),
         ]
       : [
-          Bun.which("esbuild"),
+          ESBUILD_PATH,
           mode === "bundle" && "--bundle",
           outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
           `--format=${format}`,
@@ -377,6 +392,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
           outbase && `--outbase=${path.join(root, outbase)}`,
           keepNames && `--keep-names`,
           mainFields && `--main-fields=${mainFields.join(",")}`,
+          loader && Object.entries(loader).map(([k, v]) => `--loader:${k}=${v}`),
           [...(unsupportedJSFeatures ?? []), ...(unsupportedCSSFeatures ?? [])].map(x => `--supported:${x}=false`),
           ...entryPaths,
           ...(entryPointsRaw ?? []),
@@ -593,16 +609,47 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     options: opts,
   } satisfies BundlerTestBundleAPI;
 
+  // DCE keep scan
+  let keepMarkers: Record<string, number> = typeof dceKeepMarkerCount === "object" ? dceKeepMarkerCount : {};
+  let keepMarkersFound = 0;
+  if (dce && typeof dceKeepMarkerCount !== "number" && dceKeepMarkerCount !== false) {
+    for (const file of Object.entries(files)) {
+      keepMarkers[outfile ? outfile : path.join(outdir!, file[0]).slice(root.length).replace(/\.ts$/, ".js")] ??= [
+        ...file[1].matchAll(/KEEP/gi),
+      ].length;
+    }
+  }
+
   // Check that the bundle failed with status code 0 by verifying all files exist.
+  // TODO: clean up this entire bit into one main loop
   if (outfile) {
     if (!existsSync(outfile)) {
       throw new Error("Bundle was not written to disk: " + outfile);
     } else {
       const content = readFileSync(outfile).toString();
       if (dce) {
-        const dceFails = [...content.matchAll(/FAIL|FAILED|DROP|REMOVE/g)];
+        const dceFails = [...content.matchAll(/FAIL|FAILED|DROP|REMOVE/gi)];
         if (dceFails.length) {
           throw new Error("DCE test did not remove all expected code in " + outfile + ".");
+        }
+        if (dceKeepMarkerCount !== false) {
+          const keepMarkersThisFile = [...content.matchAll(/KEEP/gi)].length;
+          keepMarkersFound += keepMarkersThisFile;
+          if (
+            (typeof dceKeepMarkerCount === "number"
+              ? dceKeepMarkerCount
+              : Object.values(keepMarkers).reduce((a, b) => a + b, 0)) !== keepMarkersThisFile
+          ) {
+            throw new Error(
+              "DCE keep markers were not preserved in " +
+                outfile +
+                ". Expected " +
+                keepMarkers[outfile] +
+                " but found " +
+                keepMarkersThisFile +
+                ".",
+            );
+          }
         }
       }
       if (!ESBUILD) {
@@ -611,17 +658,52 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     }
   } else {
     // entryNames makes it so we cannot predict the output file
-    if (!entryNames) {
+    if (!entryNames || entryNames === "[name].[ext]") {
       for (const fullpath of outputPaths) {
         if (!existsSync(fullpath)) {
           throw new Error("Bundle was not written to disk: " + fullpath);
-        } else if (!ESBUILD) {
-          // expect(readFileSync(fullpath).toString()).toMatchSnapshot(fullpath.slice(root.length));
+        } else {
+          if (!ESBUILD) {
+            // expect(readFileSync(fullpath).toString()).toMatchSnapshot(fullpath.slice(root.length));
+          }
+          if (dce) {
+            const content = readFileSync(fullpath, "utf8");
+            const dceFails = [...content.matchAll(/FAIL|FAILED|DROP|REMOVE/gi)];
+            const key = fullpath.slice(root.length);
+            if (dceFails.length) {
+              throw new Error("DCE test did not remove all expected code in " + key + ".");
+            }
+            if (dceKeepMarkerCount !== false) {
+              const keepMarkersThisFile = [...content.matchAll(/KEEP/gi)].length;
+              keepMarkersFound += keepMarkersThisFile;
+              if (keepMarkers[key] !== keepMarkersThisFile) {
+                throw new Error(
+                  "DCE keep markers were not preserved in " +
+                    key +
+                    ". Expected " +
+                    keepMarkers[key] +
+                    " but found " +
+                    keepMarkersThisFile +
+                    ".",
+                );
+              }
+            }
+          }
         }
       }
     } else if (!ESBUILD) {
       // TODO: snapshot these test cases
     }
+  }
+  if (
+    dce &&
+    dceKeepMarkerCount !== false &&
+    typeof dceKeepMarkerCount === "number" &&
+    keepMarkersFound !== dceKeepMarkerCount
+  ) {
+    throw new Error(
+      `DCE keep markers were not preserved. Expected ${dceKeepMarkerCount} KEEP markers, but found ${keepMarkersFound}.`,
+    );
   }
 
   if (assertNotPresent) {

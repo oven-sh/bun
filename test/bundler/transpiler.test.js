@@ -2945,7 +2945,13 @@ console.log(foo, array);
     });
   });
 
-  it("import statement with quoted specifier", () => {
-    expectPrinted_(`import { "x.y" as xy } from "bar";`, `import {"x.y" as xy} from "bar"`);
+  describe("edge cases", () => {
+    it("import statement with quoted specifier", () => {
+      expectPrinted_(`import { "x.y" as xy } from "bar";`, `import {"x.y" as xy} from "bar"`);
+    });
+
+    it('`str` + "``"', () => {
+      expectPrinted_('const x = `str` + "``";', "const x = `str\\`\\``");
+    });
   });
 });

@@ -1,6 +1,6 @@
 import assert from "assert";
 import dedent from "dedent";
-import { bundlerTest, expectBundled, itBundled, testForFile } from "../expectBundled";
+import { ESBUILD_PATH, bundlerTest, expectBundled, itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:
@@ -4301,7 +4301,7 @@ describe("bundler", () => {
       // to properly check that keep names actually worked, we need to minify the
       // file and THEN check for the names. we do this separatly just so that we know that
       // the bundler's minifier doesn't mess anything up.
-      Bun.spawnSync(["esbuild", "--minify-identifiers", "--outfile=out.min.js", "out.js"], { cwd: api.root });
+      Bun.spawnSync([ESBUILD_PATH, "--minify-identifiers", "--outfile=out.min.js", "out.js"], { cwd: api.root });
       const code = api.readFile("/out.min.js");
       const checks = ["fnStmtKeep", "keepFn", "clsStmtKeep", "keepClass"];
       for (const check of checks) {
@@ -4341,7 +4341,7 @@ describe("bundler", () => {
       // to properly check that keep names actually worked, we need to minify the
       // file and THEN check for the names. we do this separatly just so that we know that
       // the bundler's minifier doesn't mess anything up.
-      Bun.spawnSync(["esbuild", "--minify-identifiers", "--outfile=out.min.js", "out.js"], { cwd: api.root });
+      Bun.spawnSync([ESBUILD_PATH, "--minify-identifiers", "--outfile=out.min.js", "out.js"], { cwd: api.root });
       const code = api.readFile("/out.min.js");
       const checks = [
         "ClassName1A",

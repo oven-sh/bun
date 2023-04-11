@@ -429,13 +429,39 @@ it("path.resolve", () => {
   strictEqual(failures.length, 0, failures.join("\n"));
 });
 
-it("path.parse", () => {
-  const parsed = path.parse("/a/b/c/index.html");
-  assert.deepStrictEqual(parsed, {
-    root: "/",
-    dir: "/a/b/c",
-    base: "index.html",
-    ext: ".html",
-    name: "index",
+describe("path.parse", () => {
+  describe("absolute path", () => {
+    it("parses", () => {
+      const parsed = path.parse("/a/b/c/index.html");
+      assert.deepStrictEqual(parsed, {
+        root: "/",
+        dir: "/a/b/c",
+        base: "index.html",
+        ext: ".html",
+        name: "index",
+      });
+    });
+
+    it("posix.parse windows path", () => {
+      const parsed = path.posix.parse("C:/a/b/c/index.html");
+      assert.deepStrictEqual(parsed, {
+        root: "",
+        dir: "C:/a/b/c",
+        base: "index.html",
+        ext: ".html",
+        name: "index",
+      });
+    });
+
+    it("win32.parse windows path", () => {
+      const parsed = path.win32.parse("C:/a/b/c/index.html");
+      assert.deepStrictEqual(parsed, {
+        root: "C:/",
+        dir: "C:/a/b/c",
+        base: "index.html",
+        ext: ".html",
+        name: "index",
+      });
+    });
   });
 });

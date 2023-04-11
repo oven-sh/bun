@@ -1777,17 +1777,22 @@ pub const Path = struct {
         var path = path_slice.slice();
         var path_name = Fs.PathName.init(path);
         var root = JSC.ZigString.init(path_name.dir);
-        const is_absolute = (isWindows and isZigStringAbsoluteWindows(root)) or (!isWindows and path_name.dir.len > 0 and path_name.dir[0] == '/');
-
         var dir = JSC.ZigString.init(path_name.dir);
-        if (is_absolute) {
-            root = JSC.ZigString.Empty;
-            if (path_name.dir.len == 0)
-                dir = JSC.ZigString.init(if (isWindows) std.fs.path.sep_str_windows else std.fs.path.sep_str_posix);
+
+        if (isWindows) {
+            if (isZigStringAbsoluteWindows(root)) {
+                root = JSC.ZigString.init(path_name.dir[0..3]);
+            }
+        } else {
+            if (path_name.dir.len > 0 and path_name.dir[0] == '/') {
+                root = JSC.ZigString.init("/");
+            } else {
+                root = JSC.ZigString.init("");
+            }
         }
 
-        var base = JSC.ZigString.init(path_name.base);
-        var name_ = JSC.ZigString.init(path_name.filename);
+        var base = JSC.ZigString.init(path_name.filename);
+        var name_ = JSC.ZigString.init(path_name.base);
         var ext = JSC.ZigString.init(path_name.ext);
         dir.setOutputEncoding();
         root.setOutputEncoding();

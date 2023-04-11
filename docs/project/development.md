@@ -29,7 +29,7 @@ If none of the above solutions apply, you will have to install it [manually](htt
 
 Make sure LLVM 15 is in your path:
 
-```
+```bash
 $ which clang-15
 ```
 

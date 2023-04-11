@@ -787,6 +787,7 @@ pub const HelpCommand = struct {
             \\>  <b><blue>upgrade<r>                         Get the latest version of bun
             \\>  <b><d>completions<r>                     Install shell completions for tab-completion
             \\>  <b><d>discord<r>                         Open bun's Discord server
+            \\>  <b><d>docs<r>                            Open bun's documentation
             \\>  <b><d>help<r>                            Print this help menu
             \\
         ;
@@ -979,6 +980,7 @@ pub const Command = struct {
             RootCommandMatcher.case("init") => .InitCommand,
             RootCommandMatcher.case("build"), RootCommandMatcher.case("bun") => .BuildCommand,
             RootCommandMatcher.case("discord") => .DiscordCommand,
+            RootCommandMatcher.case("docs") => .DocsCommand,
             RootCommandMatcher.case("upgrade") => .UpgradeCommand,
             RootCommandMatcher.case("completions") => .InstallCompletionsCommand,
             RootCommandMatcher.case("getcompletes") => .GetCompletionsCommand,
@@ -1026,6 +1028,7 @@ pub const Command = struct {
         "bun",
         "upgrade",
         "discord",
+        "docs",
         "pm",
         "x",
     };
@@ -1044,6 +1047,7 @@ pub const Command = struct {
         const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
         const DevCommand = @import("./cli/dev_command.zig").DevCommand;
         const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
+        const DocsCommand = @import("./cli/docs_command.zig").DocsCommand;
         const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
         const LinkCommand = @import("./cli/link_command.zig").LinkCommand;
         const UnlinkCommand = @import("./cli/unlink_command.zig").UnlinkCommand;
@@ -1079,6 +1083,7 @@ pub const Command = struct {
 
         switch (tag) {
             .DiscordCommand => return try DiscordCommand.exec(allocator),
+            .DocsCommand => return try DocsCommand.exec(allocator),
             .HelpCommand => return try HelpCommand.exec(allocator),
             .InitCommand => return try InitCommand.exec(allocator, std.os.argv),
             else => {},
@@ -1487,6 +1492,7 @@ pub const Command = struct {
         CreateCommand,
         DevCommand,
         DiscordCommand,
+        DocsCommand,
         GetCompletionsCommand,
         HelpCommand,
         InitCommand,

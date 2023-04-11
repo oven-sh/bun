@@ -85,6 +85,12 @@ To compile:
 $ rustc --crate-type cdylib add.rs
 ```
 
+{% callout %}
+
+Bun is **not affiliated** in any way and is not part of the **Rust Foundation**.
+
+{% /callout %}
+
 ## FFI types
 
 The following `FFIType` values are supported.

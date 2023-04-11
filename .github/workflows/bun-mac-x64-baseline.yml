@@ -423,9 +423,9 @@ jobs:
           cd ${{matrix.tag}}
           chmod +x bun
           sudo mv bun /usr/local/bin/bun
+          mkdir -p ~/proxy/
           curl -L -o ~/proxy/http_proxy https://github.com/cirospaciari/http-proxy/raw/main/bin/macos/http_proxy
           chmod +x ~/proxy/http_proxy
-          echo -e "\nexport PATH=$PATH:~/proxy" >> ~/.bashrc
           echo -e "\nexport PATH=$PATH:~/proxy" >> ~/.zshrc
           source ~/.zshrc
           bun --version

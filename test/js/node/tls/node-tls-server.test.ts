@@ -455,7 +455,7 @@ describe("tls.createServer events", () => {
 
     let timeout: Timer;
     let is_done = false;
-    const server = createServer();
+    const server = createServer(COMMON_CERT);
     let maxClients = 2;
     server.maxConnections = maxClients - 1;
 

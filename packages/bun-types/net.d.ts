@@ -528,11 +528,11 @@ declare module "net" {
    * @since v0.1.90
    */
   class Server extends EventEmitter {
-    // constructor(connectionListener?: (socket: Socket) => void);
-    // constructor(
-    //   options?: ServerOpts,
-    //   connectionListener?: (socket: Socket) => void,
-    // );
+    constructor(connectionListener?: (socket: Socket) => void);
+    constructor(
+      options?: ServerOpts,
+      connectionListener?: (socket: Socket) => void,
+    );
     /**
      * Start a server listening for connections. A `net.Server` can be a TCP or
      * an `IPC` server depending on what it listens to.
@@ -863,11 +863,11 @@ declare module "net" {
    * @since v0.5.0
    * @param connectionListener Automatically set as a listener for the {@link 'connection'} event.
    */
-  // function createServer(connectionListener?: (socket: Socket) => void): Server;
-  // function createServer(
-  //   options?: ServerOpts,
-  //   connectionListener?: (socket: Socket) => void,
-  // ): Server;
+  function createServer(connectionListener?: (socket: Socket) => void): Server;
+  function createServer(
+    options?: ServerOpts,
+    connectionListener?: (socket: Socket) => void,
+  ): Server;
   /**
    * Aliases to {@link createConnection}.
    *

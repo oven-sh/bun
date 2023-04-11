@@ -75,6 +75,7 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
+  if (!HTTP_PROXY_PATH) return;
   server.stop();
   proxy.stop();
   auth_proxy.stop();

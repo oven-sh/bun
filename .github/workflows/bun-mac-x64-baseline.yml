@@ -423,6 +423,9 @@ jobs:
           cd ${{matrix.tag}}
           chmod +x bun
           sudo mv bun /usr/local/bin/bun
+          curl -L -o ./http_proxy https://github.com/cirospaciari/http-proxy/raw/main/bin/macos/http_proxy
+          chmod +x ./http_proxy
+          sudo mv ./http_proxy /usr/local/bin/http_proxy
           bun --version
       - id: test
         name: Test (node runner)

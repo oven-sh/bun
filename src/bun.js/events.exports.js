@@ -8,14 +8,13 @@ const kMaxEventTargetListenersWarned = Symbol("events.maxEventTargetListenersWar
 const kWatermarkData = Symbol.for("nodejs.watermarkData");
 export const captureRejectionSymbol = Symbol.for("nodejs.rejection");
 
-export var usingDomains = true;
-export var captureRejections = false;
-export var errorMonitor = Symbol.for("events.errorMonitor");
+var captureRejections = false;
+var errorMonitor = Symbol.for("events.errorMonitor");
 
-export var defaultMaxListeners = 10;
+var defaultMaxListeners = 10;
 
 // EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.apply(this)`.
-export function EventEmitter(opts) {
+function EventEmitter(opts) {
   if (this._events === undefined || this._events === this.__proto__._events) {
     this._events = { __proto__: null };
     this._eventsCount = 0;
@@ -183,7 +182,7 @@ EventEmitter.prototype.eventNames = function eventNames() {
 
 EventEmitter.prototype[kCapture] = false;
 
-export function once(emitter, type, { signal } = {}) {
+function once(emitter, type, { signal } = {}) {
   validateAbortSignal(signal, "options.signal");
   if (signal?.aborted) {
     throw new AbortError(undefined, { cause: signal?.reason });
@@ -221,17 +220,20 @@ export function once(emitter, type, { signal } = {}) {
     }
   });
 }
+EventEmitter.once = once;
 
-export function on(emitter, type, { signal, close, highWatermark = Number.MAX_SAFE_INTEGER, lowWatermark = 1 } = {}) {
+function on(emitter, type, { signal, close, highWatermark = Number.MAX_SAFE_INTEGER, lowWatermark = 1 } = {}) {
   throw new Error("events.on is not implemented");
 }
+EventEmitter.on = on;
 
-export function getEventListeners(emitter, type) {
+function getEventListeners(emitter, type) {
   // TODO: EventTarget support
   return emitter.listeners(type);
 }
+EventEmitter.getEventListeners = getEventListeners;
 
-export function setMaxListeners(n, ...eventTargets) {
+function setMaxListeners(n, ...eventTargets) {
   validateNumber(n, "setMaxListeners", 0);
   if (eventTargets) {
     var { length } = eventTargets;
@@ -242,13 +244,15 @@ export function setMaxListeners(n, ...eventTargets) {
     defaultMaxListeners = n;
   }
 }
+EventEmitter.setMaxListeners = setMaxListeners;
 
-export function listenerCount(emitter, type) {
+function listenerCount(emitter, type) {
   return emitter.listenerCount(type);
 }
+EventEmitter.listenerCount = listenerCount;
 
 EventEmitter.EventEmitter = EventEmitter;
-// EventEmitter.usingDomains = usingDomains; // TODO: getter/setter?
+EventEmitter.usingDomains = false;
 EventEmitter.captureRejectionSymbol = captureRejectionSymbol;
 // EventEmitter.captureRejections = captureRejections; // TODO: getter/setter?
 EventEmitter.errorMonitor = errorMonitor;
@@ -278,8 +282,9 @@ Object.defineProperties(EventEmitter, {
     writable: false,
   },
 });
+EventEmitter.init = EventEmitter;
+EventEmitter[Symbol.for("CommonJS")] = 0;
 
-export const init = EventEmitter;
 export default EventEmitter;
 
 function eventTargetAgnosticRemoveListener(emitter, name, listener, flags) {
@@ -338,5 +343,3 @@ export class EventEmitterAsyncResource extends EventEmitter {
 }
 
 EventEmitter.EventEmitterAsyncResource = EventEmitterAsyncResource;
-
-export const IT_WORKED = true;

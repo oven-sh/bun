@@ -112,7 +112,7 @@ EventEmitter.prototype.once = function once(type, listener) {
   return this;
 };
 
-EventEmitter.prototype.prependOnceListener = function prependOnceListener() {
+EventEmitter.prototype.prependOnceListener = function prependOnceListener(type, listener) {
   const bound = onceWrapper.bind(this, type, listener);
   bound.listener = listener;
   this.prependListener(type, bound);
@@ -156,14 +156,16 @@ EventEmitter.prototype.removeAllListeners = function removeAllListeners(type) {
   return this;
 };
 
-EventEmitter.prototype.listeners = function listeners() {
-  var handlers = this._bunEvents?.get(type);
+EventEmitter.prototype.listeners = function listeners(type) {
+  var { _events: events } = this;
+  if (!events) return [];
+  var handlers = events[type];
   if (!handlers) return [];
   if (typeof handlers === "function") return [handlers.listener ?? handlers];
   return handlers.map(x => x.listener ?? x);
 };
 
-EventEmitter.prototype.rawListeners = function rawListeners() {
+EventEmitter.prototype.rawListeners = function rawListeners(type) {
   var handlers = this._bunEvents?.get(type);
   if (!handlers) return [];
   if (typeof handlers === "function") return [handlers];

@@ -4581,8 +4581,8 @@ fn NewPrinter(
                     if (record.contains_import_star) {
                         if (item_count > 0) {
                             p.print(",");
-                            p.printSpace();
                         }
+                        p.printSpace();
 
                         p.printWhitespacer(ws("* as "));
                         p.printSymbol(s.namespace_ref);

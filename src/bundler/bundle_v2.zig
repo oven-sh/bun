@@ -334,7 +334,6 @@ pub const BundleV2 = struct {
         var path = result.path() orelse return null;
 
         const loader = this.bundler.options.loaders.get(path.name.ext) orelse .file;
-        if (!loader.isJavaScriptLikeOrJSON()) return null;
 
         var entry = try this.graph.path_to_source_index_map.getOrPut(this.graph.allocator, hash orelse wyhash(0, path.text));
         if (entry.found_existing) {
@@ -595,11 +594,7 @@ pub const BundleV2 = struct {
                 while (iter.next()) |entry| {
                     const hash = entry.key_ptr.*;
                     const value = entry.value_ptr.*;
-                    const loader = value.loader orelse options.Loader.file;
-                    if (!loader.isJavaScriptLikeOrJSON()) {
-                        // TODO:
-                        continue;
-                    }
+
                     var existing = graph.path_to_source_index_map.getOrPut(graph.allocator, hash) catch unreachable;
 
                     // If the same file is imported and required, and those point to different files
@@ -821,6 +816,13 @@ const ParseTask = struct {
             },
             .toml => {
                 const root = try TOML.parse(&source, log, allocator);
+                return (try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?;
+            },
+            .text => {
+                const root = Expr.init(E.String, E.String{
+                    .data = source.contents,
+                    .prefer_template = true,
+                }, Logger.Loc{ .start = 0 });
                 return (try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?;
             },
             else => return js_ast.Ast.empty,

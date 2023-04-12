@@ -59,7 +59,7 @@ pub const Run = struct {
             try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
         }
 
-        run = .{
+        run = Run{
             .vm = try VirtualMachine.initWithModuleGraph(arena.allocator(), ctx.log, graph_ptr),
             .arena = arena,
             .ctx = ctx,
@@ -147,10 +147,12 @@ pub const Run = struct {
             .vm = try VirtualMachine.init(
                 arena.allocator(),
                 ctx.args,
-                null,
-                ctx.log,
-                null,
-                ctx.debug.hot_reload != .none,
+                .{
+                    .log = ctx.log,
+                    .store_fd = ctx.debug.hot_reload != .none,
+                    .inspector = ctx.debug.inspect_break != .none,
+                    .env_loader = null,
+                },
             ),
             .arena = arena,
             .ctx = ctx,

@@ -1467,10 +1467,12 @@ pub const RequestContext = struct {
             var vm: *JavaScript.VirtualMachine = JavaScript.VirtualMachine.init(
                 bun.default_allocator,
                 handler.args,
-                null,
-                handler.log,
-                handler.env_loader,
-                true,
+                .{
+                    .log = handler.log,
+                    .env_loader = handler.env_loader,
+                    .store_fd = true,
+                    .inspector = .none,
+                },
             ) catch |err| {
                 handler.handleJSError(.create_vm, err) catch {};
                 javascript_disabled = true;

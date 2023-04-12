@@ -282,7 +282,6 @@ CPP_DECL void JSC__JSGlobalObject__handleRejectedPromises(JSC__JSGlobalObject* a
 CPP_DECL JSC__JSValue JSC__JSGlobalObject__putCachedObject(JSC__JSGlobalObject* arg0, const ZigString* arg1, JSC__JSValue JSValue2);
 CPP_DECL void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue JSValue2, JSC__JSValue JSValue3, JSC__JSValue JSValue4);
 CPP_DECL void JSC__JSGlobalObject__reload(JSC__JSGlobalObject* arg0);
-CPP_DECL bool JSC__JSGlobalObject__startRemoteInspector(JSC__JSGlobalObject* arg0, unsigned char* arg1, uint16_t arg2);
 CPP_DECL JSC__VM* JSC__JSGlobalObject__vm(JSC__JSGlobalObject* arg0);
 
 #pragma mark - JSC::JSMap
@@ -567,7 +566,7 @@ ZIG_DECL JSC__JSValue Crypto__timingSafeEqual__slowpath(JSC__JSGlobalObject* arg
 
 #pragma mark - Zig::GlobalObject
 
-CPP_DECL JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* arg0, int32_t arg1, void* arg2);
+CPP_DECL JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* arg0, int32_t arg1, void* arg2, int32_t Inspect3);
 CPP_DECL void* Zig__GlobalObject__getModuleRegistryMap(JSC__JSGlobalObject* arg0);
 CPP_DECL bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* arg0, void* arg1);
 

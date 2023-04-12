@@ -106,6 +106,11 @@ public:
     void reportException(const String& errorMessage, int lineNumber, int columnNumber, const String& sourceURL, JSC::Exception* exception, RefPtr<void*>&&, CachedScript* = nullptr, bool = false)
     {
     }
+
+    void setURL(const WTF::URL& url) { m_url = url; }
+    void setURL(const ZigString* sourceFilePath);
+    void ensureURL();
+
     // void reportUnhandledPromiseRejection(JSC::JSGlobalObject&, JSC::JSPromise&, RefPtr<Inspector::ScriptCallStack>&&)
     // {
     // }

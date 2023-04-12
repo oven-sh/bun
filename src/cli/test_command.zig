@@ -465,15 +465,19 @@ pub const TestCommand = struct {
         var vm = try JSC.VirtualMachine.init(
             ctx.allocator,
             ctx.args,
-            null,
-            ctx.log,
-            env_loader,
-            // we must store file descriptors because we reuse them for
-            // iterating through the directory tree recursively
-            //
-            // in the future we should investigate if refactoring this to not
-            // rely on the dir fd yields a performance improvement
-            true,
+            .{
+                .log = ctx.log,
+                .env_loader = env_loader,
+                .existing_bundle = null,
+                .store_fd =
+                // we must store file descriptors because we reuse them for
+                // iterating through the directory tree recursively
+                //
+                // in the future we should investigate if refactoring this to not
+                // rely on the dir fd yields a performance improvement
+                true,
+                .inspector = if (ctx.debug.inspect_break) .breakpoint else .none,
+            },
         );
         vm.argv = ctx.passthrough;
         vm.preload = ctx.preloads;

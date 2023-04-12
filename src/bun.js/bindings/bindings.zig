@@ -2772,8 +2772,10 @@ pub const JSGlobalObject = extern struct {
         return cppFn("handleRejectedPromises", .{this});
     }
 
+    extern fn JSGlobalObject__startRemoteInspector(*JSGlobalObject, [*:0]const u8, u16) bool;
     pub fn startRemoteInspector(this: *JSGlobalObject, host: [:0]const u8, port: u16) bool {
-        return cppFn("startRemoteInspector", .{ this, host, port });
+        if (comptime is_bindgen) unreachable;
+        return JSGlobalObject__startRemoteInspector(this, host, port);
     }
 
     extern fn ZigGlobalObject__readableStreamToArrayBuffer(*JSGlobalObject, JSValue) JSValue;
@@ -2812,7 +2814,6 @@ pub const JSGlobalObject = extern struct {
 
         "vm",
         "generateHeapSnapshot",
-        "startRemoteInspector",
         "handleRejectedPromises",
         "createSyntheticModule_",
         "queueMicrotaskJob",

@@ -7,6 +7,7 @@
 #include "_libusockets.h"
 
 extern "C" void Bun__startLoop(us_loop_t* loop);
+extern "C" void Bun__getMainPath(JSC::JSGlobalObject* globalObject, ZigString* out);
 
 namespace WebCore {
 
@@ -32,6 +33,18 @@ static void registerHTTPContextForWebSocket(ScriptExecutionContext* script, us_s
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }
+}
+
+void ScriptExecutionContext::setURL(const ZigString* filePath)
+{
+    setURL(WTF::URL::fileURLWithFileSystemPath(toStringCopy(*filePath)).isolatedCopy());
+}
+
+void ScriptExecutionContext::ensureURL()
+{
+    ZigString filePath;
+    Bun__getMainPath(m_globalObject, &filePath);
+    setURL(&filePath);
 }
 
 us_socket_context_t* ScriptExecutionContext::webSocketContextSSL()

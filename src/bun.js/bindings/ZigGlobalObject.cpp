@@ -114,6 +114,8 @@
 #include "JSEnvironmentVariableMap.h"
 #include "DOMIsoSubspaces.h"
 
+#include "BunInspector.h"
+
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
 #endif
@@ -241,7 +243,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 extern "C" void* Bun__getVM();
 
 extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObjectClass, int count,
-    void* console_client)
+    void* console_client, int inspector)
 {
     auto heapSize = JSC::HeapType::Large;
 
@@ -261,7 +263,6 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObje
     }
 
     JSC::gcProtect(globalObject);
-
     vm.ref();
     return globalObject;
 }
@@ -3759,14 +3760,26 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
     extraStaticGlobals.releaseBuffer();
 }
 
-extern "C" bool JSC__JSGlobalObject__startRemoteInspector(JSC__JSGlobalObject* globalObject, unsigned char* host, uint16_t arg1)
+extern "C" bool JSGlobalObject__startRemoteInspector(Zig::GlobalObject* globalObject, unsigned char* host, uint16_t port)
 {
 #if !ENABLE(REMOTE_INSPECTOR)
     return false;
 #else
     globalObject->setInspectable(true);
-    auto& server = Inspector::RemoteInspectorServer::singleton();
-    return server.start(reinterpret_cast<const char*>(host), arg1);
+    bool didSucceed = false;
+
+    // This function calls immediately.
+    auto inspector = BunInspector::startWebSocketServer(
+        *globalObject->scriptExecutionContext(),
+        WTF::String::fromUTF8(host),
+        port, [port, &didSucceed](RefPtr<BunInspector> inspector, bool success) {
+            didSucceed = success;
+
+            if (success) {
+                inspector->ref();
+            }
+        });
+    return didSucceed;
 #endif
 }
 

@@ -9595,14 +9595,13 @@ pub const Macro = struct {
             resolver.opts.transform_options.node_modules_bundle_path = null;
             resolver.opts.transform_options.node_modules_bundle_path_server = null;
             defer resolver.opts.transform_options = old_transform_options;
-            var _vm = try JavaScript.VirtualMachine.init(
-                default_allocator,
-                resolver.opts.transform_options,
-                null,
-                log,
-                env,
-                false,
-            );
+            var _vm = try JavaScript.VirtualMachine.init(default_allocator, resolver.opts.transform_options, .{
+                .log = log,
+                .existing_bundle = null,
+                .store_fd = false,
+                .inspector = .none,
+                .env = env,
+            });
 
             _vm.enableMacroMode();
             _vm.eventLoop().ensureWaker();

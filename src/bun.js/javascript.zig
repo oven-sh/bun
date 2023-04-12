@@ -320,6 +320,12 @@ pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSC.
     jsc_vm.autoGarbageCollect();
 }
 
+pub export fn Bun__getMainPath(globalObject: *JSC.JSGlobalObject, out: *ZigString) void {
+    var jsc_vm = globalObject.bunVM();
+
+    out.* = ZigString.fromUTF8(jsc_vm.main);
+}
+
 pub export fn Bun__onDidAppendPlugin(jsc_vm: *VirtualMachine, globalObject: *JSGlobalObject) void {
     if (jsc_vm.plugin_runner != null) {
         return;
@@ -448,6 +454,8 @@ pub const VirtualMachine = struct {
     aggressive_garbage_collection: GCLevel = GCLevel.none,
 
     gc_controller: JSC.GarbageCollectionController = .{},
+
+    auto_inspect: bool = false,
 
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
 
@@ -826,16 +834,21 @@ pub const VirtualMachine = struct {
         return vm;
     }
 
+    pub const VMOptions = struct {
+        env_loader: ?*DotEnv.Loader = null,
+        log: ?*logger.Log = null,
+        existing_bundle: ?*NodeModuleBundle = null,
+        store_fd: bool = false,
+        inspector: JSC.ZigGlobalObject.Inspect = .none,
+    };
+
     pub fn init(
         allocator: std.mem.Allocator,
         _args: Api.TransformOptions,
-        existing_bundle: ?*NodeModuleBundle,
-        _log: ?*logger.Log,
-        env_loader: ?*DotEnv.Loader,
-        store_fd: bool,
+        vm_opts: VMOptions,
     ) !*VirtualMachine {
         var log: *logger.Log = undefined;
-        if (_log) |__log| {
+        if (vm_opts.log) |__log| {
             log = __log;
         } else {
             log = try allocator.create(logger.Log);
@@ -849,8 +862,8 @@ pub const VirtualMachine = struct {
             allocator,
             log,
             try Config.configureTransformOptionsForBunVM(allocator, _args),
-            existing_bundle,
-            env_loader,
+            vm_opts.existing_bundle,
+            vm_opts.env_loader,
         );
         var vm = VMHolder.vm.?;
 
@@ -884,7 +897,7 @@ pub const VirtualMachine = struct {
         vm.event_loop = &vm.regular_event_loop;
 
         vm.bundler.macro_context = null;
-        vm.bundler.resolver.store_fd = store_fd;
+        vm.bundler.resolver.store_fd = vm_opts.store_fd;
 
         vm.bundler.resolver.onWakePackageManager = .{
             .context = &vm.modules,
@@ -896,7 +909,7 @@ pub const VirtualMachine = struct {
         try vm.bundler.configureFramework(false);
 
         vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
-
+        vm.auto_inspect = vm_opts.inspector != .none;
         if (_args.serve orelse false) {
             vm.bundler.linker.onImportCSS = Bun.onImportCSS;
         }
@@ -909,6 +922,7 @@ pub const VirtualMachine = struct {
             &global_classes,
             @intCast(i32, global_classes.len),
             vm.console,
+            vm_opts.inspector,
         );
         vm.regular_event_loop.global = vm.global;
         vm.regular_event_loop.virtual_machine = vm;
@@ -1670,6 +1684,11 @@ pub const VirtualMachine = struct {
             promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(this.main));
             this.pending_internal_promise = promise;
             JSC.JSValue.fromCell(promise).ensureStillAlive();
+        }
+
+        if (this.auto_inspect) {
+            this.auto_inspect = false;
+            _ = this.global.startRemoteInspector("0.0.0.0", 9229);
         }
 
         return promise;
@@ -2770,4 +2789,9 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             }
         }
     };
+}
+
+comptime {
+    if (!JSC.is_bindgen)
+        _ = Bun__getMainPath;
 }

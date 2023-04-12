@@ -1202,9 +1202,7 @@ pub const Expect = struct {
                 }
             }
         } else if (value.isString() and expected.isString()) {
-            const value_string = value.toString(globalObject).toSlice(globalObject, default_allocator).slice();
-            const expected_string = expected.toString(globalObject).toSlice(globalObject, default_allocator).slice();
-            if (strings.contains(value_string, expected_string)) {
+            if (value.stringIncludes(globalObject, expected)) {
                 pass = true;
             }
         } else {

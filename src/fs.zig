@@ -1142,7 +1142,7 @@ pub const PathName = struct {
     pub fn init(_path: string) PathName {
         var path = _path;
         var base = path;
-        var ext = path;
+        var ext: string = "";
         var dir = path;
         var is_absolute = true;
 

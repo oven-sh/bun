@@ -826,6 +826,7 @@ pub const defaultLoaders = ComptimeStringMap(Loader, .{
     .{ ".jsx", Loader.jsx },
     .{ ".json", Loader.json },
     .{ ".js", Loader.jsx },
+    .{ "", Loader.js },
 
     .{ ".mjs", Loader.js },
     .{ ".cjs", Loader.js },
@@ -1143,6 +1144,9 @@ const default_loader_ext = [_]string{
     ".mts",  ".cts",
 
     ".toml", ".wasm",
+
+    // no extension will default to js
+    "",
 };
 
 pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.LoaderMap, platform: Platform) !bun.StringArrayHashMap(Loader) {

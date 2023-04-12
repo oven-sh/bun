@@ -1774,6 +1774,8 @@ test("toContain()", () => {
   // expect("test").not.toContain("test");
   expect(["test", "es"]).toContain("es");
   expect("").toContain("");
+  expect("").not.toContain(" ");
+  expect(" ").toContain("");
   expect([""]).toContain("");
 
   expect(["lemon", "lime"]).not.toContain("orange");

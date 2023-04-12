@@ -333,7 +333,7 @@ pub const BundleV2 = struct {
         var result = resolve;
         var path = result.path() orelse return null;
 
-        const loader = this.bundler.options.loaders.get(path.name.ext) orelse .file;
+        const loader = path.loader(&this.bundler.options.loaders) orelse Loader.js;
         if (!loader.isJavaScriptLikeOrJSON()) return null;
 
         var entry = try this.graph.path_to_source_index_map.getOrPut(this.graph.allocator, hash orelse wyhash(0, path.text));

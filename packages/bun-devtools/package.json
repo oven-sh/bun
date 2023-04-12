@@ -1,0 +1,8 @@
+{
+  "name": "bun-devtools",
+  "private": true,
+  "module": "./index.ts",
+  "scripts": {
+    "generate-protocol": "bun run scripts/generate-protocol.ts"
+  }
+}

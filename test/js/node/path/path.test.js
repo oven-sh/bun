@@ -429,39 +429,56 @@ it("path.resolve", () => {
   strictEqual(failures.length, 0, failures.join("\n"));
 });
 
+const node = (strings, ...values) => {
+  const expression = String.raw({ raw: strings }, ...values);
+  const { spawnSync } = require("child_process");
+  const nodeProcess = spawnSync("node", ["-e", `console.log(JSON.stringify(${expression}, null, 2))`]);
+  const stdout = new TextDecoder().decode(nodeProcess.stdout);
+  const parsedOutput = JSON.parse(stdout);
+  return parsedOutput;
+};
+
 describe("path.parse", () => {
   describe("absolute path", () => {
-    it("parses", () => {
-      const parsed = path.parse("/a/b/c/index.html");
-      assert.deepStrictEqual(parsed, {
-        root: "/",
-        dir: "/a/b/c",
-        base: "index.html",
-        ext: ".html",
-        name: "index",
+    describe("posix path", () => {
+      const absolutePosixPath = "/a/b/c/index.html";
+      it("posix.parse posix path", () => {
+        const parsed = path.posix.parse(absolutePosixPath);
+        assert.deepStrictEqual(parsed, node`require("path").posix.parse("${absolutePosixPath}")`);
+      });
+
+      it("win32.parse posix path", () => {
+        const parsed = path.win32.parse(absolutePosixPath);
+        assert.deepStrictEqual(parsed, node`require("path").win32.parse("${absolutePosixPath}")`);
       });
     });
 
-    it("posix.parse windows path", () => {
-      const parsed = path.posix.parse("C:/a/b/c/index.html");
-      assert.deepStrictEqual(parsed, {
-        root: "",
-        dir: "C:/a/b/c",
-        base: "index.html",
-        ext: ".html",
-        name: "index",
+    describe("windows path", () => {
+      const absoluteWinPath = "C:/a/b/c/index.html";
+
+      it("posix.parse windows path", () => {
+        const parsed = path.posix.parse(absoluteWinPath);
+        assert.deepStrictEqual(parsed, node`require("path").posix.parse("${absoluteWinPath}")`);
+      });
+
+      it("win32.parse windows path", () => {
+        const parsed = path.win32.parse(absoluteWinPath);
+        assert.deepStrictEqual(parsed, node`require("path").win32.parse("${absoluteWinPath}")`);
       });
     });
+  });
 
-    it("win32.parse windows path", () => {
-      const parsed = path.win32.parse("C:/a/b/c/index.html");
-      assert.deepStrictEqual(parsed, {
-        root: "C:/",
-        dir: "C:/a/b/c",
-        base: "index.html",
-        ext: ".html",
-        name: "index",
-      });
+  describe("relative path", () => {
+    const relativePath = "./a/b/c/index.html";
+
+    it("posix.parse", () => {
+      const parsed = path.posix.parse(relativePath);
+      assert.deepStrictEqual(parsed, node`require("path").posix.parse("${relativePath}")`);
+    });
+
+    it("win32.parse", () => {
+      const parsed = path.win32.parse(relativePath);
+      assert.deepStrictEqual(parsed, node`require("path").win32.parse("${relativePath}")`);
     });
   });
 });

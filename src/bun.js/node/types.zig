@@ -1782,6 +1782,8 @@ pub const Path = struct {
         if (isWindows) {
             if (isZigStringAbsoluteWindows(root)) {
                 root = JSC.ZigString.init(path_name.dir[0..3]);
+            } else {
+                root = JSC.ZigString.init("");
             }
         } else {
             if (path_name.dir.len > 0 and path_name.dir[0] == '/') {

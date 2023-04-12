@@ -1,3 +1,5 @@
+import assert from "assert";
+import dedent from "dedent";
 import { expectBundled, itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
@@ -6,10 +8,10 @@ var { describe, test, expect } = testForFile(import.meta.path);
 
 // For debug, all files are written to $TEMP/bun-bundle-tests/dce
 
+// To understand what `dce: true` is doing, see ../expectBundled.md's "dce: true" section
+
 describe("bundler", () => {
-  return;
   itBundled("dce/PackageJsonSideEffectsFalseKeepNamedImportES6", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -24,10 +26,12 @@ describe("bundler", () => {
           "sideEffects": false
         }
       `,
+    },
+    run: {
+      stdout: "hello\n123",
     },
   });
   itBundled("dce/PackageJsonSideEffectsFalseKeepNamedImportCommonJS", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -43,13 +47,15 @@ describe("bundler", () => {
         }
       `,
     },
+    run: {
+      stdout: "hello\n123",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsFalseKeepStarImportES6", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import * as ns from "demo-pkg"
-        console.log(ns)
+        console.log(JSON.stringify(ns))
       `,
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
         export const foo = 123
@@ -60,14 +66,16 @@ describe("bundler", () => {
           "sideEffects": false
         }
       `,
+    },
+    run: {
+      stdout: 'hello\n{"foo":123}',
     },
   });
   itBundled("dce/PackageJsonSideEffectsFalseKeepStarImportCommonJS", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import * as ns from "demo-pkg"
-        console.log(ns)
+        console.log(JSON.stringify(ns))
       `,
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
         exports.foo = 123
@@ -78,17 +86,19 @@ describe("bundler", () => {
           "sideEffects": false
         }
       `,
+    },
+    run: {
+      stdout: 'hello\n{"default":{"foo":123},"foo":123}',
     },
   });
   itBundled("dce/PackageJsonSideEffectsTrueKeepES6", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
-        export const foo = 123
+        export const foo = "FAILED"
         console.log('hello')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
@@ -96,10 +106,13 @@ describe("bundler", () => {
           "sideEffects": true
         }
       `,
+    },
+    dce: true,
+    run: {
+      stdout: "hello\nunused import",
     },
   });
   itBundled("dce/PackageJsonSideEffectsTrueKeepCommonJS", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
@@ -115,9 +128,12 @@ describe("bundler", () => {
         }
       `,
     },
+    dce: true,
+    run: {
+      stdout: "hello\nunused import",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsFalseKeepBareImportAndRequireES6", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
@@ -134,12 +150,12 @@ describe("bundler", () => {
         }
       `,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: WARNING: Ignoring this import because "Users/user/project/node_modules/demo-pkg/index.js" was marked as having no side effects
-  Users/user/project/node_modules/demo-pkg/package.json: NOTE: "sideEffects" is false in the enclosing "package.json" file:
-  `, */
+    dce: true,
+    run: {
+      stdout: "hello\nunused import",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsFalseKeepBareImportAndRequireCommonJS", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
@@ -156,20 +172,20 @@ describe("bundler", () => {
         }
       `,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: WARNING: Ignoring this import because "Users/user/project/node_modules/demo-pkg/index.js" was marked as having no side effects
-  Users/user/project/node_modules/demo-pkg/package.json: NOTE: "sideEffects" is false in the enclosing "package.json" file:
-  `, */
+    dce: true,
+    run: {
+      stdout: "hello\nunused import",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveBareImportES6", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
-        export const foo = 123
-        console.log('hello')
+        export const foo = "TEST FAILED"
+        console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
         {
@@ -177,20 +193,20 @@ describe("bundler", () => {
         }
       `,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: WARNING: Ignoring this import because "Users/user/project/node_modules/demo-pkg/index.js" was marked as having no side effects
-  Users/user/project/node_modules/demo-pkg/package.json: NOTE: "sideEffects" is false in the enclosing "package.json" file:
-  `, */
+    dce: true,
+    run: {
+      stdout: "unused import",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveBareImportCommonJS", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
-        exports.foo = 123
-        console.log('hello')
+        exports.foo = "TEST FAILED"
+        console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
         {
@@ -198,74 +214,83 @@ describe("bundler", () => {
         }
       `,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: WARNING: Ignoring this import because "Users/user/project/node_modules/demo-pkg/index.js" was marked as having no side effects
-  Users/user/project/node_modules/demo-pkg/package.json: NOTE: "sideEffects" is false in the enclosing "package.json" file:
-  `, */
+    dce: true,
+    run: {
+      stdout: "unused import",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveNamedImportES6", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
-        export const foo = 123
-        console.log('hello')
+        export const foo = "TEST FAILED"
+        console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
         {
           "sideEffects": false
         }
       `,
+    },
+    dce: true,
+    run: {
+      stdout: "unused import",
     },
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveNamedImportCommonJS", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
-        exports.foo = 123
-        console.log('hello')
+        exports.foo = "TEST FAILED"
+        console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
         {
           "sideEffects": false
         }
       `,
+    },
+    dce: true,
+    run: {
+      stdout: "unused import",
     },
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveStarImportES6", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import * as ns from "demo-pkg"
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
-        export const foo = 123
-        console.log('hello')
+        export const foo = "TEST FAILED"
+        console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
         {
           "sideEffects": false
         }
       `,
+    },
+    dce: true,
+    run: {
+      stdout: "unused import",
     },
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveStarImportCommonJS", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import * as ns from "demo-pkg"
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
-        exports.foo = 123
-        console.log('hello')
+        exports.foo = "TEST FAILED"
+        console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
         {
@@ -273,16 +298,19 @@ describe("bundler", () => {
         }
       `,
     },
+    dce: true,
+    run: {
+      stdout: "unused import",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsArrayRemove", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
-        export const foo = 123
+        export const foo = "TEST FAILED"
         console.log('hello')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
@@ -291,17 +319,20 @@ describe("bundler", () => {
         }
       `,
     },
+    dce: true,
+    run: {
+      stdout: "unused import",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeep", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
-        export const foo = 123
-        console.log('hello')
+        export const foo = "TEST FAILED"
+        console.log("hello")
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
         {
@@ -309,20 +340,23 @@ describe("bundler", () => {
         }
       `,
     },
+    dce: true,
+    run: {
+      stdout: "hello\nunused import",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepMainUseModule", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg/index-main.js": /* js */ `
-        export const foo = 123
+        export const foo = "TEST FAILED"
         console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/index-module.js": /* js */ `
-        export const foo = 123
+        export const foo = "TEST FAILED"
         console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
@@ -332,21 +366,25 @@ describe("bundler", () => {
           "sideEffects": ["./index-main.js"]
         }
       `,
+    },
+    dce: true,
+    mainFields: ["module"],
+    run: {
+      stdout: "unused import",
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepMainUseMain", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg/index-main.js": /* js */ `
-        export const foo = 123
+        export const foo = "TEST FAILED"
         console.log('this should be kept')
       `,
       "/Users/user/project/node_modules/demo-pkg/index-module.js": /* js */ `
-        export const foo = 123
+        export const foo = "TEST FAILED"
         console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
@@ -356,21 +394,25 @@ describe("bundler", () => {
           "sideEffects": ["./index-main.js"]
         }
       `,
+    },
+    dce: true,
+    mainFields: ["main"],
+    run: {
+      stdout: "this should be kept\nunused import",
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepMainImplicitModule", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg/index-main.js": /* js */ `
-        export const foo = 123
+        export const foo = "TEST FAILED"
         console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/index-module.js": /* js */ `
-        export const foo = 123
+        export const foo = "TEST FAILED"
         console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
@@ -380,10 +422,13 @@ describe("bundler", () => {
           "sideEffects": ["./index-main.js"]
         }
       `,
+    },
+    dce: true,
+    run: {
+      stdout: "unused import",
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepMainImplicitMain", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -395,11 +440,11 @@ describe("bundler", () => {
         require('demo-pkg')
       `,
       "/Users/user/project/node_modules/demo-pkg/index-main.js": /* js */ `
-        export const foo = 123
+        export const foo = "POSSIBLE_REMOVAL"
         console.log('this should be kept')
       `,
       "/Users/user/project/node_modules/demo-pkg/index-module.js": /* js */ `
-        export const foo = 123
+        export const foo = "TEST FAILED"
         console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
@@ -410,20 +455,23 @@ describe("bundler", () => {
         }
       `,
     },
+    dce: true,
+    run: {
+      stdout: "this should be kept\nunused import",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleUseModule", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg/index-main.js": /* js */ `
-        export const foo = 123
+        export const foo = "TEST FAILED"
         console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/index-module.js": /* js */ `
-        export const foo = 123
+        export const foo = "TEST FAILED"
         console.log('this should be kept')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
@@ -433,10 +481,13 @@ describe("bundler", () => {
           "sideEffects": ["./index-module.js"]
         }
       `,
+    },
+    dce: true,
+    run: {
+      stdout: "this should be kept\nunused import",
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleUseMain", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -448,7 +499,7 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/demo-pkg/index-module.js": /* js */ `
         export const foo = 123
-        console.log('TEST FAILED')
+        console.log('hello')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
         {
@@ -458,9 +509,12 @@ describe("bundler", () => {
         }
       `,
     },
+    dce: true,
+    run: {
+      stdout: "hello\nunused import",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleImplicitModule", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -482,9 +536,12 @@ describe("bundler", () => {
         }
       `,
     },
+    dce: true,
+    run: {
+      stdout: "this should be kept\nunused import",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleImplicitMain", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -496,11 +553,11 @@ describe("bundler", () => {
         require('demo-pkg')
       `,
       "/Users/user/project/node_modules/demo-pkg/index-main.js": /* js */ `
-        export const foo = 123
+        export const foo = "POSSIBLE_REMOVAL"
         console.log('this should be kept')
       `,
       "/Users/user/project/node_modules/demo-pkg/index-module.js": /* js */ `
-        export const foo = 123
+        export const foo = "TEST FAILED"
         console.log('TEST FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
@@ -511,9 +568,12 @@ describe("bundler", () => {
         }
       `,
     },
+    dce: true,
+    run: {
+      stdout: "this should be kept\nunused import",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsArrayGlob", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg/keep/this/file"
@@ -531,12 +591,12 @@ describe("bundler", () => {
         }
       `,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: WARNING: Ignoring this import because "Users/user/project/node_modules/demo-pkg/remove/this/file.js" was marked as having no side effects
-  Users/user/project/node_modules/demo-pkg/package.json: NOTE: It was excluded from the "sideEffects" array in the enclosing "package.json" file:
-  `, */
+    dce: true,
+    run: {
+      stdout: "this should be kept",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsNestedDirectoryRemove", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg/a/b/c"
@@ -548,13 +608,16 @@ describe("bundler", () => {
         }
       `,
       "/Users/user/project/node_modules/demo-pkg/a/b/c/index.js": /* js */ `
-        export const foo = 123
-        console.log('hello')
+        export const foo = "TEST FAILED"
+        console.log('TEST FAILED')
       `,
+    },
+    dce: true,
+    run: {
+      stdout: "unused import",
     },
   });
   itBundled("dce/PackageJsonSideEffectsKeepExportDefaultExpr", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import foo from "demo-pkg"
@@ -567,9 +630,18 @@ describe("bundler", () => {
         }
       `,
     },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        globalThis.exprWithSideEffects = () => 1;
+        await import('./out');
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "1",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsFalseNoWarningInNodeModulesIssue999", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
@@ -580,8 +652,8 @@ describe("bundler", () => {
         console.log('unused import')
       `,
       "/Users/user/project/node_modules/demo-pkg2/index.js": /* js */ `
-        export const foo = 123
-        console.log('hello')
+        export const foo = "FAILED"
+        console.log('FAILED')
       `,
       "/Users/user/project/node_modules/demo-pkg2/package.json": /* json */ `
         {
@@ -589,9 +661,12 @@ describe("bundler", () => {
         }
       `,
     },
+    dce: true,
+    run: {
+      stdout: "unused import\nused import",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsFalseIntermediateFilesUnused", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import {foo} from "demo-pkg"`,
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
@@ -601,9 +676,12 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/foo.js": `export const foo = 123`,
       "/Users/user/project/node_modules/demo-pkg/package.json": `{ "sideEffects": false }`,
     },
+    dce: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toBe("");
+    },
   });
   itBundled("dce/PackageJsonSideEffectsFalseIntermediateFilesUsed", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -611,10 +689,14 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
         export {foo} from "./foo.js"
-        throw 'keep this'
+        console.log('hello')
       `,
       "/Users/user/project/node_modules/demo-pkg/foo.js": `export const foo = 123`,
       "/Users/user/project/node_modules/demo-pkg/package.json": `{ "sideEffects": false }`,
+    },
+    dce: true,
+    run: {
+      stdout: "hello\n123",
     },
   });
   itBundled("dce/PackageJsonSideEffectsFalseIntermediateFilesChainAll", {
@@ -628,7 +710,7 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/a/package.json": `{ "sideEffects": false }`,
       "/Users/user/project/node_modules/b/index.js": /* js */ `
         export {foo} from "c"
-        throw 'keep this'
+        console.log('hello')
       `,
       "/Users/user/project/node_modules/b/package.json": `{ "sideEffects": false }`,
       "/Users/user/project/node_modules/c/index.js": `export {foo} from "d"`,
@@ -636,9 +718,12 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/d/index.js": `export const foo = 123`,
       "/Users/user/project/node_modules/d/package.json": `{ "sideEffects": false }`,
     },
+    dce: true,
+    run: {
+      stdout: "hello\n123",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsFalseIntermediateFilesChainOne", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "a"
@@ -647,15 +732,18 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/a/index.js": `export {foo} from "b"`,
       "/Users/user/project/node_modules/b/index.js": /* js */ `
         export {foo} from "c"
-        throw 'keep this'
+        console.log('hello')
       `,
       "/Users/user/project/node_modules/b/package.json": `{ "sideEffects": false }`,
       "/Users/user/project/node_modules/c/index.js": `export {foo} from "d"`,
       "/Users/user/project/node_modules/d/index.js": `export const foo = 123`,
     },
+    dce: true,
+    run: {
+      stdout: "hello\n123",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsFalseIntermediateFilesDiamond", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "a"
@@ -667,22 +755,25 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/b1/index.js": /* js */ `
         export {foo} from "c"
-        throw 'keep this 1'
+        console.log('hello 1')
       `,
       "/Users/user/project/node_modules/b1/package.json": `{ "sideEffects": false }`,
       "/Users/user/project/node_modules/b2/index.js": /* js */ `
         export {foo} from "c"
-        throw 'keep this 2'
+        console.log('hello 2')
       `,
       "/Users/user/project/node_modules/b2/package.json": `{ "sideEffects": false }`,
       "/Users/user/project/node_modules/c/index.js": `export {foo} from "d"`,
       "/Users/user/project/node_modules/d/index.js": `export const foo = 123`,
     },
+    dce: true,
+    run: {
+      stdout: "hello 1\nhello 2\n123",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsFalseOneFork", {
-    // GENERATED
     files: {
-      "/Users/user/project/src/entry.js": `import("a").then(x => assert(x.foo === "foo"))`,
+      "/Users/user/project/src/entry.js": `import("a").then(x => console.log(x.foo))`,
       "/Users/user/project/node_modules/a/index.js": `export {foo} from "b"`,
       "/Users/user/project/node_modules/b/index.js": /* js */ `
         export {foo, bar} from "c"
@@ -695,11 +786,14 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/d/index.js": `export let baz = "baz"`,
     },
+    dce: true,
+    run: {
+      stdout: "foo",
+    },
   });
   itBundled("dce/PackageJsonSideEffectsFalseAllFork", {
-    // GENERATED
     files: {
-      "/Users/user/project/src/entry.js": `import("a").then(x => assert(x.foo === "foo"))`,
+      "/Users/user/project/src/entry.js": `import("a").then(x => console.log(x.foo))`,
       "/Users/user/project/node_modules/a/index.js": `export {foo} from "b"`,
       "/Users/user/project/node_modules/b/index.js": /* js */ `
         export {foo, bar} from "c"
@@ -714,70 +808,102 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/d/index.js": `export let baz = "baz"`,
       "/Users/user/project/node_modules/d/package.json": `{ "sideEffects": false }`,
     },
+    dce: true,
+    run: {
+      stdout: "foo",
+    },
   });
   itBundled("dce/JSONLoaderRemoveUnused", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import unused from "./example.json"
         console.log('unused import')
       `,
-      "/example.json": `{"data": true}`,
+      "/example.json": `{"data": "FAILED"}`,
+    },
+    dce: true,
+    run: {
+      stdout: "unused import",
     },
   });
   itBundled("dce/TextLoaderRemoveUnused", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import unused from "./example.txt"
         console.log('unused import')
       `,
-      "/example.txt": `some data`,
+      "/example.txt": `TEST FAILED`,
+    },
+    dce: true,
+    run: {
+      stdout: "unused import",
     },
   });
   itBundled("dce/Base64LoaderRemoveUnused", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import unused from "./example.data"
         console.log('unused import')
       `,
-      "/example.data": `some data`,
+      "/example.data": `TEST FAILED`,
+    },
+    dce: true,
+    run: {
+      stdout: "unused import",
+    },
+    loader: {
+      ".data": "base64",
     },
   });
   itBundled("dce/DataURLLoaderRemoveUnused", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import unused from "./example.data"
         console.log('unused import')
       `,
-      "/example.data": `some data`,
+      "/example.data": `TEST FAILED`,
+    },
+    dce: true,
+    run: {
+      stdout: "unused import",
+    },
+    loader: {
+      ".data": "dataurl",
     },
   });
   itBundled("dce/FileLoaderRemoveUnused", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import unused from "./example.data"
         console.log('unused import')
       `,
-      "/example.data": `some data`,
+      "/example.data": `TEST FAILED`,
+    },
+    dce: true,
+    run: {
+      stdout: "unused import",
+    },
+    loader: {
+      ".data": "file",
     },
   });
   itBundled("dce/RemoveUnusedImportMeta", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function foo() {
-          console.log(import.meta.url, import.meta.path)
+          console.log(import.meta.url, import.meta.path, 'FAILED')
         }
         console.log('foo is unused')
       `,
     },
+    dce: true,
+    run: {
+      stdout: "foo is unused",
+    },
   });
   itBundled("dce/RemoveUnusedPureCommentCalls", {
-    // GENERATED
+    // in this test, the bundler must drop all `_yes` variables entirely, and then
+    // preserve the pure comments in the same way esbuild does
     files: {
       "/entry.js": /* js */ `
         function bar() {}
@@ -841,54 +967,100 @@ describe("bundler", () => {
         let new_exp_no = /* @__PURE__ */ new foo() ** foo();
       `,
     },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      assert(!code.includes("_yes"), "should not contain any *_yes variables");
+      assert(code.includes("var bare = foo(bar)"), "should contain `var bare = foo(bar)`");
+      const keep = [
+        ["at_no", true],
+        ["new_at_no", true],
+        ["nospace_at_no", true],
+        ["nospace_new_at_no", true],
+        ["num_no", true],
+        ["new_num_no", true],
+        ["nospace_num_no", true],
+        ["nospace_new_num_no", true],
+        ["dot_no", true],
+        ["new_dot_no", true],
+        ["nested_no", true],
+        ["new_nested_no", true],
+        ["single_at_no", true],
+        ["new_single_at_no", true],
+        ["single_num_no", true],
+        ["new_single_num_no", true],
+        ["bad_no", false],
+        ["new_bad_no", false],
+        ["parens_no", false],
+        ["new_parens_no", false],
+        ["exp_no", true],
+        ["new_exp_no", true],
+      ];
+      for (const [name, pureComment] of keep) {
+        const regex = new RegExp(`${name}\\s*=[^\/\n]*(\\/\\*.*?\\*\\/)?`, "g");
+        const match = regex.exec(code);
+        assert(!!match, `should contain ${name}`);
+        assert(pureComment ? !!match[1] : !match[1], `should contain a pure comment for ${name}`);
+      }
+    },
   });
   itBundled("dce/TreeShakingReactElements", {
-    // GENERATED
     files: {
       "/entry.jsx": /* jsx */ `
         function Foo() {}
   
-        let a = <div/>
-        let b = <Foo>{a}</Foo>
-        let c = <>{b}</>
+        let DROP_a = <div/>
+        let DROP_b = <Foo>{DROP_a}</Foo>
+        let DROP_c = <>{DROP_b}</>
   
         let d = <div/>
         let e = <Foo>{d}</Foo>
         let f = <>{e}</>
-        console.log(f)
+        console.log(JSON.stringify(f))
       `,
+
+      "/node_modules/react/index.js": `export const Fragment = 'F'`,
+      "/node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = (a,b) => [a,b]; export const Fragment = 'F'`,
+    },
+    jsx: {
+      development: true,
+      automaticRuntime: true,
+    },
+    dce: true,
+    run: {
+      stdout: `["F",{"children":[null,{"children":["div",{}]}]}]`,
     },
   });
-  itBundled("dce/DisableTreeShaking", {
-    // GENERATED
-    files: {
-      "/entry.jsx": /* jsx */ `
-        import './remove-me'
-        function RemoveMe1() {}
-        let removeMe2 = 0
-        class RemoveMe3 {}
-  
-        import './keep-me'
-        function KeepMe1() {}
-        let keepMe2 = <KeepMe1/>
-        function keepMe3() { console.log('side effects') }
-        let keepMe4 = /* @__PURE__ */ keepMe3()
-        let keepMe5 = pure()
-        let keepMe6 = some.fn()
-      `,
-      "/remove-me.js": `export default 'unused'`,
-      "/keep-me/index.js": `console.log('side effects')`,
-      "/keep-me/package.json": `{ "sideEffects": false }`,
-    },
-    // TODO: Unsure how to port this: https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_dce_test.go#L1249
-    ignoreDCEAnnotations: true,
-    define: {
-      pure: "???",
-      "some.fn": "???",
-    },
-  });
+  // itBundled("dce/DisableTreeShaking", {
+  //   // GENERATED
+  //   files: {
+  //     "/entry.jsx": /* jsx */ `
+  //       import './remove-me'
+  //       function RemoveMe1() {}
+  //       let removeMe2 = 0
+  //       class RemoveMe3 {}
+
+  //       import './keep-me'
+  //       function KeepMe1() {}
+  //       let keepMe2 = <KeepMe1/>
+  //       function keepMe3() { console.log('side effects') }
+  //       let keepMe4 = /* @__PURE__ */ keepMe3()
+  //       let keepMe5 = pure()
+  //       let keepMe6 = some.fn()
+  //     `,
+  //     "/remove-me.js": `export default 'unused'`,
+  //     "/keep-me/index.js": `console.log('side effects')`,
+  //     "/keep-me/package.json": `{ "sideEffects": false }`,
+  //   },
+  //   // TODO: Unsure how to port this: https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_dce_test.go#L1249
+  //   ignoreDCEAnnotations: true,
+  //   define: {
+  //     pure: "???",
+  //     "some.fn": "???",
+  //   },
+  // });
+  0; // the commented out test has a pure comment which unless this 0 line is here, that test will be removed
+
   itBundled("dce/DeadCodeFollowingJump", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function testReturn() {
@@ -971,9 +1143,10 @@ describe("bundler", () => {
         testStmts()
       `,
     },
+    dce: true,
+    minifySyntax: true,
   });
   itBundled("dce/RemoveTrailingReturn", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function foo() {
@@ -1007,9 +1180,16 @@ describe("bundler", () => {
       `,
     },
     minifySyntax: true,
+    dce: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      assert(
+        [...code.matchAll(/return/g)].length === 2,
+        "should remove 3 trailing returns and the arrow function return",
+      );
+    },
   });
   itBundled("dce/ImportReExportOfNamespaceImport", {
-    // GENERATED
     files: {
       "/Users/user/project/entry.js": /* js */ `
         import * as ns from 'pkg'
@@ -1021,26 +1201,33 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/pkg/package.json": `{ "sideEffects": false }`,
       "/Users/user/project/node_modules/pkg/foo.js": `module.exports = 123`,
-      "/Users/user/project/node_modules/pkg/bar.js": `module.exports = 'abc'`,
+      "/Users/user/project/node_modules/pkg/bar.js": `module.exports = 'FAILED'`,
+    },
+    dce: true,
+    run: {
+      stdout: "123",
     },
   });
   itBundled("dce/TreeShakingImportIdentifier", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as a from './a'
-        new a.Keep()
+        new a.Keep().x().y()
       `,
       "/a.js": /* js */ `
         import * as b from './b'
-        export class Keep extends b.Base {}
-        export class REMOVE extends b.Base {}
+        export class Keep extends b.Base { y() { console.log(2); return this; } }
+        export class REMOVE extends b.Base { y() { console.log(3); return this; } }
       `,
-      "/b.js": `export class Base {}`,
+      "/b.js": `export class Base { x() { console.log(1); return this; } }`,
+    },
+    dce: true,
+    dceKeepMarkerCount: false,
+    run: {
+      stdout: "1\n2",
     },
   });
   itBundled("dce/TreeShakingObjectProperty", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         let remove1 = { x: 'x' }
@@ -1072,10 +1259,9 @@ describe("bundler", () => {
       `,
     },
     treeShaking: true,
-    mode: "passthrough",
+    dce: true,
   });
   itBundled("dce/TreeShakingClassProperty", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         let remove1 = class { x }
@@ -1095,20 +1281,22 @@ describe("bundler", () => {
         let remove15 = class { [false] = 'x' }
         let remove16 = class { [0n] = 'x' }
         let remove17 = class { toString() {} }
-  
+        
         let keep1 = class { [x] = 'x' }
         let keep2 = class { [x]() {} }
         let keep3 = class { get [x]() {} }
         let keep4 = class { set [x](_) {} }
         let keep5 = class { async [x]() {} }
-        let keep6 = class { [{ toString() {} }] = 'x' }
+        let keep6 = class { [{ toString() { console.log(1); } }] = 'x' }
+
+        let POSSIBLE_REMOVAL_1 = class { [{ toString() {} }] = 'x' }
       `,
     },
+    mode: "transform",
     treeShaking: true,
-    mode: "passthrough",
+    dce: true,
   });
   itBundled("dce/TreeShakingClassStaticProperty", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         let remove1 = class { static x }
@@ -1134,14 +1322,16 @@ describe("bundler", () => {
         let keep5 = class { static get [x]() {} }
         let keep6 = class { static set [x](_) {} }
         let keep7 = class { static async [x]() {} }
-        let keep8 = class { static [{ toString() {} }] = 'x' }
+        let keep8 = class { static [{ toString() { console.log(1); } }] = 'x' }
+
+        let POSSIBLE_REMOVAL_1 = class { static [{ toString() {} }] = 'x' }
       `,
     },
+    mode: "transform",
     treeShaking: true,
-    mode: "passthrough",
+    dce: true,
   });
   itBundled("dce/TreeShakingUnaryOperators", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // These operators may have side effects
@@ -1161,9 +1351,10 @@ describe("bundler", () => {
         void REMOVE;
       `,
     },
+    format: "iife",
+    dce: true,
   });
   itBundled("dce/TreeShakingBinaryOperators", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // These operators may have side effects
@@ -1215,30 +1406,34 @@ describe("bundler", () => {
         REMOVE && REMOVE2;
       `,
     },
+    dce: true,
+    format: "iife",
   });
   itBundled("dce/TreeShakingNoBundleESM", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function keep() {}
-        function unused() {}
+        function REMOVE() {}
         keep()
       `,
     },
     format: "esm",
-    mode: "convertformat",
+    mode: "transform",
+    treeShaking: true,
+    dce: true,
   });
   itBundled("dce/TreeShakingNoBundleCJS", {
     // GENERATED
     files: {
       "/entry.js": /* js */ `
         function keep() {}
-        function unused() {}
+        function REMOVE() {}
         keep()
       `,
     },
     format: "cjs",
-    mode: "convertformat",
+    treeShaking: true,
+    mode: "transform",
   });
   itBundled("dce/TreeShakingNoBundleIIFE", {
     // GENERATED
@@ -1250,14 +1445,14 @@ describe("bundler", () => {
       `,
     },
     format: "iife",
-    mode: "convertformat",
+    treeShaking: true,
+    mode: "transform",
   });
   itBundled("dce/TreeShakingInESMWrapper", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {keep1} from './lib'
-        console.log(keep1(), require('./cjs'))
+        console.log(JSON.stringify([keep1(), require('./cjs')]))
       `,
       "/cjs.js": /* js */ `
         import {keep2} from './lib'
@@ -1270,6 +1465,11 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
+    dce: true,
+    dceKeepMarkerCount: false,
+    run: {
+      stdout: '["keep1",{"default":"keep2"}]',
+    },
   });
   itBundled("dce/DCETypeOf", {
     // GENERATED
@@ -1286,7 +1486,7 @@ describe("bundler", () => {
         function* g_REMOVE() {}
         async function a_REMOVE() {}
   
-        // These technically have side effects due to TDZ, but this is not currently handled
+        // TODO: These technically have side effects due to TDZ, but this is not currently handled
         typeof c_remove
         typeof l_remove
         typeof s_remove
@@ -1296,31 +1496,31 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
+    dce: true,
   });
   itBundled("dce/DCETypeOfEqualsString", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
-        var hasBar = typeof bar !== 'undefined'
+        var hasBar = typeof REMOVE !== 'undefined'
         if (false) console.log(hasBar)
       `,
     },
     format: "iife",
+    dce: true,
   });
   itBundled("dce/DCETypeOfEqualsStringMangle", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // Everything here should be removed as dead code due to tree shaking
-        var hasBar = typeof bar !== 'undefined'
-        if (false) console.log(hasBar)
+        var REMOVE1 = typeof REMOVE2 !== 'undefined'
+        if (false) console.log(REMOVE1)
       `,
     },
     format: "iife",
     minifySyntax: true,
+    dce: true,
   });
   itBundled("dce/DCETypeOfEqualsStringGuardCondition", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // Everything here should be removed as dead code due to tree shaking
@@ -1415,9 +1615,9 @@ describe("bundler", () => {
       `,
     },
     format: "iife",
+    dce: true,
   });
   itBundled("dce/DCETypeOfCompareStringGuardCondition", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // Everything here should be removed as dead code due to tree shaking
@@ -1476,48 +1676,56 @@ describe("bundler", () => {
       `,
     },
     format: "iife",
+    dce: true,
   });
   itBundled("dce/RemoveUnusedImports", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
-        import a from 'a'
-        import * as b from 'b'
-        import {c} from 'c'
+        import REMOVE1 from 'a'
+        import * as REMOVE2 from 'b'
+        import {REMOVE3} from 'c'
       `,
     },
     minifySyntax: true,
-    mode: "passthrough",
+    mode: "transform",
+    dce: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toBe(
+        dedent`
+          import "a";
+          import "b";
+          import "c";
+        ` + "\n",
+      );
+    },
   });
   itBundled("dce/RemoveUnusedImportsEval", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
-        import a from 'a'
-        import * as b from 'b'
-        import {c} from 'c'
-        eval('foo(a, b, c)')
+        import keep_a from 'a'
+        import * as keep_b from 'b'
+        import {keep_c} from 'c'
+        eval('foo(keep_a, keep_b, keep_c)')
       `,
     },
     minifySyntax: true,
-    mode: "passthrough",
+    mode: "transform",
+    dce: true,
   });
   itBundled("dce/RemoveUnusedImportsEvalTS", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
-        import a from 'a'
-        import * as b from 'b'
-        import {c} from 'c'
+        import drop_a from 'a'
+        import * as drop_b from 'b'
+        import {drop_c} from 'c'
         eval('foo(a, b, c)')
       `,
     },
-    entryPoints: ["/entry.js"],
+    dce: true,
     minifySyntax: true,
-    mode: "passthrough",
+    mode: "transform",
   });
   itBundled("dce/DCEClassStaticBlocks", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         class A_REMOVE {
@@ -1553,33 +1761,40 @@ describe("bundler", () => {
         }
       `,
     },
-    entryPoints: ["/entry.js"],
+    dce: true,
   });
   itBundled("dce/DCEVarExports", {
-    // GENERATED
     files: {
       "/a.js": /* js */ `
-        var foo = { bar: 123 }
+        var foo = { keep: 123 }
         module.exports = foo
       `,
       "/b.js": /* js */ `
-        var exports = { bar: 123 }
+        var exports = { keep: 123 }
         module.exports = exports
       `,
       "/c.js": /* js */ `
-        var module = { bar: 123 }
+        var module = { keep: 123 }
         exports.foo = module
       `,
     },
+    dce: true,
     entryPoints: ["/a.js", "/b.js", "/c.js"],
   });
   itBundled("dce/DCETemplateLiteral", {
-    // GENERATED
-    files: {},
-    entryPoints: ["/entry.js"],
+    files: {
+      "/entry.js":
+        "var remove;\n" +
+        "var alsoKeep;\n" +
+        "let a = `${keep}`\n" +
+        "let remove2 = `${123}`\n" +
+        "let c = `${keep ? 1 : 2n}`\n" +
+        "let remove3 = `${remove ? 1 : 2n}`\n" +
+        "let e = `${alsoKeep}`\n",
+    },
+    dce: true,
   });
   itBundled("dce/TreeShakingLoweredClassStaticField", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class REMOVE_ME {
@@ -1603,9 +1818,11 @@ describe("bundler", () => {
         new KeepMe2()
       `,
     },
+    dce: true,
+    dceKeepMarkerCount: 9,
+    unsupportedJSFeatures: ["class-field"],
   });
   itBundled("dce/TreeShakingLoweredClassStaticFieldMinified", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class REMOVE_ME {
@@ -1629,10 +1846,12 @@ describe("bundler", () => {
         new KeepMe2()
       `,
     },
-    unsupportedJSFeatures: "ClassField",
+    dce: true,
+    dceKeepMarkerCount: 9,
+    unsupportedJSFeatures: ["class-field"],
+    minifySyntax: true,
   });
   itBundled("dce/TreeShakingLoweredClassStaticFieldAssignment", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         class KeepMe1 {
@@ -1642,7 +1861,7 @@ describe("bundler", () => {
         }
         class KeepMe2 {
           static x = 'x'
-          static y = sideEffects()
+          static y = sideEffects_keep()
           static z = 'z'
         }
         class KeepMe3 {
@@ -1653,11 +1872,11 @@ describe("bundler", () => {
         new KeepMe3()
       `,
     },
-    entryPoints: ["/entry.js"],
-    unsupportedJSFeatures: "ClassField",
+    unsupportedJSFeatures: ["class-field"],
+    dce: true,
+    dceKeepMarkerCount: 14,
   });
   itBundled("dce/InlineIdentityFunctionCalls", {
-    // GENERATED
     files: {
       "/identity.js": /* js */ `
         function DROP(x) { return x }
@@ -1801,9 +2020,13 @@ describe("bundler", () => {
       "/not-identity-rest.js",
       "/not-identity-return.js",
     ],
+    dce: true,
+    minifySyntax: true,
+    dceKeepMarkerCount: {
+      "/out/identity-first.js": 4,
+    },
   });
   itBundled("dce/InlineEmptyFunctionCalls", {
-    // GENERATED
     files: {
       "/empty.js": /* js */ `
         function DROP() {}
@@ -1914,49 +2137,93 @@ describe("bundler", () => {
       "/reassign-array.js",
       "/reassign-object.js",
     ],
+    minifySyntax: true,
+    dce: true,
+    dceKeepMarkerCount: {
+      "/out/empty-first.js": 4,
+    },
   });
   itBundled("dce/InlineFunctionCallBehaviorChanges", {
-    // GENERATED
     files: {
-      "/entry.js": `
-        function empty() {}
-        function id(x) { return x }
-  
-        export let shouldBeWrapped = [
-          id(foo.bar)(),
-          id(foo[bar])(),
-          id(foo?.bar)(),
-          id(foo?.[bar])(),
-  
-          (empty(), foo.bar)(),
-          (empty(), foo[bar])(),
-          (empty(), foo?.bar)(),
-          (empty(), foo?.[bar])(),
-  
-          id(eval)(),
-          id(eval)?.(),
-          (empty(), eval)(),
-          (empty(), eval)?.(),
-  
-          id(foo.bar)\` + "\`\`" +
-      `,
+      // At the time of writing, using a template string here triggered a bug in bun's transpiler
+      // making it impossible to run the test.
+      "/entry.js":
+        "function empty_REMOVE() { }\n" +
+        "function id_REMOVE(x) { return x }\n" +
+        "\n" +
+        "export let shouldBeWrapped = [\n" +
+        "  id_REMOVE(foo.bar)(),\n" +
+        "  id_REMOVE(foo[bar])(),\n" +
+        "  id_REMOVE(foo?.bar)(),\n" +
+        "  id_REMOVE(foo?.[bar])(),\n" +
+        "\n" +
+        "  (empty_REMOVE(), foo.bar)(),\n" +
+        "  (empty_REMOVE(), foo[bar])(),\n" +
+        "  (empty_REMOVE(), foo?.bar)(),\n" +
+        "  (empty_REMOVE(), foo?.[bar])(),\n" +
+        "\n" +
+        "  id_REMOVE(eval)(),\n" +
+        "  id_REMOVE(eval)?.(),\n" +
+        "  (empty_REMOVE(), eval)(),\n" +
+        "  (empty_REMOVE(), eval)?.(),\n" +
+        "\n" +
+        "  id_REMOVE(foo.bar)``,\n" +
+        "  id_REMOVE(foo[bar])``,\n" +
+        "  id_REMOVE(foo?.bar)``,\n" +
+        "  id_REMOVE(foo?.[bar])``,\n" +
+        "\n" +
+        "  (empty_REMOVE(), foo.bar)``,\n" +
+        "  (empty_REMOVE(), foo[bar])``,\n" +
+        "  (empty_REMOVE(), foo?.bar)``,\n" +
+        "  (empty_REMOVE(), foo?.[bar])``,\n" +
+        "\n" +
+        "  delete id_REMOVE(foo),\n" +
+        "  delete id_REMOVE(foo.bar),\n" +
+        "  delete id_REMOVE(foo[bar]),\n" +
+        "  delete id_REMOVE(foo?.bar),\n" +
+        "  delete id_REMOVE(foo?.[bar]),\n" +
+        "\n" +
+        "  delete (empty_REMOVE(), foo),\n" +
+        "  delete (empty_REMOVE(), foo.bar),\n" +
+        "  delete (empty_REMOVE(), foo[bar]),\n" +
+        "  delete (empty_REMOVE(), foo?.bar),\n" +
+        "  delete (empty_REMOVE(), foo?.[bar]),\n" +
+        "\n" +
+        "  delete empty_REMOVE(),\n" +
+        "]\n" +
+        "\n" +
+        "export let shouldNotBeWrapped = [\n" +
+        "  id_REMOVE(foo)(),\n" +
+        "  (empty_REMOVE(), foo)(),\n" +
+        "\n" +
+        "  id_REMOVE(foo)``,\n" +
+        "  (empty_REMOVE(), foo)``,\n" +
+        "]\n" +
+        "\n" +
+        "export let shouldNotBeDoubleWrapped = [\n" +
+        "  delete (empty_REMOVE(), foo(), foo()),\n" +
+        "  delete id_REMOVE((foo(), bar())),\n" +
+        "]",
     },
-    mode: "passthrough",
+    mode: "transform",
+    minifySyntax: true,
+    treeShaking: true,
+    dce: true,
   });
   itBundled("dce/InlineFunctionCallForInitDecl", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
-        function empty() {}
-        function id(x) { return x }
+        function empty_REMOVE() {}
+        function id_REMOVE(x) { return x }
   
-        for (var y = empty(); false; ) ;
-        for (var z = id(123); false; ) ;
+        for (var y = empty_REMOVE(); false; ) ;
+        for (var z = id_REMOVE(123); false; ) ;
       `,
     },
+    minifySyntax: true,
+    dce: true,
   });
   itBundled("dce/ConstValueInliningNoBundle", {
-    // GENERATED
     files: {
       "/top-level.js": /* js */ `
         // These should be kept because they are top-level and tree shaking is not enabled
@@ -2105,10 +2372,15 @@ describe("bundler", () => {
       "/backwards-reference-top-level.js",
       "/backwards-reference-nested-function.js",
     ],
-    mode: "passthrough",
+    mode: "transform",
+    minifySyntax: true,
+    dce: true,
+    dceKeepMarkerCount: {
+      "/out/top-level.js": 7,
+      "/out/namespace-export.js": 1,
+    },
   });
   itBundled("dce/ConstValueInliningBundle", {
-    // GENERATED
     files: {
       "/exported-entry.js": /* js */ `
         const x_REMOVE = 1
@@ -2226,9 +2498,15 @@ describe("bundler", () => {
     ],
     format: "esm",
     minifySyntax: true,
+    dce: true,
+    dceKeepMarkerCount: {
+      "/out/re-exported-entry.js": 2,
+      "/out/re-exported-2-entry.js": 2,
+      "/out/re-exported-star-entry.js": 4,
+      "/out/re-exported-star-entry.js.": 4,
+    },
   });
   itBundled("dce/ConstValueInliningAssign", {
-    // GENERATED
     files: {
       "/const-assign.js": /* js */ `
         const x = 1
@@ -2240,46 +2518,43 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/const-assign.js", "/const-update.js"],
-    mode: "passthrough",
-    /* TODO FIX expectedScanLog: `const-assign.js: ERROR: Cannot assign to "x" because it is a constant
-  const-assign.js: NOTE: The symbol "x" was declared a constant here:
-  const-update.js: ERROR: Cannot assign to "x" because it is a constant
-  const-update.js: NOTE: The symbol "x" was declared a constant here:
-  `, */
+    bundleErrors: {
+      "/const-assign.js": ['Cannot assign to constant variable "x"'],
+      "/const-update.js": ['Cannot assign to constant variable "x"'],
+    },
   });
   itBundled("dce/ConstValueInliningDirectEval", {
-    // GENERATED
     files: {
       "/top-level-no-eval.js": /* js */ `
-        const x = 1
-        console.log(x, evil('x'))
+        const keep = 1
+        console.log(keep, evil('x')) // inline the 1 here
       `,
       "/top-level-eval.js": /* js */ `
-        const x = 1
-        console.log(x, eval('x'))
+        const keep = 1
+        console.log(keep, eval('x')) // inline the 1 but keep the const def
       `,
       "/nested-no-eval.js": /* js */ `
         (() => {
-          const x = 1
-          console.log(x, evil('x'))
+          const remove = 1
+          console.log(remove, evil('x')) // inline the 1 here and remove the const def
         })()
       `,
       "/nested-eval.js": /* js */ `
         (() => {
-          const x = 1
-          console.log(x, eval('x'))
+          const keep = 1
+          console.log(keep, eval('x')) // inline the 1 but keep the const def
         })()
       `,
       "/ts-namespace-no-eval.ts": /* ts */ `
         namespace y {
-          export const x = 1
-          console.log(x, evil('x'))
+          export const keep = 1
+          console.log(keep, evil('x')) // inline the 1 here
         }
       `,
       "/ts-namespace-eval.ts": /* ts */ `
         namespace z {
-          export const x = 1
-          console.log(x, eval('x'))
+          export const keep = 1
+          console.log(keep, eval('x'))
         }
       `,
     },
@@ -2291,19 +2566,28 @@ describe("bundler", () => {
       "/ts-namespace-no-eval.ts",
       "/ts-namespace-eval.ts",
     ],
-    mode: "passthrough",
+    mode: "transform",
+    minifySyntax: true,
+    dce: true,
+    dceKeepMarkerCount: {
+      "/out/top-level-no-eval.js": 1,
+      "/out/top-level-eval.js": 1,
+      "/out/nested-eval.js": 1,
+      "/out/ts-namespace-no-eval.js": 1,
+      "/out/ts-namespace-eval.js": 1,
+    },
   });
   itBundled("dce/CrossModuleConstantFolding", {
     // GENERATED
     files: {
       "/enum-constants.ts": /* ts */ `
-        export enum x {
+        export enum remove {
           a = 3,
           b = 6,
         }
       `,
       "/enum-entry.ts": /* ts */ `
-        import { x } from './enum-constants'
+        import { remove as x } from './enum-constants'
         console.log([
           +x.b,
           -x.b,
@@ -2386,14 +2670,14 @@ describe("bundler", () => {
         export const a = 2
         export const b = 4
         export const c = 8
-        export enum x {
+        export enum remove {
           a = 16,
           b = 32,
           c = 64,
         }
       `,
       "/nested-entry.ts": /* ts */ `
-        import { a, b, c, x } from './nested-constants'
+        import { a, b, c, remove as x } from './nested-constants'
         console.log({
           'should be 4': ~(~a & ~b) & (b | c),
           'should be 32': ~(~x.a & ~x.b) & (x.b | x.c),
@@ -2401,9 +2685,9 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/enum-entry.ts", "/const-entry.js", "/nested-entry.ts"],
+    dce: true,
   });
   itBundled("dce/MultipleDeclarationTreeShaking", {
-    // GENERATED
     files: {
       "/var2.js": /* js */ `
         var x = 1
@@ -2431,9 +2715,17 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/var2.js", "/var3.js", "/function2.js", "/function3.js"],
+    dce: true,
+    treeShaking: true,
+    minifySyntax: false,
+    run: [
+      { file: "/out/var2.js", stdout: "1" },
+      { file: "/out/var3.js", stdout: "1\n2" },
+      { file: "/out/function2.js", stdout: "2" },
+      { file: "/out/function3.js", stdout: "3\n3" },
+    ],
   });
   itBundled("dce/MultipleDeclarationTreeShakingMinifySyntax", {
-    // GENERATED
     files: {
       "/var2.js": /* js */ `
         var x = 1
@@ -2448,79 +2740,118 @@ describe("bundler", () => {
         var x = 3
       `,
       "/function2.js": /* js */ `
-        function x() { return 1 }
+        function x() { return "REMOVE" }
         console.log(x())
         function x() { return 2 }
       `,
       "/function3.js": /* js */ `
-        function x() { return 1 }
+        function x() { return "REMOVE" }
         console.log(x())
-        function x() { return 2 }
+        function x() { return "REMOVE" }
         console.log(x())
         function x() { return 3 }
       `,
     },
     entryPoints: ["/var2.js", "/var3.js", "/function2.js", "/function3.js"],
+    dce: true,
+    treeShaking: true,
+    minifySyntax: true,
+    run: [
+      { file: "/out/var2.js", stdout: "1" },
+      { file: "/out/var3.js", stdout: "1\n2" },
+      { file: "/out/function2.js", stdout: "2" },
+      { file: "/out/function3.js", stdout: "3\n3" },
+    ],
   });
   itBundled("dce/PureCallsWithSpread", {
-    // GENERATED
     files: {
+      // this changes to "[...args]"
       "/entry.js": /* js */ `
-        /* @__PURE__ */ foo(...args);
-        /* @__PURE__ */ new foo(...args);
+        /* @__PURE__ */ REMOVE(...args);
+        /* @__PURE__ */ new REMOVE(...args);
       `,
+    },
+    minifySyntax: true,
+    dce: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      assert([...code.matchAll(/\[\.\.\.args\]/g)].length === 2, "spread should be preserved");
     },
   });
   itBundled("dce/TopLevelFunctionInliningWithSpread", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
-        function empty1() {}
-        function empty2() {}
-        function empty3() {}
+        function empty1_remove() {}
+        function empty2_remove() {}
+        function empty3_remove() {}
   
         function identity1(x) { return x }
-        function identity2(x) { return x }
+        function identity2_remove(x) { return x }
         function identity3(x) { return x }
   
-        empty1()
-        empty2(args)
-        empty3(...args)
+        empty1_remove()
+        empty2_remove(args)
+        empty3_remove(...args)
   
         identity1()
-        identity2(args)
+        identity2_remove(args)
         identity3(...args)
       `,
       "/inner.js": /* js */ `
-        export function empty1() {}
-        export function empty2() {}
-        export function empty3() {}
+        export function empty1_remove() {}
+        export function empty2_remove() {}
+        export function empty3_remove() {}
   
         export function identity1(x) { return x }
-        export function identity2(x) { return x }
+        export function identity2_remove(x) { return x }
         export function identity3(x) { return x }
       `,
       "/entry-outer.js": /* js */ `
         import {
-          empty1,
-          empty2,
-          empty3,
+          empty1_remove,
+          empty2_remove,
+          empty3_remove,
   
           identity1,
-          identity2,
+          identity2_remove,
           identity3,
         } from './inner.js'
   
-        empty1()
-        empty2(args)
-        empty3(...args)
+        empty1_remove()
+        empty2_remove(args)
+        empty3_remove(...args)
   
         identity1()
-        identity2(args)
+        identity2_remove(args)
         identity3(...args)
       `,
     },
+    dce: true,
     entryPoints: ["/entry.js", "/entry-outer.js"],
+    minifySyntax: true,
+
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        globalThis.args = {
+          [Symbol.iterator]() {
+            console.log('spread')
+            return {
+              next() {
+                return { done: true, value: undefined }
+              }
+            }
+          }
+        };
+
+        await import('./out/entry.js');
+        console.log('---')
+        await import('./out/entry-outer.js');
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "spread\nspread\n---\nspread\nspread",
+    },
   });
   itBundled("dce/NestedFunctionInliningWithSpread", {
     // GENERATED
@@ -2577,8 +2908,8 @@ describe("bundler", () => {
     },
     entryPoints: ["/entry.js", "/entry-outer.js"],
   });
+  // im confused what this is testing. cross platform slash? there is none?? not even in the go source
   itBundled("dce/PackageJsonSideEffectsFalseCrossPlatformSlash", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg/foo"
@@ -2595,155 +2926,159 @@ describe("bundler", () => {
         }
       `,
     },
-  });
-  itBundled("dce/TreeShakingJSWithAssociatedCSS", {
-    // GENERATED
-    files: {
-      "/project/test.jsx": /* jsx */ `
-        import { Button } from 'pkg/button'
-        import { Menu } from 'pkg/menu'
-        render(<Button/>)
-      `,
-      "/project/node_modules/pkg/button.js": /* js */ `
-        import './button.css'
-        export let Button
-      `,
-      "/project/node_modules/pkg/button.css": `button { color: red }`,
-      "/project/node_modules/pkg/menu.js": /* js */ `
-        import './menu.css'
-        export let Menu
-      `,
-      "/project/node_modules/pkg/menu.css": `menu { color: red }`,
+    run: {
+      stdout: "foo\nbar",
     },
   });
-  itBundled("dce/TreeShakingJSWithAssociatedCSSReExportSideEffectsFalse", {
-    // GENERATED
-    files: {
-      "/project/test.jsx": /* jsx */ `
-        import { Button } from 'pkg'
-        render(<Button/>)
-      `,
-      "/project/node_modules/pkg/entry.js": `export { Button } from './components'`,
-      "/project/node_modules/pkg/package.json": /* json */ `
-        {
-        "main": "./entry.js",
-        "sideEffects": false
-      }
-      `,
-      "/project/node_modules/pkg/components.jsx": /* jsx */ `
-        require('./button.css')
-        export const Button = () => <button/>
-      `,
-      "/project/node_modules/pkg/button.css": `button { color: red }`,
-    },
-  });
-  itBundled("dce/TreeShakingJSWithAssociatedCSSReExportSideEffectsFalseOnlyJS", {
-    // GENERATED
-    files: {
-      "/project/test.jsx": /* jsx */ `
-        import { Button } from 'pkg'
-        render(<Button/>)
-      `,
-      "/project/node_modules/pkg/entry.js": `export { Button } from './components'`,
-      "/project/node_modules/pkg/package.json": /* json */ `
-        {
-        "main": "./entry.js",
-        "sideEffects": ["*.css"]
-      }
-      `,
-      "/project/node_modules/pkg/components.jsx": /* jsx */ `
-        require('./button.css')
-        export const Button = () => <button/>
-      `,
-      "/project/node_modules/pkg/button.css": `button { color: red }`,
-    },
-  });
-  itBundled("dce/TreeShakingJSWithAssociatedCSSExportStarSideEffectsFalse", {
-    // GENERATED
-    files: {
-      "/project/test.jsx": /* jsx */ `
-        import { Button } from 'pkg'
-        render(<Button/>)
-      `,
-      "/project/node_modules/pkg/entry.js": `export * from './components'`,
-      "/project/node_modules/pkg/package.json": /* json */ `
-        {
-        "main": "./entry.js",
-        "sideEffects": false
-      }
-      `,
-      "/project/node_modules/pkg/components.jsx": /* jsx */ `
-        require('./button.css')
-        export const Button = () => <button/>
-      `,
-      "/project/node_modules/pkg/button.css": `button { color: red }`,
-    },
-  });
-  itBundled("dce/TreeShakingJSWithAssociatedCSSExportStarSideEffectsFalseOnlyJS", {
-    // GENERATED
-    files: {
-      "/project/test.jsx": /* jsx */ `
-        import { Button } from 'pkg'
-        render(<Button/>)
-      `,
-      "/project/node_modules/pkg/entry.js": `export * from './components'`,
-      "/project/node_modules/pkg/package.json": /* json */ `
-        {
-        "main": "./entry.js",
-        "sideEffects": ["*.css"]
-      }
-      `,
-      "/project/node_modules/pkg/components.jsx": /* jsx */ `
-        require('./button.css')
-        export const Button = () => <button/>
-      `,
-      "/project/node_modules/pkg/button.css": `button { color: red }`,
-    },
-  });
-  itBundled("dce/TreeShakingJSWithAssociatedCSSUnusedNestedImportSideEffectsFalse", {
-    // GENERATED
-    files: {
-      "/project/test.jsx": /* jsx */ `
-        import { Button } from 'pkg/button'
-        render(<Button/>)
-      `,
-      "/project/node_modules/pkg/package.json": /* json */ `
-        {
-        "sideEffects": false
-      }
-      `,
-      "/project/node_modules/pkg/button.jsx": /* jsx */ `
-        import styles from './styles'
-        export const Button = () => <button/>
-      `,
-      "/project/node_modules/pkg/styles.js": /* js */ `
-        import './styles.css'
-        export default {}
-      `,
-      "/project/node_modules/pkg/styles.css": `button { color: red }`,
-    },
-  });
-  itBundled("dce/TreeShakingJSWithAssociatedCSSUnusedNestedImportSideEffectsFalseOnlyJS", {
-    // GENERATED
-    files: {
-      "/project/test.jsx": /* jsx */ `
-        import { Button } from 'pkg/button'
-        render(<Button/>)
-      `,
-      "/project/node_modules/pkg/package.json": /* json */ `
-        {
-          "sideEffects": ["*.css"]
-        }
-      `,
-      "/project/node_modules/pkg/button.jsx": /* jsx */ `
-        import styles from './styles'
-        export const Button = () => <button/>
-      `,
-      "/project/node_modules/pkg/styles.js": /* js */ `
-        import './styles.css'
-        export default {}
-      `,
-      "/project/node_modules/pkg/styles.css": `button { color: red }`,
-    },
-  });
+  // itBundled("dce/TreeShakingJSWithAssociatedCSS", {
+  //   // TODO: css assertions. this should contain both button and menu
+  //   files: {
+  //     "/project/test.jsx": /* jsx */ `
+  //       import { Button } from 'pkg/button'
+  //       import { Menu } from 'pkg/menu'
+  //       render(<Button/>)
+  //     `,
+  //     "/project/node_modules/pkg/button.js": /* js */ `
+  //       import './button.css'
+  //       export let Button
+  //     `,
+  //     "/project/node_modules/pkg/button.css": `button { color: red }`,
+  //     "/project/node_modules/pkg/menu.js": /* js */ `
+  //       import './menu.css'
+  //       export let Menu
+  //     `,
+  //     "/project/node_modules/pkg/menu.css": `menu { color: green }`,
+  //   },
+  //   external: ["react"],
+  // });
+  // itBundled("dce/TreeShakingJSWithAssociatedCSSReExportSideEffectsFalse", {
+  //   // GENERATED
+  //   files: {
+  //     "/project/test.jsx": /* jsx */ `
+  //       import { Button } from 'pkg'
+  //       render(<Button/>)
+  //     `,
+  //     "/project/node_modules/pkg/entry.js": `export { Button } from './components'`,
+  //     "/project/node_modules/pkg/package.json": /* json */ `
+  //       {
+  //       "main": "./entry.js",
+  //       "sideEffects": false
+  //     }
+  //     `,
+  //     "/project/node_modules/pkg/components.jsx": /* jsx */ `
+  //       require('./button.css')
+  //       export const Button = () => <button/>
+  //     `,
+  //     "/project/node_modules/pkg/button.css": `button { color: red }`,
+  //   },
+  // });
+  // itBundled("dce/TreeShakingJSWithAssociatedCSSReExportSideEffectsFalseOnlyJS", {
+  //   // GENERATED
+  //   files: {
+  //     "/project/test.jsx": /* jsx */ `
+  //       import { Button } from 'pkg'
+  //       render(<Button/>)
+  //     `,
+  //     "/project/node_modules/pkg/entry.js": `export { Button } from './components'`,
+  //     "/project/node_modules/pkg/package.json": /* json */ `
+  //       {
+  //       "main": "./entry.js",
+  //       "sideEffects": ["*.css"]
+  //     }
+  //     `,
+  //     "/project/node_modules/pkg/components.jsx": /* jsx */ `
+  //       require('./button.css')
+  //       export const Button = () => <button/>
+  //     `,
+  //     "/project/node_modules/pkg/button.css": `button { color: red }`,
+  //   },
+  // });
+  // itBundled("dce/TreeShakingJSWithAssociatedCSSExportStarSideEffectsFalse", {
+  //   // GENERATED
+  //   files: {
+  //     "/project/test.jsx": /* jsx */ `
+  //       import { Button } from 'pkg'
+  //       render(<Button/>)
+  //     `,
+  //     "/project/node_modules/pkg/entry.js": `export * from './components'`,
+  //     "/project/node_modules/pkg/package.json": /* json */ `
+  //       {
+  //       "main": "./entry.js",
+  //       "sideEffects": false
+  //     }
+  //     `,
+  //     "/project/node_modules/pkg/components.jsx": /* jsx */ `
+  //       require('./button.css')
+  //       export const Button = () => <button/>
+  //     `,
+  //     "/project/node_modules/pkg/button.css": `button { color: red }`,
+  //   },
+  // });
+  // itBundled("dce/TreeShakingJSWithAssociatedCSSExportStarSideEffectsFalseOnlyJS", {
+  //   // GENERATED
+  //   files: {
+  //     "/project/test.jsx": /* jsx */ `
+  //       import { Button } from 'pkg'
+  //       render(<Button/>)
+  //     `,
+  //     "/project/node_modules/pkg/entry.js": `export * from './components'`,
+  //     "/project/node_modules/pkg/package.json": /* json */ `
+  //       {
+  //       "main": "./entry.js",
+  //       "sideEffects": ["*.css"]
+  //     }
+  //     `,
+  //     "/project/node_modules/pkg/components.jsx": /* jsx */ `
+  //       require('./button.css')
+  //       export const Button = () => <button/>
+  //     `,
+  //     "/project/node_modules/pkg/button.css": `button { color: red }`,
+  //   },
+  // });
+  // itBundled("dce/TreeShakingJSWithAssociatedCSSUnusedNestedImportSideEffectsFalse", {
+  //   // GENERATED
+  //   files: {
+  //     "/project/test.jsx": /* jsx */ `
+  //       import { Button } from 'pkg/button'
+  //       render(<Button/>)
+  //     `,
+  //     "/project/node_modules/pkg/package.json": /* json */ `
+  //       {
+  //       "sideEffects": false
+  //     }
+  //     `,
+  //     "/project/node_modules/pkg/button.jsx": /* jsx */ `
+  //       import styles from './styles'
+  //       export const Button = () => <button/>
+  //     `,
+  //     "/project/node_modules/pkg/styles.js": /* js */ `
+  //       import './styles.css'
+  //       export default {}
+  //     `,
+  //     "/project/node_modules/pkg/styles.css": `button { color: red }`,
+  //   },
+  // });
+  // itBundled("dce/TreeShakingJSWithAssociatedCSSUnusedNestedImportSideEffectsFalseOnlyJS", {
+  //   // GENERATED
+  //   files: {
+  //     "/project/test.jsx": /* jsx */ `
+  //       import { Button } from 'pkg/button'
+  //       render(<Button/>)
+  //     `,
+  //     "/project/node_modules/pkg/package.json": /* json */ `
+  //       {
+  //         "sideEffects": ["*.css"]
+  //       }
+  //     `,
+  //     "/project/node_modules/pkg/button.jsx": /* jsx */ `
+  //       import styles from './styles'
+  //       export const Button = () => <button/>
+  //     `,
+  //     "/project/node_modules/pkg/styles.js": /* js */ `
+  //       import './styles.css'
+  //       export default {}
+  //     `,
+  //     "/project/node_modules/pkg/styles.css": `button { color: red }`,
+  //   },
+  // });
 });

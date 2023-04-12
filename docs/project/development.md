@@ -29,7 +29,7 @@ If none of the above solutions apply, you will have to install it [manually](htt
 
 Make sure LLVM 15 is in your path:
 
-```
+```bash
 $ which clang-15
 ```
 
@@ -72,7 +72,7 @@ In addition to this, you will need either `bun` or `npm` installed to install th
 
 Zig can installed either with our npm package [`@oven/zig`](https://www.npmjs.com/package/@oven/zig), or by using [zigup](https://github.com/marler8997/zigup).
 
-```
+```bash
 $ bun install -g @oven/zig
 $ zigup master
 ```
@@ -159,8 +159,8 @@ While Bun is in beta, you can modify them at runtime in release builds via the e
 To build a release build of Bun, run:
 
 ```bash
-make release-bindings -j12
-make release
+$ make release-bindings -j12
+$ make release
 ```
 
 The binary will be located at `packages/bun-{platform}-{arch}/bun`.
@@ -180,7 +180,7 @@ You'll need a very recent version of Valgrind due to DWARF 5 debug symbols. You 
 `--fair-sched=try` is necessary if running multithreaded code in Bun (such as the bundler). Otherwise it will hang.
 
 ```bash
-valgrind --fair-sched=try --track-origins=yes bun-debug <args>
+$ valgrind --fair-sched=try --track-origins=yes bun-debug <args>
 ```
 
 ## Troubleshooting

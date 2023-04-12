@@ -2944,4 +2944,14 @@ console.log(foo, array);
       expect(exports).toHaveLength(3);
     });
   });
+
+  describe("edge cases", () => {
+    it("import statement with quoted specifier", () => {
+      expectPrinted_(`import { "x.y" as xy } from "bar";`, `import {"x.y" as xy} from "bar"`);
+    });
+
+    it('`str` + "``"', () => {
+      expectPrinted_('const x = `str` + "``";', "const x = `str\\`\\``");
+    });
+  });
 });

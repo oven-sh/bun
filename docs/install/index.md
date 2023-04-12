@@ -23,7 +23,9 @@ sudo apt install --install-recommends linux-generic-hwe-20.04
 
 {% /details %}
 
-## `bun install`
+## Manage dependencies
+
+### `bun install`
 
 To install all dependencies of a project:
 
@@ -84,13 +86,12 @@ dryRun = false
 
 {% /details %}
 
-## `bun add` / `bun remove`
+### `bun add`
 
-To add or remove a particular package:
+To add a particular package:
 
 ```bash
 $ bun add preact
-$ bun remove preact
 ```
 
 To specify a version, version range, or tag:
@@ -147,7 +148,15 @@ To view a complete list of options for a given command:
 $ bun add --help
 ```
 
-## `git` dependencies
+### `bun remove`
+
+To remove a dependency:
+
+```bash
+$ bun remove preact
+```
+
+## Git dependencies
 
 To add a dependency from a git repository:
 
@@ -168,44 +177,14 @@ Bun supports a variety of protocols, including [`github`](https://docs.npmjs.com
 }
 ```
 
-## `bun pm`
+## Tarball dependencies
 
-The `bun pm` command group provides a set of utilities for working with Bun's package manager.
+A package name can correspond to a publically hosted `.tgz` file. During `bun install`, Bun will download and install the package from the specified tarball URL, rather than from the package registry.
 
-To print the path to the `bin` directory for the local project:
-
-```bash
-$ bun pm bin
-/path/to/current/project/node_modules/.bin
-```
-
-To get the path to the global `bin` directory:
-
-```bash
-$ bun pm bin
-<$HOME>/.bun/bin
-```
-
-To print a list of packages installed in the current project and their resolved versions, excluding their dependencies. Use the `--all` flag to print the entire tree, including all nth-order dependencies.
-
-```bash
-$ bun pm ls
-/path/to/project node_modules (5)
-├── eslint@8.33.0
-├── react@18.2.0
-├── react-dom@18.2.0
-├── typescript@4.8.4
-└── zod@3.20.1
-```
-
-To print the path to Bun's global module cache:
-
-```bash
-$ bun pm cache
-```
-
-To clear Bun's global module cache:
-
-```bash
-$ bun pm cache rm
+```json#package.json
+{
+  "dependencies": {
+    "zod": "https://registry.npmjs.org/zod/-/zod-3.21.4.tgz"
+  }
+}
 ```

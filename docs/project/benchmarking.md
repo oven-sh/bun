@@ -22,6 +22,8 @@ When writing your own benchmarks, it's important to choose the right tool.
 
 Bun has two heaps. One heap is for the JavaScript runtime and the other heap is for everything else.
 
+{% anchor id="bunjsc" /%}
+
 ### JavaScript heap stats
 
 The `bun:jsc` module exposes a few functions for measuring memory usage:

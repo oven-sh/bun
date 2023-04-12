@@ -82,17 +82,32 @@ export default {
     page("runtime/index", "Runtime", {
       description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
     }),
+    page("ecosystem/nodejs", "Node.js compatibility", {
+      description: `Track the status of Bun's API compatibility with Node.js.`,
+    }),
     // page("runtime/web-apis", "Web APIs"),
-    page("runtime/modules", "Module resolution", {
-      description: `Bun uses ESM and implements an extended version of the Node.js module resolution algorithm.`,
+
+    // page("runtime/loaders", "Loaders"),
+
+    page("ecosystem/typescript", "TypeScript", {
+      description: `Bun can directly execute TypeScript files without additional configuration.`,
+    }),
+    page("runtime/jsx", "JSX and React", {
+      description: `Bun can directly execute TypeScript files without additional configuration.`,
     }),
     page("runtime/hot", "Watch mode", {
       description: `Reload your application & tests automatically.`,
     }),
-    // page("runtime/loaders", "Loaders"),
+    page("runtime/modules", "Module resolution", {
+      description: `Bun uses ESM and implements an extended version of the Node.js module resolution algorithm.`,
+    }),
+    page("runtime/autoimport", "Automatic imports", {
+      description: `Bun uses ESM and implements an extended version of the Node.js module resolution algorithm.`,
+    }),
     page("runtime/plugins", "Plugins", {
       description: `Implement custom loaders and module resolution logic with Bun's plugin system.`,
     }),
+
     page("runtime/framework", "Framework API", {
       disabled: true,
       description:
@@ -120,6 +135,11 @@ export default {
       description:
         "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
     }),
+    page("install/utilities", "Utilities", {
+      description:
+        "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
+    }),
+
     divider("Test runner"),
     page("cli/test", "`bun test`", {
       description: "Bun's test runner uses Jest-compatible syntax but runs 100x faster.",
@@ -134,14 +154,11 @@ export default {
     // page("runtime/nodejs", "Node.js APIs"),
 
     divider("Ecosystem"),
-    page("ecosystem/nodejs", "Node.js", {
-      description: `Track the status of Bun's API compatibility with Node.js.`,
-    }),
-    page("ecosystem/typescript", "TypeScript", {
-      description: `Bun can directly execute TypeScript files without additional configuration.`,
-    }),
-    page("ecosystem/react", "React", {
-      description: `The Bun runtime supports JSX syntax out of the box and optimizes server-side rendering.`,
+    // page("ecosystem/react", "React", {
+    //   description: `The Bun runtime supports JSX syntax out of the box and optimizes server-side rendering.`,
+    // }),
+    page("ecosystem/express", "Express", {
+      description: `Servers built with Express and other major Node.js HTTP libraries work out of the box.`,
     }),
     page("ecosystem/elysia", "Elysia", {
       description: `Get started with Elysia, a Bun-native framework designed for the edge.`,
@@ -152,9 +169,7 @@ export default {
     page("ecosystem/buchta", "Buchta", {
       description: `Buchta is a Bun-native fullstack framework for Svelte and Preact apps.`,
     }),
-    page("ecosystem/express", "Express", {
-      description: `Servers built with Express and other major Node.js HTTP libraries work out of the box.`,
-    }),
+
     page("ecosystem/awesome", "Awesome", {
       href: "https://github.com/apvarun/awesome-bun",
       description: ``,

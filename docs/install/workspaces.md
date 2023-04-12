@@ -11,7 +11,7 @@ To try it, specify a list of sub-packages in the `workspaces` field of your `pac
 ```
 
 {% callout %}
-**Glob support** — Bun v0.5.8 added support for simple globs for workspace names, with a "\*/" at the end. Nothing too fancy.
+**Glob support** — Bun v0.5.8 added support for simple `<directory>/*` globs in `"workspaces"`. Full glob syntax (e.g. `**` and `?`) is not yet supported (soon!).
 {% /callout %}
 
 This has a couple major benefits.

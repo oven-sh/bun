@@ -1,8 +1,8 @@
 {% callout %}
-**Note** — `bunx` is an alias for `bun x`
+**Note** — `bunx` is an alias for `bun x`. The `bunx` CLI will be auto-installed when you install `bun`.
 {% /callout %}
 
-Use `bunx` to auto-install and run packages from `npm`. The `bunx` CLI will be auto-installed when you install `bun`.
+Use `bunx` to auto-install and run packages from `npm`. It's Bun's equivalent of `npx` or `yarn dlx`.
 
 ```bash
 $ bunx cowsay "Hello world!"

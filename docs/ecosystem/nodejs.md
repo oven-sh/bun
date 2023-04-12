@@ -182,7 +182,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 ---
 
 - {% anchor id="node_string_decoder" %} [`node:string_decoder`](https://nodejs.org/api/string_decoder.html) {% /anchor %}
-- 🟢
+- 🟢 Fully implemented.
 
 ---
 
@@ -230,7 +230,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 - {% anchor id="node_v8" %} [`node:v8`](https://nodejs.org/api/v8.html) {% /anchor %}
 - 🔴
-- Not implemented or planned. For profiling, use `bun:jsc` instead.
+- Not implemented or planned. For profiling, use [`bun:jsc`](/docs/project/benchmarking#bunjsc) instead.
 
 ---
 

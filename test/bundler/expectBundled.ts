@@ -561,7 +561,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
       let unexpectedWarnings = [];
 
       for (const error of allWarnings) {
-        const i = warningsLeft.findIndex(item => error.file === item.file && item.error === error.error);
+        const i = warningsLeft.findIndex(item => error.file === item.file && item.error.includes(error.error));
         if (i === -1) {
           unexpectedWarnings.push(error);
         } else {

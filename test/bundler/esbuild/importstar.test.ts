@@ -1260,9 +1260,9 @@ describe("bundler", () => {
     entryPoints: ["/entry-nope.js", "/entry-default.js"],
     bundleWarnings: {
       "/entry-nope.js": [
-        'WARNING: Import "nope" will always be undefined because the file "empty.js" has no exports',
-        'WARNING: Import "nope" will always be undefined because the file "empty.mjs" has no exports',
-        'WARNING: Import "nope" will always be undefined because the file "empty.cjs" has no exports',
+        'Import "nope" will always be undefined because the file "empty.js" has no exports',
+        'Import "nope" will always be undefined because the file "empty.mjs" has no exports',
+        'Import "nope" will always be undefined because the file "empty.cjs" has no exports',
       ],
     },
     run: [

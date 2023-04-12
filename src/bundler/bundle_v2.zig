@@ -791,6 +791,11 @@ const ParseTask = struct {
 
     threadlocal var override_file_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
+    fn getEmptyAST(log: *Logger.Log, bundler: *Bundler, opts: js_parser.Parser.Options, allocator: std.mem.Allocator, source: Logger.Source) !js_ast.Ast {
+        const root = Expr.init(E.Undefined, E.Undefined{}, Logger.Loc.Empty);
+        return (try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?;
+    }
+
     fn getAST(
         log: *Logger.Log,
         bundler: *Bundler,
@@ -808,7 +813,7 @@ const ParseTask = struct {
                     bundler.options.define,
                     log,
                     &source,
-                )) orelse return js_ast.Ast.empty;
+                )) orelse return try getEmptyAST(log, bundler, opts, allocator, source);
             },
             .json => {
                 const root = (try resolver.caches.json.parseJSON(log, source, allocator)) orelse Expr.init(E.Object, E.Object{}, Logger.Loc.Empty);
@@ -825,7 +830,7 @@ const ParseTask = struct {
                 }, Logger.Loc{ .start = 0 });
                 return (try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?;
             },
-            else => return js_ast.Ast.empty,
+            else => return try getEmptyAST(log, bundler, opts, allocator, source),
         }
     }
 
@@ -950,17 +955,8 @@ const ParseTask = struct {
 
         var ast: js_ast.Ast = if (!is_empty)
             try getAST(log, bundler, opts, allocator, resolver, source, loader)
-        else brk: {
-            var empty = js_ast.Ast.empty;
-            empty.named_imports.allocator = allocator;
-            empty.named_exports.allocator = allocator;
-            var _parts = allocator.alloc(js_ast.Part, 1) catch unreachable;
-            _parts[0] = js_ast.Part{
-                .can_be_removed_if_unused = true,
-            };
-            empty.parts = BabyList(js_ast.Part).init(_parts[0..1]);
-            break :brk empty;
-        };
+        else
+            try getEmptyAST(log, bundler, opts, allocator, source);
 
         ast.platform = platform;
         if (ast.parts.len <= 1) {
@@ -1704,12 +1700,12 @@ const LinkerGraph = struct {
         part.symbol_uses = uses;
 
         const exports_ref = g.ast.items(.exports_ref)[source_index];
-        const module_ref = g.ast.items(.module_ref)[source_index].?;
-        if (ref.eql(exports_ref)) {
+        const module_ref = g.ast.items(.module_ref)[source_index];
+        if (!exports_ref.isNull() and ref.eql(exports_ref)) {
             g.ast.items(.uses_exports_ref)[source_index] = true;
         }
 
-        if (ref.eql(module_ref)) {
+        if (!module_ref.isNull() and ref.eql(module_ref)) {
             g.ast.items(.uses_module_ref)[source_index] = true;
         }
 
@@ -2526,7 +2522,7 @@ const LinkerContext = struct {
             .data = stmt.data.s_lazy_export,
             .loc = stmt.loc,
         };
-        const module_ref = this.graph.ast.items(.module_ref)[source_index].?;
+        const module_ref = this.graph.ast.items(.module_ref)[source_index];
 
         switch (exports_kind) {
             .cjs => {
@@ -2649,7 +2645,7 @@ const LinkerContext = struct {
 
             var export_star_import_records: [][]u32 = this.graph.ast.items(.export_star_import_records);
             var exports_refs: []Ref = this.graph.ast.items(.exports_ref);
-            var module_refs: []?Ref = this.graph.ast.items(.module_ref);
+            var module_refs: []Ref = this.graph.ast.items(.module_ref);
             var lazy_exports: []bool = this.graph.ast.items(.has_lazy_export);
             var symbols = &this.graph.symbols;
             defer this.graph.symbols = symbols.*;
@@ -2901,7 +2897,7 @@ const LinkerContext = struct {
                         export_kind == .cjs and flag.wrap == .none)
                     {
                         const exports_ref = symbols.follow(exports_refs[id]);
-                        const module_ref = symbols.follow(module_refs[id].?);
+                        const module_ref = symbols.follow(module_refs[id]);
                         symbols.get(exports_ref).?.kind = .unbound;
                         symbols.get(module_ref).?.kind = .unbound;
                     } else if (flag.force_include_exports_for_entry_point or export_kind != .cjs) {
@@ -2909,8 +2905,8 @@ const LinkerContext = struct {
                         flags[id] = flag;
                     }
 
-                    const wrapped_ref = this.graph.ast.items(.wrapper_ref)[id] orelse continue;
-                    if (wrapped_ref.isNull()) continue;
+                    const wrapped_ref = this.graph.ast.items(.wrapper_ref)[id];
+                    if (wrapped_ref.isNull() or wrapped_ref.isEmpty()) continue;
 
                     // Create the wrapper part for wrapped files. This is needed by a later step.
                     this.createWrapperForFile(
@@ -2963,7 +2959,7 @@ const LinkerContext = struct {
                     this.graph.symbols.get(exports_ref)
                 else
                     null;
-                const module_ref = module_refs[id] orelse Ref.None;
+                const module_ref = module_refs[id];
                 var module_symbol: ?*js_ast.Symbol = if (module_ref.isValid())
                     this.graph.symbols.get(module_ref)
                 else
@@ -3025,7 +3021,7 @@ const LinkerContext = struct {
                     ) catch unreachable;
 
                     buf = buf[original_name.len..];
-                    this.graph.symbols.get(wrapper_refs[id].?).?.original_name = original_name;
+                    this.graph.symbols.get(wrapper_refs[id]).?.original_name = original_name;
                 }
 
                 // If this isn't CommonJS, then rename the unused "exports" and "module"
@@ -3243,7 +3239,7 @@ const LinkerContext = struct {
 
                         if (other_flags.wrap != .none) {
                             // Depend on the automatically-generated require wrapper symbol
-                            const wrapper_ref = wrapper_refs[other_id].?;
+                            const wrapper_ref = wrapper_refs[other_id];
                             this.graph.generateSymbolImportAndUse(
                                 source_index,
                                 @intCast(u32, part_index),
@@ -3863,7 +3859,7 @@ const LinkerContext = struct {
         flags: []const JSMeta.Flags,
         entry_point_chunk_indices: []Index.Int,
         imports_to_bind: []RefImportData,
-        wrapper_refs: []const ?Ref,
+        wrapper_refs: []const Ref,
         sorted_and_filtered_export_aliases: []const []const string,
         resolved_exports: []const ResolvedExports,
         ctx: *LinkerContext,
@@ -3884,7 +3880,7 @@ const LinkerContext = struct {
                 var import_records = deps.import_records[source_index].slice();
                 const imports_to_bind = deps.imports_to_bind[source_index];
                 const wrap = deps.flags[source_index].wrap;
-                const wrapper_ref = deps.wrapper_refs[source_index].?;
+                const wrapper_ref = deps.wrapper_refs[source_index];
                 const _chunks = deps.chunks;
 
                 for (parts) |part| {
@@ -4004,12 +4000,12 @@ const LinkerContext = struct {
 
                     // Ensure "exports" is included if the current output format needs it
                     if (flags.force_include_exports_for_entry_point) {
-                        imports.put(deps.wrapper_refs[chunk.entry_point.source_index].?, {}) catch unreachable;
+                        imports.put(deps.wrapper_refs[chunk.entry_point.source_index], {}) catch unreachable;
                     }
 
                     // Include the wrapper if present
                     if (flags.wrap != .none) {
-                        imports.put(deps.wrapper_refs[chunk.entry_point.source_index].?, {}) catch unreachable;
+                        imports.put(deps.wrapper_refs[chunk.entry_point.source_index], {}) catch unreachable;
                     }
                 }
             }
@@ -4307,7 +4303,7 @@ const LinkerContext = struct {
         const all_module_scopes = c.graph.ast.items(.module_scope);
         const all_flags: []const JSMeta.Flags = c.graph.meta.items(.flags);
         const all_parts: []const js_ast.Part.List = c.graph.ast.items(.parts);
-        const all_wrapper_refs: []const ?Ref = c.graph.ast.items(.wrapper_ref);
+        const all_wrapper_refs: []const Ref = c.graph.ast.items(.wrapper_ref);
         const all_import_records: []const ImportRecord.List = c.graph.ast.items(.import_records);
 
         var r = try renamer.NumberRenamer.init(
@@ -4381,7 +4377,7 @@ const LinkerContext = struct {
                 // scope to this new top-level scope) but it's good enough for the
                 // renaming code.
                 .cjs => {
-                    r.addTopLevelSymbol(all_wrapper_refs[source_index].?);
+                    r.addTopLevelSymbol(all_wrapper_refs[source_index]);
 
                     // External import statements will be hoisted outside of the CommonJS
                     // wrapper if the output format supports import statements. We need to
@@ -4448,7 +4444,7 @@ const LinkerContext = struct {
                 // minify everything inside the closure without introducing a new scope
                 // since all top-level variables will be hoisted outside of the closure.
                 .esm => {
-                    r.addTopLevelSymbol(all_wrapper_refs[source_index].?);
+                    r.addTopLevelSymbol(all_wrapper_refs[source_index]);
                 },
 
                 else => {},
@@ -4881,14 +4877,14 @@ const LinkerContext = struct {
                                 .{
                                     .default_name = .{
                                         .loc = Logger.Loc.Empty,
-                                        .ref = ast.wrapper_ref.?,
+                                        .ref = ast.wrapper_ref,
                                     },
                                     .value = .{
                                         .expr = Expr.init(
                                             E.Call,
                                             E.Call{
                                                 .target = Expr.initIdentifier(
-                                                    ast.wrapper_ref.?,
+                                                    ast.wrapper_ref,
                                                     Logger.Loc.Empty,
                                                 ),
                                             },
@@ -4915,7 +4911,7 @@ const LinkerContext = struct {
                                                         E.Call,
                                                         E.Call{
                                                             .target = Expr.initIdentifier(
-                                                                ast.wrapper_ref.?,
+                                                                ast.wrapper_ref,
                                                                 Logger.Loc.Empty,
                                                             ),
                                                         },
@@ -4938,7 +4934,7 @@ const LinkerContext = struct {
                                                 E.Call,
                                                 E.Call{
                                                     .target = Expr.initIdentifier(
-                                                        ast.wrapper_ref.?,
+                                                        ast.wrapper_ref,
                                                         Logger.Loc.Empty,
                                                     ),
                                                 },
@@ -5122,7 +5118,7 @@ const LinkerContext = struct {
                                 Expr.init(
                                     E.Call,
                                     .{
-                                        .target = Expr.initIdentifier(ast.wrapper_ref.?, Logger.Loc.Empty),
+                                        .target = Expr.initIdentifier(ast.wrapper_ref, Logger.Loc.Empty),
                                     },
                                     Logger.Loc.Empty,
                                 ),
@@ -5139,7 +5135,7 @@ const LinkerContext = struct {
                                     .value = Expr.init(
                                         E.Call,
                                         .{
-                                            .target = Expr.initIdentifier(ast.wrapper_ref.?, Logger.Loc.Empty),
+                                            .target = Expr.initIdentifier(ast.wrapper_ref, Logger.Loc.Empty),
                                         },
                                         Logger.Loc.Empty,
                                     ),
@@ -5345,7 +5341,7 @@ const LinkerContext = struct {
                         E.Call,
                         E.Call{
                             .target = Expr.initIdentifier(
-                                c.graph.ast.items(.wrapper_ref)[record.source_index.get()].?,
+                                c.graph.ast.items(.wrapper_ref)[record.source_index.get()],
                                 loc,
                             ),
                         },
@@ -5598,7 +5594,7 @@ const LinkerContext = struct {
                                                         .target = Expr.init(
                                                             E.Identifier,
                                                             E.Identifier{
-                                                                .ref = c.graph.ast.items(.wrapper_ref)[record.source_index.get()].?,
+                                                                .ref = c.graph.ast.items(.wrapper_ref)[record.source_index.get()],
                                                             },
                                                             stmt.loc,
                                                         ),
@@ -6127,7 +6123,7 @@ const LinkerContext = struct {
                                     .binding = js_ast.Binding.alloc(
                                         temp_allocator,
                                         js_ast.B.Identifier{
-                                            .ref = ast.module_ref.?,
+                                            .ref = ast.module_ref,
                                         },
                                         Logger.Loc.Empty,
                                     ),
@@ -6172,7 +6168,7 @@ const LinkerContext = struct {
                             .binding = Binding.alloc(
                                 temp_allocator,
                                 B.Identifier{
-                                    .ref = ast.wrapper_ref.?,
+                                    .ref = ast.wrapper_ref,
                                 },
                                 Logger.Loc.Empty,
                             ),
@@ -6320,7 +6316,7 @@ const LinkerContext = struct {
                             .binding = Binding.alloc(
                                 temp_allocator,
                                 B.Identifier{
-                                    .ref = ast.wrapper_ref.?,
+                                    .ref = ast.wrapper_ref,
                                 },
                                 Logger.Loc.Empty,
                             ),
@@ -6406,7 +6402,7 @@ const LinkerContext = struct {
             else
                 Ref.None,
             .is_wrapper_async = flags.is_async_or_has_async_dependency,
-            .wrapper_ref = c.graph.ast.items(.wrapper_ref)[source_index] orelse Ref.None,
+            .wrapper_ref = c.graph.ast.items(.wrapper_ref)[source_index],
         };
     }
 
@@ -7144,8 +7140,8 @@ const LinkerContext = struct {
                             c.allocator,
                             &[_]js_ast.DeclaredSymbol{
                                 .{ .ref = c.graph.ast.items(.exports_ref)[source_index], .is_top_level = true },
-                                .{ .ref = c.graph.ast.items(.module_ref)[source_index].?, .is_top_level = true },
-                                .{ .ref = c.graph.ast.items(.wrapper_ref)[source_index].?, .is_top_level = true },
+                                .{ .ref = c.graph.ast.items(.module_ref)[source_index], .is_top_level = true },
+                                .{ .ref = c.graph.ast.items(.wrapper_ref)[source_index], .is_top_level = true },
                             },
                         ) catch unreachable,
                         .dependencies = Dependency.List.init(dependencies),

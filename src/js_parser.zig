@@ -2776,7 +2776,14 @@ pub const Parser = struct {
         var parts = try p.allocator.alloc(js_ast.Part, 2);
         parts[0..2].* = .{ ns_export_part, part };
 
-        result.ast = try p.toAST(parts, js_ast.ExportsKind.none, null);
+        const exports_kind: js_ast.ExportsKind = brk: {
+            if (expr.data == .e_undefined) {
+                if (strings.eqlComptime(this.source.path.name.ext, ".cjs")) break :brk .cjs;
+                if (strings.eqlComptime(this.source.path.name.ext, ".mjs")) break :brk .esm;
+            }
+            break :brk .none;
+        };
+        result.ast = try p.toAST(parts, exports_kind, null);
         result.ok = true;
 
         return result;
@@ -20545,7 +20552,7 @@ fn NewParser_(
                 }
             }
 
-            const wrapper_ref: ?Ref = brk: {
+            const wrapper_ref: Ref = brk: {
                 if (p.options.bundle) {
                     break :brk p.newSymbol(
                         .other,
@@ -20559,7 +20566,7 @@ fn NewParser_(
                     ) catch unreachable;
                 }
 
-                break :brk @as(?Ref, null);
+                break :brk Ref.None;
             };
 
             return .{

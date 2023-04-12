@@ -16,11 +16,45 @@ void BunInspector::sendMessageToFrontend(const String& message)
         if (auto object = jsonObject->asObject()) {
             auto method = object->getString("method"_s);
 
+            // {
+            //   "scriptId": "384",
+            //   "url": "file:///private/tmp/empty.js",
+            //   "startLine": 0,
+            //   "startColumn": 0,
+            //   "endLine": 1,
+            //   "endColumn": 0,
+            //   "executionContextId": 1,
+            //   "hash": "a3b314362f7e47deabee6100e0d8081619194faf1b5741e0fe2f88b150557ddd",
+            //   "executionContextAuxData": { "isDefault": true },
+            //   "isLiveEdit": false,
+            //   "sourceMapURL": "",
+            //   "hasSourceURL": false,
+            //   "isModule": false,
+            //   "length": 21,
+            //   "stackTrace": {
+            //     "callFrames": [
+            //       {
+            //         "functionName": "internalCompileFunction",
+            //         "scriptId": "62",
+            //         "url": "node:internal/vm",
+            //         "lineNumber": 72,
+            //         "columnNumber": 17
+            //       }
+            //     ]
+            //   },
+            //   "scriptLanguage": "JavaScript",
+            //   "embedderName": "file:///private/tmp/empty.js"
+            // }
             if (method == "Debugger.scriptParsed"_s) {
                 if (auto params = object->getObject("params"_s)) {
                     params->setInteger("executionContextId"_s, 1);
-
-                    params->setString("url"_s, makeString("file://"_s, params->getString("url"_s)));
+                    auto url = makeString("file://"_s, params->getString("url"_s));
+                    params->setString("url"_s, url);
+                    // TODO: content hash
+                    params->setInteger("hash"_s, url.hash());
+                    params->setBoolean("isModule"_s, true);
+                    params->setString("scriptLanguage"_s, "JavaScript"_s);
+                    params->setString("embedderName"_s, "Bun!"_s);
                 }
 
                 out = object->toJSONString();
@@ -104,7 +138,28 @@ RefPtr<BunInspector> BunInspector::startWebSocketServer(
                                      .open = [inspector](auto* ws) {
                                                                    *ws->getUserData() = inspector.get();
                                                                    ws->subscribe("BunInspectorConnection");
-                                                                   inspector->connect(Inspector::FrontendChannel::ConnectionType::Local); },
+                                                               ws->cork([ws, inspector]() {
+                                                                // TODO: why does this freeze the connection?
+                                                                // do we need to buffer messages?
+                                                                //
+                                                                //  auto welcomeMessage = makeString(
+                                                                //         "{\"context\":{\"id\":\""_s,  
+                                                                //         inspector->scriptExecutionContext()->identifier(), 
+                                                                //         ",\"origin\":\"\",\"name\":\""_s, 
+                                                                //         inspector->identifier(), 
+                                                                //         "\",\"uniqueId\":\"1234\",\"auxData\":{\"isDefault\":true}}"_s
+                                                                //     ).utf8();
+                                                                //     std::string_view view { welcomeMessage.data(), welcomeMessage.length() };
+                                                                //    ws->send(
+                                                                //     view,
+                                                                //     uWS::OpCode::TEXT,
+                                                                //     false,
+                                                                //     false
+                                                                //    );
+                                                                   
+
+                                                                   inspector->connect(Inspector::FrontendChannel::ConnectionType::Local);
+                                      }); },
                                      .message = [inspector](auto* ws, std::string_view message, uWS::OpCode opCode) {
                                                                        if (opCode == uWS::OpCode::TEXT) {
                                                                            if (!inspector) {

@@ -63,28 +63,6 @@ export default {
     //   description: "Deploy your Bun app to the cloud (eventually)",
     // }),
 
-    divider("Package manager"),
-    page("install/index", "`bun install`", {
-      description:
-        "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
-    }),
-    page("install/workspaces", "Workspaces", {
-      description:
-        "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
-    }),
-    page("install/cache", "Global cache", {
-      description:
-        "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
-    }),
-    page("install/lockfile", "Lockfile", {
-      description:
-        "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
-    }),
-    page("install/registries", "Registries", {
-      description:
-        "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
-    }),
-
     // page("bundler", "Bundler"),
     // page("cli/bun-install", "`bun install`"),
     // page("cli/bun-create", "`bun create`"),
@@ -94,17 +72,6 @@ export default {
     // page("cli/bun-completions", "`bun completions`"),
     // page("bundev", "Dev server"),
     // page("benchmarks", "Benchmarks"),
-
-    divider("Test runner"),
-    page("cli/test", "`bun test`", {
-      description: "Bun's test runner uses Jest-compatible syntax but runs 100x faster.",
-    }),
-
-    divider("Package runner"),
-    page("cli/bunx", "`bunx`", {
-      description:
-        "Use `bunx` to auto-install and run executable packages from npm, or use locally installed command-line tools.",
-    }),
 
     // divider("Runtime"),
     divider("Runtime"),
@@ -131,6 +98,39 @@ export default {
       description:
         "Coming soon. Use the Framework API to build a fast, cloud-ready framework on top of Bun's bundler and runtime.",
     }),
+
+    divider("Package manager"),
+    page("install/index", "`bun install`", {
+      description:
+        "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
+    }),
+    page("install/workspaces", "Workspaces", {
+      description:
+        "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
+    }),
+    page("install/cache", "Global cache", {
+      description:
+        "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
+    }),
+    page("install/lockfile", "Lockfile", {
+      description:
+        "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
+    }),
+    page("install/registries", "Registries", {
+      description:
+        "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
+    }),
+    divider("Test runner"),
+    page("cli/test", "`bun test`", {
+      description: "Bun's test runner uses Jest-compatible syntax but runs 100x faster.",
+    }),
+
+    divider("Package runner"),
+    page("cli/bunx", "`bunx`", {
+      description:
+        "Use `bunx` to auto-install and run executable packages from npm, or use locally installed command-line tools.",
+    }),
+
     // page("runtime/nodejs", "Node.js APIs"),
 
     divider("Ecosystem"),

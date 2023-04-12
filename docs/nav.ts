@@ -35,29 +35,54 @@ export default {
     page("quickstart", "Quickstart", {
       description: "Get started with Bun by building and running a simple HTTP server in 5 lines of TypeScript.",
     }),
+    page("templates", "Templates", {
+      description: "Get started with Bun by building and running a simple HTTP server in 5 lines of TypeScript.",
+    }),
     // page("typescript", "TypeScript"),
 
-    divider("CLI"),
-    page("cli/run", "`bun run`", {
+    // divider("CLI"),
+    // page("cli/run", "`bun run`", {
+    //   description:
+    //     "Use `bun run` to execute JavaScript/TypeScript files, package.json scripts, and executable packages.",
+    // }),
+    // page("cli/install", "`bun install`", {
+    //   description: "A 100x faster npm client with workspaces, git dependencies, and private registry support.",
+    // }),
+    // page("cli/test", "`bun test`", {
+    //   description: "Bun's test runner uses Jest-compatible syntax but runs 100x faster.",
+    // }),
+    // page("cli/create", "`bun create`", {
+    //   description: "Scaffold a new Bun project from an official template or GitHub repo.",
+    // }),
+    // page("cli/bunx", "`bunx`", {
+    //   description:
+    //     "Use `bunx` to auto-install and run executable packages from npm, or use locally installed command-line tools.",
+    // }),
+    // page("cli/deploy", "`bun deploy`", {
+    //   disabled: true,
+    //   description: "Deploy your Bun app to the cloud (eventually)",
+    // }),
+
+    divider("Package Manager"),
+    page("install/index", "Install packages", {
       description:
-        "Use `bun run` to execute JavaScript/TypeScript files, package.json scripts, and executable packages.",
+        "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
     }),
-    page("cli/install", "`bun install`", {
-      description: "A 100x faster npm client with workspaces, git dependencies, and private registry support.",
-    }),
-    page("cli/test", "`bun test`", {
-      description: "Bun's test runner uses Jest-compatible syntax but runs 100x faster.",
-    }),
-    page("cli/create", "`bun create`", {
-      description: "Scaffold a new Bun project from an official template or GitHub repo.",
-    }),
-    page("cli/bunx", "`bunx`", {
+    page("install/workspaces", "Workspaces", {
       description:
-        "Use `bunx` to auto-install and run executable packages from npm, or use locally installed command-line tools.",
+        "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
     }),
-    page("cli/deploy", "`bun deploy`", {
-      disabled: true,
-      description: "Deploy your Bun app to the cloud (eventually)",
+    page("install/cache", "Global cache", {
+      description:
+        "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
+    }),
+    page("install/lockfile", "Lockfile", {
+      description:
+        "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
+    }),
+    page("install/registries", "Registries", {
+      description:
+        "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
     }),
 
     // page("bundler", "Bundler"),
@@ -70,7 +95,21 @@ export default {
     // page("bundev", "Dev server"),
     // page("benchmarks", "Benchmarks"),
 
+    divider("Runner"),
+    page("cli/run", "`bun run`", {
+      description:
+        "Use `bun run` to execute JavaScript/TypeScript files, package.json scripts, and executable packages.",
+    }),
+    page("cli/test", "`bun test`", {
+      description: "Bun's test runner uses Jest-compatible syntax but runs 100x faster.",
+    }),
+    page("cli/bunx", "`bunx`", {
+      description:
+        "Use `bunx` to auto-install and run executable packages from npm, or use locally installed command-line tools.",
+    }),
+
     divider("Runtime"),
+
     page("runtime/index", "Runtime", {
       description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
     }),

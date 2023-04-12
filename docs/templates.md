@@ -50,7 +50,7 @@ Running `bun create` performs the following steps:
 - Initialize a fresh Git repo. Opt out with the `--no-git` flag.
 - Run the template's configured `start` script, if defined.
 
-## Official templates
+### Official templates
 
 The following official templates are available.
 
@@ -75,7 +75,7 @@ Welcome to bun! Create a new project by pasting any of the following:
 ⚡️ **Speed** — At the time of writing, `bun create react app` runs ~11x faster on a M1 Macbook Pro than `yarn create react-app app`.
 {% /callout %}
 
-## GitHub repos
+### GitHub repos
 
 A template of the form `<username>/<repo>` will be downloaded from GitHub.
 
@@ -92,7 +92,7 @@ $ bun create https://github.com/ahfarmer/calculator ./myapp
 
 Bun installs the files as they currently exist current default branch (usually `main`). Unlike `git clone` it doesn't download the commit history or configure a remote.
 
-## Local templates
+### Local templates
 
 {% callout %}
 **⚠️ Warning** — Unlike remote templates, running `bun create` with a local template will delete the entire destination folder if it already exists! Be careful.
@@ -164,9 +164,9 @@ Each of these can correspond to a string or array of strings. An array of comman
 
 When cloning a template, `bun create` will automatically remove the `"bun-create"` section from `package.json` before writing it to the destination folder.
 
-## Reference
+### Reference
 
-### CLI flags
+#### CLI flags
 
 {% table %}
 
@@ -195,7 +195,7 @@ When cloning a template, `bun create` will automatically remove the `"bun-create
 
 {% /table %}
 
-### Environment variables
+#### Environment variables
 
 {% table %}
 

@@ -12,12 +12,11 @@ To precisely measure time, Bun offers two runtime APIs functions:
 When writing your own benchmarks, it's important to choose the right tool.
 
 - For microbenchmarks, a great general-purpose tool is [`mitata`](https://github.com/evanwashere/mitata).
-- For load testing, you *must use* an HTTP benchmarking tool that is at least as fast as `Bun.serve()`, or your results will be skewed. Some popular Node.js-based benchmarking tools like [`autocannon`](https://github.com/mcollina/autocannon) are not fast enough. We recommend one of the following:
+- For load testing, you _must use_ an HTTP benchmarking tool that is at least as fast as `Bun.serve()`, or your results will be skewed. Some popular Node.js-based benchmarking tools like [`autocannon`](https://github.com/mcollina/autocannon) are not fast enough. We recommend one of the following:
   - [`bombardier`](https://github.com/codesenberg/bombardier)
   - [`oha`](https://github.com/hatoo/oha)
   - [`http_load_test`](https://github.com/uNetworking/uSockets/blob/master/examples/http_load_test.c)
-- For benchmarking scripts or CLI commands, we recommend [`hyperfine`](https://github.com/sharkdp/hyperfine). It's an easy way to compare 
-
+- For benchmarking scripts or CLI commands, we recommend [`hyperfine`](https://github.com/sharkdp/hyperfine).
 
 ## Measuring memory usage
 
@@ -31,7 +30,9 @@ The `bun:jsc` module exposes a few functions for measuring memory usage:
 import { heapStats } from "bun:jsc";
 console.log(heapStats());
 ```
+
 {% details summary="View example statistics"  %}
+
 ```ts
 {
   heapSize: 1657575,
@@ -134,6 +135,7 @@ console.log(heapStats());
   }
 }
 ```
+
 {% /details %}
 
 JavaScript is a garbage-collected language, not reference counted. It's normal and correct for objects to not be freed immediately in all cases, though it's not normal for objects to never be freed.
@@ -141,7 +143,7 @@ JavaScript is a garbage-collected language, not reference counted. It's normal a
 Tp force garbage collection to run manually:
 
 ```js
-Bun.gc(true);  // synchronous
+Bun.gc(true); // synchronous
 Bun.gc(false); // asynchronous
 ```
 
@@ -161,14 +163,11 @@ To view the snapshot, open the `heap.json` file in Safari's Developer Tools (or 
 3. Click "JavaScript Allocations" in the menu on the left. It might not be visible until you click the pencil icon to show all the timelines
 4. Click "Import" and select your heap snapshot JSON
 
-
 {% image alt="Import heap json" src="https://user-images.githubusercontent.com/709451/204428943-ba999e8f-8984-4f23-97cb-b4e3e280363e.png" caption="Importing a heap snapshot" /%}
 
 Once imported, you should see something like this:
 
-
 {% image alt="Viewing heap snapshot in Safari" src="https://user-images.githubusercontent.com/709451/204429337-b0d8935f-3509-4071-b991-217794d1fb27.png" caption="Viewing heap snapshot in Safari Dev Tools" /%}
-
 
 ### Native heap stats
 

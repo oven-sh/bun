@@ -79,22 +79,34 @@ export default {
       description:
         "Use `bun run` to execute JavaScript/TypeScript files, package.json scripts, and executable packages.",
     }),
-    page("runtime/index", "Runtime", {
+    // page("runtime/index", "Runtime", {
+    //   description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
+    // }),
+    page("runtime/performance", "Performance", {
       description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
     }),
-    page("ecosystem/nodejs", "Node.js compatibility", {
-      description: `Track the status of Bun's API compatibility with Node.js.`,
-    }),
-    // page("runtime/web-apis", "Web APIs"),
-
-    // page("runtime/loaders", "Loaders"),
-
-    page("ecosystem/typescript", "TypeScript", {
+    page("runtime/typescript", "TypeScript", {
       description: `Bun can directly execute TypeScript files without additional configuration.`,
     }),
     page("runtime/jsx", "JSX and React", {
       description: `Bun can directly execute TypeScript files without additional configuration.`,
     }),
+    page("runtime/nodejs-apis", "Node.js APIs", {
+      description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
+    }),
+    page("runtime/web-apis", "Web APIs", {
+      description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
+    }),
+    page("runtime/bun-apis", "Bun APIs", {
+      description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
+    }),
+
+    // page("runtime/nodejs", "Node.js compatibility", {
+    //   description: `Track the status of Bun's API compatibility with Node.js.`,
+    // }),
+    // page("runtime/web-apis", "Web APIs"),
+    // page("runtime/loaders", "Loaders"),
+
     page("runtime/hot", "Watch mode", {
       description: `Reload your application & tests automatically.`,
     }),
@@ -115,7 +127,7 @@ export default {
     }),
 
     divider("Package manager"),
-    page("install/index", "`bun install`", {
+    page("cli/install", "`bun install`", {
       description:
         "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
     }),

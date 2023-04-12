@@ -1,5 +1,7 @@
 Use the built-in `bun:ffi` module to efficiently call native libraries from JavaScript. It works with languages that support the C ABI (Zig, Rust, C/C++, C#, Nim, Kotlin, etc).
 
+## Usage (`bun:ffi`)
+
 To print the version number of `sqlite3`:
 
 ```ts
@@ -227,11 +229,7 @@ const lib = linkSymbols({
   },
 });
 
-const [major, minor, patch] = [
-  lib.symbols.getMajor(),
-  lib.symbols.getMinor(),
-  lib.symbols.getPatch(),
-];
+const [major, minor, patch] = [lib.symbols.getMajor(), lib.symbols.getMinor(), lib.symbols.getPatch()];
 ```
 
 ## Callbacks
@@ -251,13 +249,10 @@ const {
   },
 });
 
-const searchIterator = new JSCallback(
-  (ptr, length) => /hello/.test(new CString(ptr, length)),
-  {
-    returns: "bool",
-    args: ["ptr", "usize"],
-  },
-);
+const searchIterator = new JSCallback((ptr, length) => /hello/.test(new CString(ptr, length)), {
+  returns: "bool",
+  args: ["ptr", "usize"],
+});
 
 const str = Buffer.from("wwutwutwutwutwutwutwutwutwutwutut\0", "utf8");
 if (search(ptr(str), searchIterator)) {
@@ -278,7 +273,7 @@ When you're done with a JSCallback, you should call `close()` to free the memory
 **⚡️ Performance tip** — For a slight performance boost, directly pass `JSCallback.prototype.ptr` instead of the `JSCallback` object:
 
 ```ts
-const onResolve = new JSCallback((arg) => arg === 42, {
+const onResolve = new JSCallback(arg => arg === 42, {
   returns: "bool",
   args: ["i32"],
 });

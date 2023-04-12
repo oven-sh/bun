@@ -1,6 +1,6 @@
 Spawn child processes with `Bun.spawn` or `Bun.spawnSync`.
 
-## Spawn a process
+## Spawn a process (`Bun.spawn()`)
 
 Provide a command as an array of strings. The result of `Bun.spawn()` is a `Bun.Subprocess` object.
 
@@ -28,9 +28,7 @@ By default, the input stream of the subprocess is undefined; it can be configure
 
 ```ts
 const proc = Bun.spawn(["cat"], {
-  stdin: await fetch(
-    "https://raw.githubusercontent.com/oven-sh/bun/main/examples/hashing.js",
-  ),
+  stdin: await fetch("https://raw.githubusercontent.com/oven-sh/bun/main/examples/hashing.js"),
 });
 
 const text = await new Response(proc.stdout).text();
@@ -183,7 +181,7 @@ const proc = Bun.spawn(["echo", "hello"]);
 proc.unref();
 ```
 
-## Blocking API
+## Blocking API (`Bun.spawnSync()`)
 
 Bun provides a synchronous equivalent of `Bun.spawn` called `Bun.spawnSync`. This is a blocking API that supports the same inputs and parameters as `Bun.spawn`. It returns a `SyncSubprocess` object, which differs from `Subprocess` in a few ways.
 
@@ -245,12 +243,7 @@ namespace SpawnOptions {
     stdin?: SpawnOptions.Readable;
     stdout?: SpawnOptions.Writable;
     stderr?: SpawnOptions.Writable;
-    onExit?: (
-      proc: Subprocess,
-      exitCode: number | null,
-      signalCode: string | null,
-      error: Error | null,
-    ) => void;
+    onExit?: (proc: Subprocess, exitCode: number | null, signalCode: string | null, error: Error | null) => void;
   }
 
   type Readable =
@@ -262,7 +255,7 @@ namespace SpawnOptions {
     | BunFile
     | ArrayBufferView
     | number;
-  
+
   type Writable =
     | "pipe"
     | "inherit"
@@ -307,10 +300,10 @@ interface SyncSubprocess<Stdout, Stderr> {
 type ReadableSubprocess = Subprocess<any, "pipe", "pipe">;
 type WritableSubprocess = Subprocess<"pipe", any, any>;
 type PipedSubprocess = Subprocess<"pipe", "pipe", "pipe">;
-type NullSubprocess = Subprocess<null, null, null>
+type NullSubprocess = Subprocess<null, null, null>;
 
 type ReadableSyncSubprocess = SyncSubprocess<"pipe", "pipe">;
-type NullSyncSubprocess = SyncSubprocess<null, null>
+type NullSyncSubprocess = SyncSubprocess<null, null>;
 
 type Signal =
   | "SIGABRT"

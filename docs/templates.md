@@ -90,7 +90,7 @@ $ bun create github.com/ahfarmer/calculator ./myapp
 $ bun create https://github.com/ahfarmer/calculator ./myapp
 ```
 
-Bun installs the files as they currently exist current default branch (usually `main`). Unlike `git clone` it doesn't download the commit history or configure a remote.
+Bun installs the files as they currently exist current default branch (usually `main` or `master`). Unlike `git clone` it doesn't download the commit history or configure a remote.
 
 ### Local templates
 

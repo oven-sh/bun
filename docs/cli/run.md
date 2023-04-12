@@ -1,31 +1,32 @@
 The `bun` CLI can be used to execute JavaScript/TypeScript files, `package.json` scripts, and [executable packages](https://docs.npmjs.com/cli/v9/configuring-npm/package-json#bin).
 
-## Running a file
+<!-- ## Speed -->
+
+<!--
+Performance sensitive APIs like `Buffer`, `fetch`, and `Response` are heavily profiled and optimized. Under the hood Bun uses the [JavaScriptCore engine](https://developer.apple.com/documentation/javascriptcore), which is developed by Apple for Safari. It starts and runs faster than V8, the engine used by Node.js and Chromium-based browsers. -->
+
+## Run a file
 
 {% callout %}
 Compare to `node <file>`
 {% /callout %}
 
-Bun can execute `.js`, `.jsx`, `.ts`, and `.tsx` files. Every file is transpiled to vanilla JavaScript by Bun's fast native transpiler before being executed. For details on Bun's runtime, refer to the [Bun runtime](/docs/runtime) documentation.
-
-```ts#foo.ts
-import { z } from "zod";
-
-const schema = z.string()
-const result = schema.parse("Billie Eilish");
-console.log(result);
-```
-
-To run a file in Bun:
+Use `bun run` to execute a source file.
 
 ```bash
-$ bun foo.ts
-Billie Eilish
+$ bun index.js
 ```
 
-If no `node_modules` directory is found in the working directory or above, Bun will abandon Node.js-style module resolution in favor of the `Bun module resolution algorithm`. Under Bun-style module resolution, all packages are _auto-installed_ on the fly into a [global module cache](/docs/cli/install#global-cache). For full details on this algorithm, refer to [Runtime > Modules](/docs/runtime/modules).
+Bun supports TypeScript and JSX out of the box. Every file is transpiled on the fly by Bun's fast native transpiler before being executed.
 
-## Running a package script
+```bash
+$ bun index.js
+$ bun index.jsx
+$ bun index.ts
+$ bun index.tsx
+```
+
+## Run a `package.json` script
 
 {% note %}
 Compare to `npm run <script>` or `yarn <script>`
@@ -80,3 +81,13 @@ quickstart scripts:
 ```
 
 Bun respects lifecycle hooks. For instance, `bun run clean` will execute `preclean` and `postclean`, if defined. If the `pre<script>` fails, Bun will not execute the script itself.
+
+## Environment variables
+
+Bun automatically loads environment variables from `.env` files before running a file, script, or executable. The following files are checked, in order:
+
+1. `.env.local` (first)
+2. `NODE_ENV` === `"production"` ? `.env.production` : `.env.development`
+3. `.env`
+
+To debug environment variables, run `bun run env` to view a list of resolved environment variables.

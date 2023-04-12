@@ -2,14 +2,23 @@ Bun is a new JavaScript runtime designed to be a faster, leaner, more modern rep
 
 ## Speed
 
-Bun is designed to start fast and run fast. It's transpiler and runtime are written in Zig, a modern, high-performance language. On Linux, this translates into startup times [4x faster](https://twitter.com/jarredsumner/status/1499225725492076544) than Node.js. Performance sensitive APIs like `Buffer`, `fetch`, and `Response` are heavily profiled and optimized. Under the hood Bun uses the [JavaScriptCore engine](https://developer.apple.com/documentation/javascriptcore), which is developed by Apple for Safari. It starts and runs faster than V8, the engine used by Node.js and Chromium-based browsers.
+Bun is designed to start fast and run fast. It's transpiler and runtime are written in Zig, a modern, high-performance language. On Linux, this translates into startup times [4x faster](https://twitter.com/jarredsumner/status/1499225725492076544) than Node.js.
+
+{% image src="/images/bun-run-speed.jpeg" caption="Bun vs Node.js vs Deno running Hello World" /%}
+
+<!-- If no `node_modules` directory is found in the working directory or above, Bun will abandon Node.js-style module resolution in favor of the `Bun module resolution algorithm`. Under Bun-style module resolution, all packages are _auto-installed_ on the fly into a [global module cache](/docs/cli/install#global-cache). For full details on this algorithm, refer to [Runtime > Modules](/docs/runtime/modules). -->
+
+Performance sensitive APIs like `Buffer`, `fetch`, and `Response` are heavily profiled and optimized. Under the hood Bun uses the [JavaScriptCore engine](https://developer.apple.com/documentation/javascriptcore), which is developed by Apple for Safari. It starts and runs faster than V8, the engine used by Node.js and Chromium-based browsers.
 
 ## File types
 
 Bun natively supports TypeScript and JSX out of the box.
 
 ```bash
-$ bun server.tsx
+$ bun index.js
+$ bun index.jsx
+$ bun index.ts
+$ bun index.tsx
 ```
 
 <!-- Before execution, Bun internally transforms all source files to vanilla JavaScript using its fast native transpiler. The transpiler looks at the files extension to determine how to handle it. -->
@@ -110,7 +119,7 @@ Bun implements the Node.js module resolution algorithm, so dependencies can stil
 **Note** — We recommend using Bun's [built-in package manager](/docs/cli/install) for a performance boost over other npm clients.
 {% /callout %}
 
-## Web-standard
+## Web APIs
 
 <!-- When prudent, Bun attempts to implement Web-standard APIs instead of introducing new APIs. Refer to [Runtime > Web APIs](/docs/web-apis) for a list of Web APIs that are available in Bun. -->
 

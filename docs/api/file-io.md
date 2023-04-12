@@ -4,7 +4,7 @@
 
 Bun provides a set of optimized APIs for reading and writing files.
 
-## Reading files
+## Reading files (`Bun.file()`)
 
 `Bun.file(path): BunFile`
 
@@ -56,7 +56,7 @@ Bun.stdout;
 Bun.stderr;
 ```
 
-## Writing files
+## Writing files (`Bun.write()`)
 
 `Bun.write(destination, data): Promise<number>`
 

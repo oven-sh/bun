@@ -2952,6 +2952,9 @@ console.log(foo, array);
 
     it('`str` + "``"', () => {
       expectPrinted_('const x = `str` + "``";', "const x = `str\\`\\``");
+      expectPrinted_('const x = `` + "`";', "const x = `\\``");
+      expectPrinted_('const x = `` + "``";', "const x = `\\`\\``");
+      expectPrinted_('const x = "``" + ``;', 'const x = "``"');
     });
   });
 });

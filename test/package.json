@@ -10,7 +10,7 @@
     "bktree-fast": "^0.0.7",
     "body-parser": "^1.20.2",
     "dedent": "^0.7.0",
-    "esbuild": "^0.17.11",
+    "esbuild": "^0.17.16",
     "express": "^4.18.2",
     "iconv-lite": "^0.6.3",
     "lodash": "^4.17.21",

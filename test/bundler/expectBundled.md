@@ -182,3 +182,9 @@ itBundled("importstar/ReExportStarExternalIIFE", {
 ## dce: true
 
 This parameter checks the bundle for strings like `DROP`, `REMOVE`, and `FAIL` within the bundle, and will throw an error. This is handy for dead code elimination tests where you can just name variables that should be removed with one of those trigger words. In addition, `KEEP`, `PRESERVE`, and `KEEPME` is scanned in the source code and will throw an error if the count of those strings is not equal to the count of the corresponding trigger strings.
+
+Places that are not required to be dce'd contain `POSSIBLE_REMOVAL` and do not trigger an error if not removed. These might be able to be optimized in the future.
+
+## keepNames tricks
+
+In `esbuild/default.test.ts`, test `default/KeepNamesTreeShaking`, we call the esbuild cli to minify identifiers, and then check the code for expected class names to survive the minification (keep names forcibily sets functions `.name`).

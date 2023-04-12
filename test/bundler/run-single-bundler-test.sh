@@ -6,7 +6,7 @@ if [ -z "$1" ]; then
   exit 1
 fi
 
-__dirname="$(dirname "$0")"
+__dirname="$(dirname $(realpath "$0"))"
 cd "$__dirname"
 
 clear

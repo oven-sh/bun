@@ -1,6 +1,7 @@
 // Reimplementation of https://nodejs.org/api/events.html
 // Reference: https://github.com/nodejs/node/blob/main/lib/events.js
-
+const SymbolFor = Symbol.for;
+const ObjectDefineProperty = Object.defineProperty;
 const kCapture = Symbol("kCapture");
 const kErrorMonitor = Symbol("events.errorMonitor");
 const kMaxEventTargetListeners = Symbol("events.maxEventTargetListeners");
@@ -8,6 +9,8 @@ const kMaxEventTargetListenersWarned = Symbol("events.maxEventTargetListenersWar
 const kWatermarkData = Symbol.for("nodejs.watermarkData");
 const kRejection = SymbolFor("nodejs.rejection");
 const captureRejectionSymbol = Symbol.for("nodejs.rejection");
+const ArrayPrototypeSlice = Array.prototype.slice;
+var { isPromise } = import.meta.primordials;
 
 var errorMonitor = Symbol.for("events.errorMonitor");
 
@@ -21,7 +24,11 @@ function EventEmitter(opts) {
   }
 
   this._maxListeners ??= undefined;
-  this[kCapture] = opts?.captureRejections ? Boolean(opts?.captureRejections) : EventEmitter.prototype[kCapture];
+  if (
+    (this[kCapture] = opts?.captureRejections ? Boolean(opts?.captureRejections) : EventEmitter.prototype[kCapture])
+  ) {
+    this.emit = emitWithRejectionCapture;
+  }
 }
 
 EventEmitter.prototype._events = undefined;
@@ -49,21 +56,10 @@ function emitError(emitter, args) {
 }
 
 function addCatch(emitter, promise, type, args) {
-  if (!emitter[kCapture]) {
-    return;
-  }
-  // Handle Promises/A+ spec, then could be a getter that throws on second use.
-  try {
-    const then = promise.then;
-    if (typeof then === "function") {
-      then.call(promise, undefined, function (err) {
-        // The callback is called with queueMicrotask to avoid a follow-up rejection from this promise.
-        queueMicrotask(emitUnhandledRejectionOrErr, that, err, type, args);
-      });
-    }
-  } catch (err) {
-    that.emit("error", err);
-  }
+  promise.then(undefined, function (err) {
+    // The callback is called with nextTick to avoid a follow-up rejection from this promise.
+    process.nextTick(emitUnhandledRejectionOrErr, emitter, err, type, args);
+  });
 }
 
 function emitUnhandledRejectionOrErr(emitter, err, type, args) {
@@ -82,24 +78,43 @@ function emitUnhandledRejectionOrErr(emitter, err, type, args) {
   }
 }
 
-EventEmitter.prototype.emit = function emit(type, ...args) {
+const emitWithoutRejectionCapture = function emit(type, ...args) {
   if (type === "error") {
     return emitError(this, args);
   }
-  var { _events: events, [kCapture]: captureRejections } = this;
+  var { _events: events } = this;
+  if (events === undefined) return false;
+  var handlers = events[type];
+  if (handlers === undefined) return false;
+
+  for (var handler of [...handlers]) {
+    handler.apply(this, args);
+  }
+  return true;
+};
+
+const emitWithRejectionCapture = function emit(type, ...args) {
+  console.log("emit", type, args);
+  if (type === "error") {
+    return emitError(this, args);
+  }
+  var { _events: events } = this;
   if (events === undefined) return false;
   var handlers = events[type];
   if (handlers === undefined) return false;
   for (var handler of handlers.slice()) {
     var result = handler.apply(this, args);
-    if (captureRejections && result !== undefined) {
+    if (result !== undefined && isPromise(result)) {
       addCatch(this, result, type, args);
     }
   }
   return true;
 };
 
+EventEmitter.prototype.emit = emitWithoutRejectionCapture;
+
 EventEmitter.prototype.addListener = function addListener(type, fn) {
+  console.log("addListener", type, fn);
   var events = this._events;
   if (!events) {
     events = this._events = { __proto__: null };

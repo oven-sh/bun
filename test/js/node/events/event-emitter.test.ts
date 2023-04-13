@@ -70,6 +70,7 @@ describe("node:events", () => {
     emitter.emit("hey", 2);
   });
 
+  // TODO: extensive events.on tests
   // test("on", () => {
   //   const emitter = new EventEmitter();
   //   const asyncIterator = EventEmitter.on(emitter, "hey");
@@ -145,51 +146,53 @@ describe("EventEmitter", () => {
   });
 
   // These are also tests for the done() function in the test runner.
-  test("emit (different tick)", done => {
-    var emitter = new EventEmitter();
-    emitter.on("wow", () => done());
-    queueMicrotask(() => {
+  describe("emit", () => {
+    test("different tick", done => {
+      var emitter = new EventEmitter();
+      emitter.on("wow", () => done());
+      queueMicrotask(() => {
+        emitter.emit("wow");
+      });
+    });
+
+    // Unlike Jest, bun supports async and done
+    test("async microtask before", async done => {
+      await 1;
+      var emitter = new EventEmitter();
+      emitter.on("wow", () => done());
       emitter.emit("wow");
+    });
+
+    test("async microtask after", async done => {
+      var emitter = new EventEmitter();
+      emitter.on("wow", () => done());
+      await 1;
+      emitter.emit("wow");
+    });
+
+    test("same tick", done => {
+      var emitter = new EventEmitter();
+
+      emitter.on("wow", () => done());
+
+      emitter.emit("wow");
+    });
+
+    test("setTimeout task", done => {
+      var emitter = new EventEmitter();
+      emitter.on("wow", () => done());
+      setTimeout(() => emitter.emit("wow"), 1);
     });
   });
 
-  // Unlike Jest, bun supports async and done
-  test("async emit (microtask)", async done => {
-    await 1;
-    var emitter = new EventEmitter();
-    emitter.on("wow", () => done());
-    emitter.emit("wow");
-  });
-
-  test("async emit (microtask) after", async done => {
-    var emitter = new EventEmitter();
-    emitter.on("wow", () => done());
-    await 1;
-    emitter.emit("wow");
-  });
-
-  test("emit (same tick)", done => {
-    var emitter = new EventEmitter();
-
-    emitter.on("wow", () => done());
-
-    emitter.emit("wow");
-  });
-
-  test("emit (setTimeout task)", done => {
-    var emitter = new EventEmitter();
-    emitter.on("wow", () => done());
-    setTimeout(() => emitter.emit("wow"), 1);
-  });
-
-  test("on", () => {
+  test("addListener return type", () => {
     var myEmitter = new EventEmitter();
-    expect(myEmitter.on("foo", () => {})).toBe(myEmitter);
+    expect(myEmitter.addListener("foo", () => {})).toBe(myEmitter);
   });
 
-  test("off", () => {
+  test("removeListener return type", () => {
     var myEmitter = new EventEmitter();
-    expect(myEmitter.off("foo", () => {})).toBe(myEmitter);
+    expect(myEmitter.removeListener("foo", () => {})).toBe(myEmitter);
   });
 
   test("once", () => {
@@ -363,7 +366,79 @@ describe("EventEmitter error handling", () => {
 });
 
 describe("EventEmitter captureRejections", () => {
-  //
+  // Can't catch the unhandled rejection because we do not have process.on("unhandledRejection")
+  // test("captureRejections off will not capture rejections", async () => {
+  //   const myEmitter = new EventEmitter();
+
+  //   let handled = false;
+  //   myEmitter.on("error", (...args) => {
+  //     handled = true;
+  //   });
+
+  //   myEmitter.on("action", async () => {
+  //     throw new Error("Hello World");
+  //   });
+
+  //   myEmitter.emit("action");
+
+  //   await Bun.sleep(1);
+
+  //   expect(handled).toBe(false);
+  // });
+  test("it captures rejections", async () => {
+    const myEmitter = new EventEmitter({ captureRejections: true });
+
+    let handled: any = null;
+    myEmitter.on("error", (...args) => {
+      handled = args;
+    });
+
+    myEmitter.on("action", async () => {
+      throw 123;
+    });
+
+    myEmitter.emit("action");
+
+    await Bun.sleep(5);
+
+    expect(handled).toEqual([123]);
+  });
+  test("it does not capture successful promises", async () => {
+    const myEmitter = new EventEmitter({ captureRejections: true });
+
+    let handled: any = null;
+    myEmitter.on("error", () => {
+      handled = true;
+    });
+
+    myEmitter.on("action", async () => {
+      return 123;
+    });
+
+    myEmitter.emit("action");
+
+    await Bun.sleep(5);
+
+    expect(handled).toEqual(null);
+  });
+  test("it does not capture handled rejections", async () => {
+    const myEmitter = new EventEmitter({ captureRejections: true });
+
+    let handled: any = null;
+    myEmitter.on("error", () => {
+      handled = true;
+    });
+
+    myEmitter.on("action", async () => {
+      return Promise.reject(123).catch(() => 234);
+    });
+
+    myEmitter.emit("action");
+
+    await Bun.sleep(5);
+
+    expect(handled).toEqual(null);
+  });
 });
 
 const waysOfCreating = [

@@ -4,7 +4,7 @@ import { bunEnv, bunExe } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import * as Module from "node:module";
 import { join } from "node:path";
-import sync from "./require-json.json.js";
+import sync from "./require-json.json";
 
 const { path, dir } = import.meta;
 

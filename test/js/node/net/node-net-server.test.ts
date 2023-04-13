@@ -301,7 +301,7 @@ describe("net.createServer events", () => {
           hostname: address.address,
           port: address.port,
           socket: {
-            data(socket) { },
+            data(socket) {},
             open(socket) {
               if (socket.write("Hello")) {
                 socket.end();
@@ -348,8 +348,8 @@ describe("net.createServer events", () => {
           hostname: address.address,
           port: address.port,
           socket: {
-            data(socket) { },
-            open(socket) { },
+            data(socket) {},
+            open(socket) {},
             connectError: closeAndFail, // connection failed
           },
         }).catch(closeAndFail);
@@ -417,7 +417,7 @@ describe("net.createServer events", () => {
             port: address?.port,
             hostname: address?.address,
             socket: {
-              data(socket) { },
+              data(socket) {},
               open(socket) {
                 socket.end();
               },
@@ -511,33 +511,30 @@ describe("net.createServer events", () => {
     //should be faster than 100ms
     timeout = setTimeout(closeAndFail, 100);
 
-    server.listen(
-      async () => {
-        const address = server.address() as AddressInfo;
-        client = await Bun.connect({
-          hostname: address.address,
-          port: address.port,
-          socket: {
-            drain(socket) {
-              socket.write("Hello");
-            },
-            data(socket, data) {
-              is_done = true;
-              clearTimeout(timeout);
-              server.close();
-              socket.end();
-              expect(data.byteLength).toBe(5);
-              expect(data.toString("utf8")).toBe("Hello");
-              done();
-
-            },
-            open(socket) {
-              socket.write("Hello");
-            },
-            connectError: closeAndFail, // connection failed
+    server.listen(async () => {
+      const address = server.address() as AddressInfo;
+      client = await Bun.connect({
+        hostname: address.address,
+        port: address.port,
+        socket: {
+          drain(socket) {
+            socket.write("Hello");
           },
-        }).catch(closeAndFail);
-      },
-    );
+          data(socket, data) {
+            is_done = true;
+            clearTimeout(timeout);
+            server.close();
+            socket.end();
+            expect(data.byteLength).toBe(5);
+            expect(data.toString("utf8")).toBe("Hello");
+            done();
+          },
+          open(socket) {
+            socket.write("Hello");
+          },
+          connectError: closeAndFail, // connection failed
+        },
+      }).catch(closeAndFail);
+    });
   });
 });

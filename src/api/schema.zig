@@ -368,6 +368,9 @@ pub const Api = struct {
         /// dataurl
         dataurl,
 
+        /// text
+        text,
+
         _,
 
         pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {

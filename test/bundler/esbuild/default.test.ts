@@ -985,10 +985,10 @@ describe("bundler", () => {
   itBundled("default/RequireTxt", {
     files: {
       "/entry.js": `console.log(require('./test.txt'))`,
-      "/test.txt": `This is a test.`,
+      "/test.txt": `This is a\` test.`,
     },
     run: {
-      stdout: "This is a test.",
+      stdout: "This is a` test.",
     },
   });
   itBundled("default/RequireBadExtension", {

@@ -5274,8 +5274,8 @@ pub const Ast = struct {
     module_scope: Scope = Scope{},
     // char_freq:    *CharFreq,
     exports_ref: Ref = Ref.None,
-    module_ref: ?Ref = null,
-    wrapper_ref: ?Ref = null,
+    module_ref: Ref = Ref.None,
+    wrapper_ref: Ref = Ref.None,
     require_ref: Ref = Ref.None,
 
     bun_plugin: BunPlugin = .{},

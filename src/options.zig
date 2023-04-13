@@ -741,6 +741,8 @@ pub const Loader = enum {
         .{ "node", Loader.napi },
         .{ "dataurl", Loader.dataurl },
         .{ "base64", Loader.base64 },
+        .{ "txt", Loader.text },
+        .{ "text", Loader.text },
     });
 
     pub fn fromString(slice_: string) ?Loader {
@@ -770,6 +772,7 @@ pub const Loader = enum {
             .toml => .toml,
             .wasm => .wasm,
             .napi => .napi,
+            .text => .text,
             else => .file,
         };
     }
@@ -785,6 +788,7 @@ pub const Loader = enum {
             .toml => .toml,
             .wasm => .wasm,
             .napi => .napi,
+            .text => .text,
             else => .file,
         };
     }
@@ -840,6 +844,8 @@ pub const defaultLoaders = ComptimeStringMap(Loader, .{
     .{ ".toml", Loader.toml },
     .{ ".wasm", Loader.wasm },
     .{ ".node", Loader.napi },
+    .{ ".txt", Loader.text },
+    .{ ".text", Loader.text },
 });
 
 // https://webpack.js.org/guides/package-exports/#reference-syntax
@@ -1143,6 +1149,7 @@ const default_loader_ext = [_]string{
     ".mts",  ".cts",
 
     ".toml", ".wasm",
+    ".txt",  ".text",
 };
 
 pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.LoaderMap, platform: Platform) !bun.StringArrayHashMap(Loader) {
@@ -1161,6 +1168,7 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
                 .toml => Loader.toml,
                 .wasm => Loader.wasm,
                 .napi => Loader.napi,
+                .text => Loader.text,
                 else => unreachable,
             };
 
@@ -1177,6 +1185,7 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
                 .json => Loader.json,
                 .toml => Loader.toml,
                 .wasm => Loader.wasm,
+                .text => Loader.text,
                 else => unreachable,
             };
 

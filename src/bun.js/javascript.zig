@@ -2980,7 +2980,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
                                 const loader = (bundler.options.loaders.get(Fs.PathName.init(changed_name).ext) orelse .file);
                                 var prev_entry_id: usize = std.math.maxInt(usize);
-                                if (loader.isJavaScriptLikeOrJSON() or loader == .css) {
+                                if (loader != .file) {
                                     var path_string: bun.PathString = undefined;
                                     var file_hash: @This().Watcher.HashType = last_file_hash;
                                     const abs_path: string = brk: {

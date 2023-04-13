@@ -2067,14 +2067,14 @@ fn NewPrinter(
                     }
                 },
                 .e_require => |e| {
-                    if (rewrite_esm_to_cjs and p.importRecord(e.import_record_index).is_bundled) {
+                    if (rewrite_esm_to_cjs and p.importRecord(e.import_record_index).is_legacy_bundled) {
                         p.printIndent();
                         p.printBundledRequire(e);
                         p.printSemicolonIfNeeded();
                         return;
                     }
 
-                    if (!rewrite_esm_to_cjs or !p.importRecord(e.import_record_index).is_bundled) {
+                    if (!rewrite_esm_to_cjs or !p.importRecord(e.import_record_index).is_legacy_bundled) {
                         p.printRequireOrImportExpr(e.import_record_index, &([_]G.Comment{}), level, flags);
                     }
                 },
@@ -2581,7 +2581,7 @@ fn NewPrinter(
                         } else if (symbol.namespace_alias) |namespace| {
                             if (namespace.import_record_index < p.import_records.len) {
                                 const import_record = p.importRecord(namespace.import_record_index);
-                                if ((comptime is_inside_bundle) or import_record.is_bundled or namespace.was_originally_property_access) {
+                                if ((comptime is_inside_bundle) or import_record.is_legacy_bundled or namespace.was_originally_property_access) {
                                     var wrap = false;
                                     didPrint = true;
 
@@ -3731,7 +3731,7 @@ fn NewPrinter(
 
                                     if (symbol.namespace_alias) |namespace| {
                                         const import_record = p.importRecord(namespace.import_record_index);
-                                        if (import_record.is_bundled or (comptime is_inside_bundle) or namespace.was_originally_property_access) {
+                                        if (import_record.is_legacy_bundled or (comptime is_inside_bundle) or namespace.was_originally_property_access) {
                                             p.printIdentifier(name);
                                             p.print(": () => ");
                                             p.printNamespaceAlias(import_record.*, namespace);
@@ -3802,7 +3802,7 @@ fn NewPrinter(
                                 if (p.symbols().get(item.name.ref.?)) |symbol| {
                                     if (symbol.namespace_alias) |namespace| {
                                         const import_record = p.importRecord(namespace.import_record_index);
-                                        if (import_record.is_bundled or (comptime is_inside_bundle) or namespace.was_originally_property_access) {
+                                        if (import_record.is_legacy_bundled or (comptime is_inside_bundle) or namespace.was_originally_property_access) {
                                             p.print("var ");
                                             p.printSymbol(item.name.ref.?);
                                             p.@"print = "();
@@ -4483,7 +4483,7 @@ fn NewPrinter(
                         }
 
                         return;
-                    } else if (record.is_bundled) {
+                    } else if (record.is_legacy_bundled) {
                         if (!record.path.is_disabled) {
                             if (!p.has_printed_bundled_import_statement) {
                                 p.has_printed_bundled_import_statement = true;
@@ -4494,14 +4494,14 @@ fn NewPrinter(
                                 // This might be a determinsim issue
                                 // But, it's not random
                                 skip: for (p.import_records, 0..) |_record, i| {
-                                    if (!_record.is_bundled or _record.module_id == 0) continue;
+                                    if (!_record.is_legacy_bundled or _record.module_id == 0) continue;
 
                                     if (i < last) {
                                         // Prevent importing the same module ID twice
                                         // We could use a map but we want to avoid allocating
                                         // and this should be pretty quick since it's just comparing a uint32
                                         for (p.import_records[i + 1 ..]) |_record2| {
-                                            if (_record2.is_bundled and _record2.module_id > 0 and _record2.module_id == _record.module_id) {
+                                            if (_record2.is_legacy_bundled and _record2.module_id > 0 and _record2.module_id == _record.module_id) {
                                                 continue :skip;
                                             }
                                         }
@@ -4580,11 +4580,11 @@ fn NewPrinter(
                         item_count += 1;
                     }
 
-                    if (s.star_name_loc != null) {
+                    if (record.contains_import_star) {
                         if (item_count > 0) {
                             p.print(",");
-                            p.printSpace();
                         }
+                        p.printSpace();
 
                         p.printWhitespacer(ws("* as "));
                         p.printSymbol(s.namespace_ref);

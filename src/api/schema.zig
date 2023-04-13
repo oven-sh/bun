@@ -368,6 +368,7 @@ pub const Api = struct {
         /// dataurl
         dataurl,
 
+        /// text
         text,
 
         _,

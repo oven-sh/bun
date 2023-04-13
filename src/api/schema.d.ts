@@ -26,6 +26,7 @@ export const enum Loader {
   napi = 10,
   base64 = 11,
   dataurl = 12,
+  text = 13,
 }
 export const LoaderKeys: {
   1: "jsx";
@@ -52,6 +53,8 @@ export const LoaderKeys: {
   base64: "base64";
   12: "dataurl";
   dataurl: "dataurl";
+  13: "text";
+  text: "text";
 };
 export const enum FrameworkEntryPointType {
   client = 1,

@@ -11,6 +11,7 @@ const Loader = {
   "10": 10,
   "11": 11,
   "12": 12,
+  "13": 13,
   "jsx": 1,
   "js": 2,
   "ts": 3,
@@ -23,6 +24,7 @@ const Loader = {
   "napi": 10,
   "base64": 11,
   "dataurl": 12,
+  "text": 13,
 };
 const LoaderKeys = {
   "1": "jsx",
@@ -37,6 +39,7 @@ const LoaderKeys = {
   "10": "napi",
   "11": "base64",
   "12": "dataurl",
+  "13": "text",
   "jsx": "jsx",
   "js": "js",
   "ts": "ts",
@@ -49,6 +52,7 @@ const LoaderKeys = {
   "napi": "napi",
   "base64": "base64",
   "dataurl": "dataurl",
+  "text": "text",
 };
 const FrameworkEntryPointType = {
   "1": 1,

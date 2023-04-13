@@ -15,6 +15,8 @@
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/SubspaceInlines.h"
 #include "JavaScriptCore/RegExpObject.h"
+#include "JavaScriptCore/JSPromise.h"
+#include "BunClientData.h"
 
 #include "JavaScriptCore/RegularExpression.h"
 

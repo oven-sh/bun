@@ -8,6 +8,7 @@
 #include "headers.h"
 #include "JSDOMConvertEnumeration.h"
 #include "JavaScriptCore/JSArrayBufferView.h"
+#include "BunClientData.h"
 
 namespace WebCore {
 

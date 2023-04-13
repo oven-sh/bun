@@ -61,6 +61,7 @@
 #include "DOMJITIDLTypeFilter.h"
 #include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
+#include "BunClientData.h"
 
 namespace WebCore {
 using namespace JSC;

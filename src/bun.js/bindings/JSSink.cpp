@@ -7,6 +7,8 @@
 //
 #include "root.h"
 #include "headers.h"
+#include "BunClientData.h"
+
 #include "JSSink.h"
 
 #include "ActiveDOMObject.h"

@@ -8,6 +8,7 @@
 #include "ErrorStackTrace.h"
 
 #include <JavaScriptCore/JSObject.h>
+#include "BunClientData.h"
 
 using namespace JSC;
 using namespace WebCore;

@@ -56,6 +56,9 @@
 // #include "JavaScriptCore/JSTypedArrayViewPrototype.h"
 #include "JavaScriptCore/JSArrayBufferViewInlines.h"
 
+using namespace JSC;
+using namespace WebCore;
+
 JSC_DECLARE_HOST_FUNCTION(constructJSBuffer);
 
 static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_alloc);
@@ -2172,5 +2175,5 @@ bool JSBuffer__isBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJS
         return false;
 
     JSValue prototype = cell->getPrototype(vm, lexicalGlobalObject);
-    return prototype.inherits<JSBufferPrototype>();
+    return prototype.inherits<WebCore::JSBufferPrototype>();
 }

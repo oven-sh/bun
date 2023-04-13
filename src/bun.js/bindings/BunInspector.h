@@ -11,6 +11,7 @@
 namespace Zig {
 
 using namespace JSC;
+using namespace WebCore;
 
 class BunInspector final : public RefCounted<BunInspector>, ::Inspector::InspectorTarget, ::Inspector::FrontendChannel, public WebCore::ContextDestructionObserver {
 public:

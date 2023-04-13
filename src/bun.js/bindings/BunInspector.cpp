@@ -2,6 +2,7 @@
 #include <JavaScriptCore/Heap.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include "JSGlobalObjectInspectorController.h"
+#include <JavaScriptCore/JSGlobalObjectDebugger.h>
 
 namespace Zig {
 
@@ -111,6 +112,8 @@ void BunInspector::drainOutgoingMessages()
     }
 }
 
+extern "C" void Bun__tickWhileWaitingForDebugger(JSC::JSGlobalObject* globalObject);
+
 RefPtr<BunInspector> BunInspector::startWebSocketServer(
     WebCore::ScriptExecutionContext& context,
     WTF::String hostname,
@@ -184,7 +187,13 @@ RefPtr<BunInspector> BunInspector::startWebSocketServer(
                 *connectionPtr = new BunInspectorConnection(inspector);
                 ws->subscribe("BunInspectorConnection");
                 BunInspectorConnection* connection = *connectionPtr;
-                inspector->connect(Inspector::FrontendChannel::ConnectionType::Local); },
+                inspector->connect(Inspector::FrontendChannel::ConnectionType::Local);
+                 auto* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(inspector->globalObject()->inspectorController().debugger());
+    debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& globalObject, bool& isPaused) {
+        while (isPaused) {
+            Bun__tickWhileWaitingForDebugger(&globalObject);
+        }
+    }; },
 
                                                .message = [inspector](auto* ws, std::string_view message, uWS::OpCode opCode) {
         if (opCode == uWS::OpCode::TEXT) {

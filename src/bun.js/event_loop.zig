@@ -879,3 +879,12 @@ pub const AnyEventLoop = union(enum) {
         }
     }
 };
+
+pub export fn Bun__tickWhileWaitingForDebugger(globalObject: *JSC.JSGlobalObject) callconv(.C) void {
+    globalObject.bunVM().eventLoop().tickPossiblyForever();
+}
+
+comptime {
+    if (!JSC.is_bindgen)
+        _ = Bun__tickWhileWaitingForDebugger;
+}

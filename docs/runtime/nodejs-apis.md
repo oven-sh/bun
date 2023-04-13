@@ -182,7 +182,8 @@ This page is updated regularly to reflect compatibility status of the latest ver
 ---
 
 - {% anchor id="node_string_decoder" %} [`node:string_decoder`](https://nodejs.org/api/string_decoder.html) {% /anchor %}
-- 🟢 Fully implemented.
+- 🟢
+- Fully implemented.
 
 ---
 

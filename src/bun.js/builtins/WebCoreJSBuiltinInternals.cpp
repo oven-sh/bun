@@ -42,10 +42,7 @@ namespace Zig { class GlobalObject; }
 
 #include "JSDOMGlobalObject.h"
 #include "WebCoreJSClientData.h"
-#include <JavaScriptCore/HeapInlines.h>
-#include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSObjectInlines.h>
-#include <JavaScriptCore/SlotVisitorInlines.h>
 
 namespace WebCore {
 

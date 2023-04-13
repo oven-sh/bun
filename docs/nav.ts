@@ -79,27 +79,34 @@ export default {
       description:
         "Use `bun run` to execute JavaScript/TypeScript files, package.json scripts, and executable packages.",
     }),
-    page("runtime/index", "Runtime", {
-      description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
-    }),
-    // page("runtime/performance", "Performance", {
+    // page("runtime/index", "Overview", {
     //   description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
     // }),
+    page("runtime/performance", "Performance", {
+      description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
+    }),
+    page("runtime/loaders", "File types", {
+      description: `Bun can directly execute TypeScript files without additional configuration.`,
+    }),
     page("runtime/typescript", "TypeScript", {
       description: `Bun can directly execute TypeScript files without additional configuration.`,
     }),
-    page("runtime/jsx", "JSX and React", {
-      description: `Bun can directly execute TypeScript files without additional configuration.`,
+    // page("runtime/jsx", "JSX", {
+    //   description: `Bun can directly execute TypeScript files without additional configuration.`,
+    // }),
+    // page("runtime/apis", "APIs", {
+    //   description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
+    // }),
+    page("runtime/bun-apis", "Bun APIs", {
+      description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
     }),
+    page("runtime/web-apis", "Web APIs", {
+      description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
+    }),
+
     page("runtime/nodejs-apis", "Node.js compatibility", {
       description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
     }),
-    // page("runtime/web-apis", "Web APIs", {
-    //   description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
-    // }),
-    // page("runtime/bun-apis", "Bun APIs", {
-    //   description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
-    // }),
 
     // page("runtime/nodejs", "Node.js compatibility", {
     //   description: `Track the status of Bun's API compatibility with Node.js.`,
@@ -113,8 +120,11 @@ export default {
     page("runtime/modules", "Module resolution", {
       description: `Bun uses ESM and implements an extended version of the Node.js module resolution algorithm.`,
     }),
-    page("runtime/autoimport", "Automatic imports", {
+    page("runtime/autoimport", "Auto-install", {
       description: `Bun uses ESM and implements an extended version of the Node.js module resolution algorithm.`,
+    }),
+    page("runtime/configuration", "Configuration", {
+      description: `Bun's runtime is configurable with environment variables and the bunfig.toml config file.`,
     }),
     page("runtime/plugins", "Plugins", {
       description: `Implement custom loaders and module resolution logic with Bun's plugin system.`,
@@ -143,7 +153,7 @@ export default {
       description:
         "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
     }),
-    page("install/registries", "Registries", {
+    page("install/registries", "Scopes and registries", {
       description:
         "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
     }),
@@ -248,9 +258,7 @@ export default {
     page("project/roadmap", "Roadmap", {
       description: `Track Bun's near-term and long-term goals.`,
     }),
-    page("project/configuration", "Configuration", {
-      description: `Bun's runtime is configurable with environment variables and the bunfig.toml config file.`,
-    }),
+
     page("project/benchmarking", "Benchmarking", {
       description: `Bun is designed for performance. Learn how to benchmark Bun yourself.`,
     }),

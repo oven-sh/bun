@@ -1,4 +1,4 @@
-Bun can directly execute `.ts` and `.tsx` files just like vanilla JavaScript, with no extra configuration. If you import a `.ts` or `.tsx` file (or an `npm` module that exports these files), Bun internally transpiles it into JavaScript then executes the file.
+Bun can directly execute `.ts` and `.tsx` files with no extra configuration. If you import a `.ts` or `.tsx` file, Bun internally transpiles it into JavaScript then executes the file.
 
 {% callout %}
 **Note** — Similar to other build tools, Bun does not typecheck the files. Use [`tsc --noEmit`](https://www.typescriptlang.org/docs/handbook/compiler-options.html) (the official TypeScript CLI) if you're looking to catch static type errors.
@@ -37,7 +37,7 @@ These are the recommended `compilerOptions` for a Bun project.
     "lib": ["esnext"],
     "module": "esnext",
     "target": "esnext",
-    
+
     // requires typescript 5.x+
     // use "nodenext" for earlier versions
     "moduleResolution": "bundler",

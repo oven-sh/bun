@@ -1,4 +1,4 @@
-Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.
+Bun is a new JavaScript & TypeScript runtime designed to be a faster, leaner, more modern replacement for Node.js.
 
 ## Speed
 
@@ -10,9 +10,9 @@ Bun is designed to start fast and run fast. It's transpiler and runtime are writ
 
 Performance sensitive APIs like `Buffer`, `fetch`, and `Response` are heavily profiled and optimized. Under the hood Bun uses the [JavaScriptCore engine](https://developer.apple.com/documentation/javascriptcore), which is developed by Apple for Safari. It starts and runs faster than V8, the engine used by Node.js and Chromium-based browsers.
 
-## File types
+## TypeScript
 
-Bun natively supports TypeScript and JSX out of the box.
+Bun natively supports TypeScript out of the box. All files are transpiled on the fly by Bun's fast native transpiler before being executed. Similar to other build tools, Bun does not perform typechecking; it simply removes type annotations from the file.
 
 ```bash
 $ bun index.js
@@ -20,6 +20,8 @@ $ bun index.jsx
 $ bun index.ts
 $ bun index.tsx
 ```
+
+Some aspects of Bun's runtime behavior are affected by the contents of your `tsconfig.json` file. Refer to [Runtime > TypeScript](/docs/runtime/typescript) page for details.
 
 <!-- Before execution, Bun internally transforms all source files to vanilla JavaScript using its fast native transpiler. The transpiler looks at the files extension to determine how to handle it. -->
 
@@ -88,6 +90,10 @@ every file before execution. It's transpiler  can directly run TypeScript and JS
 
 {% /table %} -->
 
+## JSX
+
+## JSON and TOML
+
 Source files can import a `*.json` or `*.toml` file to load its contents as a plain old JavaScript object.
 
 ```ts
@@ -95,7 +101,9 @@ import pkg from "./package.json";
 import bunfig from "./bunfig.toml";
 ```
 
-As of v0.5.2, experimental support has been for the [WebAssembly System Interface](https://github.com/WebAssembly/WASI) (WASI), you can run `.wasm` binaries.
+## WASM
+
+As of v0.5.2, experimental support exists for WASI, the [WebAssembly System Interface](https://github.com/WebAssembly/WASI). To run a `.wasm` binary with Bun:
 
 ```bash
 $ bun ./my-wasm-app.wasm
@@ -104,14 +112,13 @@ $ bun run ./my-wasm-app.whatever
 ```
 
 {% callout %}
-**Note** — WASI support is based on [wasi-js](https://github.com/sagemathinc/cowasm/tree/main/packages/wasi-js). Currently, it only supports WASI binaries that use the `wasi_snapshot_preview1` or `wasi_unstable` APIs. Bun's implementation is not optimized for performance, but if this feature gets popular, we'll definitely invest time in making it faster.
-{% /callout %}
 
-Support for additional file types can be implemented with [Plugins](/docs/runtime/plugins).
+**Note** — WASI support is based on [wasi-js](https://github.com/sagemathinc/cowasm/tree/main/packages/wasi-js). Currently, it only supports WASI binaries that use the `wasi_snapshot_preview1` or `wasi_unstable` APIs. Bun's implementation is not fully optimized for performance; this will become more of a priority as WASM grows in popularity.
+{% /callout %}
 
 ## Node.js compatibility
 
-Long-term, Bun aims for complete Node.js compatibility. Most Node.js packages already work with Bun out of the box, but certain low-level APIs like `dgram` are still unimplemented. Track the current compatibility status at [Ecosystem > Node.js](/docs/ecosystem/nodejs).
+Long-term, Bun aims for complete Node.js compatibility. Most Node.js packages already work with Bun out of the box, but certain low-level APIs like `dgram` are still unimplemented. Track the current compatibility status at [Ecosystem > Node.js](/docs/runtime/nodejs-apis).
 
 Bun implements the Node.js module resolution algorithm, so dependencies can still be managed with `package.json`, `node_modules`, and CommonJS-style imports.
 
@@ -216,7 +223,7 @@ The following Web APIs are partially or completely supported.
 
 {% /table %}
 
-## Bun-native APIs
+## Bun APIs
 
 Bun exposes a set of Bun-specific APIs on the `Bun` global object and through a number of built-in modules. These APIs represent the canonical "Bun-native" way to perform some common development tasks. They are all heavily optimized for performance. Click the link in the left column to view the associated documentation.
 
@@ -293,3 +300,7 @@ Bun exposes a set of Bun-specific APIs on the `Bun` global object and through a 
 ---
 
 {% /table %}
+
+## Plugins
+
+Support for additional file types can be implemented with plugins. Refer to [Runtime > Plugins](/docs/runtime/plugins) for full documentation.

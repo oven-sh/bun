@@ -19,7 +19,7 @@ $ bun run react.tsx
 <Component message="Hello world!" />
 ```
 
-### Prop punning
+<!-- ### Prop punning
 
 The Bun runtime also supports "prop punning" for JSX. This is a shorthand syntax useful for assigning a variable to a prop with the same name.
 
@@ -32,4 +32,4 @@ function Div(props: {className: string;}) {
   // with punning
   return <div {className} />;
 }
-```
+``` -->

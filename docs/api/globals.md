@@ -34,7 +34,7 @@ Bun implements the following globals.
 
 - [`Buffer`](https://nodejs.org/api/buffer.html#class-buffer)
 - Node.js
-- See [Node.js > `Buffer`](/docs/ecosystem/nodejs#node_buffer)
+- See [Node.js > `Buffer`](/docs/runtime/nodejs-apis#node_buffer)
 
 ---
 
@@ -172,7 +172,7 @@ Bun implements the following globals.
 
 - [`global`](https://nodejs.org/api/globals.html#global)
 - Node.js
-- See [Node.js > `global`](/docs/ecosystem/nodejs#node_global).
+- See [Node.js > `global`](/docs/runtime/nodejs-apis#node_global).
 
 ---
 
@@ -214,7 +214,7 @@ Bun implements the following globals.
 
 - [`process`](https://nodejs.org/api/process.html)
 - Node.js
-- See [Node.js > `process`](/docs/ecosystem/nodejs#node_process)
+- See [Node.js > `process`](/docs/runtime/nodejs-apis#node_process)
 
 ---
 

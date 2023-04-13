@@ -14,15 +14,21 @@ Compare to `node <file>`
 Use `bun run` to execute a source file.
 
 ```bash
-$ bun index.js
+$ bun run index.js
 ```
 
 Bun supports TypeScript and JSX out of the box. Every file is transpiled on the fly by Bun's fast native transpiler before being executed.
 
 ```bash
-$ bun index.js
-$ bun index.jsx
-$ bun index.ts
+$ bun run index.js
+$ bun run index.jsx
+$ bun run index.ts
+$ bun run index.tsx
+```
+
+The "naked" `bun` command is equivalent to `bun run`.
+
+```bash
 $ bun index.tsx
 ```
 

@@ -830,7 +830,12 @@ const ParseTask = struct {
                 }, Logger.Loc{ .start = 0 });
                 return (try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?;
             },
-            else => return try getEmptyAST(log, bundler, opts, allocator, source),
+            else => {
+                const root = Expr.init(E.String, E.String{
+                    .data = source.path.text,
+                }, Logger.Loc{ .start = 0 });
+                return (try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?;
+            },
         }
     }
 

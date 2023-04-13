@@ -1777,6 +1777,11 @@ fn NewPrinter(
                     return;
                 }
 
+                if (record.path.is_disabled) {
+                    p.printDisabledImport();
+                    return;
+                }
+
                 if (comptime is_bun_platform) {
                     p.print("import.meta.require");
                 } else {

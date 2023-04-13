@@ -885,7 +885,7 @@ export function itBundled(id: string, opts: BundlerTestInput): BundlerTestRef {
     return ref;
   } else if (!FILTER) {
     try {
-      expectBundled(id, opts);
+      expectBundled(id, opts, true);
     } catch (error) {
       it.skip(id, () => {});
       return ref;

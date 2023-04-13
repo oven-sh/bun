@@ -171,6 +171,17 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": "bun build debug STDOUT 2",
+      "program": "bun-debug",
+      "args": ["bun", "${fileDirname}/e00.js", "${fileDirname}/e01.js", "${fileDirname}/e02.js", "${fileDirname}/e03.js", "${fileDirname}/e04.js", "${fileDirname}/e05.js", "${fileDirname}/e06.js", "${fileDirname}/e07.js", "${fileDirname}/e08.js", "--outdir=build"],
+      "cwd": "${file}/../",
+      "console": "internalConsole",
+      "env": {}
+    },
+
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "bun build debug (no splitting, browser entry)",
       "program": "bun-debug",
       "args": [

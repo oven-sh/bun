@@ -146,6 +146,12 @@ export interface BundlerTestInput {
   /** Used on tests in the esbuild suite that fail and skip. */
   skipOnEsbuild?: boolean;
 
+  /** Compares output files from another test. Used for example in `ts/TSMinifyNestedEnumNoLogicalAssignment` because the output is exactly the same. */
+  matchesReference?: {
+    ref: BundlerTestRef;
+    files: string[];
+  };
+
   /** Run after bundle happens but before runtime. */
   onAfterBundle?(api: BundlerTestBundleAPI): void;
 }
@@ -187,11 +193,25 @@ export interface BundlerTestRunOptions {
   runtime?: "bun" | "node";
 }
 
+export interface BundlerTestRef {
+  id: string;
+  options: BundlerTestInput;
+}
+
 var testFiles = new Map();
 
-export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boolean) {
+function testRef(id: string, options: BundlerTestInput): BundlerTestRef {
+  return { id, options };
+}
+
+export function expectBundled(
+  id: string,
+  opts: BundlerTestInput,
+  dryRun = false,
+  ignoreFilter = false,
+): BundlerTestRef {
   var { expect, it, test } = testForFile(callerSourceOrigin());
-  if (FILTER && id !== FILTER) return;
+  if (!ignoreFilter && FILTER && id !== FILTER) return testRef(id, opts);
 
   let {
     assertNotPresent,
@@ -233,6 +253,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     treeShaking,
     unsupportedCSSFeatures,
     unsupportedJSFeatures,
+    matchesReference,
     ...unknownProps
   } = opts;
 
@@ -288,10 +309,10 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     throw new Error("loader not implemented in bun build");
   }
   if (ESBUILD && skipOnEsbuild) {
-    return;
+    return testRef(id, opts);
   }
   if (dryRun) {
-    return;
+    return testRef(id, opts);
   }
 
   const root = path.join(outBase, id.replaceAll("/", path.sep));
@@ -452,14 +473,19 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
   if (!success) {
     if (!ESBUILD) {
       const errorRegex = /^error: (.*?)\n(?:.*?\n\s*\^\s*\n(.*?)\n)?/gms;
-      const allErrors = [...stderr!.toString("utf-8").matchAll(errorRegex)].map(([_str1, error, source]) => {
-        if (!source) {
-          return { error, file: "<bun>" };
-        }
-        const [_str2, fullFilename, line, col] = source.match(/bun-build-tests\/(.*):(\d+):(\d+)/)!;
-        const file = fullFilename.slice(id.length + path.basename(outBase).length + 1);
-        return { error, file, line, col };
-      });
+      const allErrors = [...stderr!.toString("utf-8").matchAll(errorRegex)]
+        .map(([_str1, error, source]) => {
+          if (!source) {
+            if (error === "FileNotFound") {
+              return null;
+            }
+            return { error, file: "<bun>" };
+          }
+          const [_str2, fullFilename, line, col] = source.match(/bun-build-tests\/(.*):(\d+):(\d+)/)!;
+          const file = fullFilename.slice(id.length + path.basename(outBase).length + 1);
+          return { error, file, line, col };
+        })
+        .filter(Boolean) as any[];
 
       if (allErrors.length === 0) {
         console.log(stderr!.toString("utf-8"));
@@ -480,7 +506,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
         for (const [file, errs] of Object.entries(files)) {
           console.log('  "' + file + '": [');
           for (const err of errs as any) {
-            console.log("    `" + err.error + "`");
+            console.log("    `" + err.error + "`,");
           }
           console.log("  ],");
         }
@@ -513,13 +539,13 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
           throw new Error("Errors were expected while bundling:\n" + errorsLeft.map(formatError).join("\n"));
         }
 
-        return;
+        return testRef(id, opts);
       }
       throw new Error("Bundle Failed\n" + [...allErrors].map(formatError).join("\n"));
     } else if (!expectedErrors) {
       throw new Error("Bundle Failed\n" + stderr?.toString("utf-8"));
     }
-    return;
+    return testRef(id, opts);
   } else if (expectedErrors) {
     throw new Error("Errors were expected while bundling:\n" + expectedErrors.map(formatError).join("\n"));
   }
@@ -547,7 +573,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
       for (const [file, errs] of Object.entries(warningReference)) {
         console.log('  "' + file + '": [');
         for (const err of errs as any) {
-          console.log("    `" + err.error + "`");
+          console.log("    `" + err.error + "`,");
         }
         console.log("  ],");
       }
@@ -728,6 +754,31 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     onAfterBundle(api);
   }
 
+  // check reference
+  if (matchesReference) {
+    const { ref } = matchesReference;
+    const theirRoot = path.join(outBase, ref.id.replaceAll("/", path.sep));
+    if (!existsSync(theirRoot)) {
+      expectBundled(ref.id, ref.options, false, true);
+      if (!existsSync(theirRoot)) {
+        console.log("Expected " + theirRoot + " to exist after running reference test");
+        throw new Error('Reference test "' + ref.id + '" did not succeed');
+      }
+    }
+    for (const file of matchesReference.files) {
+      const ours = path.join(root, file);
+      const theirs = path.join(theirRoot, file);
+      if (!existsSync(theirs)) throw new Error(`Reference test "${ref.id}" did not write ${file}`);
+      if (!existsSync(ours)) throw new Error(`Test did not write ${file}`);
+      try {
+        expect(readFileSync(ours).toString()).toBe(readFileSync(theirs).toString());
+      } catch (error) {
+        console.log("Expected reference test " + ref.id + "'s " + file + " to match ours");
+        throw error;
+      }
+    }
+  }
+
   // Runtime checks!
   if (run) {
     const runs = Array.isArray(run) ? run : [run];
@@ -820,29 +871,34 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
       }
     }
   }
+
+  return testRef(id, opts);
 }
 
 /** Shorthand for test and expectBundled. See `expectBundled` for what this does.
  */
-export function itBundled(id: string, opts: BundlerTestInput) {
+export function itBundled(id: string, opts: BundlerTestInput): BundlerTestRef {
+  const ref = testRef(id, opts);
   const { it } = testForFile(callerSourceOrigin());
 
   if (FILTER && id !== FILTER) {
-    return;
+    return ref;
   } else if (!FILTER) {
     try {
-      expectBundled(id, opts, true);
+      expectBundled(id, opts);
     } catch (error) {
       it.skip(id, () => {});
-      return;
+      return ref;
     }
   }
 
   it(id, () => expectBundled(id, opts));
+  return ref;
 }
 itBundled.skip = (id: string, opts: BundlerTestInput) => {
   const { it } = testForFile(callerSourceOrigin());
-  return it.skip(id, () => expectBundled(id, opts));
+  it.skip(id, () => expectBundled(id, opts));
+  return testRef(id, opts);
 };
 
 /** version of test that applies filtering */
@@ -855,7 +911,7 @@ export function bundlerTest(id: string, cb: () => void) {
 }
 bundlerTest.skip = (id: string, cb: any) => {
   const { it } = testForFile(callerSourceOrigin());
-  return it.skip(id, cb);
+  it.skip(id, cb);
 };
 
 function formatError(err: { file: string; error: string; line?: string; col?: string }) {

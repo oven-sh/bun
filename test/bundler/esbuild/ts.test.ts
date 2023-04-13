@@ -1,3 +1,4 @@
+import assert from "assert";
 import { itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
@@ -7,9 +8,7 @@ var { describe, test, expect } = testForFile(import.meta.path);
 // For debug, all files are written to $TEMP/bun-bundle-tests/ts
 
 describe("bundler", () => {
-  return;
   itBundled("ts/TSDeclareConst", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         declare const require: any
@@ -20,9 +19,15 @@ describe("bundler", () => {
         let foo = bar()
       `,
     },
+    onAfterBundle(api) {
+      assert(api.readFile("/out.js").includes("foo = bar()"), 'includes "foo = bar()"');
+      assert(!api.readFile("/out.js").includes("require"), 'does not include "require"');
+      assert(!api.readFile("/out.js").includes("exports"), 'does not include "exports"');
+      assert(!api.readFile("/out.js").includes("module"), 'does not include "module"');
+      assert(!api.readFile("/out.js").includes("const foo"), 'does not include "const foo"');
+    },
   });
   itBundled("ts/TSDeclareLet", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         declare let require: any
@@ -33,9 +38,14 @@ describe("bundler", () => {
         let foo = bar()
       `,
     },
+    onAfterBundle(api) {
+      assert(api.readFile("/out.js").includes("foo = bar()"), 'includes "foo = bar()"');
+      assert(!api.readFile("/out.js").includes("require"), 'does not include "require"');
+      assert(!api.readFile("/out.js").includes("exports"), 'does not include "exports"');
+      assert(!api.readFile("/out.js").includes("module"), 'does not include "module"');
+    },
   });
   itBundled("ts/TSDeclareVar", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         declare var require: any
@@ -46,9 +56,14 @@ describe("bundler", () => {
         let foo = bar()
       `,
     },
+    onAfterBundle(api) {
+      assert(api.readFile("/out.js").includes("foo = bar()"), 'includes "foo = bar()"');
+      assert(!api.readFile("/out.js").includes("require"), 'does not include "require"');
+      assert(!api.readFile("/out.js").includes("exports"), 'does not include "exports"');
+      assert(!api.readFile("/out.js").includes("module"), 'does not include "module"');
+    },
   });
   itBundled("ts/TSDeclareClass", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         declare class require {}
@@ -59,13 +74,30 @@ describe("bundler", () => {
         let foo = bar()
       `,
     },
+    onAfterBundle(api) {
+      assert(api.readFile("/out.js").includes("foo = bar()"), 'includes "foo = bar()"');
+      assert(!api.readFile("/out.js").includes("require"), 'does not include "require"');
+      assert(!api.readFile("/out.js").includes("exports"), 'does not include "exports"');
+      assert(!api.readFile("/out.js").includes("module"), 'does not include "module"');
+      assert(!api.readFile("/out.js").includes("class"), 'does not include "class"');
+    },
   });
   itBundled("ts/TSDeclareClassFields", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
+        import './setup'
         import './define-false'
         import './define-true'
+      `,
+      "./setup.js": /* js */ `
+        globalThis.A = "global.A"
+        globalThis.a = "global.a"
+        globalThis.B = "global.B"
+        globalThis.b = "global.b"
+        globalThis.C = "global.C"
+        globalThis.c = "global.c"
+        globalThis.D = "global.D"
+        globalThis.d = "global.d"
       `,
       "/define-false/index.ts": /* ts */ `
         class Foo {
@@ -79,7 +111,9 @@ describe("bundler", () => {
           static [(() => null, C)]
           static declare [(() => null, D)]
         }
-        (() => new Foo())()
+        const props = x => JSON.stringify({ ...Object.getOwnPropertyDescriptors(x), length: undefined, prototype: undefined })
+        console.log('Foo    ', props(Foo))
+        console.log('new Foo', props(new Foo()))
       `,
       "/define-true/index.ts": /* ts */ `
         class Bar {
@@ -93,19 +127,28 @@ describe("bundler", () => {
           static [(() => null, C)]
           static declare [(() => null, D)]
         }
-        (() => new Bar())()
+        const props = x => JSON.stringify({ ...Object.getOwnPropertyDescriptors(x), length: undefined, prototype: undefined })
+        console.log('Bar    ', props(Bar))
+        console.log('new Bar', props(new Bar()))
       `,
       "/define-true/tsconfig.json": /* json */ `
         {
-        "compilerOptions": {
-          "useDefineForClassFields": true
+          "compilerOptions": {
+            "useDefineForClassFields": true
+          }
         }
-      }
+      `,
+    },
+    run: {
+      stdout: `
+        Foo     {"name":{"value":"Foo","writable":false,"enumerable":false,"configurable":true}}
+        new Foo {}
+        Bar     {"name":{"value":"Bar","writable":false,"enumerable":false,"configurable":true},"A":{"writable":true,"enumerable":true,"configurable":true},"global.C":{"writable":true,"enumerable":true,"configurable":true}}
+        new Bar {"a":{"writable":true,"enumerable":true,"configurable":true},"global.c":{"writable":true,"enumerable":true,"configurable":true}}
       `,
     },
   });
   itBundled("ts/TSDeclareFunction", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         declare function require(): void
@@ -116,9 +159,15 @@ describe("bundler", () => {
         let foo = bar()
       `,
     },
+    onAfterBundle(api) {
+      assert(api.readFile("/out.js").includes("foo = bar()"), 'includes "foo = bar()"');
+      assert(!api.readFile("/out.js").includes("require"), 'does not include "require"');
+      assert(!api.readFile("/out.js").includes("exports"), 'does not include "exports"');
+      assert(!api.readFile("/out.js").includes("module"), 'does not include "module"');
+      assert(!api.readFile("/out.js").includes("function"), 'does not include "function"');
+    },
   });
   itBundled("ts/TSDeclareNamespace", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         declare namespace require {}
@@ -129,9 +178,15 @@ describe("bundler", () => {
         let foo = bar()
       `,
     },
+    onAfterBundle(api) {
+      assert(api.readFile("/out.js").includes("foo = bar()"), 'includes "foo = bar()"');
+      assert(!api.readFile("/out.js").includes("require"), 'does not include "require"');
+      assert(!api.readFile("/out.js").includes("exports"), 'does not include "exports"');
+      assert(!api.readFile("/out.js").includes("module"), 'does not include "module"');
+      assert(!api.readFile("/out.js").includes("namespace"), 'does not include "namespace"');
+    },
   });
   itBundled("ts/TSDeclareEnum", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         declare enum require {}
@@ -142,9 +197,15 @@ describe("bundler", () => {
         let foo = bar()
       `,
     },
+    onAfterBundle(api) {
+      assert(api.readFile("/out.js").includes("foo = bar()"), 'includes "foo = bar()"');
+      assert(!api.readFile("/out.js").includes("require"), 'does not include "require"');
+      assert(!api.readFile("/out.js").includes("exports"), 'does not include "exports"');
+      assert(!api.readFile("/out.js").includes("module"), 'does not include "module"');
+      assert(!api.readFile("/out.js").includes("enum"), 'does not include "enum"');
+    },
   });
   itBundled("ts/TSDeclareConstEnum", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         declare const enum require {}
@@ -155,9 +216,16 @@ describe("bundler", () => {
         let foo = bar()
       `,
     },
+    onAfterBundle(api) {
+      assert(api.readFile("/out.js").includes("foo = bar()"), 'includes "foo = bar()"');
+      assert(!api.readFile("/out.js").includes("require"), 'does not include "require"');
+      assert(!api.readFile("/out.js").includes("exports"), 'does not include "exports"');
+      assert(!api.readFile("/out.js").includes("module"), 'does not include "module"');
+      assert(!api.readFile("/out.js").includes("enum"), 'does not include "enum"');
+      assert(!api.readFile("/out.js").includes("const"), 'does not include "const"');
+    },
   });
   itBundled("ts/TSConstEnumComments", {
-    // GENERATED
     files: {
       "/bar.ts": /* ts */ `
         export const enum Foo {
@@ -171,7 +239,7 @@ describe("bundler", () => {
           "%/*" = 1,
           "*/%" = 2,
         }
-        console.log({
+        console.log(JSON.stringify({
           'should have comments': [
             Foo["%/*"],
             Bar["%/*"],
@@ -180,93 +248,120 @@ describe("bundler", () => {
             Foo["*/%"],
             Bar["*/%"],
           ],
-        });
+        }));
       `,
     },
     entryPoints: ["/foo.ts"],
-  });
-  itBundled("ts/TSImportEmptyNamespace", {
-    // GENERATED
-    files: {
-      "/entry.ts": /* ts */ `
-        import {ns} from './ns.ts'
-        function foo(): ns.type {}
-        foo();
-      `,
-      "/ns.ts": `export namespace ns {}`,
+    onAfterBundle(api) {
+      assert(!api.readFile("/out.js").match(/var|let|const/), "should have inlined all enum constants");
+      assert(!api.readFile("/out.js").match(/\*\/%/), "should not include '*/%' anywhere");
+      assert(
+        [...api.readFile("/out.js").matchAll(/1\s*\/\* %\/\* \*\//g)].length === 2,
+        "should have 2 comments for '1'",
+      );
+      assert(
+        [...api.readFile("/out.js").matchAll(/2\s*\/\*/g)].length === 0,
+        "should have 0 comments for '2' since */ will break the comment syntax",
+      );
+    },
+    run: {
+      stdout: `{"should have comments":[1,1],"should not have comments":[2,2]}`,
     },
   });
+  itBundled("ts/TSImportEmptyNamespace", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import {REMOVE} from './ns.ts'
+        function foo(): REMOVE.type {}
+        foo();
+      `,
+      "/ns.ts": `export namespace REMOVE { type type = number }`,
+    },
+    dce: true,
+    run: true,
+  });
   itBundled("ts/TSImportMissingES6", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import fn, {x as a, y as b} from './foo'
         console.log(fn(a, b))
       `,
-      "/foo.js": `export const x = 123`,
+      "/foo.js": `export const x = 123;`,
     },
-    /* TODO FIX expectedCompileLog: `entry.ts: ERROR: No matching export in "foo.js" for import "default"
-  entry.ts: ERROR: No matching export in "foo.js" for import "y"
-  `, */
+    bundleErrors: {
+      "/entry.ts": [
+        `No matching export "default" in "foo.js" for import "default"`,
+        `No matching export "y" in "foo.js" for import "y"`,
+      ],
+    },
   });
   itBundled("ts/TSImportMissingUnusedES6", {
-    // GENERATED
     files: {
       "/entry.ts": `import fn, {x as a, y as b} from './foo'`,
       "/foo.js": `export const x = 123`,
     },
+    // goal for this test is there is no error. we dont really care about the output
   });
   itBundled("ts/TSExportMissingES6", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
-        console.log(ns)
+        console.log(JSON.stringify(ns))
       `,
       "/foo.ts": `export {nope} from './bar'`,
       "/bar.js": `export const yep = 123`,
     },
+    run: {
+      stdout: `{}`,
+    },
   });
   itBundled("ts/TSImportMissingFile", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import {Something} from './doesNotExist.ts'
         let foo = new Something
       `,
     },
-    /* TODO FIX expectedScanLog: `entry.ts: ERROR: Could not resolve "./doesNotExist.ts"
-  `, */
+    bundleErrors: {
+      "/entry.ts": [`Could not resolve: "./doesNotExist.ts"`],
+    },
   });
   itBundled("ts/TSImportTypeOnlyFile", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import {SomeType1} from './doesNotExist1.ts'
         import {SomeType2} from './doesNotExist2.ts'
+        function bar() { return 2; }
         let foo: SomeType1 = bar()
+        console.log(foo);
       `,
+    },
+    run: {
+      stdout: "2",
     },
   });
   itBundled("ts/TSExportEquals", {
-    // GENERATED
     files: {
       "/a.ts": /* ts */ `
         import b from './b.ts'
-        console.log(b)
+        console.log(JSON.stringify(b))
       `,
       "/b.ts": /* ts */ `
         export = [123, foo]
         function foo() {}
       `,
     },
+    run: {
+      stdout: `[123,null]`,
+    },
   });
   itBundled("ts/TSExportNamespace", {
-    // GENERATED
     files: {
       "/a.ts": /* ts */ `
         import {Foo} from './b.ts'
-        console.log(new Foo)
+        console.log(JSON.stringify(new Foo))
+        console.log(Foo.foo)
+        console.log(Foo.bar)
       `,
       "/b.ts": /* ts */ `
         export class Foo {}
@@ -278,11 +373,13 @@ describe("bundler", () => {
         }
       `,
     },
+    run: {
+      stdout: `{}\n1\n2`,
+    },
   });
   itBundled("ts/TSMinifyEnum", {
-    // GENERATED
     files: {
-      "/a.ts": `enum Foo { A, B, C = Foo }`,
+      "/a.ts": `enum Foo { A, B, C = Foo }\ncapture(Foo)`,
       "/b.ts": `export enum Foo { X, Y, Z = Foo }`,
     },
     entryPoints: ["/a.ts", "/b.ts"],
@@ -290,34 +387,107 @@ describe("bundler", () => {
     minifyWhitespace: true,
     minifyIdentifiers: true,
     mode: "transform",
+    onAfterBundle(api) {
+      const a = api.readFile("/out/a.js");
+      api.writeFile("/out/a.edited.js", a.replace(/capture\((.*?)\)/, `export const Foo = $1`));
+      const b = api.readFile("/out/b.js");
+
+      // make sure the minification trick "enum[enum.K=V]=K" is used, but `enum`
+      assert(a.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.A=0]=["']A["']\b/), "should be using enum minification trick (1)");
+      assert(a.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.B=1]=["']B["']\b/), "should be using enum minification trick (2)");
+      assert(
+        a.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.C=[a-zA-Z$]]=["']C["']\b/),
+        "should be using enum minification trick (3)",
+      );
+      assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.X=0]=["']X["']\b/), "should be using enum minification trick (4)");
+      assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.Y=1]=["']Y["']\b/), "should be using enum minification trick (5)");
+      assert(
+        b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.Z=[a-zA-Z$]]=["']Z["']\b/),
+        "should be using enum minification trick (6)",
+      );
+    },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import {Foo as FooA} from './out/a.edited.js'
+        import {Foo as FooB} from './out/b.js'
+        import assert from 'assert';
+        assert.strictEqual(FooA.A, 0, 'a.ts Foo.A')
+        assert.strictEqual(FooA.B, 1, 'a.ts Foo.B')
+        assert.strictEqual(FooA.C, Foo, 'a.ts Foo.C')
+        assert.strictEqual(FooA[0], 'A', 'a.ts Foo[0]')
+        assert.strictEqual(FooA[1], 'B', 'a.ts Foo[1]')
+        assert.strictEqual(FooA[FooA], 'C', 'a.ts Foo[Foo]')
+        assert.strictEqual(FooB.X, 0, 'b.ts Foo.X')
+        assert.strictEqual(FooB.Y, 1, 'b.ts Foo.Y')
+        assert.strictEqual(FooB.Z, FooB, 'b.ts Foo.Z')
+        assert.strictEqual(FooB[0], 'X', 'b.ts Foo[0]')
+        assert.strictEqual(FooB[1], 'Y', 'b.ts Foo[1]')
+        assert.strictEqual(FooB[FooB], 'Z', 'b.ts Foo[Foo]')
+      `,
+    },
   });
-  itBundled("ts/TSMinifyNestedEnum", {
-    // GENERATED
+  const TSMinifyNestedEnum = itBundled("ts/TSMinifyNestedEnum", {
     files: {
-      "/a.ts": `function foo() { enum Foo { A, B, C = Foo } return Foo }`,
-      "/b.ts": `export function foo() { enum Foo { X, Y, Z = Foo } return Foo }`,
+      "/a.ts": `function foo(arg) { enum Foo { A, B, C = Foo, D = arg } return Foo }\ncapture(foo)`,
+      "/b.ts": `export function foo(arg) { enum Foo { X, Y, Z = Foo, W = arg } return Foo }`,
     },
     entryPoints: ["/a.ts", "/b.ts"],
     minifySyntax: true,
     minifyWhitespace: true,
     minifyIdentifiers: true,
     mode: "transform",
+    onAfterBundle(api) {
+      const a = api.readFile("/out/a.js");
+      api.writeFile("/out/a.edited.js", a.replace(/capture\((.*?)\)/, `export const Foo = $1`));
+    },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import {foo as fooA} from './out/a.edited.js'
+        import {foo as fooB} from './out/b.js'
+        import assert from 'assert';
+        const S = Symbol('S')
+        const FooA = fooA(S)
+        const FooB = fooB(S)
+        assert.strictEqual(FooA.A, 0, 'a.ts Foo.A')
+        assert.strictEqual(FooA.B, 1, 'a.ts Foo.B')
+        assert.strictEqual(FooA.C, Foo, 'a.ts Foo.C')
+        assert.strictEqual(FooA.D, S, 'a.ts Foo.D')
+        assert.strictEqual(FooA[0], 'A', 'a.ts Foo[0]')
+        assert.strictEqual(FooA[1], 'B', 'a.ts Foo[1]')
+        assert.strictEqual(FooA[FooA], 'C', 'a.ts Foo[Foo]')
+        assert.strictEqual(FooA[S], 'D', 'a.ts Foo[S]')
+        assert.strictEqual(FooB.X, 0, 'b.ts Foo.X')
+        assert.strictEqual(FooB.Y, 1, 'b.ts Foo.Y')
+        assert.strictEqual(FooB.Z, FooB, 'b.ts Foo.Z')
+        assert.strictEqual(FooB.W, S, 'b.ts Foo.W')
+        assert.strictEqual(FooB[0], 'X', 'b.ts Foo[0]')
+        assert.strictEqual(FooB[1], 'Y', 'b.ts Foo[1]')
+        assert.strictEqual(FooB[FooB], 'Z', 'b.ts Foo[Foo]')
+        assert.strictEqual(FooB[S], 'W', 'b.ts Foo[S]')
+      `,
+    },
   });
   itBundled("ts/TSMinifyNestedEnumNoLogicalAssignment", {
-    // GENERATED
     files: {
-      "/a.ts": `function foo() { enum Foo { A, B, C = Foo } return Foo }`,
-      "/b.ts": `export function foo() { enum Foo { X, Y, Z = Foo } return Foo }`,
+      "/a.ts": `function foo(arg) { enum Foo { A, B, C = Foo, D = arg } return Foo }\ncapture(foo)`,
+      "/b.ts": `export function foo(arg) { enum Foo { X, Y, Z = Foo, W = arg } return Foo }`,
     },
     entryPoints: ["/a.ts", "/b.ts"],
     minifySyntax: true,
     minifyWhitespace: true,
     minifyIdentifiers: true,
-    outdir: "/",
     mode: "transform",
+    unsupportedJSFeatures: ["logical-assignment"],
+    onAfterBundle(api) {
+      const a = api.readFile("/out/a.js");
+      assert(a.includes("A"), "a should not be empty");
+      assert(!a.includes("||="), "a should not use logical assignment");
+      const b = api.readFile("/out/b.js");
+      assert(b.includes("X"), "b should not be empty");
+      assert(!b.includes("||="), "b should not use logical assignment");
+    },
   });
   itBundled("ts/TSMinifyNestedEnumNoArrow", {
-    // GENERATED
     files: {
       "/a.ts": `function foo() { enum Foo { A, B, C = Foo } return Foo }`,
       "/b.ts": `export function foo() { enum Foo { X, Y, Z = Foo } return Foo }`,
@@ -328,7 +498,17 @@ describe("bundler", () => {
     minifyIdentifiers: true,
     outdir: "/",
     mode: "transform",
+    unsupportedJSFeatures: ["arrow"],
+    onAfterBundle(api) {
+      const a = api.readFile("/a.js");
+      assert(a.includes("A"), "a should not be empty");
+      assert(!a.includes("=>"), "a should not use arrow");
+      const b = api.readFile("/b.js");
+      assert(b.includes("X"), "b should not be empty");
+      assert(!b.includes("=>"), "b should not use arrow");
+    },
   });
+  return;
   itBundled("ts/TSMinifyNamespace", {
     // GENERATED
     files: {
@@ -377,6 +557,7 @@ describe("bundler", () => {
     minifyIdentifiers: true,
     outdir: "/",
     mode: "transform",
+    unsupportedJSFeatures: ["logical-assignment"],
   });
   itBundled("ts/TSMinifyNamespaceNoArrow", {
     // GENERATED

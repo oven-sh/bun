@@ -944,8 +944,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         request_js_object: JSC.C.JSObjectRef = null,
         request_body_buf: std.ArrayListUnmanaged(u8) = .{},
         request_body_content_len: usize = 0,
+
+        /// Used to avoid looking at the uws.Request struct after it's been freed
         is_transfer_encoding: bool = false,
-        is_web_browser_navigation: bool = false,
+
+        /// Used in renderMissing in debug mode to show the user an HTML page
+        /// Used to avoid looking at the uws.Request struct after it's been freed
+        is_web_browser_navigation: if (debug_mode) bool else void = if (debug_mode) false else {},
+
         sink: ?*ResponseStream.JSSink = null,
         byte_stream: ?*JSC.WebCore.ByteStream = null,
 
@@ -4951,15 +4957,17 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 },
             };
 
-            ctx.is_web_browser_navigation = brk: {
-                if (ctx.req.header("sec-fetch-dest")) |fetch_dest| {
-                    if (strings.eqlComptime(fetch_dest, "document")) {
-                        break :brk true;
+            if (comptime debug_mode) {
+                ctx.is_web_browser_navigation = brk: {
+                    if (ctx.req.header("sec-fetch-dest")) |fetch_dest| {
+                        if (strings.eqlComptime(fetch_dest, "document")) {
+                            break :brk true;
+                        }
                     }
-                }
 
-                break :brk false;
-            };
+                    break :brk false;
+                };
+            }
 
             // we need to do this very early unfortunately
             // it seems to work fine for synchronous requests but anything async will take too long to register the handler

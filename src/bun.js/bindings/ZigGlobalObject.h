@@ -1,3 +1,6 @@
+// This header is included in nearly every file.
+// Be very cautious of sticking your #include in this file.
+// TODO: rename this to BunGlobalObject
 #pragma once
 
 #ifndef ZIG_GLOBAL_OBJECT

@@ -1,45 +1,43 @@
-import { bench, group, run } from "mitata";
-import { implementations } from "./implementations.mjs";
+import { bench, run } from "mitata";
+import { groupForEmitter } from "./implementations.mjs";
 
 var id = 0;
 
-group(() => {
-  for (let { impl: EventEmitter, name } of implementations) {
-    const emitter = new EventEmitter();
+groupForEmitter("single emit", ({ EventEmitter, name }) => {
+  const emitter = new EventEmitter();
 
-    emitter.on("hello", event => {
-      event.preventDefault();
+  emitter.on("hello", event => {
+    event.preventDefault();
+  });
+
+  bench(name, () => {
+    emitter.emit("hello", {
+      preventDefault() {
+        id++;
+      },
     });
+  });
+});
 
-    bench(`${name}.emit`, () => {
-      emitter.emit("hello", {
+groupForEmitter("on x 10_000 (handler)", ({ EventEmitter, name }) => {
+  const emitter = new EventEmitter();
+
+  bench(name, () => {
+    var cb = event => {
+      event.preventDefault();
+    };
+    emitter.on("hey", cb);
+    var called = false;
+    for (let i = 0; i < 10_000; i++)
+      emitter.emit("hey", {
         preventDefault() {
           id++;
+          called = true;
         },
       });
-    });
-  }
-});
-group(() => {
-  for (let { impl: EventEmitter, name } of implementations) {
-    const emitter = new EventEmitter();
-    bench(`${name}.on x 10_000 (handler)`, () => {
-      var cb = event => {
-        event.preventDefault();
-      };
-      emitter.on("hey", cb);
-      var called = false;
-      for (let i = 0; i < 10_000; i++)
-        emitter.emit("hey", {
-          preventDefault() {
-            id++;
-            called = true;
-          },
-        });
 
-      if (!called) throw new Error("not called");
-    });
-  }
+    if (!called) throw new Error("not called");
+  });
 });
 
 // for (let { impl: EventEmitter, name, monkey } of []) {

@@ -1,5 +1,5 @@
-import { bench, group, run } from "mitata";
-import { implementations } from "./implementations.mjs";
+import { bench, run } from "mitata";
+import { groupForEmitter } from "./implementations.mjs";
 
 // Psuedo RNG is derived from https://stackoverflow.com/a/424445
 let rngState = 123456789;
@@ -26,40 +26,38 @@ const chunks = new Array(1024).fill(null).map((_, j) => {
   return arr;
 });
 
-group("stream simulation", () => {
-  for (let { impl: EventEmitter, name } of implementations) {
-    bench(`${name}`, () => {
-      let id = 0;
-      const stream = new EventEmitter();
+groupForEmitter("stream simulation", ({ EventEmitter, name }) => {
+  bench(name, () => {
+    let id = 0;
+    const stream = new EventEmitter();
 
-      stream.on("start", res => {
-        if (res.status !== 200) throw new Error("not 200");
-      });
-
-      const recived = [];
-      stream.on("data", req => {
-        recived.push(req);
-      });
-
-      stream.on("end", ev => {
-        ev.preventDefault();
-      });
-
-      // simulate a stream
-      stream.emit("start", { status: 200 });
-      for (let chunk of chunks) {
-        stream.emit("data", chunk);
-      }
-      stream.emit("end", {
-        preventDefault() {
-          id++;
-        },
-      });
-
-      if (id !== 1) throw new Error("not implemented right");
-      if (recived.length !== 1024) throw new Error("not implemented right");
+    stream.on("start", res => {
+      if (res.status !== 200) throw new Error("not 200");
     });
-  }
+
+    const recived = [];
+    stream.on("data", req => {
+      recived.push(req);
+    });
+
+    stream.on("end", ev => {
+      ev.preventDefault();
+    });
+
+    // simulate a stream
+    stream.emit("start", { status: 200 });
+    for (let chunk of chunks) {
+      stream.emit("data", chunk);
+    }
+    stream.emit("end", {
+      preventDefault() {
+        id++;
+      },
+    });
+
+    if (id !== 1) throw new Error("not implemented right");
+    if (recived.length !== 1024) throw new Error("not implemented right");
+  });
 });
 
 await run();

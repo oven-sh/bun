@@ -1,4 +1,4 @@
-import { test, describe, expect, it } from "bun:test";
+import { test, describe, expect } from "bun:test";
 // import { heapStats } from "bun:jsc";
 // import { expectMaxObjectTypeCount, gc } from "harness";
 
@@ -6,31 +6,117 @@ import { test, describe, expect, it } from "bun:test";
 // our transpiler transform changes this to a var with import.meta.require
 import EventEmitter, { getEventListeners, captureRejectionSymbol } from "node:events";
 
-describe("EventEmitter", () => {
-  it("captureRejectionSymbol", () => {
+describe("node:events", () => {
+  test("captureRejectionSymbol", () => {
     expect(EventEmitter.captureRejectionSymbol).toBeDefined();
     expect(captureRejectionSymbol).toBeDefined();
     expect(captureRejectionSymbol).toBe(EventEmitter.captureRejectionSymbol);
   });
+
+  test("once", done => {
+    const emitter = new EventEmitter();
+    EventEmitter.once(emitter, "hey").then(x => {
+      try {
+        expect(x).toEqual([1, 5]);
+      } catch (error) {
+        done(error);
+      }
+      done();
+    });
+    emitter.emit("hey", 1, 5);
+  });
+
+  test("once (abort)", done => {
+    const emitter = new EventEmitter();
+    const controller = new AbortController();
+    EventEmitter.once(emitter, "hey", { signal: controller.signal })
+      .then(() => done(new Error("Should not be called")))
+      .catch(() => done());
+    controller.abort();
+  });
+
+  // Next two tests are checking exact behavior
+  // https://nodejs.org/api/events.html#awaiting-multiple-events-emitted-on-processnexttick
+  test("once (multiple, only first hits)", () => {
+    const emitter = new EventEmitter();
+    let a, b;
+    EventEmitter.once(emitter, "hey").then(() => {
+      a = true;
+    });
+    EventEmitter.once(emitter, "hey").then(() => {
+      b = true;
+    });
+    emitter.emit("hey");
+    expect(a).toBe(true);
+    expect(b).toBe(false);
+  });
+
+  test("once (two events in same tick)", done => {
+    const emitter = new EventEmitter();
+    EventEmitter.once(emitter, "hey").then(() => {
+      EventEmitter.once(emitter, "hey").then(data => {
+        try {
+          expect(data).toEqual([3]);
+        } catch (error) {
+          done(error);
+        }
+        done();
+      });
+      setTimeout(() => {
+        emitter.emit("hey", 3);
+      }, 10);
+    });
+    emitter.emit("hey", 1);
+    emitter.emit("hey", 2);
+  });
+
+  // test("on", () => {
+  //   const emitter = new EventEmitter();
+  //   const asyncIterator = EventEmitter.on(emitter, "hey");
+
+  //   expect(asyncIterator.next).toBeDefined();
+  //   expect(asyncIterator[Symbol.asyncIterator]).toBeDefined();
+
+  //   const fn = async () => {
+  //     const { value } = await asyncIterator.next();
+  //     expect(value).toBe(1);
+  //   };
+
+  //   emitter.emit("hey", 1, 2, 3);
+  // });
+});
+
+describe("EventEmitter", () => {
   test("getEventListeners", () => {
     expect(getEventListeners(new EventEmitter(), "hey").length).toBe(0);
   });
-  test("EventEmitter constructor", () => {
+
+  test("constructor", () => {
     var emitter = new EventEmitter();
     emitter.setMaxListeners(100);
     expect(emitter.getMaxListeners()).toBe(100);
   });
 
-  test("EventEmitter.removeAllListeners()", () => {
-    var emitter = new EventEmitter();
+  test("removeAllListeners()", () => {
+    var emitter = new EventEmitter() as any;
     var ran = false;
     emitter.on("hey", () => {
       ran = true;
     });
+    emitter.on("hey", () => {
+      ran = true;
+    });
+    emitter.on("exit", () => {
+      ran = true;
+    });
+    const { _events } = emitter;
     emitter.removeAllListeners();
     expect(emitter.listenerCount("hey")).toBe(0);
+    expect(emitter.listenerCount("exit")).toBe(0);
     emitter.emit("hey");
+    emitter.emit("exit");
     expect(ran).toBe(false);
+    expect(_events).not.toBe(emitter._events); // This looks wrong but node.js replaces it too
     emitter.on("hey", () => {
       ran = true;
     });
@@ -39,8 +125,27 @@ describe("EventEmitter", () => {
     expect(emitter.listenerCount("hey")).toBe(1);
   });
 
+  test("removeAllListeners(type)", () => {
+    var emitter = new EventEmitter();
+    var ran = false;
+    emitter.on("hey", () => {
+      ran = true;
+    });
+    emitter.on("exit", () => {
+      ran = true;
+    });
+    expect(emitter.listenerCount("hey")).toBe(1);
+    emitter.removeAllListeners("hey");
+    expect(emitter.listenerCount("hey")).toBe(0);
+    expect(emitter.listenerCount("exit")).toBe(1);
+    emitter.emit("hey");
+    expect(ran).toBe(false);
+    emitter.emit("exit");
+    expect(ran).toBe(true);
+  });
+
   // These are also tests for the done() function in the test runner.
-  test("EventEmitter emit (different tick)", done => {
+  test("emit (different tick)", done => {
     var emitter = new EventEmitter();
     emitter.on("wow", () => done());
     queueMicrotask(() => {
@@ -49,21 +154,21 @@ describe("EventEmitter", () => {
   });
 
   // Unlike Jest, bun supports async and done
-  test("async EventEmitter emit (microtask)", async done => {
+  test("async emit (microtask)", async done => {
     await 1;
     var emitter = new EventEmitter();
     emitter.on("wow", () => done());
     emitter.emit("wow");
   });
 
-  test("async EventEmitter emit (microtask) after", async done => {
+  test("async emit (microtask) after", async done => {
     var emitter = new EventEmitter();
     emitter.on("wow", () => done());
     await 1;
     emitter.emit("wow");
   });
 
-  test("EventEmitter emit (same tick)", done => {
+  test("emit (same tick)", done => {
     var emitter = new EventEmitter();
 
     emitter.on("wow", () => done());
@@ -71,23 +176,23 @@ describe("EventEmitter", () => {
     emitter.emit("wow");
   });
 
-  test("EventEmitter emit (setTimeout task)", done => {
+  test("emit (setTimeout task)", done => {
     var emitter = new EventEmitter();
     emitter.on("wow", () => done());
     setTimeout(() => emitter.emit("wow"), 1);
   });
 
-  test("EventEmitter.on", () => {
+  test("on", () => {
     var myEmitter = new EventEmitter();
     expect(myEmitter.on("foo", () => {})).toBe(myEmitter);
   });
 
-  test("EventEmitter.off", () => {
+  test("off", () => {
     var myEmitter = new EventEmitter();
     expect(myEmitter.off("foo", () => {})).toBe(myEmitter);
   });
 
-  test("EventEmitter.once", () => {
+  test("once", () => {
     var myEmitter = new EventEmitter();
     var calls = 0;
 
@@ -107,12 +212,12 @@ describe("EventEmitter", () => {
     expect(myEmitter.listenerCount("foo")).toBe(0);
   });
 
-  test("EventEmitter aliases", () => {
+  test("addListener/removeListener aliases", () => {
     expect(EventEmitter.prototype.addListener).toBe(EventEmitter.prototype.on);
     expect(EventEmitter.prototype.removeListener).toBe(EventEmitter.prototype.off);
   });
 
-  test("EventEmitter.prependListener", () => {
+  test("prependListener", () => {
     const myEmitter = new EventEmitter();
     const order: number[] = [];
 
@@ -137,7 +242,7 @@ describe("EventEmitter", () => {
     expect(order).toEqual([3, 2, 1, 4]);
   });
 
-  test("EventEmitter.prependOnceListener", () => {
+  test("prependOnceListener", () => {
     const myEmitter = new EventEmitter();
     const order: number[] = [];
 
@@ -148,7 +253,6 @@ describe("EventEmitter", () => {
     myEmitter.prependOnceListener("foo", () => {
       order.push(2);
     });
-
     myEmitter.prependOnceListener("foo", () => {
       order.push(3);
     });
@@ -158,12 +262,15 @@ describe("EventEmitter", () => {
     });
 
     myEmitter.emit("foo");
+
+    expect(order).toEqual([3, 2, 1, 4]);
+
     myEmitter.emit("foo");
 
     expect(order).toEqual([3, 2, 1, 4, 1, 4]);
   });
 
-  test("EventEmitter.listeners", () => {
+  test("listeners", () => {
     const myEmitter = new EventEmitter();
     const fn = () => {};
     myEmitter.on("foo", fn);
@@ -175,7 +282,7 @@ describe("EventEmitter", () => {
     expect(myEmitter.listeners("foo")).toEqual([fn]);
   });
 
-  test("EventEmitter.rawListeners", () => {
+  test("rawListeners", () => {
     const myEmitter = new EventEmitter();
     const fn = () => {};
     myEmitter.on("foo", fn);
@@ -187,34 +294,71 @@ describe("EventEmitter", () => {
     expect(myEmitter.listeners("foo")).toEqual([fn]);
   });
 
-  test("EventEmitter.eventNames", () => {
+  test("eventNames", () => {
     const myEmitter = new EventEmitter();
     expect(myEmitter.eventNames()).toEqual([]);
-    myEmitter.on("foo", () => {});
+    const fn = () => {};
+    myEmitter.on("foo", fn);
     expect(myEmitter.eventNames()).toEqual(["foo"]);
     myEmitter.on("bar", () => {});
     expect(myEmitter.eventNames()).toEqual(["foo", "bar"]);
-    myEmitter.off("foo", () => {});
+    myEmitter.off("foo", fn);
     expect(myEmitter.eventNames()).toEqual(["bar"]);
+  });
+
+  test("_eventsCount", () => {
+    const myEmitter = new EventEmitter() as EventEmitter & { _eventsCount: number };
+    expect(myEmitter._eventsCount).toBe(0);
+    myEmitter.on("foo", () => {});
+    expect(myEmitter._eventsCount).toBe(1);
+    myEmitter.on("foo", () => {});
+    expect(myEmitter._eventsCount).toBe(1);
+    myEmitter.on("bar", () => {});
+    expect(myEmitter._eventsCount).toBe(2);
+    myEmitter.on("foo", () => {});
+    expect(myEmitter._eventsCount).toBe(2);
+    myEmitter.on("bar", () => {});
+    expect(myEmitter._eventsCount).toBe(2);
+    myEmitter.removeAllListeners("foo");
+    expect(myEmitter._eventsCount).toBe(1);
+  });
+
+  test("events.init", () => {
+    // init is a undocumented property that is identical to the constructor
+    // in node, EventEmitter just calls init()
+    expect(EventEmitter).toBe((EventEmitter as any).init);
   });
 });
 
 describe("EventEmitter error handling", () => {
-  test('"error" basic situation', () => {
+  test("unhandled error event throws on emit", () => {
     const myEmitter = new EventEmitter();
 
-    let stored;
-    myEmitter.on("error", (err: Error) => {
-      stored = err;
+    expect(() => {
+      myEmitter.emit("error", "Hello!");
+    }).toThrow("Hello!");
+  });
+
+  test("unhandled error event throws on emit with no arguments", () => {
+    const myEmitter = new EventEmitter();
+
+    expect(() => {
+      myEmitter.emit("error");
+    }).toThrow("Unhandled error.");
+  });
+
+  test("handled error event", () => {
+    const myEmitter = new EventEmitter();
+
+    let handled = false;
+    myEmitter.on("error", (...args) => {
+      expect(args).toEqual(["Hello", "World"]);
+      handled = true;
     });
 
-    myEmitter.on("start", () => {
-      throw new Error("whoops!");
-    });
+    myEmitter.emit("error", "Hello", "World");
 
-    myEmitter.emit("start");
-
-    expect(stored).toBeInstanceOf(Error);
+    expect(handled).toBe(true);
   });
 });
 
@@ -260,7 +404,7 @@ const waysOfCreating = [
 
 describe("EventEmitter constructors", () => {
   for (let create of waysOfCreating) {
-    it(`${create.toString().slice(10, 40).replaceAll("\n", "\\n").trim()} should work`, () => {
+    test(`${create.toString().slice(10, 40).replaceAll("\n", "\\n").trim()} should work`, () => {
       var myEmitter = create();
       var called = false;
       (myEmitter as EventEmitter).once("event", function () {

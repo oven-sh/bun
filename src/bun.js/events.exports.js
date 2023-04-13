@@ -1,5 +1,5 @@
 // Reimplementation of https://nodejs.org/api/events.html
-// Port of https://github.com/nodejs/node/blob/main/lib/events.js
+// Reference: https://github.com/nodejs/node/blob/main/lib/events.js
 
 const kCapture = Symbol("kCapture");
 const kErrorMonitor = Symbol("events.errorMonitor");
@@ -37,29 +37,27 @@ EventEmitter.prototype.getMaxListeners = function getMaxListeners() {
   return this._maxListeners ?? EventEmitter.defaultMaxListeners;
 };
 
-function emitError(a, b, c) {
-  throw new Error("emitError not implemented");
-}
-
-function handleEmitError(a, b, c) {
-  throw new Error("handleEmitError not implemented");
+function emitError(emitter, args) {
+  var { _events: events } = emitter;
+  if (!events) throw args[0];
+  var handlers = events.error;
+  if (!handlers) throw args[0];
+  for (var handler of handlers.slice()) {
+    handler.apply(emitter, args);
+  }
+  return true;
 }
 
 EventEmitter.prototype.emit = function emit(type, ...args) {
-  var handlers, length;
   if (type === "error") {
-    return emitError(this, type, args);
+    return emitError(this, args);
   }
-  if (!this._events) return false;
-  try {
-    handlers = this._events[type];
-    if (!handlers) return this;
-    length = handlers.length;
-    for (let i = 0; i < length; i++) {
-      handlers[i].apply(this, args);
-    }
-  } catch (error) {
-    handleEmitError(this, type, error);
+  var { _events: events } = this;
+  if (!events) return false;
+  var handlers = events[type];
+  if (!handlers) return this;
+  for (var handler of handlers.slice()) {
+    handler.apply(this, args);
   }
   return true;
 };
@@ -68,12 +66,14 @@ EventEmitter.prototype.addListener = function addListener(type, fn) {
   var events = this._events;
   if (!events) {
     events = this._events = { __proto__: null };
+    this._eventsCount = 0;
   } else if (events.newListener) {
     this.emit("newListener", type, fn.listener ?? fn);
   }
   var handlers = events[type];
   if (!handlers) {
     events[type] = [fn];
+    this._eventsCount++;
   } else {
     handlers.push(fn);
     // TODO: overflow check
@@ -83,16 +83,18 @@ EventEmitter.prototype.addListener = function addListener(type, fn) {
 
 EventEmitter.prototype.on = EventEmitter.prototype.addListener;
 
-EventEmitter.prototype.prependListener = function prependListener() {
+EventEmitter.prototype.prependListener = function prependListener(type, fn) {
   var events = this._events;
   if (!events) {
     events = this._events = { __proto__: null };
+    this._eventsCount = 0;
   } else if (events.newListener) {
     this.emit("newListener", type, fn.listener ?? fn);
   }
   var handlers = events[type];
   if (!handlers) {
     events[type] = [fn];
+    this._eventsCount++;
   } else {
     handlers.unshift(fn);
     // TODO: overflow check
@@ -112,14 +114,14 @@ EventEmitter.prototype.once = function once(type, listener) {
   return this;
 };
 
-EventEmitter.prototype.prependOnceListener = function prependOnceListener(type, listener) {
-  const bound = onceWrapper.bind(this, type, listener);
-  bound.listener = listener;
+EventEmitter.prototype.prependOnceListener = function prependOnceListener(type, fn) {
+  const bound = onceWrapper.bind(this, type, fn);
+  bound.listener = fn;
   this.prependListener(type, bound);
   return this;
 };
 
-EventEmitter.prototype.removeListener = function removeListener(type, listener) {
+EventEmitter.prototype.removeListener = function removeListener(type, fn) {
   var { _events: events } = this;
   if (!events) return this;
   var handlers = events[type];
@@ -127,7 +129,7 @@ EventEmitter.prototype.removeListener = function removeListener(type, listener) 
   var length = handlers.length;
   let position = -1;
   for (let i = length - 1; i >= 0; i--) {
-    if (handlers[i] === listener || handlers[i].listener === listener) {
+    if (handlers[i] === fn || handlers[i].listener === fn) {
       position = i;
       break;
     }
@@ -139,7 +141,8 @@ EventEmitter.prototype.removeListener = function removeListener(type, listener) 
     handlers.splice(position, 1);
   }
   if (handlers.length === 0) {
-    events[type] = undefined;
+    delete events[type];
+    this._eventsCount--;
   }
   return this;
 };
@@ -147,9 +150,12 @@ EventEmitter.prototype.removeListener = function removeListener(type, listener) 
 EventEmitter.prototype.off = EventEmitter.prototype.removeListener;
 
 EventEmitter.prototype.removeAllListeners = function removeAllListeners(type) {
-  var { events } = this;
+  var { _events: events } = this;
   if (type && events) {
-    events[type] = undefined;
+    if (events[type]) {
+      delete events[type];
+      this._eventsCount--;
+    }
   } else {
     this._events = { __proto__: null };
   }
@@ -161,15 +167,15 @@ EventEmitter.prototype.listeners = function listeners(type) {
   if (!events) return [];
   var handlers = events[type];
   if (!handlers) return [];
-  if (typeof handlers === "function") return [handlers.listener ?? handlers];
   return handlers.map(x => x.listener ?? x);
 };
 
 EventEmitter.prototype.rawListeners = function rawListeners(type) {
-  var handlers = this._bunEvents?.get(type);
+  var { _events } = this;
+  if (!_events) return [];
+  var handlers = _events[type];
   if (!handlers) return [];
-  if (typeof handlers === "function") return [handlers];
-  return handlers.slice(0); // TODO: fastest array copy
+  return handlers.slice();
 };
 
 EventEmitter.prototype.listenerCount = function listenerCount(type) {
@@ -187,7 +193,8 @@ EventEmitter.prototype[kCapture] = false;
 function once(emitter, type, { signal } = {}) {
   validateAbortSignal(signal, "options.signal");
   if (signal?.aborted) {
-    throw new AbortError(undefined, { cause: signal?.reason });
+    // TODO: use AbortError
+    throw new Error(undefined, { cause: signal?.reason });
   }
   return new Promise((resolve, reject) => {
     const errorListener = err => {
@@ -215,7 +222,8 @@ function once(emitter, type, { signal } = {}) {
     function abortListener() {
       eventTargetAgnosticRemoveListener(emitter, type, resolver);
       eventTargetAgnosticRemoveListener(emitter, "error", errorListener);
-      reject(new AbortError(undefined, { cause: signal?.reason }));
+      // TODO: use AbortError
+      reject(new Error(undefined, { cause: signal?.reason }));
     }
     if (signal != null) {
       eventTargetAgnosticAddListener(signal, "abort", abortListener, { once: true });

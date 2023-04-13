@@ -1,11 +1,27 @@
 import EventEmitter3 from "eventemitter3";
+import { group } from "mitata";
 import EventEmitterNative from "node:events";
-import NewImpl1 from "../../src/bun.js/events.exports.mjs";
-import NewImpl2 from "../../src/bun.js/events_map.mjs";
 
 export const implementations = [
-  { impl: EventEmitterNative, name: process.isBun ? "node:events (bun C++)" : "node:events", monkey: true },
-  // { impl: EventEmitter3, name: "EventEmitter3" },
-  { impl: NewImpl1, name: "new(Object)", monkey: true },
-  { impl: NewImpl2, name: "new(Map)", monkey: true },
-];
+  { EventEmitter: EventEmitterNative, name: process.isBun ? "bun" : "node:events", monkey: true },
+  // { EventEmitter: EventEmitter3, name: "EventEmitter3" },
+].filter(Boolean);
+
+for (const impl of implementations) {
+  impl.EventEmitter?.setMaxListeners?.(Infinity);
+}
+
+export function groupForEmitter(name, cb) {
+  if (implementations.length === 1) {
+    return cb({
+      ...implementations[0],
+      name: `${name}: ${implementations[0].name}`,
+    });
+  } else {
+    return group(name, () => {
+      for (let impl of implementations) {
+        cb(impl);
+      }
+    });
+  }
+}

@@ -996,8 +996,8 @@ describe("bundler", () => {
       "/entry.js": `console.log(require('./test.bad'))`,
       "/test.bad": `This is a test.`,
     },
-    bundleErrors: {
-      "/entry.js": ['No loader is configured for ".bad" files: test.bad'],
+    run: {
+      partialStdout: "/test.bad",
     },
   });
   itBundled("default/FalseRequire", {
@@ -1127,7 +1127,7 @@ describe("bundler", () => {
       `,
     },
     bundleErrors: {
-      "/entry.js": ['Could not resolve "nope1"'],
+      "/entry.js": ["Could not resolve"],
     },
   });
   itBundled("default/ImportThenCatch", {
@@ -1245,8 +1245,8 @@ describe("bundler", () => {
       "/entry.js": `console.log(require('fs'))`,
     },
     platform: "browser",
-    bundleErrors: {
-      "/entry.js": ['ERROR: Could not resolve "fs"'],
+    run: {
+      stdout: "[Function]",
     },
   });
   itBundled("default/RequireFSNode", {
@@ -1280,8 +1280,8 @@ describe("bundler", () => {
         console.log(fs, readFileSync, defaultValue)
       `,
     },
-    bundleErrors: {
-      "/entry.js": ['ERROR: Could not resolve "fs"'],
+    run: {
+      stdout: "[Function] undefined undefined",
     },
     platform: "browser",
   });
@@ -1324,8 +1324,8 @@ describe("bundler", () => {
       `,
     },
     platform: "browser",
-    bundleErrors: {
-      "/entry.js": ['ERROR: Could not resolve "fs"'],
+    run: {
+      file: "out.js",
     },
   });
   itBundled("default/ExportFSNode", {

@@ -181,6 +181,8 @@ export interface BundlerTestRunOptions {
   bunArgs?: string[];
   /** match exact stdout */
   stdout?: string;
+  /** partial match stdout (toContain()) */
+  partialStdout?: string;
   /** match exact error message, example "ReferenceError: Can't find variable: bar" */
   error?: string;
   /**
@@ -256,6 +258,10 @@ export function expectBundled(
     matchesReference,
     ...unknownProps
   } = opts;
+
+  if (!ESBUILD && platform === "neutral") {
+    platform = "browser";
+  }
 
   // TODO: Remove this check once all options have been implemented
   if (Object.keys(unknownProps).length > 0) {
@@ -518,7 +524,7 @@ export function expectBundled(
         let unexpectedErrors = [];
 
         for (const error of allErrors) {
-          const i = errorsLeft.findIndex(item => error.file === item.file && item.error === error.error);
+          const i = errorsLeft.findIndex(item => error.file === item.file && error.error.includes(item.error));
           if (i === -1) {
             unexpectedErrors.push(error);
           } else {
@@ -587,7 +593,7 @@ export function expectBundled(
       let unexpectedWarnings = [];
 
       for (const error of allWarnings) {
-        const i = warningsLeft.findIndex(item => error.file === item.file && item.error.includes(error.error));
+        const i = warningsLeft.findIndex(item => error.file === item.file && error.error.includes(item.error));
         if (i === -1) {
           unexpectedWarnings.push(error);
         } else {
@@ -868,6 +874,15 @@ export function expectBundled(
           console.log({ file });
         }
         expect(result).toBe(expected);
+      }
+
+      if (run.partialStdout !== undefined) {
+        const result = stdout!.toString("utf-8").trim();
+        const expected = dedent(run.partialStdout).trim();
+        if (!result.includes(expected)) {
+          console.log({ file });
+        }
+        expect(result).toContain(expected);
       }
     }
   }

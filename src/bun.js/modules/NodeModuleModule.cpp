@@ -29,7 +29,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
   auto nameStr = jsCast<JSFunction *>(requireFunction)->name(vm);
   JSC::JSBoundFunction *boundRequireFunction =
       JSC::JSBoundFunction::create(vm, globalObject, requireFunction, meta,
-                                   nullptr, 0, jsString(vm, nameStr));
+                                   ArgList(), 0, jsString(vm, nameStr));
   boundRequireFunction->putDirect(
       vm, clientData->builtinNames().resolvePublicName(),
       requireFunction->getDirect(

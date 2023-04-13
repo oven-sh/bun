@@ -4981,7 +4981,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 }
 
                 ctx.request_body_content_len = req_len;
-                ctx.is_transfer_encoding = req.header("transfer-encoding") == null;
+                ctx.is_transfer_encoding = req.header("transfer-encoding") != null;
                 if (req_len > 0 or ctx.is_transfer_encoding) {
                     // we defer pre-allocating the body until we receive the first chunk
                     // that way if the client is lying about how big the body is or the client aborts

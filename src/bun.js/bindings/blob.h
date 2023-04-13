@@ -2,6 +2,7 @@
 
 #include "root.h"
 #include "JSDOMGlobalObject.h"
+#include "BunClientData.h"
 
 namespace WebCore {
 

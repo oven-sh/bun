@@ -5,11 +5,15 @@
 
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/ObjectConstructor.h"
+#include "BunClientData.h"
+using namespace JSC;
 
 extern "C" size_t Bun__getEnvNames(JSGlobalObject*, ZigString* names, size_t max);
 extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, ZigString* name, ZigString* value);
 
 namespace Bun {
+
+using namespace WebCore;
 
 JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName propertyName))
 {

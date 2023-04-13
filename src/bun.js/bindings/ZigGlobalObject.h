@@ -1,3 +1,6 @@
+// This header is included in nearly every file.
+// Be very cautious of sticking your #include in this file.
+// TODO: rename this to BunGlobalObject
 #pragma once
 
 #ifndef ZIG_GLOBAL_OBJECT
@@ -10,41 +13,38 @@ class LazyClassStructure;
 
 } // namespace JSC
 
+namespace JSC {
+
+enum class JSPromiseRejectionOperation : unsigned;
+
+}
+
 namespace WebCore {
 class ScriptExecutionContext;
 class DOMGuardedObject;
 class EventLoopTask;
+class DOMWrapperWorld;
 }
 
 #include "root.h"
 
 #include "headers-handwritten.h"
-#include "BunClientData.h"
 
 #include "JavaScriptCore/CatchScope.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/JSTypeInfo.h"
 #include "JavaScriptCore/Structure.h"
 #include "WebCoreJSBuiltinInternals.h"
-#include "JSEnvironmentVariableMap.h"
-
-#include "ZigConsoleClient.h"
 
 #include "DOMConstructors.h"
-#include "DOMWrapperWorld-class.h"
-#include "DOMIsoSubspaces.h"
 #include "BunPlugin.h"
-
-#include "ErrorStackTrace.h"
-#include "CallSite.h"
-#include "CallSitePrototype.h"
 
 namespace WebCore {
 class SubtleCrypto;
 }
 
 extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
-extern "C" void Bun__reportUnhandledError(JSGlobalObject*, EncodedJSValue);
+extern "C" void Bun__reportUnhandledError(JSC__JSGlobalObject*, JSC::EncodedJSValue);
 // defined in ModuleLoader.cpp
 extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultReject(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
@@ -82,18 +82,13 @@ public:
     static const JSC::ClassInfo s_info;
     static const JSC::GlobalObjectMethodTable s_globalObjectMethodTable;
 
-    template<typename, SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::Yes>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForWorkerGlobalScope.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWorkerGlobalScope = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForWorkerGlobalScope.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForWorkerGlobalScope = std::forward<decltype(space)>(space); },
-            [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForJSWorkerGlobalScope; });
+        return subspaceForImpl(vm);
     }
+    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
 
     ~GlobalObject();
     static void destroy(JSC::JSCell*);

@@ -153,11 +153,7 @@ static bool canPerformFastPropertyEnumerationForIterationBun(Structure* s)
     // https://bugs.webkit.org/show_bug.cgi?id=185358
     if (hasIndexedProperties(s->indexingType()))
         return false;
-    if (s->hasGetterSetterProperties())
-        return false;
-    if (s->hasReadOnlyOrGetterSetterPropertiesExcludingProto())
-        return false;
-    if (s->hasCustomGetterSetterProperties())
+    if (s->hasAnyKindOfGetterSetterProperties())
         return false;
     if (s->isUncacheableDictionary())
         return false;

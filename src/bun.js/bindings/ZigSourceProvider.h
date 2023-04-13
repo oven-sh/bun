@@ -65,7 +65,7 @@ private:
     SourceProvider(ResolvedSource resolvedSource, WTF::StringImpl& sourceImpl,
         const SourceOrigin& sourceOrigin, WTF::String&& sourceURL,
         const TextPosition& startPosition, JSC::SourceProviderSourceType sourceType)
-        : Base(sourceOrigin, WTFMove(sourceURL), startPosition, sourceType)
+        : Base(sourceOrigin, WTFMove(sourceURL), String(), startPosition, sourceType)
         , m_source(sourceImpl)
     {
 

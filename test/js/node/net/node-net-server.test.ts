@@ -262,7 +262,7 @@ describe("net.createServer listen", () => {
   });
 });
 
-describe("tls.createServer events", () => {
+describe("net.createServer events", () => {
   it("should receive data", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
     let timeout: Timer;
@@ -490,8 +490,8 @@ describe("tls.createServer events", () => {
       });
   });
 
-  it.skip("should echo data", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+  it("should echo data", done => {
+    const { mustNotCall } = createCallCheckCtx(done);
     let timeout: Timer;
     let client: any = null;
     const server: Server = createServer((socket: Socket) => {
@@ -512,7 +512,7 @@ describe("tls.createServer events", () => {
     timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
-      mustCall(async () => {
+      async () => {
         const address = server.address() as AddressInfo;
         client = await Bun.connect({
           hostname: address.address,
@@ -529,6 +529,7 @@ describe("tls.createServer events", () => {
               expect(data.byteLength).toBe(5);
               expect(data.toString("utf8")).toBe("Hello");
               done();
+              
             },
             open(socket) {
               socket.write("Hello");
@@ -536,7 +537,7 @@ describe("tls.createServer events", () => {
             connectError: closeAndFail, // connection failed
           },
         }).catch(closeAndFail);
-      }),
+      },
     );
   });
 });

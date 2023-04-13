@@ -6,9 +6,9 @@ const kErrorMonitor = Symbol("events.errorMonitor");
 const kMaxEventTargetListeners = Symbol("events.maxEventTargetListeners");
 const kMaxEventTargetListenersWarned = Symbol("events.maxEventTargetListenersWarned");
 const kWatermarkData = Symbol.for("nodejs.watermarkData");
-export const captureRejectionSymbol = Symbol.for("nodejs.rejection");
+const kRejection = SymbolFor("nodejs.rejection");
+const captureRejectionSymbol = Symbol.for("nodejs.rejection");
 
-var captureRejections = false;
 var errorMonitor = Symbol.for("events.errorMonitor");
 
 var defaultMaxListeners = 10;
@@ -48,16 +48,53 @@ function emitError(emitter, args) {
   return true;
 }
 
+function addCatch(emitter, promise, type, args) {
+  if (!emitter[kCapture]) {
+    return;
+  }
+  // Handle Promises/A+ spec, then could be a getter that throws on second use.
+  try {
+    const then = promise.then;
+    if (typeof then === "function") {
+      then.call(promise, undefined, function (err) {
+        // The callback is called with queueMicrotask to avoid a follow-up rejection from this promise.
+        queueMicrotask(emitUnhandledRejectionOrErr, that, err, type, args);
+      });
+    }
+  } catch (err) {
+    that.emit("error", err);
+  }
+}
+
+function emitUnhandledRejectionOrErr(emitter, err, type, args) {
+  if (typeof emitter[kRejection] === "function") {
+    emitter[kRejection](err, type, ...args);
+  } else {
+    // If the error handler throws, it is not catchable and it will end up in 'uncaughtException'.
+    // We restore the previous value of kCapture in case the uncaughtException is present
+    // and the exception is handled.
+    try {
+      emitter[kCapture] = false;
+      emitter.emit("error", err);
+    } finally {
+      emitter[kCapture] = true;
+    }
+  }
+}
+
 EventEmitter.prototype.emit = function emit(type, ...args) {
   if (type === "error") {
     return emitError(this, args);
   }
-  var { _events: events } = this;
-  if (!events) return false;
+  var { _events: events, [kCapture]: captureRejections } = this;
+  if (events === undefined) return false;
   var handlers = events[type];
-  if (!handlers) return this;
+  if (handlers === undefined) return false;
   for (var handler of handlers.slice()) {
-    handler.apply(this, args);
+    var result = handler.apply(this, args);
+    if (captureRejections && result !== undefined) {
+      addCatch(this, result, type, args);
+    }
   }
   return true;
 };
@@ -264,7 +301,18 @@ EventEmitter.listenerCount = listenerCount;
 EventEmitter.EventEmitter = EventEmitter;
 EventEmitter.usingDomains = false;
 EventEmitter.captureRejectionSymbol = captureRejectionSymbol;
-// EventEmitter.captureRejections = captureRejections; // TODO: getter/setter?
+ObjectDefineProperty(EventEmitter, "captureRejections", {
+  __proto__: null,
+  get() {
+    return EventEmitter.prototype[kCapture];
+  },
+  set(value) {
+    validateBoolean(value, "EventEmitter.captureRejections");
+
+    EventEmitter.prototype[kCapture] = value;
+  },
+  enumerable: true,
+});
 EventEmitter.errorMonitor = errorMonitor;
 Object.defineProperties(EventEmitter, {
   defaultMaxListeners: {

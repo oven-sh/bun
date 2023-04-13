@@ -70,7 +70,7 @@ In addition to this, you will need either `bun` or `npm` installed to install th
 
 ## Install Zig
 
-Zig can installed either with our npm package [`@oven/zig`](https://www.npmjs.com/package/@oven/zig), or by using [zigup](https://github.com/marler8997/zigup).
+Zig can be installed either with our npm package [`@oven/zig`](https://www.npmjs.com/package/@oven/zig), or by using [zigup](https://github.com/marler8997/zigup).
 
 ```bash
 $ bun install -g @oven/zig

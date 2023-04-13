@@ -2894,11 +2894,10 @@ fn NewPrinter(
             // Walk the string searching for quote characters
             // Escape any we find
             // Skip over already-escaped strings
-            while (i < utf8.len) : (i += 1) {
+            var len = utf8.len;
+            while (i < len) {
                 switch (utf8[i]) {
-                    '\\' => {
-                        i += 1;
-                    },
+                    '\\' => i += 2,
                     // We must escape here for JSX string literals that contain unescaped newlines
                     // Those will get transformed into a template string
                     // which can potentially have unescaped $
@@ -2908,17 +2907,20 @@ fn NewPrinter(
                             p.print("\\$");
 
                             utf8 = utf8[i + 1 ..];
+                            len = utf8.len;
                             i = 0;
                         }
+                        i += 1;
                     },
                     c => {
                         p.print(utf8[0..i]);
                         p.print("\\" ++ &[_]u8{c});
                         utf8 = utf8[i + 1 ..];
+                        len = utf8.len;
                         i = 0;
                     },
 
-                    else => {},
+                    else => i += 1,
                 }
             }
             if (utf8.len > 0) {

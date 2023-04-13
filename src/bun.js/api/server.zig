@@ -944,6 +944,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         request_js_object: JSC.C.JSObjectRef = null,
         request_body_buf: std.ArrayListUnmanaged(u8) = .{},
         request_body_content_len: usize = 0,
+        is_transfer_encoding: bool = false,
+        is_web_browser_navigation: bool = false,
         sink: ?*ResponseStream.JSSink = null,
         byte_stream: ?*JSC.WebCore.ByteStream = null,
 
@@ -1091,16 +1093,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 ctx.has_written_status = true;
                 ctx.resp.end("", ctx.shouldCloseConnection());
             } else {
-                const is_web_browser_navigation = brk: {
-                    if (ctx.req.header("sec-fetch-dest")) |fetch_dest| {
-                        if (strings.eqlComptime(fetch_dest, "document")) {
-                            break :brk true;
-                        }
-                    }
-
-                    break :brk false;
-                };
-                if (is_web_browser_navigation) {
+                if (ctx.is_web_browser_navigation) {
                     ctx.resp.writeStatus("200 OK");
                     ctx.has_written_status = true;
 
@@ -2655,6 +2648,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn onBufferedBodyChunk(this: *RequestContext, resp: *App.Response, chunk: []const u8, last: bool) void {
+            ctxLog("onBufferedBodyChunk {} {}", .{ chunk.len, last });
             std.debug.assert(this.resp == resp);
 
             if (this.aborted) return;
@@ -2726,8 +2720,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     // }
                 }
 
-                if (old == .Locked)
+                if (old == .Locked) {
                     old.resolve(&req.body, this.server.globalThis);
+                }
                 request.unprotect();
                 return;
             }
@@ -2735,11 +2730,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (this.request_body_buf.capacity == 0) {
                 this.request_body_buf.ensureTotalCapacityPrecise(this.allocator, @min(this.request_body_content_len, max_request_body_preallocate_length)) catch @panic("Out of memory while allocating request body buffer");
             }
-
             this.request_body_buf.appendSlice(this.allocator, chunk) catch @panic("Out of memory while allocating request body");
         }
 
         pub fn onStartStreamingRequestBody(this: *RequestContext) JSC.WebCore.DrainResult {
+            ctxLog("onStartStreamingRequestBody", .{});
             if (this.aborted) {
                 return JSC.WebCore.DrainResult{
                     .aborted = {},
@@ -2761,61 +2756,31 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 };
             }
 
-            this.resp.onData(*RequestContext, onBufferedBodyChunk, this);
-
             return .{
                 .estimated_size = this.request_body_content_len,
             };
         }
         const max_request_body_preallocate_length = 1024 * 256;
         pub fn onStartBuffering(this: *RequestContext) void {
+            ctxLog("onStartBuffering", .{});
             const request = JSC.JSValue.c(this.request_js_object);
             request.ensureStillAlive();
-
-            if (this.req.header("content-length")) |content_length| {
-                const len = std.fmt.parseInt(usize, content_length, 10) catch 0;
-                this.request_body_content_len = len;
-                if (len == 0) {
-                    if (request.as(Request)) |req| {
-                        var old = req.body;
-                        old.Locked.onReceiveValue = null;
-                        req.body = .{ .Null = {} };
-                        old.resolve(&req.body, this.server.globalThis);
-                        return;
-                    }
-                    request.ensureStillAlive();
-                }
-
-                if (len >= this.server.config.max_request_body_size) {
-                    if (request.as(Request)) |req| {
-                        var old = req.body;
-                        old.Locked.onReceiveValue = null;
-                        req.body = .{ .Null = {} };
-                        old.toError(error.RequestBodyTooLarge, this.server.globalThis);
-                        return;
-                    }
-                    request.ensureStillAlive();
-
-                    this.resp.writeStatus("413 Request Entity Too Large");
-                    this.resp.endWithoutBody(true);
-                    this.finalize();
-                    return;
-                }
-            } else if (this.req.header("transfer-encoding") == null) {
-                // no content-length
+            // TODO: check if is someone calling onStartBuffering other than onStartBufferingCallback
+            // if is not, this should be removed and only keep protect + setAbortHandler
+            if (this.is_transfer_encoding == false and this.request_body_content_len == 0) {
+                // no content-length or 0 content-length
                 // no transfer-encoding
                 if (request.as(Request)) |req| {
                     var old = req.body;
                     old.Locked.onReceiveValue = null;
                     req.body = .{ .Null = {} };
                     old.resolve(&req.body, this.server.globalThis);
-                    return;
                 }
+            } else {
+                // we need to buffer the request body
+                request.protect();
+                this.setAbortHandler();
             }
-
-            request.protect();
-            this.setAbortHandler();
-            this.resp.onData(*RequestContext, onBufferedBodyChunk, this);
         }
 
         pub fn onStartBufferingCallback(this: *anyopaque) void {
@@ -4986,6 +4951,16 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 },
             };
 
+            ctx.is_web_browser_navigation = brk: {
+                if (ctx.req.header("sec-fetch-dest")) |fetch_dest| {
+                    if (strings.eqlComptime(fetch_dest, "document")) {
+                        break :brk true;
+                    }
+                }
+
+                break :brk false;
+            };
+
             // we need to do this very early unfortunately
             // it seems to work fine for synchronous requests but anything async will take too long to register the handler
             // we do this only for HTTP methods that support request bodies, so not GET, HEAD, OPTIONS, or CONNECT.
@@ -5006,8 +4981,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 }
 
                 ctx.request_body_content_len = req_len;
-
-                if (req_len > 0) {
+                ctx.is_transfer_encoding = req.header("transfer-encoding") != null;
+                if (req_len > 0 or ctx.is_transfer_encoding) {
                     // we defer pre-allocating the body until we receive the first chunk
                     // that way if the client is lying about how big the body is or the client aborts
                     // we don't waste memory
@@ -5020,6 +4995,13 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                         },
                     };
                     resp.onData(*RequestContext, RequestContext.onBufferedBodyChunk, ctx);
+                } else {
+                    // no content-length or 0 content-length
+                    // no transfer-encoding
+                    var old = request_object.body;
+                    old.Locked.onReceiveValue = null;
+                    request_object.body = .{ .Null = {} };
+                    old.resolve(&request_object.body, this.globalThis);
                 }
             }
 

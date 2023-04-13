@@ -1,20 +1,23 @@
+There are two primary mechanisms for configuring the behavior of Bun.
+
+- environment variables
+- `bunfig.toml`: Bun's configuration file
+
+Configuring with `bunfig.toml` is optional. Bun aims to be zero-configuration out of the box, but is also highly configurable for advanced use cases. Your `bunfig.toml` should live in your project root alongside `package.json`.
+
+You can also create a global configuration file at the following paths:
+
+- `$HOME/.bunfig.toml`
+- `$XDG_CONFIG_HOME/.bunfig.toml`
+
+If both a global and local `bunfig` are detected, the results are shallow-merged, with local overridding global. CLI flags will override `bunfig` setting where applicable.
+
 ## Environment variables
 
 <!-- - `GOMAXPROCS`: For `bun bun`, this sets the maximum number of threads to use. If you’re experiencing an issue with `bun bun`, try setting `GOMAXPROCS=1` to force Bun to run single-threaded -->
 
 - `DISABLE_BUN_ANALYTICS=1` this disables Bun's analytics. Bun records bundle timings (so we can answer with data, "is Bun getting faster?") and feature usage (e.g., "are people actually using macros?"). The request body size is about 60 bytes, so it’s not a lot of data
 - `TMPDIR`: Bun occasionally requires a directory to store intermediate assets during bundling or other operations. If unset, `TMPDIR` defaults to the platform-specific temporary directory (on Linux, `/tmp` and on macOS `/private/tmp`).
-
-## `bunfig.toml`
-
-Bun's configuration file is called `bunfig.toml`. Configuring with `bunfig.toml` is optional. Bun aims to be zero-configuration out of the box, but is also highly configurable for advanced use cases..
-
-Your `bunfig.toml` should live in your project root alongside `package.json`. You can also create a global configuration file at the following paths:
-
-- `$HOME/.bunfig.toml`
-- `$XDG_CONFIG_HOME/.bunfig.toml`
-
-If both a global and local `bunfig` are detected, the results are shallow-merged, with local overridding global. CLI flags will override `bunfig` setting where applicable.
 
 ## Configure `bun install`
 

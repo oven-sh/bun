@@ -1,4 +1,4 @@
-Bun is a new JavaScript & TypeScript runtime designed to be a faster, leaner, more modern replacement for Node.js.
+Bun is a new JavaScript & TypeScript runtime designed to be a faster, leaner, and more modern drop-in replacement for Node.js.
 
 ## Speed
 

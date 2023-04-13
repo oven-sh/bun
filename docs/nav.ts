@@ -82,9 +82,9 @@ export default {
     // page("runtime/index", "Overview", {
     //   description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
     // }),
-    page("runtime/performance", "Performance", {
-      description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
-    }),
+    // page("runtime/performance", "Performance", {
+    //   description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
+    // }),
     page("runtime/loaders", "File types", {
       description: `Bun can directly execute TypeScript files without additional configuration.`,
     }),
@@ -164,6 +164,9 @@ export default {
 
     divider("Test runner"),
     page("cli/test", "`bun test`", {
+      description: "Bun's test runner uses Jest-compatible syntax but runs 100x faster.",
+    }),
+    page("test/writing", "Writing tests", {
       description: "Bun's test runner uses Jest-compatible syntax but runs 100x faster.",
     }),
 

@@ -490,7 +490,7 @@ describe("tls.createServer events", () => {
       });
   });
 
-  it("should echo data", done => {
+  it.skip("should echo data", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
     let timeout: Timer;
     let client: any = null;

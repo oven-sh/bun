@@ -6,6 +6,7 @@
 #include <JavaScriptCore/InspectorFrontendChannel.h>
 #include "ContextDestructionObserver.h"
 #include <wtf/RefPtr.h>
+#include <wtf/Deque.h>
 
 namespace Zig {
 
@@ -48,15 +49,18 @@ public:
     bool hasConnectedFrontends() { return connectionCounter > 0; }
 
     void sendMessageToFrontend(const String& message) override;
-    Inspector::FrontendChannel::ConnectionType connectionType() const override { return Inspector::FrontendChannel::ConnectionType::Local; }
+    Inspector::FrontendChannel::ConnectionType connectionType() const override { return Inspector::FrontendChannel::ConnectionType::Remote; }
 
     int connectionCounter = 0;
+
+    void drainOutgoingMessages();
 
 private:
     void dispatchToBackend(std::string_view message);
 
     WTF::String m_identifier;
     uWS::App* server;
+    Deque<WTF::CString> m_pendingMessages;
     GlobalObject* globalObject() { return static_cast<GlobalObject*>(scriptExecutionContext()->jsGlobalObject()); }
 };
 }

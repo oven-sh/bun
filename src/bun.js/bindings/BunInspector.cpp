@@ -7,6 +7,19 @@ namespace Zig {
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(BunInspector);
 
+class BunInspectorConnection {
+
+public:
+    WTF::Deque<WTF::CString> m_messages;
+    RefPtr<BunInspector> inspector;
+    bool hasSentWelcomeMessage = false;
+    BunInspectorConnection(RefPtr<BunInspector> inspector)
+        : inspector(inspector)
+        , m_messages()
+    {
+    }
+};
+
 void BunInspector::sendMessageToFrontend(const String& message)
 {
 
@@ -59,12 +72,43 @@ void BunInspector::sendMessageToFrontend(const String& message)
 
                 out = object->toJSONString();
             }
+
+            if (method == "Debugger.enable"_s) {
+                // debuggerId is missing from the response
+                auto params = WTF::JSONImpl::Object::create();
+                params->setString("debuggerId"_s, "3701622443570787625.-8711178633418819848"_s);
+                object->setObject("params"_s, WTFMove(params));
+            }
+
+            out = object->toJSONString();
         }
     }
 
     auto utf8Message = out.utf8();
+    if (this->m_pendingMessages.size() > 0) {
+        this->m_pendingMessages.append(WTFMove(utf8Message));
+        return;
+    }
+
     std::string_view view { utf8Message.data(), utf8Message.length() };
-    this->server->publish("BunInspectorConnection", view, uWS::OpCode::TEXT, false);
+    if (!this->server->publish("BunInspectorConnection", view, uWS::OpCode::TEXT, false)) {
+        this->m_pendingMessages.append(WTFMove(utf8Message));
+    }
+}
+
+void BunInspector::drainOutgoingMessages()
+{
+
+    size_t size = this->m_pendingMessages.size();
+    while (size > 0) {
+        auto& message = this->m_pendingMessages.first();
+        std::string_view view { message.data(), message.length() };
+        if (!this->server->publish("BunInspectorConnection", view, uWS::OpCode::TEXT, false)) {
+            return;
+        }
+        this->m_pendingMessages.removeFirst();
+        size = this->m_pendingMessages.size();
+    }
 }
 
 RefPtr<BunInspector> BunInspector::startWebSocketServer(
@@ -91,7 +135,7 @@ RefPtr<BunInspector> BunInspector::startWebSocketServer(
     app->get("/json", [hostname, port, url, title = title, inspector](auto* res, auto* /*req*/) {
            auto identifier = inspector->identifier();
            auto jsonString = makeString(
-               "[ {\"description\": \"\", \"devtoolsFrontendUrl\": \"devtools://devtools/bundled/js_app.html?experiments=false&v8only=true&ws="_s,
+               "[ {\"faviconUrl\": \"https://bun.sh/favicon.svg\", \"description\": \"\", \"devtoolsFrontendUrl\": \"devtools://devtools/bundled/js_app.html?experiments=true&v8only=true&ws="_s,
                hostname,
                ":"_s,
                port,
@@ -119,70 +163,99 @@ RefPtr<BunInspector> BunInspector::startWebSocketServer(
            res->end(utf8.data(), utf8.length());
        })
         .get("/json/version", [](auto* res, auto* req) {
-            auto out = makeString("{\"Browser\": \"node.js/19.6.0\", \"Protocol-Version\": \"1.1\"}"_s);
+            auto out = makeString("{\"Browser\": \"Bun/"_s, Bun__version, "\",\"Protocol-Version\": \"1.1\"}"_s);
             auto utf8 = out.utf8();
             res->writeStatus("200 OK");
             res->writeHeader("Content-Type", "application/json");
             res->end({ utf8.data(), utf8.length() });
         })
-        .ws<BunInspector*>("/*", { /* Settings */
-                                     .compression = uWS::DISABLED,
-                                     .maxPayloadLength = 1024 * 1024 * 1024,
-                                     .idleTimeout = 512,
-                                     .maxBackpressure = 64 * 1024 * 1024,
-                                     .closeOnBackpressureLimit = false,
-                                     .resetIdleTimeoutOnSend = false,
-                                     .sendPingsAutomatically = true,
-                                     /* Handlers */
-                                     .upgrade = nullptr,
-                                     .open = [inspector](auto* ws) {
-                                                                   *ws->getUserData() = inspector.get();
-                                                                   ws->subscribe("BunInspectorConnection");
-                                                               ws->cork([ws, inspector]() {
-                                                                // TODO: why does this freeze the connection?
-                                                                // do we need to buffer messages?
-                                                                //
-                                                                //  auto welcomeMessage = makeString(
-                                                                //         "{\"context\":{\"id\":\""_s,  
-                                                                //         inspector->scriptExecutionContext()->identifier(), 
-                                                                //         ",\"origin\":\"\",\"name\":\""_s, 
-                                                                //         inspector->identifier(), 
-                                                                //         "\",\"uniqueId\":\"1234\",\"auxData\":{\"isDefault\":true}}"_s
-                                                                //     ).utf8();
-                                                                //     std::string_view view { welcomeMessage.data(), welcomeMessage.length() };
-                                                                //    ws->send(
-                                                                //     view,
-                                                                //     uWS::OpCode::TEXT,
-                                                                //     false,
-                                                                //     false
-                                                                //    );
-                                                                   
+        .ws<BunInspectorConnection*>("/*", { /* Settings */
+                                               .compression = uWS::DISABLED,
+                                               .maxPayloadLength = 1024 * 1024 * 1024,
+                                               .idleTimeout = 512,
+                                               .maxBackpressure = 64 * 1024 * 1024,
+                                               .closeOnBackpressureLimit = false,
+                                               .resetIdleTimeoutOnSend = false,
+                                               .sendPingsAutomatically = true,
+                                               /* Handlers */
+                                               .upgrade = nullptr,
+                                               .open = [inspector](auto* ws) {
+                BunInspectorConnection** connectionPtr = ws->getUserData();
+                *connectionPtr = new BunInspectorConnection(inspector);
+                ws->subscribe("BunInspectorConnection");
+                BunInspectorConnection* connection = *connectionPtr;
+                inspector->connect(Inspector::FrontendChannel::ConnectionType::Local); },
 
-                                                                   inspector->connect(Inspector::FrontendChannel::ConnectionType::Local);
-                                      }); },
-                                     .message = [inspector](auto* ws, std::string_view message, uWS::OpCode opCode) {
-                                                                       if (opCode == uWS::OpCode::TEXT) {
-                                                                           if (!inspector) {
-                                                                               ws->close();
-                                                                               return;
-                                                                           }
-                                                                           
+                                               .message = [inspector](auto* ws, std::string_view message, uWS::OpCode opCode) {
+        if (opCode == uWS::OpCode::TEXT) {
+            if (!inspector) {
+                ws->close();
+                return;
+            }
 
+            BunInspectorConnection** connectionPtr = ws->getUserData();
+            BunInspectorConnection* connection = *connectionPtr;
+        //       if (!connection->hasSentWelcomeMessage) {
+        //     connection->hasSentWelcomeMessage = true;
+        //     auto welcomeMessage = makeString(
+        //                                                                 "{ \"method\": \"Runtime.executionContextCreated\", \"params\":{\"context\":{\"id\":"_s,  
+        //                                                                 connection->inspector->scriptExecutionContext()->identifier(), 
+        //                                                                 ",\"origin\":\"\",\"name\":\""_s, 
+        //                                                                 connection->inspector->identifier(), 
+        //                                                                 "\",\"uniqueId\":\"1234\",\"auxData\":{\"isDefault\":true}}}}"_s
+        //                                                             ).utf8();
+        //                                                             std::string_view view { welcomeMessage.data(), welcomeMessage.length() };
+        //                                                           if (! ws->send(
+        //                                                             view,
+        //                                                             uWS::OpCode::TEXT,
+        //                                                             false,
+        //                                                             false
+        //                                                            )) {
+        //                                                             connection->m_messages.append(WTFMove(welcomeMessage));
+        //                                                            }
+        // }
 
-                                                                           inspector->dispatchToBackend(message);
-                                                                       } },
-                                     .drain = [](auto* /*ws*/) {
-    /* Check ws->getBufferedAmount() here */ },
-                                     .ping = [](auto* /*ws*/, std::string_view) {
+            inspector->dispatchToBackend(message);
+        } },
+                                               .drain = [](auto* ws) {
+
+        /* Check ws->getBufferedAmount() here */
+        BunInspectorConnection** connectionPtr = ws->getUserData();
+        BunInspectorConnection* connection = *connectionPtr;
+
+        if (!connection) {
+            return;
+        }
+
+      
+
+        while (connection->m_messages.size() > 0) {
+            auto& message = connection->m_messages.first();
+            std::string_view view { message.data(), message.length() };
+            if (!ws->send(view, uWS::OpCode::TEXT, false, false)) {
+                return;
+            }
+            connection->m_messages.removeFirst();
+        }
+
+        connection->inspector->drainOutgoingMessages(); },
+                                               .ping = [](auto* /*ws*/, std::string_view) {
     /* Not implemented yet */ },
-                                     .pong = [](auto* /*ws*/, std::string_view) {
+                                               .pong = [](auto* /*ws*/, std::string_view) {
     /* Not implemented yet */ },
-                                     .close = [](auto* ws, int /*code*/, std::string_view /*message*/) { 
-                                                                    
-                                                                    auto* connection = *ws->getUserData();
-                                                                    if (connection) {
-                                                                        connection->disconnect();
-                                                                    } } })
+                                               .close = [](auto* ws, int /*code*/, std::string_view /*message*/) {
+        BunInspectorConnection** connectionPtr = ws->getUserData();
+        BunInspectorConnection* connection = *connectionPtr;
+        if (!connection) {
+            return;
+        }
+        if (connection->inspector.get()) {
+            connection->inspector->disconnect();
+            connection->inspector = nullptr;
+        }
+
+        connection->m_messages.clear();
+        delete connection; } })
         .any("/*", [](auto* res, auto* req) {
             res->writeStatus("404 Not Found");
             res->writeHeader("Content-Type", "text/plain");

@@ -3180,28 +3180,33 @@ pub const PragmaArg = enum {
             return null;
         }
 
-        const start: u32 = brk: {
-            // One or more whitespace characters
-            if (kind == .skip_space_first) {
-                if (!isWhitespace(cursor.c)) {
-                    return null;
-                }
+        var start: u32 = 0;
 
-                while (iter.next(&cursor)) {
-                    if (!isWhitespace(cursor.c)) {
-                        break;
-                    }
-                }
-
-                break :brk cursor.i;
+        // One or more whitespace characters
+        if (kind == .skip_space_first) {
+            if (!isWhitespace(cursor.c)) {
+                return null;
             }
 
-            break :brk 0;
-        };
+            while (isWhitespace(cursor.c)) {
+                if (!iter.next(&cursor)) {
+                    break;
+                }
+            }
+            start = cursor.i;
+            text = text[cursor.i..];
+            cursor = .{};
+            iter = strings.CodepointIterator.init(text);
+            _ = iter.next(&cursor);
+        }
 
-        var end = cursor.i -| @as(u32, cursor.width);
+        var i: usize = 0;
+        while (!isWhitespace(cursor.c)) {
+            i += cursor.width;
+            if (i >= text.len) {
+                break;
+            }
 
-        while (!isWhitespace(cursor.c)) : (end = cursor.i -| @as(u32, cursor.width)) {
             if (!iter.next(&cursor)) {
                 break;
             }
@@ -3209,12 +3214,12 @@ pub const PragmaArg = enum {
 
         return js_ast.Span{
             .range = logger.Range{
-                .len = @intCast(i32, end) - @intCast(i32, start),
+                .len = @intCast(i32, i),
                 .loc = logger.Loc{
                     .start = @intCast(i32, start + @intCast(u32, offset_) + @intCast(u32, pragma.len)),
                 },
             },
-            .text = text[start..end],
+            .text = text[0..i],
         };
     }
 };

@@ -120,6 +120,16 @@ const JSXImport = enum {
             return null;
         }
 
+        pub fn getWithTag(this: *const Symbols, tag: JSXImport) ?Ref {
+            return switch (tag) {
+                .jsx => if (this.jsx) |jsx| jsx.ref.? else null,
+                .jsxDEV => if (this.jsxDEV) |jsx| jsx.ref.? else null,
+                .jsxs => if (this.jsxs) |jsxs| jsxs.ref.? else null,
+                .Fragment => if (this.Fragment) |Fragment| Fragment.ref.? else null,
+                .createElement => if (this.createElement) |createElement| createElement.ref.? else null,
+            };
+        }
+
         const Runtime = struct {
             pub const full: []const string = &[_]string{ "jsx", "jsxs" };
             pub const jsxs_: []const string = &[_]string{"jsxs"};
@@ -160,22 +170,23 @@ const JSXImport = enum {
         };
 
         pub fn legacyImportNames(this: *const Symbols, jsx: *const options.JSX.Pragma, buf: *[2]string) []const string {
+            _ = jsx;
             if (this.Fragment != null and this.createElement != null) {
                 buf[0..2].* = .{
-                    jsx.fragment[jsx.fragment.len - 1],
-                    jsx.factory[jsx.factory.len - 1],
+                    this.factory_name,
+                    this.fragment_name,
                 };
                 return buf[0..2];
             }
 
             if (this.createElement != null) {
                 buf[0] =
-                    jsx.factory[jsx.factory.len - 1];
+                    this.factory_name;
                 return buf[0..1];
             }
 
             if (this.Fragment != null) {
-                buf[0] = jsx.fragment[jsx.fragment.len - 1];
+                buf[0] = this.fragment_name;
                 return buf[0..1];
             }
 
@@ -4235,6 +4246,146 @@ const ParserFeatures = struct {
 const FastRefresh = struct {};
 
 const ImportItemForNamespaceMap = bun.StringArrayHashMap(LocRef);
+
+pub const KnownGlobal = enum {
+    WeakSet,
+    WeakMap,
+    Date,
+    Set,
+    Map,
+
+    pub const map = bun.ComptimeEnumMap(KnownGlobal);
+
+    pub fn maybeMarkConstructorAsPure(e: *E.New, symbols: []const Symbol) void {
+        const id = if (e.target.data == .e_identifier) e.target.data.e_identifier.ref else return;
+        const symbol = &symbols[id.innerIndex()];
+        if (symbol.kind != .unbound)
+            return;
+
+        const constructor = map.get(symbol.original_name) orelse return;
+
+        switch (constructor) {
+            .WeakSet, .WeakMap => {
+                const n = e.args.len;
+
+                if (n == 0) {
+                    // "new WeakSet()" is pure
+                    e.can_be_unwrapped_if_unused = true;
+                    return;
+                }
+
+                if (n == 1) {
+                    switch (e.args[0].data) {
+                        .e_null, .e_undefined => {
+                            // "new WeakSet(null)" is pure
+                            // "new WeakSet(void 0)" is pure
+                            e.can_be_unwrapped_if_unused = true;
+                        },
+                        .e_array => |array| {
+                            if (array.items.len == 0) {
+                                // "new WeakSet([])" is pure
+                                e.can_be_unwrapped_if_unused = true;
+                            } else {
+                                // "new WeakSet([x])" is impure because an exception is thrown if "x" is not an object
+                            }
+                        },
+                        else => {
+                            // "new WeakSet(x)" is impure because the iterator for "x" could have side effects
+                        },
+                    }
+                }
+            },
+            .Date => {
+                const n = e.args.len;
+
+                if (n == 0) {
+                    // "new Date()" is pure
+                    e.can_be_unwrapped_if_unused = true;
+                    return;
+                }
+
+                if (n == 1) {
+                    switch (e.args[0].knownPrimitiveType()) {
+                        .null, .undefined, .boolean, .number, .string => {
+                            // "new Date('')" is pure
+                            // "new Date(0)" is pure
+                            // "new Date(null)" is pure
+                            // "new Date(true)" is pure
+                            // "new Date(false)" is pure
+                            // "new Date(undefined)" is pure
+                            e.can_be_unwrapped_if_unused = true;
+                        },
+                        else => {
+                            // "new Date(x)" is impure because the argument could be a string with side effects
+
+                        },
+                    }
+                }
+            },
+
+            .Set => {
+                const n = e.args.len;
+
+                if (n == 0) {
+                    // "new Set()" is pure
+                    e.can_be_unwrapped_if_unused = true;
+                    return;
+                }
+
+                if (n == 1) {
+                    switch (e.args[0].data) {
+                        .e_array, .e_null, .e_undefined => {
+                            // "new Set([a, b, c])" is pure
+                            // "new Set(null)" is pure
+                            // "new Set(void 0)" is pure
+                            e.can_be_unwrapped_if_unused = true;
+                        },
+                        else => {
+                            // "new Set(x)" is impure because the iterator for "x" could have side effects
+                        },
+                    }
+                }
+            },
+
+            .Map => {
+                const n = e.args.len;
+
+                if (n == 0) {
+                    // "new Map()" is pure
+                    e.can_be_unwrapped_if_unused = true;
+                    return;
+                }
+
+                if (n == 1) {
+                    switch (e.args[0].data) {
+                        .e_null, .e_undefined => {
+                            // "new Map(null)" is pure
+                            // "new Map(void 0)" is pure
+                            e.can_be_unwrapped_if_unused = true;
+                        },
+                        .e_array => |array| {
+                            var all_items_are_arrays = true;
+                            for (array.items) |item| {
+                                if (item.data != .e_array) {
+                                    all_items_are_arrays = false;
+                                    break;
+                                }
+                            }
+
+                            if (all_items_are_arrays) {
+                                // "new Map([[a, b], [c, d]])" is pure
+                                e.can_be_unwrapped_if_unused = true;
+                            }
+                        },
+                        else => {
+                            // "new Map(x)" is impure because the iterator for "x" could have side effects
+                        },
+                    }
+                }
+            },
+        }
+    }
+};
 
 pub const MacroState = struct {
     refs: MacroRefs,
@@ -16657,14 +16808,13 @@ fn NewParser_(
         }
 
         fn jsxImport(p: *P, kind: JSXImport, loc: logger.Loc) Expr {
-            var jsx_imports = &p.jsx_imports;
             switch (kind) {
                 inline else => |field| {
                     const ref: Ref = brk: {
-                        if (@field(jsx_imports, @tagName(field)) == null) {
+                        if (p.jsx_imports.getWithTag(kind) == null) {
                             const symbol_name = switch (kind) {
-                                .createElement => p.options.jsx.factory[p.options.jsx.factory.len - 1],
-                                .Fragment => p.options.jsx.fragment[p.options.jsx.fragment.len - 1],
+                                .createElement => p.jsx_imports.factory_name,
+                                .Fragment => p.jsx_imports.fragment_name,
                                 else => @tagName(field),
                             };
 
@@ -16675,11 +16825,11 @@ fn NewParser_(
 
                             p.module_scope.generated.push(p.allocator, loc_ref.ref.?) catch unreachable;
                             p.is_import_item.put(p.allocator, loc_ref.ref.?, {}) catch unreachable;
-                            @field(jsx_imports, @tagName(field)) = loc_ref;
+                            @field(p.jsx_imports, @tagName(field)) = loc_ref;
                             break :brk loc_ref.ref.?;
                         }
 
-                        break :brk @field(jsx_imports, @tagName(field)).?.ref.?;
+                        break :brk p.jsx_imports.getWithTag(kind).?;
                     };
 
                     p.recordUsage(ref);
@@ -20805,7 +20955,6 @@ pub fn newLazyExportAST(
         .source = source,
         .log = log,
     };
-
     var result = parser.toLazyExportAST(
         expr,
         runtime_api_call,

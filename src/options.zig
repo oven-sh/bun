@@ -885,6 +885,7 @@ pub const ESMConditions = struct {
 pub const JSX = struct {
     pub const RuntimeMap = bun.ComptimeStringMap(JSX.Runtime, .{
         .{ "classic", JSX.Runtime.classic },
+        .{ "automatic", JSX.Runtime.automatic },
         .{ "react", JSX.Runtime.classic },
         .{ "react-jsx", JSX.Runtime.automatic },
         .{ "react-jsxDEV", JSX.Runtime.automatic },

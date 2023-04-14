@@ -24,7 +24,7 @@ pub inline fn contains(self: string, str: string) bool {
 }
 
 pub fn toUTF16Literal(comptime str: []const u8) []const u16 {
-    comptime {
+    return comptime brk: {
         comptime var output: [str.len]u16 = undefined;
 
         for (str, 0..) |c, i| {
@@ -34,9 +34,8 @@ pub fn toUTF16Literal(comptime str: []const u8) []const u16 {
         const Static = struct {
             pub const literal: []const u16 = output[0..];
         };
-
-        return Static.literal;
-    }
+        break :brk Static.literal;
+    };
 }
 
 const OptionalUsize = std.meta.Int(.unsigned, @bitSizeOf(usize) - 1);

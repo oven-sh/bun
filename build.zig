@@ -218,6 +218,7 @@ pub fn build(b: *Build) !void {
         .target = target,
         .optimize = optimize,
     });
+
     var default_build_options: BunBuildOptions = brk: {
         const is_baseline = arch.isX86() and (target.cpu_model == .baseline or
             !std.Target.x86.featureSetHas(target.getCpuFeatures(), .avx2));
@@ -285,11 +286,12 @@ pub fn build(b: *Build) !void {
         std.io.getStdErr().writer().print("Output: {s}/{s}\n\n", .{ output_dir, bun_executable_name }) catch unreachable;
 
         defer obj_step.dependOn(&obj.step);
-
+        obj.emit_bin = .{
+            .emit_to = b.fmt("{s}/{s}.o", .{ output_dir, bun_executable_name }),
+        };
         var actual_build_options = default_build_options;
         if (b.option(bool, "generate-sizes", "Generate sizes of things") orelse false) {
             actual_build_options.sizegen = true;
-            obj.setOutputDir(b.pathFromRoot("misctools/sizegen"));
         }
 
         obj.addOptions("build_options", actual_build_options.step(b));
@@ -299,7 +301,6 @@ pub fn build(b: *Build) !void {
         obj.strip = false;
         obj.bundle_compiler_rt = false;
         obj.omit_frame_pointer = optimize != .Debug;
-
         // Disable stack probing on x86 so we don't need to include compiler_rt
         if (target.getCpuArch().isX86()) obj.disable_stack_probing = true;
 
@@ -449,10 +450,12 @@ pub fn build(b: *Build) !void {
             .root_source_file = FileSource.relative(test_file orelse "src/main.zig"),
             .target = target,
         });
-        headers_obj.setFilter(test_filter);
+        headers_obj.filter = test_filter;
         if (test_bin_) |test_bin| {
             headers_obj.name = std.fs.path.basename(test_bin);
-            if (std.fs.path.dirname(test_bin)) |dir| headers_obj.setOutputDir(dir);
+            if (std.fs.path.dirname(test_bin)) |dir| headers_obj.emit_bin = .{
+                .emit_to = b.fmt("{s}/{s}", .{ dir, headers_obj.name }),
+            };
         }
 
         try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
@@ -489,8 +492,6 @@ pub fn build(b: *Build) !void {
         //     headers_step.dependOn(&after.step);
         // }
     }
-    if (obj.emit_bin != .no_emit)
-        obj.setOutputDir(output_dir);
 
     b.default_step.dependOn(obj_step);
 }
@@ -568,9 +569,12 @@ pub fn configureObjectStep(b: *std.build.Builder, obj: *CompileStep, comptime Ta
 
     obj.strip = false;
 
-    obj.setOutputDir(output_dir);
     // obj.setBuildMode(optimize);
     obj.bundle_compiler_rt = false;
+    if (obj.emit_bin == .default)
+        obj.emit_bin = .{
+            .emit_to = b.fmt("{s}/{s}.o", .{ output_dir, obj.name }),
+        };
 
     if (target.getOsTag() != .freestanding) obj.linkLibC();
     if (target.getOsTag() != .freestanding) obj.bundle_compiler_rt = false;

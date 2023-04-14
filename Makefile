@@ -40,7 +40,7 @@ endif
 
 MIN_MACOS_VERSION ?= $(DEFAULT_MIN_MACOS_VERSION)
 BUN_BASE_VERSION = 0.6
-
+WITH_MMD = -MMD
 AR=
 
 BUN_OR_NODE = $(shell which bun 2>/dev/null || which node 2>/dev/null)
@@ -115,6 +115,16 @@ ifeq ($(OS_NAME),darwin)
 	CC = $(LLVM_PREFIX)/bin/clang
 	CXX = $(LLVM_PREFIX)/bin/clang++
 	CODESIGN_IDENTITY ?= $(shell security find-identity -v -p codesigning | awk '/Apple Development/ { print $$2 }')
+endif
+
+# if we are CI, set MMD to empty
+ifeq ($(GITHUB_ACTION), "true")
+	WITH_MMD =
+endif
+
+# if we are CI, set MMD to empty
+ifeq ($(CI), "true")
+	WITH_MMD =
 endif
 
 # macOS sed is different
@@ -310,8 +320,15 @@ DEBUG_WEBCRYPTO_OBJ_FILES := $(patsubst $(SRC_DIR)/webcrypto/%.cpp, $(DEBUG_OBJ_
 BINDINGS_OBJ := $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILES) $(NODE_OS_OBJ_FILES) $(BUILTINS_OBJ_FILES) $(IO_FILES) $(MODULES_OBJ_FILES) $(WEBCRYPTO_OBJ_FILES)
 DEBUG_BINDINGS_OBJ := $(DEBUG_OBJ_FILES) $(DEBUG_WEBCORE_OBJ_FILES) $(DEBUG_SQLITE_OBJ_FILES) $(DEBUG_NODE_OS_OBJ_FILES) $(DEBUG_BUILTINS_OBJ_FILES) $(DEBUG_IO_FILES) $(DEBUG_MODULES_OBJ_FILES) $(DEBUG_WEBCRYPTO_OBJ_FILES)
 
+
+# if we are CI, set MMD to empty
+ifneq ($(GITHUB_ACTION), "true")
+
 -include $(BINDINGS_OBJ:.o=.d)
 -include $(DEBUG_BINDINGS_OBJ:.o=.d)
+
+endif
+
 
 ALL_JSC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/WTF/Headers \
 		-I$(WEBKIT_RELEASE_DIR)/ICU/Headers \
@@ -1453,7 +1470,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) $(UWS_INCLUDE) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
-		-MMD \
+		$(WITH_MMD) \
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
@@ -1464,7 +1481,7 @@ $(OBJ_DIR)/%.o: src/bun.js/modules/%.cpp
 	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) $(UWS_INCLUDE) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
-		-MMD \
+		$(WITH_MMD) \
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
@@ -1475,7 +1492,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
 	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
-		-MMD \
+		$(WITH_MMD) \
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
@@ -1486,7 +1503,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
 	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
-		-MMD \
+		$(WITH_MMD) \
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
@@ -1497,7 +1514,7 @@ $(OBJ_DIR)/%.o: src/io/%.cpp
 	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
-		-MMD \
+		$(WITH_MMD) \
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
@@ -1508,7 +1525,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/node_os/%.cpp
 	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
-		-MMD \
+		$(WITH_MMD) \
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
@@ -1519,7 +1536,7 @@ $(OBJ_DIR)/%.o: src/bun.js/builtins/%.cpp
 	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
-		-MMD \
+		$(WITH_MMD) \
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
@@ -1531,7 +1548,7 @@ $(OBJ_DIR)/%.o: src/bun.js/bindings/webcrypto/%.cpp
 	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
-		-MMD \
+		$(WITH_MMD) \
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
@@ -1545,7 +1562,7 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) $(UWS_INCLUDE) \
 		$(MACOS_MIN_FLAG) \
 		$(DEBUG_OPTIMIZATION_LEVEL) \
-		-MMD \
+		$(WITH_MMD) \
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
@@ -1560,7 +1577,7 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
 	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(DEBUG_OPTIMIZATION_LEVEL) \
-		-MMD \
+		$(WITH_MMD) \
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
@@ -1573,7 +1590,7 @@ $(DEBUG_OBJ_DIR)/%.o: src/io/%.cpp
 	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(DEBUG_OPTIMIZATION_LEVEL) \
-		-MMD \
+		$(WITH_MMD) \
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
@@ -1589,7 +1606,7 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
 	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(DEBUG_OPTIMIZATION_LEVEL) \
-		-MMD \
+		$(WITH_MMD) \
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
@@ -1604,7 +1621,7 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/node_os/%.cpp
 	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(DEBUG_OPTIMIZATION_LEVEL) \
-		-MMD \
+		$(WITH_MMD) \
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
@@ -1619,7 +1636,7 @@ $(DEBUG_OBJ_DIR)/%.o: src/bun.js/builtins/%.cpp
 	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(DEBUG_OPTIMIZATION_LEVEL) \
-		-MMD \
+		$(WITH_MMD) \
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
@@ -1632,7 +1649,7 @@ $(DEBUG_OBJ_DIR)/%.o: src/bun.js/modules/%.cpp
 	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(DEBUG_OPTIMIZATION_LEVEL) \
-		-MMD \
+		$(WITH_MMD) \
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
@@ -1646,7 +1663,7 @@ $(DEBUG_OBJ_DIR)/%.o: src/bun.js/bindings/webcrypto/%.cpp
 	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(DEBUG_OPTIMIZATION_LEVEL) \
-		-MMD \
+		$(WITH_MMD) \
 		-fno-exceptions \
 		-I$(SRC_DIR) \
 		-fno-rtti \

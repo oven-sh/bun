@@ -7,23 +7,42 @@ $ bun pm bin
 /path/to/current/project/node_modules/.bin
 ```
 
-To get the path to the global `bin` directory:
+To print the path to the global `bin` directory:
 
 ```bash
-$ bun pm bin
+$ bun pm bin -g
 <$HOME>/.bun/bin
 ```
 
-To print a list of packages installed in the current project and their resolved versions, excluding their dependencies. Use the `--all` flag to print the entire tree, including all nth-order dependencies.
+To print a list of installed dependencies in the current project and their resolved versions, excluding their dependencies.
 
 ```bash
 $ bun pm ls
-/path/to/project node_modules (5)
-├── eslint@8.33.0
+/path/to/project node_modules (135)
+├── eslint@8.38.0
 ├── react@18.2.0
 ├── react-dom@18.2.0
-├── typescript@4.8.4
-└── zod@3.20.1
+├── typescript@5.0.4
+└── zod@3.21.4
+```
+
+To print all installed dependencies, including nth-order dependencies.
+
+```bash
+$ bun pm ls --all
+/path/to/project node_modules (135)
+├── @eslint-community/eslint-utils@4.4.0
+├── @eslint-community/regexpp@4.5.0
+├── @eslint/eslintrc@2.0.2
+├── @eslint/js@8.38.0
+├── @nodelib/fs.scandir@2.1.5
+├── @nodelib/fs.stat@2.0.5
+├── @nodelib/fs.walk@1.2.8
+├── acorn@8.8.2
+├── acorn-jsx@5.3.2
+├── ajv@6.12.6
+├── ansi-regex@5.0.1
+├── ...
 ```
 
 To print the path to Bun's global module cache:

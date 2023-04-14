@@ -33,10 +33,10 @@ export default {
       description: "Install Bun with npm, Homebrew, Docker, or the official install script.",
     }),
     page("quickstart", "Quickstart", {
-      description: "Get started with Bun by building and running a simple HTTP server in 5 lines of TypeScript.",
+      description: "Get started with Bun by building and running a simple HTTP server in 6 lines of TypeScript.",
     }),
     page("templates", "Templates", {
-      description: "Get started with Bun by building and running a simple HTTP server in 5 lines of TypeScript.",
+      description: "Hit the ground running with one of Bun's official templates, or download a template from GitHub.",
     }),
     // page("typescript", "TypeScript"),
 
@@ -76,8 +76,7 @@ export default {
     // divider("Runtime"),
     divider("Runtime"),
     page("cli/run", "`bun run`", {
-      description:
-        "Use `bun run` to execute JavaScript/TypeScript files, package.json scripts, and executable packages.",
+      description: "Use `bun run` to execute JavaScript/TypeScript files and package.json scripts.",
     }),
     // page("runtime/index", "Overview", {
     //   description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
@@ -86,7 +85,7 @@ export default {
     //   description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
     // }),
     page("runtime/loaders", "File types", {
-      description: `Bun can directly execute TypeScript files without additional configuration.`,
+      description: `Bun's runtime supports JavaScript/TypeScript files, JSX syntax, Wasm, JSON/TOML imports, and more.`,
     }),
     page("runtime/typescript", "TypeScript", {
       description: `Bun can directly execute TypeScript files without additional configuration.`,
@@ -98,14 +97,14 @@ export default {
     //   description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
     // }),
     page("runtime/bun-apis", "Bun APIs", {
-      description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
+      description: `Bun provides a set of highly optimized native APIs for performing common tasks.`,
     }),
     page("runtime/web-apis", "Web APIs", {
-      description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
+      description: `Bun implements an array of Web-standard APIs like fetch, URL, and WebSocket.`,
     }),
 
     page("runtime/nodejs-apis", "Node.js compatibility", {
-      description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
+      description: `Bun aims for full Node.js compatibility. This page tracks the current compatibility status.`,
     }),
 
     // page("runtime/nodejs", "Node.js compatibility", {
@@ -121,7 +120,7 @@ export default {
       description: `Bun uses ESM and implements an extended version of the Node.js module resolution algorithm.`,
     }),
     page("runtime/autoimport", "Auto-install", {
-      description: `Bun uses ESM and implements an extended version of the Node.js module resolution algorithm.`,
+      description: `Never use node_modules again. Bun can optionally auto-install your dependencies on the fly.`,
     }),
     page("runtime/configuration", "Configuration", {
       description: `Bun's runtime is configurable with environment variables and the bunfig.toml config file.`,
@@ -150,10 +149,10 @@ export default {
     }),
     page("install/lockfile", "Lockfile", {
       description:
-        "Bun's binary lockfile `bun.lockb` tracks your resolved dependency, making future installs fast and repeatable.",
+        "Bun's binary lockfile `bun.lockb` tracks your resolved dependency ytrr, making future installs fast and repeatable.",
     }),
     page("install/registries", "Scopes and registries", {
-      description: "How to configure private scopes and non-default package registries.",
+      description: "How to configure private scopes and custom package registries.",
     }),
     page("install/utilities", "Utilities", {
       description: "Use `bun pm` to introspect your global module cache or project dependency tree.",
@@ -170,8 +169,7 @@ export default {
 
     divider("Package runner"),
     page("cli/bunx", "`bunx`", {
-      description:
-        "Use `bunx` to auto-install and run executable packages from npm, or use locally installed command-line tools.",
+      description: "Use `bunx` to auto-install and run executable packages from npm.",
     }),
 
     // page("runtime/nodejs", "Node.js APIs"),

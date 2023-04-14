@@ -49,7 +49,7 @@ bun test --update-snapshots
 
 Snapshots will be stored in a `__snapshots__` directory next to the test file.
 
-## Watch more
+## Watch mode
 
 Similar to `bun run`, you can pass the `--watch` flag to `bun test` to watch for changes and re-run tests.
 
@@ -61,7 +61,7 @@ $ bun test --watch
 
 Bun's test runner is fast.
 
-{% image src="/images/buntest.jpeg" caption="Bun runs 266 React SSR tests faster than Jest can print its version number." /%}
+{% image src="/images/buntest.jpeg" caption="Running 266 React SSR tests faster than Jest can print its version number." /%}
 
 <!--
 Consider the following directory structure:

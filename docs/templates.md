@@ -1,6 +1,6 @@
 ## `bun init`
 
-Scaffold an empty project with `bun init`. It's an interactive tool.
+Scaffold an empty project with the interactive `bun init` command.
 
 ```bash
 $ bun init

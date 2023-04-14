@@ -7457,17 +7457,31 @@ const LinkerContext = struct {
 
                     const r = lex.rangeOfIdentifier(source, named_import.alias_loc orelse Logger.Loc{});
 
-                    // if (result.name_loc.start != 0)
-                    // TODO: better error
-                    c.log.addRangeErrorFmt(
-                        source,
-                        r,
-                        c.allocator,
-                        "Ambiguous import: {s}",
-                        .{
-                            named_import.alias.?,
-                        },
-                    ) catch unreachable;
+                    // TODO: log locations of the ambiguous exports
+
+                    const symbol: *Symbol = c.graph.symbols.get(import_ref).?;
+                    if (symbol.import_item_status == .generated) {
+                        symbol.import_item_status = .missing;
+                        c.log.addRangeWarningFmt(
+                            source,
+                            r,
+                            c.allocator,
+                            "Import \"{s}\" will always be undefined because there are multiple matching exports",
+                            .{
+                                named_import.alias.?,
+                            },
+                        ) catch unreachable;
+                    } else {
+                        c.log.addRangeErrorFmt(
+                            source,
+                            r,
+                            c.allocator,
+                            "Ambiguous import \"{s}\" has multiple matching exports",
+                            .{
+                                named_import.alias.?,
+                            },
+                        ) catch unreachable;
+                    }
                 },
                 .ignore => {},
             }
@@ -7527,7 +7541,7 @@ const LinkerContext = struct {
                         continue;
 
                     // This export star is shadowed if any file in the stack has a matching real named export
-                    for (this.source_index_stack.items[stack_end_pos..]) |prev| {
+                    for (this.source_index_stack.items[0..stack_end_pos]) |prev| {
                         if (this.named_exports[prev].contains(alias)) {
                             continue :next_export;
                         }

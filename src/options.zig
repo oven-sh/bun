@@ -730,6 +730,10 @@ pub const Loader = enum {
 
     pub const names = bun.ComptimeStringMap(Loader, .{
         .{ "js", Loader.js },
+        .{ "mjs", Loader.js },
+        .{ "cjs", Loader.js },
+        .{ "cts", Loader.ts },
+        .{ "mts", Loader.ts },
         .{ "jsx", Loader.jsx },
         .{ "ts", Loader.ts },
         .{ "tsx", Loader.tsx },

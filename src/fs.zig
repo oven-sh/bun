@@ -1198,8 +1198,7 @@ pub const Path = struct {
             return bun.options.Loader.dataurl;
         }
 
-        // without the leading .
-        const ext = strings.trimLeadingChar(this.name.ext, '.');
+        const ext = this.name.ext;
 
         return loaders.get(ext) orelse bun.options.Loader.fromString(ext);
     }

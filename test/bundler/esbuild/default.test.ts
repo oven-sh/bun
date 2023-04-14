@@ -482,12 +482,15 @@ describe("bundler", () => {
       `,
     },
   });
+  // note: esbuild treats .js as non-jsx
+  // bun treats js as jsx
+  // so the extension has to be .mjs or .cjs to disable JSX.
   itBundled("default/JSXSyntaxInJS", {
     files: {
-      "/entry.js": `console.log(<div/>)`,
+      "/entry.mjs": `console.log(<div/>)`,
     },
     bundleErrors: {
-      "/entry.js": ["ERROR: The JSX syntax extension is not currently enabled"],
+      "/entry.mjs": ["ERROR: The JSX syntax extension is not currently enabled"],
     },
   });
   itBundled("default/JSXConstantFragments", {

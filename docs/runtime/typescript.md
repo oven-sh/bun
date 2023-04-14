@@ -1,12 +1,14 @@
-Bun can directly execute `.ts` and `.tsx` files just like vanilla JavaScript, with no extra configuration. If you import a `.ts` or `.tsx` file (or an `npm` module that exports these files), Bun internally transpiles it into JavaScript then executes the file.
+Bun can directly execute `.ts` and `.tsx` files with no extra configuration. If you import a `.ts` or `.tsx` file, Bun internally transpiles it into JavaScript then executes the file.
 
 {% callout %}
 **Note** — Similar to other build tools, Bun does not typecheck the files. Use [`tsc --noEmit`](https://www.typescriptlang.org/docs/handbook/compiler-options.html) (the official TypeScript CLI) if you're looking to catch static type errors.
 {% /callout %}
 
-## Type definitions
+## Configuring `tsconfig.json`
 
-To install TypeScript definitions for Bun's built-in APIs, first install `bun-types`.
+When using TypeScript and Bun together, it's important to properly configure your `tsconfig.json`.
+
+First, install the TypeScript definitions for Bun's built-in APIs:
 
 ```sh
 $ bun add -d bun-types # dev dependency
@@ -22,13 +24,9 @@ Then include `"bun-types"` in the `compilerOptions.types` in your `tsconfig.json
   }
 ```
 
-## Compiler options
+This is the most important step, as it allows you to use Bun's built in APIs without seeing TypeScript errors in your IDE.
 
-Bun's runtime implements [modern ECMAScript features](https://github.com/sudheerj/ECMAScript-features), like bigint literals, nullish coalescing, dynamic imports, `import.meta`, `globalThis`, ES modules, top-level await, and more. To use these features without seeing TypeScript errors in your IDE, your `tsconfig.json` needs to be properly configured.
-
-These are the recommended `compilerOptions` for a Bun project.
-
-> The config below sets `moduleResolution` to `bundler` which requires TypeScript option is set to `"bundler"` to support [path mapping](#path-mapping).
+Bun implements a range of [modern ECMAScript features](https://github.com/sudheerj/ECMAScript-features), like bigint literals, nullish coalescing, dynamic imports, `import.meta`, `globalThis`, ES modules, top-level await, and more. To use these features without seeing TypeScript errors in your IDE, set the following `compilerOptions`:
 
 ```jsonc
 {
@@ -37,10 +35,11 @@ These are the recommended `compilerOptions` for a Bun project.
     "lib": ["esnext"],
     "module": "esnext",
     "target": "esnext",
-    
-    // requires typescript 5.x+
-    // use "nodenext" for earlier versions
+
+    // typescript 5.x+
     "moduleResolution": "bundler",
+    // typescript 4.x or earlier
+    "moduleResolution": "nodenext",
 
     // support JSX, CommonJS
     "jsx": "react-jsx", // support JSX (value doesn't matter)

@@ -125,7 +125,7 @@ Then include `"bun-types"` in the `compilerOptions.types` in your `tsconfig.json
   }
 ```
 
-Refer to [Ecosystem > TypeScript](/docs/ecosystem/typescript) for a complete guide to TypeScript support in Bun.
+Refer to [Ecosystem > TypeScript](/docs/runtime/typescript) for a complete guide to TypeScript support in Bun.
 
 ## Completions
 

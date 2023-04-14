@@ -1,8 +1,8 @@
-The `bun` CLI contains a Node.js-compatible package manager designed to be a dramatically faster replacement for `npm`, `yarn`, and `pnpm`. It's a standalone tool that will work in pre-existing Node.js projects; if your project has a `package.json`, `bun install` can help you speed up your workflow.
+The `bun` CLI contains an `npm`-compatible package manager designed to be a faster replacement for existing package management tools like `npm`, `yarn`, and `pnpm`. It's designed for Node.js compatibility; use it in any Bun or Node.js project.
 
 {% callout %}
 
-**⚡️ 25x faster** — Switch from `npm install` to `bun install` in any Node.js project to make your installations up to 25x faster.
+**⚡️ 80x faster** — Switch from `npm install` to `bun install` in any Node.js project to make your installations up to 80x faster.
 
 {% image src="https://user-images.githubusercontent.com/709451/147004342-571b6123-17a9-49a2-8bfd-dcfc5204047e.png" height="200" /%}
 
@@ -156,47 +156,6 @@ To remove a dependency:
 $ bun remove preact
 ```
 
-## Local packages (`bun link`)
-
-Use `bun link` in a local directory to register the current package as a "linkable" package.
-
-```bash
-$ cd /path/to/cool-pkg
-$ cat package.json
-{
-  "name": "cool-pkg",
-  "version": "1.0.0"
-}
-$ bun link
-bun link v0.5.7 (7416672e)
-Success! Registered "cool-pkg"
-
-To use cool-pkg in a project, run:
-  bun link cool-pkg
-
-Or add it in dependencies in your package.json file:
-  "cool-pkg": "link:cool-pkg"
-```
-
-This package can now be "linked" into other projects using `bun link cool-pkg`. This will create a symlink in the `node_modules` directory of the target project, pointing to the local directory.
-
-```bash
-$ cd /path/to/my-app
-$ bun link cool-pkg
-```
-
-This will add `cool-pkg` to the `dependencies` field of your app's package.json with a special version specifier that tells Bun to load from the registered local directory instead of installing from `npm`.
-
-```json-diff
-  {
-    "name": "my-app",
-    "version": "1.0.0",
-    "dependencies": {
-+     "cool-pkg": "link:cool-pkg"
-    }
-  }
-```
-
 ## Git dependencies
 
 To add a dependency from a git repository:
@@ -228,25 +187,4 @@ A package name can correspond to a publically hosted `.tgz` file. During `bun in
     "zod": "https://registry.npmjs.org/zod/-/zod-3.21.4.tgz"
   }
 }
-```
-
-## CI/CD
-
-Looking to speed up your CI? Use the official `oven-sh/setup-bun` action to install `bun` in a GitHub Actions pipeline.
-
-```yaml#.github/workflows/release.yml
-name: bun-types
-jobs:
-  build:
-    name: build-app
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
-      - name: Install bun
-        uses: oven-sh/setup-bun@v1
-      - name: Install dependencies
-        run: bun install
-      - name: Build app
-        run: bun run build
 ```

@@ -1,8 +1,8 @@
 {% callout %}
-**Note** — `bunx` is an alias for `bun x`
+**Note** — `bunx` is an alias for `bun x`. The `bunx` CLI will be auto-installed when you install `bun`.
 {% /callout %}
 
-Use `bunx` to auto-install and run packages from `npm`. The `bunx` CLI will be auto-installed when you install `bun`.
+Use `bunx` to auto-install and run packages from `npm`. It's Bun's equivalent of `npx` or `yarn dlx`.
 
 ```bash
 $ bunx cowsay "Hello world!"
@@ -50,7 +50,7 @@ $ bunx my-cli --foo bar
 
 ## Shebangs
 
-By default, Bun respects shebangs. If an executable is marked with `#!/usr/bin/env node`, Bun will spin up a `node` process to execute the file. However, in some cases it may be desirable to run executables using [Bun's runtime](/docs/runtime), even if the executable indicates otherwise. To do so, include the `--bun` flag.
+By default, Bun respects shebangs. If an executable is marked with `#!/usr/bin/env node`, Bun will spin up a `node` process to execute the file. However, in some cases it may be desirable to run executables using Bun's runtime, even if the executable indicates otherwise. To do so, include the `--bun` flag.
 
 ```bash
 $ bunx --bun my-cli
@@ -66,7 +66,7 @@ $ bunx my-cli --bun # bad
 
 {% /callout %}
 
-## Environment variables
+<!-- ## Environment variables
 
 Bun automatically loads environment variables from `.env` files before running a file, script, or executable. The following files are checked, in order:
 
@@ -74,4 +74,4 @@ Bun automatically loads environment variables from `.env` files before running a
 2. `NODE_ENV` === `"production"` ? `.env.production` : `.env.development`
 3. `.env`
 
-To debug environment variables, run `bun run env` to view a list of resolved environment variables.
+To debug environment variables, run `bun run env` to view a list of resolved environment variables. -->

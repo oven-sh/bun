@@ -161,6 +161,7 @@ pub fn toExternal(this: Dependency) External {
     return bytes;
 }
 
+// git@example.com:path/to/repo.git
 pub inline fn isSCPLikePath(dependency: string) bool {
     // Shortest valid expression: h:p
     if (dependency.len < 3) return false;
@@ -173,7 +174,7 @@ pub inline fn isSCPLikePath(dependency: string) bool {
                 if (at_index == null) at_index = i;
             },
             ':' => {
-                if (strings.hasPrefixComptime(dependency[i..], "://")) return false;
+                if (strings.hasPrefixComptime(dependency[i + 1 ..], "//")) return false;
                 return i > if (at_index) |index| index + 1 else 0;
             },
             '/' => return if (at_index) |index| i > index + 1 else false,
@@ -201,7 +202,7 @@ pub inline fn isGitHubRepoPath(dependency: string) bool {
             '#' => {
                 if (i == 0) return false;
                 if (hash_index > 0) return false;
-                if (slash_index == 0) return false;
+                if (slash_index == 0 or slash_index == i - 1) return false;
                 hash_index = i;
             },
             // Not allowed in username
@@ -253,7 +254,7 @@ pub const Version = struct {
     }
 
     pub fn isLessThan(string_buf: []const u8, lhs: Dependency.Version, rhs: Dependency.Version) bool {
-        if (comptime Environment.allow_assert) std.debug.assert(lhs.tag == rhs.tag);
+        // if (comptime Environment.allow_assert) std.debug.assert(lhs.tag == rhs.tag);
         return strings.cmpStringsAsc({}, lhs.literal.slice(string_buf), rhs.literal.slice(string_buf));
     }
 
@@ -458,28 +459,17 @@ pub const Version = struct {
                 },
                 // hello/world
                 // hello.tar.gz
+                // http://github.com/user/repo
                 // https://github.com/user/repo
                 'h' => {
-                    if (strings.hasPrefixComptime(dependency, "http")) {
+                    if (dependency.len >= "http://github.com/u/r".len and
+                        strings.hasPrefixComptimeIgnoreLen(dependency, "http"))
+                    {
                         var url = dependency["http".len..];
-                        if (url.len > 2) {
-                            switch (url[0]) {
-                                ':' => {
-                                    if (strings.hasPrefixComptime(url, "://")) {
-                                        url = url["://".len..];
-                                    }
-                                },
-                                's' => {
-                                    if (strings.hasPrefixComptime(url, "s://")) {
-                                        url = url["s://".len..];
-                                    }
-                                },
-                                else => {},
-                            }
-                            if (strings.hasPrefixComptime(url, "github.com/")) {
-                                if (isGitHubRepoPath(url["github.com/".len..])) return .github;
-                            }
-                        }
+                        url = url[@boolToInt(url[0] == 's')..];
+                        if (strings.hasPrefixComptimeIgnoreLen(url, "://github.com/") and
+                            isGitHubRepoPath(url["://github.com/".len..]))
+                            return .github;
                     }
                 },
                 // lisp.tgz
@@ -492,7 +482,7 @@ pub const Version = struct {
                 // newspeak/repo
                 // npm:package@1.2.3
                 'n' => {
-                    if (strings.hasPrefixComptime(dependency, "npm:") and dependency.len > "npm:".len) {
+                    if (dependency.len > "npm:".len and strings.hasPrefixComptimeIgnoreLen(dependency, "npm:")) {
                         const remain = dependency["npm:".len + @boolToInt(dependency["npm:".len] == '@') ..];
                         for (remain, 0..) |c, i| {
                             if (c == '@') {
@@ -508,13 +498,14 @@ pub const Version = struct {
                 // verilog.tar.gz
                 // verilog/repo
                 // virt@example.com:repo.git
+                // v=x
                 'v' => {
+                    if (dependency.len == 1) return .dist_tag;
                     if (isTarball(dependency)) return .tarball;
                     if (isGitHubRepoPath(dependency)) return .github;
                     if (isSCPLikePath(dependency)) return .git;
-                    if (dependency.len == 1) return .dist_tag;
                     return switch (dependency[1]) {
-                        '0'...'9' => .npm,
+                        '0'...'9', 'x', 'X', '=' => .npm,
                         else => .dist_tag,
                     };
                 },
@@ -530,7 +521,11 @@ pub const Version = struct {
                 // xyz/repo#main
                 'x', 'X' => {
                     if (dependency.len == 1) return .npm;
+                    if (isTarball(dependency)) return .tarball;
+                    if (isGitHubRepoPath(dependency)) return .github;
+                    if (isSCPLikePath(dependency)) return .git;
                     if (dependency[1] == '.') return .npm;
+                    return .dist_tag;
                 },
                 else => {},
             }

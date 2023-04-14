@@ -100,14 +100,14 @@ pub inline fn isNPMPackageName(target: string) bool {
         else => return false,
     };
     var slash_index: usize = 0;
-    for (target[1..], 0..) |c, i| {
+    for (target[1..], 1..) |c, i| {
         switch (c) {
             // Old packages may have capital letters
             'A'...'Z', 'a'...'z', '0'...'9', '$', '-', '_', '.' => {},
             '/' => {
                 if (!scoped) return false;
                 if (slash_index > 0) return false;
-                slash_index = i + 1;
+                slash_index = i;
             },
             else => return false,
         }
@@ -208,6 +208,37 @@ pub fn CheckingWriter(comptime WriterType: type, comptime Checker: type) type {
 
         pub fn writer(self: *Self) Writer {
             return .{ .context = self };
+        }
+    };
+}
+
+pub fn BytesInInstructionCache(comptime chunk_size: type) type {
+    std.debug.assert(@typeInfo(chunk_size).Int.bits <= 32);
+    const max_bytes = 8;
+    const int_type = std.meta.Int(.unsigned, max_bytes * 8);
+
+    return struct {
+        const Self = @This();
+        bits: int_type,
+
+        pub fn get(self: *const Self, i: anytype) chunk_size {
+            return @truncate(chunk_size, self.bits >> @intCast(
+                std.math.Log2Int(int_type),
+                i * @typeInfo(chunk_size).Int.bits,
+            ));
+        }
+
+        pub fn init(comptime array: anytype) Self {
+            if (array.len > max_bytes)
+                std.fmt.comptimePrint(
+                    "ArrayInInstructionCache can only be initialized with up to {} bytes!",
+                    .{max_bytes},
+                );
+
+            comptime var wider_array: [max_bytes]u8 = undefined;
+            inline for (array, 0..) |x, i| wider_array[i] = x;
+            inline for (array.len..max_bytes) |i| wider_array[i] = 0;
+            return Self{ .bits = std.mem.readIntLittle(int_type, &wider_array) };
         }
     };
 }
@@ -586,18 +617,13 @@ pub fn hasPrefix(self: string, str: string) bool {
 }
 
 pub fn startsWith(self: string, str: string) bool {
-    if (str.len > self.len) {
-        return false;
-    }
+    if (str.len > self.len) return false;
+    for (str, self[0..str.len]) |a, b| if (a != b) return false;
+    return true;
+}
 
-    var i: usize = 0;
-    while (i < str.len) {
-        if (str[i] != self[i]) {
-            return false;
-        }
-        i += 1;
-    }
-
+pub fn startsWithIgnoreLen(self: string, str: string) bool {
+    for (str, self[0..str.len]) |a, b| if (a != b) return false;
     return true;
 }
 

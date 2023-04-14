@@ -884,6 +884,7 @@ pub const ESMConditions = struct {
 
 pub const JSX = struct {
     pub const RuntimeMap = bun.ComptimeStringMap(JSX.Runtime, .{
+        .{ "classic", JSX.Runtime.classic },
         .{ "react", JSX.Runtime.classic },
         .{ "react-jsx", JSX.Runtime.automatic },
         .{ "react-jsxDEV", JSX.Runtime.automatic },
@@ -950,36 +951,38 @@ pub const JSX = struct {
         // saves an allocation for the majority case
         pub fn memberListToComponentsIfDifferent(allocator: std.mem.Allocator, original: []const string, new: string) ![]const string {
             var splitter = std.mem.split(u8, new, ".");
+            const count = strings.countChar(new, '.') + 1;
 
             var needs_alloc = false;
-            var count: usize = 0;
+            var current_i: usize = 0;
             while (splitter.next()) |str| {
-                const i = (splitter.index orelse break);
-                count = i;
-                if (i > original.len) {
+                if (str.len == 0) continue;
+                if (current_i >= original.len) {
                     needs_alloc = true;
                     break;
                 }
 
-                if (!strings.eql(original[i], str)) {
+                if (!strings.eql(original[current_i], str)) {
                     needs_alloc = true;
                     break;
                 }
+                current_i += 1;
             }
 
             if (!needs_alloc) {
                 return original;
             }
 
-            var out = try allocator.alloc(string, count + 1);
+            var out = try allocator.alloc(string, count);
 
             splitter = std.mem.split(u8, new, ".");
             var i: usize = 0;
             while (splitter.next()) |str| {
+                if (str.len == 0) continue;
                 out[i] = str;
                 i += 1;
             }
-            return out;
+            return out[0..i];
         }
 
         pub fn fromApi(jsx: api.Api.Jsx, allocator: std.mem.Allocator) !Pragma {

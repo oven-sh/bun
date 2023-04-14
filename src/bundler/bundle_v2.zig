@@ -7450,8 +7450,7 @@ const LinkerContext = struct {
 
                     const r = lex.rangeOfIdentifier(source, named_import.alias_loc orelse Logger.Loc{});
 
-                    // if (result.name_loc.start != 0)
-                    // TODO: better error
+                    // TODO: log locations of the ambiguous exports
 
                     const symbol: *Symbol = c.graph.symbols.get(import_ref).?;
                     if (symbol.import_item_status == .generated) {

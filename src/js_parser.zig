@@ -17052,8 +17052,8 @@ fn NewParser_(
                             const _name = p.loadNameFromRef(old_ref);
 
                             const ref = try p.newSymbol(.other, _name);
-                            try p.current_scope.generated.push(p.allocator, data.namespace_ref);
-                            try p.recordDeclaredSymbol(data.namespace_ref);
+                            try p.current_scope.generated.push(p.allocator, ref);
+                            try p.recordDeclaredSymbol(ref);
                             data.items[j] = item;
                             data.items[j].name.ref = ref;
                             j += 1;
@@ -17070,8 +17070,8 @@ fn NewParser_(
                         for (data.items) |*item| {
                             const _name = p.loadNameFromRef(item.name.ref.?);
                             const ref = try p.newSymbol(.other, _name);
-                            try p.current_scope.generated.push(p.allocator, data.namespace_ref);
-                            try p.recordDeclaredSymbol(data.namespace_ref);
+                            try p.current_scope.generated.push(p.allocator, ref);
+                            try p.recordDeclaredSymbol(ref);
                             item.name.ref = ref;
                         }
                     }

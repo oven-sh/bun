@@ -5699,17 +5699,21 @@ const LinkerContext = struct {
 
                         if (shouldStripExports) {
                             // Turn this statement into "import {foo} from 'path'"
-
-                            for (s.items) |*item| {
-                                item.alias = item.original_name;
+                            // TODO: is this allocation necessary?
+                            var items = allocator.alloc(js_ast.ClauseItem, s.items.len) catch unreachable;
+                            for (s.items, items) |src, *dest| {
+                                dest.* = .{
+                                    .alias = src.original_name,
+                                    .alias_loc = src.alias_loc,
+                                    .name = src.name,
+                                };
                             }
 
                             stmt = Stmt.alloc(
                                 S.Import,
                                 S.Import{
-                                    .items = s.items,
+                                    .items = items,
                                     .import_record_index = s.import_record_index,
-                                    .star_name_loc = stmt.loc,
                                     .namespace_ref = s.namespace_ref,
                                     .is_single_line = s.is_single_line,
                                 },

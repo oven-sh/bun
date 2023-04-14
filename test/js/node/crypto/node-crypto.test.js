@@ -1,6 +1,7 @@
 import { it, expect, describe } from "bun:test";
 
 import crypto from "node:crypto";
+import { PassThrough, Readable } from "node:stream";
 
 it("crypto.randomBytes should return a Buffer", () => {
   expect(crypto.randomBytes(1) instanceof Buffer).toBe(true);
@@ -48,6 +49,23 @@ describe("createHash", () => {
     hash.write("some data to hash");
     hash.write("some data to hash");
     hash.end();
+  });
+
+  it("stream with pipe", done => {
+    const hash = crypto.createHash("sha256");
+    const s = new PassThrough();
+
+    hash.on("readable", () => {
+      const data = hash.read();
+      if (data) {
+        expect(data.toString("hex")).toBe("0e1076315962f2e639ba2eea46223a813dafea530425613948c4b21635abd8fc");
+        done();
+      }
+    });
+    s.write("Hello world");
+    s.pipe(hash);
+    s.write("Bun!");
+    s.end();
   });
 
   it("repeated calls doesnt segfault", () => {

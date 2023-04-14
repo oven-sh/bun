@@ -7452,15 +7452,30 @@ const LinkerContext = struct {
 
                     // if (result.name_loc.start != 0)
                     // TODO: better error
-                    c.log.addRangeErrorFmt(
-                        source,
-                        r,
-                        c.allocator,
-                        "Ambiguous import: {s}",
-                        .{
-                            named_import.alias.?,
-                        },
-                    ) catch unreachable;
+
+                    const symbol: *Symbol = c.graph.symbols.get(import_ref).?;
+                    if (symbol.import_item_status == .generated) {
+                        symbol.import_item_status = .missing;
+                        c.log.addRangeWarningFmt(
+                            source,
+                            r,
+                            c.allocator,
+                            "Import \"{s}\" will always be undefined because there are multiple matching exports",
+                            .{
+                                named_import.alias.?,
+                            },
+                        ) catch unreachable;
+                    } else {
+                        c.log.addRangeErrorFmt(
+                            source,
+                            r,
+                            c.allocator,
+                            "Ambiguous import \"{s}\" has multiple matching exports",
+                            .{
+                                named_import.alias.?,
+                            },
+                        ) catch unreachable;
+                    }
                 },
                 .ignore => {},
             }

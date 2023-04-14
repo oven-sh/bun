@@ -875,6 +875,18 @@ pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) []const u8) {
     return Map.get;
 }
 
+pub fn ComptimeEnumMap(comptime T: type) type {
+    comptime {
+        var entries: [std.enums.values(T).len].{ string, T } = undefined;
+        var i: usize = 0;
+        inline for (std.enums.values(T)) |value| {
+            entries[i] = .{ .@"0" = @tagName(value), .@"1" = value };
+            i += 1;
+        }
+        return ComptimeStringMap(T, entries);
+    }
+}
+
 /// Write 0's for every byte in Type
 /// Ignores default struct values.
 pub fn zero(comptime Type: type) Type {

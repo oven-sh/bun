@@ -4318,3 +4318,23 @@ pub fn leftHasAnyInRight(to_check: []const string, against: []const string) bool
     }
     return false;
 }
+
+pub fn hasPrefixWithWordBoundary(input: []const u8, comptime prefix: []const u8) bool {
+    if (hasPrefixComptime(input, prefix)) {
+        if (input.len == prefix.len) return true;
+
+        const next = input[prefix.len..];
+        var bytes: [4]u8 = .{
+            next[0],
+            if (next.len > 1) next[1] else 0,
+            if (next.len > 2) next[2] else 0,
+            if (next.len > 3) next[3] else 0,
+        };
+
+        if (!bun.js_lexer.isIdentifierContinue(decodeWTF8RuneT(&bytes, wtf8ByteSequenceLength(next[0]), i32, -1))) {
+            return true;
+        }
+    }
+
+    return false;
+}

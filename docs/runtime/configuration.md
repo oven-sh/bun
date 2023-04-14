@@ -21,7 +21,7 @@ If both a global and local `bunfig` are detected, the results are shallow-merged
 
 ## Configure `bun install`
 
-Package management is a complex issue; to support a range of use cases, the behavior of `bun install` can be configured in [`bunfig.toml`](/docs/project/configuration).
+Package management is a complex issue; to support a range of use cases, the behavior of `bun install` can be configured in [`bunfig.toml`](/docs/runtime/configuration).
 
 ### Default flags
 

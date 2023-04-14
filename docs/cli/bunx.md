@@ -50,7 +50,7 @@ $ bunx my-cli --foo bar
 
 ## Shebangs
 
-By default, Bun respects shebangs. If an executable is marked with `#!/usr/bin/env node`, Bun will spin up a `node` process to execute the file. However, in some cases it may be desirable to run executables using [Bun's runtime](/docs/runtime), even if the executable indicates otherwise. To do so, include the `--bun` flag.
+By default, Bun respects shebangs. If an executable is marked with `#!/usr/bin/env node`, Bun will spin up a `node` process to execute the file. However, in some cases it may be desirable to run executables using Bun's runtime, even if the executable indicates otherwise. To do so, include the `--bun` flag.
 
 ```bash
 $ bunx --bun my-cli

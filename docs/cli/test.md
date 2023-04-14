@@ -6,7 +6,7 @@ Bun ships with a built-in test runner.
 $ bun test
 ```
 
-Tests are written in JavaScript or TypeScript with a Jest-like API. Refer to [Writing tests](/test/writing) for full documentation.
+Tests are written in JavaScript or TypeScript with a Jest-like API. Refer to [Writing tests](/docs/test/writing) for full documentation.
 
 ```ts#math.test.ts
 import { expect, test } from "bun:test";

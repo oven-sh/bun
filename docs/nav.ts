@@ -142,24 +142,21 @@ export default {
         "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
     }),
     page("install/workspaces", "Workspaces", {
-      description:
-        "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
+      description: "Bun's package manager supports workspaces and mono-repo development workflows.",
     }),
     page("install/cache", "Global cache", {
       description:
-        "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
+        "Bun's package manager installs all packages into a shared global cache to avoid redundant re-downloads.",
     }),
     page("install/lockfile", "Lockfile", {
       description:
-        "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
+        "Bun's binary lockfile `bun.lockb` tracks your resolved dependency, making future installs fast and repeatable.",
     }),
     page("install/registries", "Scopes and registries", {
-      description:
-        "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
+      description: "How to configure private scopes and non-default package registries.",
     }),
     page("install/utilities", "Utilities", {
-      description:
-        "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
+      description: "Use `bun pm` to introspect your global module cache or project dependency tree.",
     }),
 
     divider("Test runner"),
@@ -167,7 +164,8 @@ export default {
       description: "Bun's test runner uses Jest-compatible syntax but runs 100x faster.",
     }),
     page("test/writing", "Writing tests", {
-      description: "Bun's test runner uses Jest-compatible syntax but runs 100x faster.",
+      description:
+        "Write your tests using Jest-like expect matchers, plus setup/teardown hooks, snapshot testing, and more",
     }),
 
     divider("Package runner"),

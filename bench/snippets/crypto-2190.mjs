@@ -1,7 +1,7 @@
 // https://github.com/oven-sh/bun/issues/2190
-const Benchmark = require("benchmark");
-const suite = new Benchmark.Suite();
-const createHash = require("crypto").createHash;
+import { bench, run } from "mitata";
+import { createHash } from "node:crypto";
+
 const data =
   "Delightful remarkably mr on announcing themselves entreaties favourable. About to in so terms voice at. Equal an would is found seems of. The particular friendship one sufficient terminated frequently themselves. It more shed went up is roof if loud case. Delay music in lived noise an. Beyond genius really enough passed is up.";
 
@@ -31,22 +31,16 @@ const scenarios = [
 ];
 
 for (const { alg, digest } of scenarios) {
-  suite.add(`${alg}-${digest}`, () => {
+  bench(`${alg}-${digest}`, () => {
     if (alg === "cyrb53") cyrb53(data);
     else createHash(alg).update(data).digest(digest);
   });
 
   if (alg !== "cyrb53" && "Bun" in globalThis) {
-    suite.add(`${alg}-${digest}-Bun.CryptoHasher`, () => {
+    bench(`${alg}-${digest} (Bun.CryptoHasher)`, () => {
       new Bun.CryptoHasher(alg).update(data).digest(digest);
     });
   }
 }
-suite
-  .on("cycle", function (event) {
-    console.log(String(event.target));
-  })
-  .on("complete", function () {
-    console.log("Fastest is " + this.filter("fastest").map("name"));
-  })
-  .run();
+
+run();

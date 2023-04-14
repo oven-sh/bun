@@ -1141,6 +1141,7 @@ var require_browser2 = __commonJS({
       this._hasher = new CryptoHasher(algorithm, options);
       this._finalized = false;
     };
+    LazyHash.prototype = Object.create(Transform.prototype);
     LazyHash.prototype.update = function update(data, encoding) {
       this._checkFinalized();
       this._hasher.update(data, encoding);
@@ -1176,10 +1177,14 @@ var require_browser2 = __commonJS({
     };
 
     const triggerMethods = [
+      "_events",
+      "_eventsCount",
       "_final",
+      "_maxListeners",
       "_maxListeners",
       "_read",
       "_undestroy",
+      "_writableState",
       "_write",
       "_writev",
       "addListener",
@@ -1260,7 +1265,6 @@ var require_browser2 = __commonJS({
     for (const method of triggerMethods) {
       Object.defineProperty(LazyHash.prototype, method, {
         get() {
-          console.log("triggering", method);
           this.__proto__ = lazyHashFullInitProto;
           Transform.call(this, this._options);
           return this[method];

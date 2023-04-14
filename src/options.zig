@@ -936,6 +936,36 @@ pub const JSX = struct {
             return strings.eqlComptime(pragma.package_name, "react") or strings.eqlComptime(pragma.package_name, "@emotion/jsx") or strings.eqlComptime(pragma.package_name, "@emotion/react");
         }
 
+        pub fn setImportSource(pragma: *Pragma, allocator: std.mem.Allocator, suffix: []const u8) void {
+            strings.concatIfNeeded(
+                allocator,
+                &pragma.import_source,
+                &[_]string{
+                    pragma.package_name,
+                    suffix,
+                },
+                &.{
+                    Defaults.ImportSource,
+                    Defaults.ImportSourceDev,
+                },
+            ) catch unreachable;
+        }
+
+        pub fn setProduction(pragma: *Pragma, allocator: std.mem.Allocator, is_production: bool) void {
+            pragma.development = !is_production;
+            const package_name = parsePackageName(pragma.import_source);
+            pragma.package_name = package_name;
+            pragma.classic_import_source = package_name;
+
+            if (is_production) {
+                pragma.setImportSource(allocator, "/jsx-runtime");
+                pragma.jsx = "jsx";
+            } else {
+                pragma.setImportSource(allocator, "/jsx-dev-runtime");
+                pragma.jsx = "jsxDEV";
+            }
+        }
+
         pub const Defaults = struct {
             pub const Factory = &[_]string{"createElement"};
             pub const Fragment = &[_]string{"Fragment"};
@@ -1069,6 +1099,7 @@ pub fn definesFromTransformOptions(
     platform: Platform,
     loader: ?*DotEnv.Loader,
     framework_env: ?*const Env,
+    NODE_ENV: ?string,
 ) !*defines.Define {
     var input_user_define = _input_define orelse std.mem.zeroes(Api.StringMap);
 
@@ -1108,8 +1139,35 @@ pub fn definesFromTransformOptions(
         }
     }
 
-    if (input_user_define.keys.len == 0) {
-        try user_defines.put(DefaultUserDefines.NodeEnv.Key, DefaultUserDefines.NodeEnv.Value);
+    if (NODE_ENV) |node_env| {
+        if (node_env.len > 0) {
+            var quoted_node_env: string = "";
+            if ((strings.startsWithChar(node_env, '"') and strings.endsWithChar(node_env, '"')) or
+                (strings.startsWithChar(node_env, '\'') and strings.endsWithChar(node_env, '\'')))
+            {
+                quoted_node_env = node_env;
+            } else {
+                // avoid allocating if we can
+                if (strings.eqlComptime(node_env, "production")) {
+                    quoted_node_env = "\"production\"";
+                } else if (strings.eqlComptime(node_env, "development")) {
+                    quoted_node_env = "\"development\"";
+                } else if (strings.eqlComptime(node_env, "test")) {
+                    quoted_node_env = "\"test\"";
+                } else {
+                    quoted_node_env = try std.fmt.allocPrint(allocator, "\"{s}\"", .{node_env});
+                }
+            }
+
+            _ = try user_defines.getOrPutValue(
+                "process.env.NODE_ENV",
+                quoted_node_env,
+            );
+            _ = try user_defines.getOrPutValue(
+                "process.env.BUN_ENV",
+                quoted_node_env,
+            );
+        }
     }
 
     if (hmr) {
@@ -1382,6 +1440,10 @@ pub const BundleOptions = struct {
             this.platform,
             loader_,
             env,
+            if (loader_) |e|
+                e.map.get("BUN_ENV") orelse e.map.get("NODE_ENV")
+            else
+                null,
         );
         this.defines_loaded = true;
     }

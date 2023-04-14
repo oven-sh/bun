@@ -391,6 +391,8 @@ pub const BundleV2 = struct {
         bundler.options.mark_bun_builtins_as_external = bundler.options.platform.isBun();
         bundler.resolver.opts.mark_bun_builtins_as_external = bundler.options.platform.isBun();
 
+        var this = generator;
+
         defer allocator.destroy(generator);
         generator.* = BundleV2{
             .bundler = bundler,
@@ -428,18 +430,6 @@ pub const BundleV2 = struct {
         generator.graph.pool = pool;
 
         var batch = ThreadPoolLib.Batch{};
-
-        var this = generator;
-
-        if (this.bundler.env.isProduction()) {
-            this.bundler.options.jsx.development = false;
-        }
-
-        if (!this.bundler.options.jsx.development) {
-            this.bundler.options.jsx.import_source = std.fmt.allocPrint(allocator, "{s}/jsx-runtime", .{generator.bundler.options.jsx.classic_import_source}) catch unreachable;
-        }
-
-        this.bundler.resolver.opts.jsx = this.bundler.options.jsx;
 
         try pool.start(this);
 

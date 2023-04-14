@@ -104,8 +104,9 @@ pub const TSConfigJSON = struct {
         log: *logger.Log,
         source: logger.Source,
         json_cache: *cache.Json,
-        is_jsx_development: bool,
+        is_jsx_development_: bool,
     ) anyerror!?*TSConfigJSON {
+        var is_jsx_development = is_jsx_development_;
         // Unfortunately "tsconfig.json" isn't actually JSON. It's some other
         // format that appears to be defined by the implementation details of the
         // TypeScript compiler.
@@ -160,7 +161,8 @@ pub const TSConfigJSON = struct {
                     if (options.JSX.RuntimeMap.get(str)) |runtime| {
                         result.jsx.runtime = runtime;
                         if (runtime == .automatic) {
-                            result.jsx.development = strings.eqlComptime(str, "react-jsxDEV");
+                            result.jsx.setProduction(allocator, strings.eqlComptime(str, "react-jsxDEV"));
+                            is_jsx_development = result.jsx.development;
                             result.jsx_flags.insert(.development);
                         }
 
@@ -178,9 +180,9 @@ pub const TSConfigJSON = struct {
                         result.jsx_flags.insert(.runtime);
                     } else {
                         if (is_jsx_development) {
-                            result.jsx.import_source = std.fmt.allocPrint(allocator, "{s}/jsx-dev-runtime", .{str}) catch unreachable;
+                            result.jsx.setImportSource(allocator, "{s}/jsx-dev-runtime");
                         } else {
-                            result.jsx.import_source = std.fmt.allocPrint(allocator, "{s}/jsx-runtime", .{str}) catch unreachable;
+                            result.jsx.setImportSource(allocator, "{s}/jsx-runtime");
                         }
                     }
 

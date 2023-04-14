@@ -564,6 +564,10 @@ pub const Bundler = struct {
 
         try this.runEnvLoader();
 
+        if (this.env.isProduction()) {
+            this.options.jsx.setProduction(this.allocator, true);
+        }
+
         js_ast.Expr.Data.Store.create(this.allocator);
         js_ast.Stmt.Data.Store.create(this.allocator);
 
@@ -583,15 +587,8 @@ pub const Bundler = struct {
         if (this.options.define.dots.get("NODE_ENV")) |NODE_ENV| {
             if (NODE_ENV.len > 0 and NODE_ENV[0].data.value == .e_string and NODE_ENV[0].data.value.e_string.eqlComptime("production")) {
                 this.options.production = true;
-                this.options.jsx.development = false;
 
-                if (this.options.jsx.import_source.ptr == options.JSX.Pragma.Defaults.ImportSourceDev) {
-                    this.options.jsx.import_source = options.JSX.Pragma.Defaults.ImportSource;
-                }
-
-                if (options.JSX.Pragma.Defaults.ImportSource == this.options.jsx.import_source.ptr or
-                    strings.eqlComptime(this.options.jsx.import_source, comptime options.JSX.Pragma.Defaults.ImportSource) or strings.eqlComptime(this.options.jsx.package_name, "react"))
-                {
+                if (strings.eqlComptime(this.options.jsx.package_name, "react")) {
                     if (this.options.jsx_optimization_inline == null) {
                         this.options.jsx_optimization_inline = true;
                     }

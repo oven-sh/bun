@@ -2155,7 +2155,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             }
 
             defer {
-                if (comptime @hasField(SinkType, "done") and this.sink.done) {
+                if ((comptime @hasField(SinkType, "done")) and this.sink.done) {
                     callframe.this().unprotect();
                 }
             }
@@ -2216,8 +2216,10 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             }
 
             defer {
-                if (comptime @hasField(SinkType, "done") and this.sink.done) {
-                    callframe.this().unprotect();
+                if (comptime @hasField(SinkType, "done")) {
+                    if (this.sink.done) {
+                        callframe.this().unprotect();
+                    }
                 }
             }
 

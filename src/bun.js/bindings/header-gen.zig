@@ -23,9 +23,9 @@ const ENABLE_REWRITE_RETURN = false;
 
 pub fn cTypeLabel(comptime Type: type) ?[]const u8 {
     return switch (comptime Type) {
-        *StaticExport.c_char => "char*",
-        [*c]u8, *const StaticExport.c_char => "const char*",
-        StaticExport.c_char => "char",
+        *c_char => "char*",
+        [*c]u8, *const c_char => "const char*",
+        c_char => "char",
         *void => "void",
         bool => "bool",
         usize => "size_t",

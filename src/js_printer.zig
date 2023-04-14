@@ -1510,7 +1510,7 @@ fn NewPrinter(
                                 // this only applies to template literal strings
                                 // but we print a template literal if there is a \n or a \r
                                 // which is often if the string is long and UTF-16
-                                if (comptime quote == '`') {
+                                if (quote == '`') {
                                     const remain = text[i..];
                                     if (remain.len > 1 and remain[0] < last_ascii and remain[0] > first_ascii and
                                         remain[0] != '$' and

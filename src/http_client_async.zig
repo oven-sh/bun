@@ -1083,7 +1083,8 @@ const os = std.os;
 pub fn hashHeaderName(name: string) u64 {
     var hasher = std.hash.Wyhash.init(0);
     var remain = name;
-    var buf: [hasher.buf.len]u8 = undefined;
+
+    var buf: [@sizeOf(@TypeOf(hasher.buf))]u8 = undefined;
 
     while (remain.len > 0) {
         const end = @min(hasher.buf.len, remain.len);

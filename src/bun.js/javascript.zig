@@ -1,7 +1,6 @@
 const std = @import("std");
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const StaticExport = @import("./bindings/static_export.zig");
-const c_char = StaticExport.c_char;
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;

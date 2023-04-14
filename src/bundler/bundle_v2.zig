@@ -7520,7 +7520,7 @@ const LinkerContext = struct {
                         continue;
 
                     // This export star is shadowed if any file in the stack has a matching real named export
-                    for (this.source_index_stack.items[stack_end_pos..]) |prev| {
+                    for (this.source_index_stack.items[0..stack_end_pos]) |prev| {
                         if (this.named_exports[prev].contains(alias)) {
                             continue :next_export;
                         }

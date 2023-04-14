@@ -239,9 +239,9 @@ export default {
     page("api/utils", "Utils", {
       description: `Bun implements a set of utilities that are commonly required by developers.`,
     }), // "`Bun.peek`"),
-    page("api/dns", "DNS", {
-      description: `Resolve domain names to IP addresses.`,
-    }), // "`bun:dns`"),
+    // page("api/dns", "DNS", {
+    //   description: `Resolve domain names to IP addresses.`,
+    // }), // "`bun:dns`"),
     page("api/node-api", "Node-API", {
       description: `Bun implements the Node-API spec for building native addons.`,
     }), // "`Node-API`"),

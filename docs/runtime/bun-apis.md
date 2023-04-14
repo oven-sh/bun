@@ -42,6 +42,11 @@ Bun implements a set of native APIs on the `Bun` global object and through a num
 
 ---
 
+<!-- - [DNS](/docs/api/dns)
+- `Bun.dns`
+
+--- -->
+
 - [Utils](/docs/api/utils)
 - `Bun.peek` `Bun.which`
 
@@ -54,11 +59,6 @@ Bun implements a set of native APIs on the `Bun` global object and through a num
 
 - [FFI](/docs/api/ffi)
 - `bun:ffi`
-
----
-
-- [DNS](/docs/api/dns)
-- `bun:dns`
 
 ---
 

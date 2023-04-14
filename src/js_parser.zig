@@ -108,13 +108,15 @@ const JSXImport = enum {
         jsxs: ?LocRef = null,
         Fragment: ?LocRef = null,
         createElement: ?LocRef = null,
+        factory_name: []const u8 = "createElement",
+        fragment_name: []const u8 = "Fragment",
 
         pub fn get(this: *const Symbols, name: []const u8) ?Ref {
             if (strings.eqlComptime(name, "jsx")) return if (this.jsx) |jsx| jsx.ref.? else null;
             if (strings.eqlComptime(name, "jsxDEV")) return if (this.jsxDEV) |jsx| jsx.ref.? else null;
             if (strings.eqlComptime(name, "jsxs")) return if (this.jsxs) |jsxs| jsxs.ref.? else null;
-            if (strings.eqlComptime(name, "Fragment")) return if (this.Fragment) |Fragment| Fragment.ref.? else null;
-            if (strings.eqlComptime(name, "createElement")) return if (this.createElement) |createElement| createElement.ref.? else null;
+            if (strings.eql(name, this.fragment_name)) return if (this.Fragment) |Fragment| Fragment.ref.? else null;
+            if (strings.eql(name, this.factory_name)) return if (this.createElement) |createElement| createElement.ref.? else null;
             return null;
         }
 
@@ -3948,7 +3950,7 @@ pub const Parser = struct {
                     &before,
                     &p.jsx_imports,
                     null,
-                    "jsx",
+                    "",
                     false,
                 ) catch unreachable;
             }
@@ -3960,7 +3962,7 @@ pub const Parser = struct {
                     &before,
                     &p.jsx_imports,
                     null,
-                    "React",
+                    "",
                     false,
                 ) catch unreachable;
             }
@@ -5889,6 +5891,28 @@ fn NewParser_(
             p.module_scope = p.current_scope;
             p.has_es_module_syntax = p.esm_import_keyword.len > 0 or p.esm_export_keyword.len > 0 or p.top_level_await_keyword.len > 0;
 
+            if (p.lexer.jsx_pragma.jsx()) |factory| {
+                p.options.jsx.factory = options.JSX.Pragma.memberListToComponentsIfDifferent(p.allocator, p.options.jsx.factory, factory.text) catch unreachable;
+            }
+
+            if (p.lexer.jsx_pragma.jsxFrag()) |fragment| {
+                p.options.jsx.fragment = options.JSX.Pragma.memberListToComponentsIfDifferent(p.allocator, p.options.jsx.fragment, fragment.text) catch unreachable;
+            }
+
+            if (p.lexer.jsx_pragma.jsxImportSource()) |import_source| {
+                p.options.jsx.import_source = try p.allocator.dupe(u8, import_source.text);
+                p.options.jsx.classic_import_source = options.JSX.Pragma.parsePackageName(p.options.jsx.import_source);
+            }
+
+            if (p.lexer.jsx_pragma.jsxRuntime()) |runtime| {
+                if (options.JSX.RuntimeMap.get(runtime.text)) |jsx_runtime| {
+                    p.options.jsx.runtime = jsx_runtime;
+                } else {
+                    // make this a warning instead of an error because we don't support "preserve" right now
+                    try p.log.addRangeWarningFmt(p.source, runtime.range, p.allocator, "Unsupported JSX runtime: \"{s}\"", .{runtime.text});
+                }
+            }
+
             // ECMAScript modules are always interpreted as strict mode. This has to be
             // done before "hoistSymbols" because strict mode can alter hoisting (!).
             if (p.esm_import_keyword.len > 0) {
@@ -5972,6 +5996,17 @@ fn NewParser_(
                 p.recordUsage(p.hmr_module.ref);
                 p.recordUsage(p.runtime_imports.__HMRClient.?.ref);
             }
+
+            //  "React.createElement" and "createElement" become:
+            //      import { createElement } from 'react';
+            //  "Foo.Bar.createElement" becomes:
+            //      import { Bar } from 'foo';
+            //      Usages become Bar.createElement
+            if (p.options.jsx.fragment.len > 0)
+                p.jsx_imports.fragment_name = p.options.jsx.fragment[if (p.options.jsx.fragment.len > 1) 1 else 0];
+
+            if (p.options.jsx.factory.len > 0)
+                p.jsx_imports.factory_name = p.options.jsx.factory[if (p.options.jsx.factory.len > 1) 1 else 0];
 
             switch (comptime jsx_transform_type) {
                 .react => {
@@ -16627,9 +16662,15 @@ fn NewParser_(
                 inline else => |field| {
                     const ref: Ref = brk: {
                         if (@field(jsx_imports, @tagName(field)) == null) {
+                            const symbol_name = switch (kind) {
+                                .createElement => p.options.jsx.factory[p.options.jsx.factory.len - 1],
+                                .Fragment => p.options.jsx.fragment[p.options.jsx.fragment.len - 1],
+                                else => @tagName(field),
+                            };
+
                             const loc_ref = LocRef{
                                 .loc = loc,
-                                .ref = p.newSymbol(.other, @tagName(field)) catch unreachable,
+                                .ref = p.newSymbol(.other, symbol_name) catch unreachable,
                             };
 
                             p.module_scope.generated.push(p.allocator, loc_ref.ref.?) catch unreachable;

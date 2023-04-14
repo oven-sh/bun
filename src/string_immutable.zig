@@ -4318,3 +4318,105 @@ pub fn leftHasAnyInRight(to_check: []const string, against: []const string) bool
     }
     return false;
 }
+
+pub fn hasPrefixWithWordBoundary(input: []const u8, comptime prefix: []const u8) bool {
+    if (hasPrefixComptime(input, prefix)) {
+        if (input.len == prefix.len) return true;
+
+        const next = input[prefix.len..];
+        var bytes: [4]u8 = .{
+            next[0],
+            if (next.len > 1) next[1] else 0,
+            if (next.len > 2) next[2] else 0,
+            if (next.len > 3) next[3] else 0,
+        };
+
+        if (!bun.js_lexer.isIdentifierContinue(decodeWTF8RuneT(&bytes, wtf8ByteSequenceLength(next[0]), i32, -1))) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+pub fn concatWithLength(
+    allocator: std.mem.Allocator,
+    args: []const string,
+    length: usize,
+) !string {
+    var out = try allocator.alloc(u8, length);
+    @memcpy(out.ptr, args[0].ptr, args[0].len);
+    return out;
+}
+
+pub fn concat(
+    allocator: std.mem.Allocator,
+    args: []const string,
+) !string {
+    var length: usize = 0;
+    for (args) |arg| {
+        length += arg.len;
+    }
+    return concatWithLength(allocator, args, length);
+}
+
+pub fn concatIfNeeded(
+    allocator: std.mem.Allocator,
+    dest: *[]const u8,
+    args: []const string,
+    interned_strings_to_check: []const string,
+) !void {
+    const total_length: usize = brk: {
+        var length: usize = 0;
+        for (args) |arg| {
+            length += arg.len;
+        }
+        break :brk length;
+    };
+
+    if (total_length == 0) {
+        dest.* = "";
+        return;
+    }
+
+    if (total_length < 1024) {
+        var stack = std.heap.stackFallback(1024, allocator);
+        const stack_copy = concatWithLength(stack.get(), args, total_length) catch unreachable;
+        for (interned_strings_to_check) |interned| {
+            if (eqlLong(stack_copy, interned, true)) {
+                dest.* = interned;
+                return;
+            }
+        }
+    }
+
+    const is_needed = brk: {
+        var out = dest.*;
+        var remain = out;
+
+        for (args) |arg| {
+            if (args.len > remain.len) {
+                break :brk true;
+            }
+
+            if (eqlLong(remain[0..args.len], arg, true)) {
+                remain = remain[args.len..];
+            } else {
+                break :brk true;
+            }
+        }
+
+        break :brk false;
+    };
+
+    if (!is_needed) return;
+
+    var buf = try allocator.alloc(u8, total_length);
+    dest.* = buf;
+    var remain = buf[0..];
+    for (args) |arg| {
+        @memcpy(remain.ptr, arg.ptr, arg.len);
+        remain = remain[arg.len..];
+    }
+    std.debug.assert(remain.len == 0);
+}

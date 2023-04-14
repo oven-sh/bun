@@ -36,6 +36,26 @@ fn notimpl() noreturn {
 
 pub var emptyJavaScriptString = ([_]u16{0});
 
+pub const JSXPragma = struct {
+    _jsx: js_ast.Span = .{},
+    _jsxFrag: js_ast.Span = .{},
+    _jsxRuntime: js_ast.Span = .{},
+    _jsxImportSource: js_ast.Span = .{},
+
+    pub fn jsx(this: *const JSXPragma) ?js_ast.Span {
+        return if (this._jsx.text.len > 0) this._jsx else null;
+    }
+    pub fn jsxFrag(this: *const JSXPragma) ?js_ast.Span {
+        return if (this._jsxFrag.text.len > 0) this._jsxFrag else null;
+    }
+    pub fn jsxRuntime(this: *const JSXPragma) ?js_ast.Span {
+        return if (this._jsxRuntime.text.len > 0) this._jsxRuntime else null;
+    }
+    pub fn jsxImportSource(this: *const JSXPragma) ?js_ast.Span {
+        return if (this._jsxImportSource.text.len > 0) this._jsxImportSource else null;
+    }
+};
+
 pub const JSONOptions = struct {
     /// Enable JSON-specific warnings/errors
     is_json: bool = false,
@@ -127,8 +147,8 @@ fn NewLexer_(
         all_original_comments: ?[]js_ast.G.Comment = null,
         code_point: CodePoint = -1,
         identifier: []const u8 = "",
-        jsx_factory_pragma_comment: ?js_ast.Span = null,
-        jsx_fragment_pragma_comment: ?js_ast.Span = null,
+        jsx_pragma: JSXPragma = .{},
+        bun_pragma: bool = false,
         source_mapping_url: ?js_ast.Span = null,
         number: f64 = 0.0,
         rescan_close_brace_as_template_token: bool = false,
@@ -167,8 +187,7 @@ fn NewLexer_(
                 .code_point = self.code_point,
                 .identifier = self.identifier,
                 .regex_flags_start = self.regex_flags_start,
-                .jsx_factory_pragma_comment = self.jsx_factory_pragma_comment,
-                .jsx_fragment_pragma_comment = self.jsx_fragment_pragma_comment,
+                .jsx_pragma = self.jsx_pragma,
                 .source_mapping_url = self.source_mapping_url,
                 .number = self.number,
                 .rescan_close_brace_as_template_token = self.rescan_close_brace_as_template_token,
@@ -1819,10 +1838,6 @@ fn NewLexer_(
             if (comptime is_json)
                 return;
 
-            // TODO: @jsx annotations
-            if (lexer.has_pure_comment_before)
-                return;
-
             var rest = text[0..end_comment_text];
             const end = rest.ptr + rest.len;
 
@@ -1848,20 +1863,35 @@ fn NewLexer_(
                         for (@as([strings.ascii_vector_size]u8, vec), 0..) |c, i| {
                             switch (c) {
                                 '@', '#' => {
+                                    const chunk = rest[i + 1 ..];
                                     if (!lexer.has_pure_comment_before) {
-                                        if (strings.indexOf(rest[i + 1 ..], "__PURE__")) |pure_i| {
-                                            const pure_prefix = rest[i + 1 ..][0..pure_i];
-                                            const pure_suffix = rest[i + 1 ..][pure_i + "__PURE__".len ..];
-                                            const has_prefix = pure_prefix.len == 0 or (strings.isAllASCII(pure_prefix) and !isIdentifierStart(pure_prefix[pure_prefix.len - 1]));
+                                        if (strings.hasPrefixWithWordBoundary(chunk, "__PURE__")) {
+                                            lexer.has_pure_comment_before = true;
+                                            continue;
+                                        }
+                                    }
 
-                                            // TODO: unicode whitespace for pure comments
-                                            // This misses non-ascii whitespace, but that's fine for now
-                                            const has_suffix = pure_suffix.len == 0 or !isIdentifierContinue(pure_suffix[0]);
-                                            lexer.has_pure_comment_before = has_prefix and has_suffix;
-
-                                            // TODO: handle JSX annotations
-                                            if (lexer.has_pure_comment_before)
-                                                return;
+                                    if (strings.hasPrefixWithWordBoundary(chunk, "bun")) {
+                                        lexer.bun_pragma = true;
+                                    } else if (strings.hasPrefixWithWordBoundary(chunk, "jsx")) {
+                                        if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsx", chunk)) |span| {
+                                            lexer.jsx_pragma._jsx = span;
+                                        }
+                                    } else if (strings.hasPrefixWithWordBoundary(chunk, "jsxFrag")) {
+                                        if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsxFrag", chunk)) |span| {
+                                            lexer.jsx_pragma._jsxFrag = span;
+                                        }
+                                    } else if (strings.hasPrefixWithWordBoundary(chunk, "jsxRuntime")) {
+                                        if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsxRuntime", chunk)) |span| {
+                                            lexer.jsx_pragma._jsxRuntime = span;
+                                        }
+                                    } else if (strings.hasPrefixWithWordBoundary(chunk, "jsxImportSource")) {
+                                        if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsxImportSource", chunk)) |span| {
+                                            lexer.jsx_pragma._jsxImportSource = span;
+                                        }
+                                    } else if (i == 2 and strings.hasPrefixComptime(chunk, " sourceMappingURL=")) {
+                                        if (PragmaArg.scan(.no_space_first, lexer.start + i + 1, " sourceMappingURL=", chunk)) |span| {
+                                            lexer.source_mapping_url = span;
                                         }
                                     }
                                 },
@@ -1883,20 +1913,36 @@ fn NewLexer_(
                 rest = rest[1..];
                 switch (c) {
                     '@', '#' => {
+                        const chunk = rest;
+                        const i = @ptrToInt(chunk.ptr) - @ptrToInt(text.ptr);
                         if (!lexer.has_pure_comment_before) {
-                            if (strings.indexOf(rest, "__PURE__")) |pure_i| {
-                                const pure_prefix = rest[0..pure_i];
-                                const pure_suffix = rest[pure_i + "__PURE__".len ..];
-                                const has_prefix = pure_prefix.len == 0 or (strings.isAllASCII(pure_prefix) and !isIdentifierStart(pure_prefix[pure_prefix.len - 1]));
+                            if (strings.hasPrefixWithWordBoundary(chunk, "__PURE__")) {
+                                lexer.has_pure_comment_before = true;
+                                continue;
+                            }
+                        }
 
-                                // TODO: unicode whitespace for pure comments
-                                // This misses non-ascii whitespace, but that's fine for now
-                                const has_suffix = pure_suffix.len == 0 or !isIdentifierContinue(pure_suffix[0]);
-                                lexer.has_pure_comment_before = (has_prefix and has_suffix);
-
-                                // TODO: handle JSX annotations
-                                if (lexer.has_pure_comment_before)
-                                    return;
+                        if (strings.hasPrefixWithWordBoundary(chunk, "bun")) {
+                            lexer.bun_pragma = true;
+                        } else if (strings.hasPrefixWithWordBoundary(chunk, "jsx")) {
+                            if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsx", chunk)) |span| {
+                                lexer.jsx_pragma._jsx = span;
+                            }
+                        } else if (strings.hasPrefixWithWordBoundary(chunk, "jsxFrag")) {
+                            if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsxFrag", chunk)) |span| {
+                                lexer.jsx_pragma._jsxFrag = span;
+                            }
+                        } else if (strings.hasPrefixWithWordBoundary(chunk, "jsxRuntime")) {
+                            if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsxRuntime", chunk)) |span| {
+                                lexer.jsx_pragma._jsxRuntime = span;
+                            }
+                        } else if (strings.hasPrefixWithWordBoundary(chunk, "jsxImportSource")) {
+                            if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsxImportSource", chunk)) |span| {
+                                lexer.jsx_pragma._jsxImportSource = span;
+                            }
+                        } else if (i == 2 and strings.hasPrefixComptime(chunk, " sourceMappingURL=")) {
+                            if (PragmaArg.scan(.no_space_first, lexer.start + i + 1, " sourceMappingURL=", chunk)) |span| {
+                                lexer.source_mapping_url = span;
                             }
                         }
                     },
@@ -3120,6 +3166,58 @@ pub fn isLatin1Identifier(comptime Buffer: type, name: Buffer) bool {
 
     return true;
 }
+
+pub const PragmaArg = enum {
+    no_space_first,
+    skip_space_first,
+
+    pub fn scan(kind: PragmaArg, offset_: usize, pragma: string, text_: string) ?js_ast.Span {
+        var text = text_[pragma.len..];
+        var iter = strings.CodepointIterator.init(text);
+
+        var cursor = strings.CodepointIterator.Cursor{};
+        if (!iter.next(&cursor)) {
+            return null;
+        }
+
+        const start: u32 = brk: {
+            // One or more whitespace characters
+            if (kind == .skip_space_first) {
+                if (!isWhitespace(cursor.c)) {
+                    return null;
+                }
+
+                while (iter.next(&cursor)) {
+                    if (!isWhitespace(cursor.c)) {
+                        break;
+                    }
+                }
+
+                break :brk cursor.i;
+            }
+
+            break :brk 0;
+        };
+
+        var end = cursor.i -| @as(u32, cursor.width);
+
+        while (!isWhitespace(cursor.c)) : (end = cursor.i -| @as(u32, cursor.width)) {
+            if (!iter.next(&cursor)) {
+                break;
+            }
+        }
+
+        return js_ast.Span{
+            .range = logger.Range{
+                .len = @intCast(i32, end) - @intCast(i32, start),
+                .loc = logger.Loc{
+                    .start = @intCast(i32, start + @intCast(u32, offset_) + @intCast(u32, pragma.len)),
+                },
+            },
+            .text = text[start..end],
+        };
+    }
+};
 
 fn skipToInterestingCharacterInMultilineComment(text_: []const u8) ?u32 {
     var text = text_;

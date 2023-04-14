@@ -1265,7 +1265,7 @@ var require_browser2 = __commonJS({
     for (const method of triggerMethods) {
       Object.defineProperty(LazyHash.prototype, method, {
         get() {
-          this.__proto__ = lazyHashFullInitProto;
+          Object.setPrototypeOf(this, lazyHashFullInitProto);
           Transform.call(this, this._options);
           return this[method];
         },

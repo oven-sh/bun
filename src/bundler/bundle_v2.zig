@@ -5035,6 +5035,13 @@ const LinkerContext = struct {
                                                                 },
                                                                 Logger.Loc.Empty,
                                                             ),
+                                                            .value = Expr.init(
+                                                                E.ImportIdentifier,
+                                                                E.ImportIdentifier{
+                                                                    .ref = resolved_export.data.import_ref,
+                                                                },
+                                                                Logger.Loc.Empty,
+                                                            ),
                                                         },
                                                     },
                                                 ) catch unreachable,

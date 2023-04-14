@@ -322,6 +322,8 @@ pub const Runtime = struct {
 
         hoist_bun_plugin: bool = false,
 
+        dont_bundle_twice: bool = false,
+
         pub const ReplaceableExport = union(enum) {
             delete: void,
             replace: JSAst.Expr,

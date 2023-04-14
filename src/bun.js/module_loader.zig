@@ -943,12 +943,12 @@ pub const ModuleLoader = struct {
                     .jsx = jsc_vm.bundler.options.jsx,
                     .virtual_source = virtual_source,
                     .hoist_bun_plugin = true,
+                    .dont_bundle_twice = true,
                     .inject_jest_globals = jsc_vm.bundler.options.rewrite_jest_for_tests and
                         jsc_vm.main.len == path.text.len and
                         jsc_vm.main_hash == hash and
                         strings.eqlLong(jsc_vm.main, path.text, false),
                 };
-
                 if (is_node_override) {
                     if (NodeFallbackModules.contentsFromPath(specifier)) |code| {
                         const fallback_path = Fs.Path.initWithNamespace(specifier, "node");
@@ -1034,6 +1034,20 @@ pub const ModuleLoader = struct {
                         },
                         .specifier = ZigString.init(display_specifier),
                         .source_url = ZigString.init(path.text),
+                        .hash = 0,
+                    };
+                }
+
+                if (parse_result.already_bundled) {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(try default_allocator.dupe(u8, parse_result.source.contents)),
+                        .specifier = ZigString.init(specifier),
+                        .source_url = ZigString.init(path.text),
+                        // // TODO: change hash to a bitfield
+                        // .hash = 1,
+
+                        // having JSC own the memory causes crashes
                         .hash = 0,
                     };
                 }
@@ -1596,9 +1610,9 @@ pub const ModuleLoader = struct {
                     opts.filepath_hash_for_hmr = 0;
                     opts.warn_about_unbundled_modules = false;
                     opts.macro_context = &jsc_vm.bundler.macro_context.?;
-                    const main_ast = (bundler.resolver.caches.js.parse(jsc_vm.allocator, opts, bundler.options.define, bundler.log, &jsc_vm.entry_point.source) catch null) orelse {
+                    const main_ast = ((bundler.resolver.caches.js.parse(jsc_vm.allocator, opts, bundler.options.define, bundler.log, &jsc_vm.entry_point.source) catch null) orelse {
                         return error.ParseError;
-                    };
+                    }).ast;
                     var parse_result = ParseResult{ .source = jsc_vm.entry_point.source, .ast = main_ast, .loader = .js, .input_fd = null };
                     var file_path = Fs.Path.init(bundler.fs.top_level_dir);
                     file_path.name.dir = bundler.fs.top_level_dir;

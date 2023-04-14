@@ -797,13 +797,16 @@ const ParseTask = struct {
     ) !js_ast.Ast {
         switch (loader) {
             .jsx, .tsx, .js, .ts => {
-                return (try resolver.caches.js.parse(
+                return if (try resolver.caches.js.parse(
                     bundler.allocator,
                     opts,
                     bundler.options.define,
                     log,
                     &source,
-                )) orelse return try getEmptyAST(log, bundler, opts, allocator, source);
+                )) |res|
+                    res.ast
+                else
+                    try getEmptyAST(log, bundler, opts, allocator, source);
             },
             .json => {
                 const root = (try resolver.caches.json.parseJSON(log, source, allocator)) orelse Expr.init(E.Object, E.Object{}, Logger.Loc.Empty);
@@ -4636,6 +4639,10 @@ const LinkerContext = struct {
                 newline_before_comment = true;
                 is_executable = true;
             }
+        }
+
+        if (chunk.entry_point.is_entry_point and ctx.c.graph.ast.items(.platform)[chunk.entry_point.source_index].isBun()) {
+            j.push("// @bun\n");
         }
 
         // TODO: banner

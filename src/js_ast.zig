@@ -5547,9 +5547,9 @@ pub const Part = struct {
     }
 };
 
-pub const Result = struct {
+pub const Result = union(enum) {
+    already_bundled: void,
     ast: Ast,
-    ok: bool = false,
 };
 
 pub const StmtOrExpr = union(enum) {

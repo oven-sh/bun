@@ -120,6 +120,7 @@ pub const ParseResult = struct {
     source: logger.Source,
     loader: options.Loader,
     ast: js_ast.Ast,
+    already_bundled: bool = false,
     input_fd: ?StoredFileDescriptorType = null,
     empty: bool = false,
     pending_imports: _resolver.PendingResolution.List = .{},
@@ -1275,6 +1276,8 @@ pub const Bundler = struct {
         replace_exports: runtime.Runtime.Features.ReplaceableExport.Map = .{},
         hoist_bun_plugin: bool = false,
         inject_jest_globals: bool = false,
+
+        dont_bundle_twice: bool = false,
     };
 
     pub fn parse(
@@ -1382,6 +1385,9 @@ pub const Bundler = struct {
                 opts.features.should_fold_typescript_constant_expressions = loader.isTypeScript() or platform.isBun();
                 opts.features.dynamic_require = platform.isBun();
 
+                // @bun annotation
+                opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
+
                 opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
 
                 opts.tree_shaking = bundler.options.tree_shaking;
@@ -1426,18 +1432,26 @@ pub const Bundler = struct {
                 opts.features.is_macro_runtime = platform == .bun_macro;
                 opts.features.replace_exports = this_parse.replace_exports;
 
-                const value = (bundler.resolver.caches.js.parse(
+                return switch ((bundler.resolver.caches.js.parse(
                     allocator,
                     opts,
                     bundler.options.define,
                     bundler.log,
                     &source,
-                ) catch null) orelse return null;
-                return ParseResult{
-                    .ast = value,
-                    .source = source,
-                    .loader = loader,
-                    .input_fd = input_fd,
+                ) catch null) orelse return null) {
+                    .ast => |value| ParseResult{
+                        .ast = value,
+                        .source = source,
+                        .loader = loader,
+                        .input_fd = input_fd,
+                    },
+                    .already_bundled => ParseResult{
+                        .ast = undefined,
+                        .already_bundled = true,
+                        .source = source,
+                        .loader = loader,
+                        .input_fd = input_fd,
+                    },
                 };
             },
             .json => {

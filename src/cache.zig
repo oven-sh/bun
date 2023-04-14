@@ -221,7 +221,7 @@ pub const JavaScript = struct {
         defines: *Define,
         log: *logger.Log,
         source: *const logger.Source,
-    ) anyerror!?js_ast.Ast {
+    ) anyerror!?js_ast.Result {
         var temp_log = logger.Log.init(allocator);
         var parser = js_parser.Parser.init(opts, &temp_log, source, defines, allocator) catch {
             temp_log.appendToMaybeRecycled(log, source) catch {};
@@ -238,7 +238,7 @@ pub const JavaScript = struct {
         };
 
         temp_log.appendToMaybeRecycled(log, source) catch {};
-        return if (result.ok) result.ast else null;
+        return result;
     }
 
     pub fn scan(

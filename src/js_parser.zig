@@ -2759,6 +2759,7 @@ pub const Parser = struct {
         p.should_fold_typescript_constant_expressions = this.options.features.should_fold_typescript_constant_expressions;
         defer p.lexer.deinit();
         var result: js_ast.Result = undefined;
+        _ = result;
         try p.prepareForVisitPass();
 
         var final_expr = expr;
@@ -2796,10 +2797,7 @@ pub const Parser = struct {
             }
             break :brk .none;
         };
-        result.ast = try p.toAST(parts, exports_kind, null);
-        result.ok = true;
-
-        return result;
+        return .{ .ast = try p.toAST(parts, exports_kind, null) };
     }
 
     pub fn parse(self: *Parser) !js_ast.Result {
@@ -2834,6 +2832,7 @@ pub const Parser = struct {
         p.should_fold_typescript_constant_expressions = self.options.features.should_fold_typescript_constant_expressions;
         defer p.lexer.deinit();
         var result: js_ast.Result = undefined;
+        _ = result;
 
         // defer {
         //     if (p.allocated_names_pool) |pool| {
@@ -2848,6 +2847,12 @@ pub const Parser = struct {
         if (p.lexer.token == .t_hashbang) {
             hashbang = p.lexer.identifier;
             try p.lexer.next();
+        }
+
+        if (p.lexer.bun_pragma and p.options.features.dont_bundle_twice) {
+            return js_ast.Result{
+                .already_bundled = {},
+            };
         }
 
         // Parse the file in the first pass, but do not bind symbols
@@ -3098,7 +3103,6 @@ pub const Parser = struct {
                                 left.data.e_dot.target.data.e_identifier.ref.eql(p.module_ref))
                             {
                                 return js_ast.Result{
-                                    .ok = true,
                                     .ast = js_ast.Ast{
                                         .allocator = p.allocator,
                                         .import_records = ImportRecord.List.init(p.import_records.items),
@@ -3115,7 +3119,6 @@ pub const Parser = struct {
                         .s_export_star => |star| {
                             if (star.alias == null) {
                                 return js_ast.Result{
-                                    .ok = true,
                                     .ast = .{
                                         .allocator = p.allocator,
                                         .import_records = ImportRecord.List.init(p.import_records.items),
@@ -4021,10 +4024,7 @@ pub const Parser = struct {
         // Pop the module scope to apply the "ContainsDirectEval" rules
         // p.popScope();
 
-        result.ast = try p.toAST(parts_slice, exports_kind, wrapper_expr);
-        result.ok = true;
-
-        return result;
+        return js_ast.Result{ .ast = try p.toAST(parts_slice, exports_kind, wrapper_expr) };
     }
 
     pub fn init(_options: Options, log: *logger.Log, source: *const logger.Source, define: *Define, allocator: Allocator) !Parser {
@@ -20969,5 +20969,5 @@ pub fn newLazyExportAST(
 
     temp_log.appendToMaybeRecycled(log_to_copy_into, source) catch {};
     result.ast.has_lazy_export = true;
-    return if (result.ok) result.ast else null;
+    return result.ast;
 }

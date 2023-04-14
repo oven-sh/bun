@@ -610,7 +610,7 @@ pub const Snapshots = struct {
         );
 
         var parse_result = try parser.parse();
-        var ast = if (parse_result.ok) parse_result.ast else return error.ParseError;
+        var ast = if (parse_result == .ast) parse_result.ast else return error.ParseError;
         defer ast.deinit();
 
         if (ast.exports_ref.isNull()) return;

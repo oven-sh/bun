@@ -2883,6 +2883,10 @@ const LinkerContext = struct {
                             &imports_to_bind[id],
                             source_index,
                         );
+
+                        if (this.log.errors > 0) {
+                            return error.ImportResolutionFailed;
+                        }
                     }
                     const export_kind = exports_kind[id];
                     var flag = flags[id];
@@ -6890,7 +6894,7 @@ const LinkerContext = struct {
                     if (status == .external and c.options.output_format.keepES6ImportExportSyntax()) {
                         // Imports from external modules should not be converted to CommonJS
                         // if the output format preserves the original ES6 import statements
-                        break;
+                        continue;
                     }
 
                     // If it's a CommonJS or external file, rewrite the import to a
@@ -6980,9 +6984,8 @@ const LinkerContext = struct {
                             source,
                             r,
                             c.allocator,
-                            "No matching export \"{s}\" in \"{s}\" for import \"{s}\"",
+                            "No matching export in \"{s}\" for import \"{s}\"",
                             .{
-                                named_import.alias.?,
                                 next_source.path.pretty,
                                 named_import.alias.?,
                             },

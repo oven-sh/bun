@@ -14558,14 +14558,36 @@ fn NewParser_(
                     e_.must_keep_due_to_with_stmt = result.is_inside_with_scope;
                     e_.ref = result.ref;
 
-                    // TODO: fix the underyling cause here
-                    // The problem seems to be that result.ref.innerIndex() is not always set.
-
                     // Handle assigning to a constant
-                    // if (in.assign_target != .none and p.symbols.items[result.ref.innerIndex()].kind == .cconst) {
-                    //     const r = js_lexer.rangeOfIdentifier(p.source, expr.loc);
-                    //     p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot assign to {s} because it is a constant", .{name}) catch unreachable;
-                    // }
+                    if (in.assign_target != .none and p.symbols.items[result.ref.innerIndex()].kind == .cconst) {
+                        const r = js_lexer.rangeOfIdentifier(p.source, expr.loc);
+                        var notes = p.allocator.alloc(logger.Data, 1) catch unreachable;
+                        notes[0] = logger.Data{
+                            .text = std.fmt.allocPrint(p.allocator, "The symbol \"{s}\" was declared a constant here:", .{name}) catch unreachable,
+                            .location = logger.Location.init_or_nil(p.source, js_lexer.rangeOfIdentifier(p.source, result.declare_loc.?)),
+                        };
+
+                        const is_error = p.const_values.contains(result.ref) or p.options.bundle;
+                        switch (is_error) {
+                            true => p.log.addRangeErrorFmtWithNotes(
+                                p.source,
+                                r,
+                                p.allocator,
+                                notes,
+                                "Cannot assign to \"{s}\" because it is a constant",
+                                .{name},
+                            ) catch unreachable,
+
+                            false => p.log.addRangeErrorFmtWithNotes(
+                                p.source,
+                                r,
+                                p.allocator,
+                                notes,
+                                "This assignment will throw because \"{s}\" is a constant",
+                                .{name},
+                            ) catch unreachable,
+                        }
+                    }
 
                     var original_name: ?string = null;
 

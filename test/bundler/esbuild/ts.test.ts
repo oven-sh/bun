@@ -508,9 +508,7 @@ describe("bundler", () => {
       assert(!b.includes("=>"), "b should not use arrow");
     },
   });
-  return;
   itBundled("ts/TSMinifyNamespace", {
-    // GENERATED
     files: {
       "/a.ts": /* ts */ `
         namespace Foo {
@@ -518,6 +516,7 @@ describe("bundler", () => {
             foo(Foo, Bar)
           }
         }
+        capture(Foo)
       `,
       "/b.ts": /* ts */ `
         export namespace Foo {
@@ -532,9 +531,22 @@ describe("bundler", () => {
     minifyWhitespace: true,
     minifyIdentifiers: true,
     mode: "transform",
+    onAfterBundle(api) {
+      api.writeFile("/out/a.edited.js", api.readFile("/out/a.js").replace(/capture\((.*?)\)/, `export const Foo = $1`));
+    },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        let called = false;
+        globalThis.foo = (a, b) => called = true;
+        await import('./out/a.edited.js');
+        assert(called, 'foo should be called from a.ts');
+        called = false;
+        await import('./out/b.js');
+        assert(called, 'foo should be called from b.ts');
+      `,
+    },
   });
   itBundled("ts/TSMinifyNamespaceNoLogicalAssignment", {
-    // GENERATED
     files: {
       "/a.ts": /* ts */ `
         namespace Foo {
@@ -558,9 +570,16 @@ describe("bundler", () => {
     outdir: "/",
     mode: "transform",
     unsupportedJSFeatures: ["logical-assignment"],
+    onAfterBundle(api) {
+      const a = api.readFile("/out/a.js");
+      assert(a.includes("A"), "a should not be empty");
+      assert(!a.includes("||="), "a should not use logical assignment");
+      const b = api.readFile("/out/b.js");
+      assert(b.includes("X"), "b should not be empty");
+      assert(!b.includes("||="), "b should not use logical assignment");
+    },
   });
   itBundled("ts/TSMinifyNamespaceNoArrow", {
-    // GENERATED
     files: {
       "/a.ts": /* ts */ `
         namespace Foo {
@@ -583,7 +602,17 @@ describe("bundler", () => {
     minifyIdentifiers: true,
     outdir: "/",
     mode: "transform",
+    unsupportedJSFeatures: ["arrow"],
+    onAfterBundle(api) {
+      const a = api.readFile("/a.js");
+      assert(a.includes("A"), "a should not be empty");
+      assert(!a.includes("=>"), "a should not use arrow");
+      const b = api.readFile("/b.js");
+      assert(b.includes("X"), "b should not be empty");
+      assert(!b.includes("=>"), "b should not use arrow");
+    },
   });
+  return;
   itBundled("ts/TSMinifyDerivedClass", {
     // GENERATED
     files: {

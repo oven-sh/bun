@@ -6,6 +6,10 @@ if [ -z "$1" ]; then
   exit 1
 fi
 
+if [ -z "$BUN_EXE"]; then
+  BUN_EXE=$(which bd 2>/dev/null || which bun 2>/dev/null)
+fi
+
 __dirname="$(dirname $(realpath "$0"))"
 cd "$__dirname"
 

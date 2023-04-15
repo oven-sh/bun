@@ -393,18 +393,12 @@ describe("bundler", () => {
       const b = api.readFile("/out/b.js");
 
       // make sure the minification trick "enum[enum.K=V]=K" is used, but `enum`
-      assert(a.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.A=0]=["']A["']\b/), "should be using enum minification trick (1)");
-      assert(a.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.B=1]=["']B["']\b/), "should be using enum minification trick (2)");
-      assert(
-        a.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.C=[a-zA-Z$]]=["']C["']\b/),
-        "should be using enum minification trick (3)",
-      );
-      assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.X=0]=["']X["']\b/), "should be using enum minification trick (4)");
-      assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.Y=1]=["']Y["']\b/), "should be using enum minification trick (5)");
-      assert(
-        b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.Z=[a-zA-Z$]]=["']Z["']\b/),
-        "should be using enum minification trick (6)",
-      );
+      assert(a.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.A=0]=["']A["']/), "should be using enum minification trick (1)");
+      assert(a.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.B=1]=["']B["']/), "should be using enum minification trick (2)");
+      assert(a.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.C=[a-zA-Z$]]=["']C["']/), "should be using enum minification trick (3)");
+      assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.X=0]=["']X["']/), "should be using enum minification trick (4)");
+      assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.Y=1]=["']Y["']/), "should be using enum minification trick (5)");
+      assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.Z=[a-zA-Z$]]=["']Z["']/), "should be using enum minification trick (6)");
     },
     runtimeFiles: {
       "/test.js": /* js */ `
@@ -426,7 +420,7 @@ describe("bundler", () => {
       `,
     },
   });
-  const TSMinifyNestedEnum = itBundled("ts/TSMinifyNestedEnum", {
+  itBundled("ts/TSMinifyNestedEnum", {
     files: {
       "/a.ts": `function foo(arg) { enum Foo { A, B, C = Foo, D = arg } return Foo }\ncapture(foo)`,
       "/b.ts": `export function foo(arg) { enum Foo { X, Y, Z = Foo, W = arg } return Foo }`,
@@ -571,11 +565,11 @@ describe("bundler", () => {
     mode: "transform",
     unsupportedJSFeatures: ["logical-assignment"],
     onAfterBundle(api) {
-      const a = api.readFile("/out/a.js");
-      assert(a.includes("A"), "a should not be empty");
+      const a = api.readFile("/a.js");
+      assert(a.includes("Bar"), "a should not be empty");
       assert(!a.includes("||="), "a should not use logical assignment");
-      const b = api.readFile("/out/b.js");
-      assert(b.includes("X"), "b should not be empty");
+      const b = api.readFile("/b.js");
+      assert(b.includes("Bar"), "b should not be empty");
       assert(!b.includes("||="), "b should not use logical assignment");
     },
   });
@@ -605,16 +599,14 @@ describe("bundler", () => {
     unsupportedJSFeatures: ["arrow"],
     onAfterBundle(api) {
       const a = api.readFile("/a.js");
-      assert(a.includes("A"), "a should not be empty");
+      assert(a.includes("foo"), "a should not be empty");
       assert(!a.includes("=>"), "a should not use arrow");
       const b = api.readFile("/b.js");
-      assert(b.includes("X"), "b should not be empty");
+      assert(b.includes("foo"), "b should not be empty");
       assert(!b.includes("=>"), "b should not use arrow");
     },
   });
-  return;
   itBundled("ts/TSMinifyDerivedClass", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         class Foo extends Bar {
@@ -626,44 +618,71 @@ describe("bundler", () => {
             bar();
           }
         }
+
+        export {Foo}
       `,
     },
     minifySyntax: true,
-    unsupportedJSFeatures: "es2015",
-    mode: "transform",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        let calledFoo = false;
+        let calledBar = false;
+        globalThis.foo = () => calledFoo = true;
+        globalThis.bar = () => calledBar = true;
+        globalThis.Bar = class Bar {
+          constructor() {
+            console.log('super')
+            this.hello = 3;
+          }
+        };
+        const {Foo} = await import('./entry.js');
+        import assert from 'assert';
+        const instance = new Foo();
+        console.log(instance.foo, instance.bar, instance.hello);
+        assert(calledFoo, 'foo should be called');
+        assert(calledBar, 'bar should be called');
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "super\n1 2 3",
+    },
   });
   itBundled("ts/TSImportVsLocalCollisionAllTypes", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import {a, b, c, d, e} from './other.ts'
         let a
         const b = 0
         var c
-        function d() {}
-        class e {}
-        console.log(a, b, c, d, e)
+        function d() { return 5; }
+        class e { constructor() { this.prop = 2; }}
+        console.log(JSON.stringify([a, b, c, d(), new e]))
       `,
       "/other.ts": ``,
     },
+    run: {
+      stdout: '[null,0,null,5,{"prop":2}]',
+    },
   });
   itBundled("ts/TSImportVsLocalCollisionMixed", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import {a, b, c, d, e, real} from './other.ts'
         let a
         const b = 0
         var c
-        function d() {}
-        class e {}
-        console.log(a, b, c, d, e, real)
+        function d() { return 5; }
+        class e { constructor() { this.prop = 2; }}
+        console.log(JSON.stringify([a, b, c, d(), new e, real]))
       `,
       "/other.ts": `export let real = 123`,
     },
+    run: {
+      stdout: '[null,0,null,5,{"prop":2},123]',
+    },
   });
   itBundled("ts/TSImportEqualsEliminationTest", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import a = foo.a
@@ -677,44 +696,62 @@ describe("bundler", () => {
         export let bar = c
       `,
     },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        globalThis.foo = {
+          a: { b: { c: 123 } },
+          get x() {
+            throw new Error('should not be called')
+          }
+        };
+        const {bar} = await import('./out.js');
+        console.log(bar);
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "123",
+    },
   });
   itBundled("ts/TSImportEqualsTreeShakingFalse", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import { foo } from 'pkg'
         import used = foo.used
-        import unused = foo.unused
+        import unused_keep = foo.unused
         export { used }
       `,
     },
-    mode: "passthrough",
+    treeShaking: false,
+    dce: true,
+    mode: "transform",
   });
   itBundled("ts/TSImportEqualsTreeShakingTrue", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import { foo } from 'pkg'
         import used = foo.used
-        import unused = foo.unused
+        import unused_drop = foo.unused
         export { used }
       `,
     },
-    mode: "passthrough",
+    dce: true,
+    treeShaking: true,
+    mode: "transform",
   });
   itBundled("ts/TSImportEqualsBundle", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import { foo } from 'pkg'
         import used = foo.used
-        import unused = foo.unused
+        import unused_drop = foo.unused
         export { used }
       `,
     },
+    dce: true,
+    external: ["pkg"],
   });
   itBundled("ts/TSMinifiedBundleES6", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import {foo} from './a'
@@ -729,13 +766,15 @@ describe("bundler", () => {
     minifySyntax: true,
     minifyWhitespace: true,
     minifyIdentifiers: true,
+    run: {
+      stdout: "123",
+    },
   });
   itBundled("ts/TSMinifiedBundleCommonJS", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         const {foo} = require('./a')
-        console.log(foo(), require('./j.json'))
+        console.log(JSON.stringify([foo(), require('./j.json')]))
       `,
       "/a.ts": /* ts */ `
         exports.foo = function() {
@@ -747,9 +786,38 @@ describe("bundler", () => {
     minifySyntax: true,
     minifyWhitespace: true,
     minifyIdentifiers: true,
+    run: {
+      stdout: '[123,{"test":true}]',
+    },
+  });
+  // TODO: all situations with decorators are currently not runtime-checked. as of writing bun crashes when hitting them at all.
+  itBundled("ts/TypeScriptDecoratorsSimpleCase", {
+    files: {
+      "/entry.ts": /* ts */ `
+        function decorator(...args) {
+          console.log('decorator called', JSON.stringify(args))
+        }
+
+        @decorator
+        class Foo {
+          @decorator
+          bar() {
+            console.log('bar called')
+          }
+        }
+
+        new Foo().bar()
+      `,
+    },
+    run: {
+      stdout: `
+        decorator called [{},"bar",{"writable":true,"enumerable":false,"configurable":true}]
+        decorator called [null]
+        bar called
+      `,
+    },
   });
   itBundled("ts/TypeScriptDecorators", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import all from './all'
@@ -888,19 +956,17 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/TypeScriptDecoratorsKeepNames", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         @decoratorMustComeAfterName
         class Foo {}
       `,
     },
+    keepNames: true,
   });
   itBundled("ts/TypeScriptDecoratorScopeESBuildIssue2147", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
-        let foo = 1
         class Foo {
           method1(@dec(foo) foo = 2) {}
           method2(@dec(() => foo) foo = 3) {}
@@ -909,7 +975,6 @@ describe("bundler", () => {
         class Bar {
           static x = class {
             static y = () => {
-              let bar = 1
               @dec(bar)
               @dec(() => bar)
               class Baz {
@@ -924,10 +989,22 @@ describe("bundler", () => {
         }
       `,
     },
-    mode: "passthrough",
+    mode: "transform",
+    onAfterBundle(api) {
+      const capturedCalls = api.captureFile("/out.js", "dec");
+      expect(capturedCalls).toEqual([
+        "foo",
+        "() => foo",
+        "bar",
+        "() => bar",
+        "() => bar",
+        "() => bar",
+        "bar",
+        "() => bar",
+      ]);
+    },
   });
   itBundled("ts/TSExportDefaultTypeESBuildIssue316", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import dc_def, { bar as dc } from './keep/declare-class'
@@ -1046,9 +1123,23 @@ describe("bundler", () => {
         export let bar = 123
       `,
     },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        globalThis.foo = 123456;
+        const mod = (await import('./out.js')).default;
+        console.log(JSON.stringify(mod))
+        console.log(JSON.stringify(mod.map(x => typeof x)))
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: `
+        [123456,123,123456,123,null,123,123456,123,123456,123,{"num":0},123,{"num":0},123,123,123,123,123,123,123]
+        ["number","number","number","number","function","number","number","number","number","number","object","number","object","number","number","number","number","number","number","number"]
+      `,
+    },
   });
   itBundled("ts/TSImplicitExtensions", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import './pick-js.js'
@@ -1059,21 +1150,23 @@ describe("bundler", () => {
         import './order-jsx.jsx'
       `,
       "/pick-js.js": `console.log("correct")`,
-      "/pick-js.ts": `console.log("wrong")`,
-      "/pick-ts.jsx": `console.log("wrong")`,
+      "/pick-js.ts": `console.log("FAILED")`,
+      "/pick-ts.jsx": `console.log("FAILED")`,
       "/pick-ts.ts": `console.log("correct")`,
       "/pick-jsx.jsx": `console.log("correct")`,
-      "/pick-jsx.tsx": `console.log("wrong")`,
-      "/pick-tsx.js": `console.log("wrong")`,
+      "/pick-jsx.tsx": `console.log("FAILED")`,
+      "/pick-tsx.js": `console.log("FAILED")`,
       "/pick-tsx.tsx": `console.log("correct")`,
       "/order-js.ts": `console.log("correct")`,
-      "/order-js.tsx": `console.log("wrong")`,
+      "/order-js.tsx": `console.log("FAILED")`,
       "/order-jsx.ts": `console.log("correct")`,
-      "/order-jsx.tsx": `console.log("wrong")`,
+      "/order-jsx.tsx": `console.log("FAILED")`,
+    },
+    run: {
+      stdout: "correct\n".repeat(6),
     },
   });
   itBundled("ts/TSImplicitExtensionsMissing", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import './mjs.mjs'
@@ -1088,21 +1181,23 @@ describe("bundler", () => {
       "/js.ts.js": ``,
       "/jsx.tsx.jsx": ``,
     },
-    /* TODO FIX expectedScanLog: `entry.ts: ERROR: Could not resolve "./mjs.mjs"
-  entry.ts: ERROR: Could not resolve "./cjs.cjs"
-  entry.ts: ERROR: Could not resolve "./js.js"
-  entry.ts: ERROR: Could not resolve "./jsx.jsx"
-  `, */
+    bundleErrors: {
+      "/entry.ts": [
+        `Could not resolve: "./mjs.mjs"`,
+        `Could not resolve: "./cjs.cjs"`,
+        `Could not resolve: "./js.js"`,
+        `Could not resolve: "./jsx.jsx"`,
+      ],
+    },
   });
   itBundled("ts/ExportTypeESBuildIssue379", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import * as A from './a'
         import * as B from './b'
         import * as C from './c'
         import * as D from './d'
-        console.log(A, B, C, D)
+        console.log(JSON.stringify([A, B, C, D]))
       `,
       "/a.ts": /* ts */ `
         type Test = Element
@@ -1127,135 +1222,284 @@ describe("bundler", () => {
       `,
       "/test.ts": `export type Test = Element`,
     },
+    run: {
+      stdout: '[{"foo":123},{"foo":123},{"foo":123},{"foo":123}]',
+    },
+    useDefineForClassFields: false,
   });
   itBundled("ts/ThisInsideFunctionTS", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
-        function foo(x = this) { console.log(this) }
+        function foo(x = this) { return [x, this]; }
         const objFoo = {
-          foo(x = this) { console.log(this) }
+          foo(x = this) { return [x, this]; }
         }
         class Foo {
           x = this
-          static y = this.z
-          foo(x = this) { console.log(this) }
-          static bar(x = this) { console.log(this) }
+          static z = 456;
+          static y = this.z;
+          foo(x = this) { return [x, this]; }
+          static bar(x = this) { return [x, this]; }
         }
-        new Foo(foo(objFoo))
+
+        assert.deepEqual(foo('bun'), ['bun', undefined]);
+        assert.deepEqual(foo.call('this'), ['this', 'this']);
+        assert.deepEqual(foo.call('this', 'bun'), ['bun', 'this']);
+        assert.deepEqual(objFoo.foo('bun'), ['bun', objFoo]);
+        assert.deepEqual(objFoo.foo(), [objFoo, objFoo]);
+        const fooInstance = new Foo();
+        assert(fooInstance.x === fooInstance, 'Foo#x');
+        assert(Foo.y === 456, 'Foo.y');
+        assert.deepEqual(Foo.bar('bun'), ['bun', Foo]);
+        assert.deepEqual(Foo.bar(), [Foo, Foo]);
+        assert.deepEqual(fooInstance.foo(), [fooInstance, fooInstance]);
+        assert.deepEqual(fooInstance.foo('bun'), ['bun', fooInstance]);
+
         if (nested) {
-          function bar(x = this) { console.log(this) }
+          function bar(x = this) { return [x, this]; }
           const objBar = {
-            foo(x = this) { console.log(this) }
+            foo(x = this) { return [x, this]; }
           }
           class Bar {
             x = this
+            static z = 456;
             static y = this.z
-            foo(x = this) { console.log(this) }
-            static bar(x = this) { console.log(this) }
+            foo(x = this) { return [x, this]; }
+            static bar(x = this) { return [x, this]; }
           }
-          new Bar(bar(objBar))
+          
+          assert.deepEqual(bar('bun'), ['bun', undefined]);
+          assert.deepEqual(bar.call('this'), ['this', 'this']);
+          assert.deepEqual(bar.call('this', 'bun'), ['bun', 'this']);
+          assert.deepEqual(objBar.foo('bun'), ['bun', objBar]);
+          assert.deepEqual(objBar.foo(), [objBar, objBar]);
+          const barInstance = new Bar();
+          assert(barInstance.x === barInstance, 'Bar#x');
+          assert(Bar.y === 456, 'Bar.y');
+          assert.deepEqual(Bar.bar('bun'), ['bun', Bar]);
+          assert.deepEqual(Bar.bar(), [Bar, Bar]);
+          assert.deepEqual(barInstance.foo(), [barInstance, barInstance]);
+          assert.deepEqual(barInstance.foo('bun'), ['bun', barInstance]);
         }
       `,
+    },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        globalThis.nested = true;
+        globalThis.assert = (await import('assert')).default;
+        import('./out')
+      `,
+    },
+    run: {
+      file: "/test.js",
     },
   });
   itBundled("ts/ThisInsideFunctionTSUseDefineForClassFields", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
-        function foo(x = this) { console.log(this) }
+        function foo(x = this) { return [x, this]; }
         const objFoo = {
-          foo(x = this) { console.log(this) }
+          foo(x = this) { return [x, this]; }
         }
         class Foo {
           x = this
-          static y = this.z
-          foo(x = this) { console.log(this) }
-          static bar(x = this) { console.log(this) }
+          static z = 456;
+          static y = this.z;
+          foo(x = this) { return [x, this]; }
+          static bar(x = this) { return [x, this]; }
         }
-        new Foo(foo(objFoo))
+
+        assert.deepEqual(foo('bun'), ['bun', undefined]);
+        assert.deepEqual(foo.call('this'), ['this', 'this']);
+        assert.deepEqual(foo.call('this', 'bun'), ['bun', 'this']);
+        assert.deepEqual(objFoo.foo('bun'), ['bun', objFoo]);
+        assert.deepEqual(objFoo.foo(), [objFoo, objFoo]);
+        const fooInstance = new Foo();
+        assert(fooInstance.x === fooInstance, 'Foo#x');
+        assert(Foo.y === 456, 'Foo.y');
+        assert.deepEqual(Foo.bar('bun'), ['bun', Foo]);
+        assert.deepEqual(Foo.bar(), [Foo, Foo]);
+        assert.deepEqual(fooInstance.foo(), [fooInstance, fooInstance]);
+        assert.deepEqual(fooInstance.foo('bun'), ['bun', fooInstance]);
+
         if (nested) {
-          function bar(x = this) { console.log(this) }
+          function bar(x = this) { return [x, this]; }
           const objBar = {
-            foo(x = this) { console.log(this) }
+            foo(x = this) { return [x, this]; }
           }
           class Bar {
             x = this
+            static z = 456;
             static y = this.z
-            foo(x = this) { console.log(this) }
-            static bar(x = this) { console.log(this) }
+            foo(x = this) { return [x, this]; }
+            static bar(x = this) { return [x, this]; }
           }
-          new Bar(bar(objBar))
+          
+          assert.deepEqual(bar('bun'), ['bun', undefined]);
+          assert.deepEqual(bar.call('this'), ['this', 'this']);
+          assert.deepEqual(bar.call('this', 'bun'), ['bun', 'this']);
+          assert.deepEqual(objBar.foo('bun'), ['bun', objBar]);
+          assert.deepEqual(objBar.foo(), [objBar, objBar]);
+          const barInstance = new Bar();
+          assert(barInstance.x === barInstance, 'Bar#x');
+          assert(Bar.y === 456, 'Bar.y');
+          assert.deepEqual(Bar.bar('bun'), ['bun', Bar]);
+          assert.deepEqual(Bar.bar(), [Bar, Bar]);
+          assert.deepEqual(barInstance.foo(), [barInstance, barInstance]);
+          assert.deepEqual(barInstance.foo('bun'), ['bun', barInstance]);
         }
       `,
     },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        globalThis.nested = true;
+        globalThis.assert = (await import('assert')).default;
+        import('./out')
+      `,
+    },
+    run: {
+      file: "/test.js",
+    },
+    useDefineForClassFields: true,
   });
   itBundled("ts/ThisInsideFunctionTSNoBundle", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
-        function foo(x = this) { console.log(this) }
+        function foo(x = this) { return [x, this]; }
         const objFoo = {
-          foo(x = this) { console.log(this) }
+          foo(x = this) { return [x, this]; }
         }
         class Foo {
           x = this
-          static y = this.z
-          foo(x = this) { console.log(this) }
-          static bar(x = this) { console.log(this) }
+          static z = 456;
+          static y = this.z;
+          foo(x = this) { return [x, this]; }
+          static bar(x = this) { return [x, this]; }
         }
-        new Foo(foo(objFoo))
+
+        assert.deepEqual(foo('bun'), ['bun', undefined]);
+        assert.deepEqual(foo.call('this'), ['this', 'this']);
+        assert.deepEqual(foo.call('this', 'bun'), ['bun', 'this']);
+        assert.deepEqual(objFoo.foo('bun'), ['bun', objFoo]);
+        assert.deepEqual(objFoo.foo(), [objFoo, objFoo]);
+        const fooInstance = new Foo();
+        assert(fooInstance.x === fooInstance, 'Foo#x');
+        assert(Foo.y === 456, 'Foo.y');
+        assert.deepEqual(Foo.bar('bun'), ['bun', Foo]);
+        assert.deepEqual(Foo.bar(), [Foo, Foo]);
+        assert.deepEqual(fooInstance.foo(), [fooInstance, fooInstance]);
+        assert.deepEqual(fooInstance.foo('bun'), ['bun', fooInstance]);
+
         if (nested) {
-          function bar(x = this) { console.log(this) }
+          function bar(x = this) { return [x, this]; }
           const objBar = {
-            foo(x = this) { console.log(this) }
+            foo(x = this) { return [x, this]; }
           }
           class Bar {
             x = this
+            static z = 456;
             static y = this.z
-            foo(x = this) { console.log(this) }
-            static bar(x = this) { console.log(this) }
+            foo(x = this) { return [x, this]; }
+            static bar(x = this) { return [x, this]; }
           }
-          new Bar(bar(objBar))
+          
+          assert.deepEqual(bar('bun'), ['bun', undefined]);
+          assert.deepEqual(bar.call('this'), ['this', 'this']);
+          assert.deepEqual(bar.call('this', 'bun'), ['bun', 'this']);
+          assert.deepEqual(objBar.foo('bun'), ['bun', objBar]);
+          assert.deepEqual(objBar.foo(), [objBar, objBar]);
+          const barInstance = new Bar();
+          assert(barInstance.x === barInstance, 'Bar#x');
+          assert(Bar.y === 456, 'Bar.y');
+          assert.deepEqual(Bar.bar('bun'), ['bun', Bar]);
+          assert.deepEqual(Bar.bar(), [Bar, Bar]);
+          assert.deepEqual(barInstance.foo(), [barInstance, barInstance]);
+          assert.deepEqual(barInstance.foo('bun'), ['bun', barInstance]);
         }
       `,
     },
-    mode: "passthrough",
+    mode: "transform",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        globalThis.nested = true;
+        globalThis.assert = (await import('assert')).default;
+        import('./out')
+      `,
+    },
+    run: {
+      file: "/test.js",
+    },
   });
   itBundled("ts/ThisInsideFunctionTSNoBundleUseDefineForClassFields", {
     // GENERATED
     files: {
       "/entry.ts": /* ts */ `
-        function foo(x = this) { console.log(this) }
+        function foo(x = this) { return [x, this]; }
         const objFoo = {
-          foo(x = this) { console.log(this) }
+          foo(x = this) { return [x, this]; }
         }
         class Foo {
           x = this
-          static y = this.z
-          foo(x = this) { console.log(this) }
-          static bar(x = this) { console.log(this) }
+          static z = 456;
+          static y = this.z;
+          foo(x = this) { return [x, this]; }
+          static bar(x = this) { return [x, this]; }
         }
-        new Foo(foo(objFoo))
+
+        assert.deepEqual(foo('bun'), ['bun', undefined]);
+        assert.deepEqual(foo.call('this'), ['this', 'this']);
+        assert.deepEqual(foo.call('this', 'bun'), ['bun', 'this']);
+        assert.deepEqual(objFoo.foo('bun'), ['bun', objFoo]);
+        assert.deepEqual(objFoo.foo(), [objFoo, objFoo]);
+        const fooInstance = new Foo();
+        assert(fooInstance.x === fooInstance, 'Foo#x');
+        assert(Foo.y === 456, 'Foo.y');
+        assert.deepEqual(Foo.bar('bun'), ['bun', Foo]);
+        assert.deepEqual(Foo.bar(), [Foo, Foo]);
+        assert.deepEqual(fooInstance.foo(), [fooInstance, fooInstance]);
+        assert.deepEqual(fooInstance.foo('bun'), ['bun', fooInstance]);
+
         if (nested) {
-          function bar(x = this) { console.log(this) }
+          function bar(x = this) { return [x, this]; }
           const objBar = {
-            foo(x = this) { console.log(this) }
+            foo(x = this) { return [x, this]; }
           }
           class Bar {
             x = this
+            static z = 456;
             static y = this.z
-            foo(x = this) { console.log(this) }
-            static bar(x = this) { console.log(this) }
+            foo(x = this) { return [x, this]; }
+            static bar(x = this) { return [x, this]; }
           }
-          new Bar(bar(objBar))
+          
+          assert.deepEqual(bar('bun'), ['bun', undefined]);
+          assert.deepEqual(bar.call('this'), ['this', 'this']);
+          assert.deepEqual(bar.call('this', 'bun'), ['bun', 'this']);
+          assert.deepEqual(objBar.foo('bun'), ['bun', objBar]);
+          assert.deepEqual(objBar.foo(), [objBar, objBar]);
+          const barInstance = new Bar();
+          assert(barInstance.x === barInstance, 'Bar#x');
+          assert(Bar.y === 456, 'Bar.y');
+          assert.deepEqual(Bar.bar('bun'), ['bun', Bar]);
+          assert.deepEqual(Bar.bar(), [Bar, Bar]);
+          assert.deepEqual(barInstance.foo(), [barInstance, barInstance]);
+          assert.deepEqual(barInstance.foo('bun'), ['bun', barInstance]);
         }
       `,
     },
-    mode: "passthrough",
+    mode: "transform",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        globalThis.nested = true;
+        globalThis.assert = (await import('assert')).default;
+        import('./out')
+      `,
+    },
+    run: {
+      file: "/test.js",
+    },
   });
   itBundled("ts/TSComputedClassFieldUseDefineFalse", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         class Foo {
@@ -1266,13 +1510,43 @@ describe("bundler", () => {
           @dec
           [y] = z;
         }
-        new Foo()
+        export default Foo;
       `,
     },
-    mode: "passthrough",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        globalThis.q = 'q1';
+        globalThis.r = 'r1';
+        globalThis.s = 's1';
+        globalThis.x = 'x1';
+        globalThis.y = 'y1';
+        globalThis.z = 'z1';
+        globalThis.dec = function(...args) {
+          console.log(JSON.stringify([this, ...args]));
+        };
+        const Foo = (await import('./out')).default;
+        globalThis.q = 'q2';
+        globalThis.r = 'r2';
+        globalThis.s = 's2';
+        globalThis.x = 'x2';
+        globalThis.y = 'y2';
+        globalThis.z = 'z2';
+        const y = new Foo();
+        console.log(JSON.stringify(y));
+      `,
+    },
+    useDefineForClassFields: false,
+    mode: "transform",
+    run: {
+      stdout: `
+        [null,{},"x1",null]
+        [null,{},"y1",null]
+        {"r1":"s2","y1":"z2"}
+      `,
+      file: "/test.js",
+    },
   });
   itBundled("ts/TSComputedClassFieldUseDefineTrue", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         class Foo {
@@ -1283,31 +1557,91 @@ describe("bundler", () => {
           @dec
           [y] = z;
         }
-        new Foo()
+        export default Foo;
       `,
     },
-    mode: "passthrough",
-  });
-  itBundled("ts/TSComputedClassFieldUseDefineTrueLower", {
-    // GENERATED
-    files: {
-      "/entry.ts": /* ts */ `
-        class Foo {
-          [q];
-          [r] = s;
-          @dec
-          [x];
-          @dec
-          [y] = z;
-        }
-        new Foo()
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        globalThis.q = 'q1';
+        globalThis.r = 'r1';
+        globalThis.s = 's1';
+        globalThis.x = 'x1';
+        globalThis.y = 'y1';
+        globalThis.z = 'z1';
+        globalThis.dec = function(...args) {
+          console.log(JSON.stringify([this, ...args]));
+        };
+        const Foo = (await import('./out')).default;
+        globalThis.q = 'q2';
+        globalThis.r = 'r2';
+        globalThis.s = 's2';
+        globalThis.x = 'x2';
+        globalThis.y = 'y2';
+        globalThis.z = 'z2';
+        const y = new Foo();
+        console.log(JSON.stringify(y));
       `,
     },
     useDefineForClassFields: true,
-    mode: "passthrough",
+    mode: "transform",
+    run: {
+      stdout: `
+        [null,{},"x1",null]
+        [null,{},"y1",null]
+        {"r1":"s2","y1":"z2"}
+      `,
+      file: "/test.js",
+    },
+  });
+  itBundled("ts/TSComputedClassFieldUseDefineTrueLower", {
+    files: {
+      "/entry.ts": /* ts */ `
+        class Foo {
+          [q];
+          [r] = s;
+          @dec
+          [x];
+          @dec
+          [y] = z;
+        }
+        export default Foo;
+      `,
+    },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        globalThis.q = 'q1';
+        globalThis.r = 'r1';
+        globalThis.s = 's1';
+        globalThis.x = 'x1';
+        globalThis.y = 'y1';
+        globalThis.z = 'z1';
+        globalThis.dec = function(...args) {
+          console.log(JSON.stringify([this, ...args]));
+        };
+        const Foo = (await import('./out')).default;
+        globalThis.q = 'q2';
+        globalThis.r = 'r2';
+        globalThis.s = 's2';
+        globalThis.x = 'x2';
+        globalThis.y = 'y2';
+        globalThis.z = 'z2';
+        const y = new Foo();
+        console.log(JSON.stringify(y));
+      `,
+    },
+    useDefineForClassFields: true,
+    mode: "transform",
+    run: {
+      stdout: `
+        [null,{},"x1",null]
+        [null,{},"y1",null]
+        {"r1":"s2","y1":"z2"}
+      `,
+      file: "/test.js",
+    },
+    unsupportedJSFeatures: ["class-field"],
   });
   itBundled("ts/TSAbstractClassFieldUseAssign", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         const keepThis = Symbol('keepThis')
@@ -1317,15 +1651,15 @@ describe("bundler", () => {
           [keepThis]: any
           abstract REMOVE_THIS_TOO: any
           abstract [AND_REMOVE_THIS]: any
-          abstract [(x => y => x + y)('nested')('scopes')]: any
+          abstract [(x => y => x + y)('nested')('scopes_REMOVE')]: any
         }
         (() => new Foo())()
       `,
     },
-    mode: "passthrough",
+    dce: true,
+    useDefineForClassFields: false,
   });
   itBundled("ts/TSAbstractClassFieldUseDefine", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         const keepThisToo = Symbol('keepThisToo')
@@ -1340,24 +1674,28 @@ describe("bundler", () => {
         (() => new Foo())()
       `,
     },
-    mode: "passthrough",
+    mode: "transform",
+    useDefineForClassFields: true,
   });
   itBundled("ts/TSImportMTS", {
-    // GENERATED
     files: {
       "/entry.ts": `import './imported.mjs'`,
       "/imported.mts": `console.log('works')`,
     },
+    run: {
+      stdout: "works",
+    },
   });
   itBundled("ts/TSImportCTS", {
-    // GENERATED
     files: {
       "/entry.ts": `require('./required.cjs')`,
       "/required.cjs": `console.log('works')`,
     },
+    run: {
+      stdout: "works",
+    },
   });
   itBundled("ts/TSSideEffectsFalseWarningTypeDeclarations", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import "some-js"
@@ -1377,14 +1715,11 @@ describe("bundler", () => {
       "/node_modules/empty-dts/package.json": `{ "main": "./foo.d.ts", "sideEffects": false }`,
       "/node_modules/empty-dts/foo.d.ts": `export type Foo = number`,
     },
-    /* TODO FIX expectedScanLog: `entry.ts: WARNING: Ignoring this import because "node_modules/some-js/foo.js" was marked as having no side effects
-  node_modules/some-js/package.json: NOTE: "sideEffects" is false in the enclosing "package.json" file:
-  entry.ts: WARNING: Ignoring this import because "node_modules/some-ts/foo.ts" was marked as having no side effects
-  node_modules/some-ts/package.json: NOTE: "sideEffects" is false in the enclosing "package.json" file:
-  `, */
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js").trim()).toBe("");
+    },
   });
   itBundled("ts/TSSiblingNamespace", {
-    // GENERATED
     files: {
       "/let.ts": /* ts */ `
         export namespace x { export let y = 123 }
@@ -1408,8 +1743,24 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/let.ts", "/function.ts", "/class.ts", "/namespace.ts", "/enum.ts"],
-    mode: "passthrough",
+    mode: "transform",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import assert from 'assert'
+        const test_let = (await import('./let.js')).x
+        assert(test_let.x === test_let.x, "let.ts worked")
+        const test_function = (await import('./function.js')).x
+        assert(test_function.x === test_function.x, "function.ts worked")
+        const test_class = (await import('./class.js')).x
+        assert(test_class.x === test_class.x, "class.ts worked")
+        const test_namespace = (await import('./namespace.js')).x
+        assert(test_namespace.x === test_namespace.x, "namespace.ts worked")
+        const test_enum = (await import('./enum.js')).x
+        assert(test_enum.x === test_enum.x, "enum.ts worked")
+      `,
+    },
   });
+  return;
   itBundled("ts/TSSiblingEnum", {
     // GENERATED
     files: {

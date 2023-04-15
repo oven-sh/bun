@@ -65,7 +65,7 @@ describe("bundler", () => {
     platform: "bun",
     run: { file: "/entry.ts" },
   });
-  itBundled("minify/TemplateStringIssue622", {
+  itBundled("edgecase/TemplateStringIssue622", {
     files: {
       "/entry.ts": /* js */ `
         capture(\`\\?\`);
@@ -75,7 +75,7 @@ describe("bundler", () => {
     capture: ["`\\\\?`", "hello`\\\\?`"],
     platform: "bun",
   });
-  itBundled("minify/StringNullBytes", {
+  itBundled("edgecase/StringNullBytes", {
     files: {
       "/entry.ts": /* js */ `
         capture("Hello\0");

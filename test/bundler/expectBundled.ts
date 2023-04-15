@@ -106,6 +106,7 @@ export interface BundlerTestInput {
   treeShaking?: boolean;
   unsupportedCSSFeatures?: string[];
   unsupportedJSFeatures?: string[];
+  /** if set to true or false, create or edit tsconfig.json to set compilerOptions.useDefineForClassFields */
   useDefineForClassFields?: boolean;
   sourceMap?: boolean | "inline" | "external";
 
@@ -264,6 +265,7 @@ export function expectBundled(
     treeShaking,
     unsupportedCSSFeatures,
     unsupportedJSFeatures,
+    useDefineForClassFields,
     ...unknownProps
   } = opts;
 
@@ -364,6 +366,26 @@ export function expectBundled(
     const filename = path.join(root, file);
     mkdirSync(path.dirname(filename), { recursive: true });
     writeFileSync(filename, dedent(contents).replace(/\{\{root\}\}/g, root));
+  }
+
+  if (useDefineForClassFields !== undefined) {
+    if (existsSync(path.join(root, "tsconfig.json"))) {
+      try {
+        const tsconfig = JSON.parse(readFileSync(path.join(root, "tsconfig.json"), "utf8"));
+        tsconfig.compilerOptions = tsconfig.compilerOptions ?? {};
+        tsconfig.compilerOptions.useDefineForClassFields = useDefineForClassFields;
+        writeFileSync(path.join(root, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
+      } catch (error) {
+        console.log(
+          "DEBUG NOTE: specifying useDefineForClassFields causes tsconfig.json to be parsed as JSON and not JSONC.",
+        );
+      }
+    } else {
+      writeFileSync(
+        path.join(root, "tsconfig.json"),
+        JSON.stringify({ compilerOptions: { useDefineForClassFields } }, null, 2),
+      );
+    }
   }
 
   // Run bun build cli. In the future we can move to using `Bun.Bundler`
@@ -650,7 +672,7 @@ export function expectBundled(
     options: opts,
     captureFile: (file, fnName = "capture") => {
       const fileContents = readFile(file);
-      const regex = new RegExp(`\\b${fnName}\\s*\\((.*?)\\)`, "g");
+      const regex = new RegExp(`\\b${fnName}\\s*\\(((?:\\(\\))?.*?)\\)`, "g");
       const matches = [...fileContents.matchAll(regex)];
       if (matches.length === 0) {
         throw new Error(`No ${fnName} calls found in ${file}`);

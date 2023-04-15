@@ -1,6 +1,7 @@
 import { FileSystemRouter, MatchedRoute, ServeOptions, Server } from "bun";
 
-import { BuildManifest, BuildConfig, BuildResult, BundlerConfig } from "./bun-build-config";
+import { BuildManifest, BuildConfig, BundlerConfig } from "./bun-build-config";
+import { BuildResult } from "./bun-build";
 
 interface AppBuildConfig extends BuildConfig {
   serve?: Array<AppServeConfig>;
@@ -110,6 +111,7 @@ interface HandlerContext {
         {
           mode: "static",
           dir: "./public",
+          "style": "static",
         },
       ],
     },

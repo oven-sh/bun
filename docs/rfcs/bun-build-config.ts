@@ -5,6 +5,7 @@
  */
 
 import { FileBlob } from "bun";
+import { Log } from "./bun-build-logs";
 type BunPlugin = Parameters<(typeof Bun)["plugin"]>[0];
 export type JavaScriptLoader = "jsx" | "js" | "ts" | "tsx";
 export type MacroMap = Record<string, Record<string, string>>;
@@ -54,7 +55,6 @@ export interface BundlerConfig {
   bundle?: boolean; // default true
   splitting?: boolean;
   plugins?: BunPlugin[];
-  cwd?: string;
 
   // dropped: preserveSymlinks. defer to tsconfig for this.
 
@@ -93,14 +93,10 @@ export interface BundlerConfig {
 
   resolve?: {
     conditions?: string[];
-    // unclear if either of these should be customizable 👇
-    mainFields?: string[];
-    extensions?: string[];
   };
 
-  publicPath?: string;
-  // handle build errors
-  catch?(errors: BundlerError[]): void;
+  origin?: string; // e.g. http://mydomain.com
+  assetOrigin?: string; // e.g. http://assets.mydomain.com
 
   // in Bun.Transpiler this only accepts a Loader string
   // change: set an ext->loader map
@@ -175,11 +171,10 @@ export type BuildManifest = {
     };
   };
 
+  // less important than `inputs`
   outputs: {
     [path: string]: {
       type: "chunk" | "entry-point" | "asset";
-
-      // low priority
       inputs: {
         [path: string]: {
           bytesInOutput: number;
@@ -193,18 +188,4 @@ export type BuildManifest = {
       exports: string[];
     };
   };
-};
-
-export type BuildResult<T> = {
-  // T will usually be a FileBlob
-  // or a Blob (for in-memory builds)
-  outputs: { path: string; result: T }[];
-  // only exists if `manifest` is true
-  manifest?: BuildManifest;
-};
-
-export type LazyBuildResult = {
-  then(cb: (context: any) => BuildConfig): LazyBuildResult;
-  run(): Promise<BuildResult<Blob>>;
-  write(dir: string): Promise<BuildResult<FileBlob>>;
 };

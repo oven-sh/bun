@@ -40,8 +40,8 @@ const BUN_EXE = (process.env.BUN_EXE && Bun.which(process.env.BUN_EXE)) ?? Bun.w
  *
  * Defaults to true unless you are running a single test.
  */
-const LOOSE = !process.env.BUN_BUNDLER_TEST_FILTER;
-export const RUN_UNCHECKED_TESTS = true;
+const LOOSE = !process.env.BUN_BUNDLER_TEST_FILTER && process.env.BUN_BUNDLER_TEST_LOOSE !== "false";
+export const RUN_UNCHECKED_TESTS = LOOSE;
 
 const outBaseTemplate = path.join(tmpdir(), "bun-build-tests", `${ESBUILD ? "esbuild" : "bun"}-`);
 if (!existsSync(path.dirname(outBaseTemplate))) mkdirSync(path.dirname(outBaseTemplate), { recursive: true });
@@ -975,7 +975,7 @@ export function itBundled(id: string, opts: BundlerTestInput): BundlerTestRef {
     }
   }
 
-  if (RUN_UNCHECKED_TESTS) {
+  if (LOOSE) {
     try {
       expectBundled(id, opts);
       it(id, () => {});

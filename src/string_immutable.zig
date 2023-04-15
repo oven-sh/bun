@@ -4344,7 +4344,11 @@ pub fn concatWithLength(
     length: usize,
 ) !string {
     var out = try allocator.alloc(u8, length);
-    @memcpy(out.ptr, args[0].ptr, args[0].len);
+    var remain = out;
+    for (args) |arg| {
+        @memcpy(remain.ptr, arg.ptr, arg.len);
+        remain = remain[arg.len..];
+    }
     return out;
 }
 

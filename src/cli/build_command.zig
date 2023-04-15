@@ -101,8 +101,17 @@ pub const BuildCommand = struct {
                     ctx.log,
                     ctx.args,
                 );
-                try log.msgs.appendSlice(result.errors);
-                try log.msgs.appendSlice(result.warnings);
+
+                if (log.msgs.items.len > 0) {
+                    try log.printForLogLevel(Output.errorWriter());
+
+                    if (result.errors.len > 0 or result.output_files.len == 0) {
+                        Output.flush();
+                        exitOrWatch(1, ctx.debug.hot_reload == .watch);
+                        unreachable;
+                    }
+                }
+
                 break :brk result.output_files;
             }
 

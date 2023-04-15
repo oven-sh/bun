@@ -1944,6 +1944,19 @@ pub const E = struct {
             };
         }
 
+        pub fn javascriptLength(s: *const String) u32 {
+            if (s.rope_len > 0) {
+                // We only support ascii ropes for now
+                return s.rope_len;
+            }
+
+            if (s.isUTF8()) {
+                return @truncate(u32, bun.simdutf.length.utf16.from.utf8.le(s.data));
+            }
+
+            return @truncate(u32, s.slice16().len);
+        }
+
         pub inline fn len(s: *const String) usize {
             return if (s.rope_len > 0) s.rope_len else s.data.len;
         }
@@ -2154,6 +2167,7 @@ pub const E = struct {
                 },
                 loc,
             );
+        }
     };
 
     pub const RegExp = struct {
@@ -5433,6 +5447,8 @@ pub const Ast = struct {
     /// Only populated when bundling
     platform: bun.options.Platform = .browser,
 
+    const_values: ConstValuesMap = .{},
+
     pub const CommonJSNamedExport = struct {
         loc_ref: LocRef,
         needs_decl: bool = true,
@@ -5441,6 +5457,7 @@ pub const Ast = struct {
 
     pub const NamedImports = std.ArrayHashMap(Ref, NamedImport, RefHashCtx, true);
     pub const NamedExports = bun.StringArrayHashMap(NamedExport);
+    pub const ConstValuesMap = std.ArrayHashMapUnmanaged(Ref, Expr, RefHashCtx, false);
 
     pub fn initTest(parts: []Part) Ast {
         return Ast{
@@ -5671,6 +5688,7 @@ pub const Part = struct {
         dirname_filename,
         bun_plugin,
         bun_test,
+        dead_due_to_inlining,
     };
 
     pub const SymbolUseMap = std.ArrayHashMapUnmanaged(Ref, Symbol.Use, RefHashCtx, false);

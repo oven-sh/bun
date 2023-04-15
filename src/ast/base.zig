@@ -203,6 +203,7 @@ pub const Ref = packed struct(u64) {
     }
 
     pub const ArrayHashCtx = RefHashCtx;
+    pub const HashCtx = RefCtx;
 
     pub const Int = std.meta.Int(.unsigned, (64 - 2) / 2);
 

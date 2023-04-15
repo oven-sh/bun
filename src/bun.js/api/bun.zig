@@ -2602,7 +2602,7 @@ pub const Unsafe = struct {
     ) js.JSValueRef {
         _ = ctx;
         const Reporter = @import("../../report.zig");
-        Reporter.globalError(error.SegfaultTest);
+        Reporter.globalError(error.SegfaultTest, null);
     }
 
     pub fn arrayBufferToString(

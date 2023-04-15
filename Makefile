@@ -1074,6 +1074,7 @@ release-bin-dir:
 
 .PHONY: dev-obj
 dev-obj:
+	rm -f $(DEBUG_PACKAGE_DIR)/bun-debug.o
 	$(ZIG) build obj -freference-trace -Dcpu="$(CPU_TARGET)"
 
 .PHONY: dev-obj-linux
@@ -1084,7 +1085,7 @@ dev-obj-linux:
 dev: mkdir-dev dev-obj bun-link-lld-debug
 
 mkdir-dev:
-	mkdir -p $(DEBUG_PACKAGE_DIR)/bin
+	mkdir -p $(DEBUG_PACKAGE_DIR)
 
 test-all:
 	$(RELEASE_BUN) test

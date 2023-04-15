@@ -42,24 +42,24 @@ type BundlerError = {
   error: Error;
 };
 
-export interface BuildConfig {
+export interface BuildConfig extends BundlerConfig {
+  outdir?: string;
+  entrypoints?: string[];
+  root?: string; // equiv. outbase
+  watch?: boolean;
+}
+
+export interface BundlerConfig {
   name?: string; // default "default"
   bundle?: boolean; // default true
-  outdir?: string;
   splitting?: boolean;
   plugins?: BunPlugin[];
   cwd?: string;
-  watch?: boolean;
 
-  // dropped: preserveSymlinks
-  // defer to tsconfig for this
+  // dropped: preserveSymlinks. defer to tsconfig for this.
 
   // whether to parse manifest after build
   manifest?: boolean;
-
-  // inputs
-  entrypoints?: string[];
-  root?: string; // equiv. outbase
 
   naming?:
     | string
@@ -196,15 +196,15 @@ export type BuildManifest = {
 };
 
 export type BuildResult<T> = {
+  // T will usually be a FileBlob
+  // or a Blob (for in-memory builds)
+  outputs: { path: string; result: T }[];
   // only exists if `manifest` is true
   manifest?: BuildManifest;
-  // per-build context that can be written to by plugins
-  context?: object;
-  outputs: { path: string; result: T }[];
 };
 
 export type LazyBuildResult = {
-  then(cb: (context: any) => BuildOptions): LazyBuildResult;
+  then(cb: (context: any) => BuildConfig): LazyBuildResult;
   run(): Promise<BuildResult<Blob>>;
   write(dir: string): Promise<BuildResult<FileBlob>>;
 };

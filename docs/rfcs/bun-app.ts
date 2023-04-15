@@ -1,21 +1,64 @@
-import { FileBlob, ServeOptions, Server } from "bun";
+import { FileSystemRouter, MatchedRoute, ServeOptions, Server } from "bun";
 
-import { BuildManifest, BuildOptions, BuildResult, LazyBuildResult } from "./bun-bundler-config";
+import { BuildManifest, BuildConfig, BuildResult, BundlerConfig } from "./bun-build-config";
 
-interface AppOptions extends BuildOptions {
-  serve?: Array<
-    | {
-        mode: "static";
-        dir: string; // directory to serve, usually the build dir
-        requestPrefix?: string; // request prefix, e.g. "/static"
-      }
-    | {
-        mode: "handler";
-        requestPrefix?: string; // request prefix, e.g. "/static"
-        handler: string; // e.g. ./serve.tsx. must match an entrypoint.
-      }
-  >;
+interface AppBuildConfig extends BuildConfig {
+  serve?: Array<AppServeConfig>;
 }
+
+interface AppConfig {
+  builds: { [k: string]: BundlerConfig };
+  fetch: Array<AppServeConfig>;
+}
+
+type AppServeConfig =
+  | {
+      // serve static files
+      mode: "static";
+      // directory to serve from
+      // e.g. "./public"
+      dir: string;
+      style: "static";
+      // serve these files at a path
+      // e.g. "/static"
+      prefix?: string;
+    }
+  | {
+      // serve the build outputs of a given build
+      mode: "outputs";
+      // must match a `name` specified in one of the `AppConfig`s
+      // serve the build outputs of the build
+      // with the given name
+      build: "client";
+      // serve these files at a path
+      // e.g. "/static"
+      prefix?: string;
+    }
+  | {
+      mode: "handler";
+      // request prefix, e.g. "/static"
+      // if incoming Request  doesn't match prefix, no JS runs
+      prefix?: string;
+      // path to file that `export default`s a handler
+      // this file is automatically added as an entrypoint in the build
+      // e.g. ./serve.tsx
+
+      handler: string;
+      // default { manifest: true }
+      context?: {
+        // if true, expose build manifest on ctx.manifest
+        // default true
+        manifest: boolean;
+        // check incoming request against this router
+        // return MatchedResult on ctx.match
+        match?: {
+          dir: string;
+          prefix: string;
+          style: "nextjs";
+        };
+      };
+      router?: FileSystemRouter;
+    };
 
 export declare class App {
   // you can a BuildConfig of an array of BuildConfigs
@@ -28,12 +71,12 @@ export declare class App {
    *   condition ? {} : undefined
    * ])
    */
-  constructor(options: AppOptions | (AppOptions | undefined)[]);
+  constructor(options: AppBuildConfig | (AppBuildConfig | undefined)[]);
   // run a build and start the dev server
   serve(options: Partial<ServeOptions>): Promise<Server>;
   // run full build
   build(options?: {
-    // all output directories are specified in `AppOptions`
+    // all output directories are specified in `AppBuildConfig`
     // the `write` flag determines whether the build is written to disk
     // if write = true, the Blobs are BunFile
     // if write = false, the Blobs are just Blobs
@@ -43,8 +86,12 @@ export declare class App {
   handle(req: Request): Promise<Response | null>;
 }
 
+// the data that is passed as context to the Request handler
+// - manifest: always provided
+// - match: MatchedResult, only provided if `match` is specified in the `AppConfig`
 interface HandlerContext {
   manifest: BuildManifest;
+  match?: MatchedRoute;
 }
 
 /////////////////////////////////////
@@ -100,7 +147,7 @@ interface HandlerContext {
         {
           mode: "handler",
           handler: "./handler.tsx", // automatically included as entrypoing
-          requestPrefix: "/api",
+          prefix: "/api",
         },
       ],
       // bundler config..

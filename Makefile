@@ -1074,7 +1074,6 @@ release-bin-dir:
 
 .PHONY: dev-obj
 dev-obj:
-	rm -f $(DEBUG_PACKAGE_DIR)/bun-debug.o
 	$(ZIG) build obj -freference-trace -Dcpu="$(CPU_TARGET)"
 
 .PHONY: dev-obj-linux

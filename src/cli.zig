@@ -199,6 +199,8 @@ pub const Arguments = struct {
         clap.parseParam("--server-components        Enable React Server Components (experimental)") catch unreachable,
         clap.parseParam("--splitting                      Split up code!") catch unreachable,
         clap.parseParam("--transform                      Do not bundle") catch unreachable,
+        clap.parseParam("--minify-syntax                  Minify syntax and inline data (experimental)") catch unreachable,
+        clap.parseParam("--minify-whitespace              Minify whitespace (experimental)") catch unreachable,
     };
 
     // TODO: update test completions
@@ -499,6 +501,8 @@ pub const Arguments = struct {
 
         if (cmd == .BuildCommand) {
             ctx.bundler_options.transform_only = args.flag("--transform");
+            ctx.bundler_options.minify_syntax = args.flag("--minify-syntax");
+            ctx.bundler_options.minify_whitespace = args.flag("--minify-whitespace");
             if (args.option("--outdir")) |outdir| {
                 if (outdir.len > 0) {
                     ctx.bundler_options.outdir = outdir;
@@ -912,6 +916,8 @@ pub const Command = struct {
             react_server_components: bool = false,
             code_splitting: bool = false,
             transform_only: bool = false,
+            minify_syntax: bool = false,
+            minify_whitespace: bool = false,
         };
 
         const _ctx = Command.Context{

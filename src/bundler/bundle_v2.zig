@@ -946,7 +946,9 @@ const ParseTask = struct {
         opts.features.top_level_await = true;
         opts.features.jsx_optimization_inline = platform.isBun() and (bundler.options.jsx_optimization_inline orelse !task.jsx.development);
         opts.features.auto_import_jsx = task.jsx.parse and bundler.options.auto_import_jsx;
-        opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
+        opts.features.trim_unused_imports = loader.isTypeScript() or (bundler.options.trim_unused_imports orelse false);
+        opts.features.inlining = true;
+
         opts.tree_shaking = task.tree_shaking;
         opts.module_type = task.module_type;
         task.jsx.parse = loader.isJSX();
@@ -1445,6 +1447,8 @@ pub const Graph = struct {
 
     use_directive_entry_points: UseDirective.List = .{},
 
+    const_values: std.HashMapUnmanaged(Ref, Expr, Ref.HashCtx, 80) = .{},
+
     pub const InputFile = struct {
         source: Logger.Source,
         loader: options.Loader = options.Loader.file,
@@ -1542,6 +1546,8 @@ const LinkerGraph = struct {
     react_server_component_boundary: BitSet = .{},
     has_client_components: bool = false,
     has_server_components: bool = false,
+
+    const_values: std.HashMapUnmanaged(Ref, Expr, Ref.HashCtx, 80) = .{},
 
     pub fn init(allocator: std.mem.Allocator, file_count: usize) !LinkerGraph {
         return LinkerGraph{
@@ -1908,6 +1914,26 @@ const LinkerGraph = struct {
                 dest.* = src.clone(this.allocator) catch @panic("Out of memory");
             }
             this.symbols = js_ast.Symbol.Map.initList(symbols);
+        }
+
+        {
+            var const_values = this.const_values;
+            var count: usize = 0;
+
+            for (this.ast.items(.const_values)) |const_value| {
+                count += const_value.count();
+            }
+
+            if (count > 0) {
+                try const_values.ensureTotalCapacity(this.allocator, @truncate(u32, count));
+                for (this.ast.items(.const_values)) |const_value| {
+                    for (const_value.keys(), const_value.values()) |key, value| {
+                        const_values.putAssumeCapacityNoClobber(key, value);
+                    }
+                }
+            }
+
+            this.const_values = const_values;
         }
 
         var in_resolved_exports: []ResolvedExports = this.meta.items(.resolved_exports);
@@ -2363,7 +2389,7 @@ const LinkerContext = struct {
                     const part_index = @truncate(u32, part_index_);
                     const is_part_in_this_chunk = is_file_in_chunk and part.is_live;
                     for (part.import_record_indices.slice()) |record_id| {
-                        const record = &records[record_id];
+                        const record: *const ImportRecord = &records[record_id];
                         if (record.source_index.isValid() and (record.kind == .stmt or is_part_in_this_chunk)) {
                             if (v.c.isExternalDynamicImport(record, source_index)) {
                                 // Don't follow import() dependencies
@@ -3431,7 +3457,6 @@ const LinkerContext = struct {
         const loc = Logger.Loc.Empty;
         // todo: investigate if preallocating this array is faster
         var ns_export_dependencies = std.ArrayList(js_ast.Dependency).initCapacity(allocator_, re_exports_count) catch unreachable;
-
         for (export_aliases) |alias| {
             var export_ = resolved_exports.getPtr(alias).?;
 
@@ -3719,22 +3744,58 @@ const LinkerContext = struct {
         var parts_slice: []js_ast.Part = parts.slice();
         var named_imports: js_ast.Ast.NamedImports = c.graph.ast.items(.named_imports)[id];
         defer c.graph.ast.items(.named_imports)[id] = named_imports;
-        for (parts_slice, 0..) |*part, part_index| {
+        outer: for (parts_slice, 0..) |*part, part_index| {
 
             // TODO: inline const TypeScript enum here
 
             // TODO: inline function calls here
 
-            // note: if we crash on append, it is due to threadlocal heaps in mimalloc
-            const symbol_uses = part.symbol_uses.keys();
+            // Inline cross-module constants
+            if (c.graph.const_values.count() > 0) {
+                // First, find any symbol usage that points to a constant value.
+                // This will be pretty rare.
+                const first_constant_i: ?usize = brk: {
+                    for (part.symbol_uses.keys(), 0..) |ref, j| {
+                        if (c.graph.const_values.contains(ref)) {
+                            break :brk j;
+                        }
+                    }
+
+                    break :brk null;
+                };
+                if (first_constant_i) |j| {
+                    var end_i: usize = 0;
+                    // symbol_uses is an array
+                    var keys = part.symbol_uses.keys()[j..];
+                    var values = part.symbol_uses.values()[j..];
+                    for (keys, values) |ref, val| {
+                        if (c.graph.const_values.contains(ref)) {
+                            continue;
+                        }
+
+                        keys[end_i] = ref;
+                        values[end_i] = val;
+                        end_i += 1;
+                    }
+                    part.symbol_uses.entries.len = end_i + j;
+
+                    if (part.symbol_uses.entries.len == 0 and part.can_be_removed_if_unused) {
+                        part.tag = .dead_due_to_inlining;
+                        part.dependencies.len = 0;
+                        continue :outer;
+                    }
+
+                    part.symbol_uses.reIndex(allocator_) catch unreachable;
+                }
+            }
+
+            var symbol_uses = part.symbol_uses.keys();
 
             // Now that we know this, we can determine cross-part dependencies
             for (symbol_uses, 0..) |ref, j| {
                 if (comptime Environment.allow_assert) {
                     std.debug.assert(part.symbol_uses.values()[j].count_estimate > 0);
                 }
-
-                // TODO: inline const values from an import
 
                 const other_parts = c.topLevelSymbolsToParts(id, ref);
 
@@ -4566,6 +4627,7 @@ const LinkerContext = struct {
                 .allocator = allocator,
                 .require_ref = runtimeRequireRef,
                 .minify_whitespace = c.options.minify_whitespace,
+                .const_values = c.graph.const_values,
             };
 
             var cross_chunk_import_records = ImportRecord.List.initCapacity(allocator, chunk.cross_chunk_imports.len) catch unreachable;
@@ -5190,6 +5252,7 @@ const LinkerContext = struct {
             .require_or_import_meta_for_source_callback = js_printer.RequireOrImportMeta.Callback.init(LinkerContext, requireOrImportMetaForSource, c),
 
             .minify_whitespace = c.options.minify_whitespace,
+            .const_values = c.graph.const_values,
         };
 
         return .{
@@ -5787,6 +5850,7 @@ const LinkerContext = struct {
                                 stmt.loc,
                             );
                             stmt.data.s_local.is_export = false;
+                            
                         }
                     },
 
@@ -6379,6 +6443,7 @@ const LinkerContext = struct {
 
             .commonjs_named_exports = ast.commonjs_named_exports,
             .commonjs_named_exports_ref = ast.exports_ref,
+            .const_values = c.graph.const_values,
 
             .allocator = allocator,
             .to_esm_ref = toESMRef,
@@ -6692,7 +6757,8 @@ const LinkerContext = struct {
             }
         }
 
-        for (parts[source_index].slice()) |part| {
+        const parts_in_file = parts[source_index].slice();
+        for (parts_in_file) |part| {
             for (part.dependencies.slice()) |dependency| {
                 if (dependency.source_index.get() != source_index) {
                     if (imports_a_boundary and

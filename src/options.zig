@@ -1410,6 +1410,7 @@ pub const BundleOptions = struct {
 
     inlining: bool = false,
     minify_whitespace: bool = false,
+    minify_syntax: bool = false,
 
     pub fn setProduction(this: *BundleOptions, value: bool) void {
         this.production = value;

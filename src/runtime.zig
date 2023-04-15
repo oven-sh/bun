@@ -296,6 +296,8 @@ pub const Runtime = struct {
 
         commonjs_named_exports: bool = true,
 
+        minify_syntax: bool = false,
+
         /// Instead of jsx("div", {}, void 0)
         /// ->
         /// {

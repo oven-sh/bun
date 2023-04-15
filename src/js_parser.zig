@@ -74,8 +74,6 @@ const StringHashMapUnamanged = bun.StringHashMapUnmanaged;
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const NodeFallbackModules = @import("./node_fallbacks.zig");
 
-const RefExprMap = std.ArrayHashMapUnmanaged(Ref, Expr, RefHashCtx, false);
-
 const SkipTypeParameterResult = enum {
     did_not_skip_anything,
     could_be_type_cast,
@@ -4751,7 +4749,7 @@ fn NewParser_(
 
         scope_order_to_visit: []ScopeOrder = &([_]ScopeOrder{}),
 
-        const_values: RefExprMap = .{},
+        const_values: js_ast.Ast.ConstValuesMap = .{},
 
         pub fn transposeImport(p: *P, arg: Expr, state: anytype) Expr {
             // The argument must be a string
@@ -5398,6 +5396,8 @@ fn NewParser_(
 
             if (p.options.features.inlining) {
                 if (p.const_values.get(ref)) |replacement| {
+                    // TODO:
+                    // p.ignoreUsage(ref);
                     return replacement;
                 }
             }
@@ -15028,6 +15028,13 @@ fn NewParser_(
                     for (e_.parts) |*part| {
                         part.value = p.visitExpr(part.value);
                     }
+
+                    // When mangling, inline string values into the template literal. Note that
+                    // it may no longer be a template literal after this point (it may turn into
+                    // a plain string literal instead).
+                    if (p.should_fold_typescript_constant_expressions or p.options.features.inlining) {
+                        return e_.fold(p.allocator, expr.loc);
+                    }
                 },
 
                 .inline_identifier => |id| {
@@ -17073,11 +17080,7 @@ fn NewParser_(
                 .e_string => |str| {
                     // minify "long-string".length to 11
                     if (strings.eqlComptime(name, "length")) {
-                        // don't handle UTF-16 strings for now
-                        if (str.is_utf16)
-                            return null;
-
-                        return p.newExpr(E.Number{ .value = @intToFloat(f64, str.len()) }, loc);
+                        return p.newExpr(E.Number{ .value = @intToFloat(f64, str.javascriptLength()) }, loc);
                     }
                 },
                 .e_object => |obj| {
@@ -20814,6 +20817,9 @@ fn NewParser_(
                 // .top_Level_await_keyword = p.top_level_await_keyword,
                 .bun_plugin = p.bun_plugin,
                 .commonjs_named_exports = p.commonjs_named_exports,
+
+                // TODO:
+                // .const_values = p.const_values,
             };
         }
 

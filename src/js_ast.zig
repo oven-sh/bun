@@ -1430,6 +1430,49 @@ pub const E = struct {
     pub const Number = struct {
         value: f64,
 
+        const double_digit = [_]string{ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62", "63", "64", "65", "66", "67", "68", "69", "70", "71", "72", "73", "74", "75", "76", "77", "78", "79", "80", "81", "82", "83", "84", "85", "86", "87", "88", "89", "90", "91", "92", "93", "94", "95", "96", "97", "98", "99", "100" };
+        const neg_double_digit = [_]string{ "-0", "-1", "-2", "-3", "-4", "-5", "-6", "-7", "-8", "-9", "-11", "-12", "-13", "-14", "-15", "-16", "-17", "-18", "-19", "-20", "-21", "-22", "-23", "-24", "-25", "-26", "-27", "-28", "-29", "-30", "-31", "-32", "-33", "-34", "-35", "-36", "-37", "-38", "-39", "-40", "-41", "-42", "-43", "-44", "-45", "-46", "-47", "-48", "-49", "-50", "-51", "-52", "-53", "-54", "-55", "-56", "-57", "-58", "-59", "-60", "-61", "-62", "-63", "-64", "-65", "-66", "-67", "-68", "-69", "-70", "-71", "-72", "-73", "-74", "-75", "-76", "-77", "-78", "-79", "-80", "-81", "-82", "-83", "-84", "-85", "-86", "-87", "-88", "-89", "-90", "-91", "-92", "-93", "-94", "-95", "-96", "-97", "-98", "-99", "-100" };
+
+        /// String concatenation with numbers is required by the TypeScript compiler for
+        /// "constant expression" handling in enums. However, we don't want to introduce
+        /// correctness bugs by accidentally stringifying a number differently than how
+        /// a real JavaScript VM would do it. So we are conservative and we only do this
+        /// when we know it'll be the same result.
+        pub fn toStringSafely(this: Number, allocator: std.mem.Allocator) ?string {
+            return toStringFromF64Safe(this.value, allocator);
+        }
+
+        pub fn toStringFromF64Safe(value: f64, allocator: std.mem.Allocator) ?string {
+            if (value == @trunc(value)) {
+                const int_value = @floatToInt(i64, value);
+                const abs = @intCast(u64, std.math.absInt(int_value) catch return null);
+                if (abs < double_digit.len) {
+                    return if (value < 0)
+                        neg_double_digit[abs]
+                    else
+                        double_digit[abs];
+                }
+
+                if (abs <= std.math.maxInt(i32)) {
+                    return std.fmt.allocPrint(allocator, "{d}", .{@intCast(i32, int_value)}) catch return null;
+                }
+            }
+
+            if (std.math.isNan(value)) {
+                return "NaN";
+            }
+
+            if (std.math.isNegativeInf(value)) {
+                return "-Infinity";
+            }
+
+            if (std.math.isInf(value)) {
+                return "Infinity";
+            }
+
+            return null;
+        }
+
         pub inline fn toU64(self: Number) u64 {
             @setRuntimeSafety(false);
             return @floatToInt(u64, @max(@trunc(self.value), 0));
@@ -2022,6 +2065,95 @@ pub const E = struct {
         tag: ?ExprNodeIndex = null,
         head: E.String,
         parts: []TemplatePart = &([_]TemplatePart{}),
+
+        /// "`a${'b'}c`" => "`abc`"
+        pub fn fold(
+            this: *Template,
+            allocator: std.mem.Allocator,
+            loc: logger.Loc,
+        ) Expr {
+            if (this.tag != null) {
+                return Expr{
+                    .data = .{
+                        .e_template = this,
+                    },
+                    .loc = loc,
+                };
+            }
+
+            // we only fold utf-8/ascii for now
+            if (this.parts.len == 0 or !this.head.isUTF8()) {
+                return Expr.init(E.String, this.head, loc);
+            }
+
+            var parts = std.ArrayList(TemplatePart).initCapacity(allocator, this.parts.len) catch unreachable;
+            var head = Expr.init(E.String, this.head, loc);
+            for (this.parts) |part_| {
+                var part = part_;
+
+                switch (part.value.data) {
+                    .e_number => {
+                        if (part.value.data.e_number.toStringSafely(allocator)) |s| {
+                            part.value = Expr.init(E.String, E.String.init(s), part.value.loc);
+                        }
+                    },
+                    .e_null => {
+                        part.value = Expr.init(E.String, E.String.init("null"), part.value.loc);
+                    },
+                    .e_boolean => {
+                        part.value = Expr.init(E.String, E.String.init(if (part.value.data.e_boolean.value)
+                            "true"
+                        else
+                            "false"), part.value.loc);
+                    },
+                    .e_undefined => {
+                        part.value = Expr.init(E.String, E.String.init("undefined"), part.value.loc);
+                    },
+                    else => {},
+                }
+
+                if (part.value.data == .e_string and part.tail.isUTF8() and part.value.data.e_string.isUTF8()) {
+                    if (parts.items.len == 0) {
+                        if (part.value.data.e_string.len() > 0) {
+                            head.data.e_string.push(part.value.data.e_string);
+                        }
+
+                        if (part.tail.len() > 0) {
+                            head.data.e_string.push(Expr.init(E.String, part.tail, part.tail_loc).data.e_string);
+                        }
+
+                        continue;
+                    } else {
+                        var prev_part = &parts.items[parts.items.len - 1];
+
+                        if (part.value.data.e_string.len() > 0) {
+                            prev_part.tail.push(part.value.data.e_string);
+                        }
+
+                        if (part.tail.len() > 0) {
+                            prev_part.tail.push(Expr.init(E.String, part.tail, part.tail_loc).data.e_string);
+                        }
+                    }
+                } else {
+                    parts.appendAssumeCapacity(part);
+                }
+            }
+
+            if (parts.items.len == 0) {
+                parts.deinit();
+
+                return head;
+            }
+
+            return Expr.init(
+                E.Template,
+                E.Template{
+                    .tag = null,
+                    .parts = parts.items,
+                    .head = head.data.e_string.*,
+                },
+                loc,
+            );
     };
 
     pub const RegExp = struct {

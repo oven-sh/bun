@@ -1478,10 +1478,16 @@ pub const Expect = struct {
         const thisValue = callFrame.this();
 
         const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
             return .zero;
         };
         value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalObject.throw("toBeFalsy() must be called in a test", .{});
+            return .zero;
+        }
+        active_test_expectation_counter.actual += 1;
 
         const not = this.op.contains(.not);
         var pass = false;

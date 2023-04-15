@@ -1999,6 +1999,10 @@ pub const OutputFile = struct {
         };
     }
 
+    pub fn moveTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
+        try bun.C.moveFileZ(file.value.move.dir, &(try std.os.toPosixPath(file.value.move.getPathname())), dir, &(try std.os.toPosixPath(rel_path)));
+    }
+
     pub fn copyTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
         var dir_obj = std.fs.Dir{ .fd = dir };
         const file_out = (try dir_obj.createFile(rel_path, .{}));

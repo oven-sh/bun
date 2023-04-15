@@ -986,7 +986,7 @@ pub const Bundler = struct {
         }
 
         switch (loader) {
-            .jsx, .tsx, .js, .ts, .json, .toml => {
+            .jsx, .tsx, .js, .ts, .json, .toml, .text => {
                 var result = bundler.parse(
                     ParseOptions{
                         .allocator = bundler.allocator,
@@ -1052,6 +1052,9 @@ pub const Bundler = struct {
                 }
 
                 output_file.value = .{ .move = file_op };
+            },
+            .dataurl, .base64 => {
+                Output.panic("TODO: dataurl, base64", .{}); // TODO
             },
             .css => {
                 const CSSBuildContext = struct {
@@ -1476,7 +1479,6 @@ pub const Bundler = struct {
                     .input_fd = input_fd,
                 };
             },
-            // TODO: use lazy export AST
             .toml => {
                 var expr = TOML.parse(&source, bundler.log, allocator) catch return null;
                 var stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
@@ -1720,46 +1722,15 @@ pub const Bundler = struct {
         return entry_point_i;
     }
 
-    pub fn bundle(
+    pub fn transform(
+        bundler: *Bundler,
         allocator: std.mem.Allocator,
         log: *logger.Log,
         opts: Api.TransformOptions,
     ) !options.TransformResult {
-        var bundler = try Bundler.init(allocator, log, opts, null, null);
-        bundler.configureLinker();
-        try bundler.configureRouter(false);
-        try bundler.configureDefines();
-        bundler.macro_context = js_ast.Macro.MacroContext.init(&bundler);
-
-        if (bundler.env.map.get("BUN_CONFIG_MINIFY_WHITESPACE") != null) {
-            bundler.options.minify_whitespace = true;
-        }
-
-        if (bundler.env.map.get("BUN_CONFIG_INLINE") != null) {
-            bundler.options.inlining = true;
-        }
-
-        var skip_normalize = false;
-        var load_from_routes = false;
-        if (bundler.options.routes.routes_enabled and bundler.options.entry_points.len == 0) {
-            if (bundler.router) |router| {
-                bundler.options.entry_points = try router.getEntryPoints();
-                skip_normalize = true;
-                load_from_routes = true;
-            }
-        }
-
-        //  100.00 µs std.fifo.LinearFifo(resolver.Result,std.fifo.LinearFifoBufferType { .Dynamic = {}}).writeItemAssumeCapacity
-        if (bundler.options.resolve_mode != .lazy) {
-            try bundler.resolve_queue.ensureUnusedCapacity(3);
-        }
-
+        _ = opts;
         var entry_points = try allocator.alloc(_resolver.Result, bundler.options.entry_points.len);
-        if (skip_normalize) {
-            entry_points = entry_points[0..bundler.enqueueEntryPoints(entry_points, false)];
-        } else {
-            entry_points = entry_points[0..bundler.enqueueEntryPoints(entry_points, true)];
-        }
+        entry_points = entry_points[0..bundler.enqueueEntryPoints(entry_points, true)];
 
         if (log.level == .verbose) {
             bundler.resolver.debug_logs = try DebugLogs.init(allocator);
@@ -1769,20 +1740,6 @@ pub const Bundler = struct {
 
         if (bundler.options.output_dir_handle == null) {
             const outstream = std.io.getStdOut();
-
-            if (load_from_routes) {
-                if (bundler.options.framework) |*framework| {
-                    if (framework.client.isEnabled()) {
-                        did_start = true;
-                        try switch (bundler.options.import_path_format) {
-                            .relative => bundler.processResolveQueue(.relative, true, @TypeOf(outstream), outstream),
-                            .absolute_url => bundler.processResolveQueue(.absolute_url, true, @TypeOf(outstream), outstream),
-                            .absolute_path => bundler.processResolveQueue(.absolute_path, true, @TypeOf(outstream), outstream),
-                            .package_path => bundler.processResolveQueue(.package_path, true, @TypeOf(outstream), outstream),
-                        };
-                    }
-                }
-            }
 
             if (!did_start) {
                 try switch (bundler.options.import_path_format) {
@@ -1797,20 +1754,6 @@ pub const Bundler = struct {
                 Output.printError("Invalid or missing output directory.", .{});
                 Global.crash();
             };
-
-            if (load_from_routes) {
-                if (bundler.options.framework) |*framework| {
-                    if (framework.client.isEnabled()) {
-                        did_start = true;
-                        try switch (bundler.options.import_path_format) {
-                            .relative => bundler.processResolveQueue(.relative, true, std.fs.Dir, output_dir),
-                            .absolute_url => bundler.processResolveQueue(.absolute_url, true, std.fs.Dir, output_dir),
-                            .absolute_path => bundler.processResolveQueue(.absolute_path, true, std.fs.Dir, output_dir),
-                            .package_path => bundler.processResolveQueue(.package_path, true, std.fs.Dir, output_dir),
-                        };
-                    }
-                }
-            }
 
             if (!did_start) {
                 try switch (bundler.options.import_path_format) {

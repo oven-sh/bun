@@ -90,33 +90,23 @@ pub const BuildCommand = struct {
             return;
         }
 
-        // var generated_server = false;
-        // if (this_bundler.options.framework) |*framework| {
-        //     if (framework.toAPI(allocator, this_bundler.fs.top_level_dir) catch null) |_server_conf| {
-        //         ServerBundleGeneratorThread.generate(
-        //             log,
-        //             env_loader,
-        //             ctx,
-        //             server_bundle_filepath,
-        //             _server_conf,
-        //             loaded_route_config,
-        //             this_bundler.router,
-        //         );
-        //         generated_server = true;
+        const output_files: []options.OutputFile = brk: {
+            if (ctx.bundler_options.transform_only) {
+                this_bundler.linker.options.resolve_mode = .lazy;
+                this_bundler.options.import_path_format = .relative;
 
-        //         if (log.msgs.items.len > 0) {
-        //             try log.printForLogLevel(Output.errorWriter());
-        //             log.* = logger.Log.init(allocator);
-        //             Output.flush();
-        //         }
-        //     }
-        // }
+                // TODO: refactor this .transform function
+                const result = try this_bundler.transform(
+                    ctx.allocator,
+                    ctx.log,
+                    ctx.args,
+                );
+                try log.msgs.appendSlice(result.errors);
+                try log.msgs.appendSlice(result.warnings);
+                break :brk result.output_files;
+            }
 
-        {
-
-            // Always generate the client-only bundle
-            // we can revisit this decision if people ask
-            const output_files = BundleV2.generate(
+            break :brk (BundleV2.generate(
                 &this_bundler,
                 allocator,
                 &estimated_input_lines_of_code_,
@@ -134,34 +124,38 @@ pub const BuildCommand = struct {
                 Output.flush();
                 exitOrWatch(1, ctx.debug.hot_reload == .watch);
                 unreachable;
-            };
+            }).items;
+        };
 
+        {
             {
                 dump: {
                     defer Output.flush();
                     var writer = Output.errorWriter();
                     var output_dir = this_bundler.options.output_dir;
-                    if (ctx.bundler_options.outfile.len > 0 and output_files.items.len == 1 and output_files.items[0].value == .buffer) {
+                    if (ctx.bundler_options.outfile.len > 0 and output_files.len == 1 and output_files[0].value == .buffer) {
                         output_dir = std.fs.path.dirname(ctx.bundler_options.outfile) orelse ".";
-                        output_files.items[0].input.text = std.fs.path.basename(ctx.bundler_options.outfile);
+                        output_files[0].input.text = std.fs.path.basename(ctx.bundler_options.outfile);
                     }
 
-                    if (output_dir.len == 0 and output_files.items.len == 1 and output_files.items[0].value == .buffer) {
-                        try writer.writeAll(output_files.items[0].value.buffer);
+                    if (output_dir.len == 0 and ctx.bundler_options.outfile.len == 0) {
+                        // if --transform is passed, it won't have an output dir
+                        if (output_files[0].value == .buffer)
+                            try writer.writeAll(output_files[0].value.buffer);
                         break :dump;
                     }
 
                     const root_path = output_dir;
                     const root_dir = try std.fs.cwd().makeOpenPathIterable(root_path, .{});
-                    var all_paths = try ctx.allocator.alloc([]const u8, output_files.items.len);
+                    var all_paths = try ctx.allocator.alloc([]const u8, output_files.len);
                     var max_path_len: usize = 0;
-                    for (all_paths, output_files.items) |*dest, src| {
+                    for (all_paths, output_files) |*dest, src| {
                         dest.* = src.input.text;
                     }
 
                     var from_path = resolve_path.longestCommonPath(all_paths);
 
-                    for (output_files.items) |f| {
+                    for (output_files) |f| {
                         max_path_len = std.math.max(
                             std.math.max(from_path.len, f.input.text.len) + 2 - from_path.len,
                             max_path_len,
@@ -171,13 +165,13 @@ pub const BuildCommand = struct {
                     // On posix, file handles automatically close on process exit by the OS
                     // Closing files shows up in profiling.
                     // So don't do that unless we actually need to.
-                    // const do_we_need_to_close = !FeatureFlags.store_file_descriptors or (@intCast(usize, root_dir.fd) + open_file_limit) < output_files.items.len;
+                    // const do_we_need_to_close = !FeatureFlags.store_file_descriptors or (@intCast(usize, root_dir.fd) + open_file_limit) < output_files.len;
 
                     var filepath_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                     filepath_buf[0] = '.';
                     filepath_buf[1] = '/';
 
-                    for (output_files.items) |f| {
+                    for (output_files) |f| {
                         var rel_path: []const u8 = undefined;
                         switch (f.value) {
                             // easy mode: write the buffer
@@ -194,12 +188,12 @@ pub const BuildCommand = struct {
                                 try root_dir.dir.writeFile(rel_path, value);
                             },
                             .move => |value| {
-                                // const primary = f.input.text[from_path.len..];
-                                // bun.copy(u8, filepath_buf[2..], primary);
-                                // rel_path = filepath_buf[0 .. primary.len + 2];
+                                const primary = f.input.text[from_path.len..];
+                                bun.copy(u8, filepath_buf[2..], primary);
+                                rel_path = filepath_buf[0 .. primary.len + 2];
                                 rel_path = value.pathname;
 
-                                // try f.moveTo(result.outbase, constStrToU8(rel_path), root_dir.fd);
+                                try f.moveTo(root_path, bun.constStrToU8(rel_path), root_dir.dir.fd);
                             },
                             .copy => |value| {
                                 rel_path = value.pathname;

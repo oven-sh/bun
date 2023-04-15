@@ -901,7 +901,12 @@ pub const Linker = struct {
                     pretty = _pretty;
                     relative_name = try linker.allocator.dupe(u8, relative_name);
                 } else {
-                    pretty = try linker.allocator.dupe(u8, relative_name);
+                    if (relative_name.len > 1 and !(relative_name[0] == std.fs.path.sep or relative_name[0] == '.')) {
+                        pretty = try strings.concat(linker.allocator, &.{ "./", relative_name });
+                    } else {
+                        pretty = try linker.allocator.dupe(u8, relative_name);
+                    }
+
                     relative_name = pretty;
                 }
 

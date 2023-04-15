@@ -69,7 +69,7 @@ pub const Cli = struct {
                         log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
                     }
 
-                    Reporter.globalError(err);
+                    Reporter.globalError(err, @errorReturnTrace());
                 },
             }
         };
@@ -198,6 +198,7 @@ pub const Arguments = struct {
         clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
         clap.parseParam("--server-components        Enable React Server Components (experimental)") catch unreachable,
         clap.parseParam("--splitting                      Split up code!") catch unreachable,
+        clap.parseParam("--transform                      Do not bundle") catch unreachable,
     };
 
     // TODO: update test completions
@@ -497,6 +498,7 @@ pub const Arguments = struct {
         var output_file: ?string = null;
 
         if (cmd == .BuildCommand) {
+            ctx.bundler_options.transform_only = args.flag("--transform");
             if (args.option("--outdir")) |outdir| {
                 if (outdir.len > 0) {
                     ctx.bundler_options.outdir = outdir;
@@ -909,6 +911,7 @@ pub const Command = struct {
             entry_names: []const u8 = "./[name].[ext]",
             react_server_components: bool = false,
             code_splitting: bool = false,
+            transform_only: bool = false,
         };
 
         const _ctx = Command.Context{

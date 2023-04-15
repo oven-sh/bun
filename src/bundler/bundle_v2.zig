@@ -6878,6 +6878,12 @@ const LinkerContext = struct {
             }
 
             const prev_import_ref = tracker.import_ref;
+
+            if (tracker.source_index.isInvalid()) {
+                // External
+                break;
+            }
+
             const prev_source_index = tracker.source_index.get();
             c.cycle_detector.append(tracker.*) catch unreachable;
 
@@ -6894,7 +6900,7 @@ const LinkerContext = struct {
                     if (status == .external and c.options.output_format.keepES6ImportExportSyntax()) {
                         // Imports from external modules should not be converted to CommonJS
                         // if the output format preserves the original ES6 import statements
-                        continue;
+                        break;
                     }
 
                     // If it's a CommonJS or external file, rewrite the import to a

@@ -1,6 +1,13 @@
 import assert from "assert";
 import dedent from "dedent";
-import { ESBUILD_PATH, bundlerTest, expectBundled, itBundled, testForFile } from "../expectBundled";
+import {
+  ESBUILD_PATH,
+  RUN_UNCHECKED_TESTS,
+  bundlerTest,
+  expectBundled,
+  itBundled,
+  testForFile,
+} from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:
@@ -1012,27 +1019,39 @@ describe("bundler", () => {
       stdout: "./test.txt",
     },
   });
-  itBundled("default/RequireWithoutCall", {
-    // TODO: MANUAL CHECK: `require` on line one has to be renamed to `__require`
+  itBundled("default/RequireWithoutCallPlatformNeutral", {
+    // `require` on line one has to be renamed to `__require`
     files: {
       "/entry.js": /* js */ `
         const req = require
         req('./entry')
+        capture(req)
       `,
     },
     platform: "neutral",
+    onAfterBundle(api) {
+      const varName = api.captureFile("/out.js")[0];
+      const assignmentValue = api.readFile("/out.js").match(new RegExp(`${varName} = (.*);`))![1];
+      expect(assignmentValue).not.toBe("require");
+    },
   });
-  itBundled("default/NestedRequireWithoutCall", {
-    // TODO: MANUAL CHECK: `require` on line one has to be renamed to `__require`
+  itBundled("default/NestedRequireWithoutCallPlatformNeutral", {
+    // `require` on line one has to be renamed to `__require`
     files: {
       "/entry.js": /* js */ `
         (() => {
           const req = require
           req('./entry')
+          capture(req)
         })()
       `,
     },
     platform: "neutral",
+    onAfterBundle(api) {
+      const varName = api.captureFile("/out.js")[0];
+      const assignmentValue = api.readFile("/out.js").match(new RegExp(`${varName} = (.*);`))![1];
+      expect(assignmentValue).not.toBe("require");
+    },
   });
   itBundled("default/RequireWithCallInsideTry", {
     files: {
@@ -1067,7 +1086,7 @@ describe("bundler", () => {
     run: [{ file: "/test1.js" }, { file: "/test2.js" }],
   });
   itBundled("default/RequireWithoutCallInsideTry", {
-    // TODO: MANUAL CHECK: `require` on line one has to be renamed to `__require`
+    // `require` has to be renamed to `__require`
     files: {
       "/entry.js": /* js */ `
         try {
@@ -1075,10 +1094,16 @@ describe("bundler", () => {
           var aliasedRequire = require;
           aliasedRequire('./locale/' + name);
           getSetGlobalLocale(oldLocale);
+          capture(aliasedRequire)
         } catch (e) {}
       `,
     },
     platform: "neutral",
+    onAfterBundle(api) {
+      const varName = api.captureFile("/out.js")[0];
+      const assignmentValue = api.readFile("/out.js").match(new RegExp(`${varName} = (.*);`))![1];
+      expect(assignmentValue).not.toBe("require");
+    },
   });
   itBundled("default/RequirePropertyAccessCommonJS", {
     files: {
@@ -1886,10 +1911,6 @@ describe("bundler", () => {
     outfile: "/out.js",
     minifyIdentifiers: true,
     mode: "transform",
-    run: {
-      // TODO: use bun here after https://github.com/oven-sh/bun/issues/1724 is fixed
-      runtime: "node",
-    },
   });
   itBundled("default/WithStatementTaintingNoBundle", {
     // TODO: MANUAL CHECK: make sure the snapshot we use works.
@@ -4568,7 +4589,7 @@ describe("bundler", () => {
   //   mode: "transform",
   //   external: ["a", "b", "c", "react/jsx-dev-runtime"],
   // });
-  return;
+  if (!RUN_UNCHECKED_TESTS) return;
   // I cant get bun to use `this` as the JSX runtime. It's a pretty silly idea anyways.
   itBundled("default/JSXThisValueCommonJS", {
     files: {

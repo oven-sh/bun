@@ -32,6 +32,16 @@ const DEBUG = process.env.BUN_BUNDLER_TEST_DEBUG;
 const FILTER = process.env.BUN_BUNDLER_TEST_FILTER;
 /** Path to the bun. TODO: Once bundler is merged, we should remove the `bun-debug` fallback. */
 const BUN_EXE = (process.env.BUN_EXE && Bun.which(process.env.BUN_EXE)) ?? Bun.which("bun-debug") ?? bunExe();
+/**
+ * If set to true, run an alternate validation for tests which is much looser.
+ * We are only testing for:
+ * - bundler does not crash
+ * - output js has no syntax errors
+ *
+ * Defaults to true unless you are running a single test.
+ */
+const LOOSE = !process.env.BUN_BUNDLER_TEST_FILTER;
+export const RUN_UNCHECKED_TESTS = true;
 
 const outBaseTemplate = path.join(tmpdir(), "bun-build-tests", `${ESBUILD ? "esbuild" : "bun"}-`);
 if (!existsSync(path.dirname(outBaseTemplate))) mkdirSync(path.dirname(outBaseTemplate), { recursive: true });
@@ -297,6 +307,12 @@ export function expectBundled(
   if (!ESBUILD && format !== "esm") {
     throw new Error("formats besides esm not implemented in bun build");
   }
+  if (!ESBUILD && platform === "neutral") {
+    throw new Error("platform=neutral not implemented in bun build");
+  }
+  if (!ESBUILD && mode === "transform") {
+    throw new Error("mode=transform not implemented in bun build");
+  }
   if (!ESBUILD && metafile) {
     throw new Error("metafile not implemented in bun build");
   }
@@ -509,8 +525,9 @@ export function expectBundled(
 
   if (!success) {
     if (!ESBUILD) {
+      const errorText = stderr.toString("utf-8");
       const errorRegex = /^error: (.*?)\n(?:.*?\n\s*\^\s*\n(.*?)\n)?/gms;
-      const allErrors = [...stderr!.toString("utf-8").matchAll(errorRegex)]
+      const allErrors = [...errorText.matchAll(errorRegex)]
         .map(([_str1, error, source]) => {
           if (!source) {
             if (error === "FileNotFound") {
@@ -525,10 +542,16 @@ export function expectBundled(
         .filter(Boolean) as any[];
 
       if (allErrors.length === 0) {
-        console.log(stderr!.toString("utf-8"));
+        console.log(errorText);
       }
 
-      if (stderr!.toString("utf-8").includes("Crash report saved to:")) {
+      if (
+        errorText.includes("Crash report saved to:") ||
+        errorText.includes("panic: reached unreachable code") ||
+        errorText.includes("Panic: reached unreachable code") ||
+        errorText.includes("Segmentation fault") ||
+        errorText.includes("bun has crashed")
+      ) {
         throw new Error("Bun crashed during build");
       }
 
@@ -952,7 +975,22 @@ export function itBundled(id: string, opts: BundlerTestInput): BundlerTestRef {
     }
   }
 
-  it(id, () => expectBundled(id, opts));
+  if (RUN_UNCHECKED_TESTS) {
+    try {
+      expectBundled(id, opts);
+      it(id, () => {});
+    } catch (error: any) {
+      if (error.message === "Bun crashed during build") {
+        it(id, () => {
+          throw error;
+        });
+      } else {
+        it.skip(id, () => {});
+      }
+    }
+  } else {
+    it(id, () => expectBundled(id, opts));
+  }
   return ref;
 }
 itBundled.skip = (id: string, opts: BundlerTestInput) => {

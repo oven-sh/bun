@@ -1,4 +1,4 @@
-import { expectBundled, itBundled, testForFile } from "../expectBundled";
+import { RUN_UNCHECKED_TESTS, expectBundled, itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:
@@ -7,7 +7,7 @@ var { describe, test, expect } = testForFile(import.meta.path);
 // For debug, all files are written to $TEMP/bun-bundle-tests/lower
 
 describe("bundler", () => {
-  return;
+  if (!RUN_UNCHECKED_TESTS) return;
   itBundled("lower/LowerOptionalCatchNameCollisionNoBundle", {
     // GENERATED
     files: {

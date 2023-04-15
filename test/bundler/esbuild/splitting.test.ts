@@ -1,4 +1,4 @@
-import { itBundled, testForFile } from "../expectBundled";
+import { RUN_UNCHECKED_TESTS, itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:
@@ -31,7 +31,7 @@ describe("bundler", () => {
       "/out/b.js": "123",
     },
   });
-  return;
+  if (!RUN_UNCHECKED_TESTS) return;
   itBundled("splitting/SplittingSharedCommonJSIntoES6", {
     // GENERATED
     files: {

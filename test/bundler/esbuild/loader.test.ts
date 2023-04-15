@@ -1,4 +1,4 @@
-import { expectBundled, itBundled, testForFile } from "../expectBundled";
+import { RUN_UNCHECKED_TESTS, expectBundled, itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:
@@ -62,8 +62,7 @@ describe("bundler", () => {
       },
     ],
   });
-
-  return;
+  if (!RUN_UNCHECKED_TESTS) return;
   itBundled("loader/LoaderFile", {
     // GENERATED
     files: {

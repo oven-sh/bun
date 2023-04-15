@@ -1,5 +1,5 @@
 import assert from "assert";
-import { itBundled, testForFile } from "../expectBundled";
+import { RUN_UNCHECKED_TESTS, itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:
@@ -1760,7 +1760,7 @@ describe("bundler", () => {
       `,
     },
   });
-  return;
+  if (!RUN_UNCHECKED_TESTS) return;
   itBundled("ts/TSSiblingEnum", {
     // GENERATED
     files: {

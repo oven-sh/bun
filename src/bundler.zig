@@ -1454,6 +1454,7 @@ pub const Bundler = struct {
                     },
                 };
             },
+            // TODO: use lazy export AST
             .json => {
                 var expr = json_parser.ParseJSON(&source, bundler.log, allocator) catch return null;
                 var stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
@@ -1475,8 +1476,33 @@ pub const Bundler = struct {
                     .input_fd = input_fd,
                 };
             },
+            // TODO: use lazy export AST
             .toml => {
                 var expr = TOML.parse(&source, bundler.log, allocator) catch return null;
+                var stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
+                    .value = js_ast.StmtOrExpr{ .expr = expr },
+                    .default_name = js_ast.LocRef{
+                        .loc = logger.Loc{},
+                        .ref = Ref.None,
+                    },
+                }, logger.Loc{ .start = 0 });
+                var stmts = allocator.alloc(js_ast.Stmt, 1) catch unreachable;
+                stmts[0] = stmt;
+                var parts = allocator.alloc(js_ast.Part, 1) catch unreachable;
+                parts[0] = js_ast.Part{ .stmts = stmts };
+
+                return ParseResult{
+                    .ast = js_ast.Ast.initTest(parts),
+                    .source = source,
+                    .loader = loader,
+                    .input_fd = input_fd,
+                };
+            },
+            // TODO: use lazy export AST
+            .text => {
+                var expr = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{
+                    .data = source.contents,
+                }, logger.Loc.Empty);
                 var stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
                     .value = js_ast.StmtOrExpr{ .expr = expr },
                     .default_name = js_ast.LocRef{

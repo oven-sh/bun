@@ -879,7 +879,7 @@ pub const ModuleLoader = struct {
         const disable_transpilying = comptime flags.disableTranspiling();
 
         switch (loader) {
-            .js, .jsx, .ts, .tsx, .json, .toml => {
+            .js, .jsx, .ts, .tsx, .json, .toml, .text => {
                 jsc_vm.transpiled_count += 1;
                 jsc_vm.bundler.resetStore();
                 const hash = http.Watcher.getHash(path.text);

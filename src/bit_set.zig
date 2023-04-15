@@ -1146,6 +1146,13 @@ pub const AutoBitSet = union(enum) {
         }
     }
 
+    pub fn unset(this: *AutoBitSet, index: usize) void {
+        switch (std.meta.activeTag(this.*)) {
+            .static => this.static.unset(index),
+            .dynamic => this.dynamic.unset(index),
+        }
+    }
+
     pub fn rawBytes(this: *const AutoBitSet) []const u8 {
         return switch (std.meta.activeTag(this.*)) {
             .static => std.mem.asBytes(&this.static.masks),

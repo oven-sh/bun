@@ -1977,7 +1977,7 @@ describe("bundler", () => {
       assert(!text.includes("renameMe"), "Should have renamed all `renameMe` variabled");
     },
   });
-  itBundled("default/ImportReExportES6Issue149", {
+  itBundled("default/ImportReExportES6ESBuildIssue149", {
     files: {
       "/app.jsx": /* jsx */ `
         import { p as Part, h, render } from './import';
@@ -2405,7 +2405,7 @@ describe("bundler", () => {
       stdout: '[{},{},{"foo":123},{"bar":123}] true',
     },
   });
-  itBundled("default/EmptyExportClauseBundleAsCommonJSIssue910", {
+  itBundled("default/EmptyExportClauseBundleAsCommonJSESBuildIssue910", {
     files: {
       "/entry.js": `console.log(JSON.stringify(require('./types.mjs')))`,
       "/types.mjs": `export {}`,
@@ -2432,7 +2432,7 @@ describe("bundler", () => {
       assert(api.readFile("/out.js").includes('"use strict";'), '"use strict"; was emitted');
     },
   });
-  itBundled("default/UseStrictDirectiveBundleIssue1837", {
+  itBundled("default/UseStrictDirectiveBundleESBuildIssue1837", {
     files: {
       "/entry.js": /* js */ `
         const p = require('./cjs').foo;
@@ -2453,7 +2453,7 @@ describe("bundler", () => {
       stdout: "function",
     },
   });
-  itBundled("default/UseStrictDirectiveBundleIIFEIssue2264", {
+  itBundled("default/UseStrictDirectiveBundleIIFEESBuildIssue2264", {
     files: {
       "/entry.js": /* js */ `
         'use strict'
@@ -2465,7 +2465,7 @@ describe("bundler", () => {
       assert(api.readFile("/out.js").includes('"use strict";'), '"use strict"; should be emitted');
     },
   });
-  itBundled("default/UseStrictDirectiveBundleCJSIssue2264", {
+  itBundled("default/UseStrictDirectiveBundleCJSESBuildIssue2264", {
     files: {
       "/entry.js": /* js */ `
         'use strict'
@@ -2477,7 +2477,7 @@ describe("bundler", () => {
       assert(api.readFile("/out.js").includes('"use strict";'), '"use strict"; should be emitted');
     },
   });
-  itBundled("default/UseStrictDirectiveBundleESMIssue2264", {
+  itBundled("default/UseStrictDirectiveBundleESMESBuildIssue2264", {
     files: {
       "/entry.js": /* js */ `
         'use strict'
@@ -4222,7 +4222,7 @@ describe("bundler", () => {
       stdout: `[[1,1,1],[1,1,1],[2,2,2,null,null]]`,
     },
   });
-  itBundled("default/DefineInfiniteLoopIssue2407", {
+  itBundled("default/DefineInfiniteLoopESBuildIssue2407", {
     files: {
       "/entry.js": /* js */ `
         a.b()
@@ -4999,7 +4999,7 @@ describe("bundler", () => {
     },
     external: ["some-path"],
   });
-  itBundled("default/StrictModeNestedFnDeclKeepNamesVariableInliningIssue1552", {
+  itBundled("default/StrictModeNestedFnDeclKeepNamesVariableInliningESBuildIssue1552", {
     // GENERATED
     files: {
       "/entry.js": /* js */ `
@@ -5784,7 +5784,7 @@ describe("bundler", () => {
   b.js: NOTE: Another definition of "x" comes from "b.js" here:
   `, */
   });
-  itBundled("default/NonDeterminismIssue2537", {
+  itBundled("default/NonDeterminismESBuildIssue2537", {
     // GENERATED
     files: {
       "/entry.ts": /* ts */ `
@@ -6327,7 +6327,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("default/ErrorMessageCrashStdinIssue2913", {
+  itBundled("default/ErrorMessageCrashStdinESBuildIssue2913", {
     // GENERATED
     files: {
       "/project/node_modules/fflate/package.json": `{ "main": "main.js" }`,

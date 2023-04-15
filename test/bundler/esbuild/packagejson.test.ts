@@ -605,7 +605,7 @@ describe("bundler", () => {
       "/Users/user/project/src/demo-pkg/ext-browser/index.js": `export let browser = 'browser'`,
     },
   });
-  itBundled("packagejson/PackageJsonBrowserIssue2002A", {
+  itBundled("packagejson/PackageJsonBrowserESBuildIssue2002A", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `require('pkg/sub')`,
@@ -621,7 +621,7 @@ describe("bundler", () => {
       "/Users/user/project/src/node_modules/sub/bar.js": `works()`,
     },
   });
-  itBundled("packagejson/PackageJsonBrowserIssue2002B", {
+  itBundled("packagejson/PackageJsonBrowserESBuildIssue2002B", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `require('pkg/sub')`,
@@ -637,7 +637,7 @@ describe("bundler", () => {
       "/Users/user/project/src/node_modules/pkg/sub/bar.js": `works()`,
     },
   });
-  itBundled("packagejson/PackageJsonBrowserIssue2002C", {
+  itBundled("packagejson/PackageJsonBrowserESBuildIssue2002C", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `require('pkg/sub')`,
@@ -1857,7 +1857,7 @@ describe("bundler", () => {
   NOTE: Node's package format requires that CommonJS files in a "type": "module" package use the ".cjs" file extension.
   `, */
   });
-  itBundled("packagejson/PackageJsonNodePathsIssue2752", {
+  itBundled("packagejson/PackageJsonNodePathsESBuildIssue2752", {
     // GENERATED
     files: {
       "/src/entry.js": /* js */ `

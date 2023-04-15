@@ -31,7 +31,7 @@ describe("bundler", () => {
     },
   });
 
-  itBundled("loader/LoaderJSONSharedWithMultipleEntriesIssue413", {
+  itBundled("loader/LoaderJSONSharedWithMultipleEntriesESBuildIssue413", {
     // GENERATED
     files: {
       "/a.js": /* js */ `

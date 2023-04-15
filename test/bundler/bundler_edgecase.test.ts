@@ -37,18 +37,50 @@ describe("bundler", () => {
     },
     run: true,
   });
-  // itBundled("edgecase/PureCommentInLineComment", {
-  //   files: {
-  //     "/entry.js": /* js */ `
-  //       (function () {
-  //         // Some text that contains a pure comment in it like /* @__PURE__ */, with other text around it.
+  itBundled("edgecase/BunPluginTreeShakeImport", {
+    // This only appears at runtime and not with bun build, even with --transform
+    files: {
+      "/entry.ts": /* js */ `
+        import { A, B } from "./somewhere-else";
+        import { plugin } from "bun";
 
-  //         // console.log;
+        plugin(B());
 
-  //         fn2("TODO: should this call be kept?");
-  //       })();
-  //     `,
-  //   },
-  //   dce: true,
-  // });
+        new A().chainedMethods();
+      `,
+      "/somewhere-else.ts": /* js */ `
+        export class A {
+          chainedMethods() {
+            console.log("hey");
+          }
+        }
+        export function B() {
+          return { name: 'hey' }
+        }
+      `,
+    },
+    external: ["external"],
+    mode: "transform",
+    minifySyntax: true,
+    platform: "bun",
+    run: { file: "/entry.ts" },
+  });
+  itBundled("minify/TemplateStringIssue622", {
+    files: {
+      "/entry.ts": /* js */ `
+        capture(\`\\?\`);
+        capture(hello\`\\?\`);
+      `,
+    },
+    capture: ["`\\\\?`", "hello`\\\\?`"],
+    platform: "bun",
+  });
+  itBundled("minify/StringNullBytes", {
+    files: {
+      "/entry.ts": /* js */ `
+        capture("Hello\0");
+      `,
+    },
+    capture: ['"Hello\0"'],
+  });
 });

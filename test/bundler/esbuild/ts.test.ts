@@ -867,7 +867,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("ts/TypeScriptDecoratorScopeIssue2147", {
+  itBundled("ts/TypeScriptDecoratorScopeESBuildIssue2147", {
     // GENERATED
     files: {
       "/entry.ts": /* ts */ `
@@ -897,7 +897,7 @@ describe("bundler", () => {
     },
     mode: "passthrough",
   });
-  itBundled("ts/TSExportDefaultTypeIssue316", {
+  itBundled("ts/TSExportDefaultTypeESBuildIssue316", {
     // GENERATED
     files: {
       "/entry.ts": /* ts */ `
@@ -1065,7 +1065,7 @@ describe("bundler", () => {
   entry.ts: ERROR: Could not resolve "./jsx.jsx"
   `, */
   });
-  itBundled("ts/ExportTypeIssue379", {
+  itBundled("ts/ExportTypeESBuildIssue379", {
     // GENERATED
     files: {
       "/entry.ts": /* ts */ `

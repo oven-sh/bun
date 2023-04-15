@@ -152,7 +152,7 @@ describe("bundler", () => {
     splitting: true,
     format: "esm",
   });
-  itBundled("splitting/SplittingCircularReferenceIssue251", {
+  itBundled("splitting/SplittingCircularReferenceESBuildIssue251", {
     // GENERATED
     files: {
       "/a.js": /* js */ `
@@ -195,7 +195,7 @@ describe("bundler", () => {
     /* TODO FIX expectedCompileLog: `common.js: WARNING: Import "missing" will always be undefined because the file "empty.js" has no exports
   `, */
   });
-  itBundled("splitting/SplittingReExportIssue273", {
+  itBundled("splitting/SplittingReExportESBuildIssue273", {
     // GENERATED
     files: {
       "/a.js": `export const a = 1`,
@@ -205,7 +205,7 @@ describe("bundler", () => {
     splitting: true,
     format: "esm",
   });
-  itBundled("splitting/SplittingDynamicImportIssue272", {
+  itBundled("splitting/SplittingDynamicImportESBuildIssue272", {
     // GENERATED
     files: {
       "/a.js": `import('./b')`,
@@ -215,7 +215,7 @@ describe("bundler", () => {
     splitting: true,
     format: "esm",
   });
-  itBundled("splitting/SplittingDynamicImportOutsideSourceTreeIssue264", {
+  itBundled("splitting/SplittingDynamicImportOutsideSourceTreeESBuildIssue264", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry1.js": `import('package')`,
@@ -310,7 +310,7 @@ describe("bundler", () => {
     minifyWhitespace: true,
     format: "esm",
   });
-  itBundled("splitting/SplittingMinifyIdentifiersCrashIssue437", {
+  itBundled("splitting/SplittingMinifyIdentifiersCrashESBuildIssue437", {
     // GENERATED
     files: {
       "/a.js": /* js */ `
@@ -329,7 +329,7 @@ describe("bundler", () => {
     minifyIdentifiers: true,
     format: "esm",
   });
-  itBundled("splitting/SplittingHybridESMAndCJSIssue617", {
+  itBundled("splitting/SplittingHybridESMAndCJSESBuildIssue617", {
     // GENERATED
     files: {
       "/a.js": `export let foo`,
@@ -358,7 +358,7 @@ describe("bundler", () => {
     format: "esm",
     splitting: true,
   });
-  itBundled("splitting/EdgeCaseIssue2793WithSplitting", {
+  itBundled("splitting/EdgeCaseESBuildIssue2793WithSplitting", {
     // GENERATED
     files: {
       "/src/a.js": `export const A = 42;`,
@@ -373,7 +373,7 @@ describe("bundler", () => {
     format: "esm",
     splitting: true,
   });
-  itBundled("splitting/EdgeCaseIssue2793WithoutSplitting", {
+  itBundled("splitting/EdgeCaseESBuildIssue2793WithoutSplitting", {
     // GENERATED
     files: {
       "/src/a.js": `export const A = 42;`,

@@ -641,7 +641,7 @@ describe("bundler", () => {
       stdout: "1",
     },
   });
-  itBundled("dce/PackageJsonSideEffectsFalseNoWarningInNodeModulesIssue999", {
+  itBundled("dce/PackageJsonSideEffectsFalseNoWarningInNodeModulesESBuildIssue999", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"

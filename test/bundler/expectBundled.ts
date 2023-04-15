@@ -57,7 +57,7 @@ export interface BundlerTestInput {
   entryPointsRaw?: string[];
   /** Defaults to bundle */
   mode?: "bundle" | "transform";
-  /** Used for `default/ErrorMessageCrashStdinIssue2913`. */
+  /** Used for `default/ErrorMessageCrashStdinESBuildIssue2913`. */
   stdin?: { contents: string; cwd: string };
   /** Use when doing something weird with entryPoints and you need to check other output paths. */
   outputPaths?: string[];
@@ -152,6 +152,9 @@ export interface BundlerTestInput {
     files: string[];
   };
 
+  /** Captures `capture()` function calls in the output. */
+  capture?: string[];
+
   /** Run after bundle happens but before runtime. */
   onAfterBundle?(api: BundlerTestBundleAPI): void;
 }
@@ -167,6 +170,10 @@ export interface BundlerTestBundleAPI {
   appendFile(file: string, contents: string): void;
   expectFile(file: string): Expect;
   assertFileExists(file: string): void;
+  /**
+   * Finds all `capture(...)` calls and returns the strings within each function call.
+   */
+  captureFile(file: string, fnName?: string): string[];
 
   warnings: Record<string, { file: string; error: string; line?: string; col?: string }[]>;
   options: BundlerTestInput;
@@ -220,6 +227,7 @@ export function expectBundled(
     banner,
     bundleErrors,
     bundleWarnings,
+    capture,
     dce,
     dceKeepMarkerCount,
     define,
@@ -236,6 +244,7 @@ export function expectBundled(
     legalComments,
     loader,
     mainFields,
+    matchesReference,
     metafile,
     minifyIdentifiers,
     minifySyntax,
@@ -255,7 +264,6 @@ export function expectBundled(
     treeShaking,
     unsupportedCSSFeatures,
     unsupportedJSFeatures,
-    matchesReference,
     ...unknownProps
   } = opts;
 
@@ -391,6 +399,7 @@ export function expectBundled(
           // keepNames && `--keep-names`,
           // mainFields && `--main-fields=${mainFields}`,
           // loader && Object.entries(loader).map(([k, v]) => ["--loader", `${k}=${v}`]),
+          mode === "transform" && "--transform",
         ]
       : [
           ESBUILD_PATH,
@@ -639,6 +648,15 @@ export function expectBundled(
     },
     warnings: warningReference,
     options: opts,
+    captureFile: (file, fnName = "capture") => {
+      const fileContents = readFile(file);
+      const regex = new RegExp(`\\b${fnName}\\s*\\((.*?)\\)`, "g");
+      const matches = [...fileContents.matchAll(regex)];
+      if (matches.length === 0) {
+        throw new Error(`No ${fnName} calls found in ${file}`);
+      }
+      return matches.map(match => match[1]);
+    },
   } satisfies BundlerTestBundleAPI;
 
   // DCE keep scan
@@ -748,6 +766,11 @@ export function expectBundled(
         }
       }
     }
+  }
+
+  if (capture) {
+    const captures = api.captureFile(path.relative(root, outfile ?? outputPaths[0]));
+    expect(captures).toEqual(capture);
   }
 
   // Write runtime files to disk as well as run the post bundle hook.

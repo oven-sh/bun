@@ -1,0 +1,56 @@
+import { describe } from "bun:test";
+import { itBundled } from "./expectBundled";
+
+describe("bundler", () => {
+  itBundled("minify/TemplateStringFolding", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(\`\${1}-\${2}-\${3}-\${null}-\${undefined}-\${true}-\${false}\`);
+        capture(\`\\uD83D\\uDE0B \\uD83D\\uDCCB \\uD83D\\uDC4C\`.length)
+        capture(\`\\uD83D\\uDE0B \\uD83D\\uDCCB \\uD83D\\uDC4C\`.length === 8)
+        capture(\`\\uD83D\\uDE0B \\uD83D\\uDCCB \\uD83D\\uDC4C\`.length == 8)
+        capture(\`\\uD83D\\uDE0B \\uD83D\\uDCCB \\uD83D\\uDC4C\`.length === 1)
+        capture(\`\\uD83D\\uDE0B \\uD83D\\uDCCB \\uD83D\\uDC4C\`.length == 1)
+        capture("\\uD83D\\uDE0B \\uD83D\\uDCCB \\uD83D\\uDC4C".length)
+        capture("\\uD83D\\uDE0B \\uD83D\\uDCCB \\uD83D\\uDC4C".length === 8)
+        capture("\\uD83D\\uDE0B \\uD83D\\uDCCB \\uD83D\\uDC4C".length == 8)
+        capture("\\uD83D\\uDE0B \\uD83D\\uDCCB \\uD83D\\uDC4C".length === 1)
+        capture("\\uD83D\\uDE0B \\uD83D\\uDCCB \\uD83D\\uDC4C".length == 1)
+        capture('\\uD83D\\uDE0B \\uD83D\\uDCCB \\uD83D\\uDC4C'.length)
+        capture('\\uD83D\\uDE0B \\uD83D\\uDCCB \\uD83D\\uDC4C'.length === 8)
+        capture('\\uD83D\\uDE0B \\uD83D\\uDCCB \\uD83D\\uDC4C'.length == 8)
+        capture('\\uD83D\\uDE0B \\uD83D\\uDCCB \\uD83D\\uDC4C'.length === 1)
+        capture('\\uD83D\\uDE0B \\uD83D\\uDCCB \\uD83D\\uDC4C'.length == 1)
+        capture(\`😋📋👌\`.length === 6)
+        capture(\`😋📋👌\`.length == 6)
+        capture(\`😋📋👌\`.length === 2)
+        capture(\`😋📋👌\`.length == 2)
+      `,
+    },
+    minifySyntax: true,
+    capture: [
+      // this list of expected values might be wrong
+      '"1-2-3-null-undefined-true-false"',
+      "8",
+      "true",
+      "true",
+      "false",
+      "false",
+      "8",
+      "true",
+      "true",
+      "false",
+      "false",
+      "8",
+      "true",
+      "true",
+      "false",
+      "false",
+      "true",
+      "true",
+      "false",
+      "false",
+    ],
+    platform: "bun",
+  });
+});

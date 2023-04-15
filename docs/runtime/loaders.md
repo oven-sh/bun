@@ -34,6 +34,28 @@ $ bun run react.tsx
 <Component message="Hello world!" />
 ```
 
+## Text files
+
+{% callout %}
+Supported in Bun v0.6.0 canary.
+{% /callout %}
+
+Text files can be imported as strings.
+
+{% codetabs %}
+
+```ts#index.ts
+import text from "./text.txt";
+console.log(text);
+// => "Hello world!"
+```
+
+```txt#text.txt
+Hello world!
+```
+
+{% /codetabs %}
+
 ## JSON and TOML
 
 JSON and TOML files can be directly imported from a source file. The contents will be loaded and returned as a JavaScript object.
@@ -57,19 +79,6 @@ $ bun run ./my-wasm-app.whatever
 
 **Note** — WASI support is based on [wasi-js](https://github.com/sagemathinc/cowasm/tree/main/packages/wasi-js). Currently, it only supports WASI binaries that use the `wasi_snapshot_preview1` or `wasi_unstable` APIs. Bun's implementation is not fully optimized for performance; this will become more of a priority as WASM grows in popularity.
 {% /callout %}
-
-## Unknown file types
-
-By default, when Bun encounters an import with an unsupported file extension, it returns an absolute path to the location on disk.
-
-```ts
-import file from "./movie.mp4";
-
-file;
-// /path/to/movie.mp4
-```
-
-Note: This behavior only applies when executing a file with `bun run`! When using Bun's bundler, the behavior may be different depending on your bundler configuration.
 
 ## Custom loaders
 

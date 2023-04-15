@@ -3168,3 +3168,8 @@ declare var module: NodeModule;
 // Same as module.exports
 declare var exports: any;
 declare var global: typeof globalThis;
+
+declare module "*.txt" {
+  var text: string;
+  export = text;
+}

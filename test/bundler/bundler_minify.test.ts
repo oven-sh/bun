@@ -27,9 +27,7 @@ describe("bundler", () => {
         capture(\`😋📋👌\`.length == 2)
       `,
     },
-    minifySyntax: true,
     capture: [
-      // this list of expected values might be wrong
       '"1-2-3-null-undefined-true-false"',
       "8",
       "true",

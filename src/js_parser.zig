@@ -6078,10 +6078,6 @@ fn NewParser_(
 
             var generated_symbols_count: u32 = 3;
 
-            if (p.options.enable_legacy_bundling) {
-                generated_symbols_count += 4;
-            }
-
             if (p.options.features.hot_module_reloading) {
                 generated_symbols_count += 3;
 
@@ -6115,14 +6111,6 @@ fn NewParser_(
                 p.jest.afterEach = try p.declareCommonJSSymbol(.unbound, "afterEach");
                 p.jest.beforeAll = try p.declareCommonJSSymbol(.unbound, "beforeAll");
                 p.jest.afterAll = try p.declareCommonJSSymbol(.unbound, "afterAll");
-            }
-
-            if (p.options.enable_legacy_bundling) {
-                p.runtime_imports.@"$$m" = try p.declareGeneratedSymbol(.other, "$$m");
-                p.runtime_imports.@"$$lzy" = try p.declareGeneratedSymbol(.other, "$$lzy");
-                p.runtime_imports.__export = try p.declareGeneratedSymbol(.other, "__export");
-                p.runtime_imports.__exportValue = try p.declareGeneratedSymbol(.other, "__exportValue");
-                p.runtime_imports.__exportDefault = try p.declareGeneratedSymbol(.other, "__exportDefault");
             }
 
             if (p.options.features.hot_module_reloading) {
@@ -17016,15 +17004,15 @@ fn NewParser_(
 
                             // rewrite `module.exports` to `exports`
                             return p.newExpr(E.Identifier{ .ref = p.exports_ref }, name_loc);
-                        } else if (strings.eqlComptime(name, "id") and identifier_opts.assign_target == .none) {
+                        } else if (p.options.bundle and strings.eqlComptime(name, "id") and identifier_opts.assign_target == .none) {
                             // inline module.id
                             p.ignoreUsage(p.module_ref);
                             return p.newExpr(E.String.init(p.source.path.text), name_loc);
-                        } else if (strings.eqlComptime(name, "filename") and identifier_opts.assign_target == .none) {
+                        } else if (p.options.bundle and strings.eqlComptime(name, "filename") and identifier_opts.assign_target == .none) {
                             // inline module.filename
                             p.ignoreUsage(p.module_ref);
                             return p.newExpr(E.String.init(p.source.path.name.filename), name_loc);
-                        } else if (strings.eqlComptime(name, "path") and identifier_opts.assign_target == .none) {
+                        } else if (p.options.bundle and strings.eqlComptime(name, "path") and identifier_opts.assign_target == .none) {
                             // inline module.path
                             p.ignoreUsage(p.module_ref);
                             return p.newExpr(E.String.init(p.source.path.pretty), name_loc);
@@ -17388,15 +17376,6 @@ fn NewParser_(
                                 }
                             }
 
-                            // When bundling, replace ExportDefault with __exportDefault(exportsRef, expr);
-                            if (p.options.enable_legacy_bundling) {
-                                var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                export_default_args[0] = p.@"module.exports"(expr.loc);
-                                export_default_args[1] = data.value.expr;
-                                stmts.append(p.s(S.SExpr{ .value = p.callRuntime(expr.loc, "__exportDefault", export_default_args) }, expr.loc)) catch unreachable;
-                                return;
-                            }
-
                             if (data.default_name.ref.?.isSourceContentsSlice()) {
                                 data.default_name = createDefaultName(p, data.value.expr.loc) catch unreachable;
                             }
@@ -17406,7 +17385,6 @@ fn NewParser_(
                             switch (s2.data) {
                                 .s_function => |func| {
                                     var name: string = "";
-                                    const had_name = func.func.name != null;
                                     if (func.func.name) |func_loc| {
                                         name = p.loadNameFromRef(func_loc.ref.?);
                                     } else {
@@ -17428,30 +17406,6 @@ fn NewParser_(
                                             _ = p.injectReplacementExport(stmts, Ref.None, logger.Loc.Empty, entry);
                                             return;
                                         }
-
-                                        // When bundling, replace ExportDefault with __exportDefault(exportsRef, expr);
-                                        if (p.options.enable_legacy_bundling) {
-                                            var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                            export_default_args[0] = p.@"module.exports"(data.value.expr.loc);
-                                            export_default_args[1] = data.value.expr;
-                                            stmts.append(p.s(S.SExpr{ .value = p.callRuntime(data.value.expr.loc, "__exportDefault", export_default_args) }, data.value.expr.loc)) catch unreachable;
-                                            return;
-                                        }
-                                    } else if (p.options.enable_legacy_bundling) {
-                                        var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                        export_default_args[0] = p.@"module.exports"(s2.loc);
-
-                                        if (had_name) {
-                                            export_default_args[1] = p.newExpr(E.Identifier{ .ref = func.func.name.?.ref.? }, s2.loc);
-                                            stmts.ensureUnusedCapacity(2) catch unreachable;
-
-                                            stmts.appendAssumeCapacity(s2);
-                                        } else {
-                                            export_default_args[1] = p.newExpr(E.Function{ .func = func.func }, s2.loc);
-                                        }
-
-                                        stmts.append(p.s(S.SExpr{ .value = p.callRuntime(s2.loc, "__exportDefault", export_default_args) }, s2.loc)) catch unreachable;
-                                        return;
                                     }
 
                                     if (data.default_name.ref.?.isSourceContentsSlice()) {
@@ -17480,37 +17434,6 @@ fn NewParser_(
                                             _ = p.injectReplacementExport(stmts, Ref.None, logger.Loc.Empty, entry);
                                             return;
                                         }
-
-                                        // When bundling, replace ExportDefault with __exportDefault(exportsRef, expr);
-                                        if (p.options.enable_legacy_bundling) {
-                                            var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                            export_default_args[0] = p.@"module.exports"(data.value.expr.loc);
-                                            export_default_args[1] = data.value.expr;
-                                            stmts.append(p.s(S.SExpr{ .value = p.callRuntime(data.value.expr.loc, "__exportDefault", export_default_args) }, data.value.expr.loc)) catch unreachable;
-                                            return;
-                                        }
-                                    } else if (p.options.enable_legacy_bundling) {
-                                        var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                        export_default_args[0] = p.@"module.exports"(s2.loc);
-
-                                        const class_name_ref = brk: {
-                                            if (class.class.class_name) |class_name_ref| {
-                                                if (class_name_ref.ref) |ref| {
-                                                    break :brk ref;
-                                                }
-                                            }
-                                            break :brk null;
-                                        };
-                                        if (class_name_ref) |ref| {
-                                            stmts.ensureUnusedCapacity(2) catch unreachable;
-                                            stmts.appendAssumeCapacity(s2);
-                                            export_default_args[1] = p.newExpr(E.Identifier{ .ref = ref }, s2.loc);
-                                        } else {
-                                            export_default_args[1] = p.newExpr(class.class, s2.loc);
-                                        }
-
-                                        stmts.append(p.s(S.SExpr{ .value = p.callRuntime(s2.loc, "__exportDefault", export_default_args) }, s2.loc)) catch unreachable;
-                                        return;
                                     }
 
                                     if (data.default_name.ref.?.isSourceContentsSlice()) {
@@ -17526,14 +17449,6 @@ fn NewParser_(
                     }
                 },
                 .s_export_equals => |data| {
-                    if (p.options.enable_legacy_bundling) {
-                        var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
-                        export_default_args[0] = p.@"module.exports"(stmt.loc);
-                        export_default_args[1] = data.value;
-
-                        stmts.append(p.s(S.SExpr{ .value = p.callRuntime(stmt.loc, "__exportDefault", export_default_args) }, stmt.loc)) catch unreachable;
-                        return;
-                    }
 
                     // "module.exports = value"
                     stmts.append(

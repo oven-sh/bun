@@ -1155,7 +1155,7 @@ describe("bundler", () => {
       `,
     },
     bundleErrors: {
-      "/entry.js": ["Could not resolve"],
+      "/entry.js": [`Could not resolve: "nope1". Maybe you need to "bun install"?`],
     },
   });
   itBundled("default/ImportThenCatch", {

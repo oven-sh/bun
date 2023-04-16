@@ -2737,7 +2737,7 @@ pub const Parser = struct {
             _ = p.addImportRecord(
                 .require,
                 logger.Loc{ .start = 0 },
-                p.options.jsx.import_source,
+                p.options.jsx.importSource(),
             );
             // Ensure we have both classic and automatic
             // This is to handle cases where they use fragments in the automatic runtime
@@ -3957,7 +3957,7 @@ pub const Parser = struct {
 
             if (runtime_import_names.len > 0) {
                 p.generateImportStmt(
-                    p.options.jsx.import_source,
+                    p.options.jsx.importSource(),
                     runtime_import_names,
                     &before,
                     &p.jsx_imports,
@@ -4796,10 +4796,13 @@ fn NewParser_(
                 const import_record_index = p.addImportRecord(.require, arg.loc, arg.data.e_string.string(p.allocator) catch unreachable);
                 p.import_records.items[import_record_index].handles_import_errors = p.fn_or_arrow_data_visit.try_body_count != 0;
                 p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
-                return p.newExpr(E.RequireOrRequireResolve{
-                    .import_record_index = Ref.toInt(import_record_index),
-                    // .leading_interior_comments = arg.getString().
-                }, arg.loc);
+                return p.newExpr(
+                    E.RequireResolveString{
+                        .import_record_index = Ref.toInt(import_record_index),
+                        // .leading_interior_comments = arg.getString().
+                    },
+                    arg.loc,
+                );
             }
 
             if (p.options.warn_about_unbundled_modules) {
@@ -4829,7 +4832,7 @@ fn NewParser_(
                     p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
 
                     if (!p.options.transform_require_to_import) {
-                        return p.newExpr(E.Require{ .import_record_index = import_record_index }, arg.loc);
+                        return p.newExpr(E.RequireString{ .import_record_index = import_record_index }, arg.loc);
                     }
 
                     p.import_records.items[import_record_index].was_originally_require = true;
@@ -6051,8 +6054,9 @@ fn NewParser_(
             }
 
             if (p.lexer.jsx_pragma.jsxImportSource()) |import_source| {
-                p.options.jsx.import_source = try p.allocator.dupe(u8, import_source.text);
-                p.options.jsx.classic_import_source = options.JSX.Pragma.parsePackageName(p.options.jsx.import_source);
+                p.options.jsx.classic_import_source = options.JSX.Pragma.parsePackageName(import_source.text);
+                p.options.jsx.package_name = p.options.jsx.classic_import_source;
+                p.options.jsx.setImportSource(p.allocator);
             }
 
             if (p.lexer.jsx_pragma.jsxRuntime()) |runtime| {
@@ -6165,9 +6169,7 @@ fn NewParser_(
                             p.jsx_classic = p.declareGeneratedSymbol(.other, "ClassicImportSource") catch unreachable;
                         }
 
-                        if (p.options.jsx.import_source.len > 0) {
-                            p.jsx_automatic = p.declareGeneratedSymbol(.other, "ImportSource") catch unreachable;
-                        }
+                        p.jsx_automatic = p.declareGeneratedSymbol(.other, "ImportSource") catch unreachable;
                     }
                 },
 

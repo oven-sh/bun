@@ -901,11 +901,11 @@ pub const JSX = struct {
         factory: []const string = Defaults.Factory,
         fragment: []const string = Defaults.Fragment,
         runtime: JSX.Runtime = JSX.Runtime.automatic,
+        import_source: ImportSource = .{},
 
         /// Facilitates automatic JSX importing
         /// Set on a per file basis like this:
         /// /** @jsxImportSource @emotion/core */
-        import_source: string = "react/jsx-dev-runtime",
         classic_import_source: string = "react",
         package_name: []const u8 = "react",
         // https://github.com/facebook/react/commit/2f26eb85d657a08c21edbac1e00f9626d68f84ae
@@ -913,11 +913,20 @@ pub const JSX = struct {
         supports_fast_refresh: bool = true,
         use_embedded_refresh_runtime: bool = false,
 
-        jsx: string = Defaults.JSXFunctionDev,
-        // jsx_static: string = Defaults.JSXStaticFunction,
-
         development: bool = true,
         parse: bool = true,
+
+        pub const ImportSource = struct {
+            development: string = "react/jsx-dev-runtime",
+            production: string = "react/jsx-runtime",
+        };
+
+        pub fn importSource(this: *const Pragma) string {
+            return switch (this.development) {
+                true => this.import_source.development,
+                false => this.import_source.production,
+            };
+        }
 
         pub fn parsePackageName(str: string) string {
             if (str[0] == '@') {
@@ -941,34 +950,34 @@ pub const JSX = struct {
             return strings.eqlComptime(pragma.package_name, "react") or strings.eqlComptime(pragma.package_name, "@emotion/jsx") or strings.eqlComptime(pragma.package_name, "@emotion/react");
         }
 
-        pub fn setImportSource(pragma: *Pragma, allocator: std.mem.Allocator, suffix: []const u8) void {
+        pub fn setImportSource(pragma: *Pragma, allocator: std.mem.Allocator) void {
             strings.concatIfNeeded(
                 allocator,
-                &pragma.import_source,
+                &pragma.import_source.development,
                 &[_]string{
                     pragma.package_name,
-                    suffix,
+                    "jsx-dev-runtime",
+                },
+                &.{
+                    Defaults.ImportSourceDev,
+                },
+            ) catch unreachable;
+
+            strings.concatIfNeeded(
+                allocator,
+                &pragma.import_source.production,
+                &[_]string{
+                    pragma.package_name,
+                    "jsx-runtime",
                 },
                 &.{
                     Defaults.ImportSource,
-                    Defaults.ImportSourceDev,
                 },
             ) catch unreachable;
         }
 
-        pub fn setProduction(pragma: *Pragma, allocator: std.mem.Allocator, is_production: bool) void {
+        pub fn setProduction(pragma: *Pragma, is_production: bool) void {
             pragma.development = !is_production;
-            const package_name = parsePackageName(pragma.import_source);
-            pragma.package_name = package_name;
-            pragma.classic_import_source = package_name;
-
-            if (is_production) {
-                pragma.setImportSource(allocator, "/jsx-runtime");
-                pragma.jsx = "jsx";
-            } else {
-                pragma.setImportSource(allocator, "/jsx-dev-runtime");
-                pragma.jsx = "jsxDEV";
-            }
         }
 
         pub const Defaults = struct {
@@ -1034,23 +1043,9 @@ pub const JSX = struct {
             pragma.runtime = jsx.runtime;
 
             if (jsx.import_source.len > 0) {
-                pragma.import_source = jsx.import_source;
-                if (jsx.import_source.len > "solid-js".len and strings.eqlComptime(jsx.import_source[0.."solid-js".len], "solid-js")) {
-                    pragma.runtime = .solid;
-                    pragma.supports_fast_refresh = false;
-                }
-                pragma.package_name = parsePackageName(pragma.import_source);
-            } else if (jsx.development) {
-                pragma.import_source = Defaults.ImportSourceDev;
-                pragma.package_name = "react";
-            } else {
-                pragma.import_source = Defaults.ImportSource;
-            }
-
-            if (jsx.development) {
-                pragma.jsx = Defaults.JSXFunctionDev;
-            } else {
-                pragma.jsx = Defaults.JSXFunction;
+                pragma.package_name = parsePackageName(pragma.importSource());
+                pragma.setImportSource(allocator);
+                pragma.classic_import_source = pragma.package_name;
             }
 
             pragma.supports_fast_refresh = if (pragma.runtime == .solid) false else pragma.supports_fast_refresh;

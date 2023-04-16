@@ -565,9 +565,7 @@ pub const Bundler = struct {
 
         try this.runEnvLoader();
 
-        if (this.env.isProduction()) {
-            this.options.jsx.setProduction(this.allocator, true);
-        }
+        this.options.jsx.setProduction(this.env.isProduction());
 
         js_ast.Expr.Data.Store.create(this.allocator);
         js_ast.Stmt.Data.Store.create(this.allocator);

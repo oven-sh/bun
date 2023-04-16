@@ -161,7 +161,7 @@ pub const TSConfigJSON = struct {
                     if (options.JSX.RuntimeMap.get(str)) |runtime| {
                         result.jsx.runtime = runtime;
                         if (runtime == .automatic) {
-                            result.jsx.setProduction(allocator, strings.eqlComptime(str, "react-jsxDEV"));
+                            result.jsx.setProduction(!strings.contains(str, "jsxDEV"));
                             is_jsx_development = result.jsx.development;
                             result.jsx_flags.insert(.development);
                         }
@@ -175,18 +175,12 @@ pub const TSConfigJSON = struct {
             if (compiler_opts.expr.asProperty("jsxImportSource")) |jsx_prop| {
                 if (jsx_prop.expr.asString(allocator)) |str| {
                     if (str.len >= "solid-js".len and strings.eqlComptime(str[0.."solid-js".len], "solid-js")) {
-                        result.jsx.import_source = str;
                         result.jsx.runtime = .solid;
                         result.jsx_flags.insert(.runtime);
-                    } else {
-                        if (is_jsx_development) {
-                            result.jsx.setImportSource(allocator, "{s}/jsx-dev-runtime");
-                        } else {
-                            result.jsx.setImportSource(allocator, "{s}/jsx-runtime");
-                        }
                     }
 
                     result.jsx.package_name = options.JSX.Pragma.parsePackageName(str);
+                    result.jsx.setImportSource(allocator);
                     result.jsx_flags.insert(.import_source);
                 }
             }

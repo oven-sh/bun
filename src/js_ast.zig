@@ -2235,12 +2235,18 @@ pub const E = struct {
         no: ExprNodeIndex,
     };
 
-    pub const Require = struct {
+    pub const RequireString = struct {
         import_record_index: u32 = 0,
+
+        /// TODO:
+        close_paren_loc: logger.Loc = logger.Loc.Empty,
     };
 
-    pub const RequireOrRequireResolve = struct {
+    pub const RequireResolveString = struct {
         import_record_index: u32 = 0,
+
+        /// TODO:
+        close_paren_loc: logger.Loc = logger.Loc.Empty,
     };
 
     pub const Import = struct {
@@ -3383,11 +3389,11 @@ pub const Expr = struct {
                     },
                 };
             },
-            E.RequireOrRequireResolve => {
+            E.RequireResolveString => {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_require_or_require_resolve = st,
+                        .e_require_resolve_string = st,
                     },
                 };
             },
@@ -3403,11 +3409,11 @@ pub const Expr = struct {
                     },
                 };
             },
-            E.Require => {
+            E.RequireString => {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_require = st,
+                        .e_require_string = st,
                     },
                 };
             },
@@ -3721,11 +3727,11 @@ pub const Expr = struct {
                     },
                 };
             },
-            E.RequireOrRequireResolve => {
+            E.RequireResolveString => {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_require_or_require_resolve = st,
+                        .e_require_resolve_string = st,
                     },
                 };
             },
@@ -3737,11 +3743,11 @@ pub const Expr = struct {
                     },
                 };
             },
-            E.Require => {
+            E.RequireString => {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_require = st,
+                        .e_require_string = st,
                     },
                 };
             },
@@ -3792,11 +3798,11 @@ pub const Expr = struct {
         e_await,
         e_yield,
         e_if,
-        e_require_or_require_resolve,
+        e_require_resolve_string,
         e_import,
         e_this,
         e_class,
-        e_require,
+        e_require_string,
 
         e_commonjs_export_identifier,
 
@@ -3857,11 +3863,11 @@ pub const Expr = struct {
                 .e_await => writer.writeAll("await"),
                 .e_yield => writer.writeAll("yield"),
                 .e_if => writer.writeAll("if"),
-                .e_require_or_require_resolve => writer.writeAll("require_or_require_resolve"),
+                .e_require_resolve_string => writer.writeAll("require_or_require_resolve"),
                 .e_import => writer.writeAll("import"),
                 .e_this => writer.writeAll("this"),
                 .e_class => writer.writeAll("class"),
-                .e_require => writer.writeAll("require"),
+                .e_require_string => writer.writeAll("require"),
                 else => writer.writeAll(@tagName(tag)),
             };
         }
@@ -4200,9 +4206,9 @@ pub const Expr = struct {
                 },
             }
         }
-        pub fn isRequireOrRequireResolve(self: Tag) bool {
+        pub fn isRequireResolveString(self: Tag) bool {
             switch (self) {
-                .e_require_or_require_resolve => {
+                .e_require_resolve_string => {
                     return true;
                 },
                 else => {
@@ -4449,8 +4455,8 @@ pub const Expr = struct {
         e_big_int: *E.BigInt,
         e_string: *E.String,
 
-        e_require: E.Require,
-        e_require_or_require_resolve: E.RequireOrRequireResolve,
+        e_require_string: E.RequireString,
+        e_require_resolve_string: E.RequireResolveString,
 
         e_missing: E.Missing,
         e_this: E.This,
@@ -6669,8 +6675,8 @@ pub const Macro = struct {
                 .e_if => |value| {
                     return JSNode{ .loc = this.loc, .data = .{ .e_if = value } };
                 },
-                .e_require_or_require_resolve => |value| {
-                    return JSNode{ .loc = this.loc, .data = .{ .e_require_or_require_resolve = value } };
+                .e_require_resolve_string => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_require_resolve_string = value } };
                 },
                 .e_import => |value| {
                     return JSNode{ .loc = this.loc, .data = .{ .e_import = value } };
@@ -6681,8 +6687,8 @@ pub const Macro = struct {
                 .e_class => |value| {
                     return JSNode{ .loc = this.loc, .data = .{ .e_class = value } };
                 },
-                .e_require => |value| {
-                    return JSNode{ .loc = this.loc, .data = .{ .e_require = value } };
+                .e_require_string => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_require_string = value } };
                 },
                 .e_missing => |value| {
                     return JSNode{ .loc = this.loc, .data = .{ .e_missing = value } };
@@ -6788,8 +6794,8 @@ pub const Macro = struct {
                 .e_if => |value| {
                     return Expr{ .loc = this.loc, .data = .{ .e_if = value } };
                 },
-                .e_require_or_require_resolve => |value| {
-                    return Expr{ .loc = this.loc, .data = .{ .e_require_or_require_resolve = value } };
+                .e_require_resolve_string => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_require_resolve_string = value } };
                 },
                 .e_import => |value| {
                     return Expr{ .loc = this.loc, .data = .{ .e_import = value } };
@@ -6800,8 +6806,8 @@ pub const Macro = struct {
                 .e_class => |value| {
                     return Expr{ .loc = this.loc, .data = .{ .e_class = value } };
                 },
-                .e_require => |value| {
-                    return Expr{ .loc = this.loc, .data = .{ .e_require = value } };
+                .e_require_string => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_require_string = value } };
                 },
                 .e_missing => |value| {
                     return Expr{ .loc = this.loc, .data = .{ .e_missing = value } };
@@ -6900,8 +6906,8 @@ pub const Macro = struct {
             s_block: *S.Block,
 
             e_reg_exp: *E.RegExp,
-            e_require_or_require_resolve: E.RequireOrRequireResolve,
-            e_require: E.Require,
+            e_require_resolve_string: E.RequireResolveString,
+            e_require_string: E.RequireString,
 
             g_property: *G.Property,
 
@@ -6948,11 +6954,11 @@ pub const Macro = struct {
             e_await,
             e_yield,
             e_if,
-            e_require_or_require_resolve,
+            e_require_resolve_string,
             e_import,
             e_this,
             e_class,
-            e_require,
+            e_require_string,
             s_import,
             s_block,
 
@@ -7015,7 +7021,7 @@ pub const Macro = struct {
                 .{ "dynamic", Tag.e_import },
                 .{ "this", Tag.e_this },
                 .{ "class", Tag.e_class },
-                .{ "require", Tag.e_require },
+                .{ "require", Tag.e_require_string },
                 .{ "import", Tag.s_import },
                 .{ "property", Tag.g_property },
                 .{ "block", Tag.s_block },
@@ -7058,11 +7064,11 @@ pub const Macro = struct {
                 list.set(Tag.e_await, Expr.Tag.e_await);
                 list.set(Tag.e_yield, Expr.Tag.e_yield);
                 list.set(Tag.e_if, Expr.Tag.e_if);
-                list.set(Tag.e_require_or_require_resolve, Expr.Tag.e_require_or_require_resolve);
+                list.set(Tag.e_require_resolve_string, Expr.Tag.e_require_resolve_string);
                 list.set(Tag.e_import, Expr.Tag.e_import);
                 list.set(Tag.e_this, Expr.Tag.e_this);
                 list.set(Tag.e_class, Expr.Tag.e_class);
-                list.set(Tag.e_require, Expr.Tag.e_require);
+                list.set(Tag.e_require_string, Expr.Tag.e_require_string);
                 break :brk list;
             };
 
@@ -7098,11 +7104,11 @@ pub const Macro = struct {
                 list.set(Expr.Tag.e_await, Tag.e_await);
                 list.set(Expr.Tag.e_yield, Tag.e_yield);
                 list.set(Expr.Tag.e_if, Tag.e_if);
-                list.set(Expr.Tag.e_require_or_require_resolve, Tag.e_require_or_require_resolve);
+                list.set(Expr.Tag.e_require_resolve_string, Tag.e_require_resolve_string);
                 list.set(Expr.Tag.e_import, Tag.e_import);
                 list.set(Expr.Tag.e_this, Tag.e_this);
                 list.set(Expr.Tag.e_class, Tag.e_class);
-                list.set(Expr.Tag.e_require, Tag.e_require);
+                list.set(Expr.Tag.e_require_string, Tag.e_require_string);
                 break :brk list;
             };
 
@@ -7860,7 +7866,7 @@ pub const Macro = struct {
                         // Tag.e_import => {},
 
                         // Tag.e_class => {},
-                        // Tag.e_require => {},
+                        // Tag.e_require_string => {},
                         // Tag.s_import => {},
 
                         // Tag.s_block => {},
@@ -9535,7 +9541,7 @@ pub const UseDirective = enum {
 //     printmem("E.Await:                   {d} bits\n", .{@bitSizeOf(E.Await)});
 //     printmem("E.Yield:                   {d} bits\n", .{@bitSizeOf(E.Yield)});
 //     printmem("E.If:                      {d} bits\n", .{@bitSizeOf(E.If)});
-//     printmem("E.RequireOrRequireResolve: {d} bits\n", .{@bitSizeOf(E.RequireOrRequireResolve)});
+//     printmem("E.RequireResolveString: {d} bits\n", .{@bitSizeOf(E.RequireResolveString)});
 //     printmem("E.Import:                  {d} bits\n", .{@bitSizeOf(E.Import)});
 //     printmem("----------Expr:            {d} bits\n", .{@bitSizeOf(Expr)});
 // }

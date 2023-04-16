@@ -2239,7 +2239,6 @@ pub const E = struct {
         import_record_index: u32 = 0,
 
         unwrapped_id: u32 = std.math.maxInt(u32),
-
     };
 
     pub const RequireResolveString = struct {

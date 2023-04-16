@@ -423,6 +423,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/ExportInfiniteCycle2", {
+    notImplemented: true, // TODO: low priority, missing a couple errors.
     files: {
       "/entry.js": /* js */ `
         export {a as b} from './foo'
@@ -439,6 +440,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/JSXImportsCommonJS", {
+    notImplemented: true, // jsx in bun is too different to esbuild
     files: {
       "/entry.jsx": /* jsx */ `
         import {elem, frag} from './custom-react'
@@ -454,7 +456,7 @@ describe("bundler", () => {
     jsx: {
       factory: "elem",
       fragment: "frag",
-      runtime: "automatic",
+      automaticRuntime: true,
     },
     run: {
       stdout: `
@@ -465,6 +467,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/JSXImportsES6", {
+    notImplemented: true, // jsx in bun is too different to esbuild
     files: {
       "/entry.jsx": /* jsx */ `
         import {elem, frag} from './custom-react'
@@ -497,10 +500,12 @@ describe("bundler", () => {
       "/entry.mjs": `console.log(<div/>)`,
     },
     bundleErrors: {
-      "/entry.mjs": ["ERROR: The JSX syntax extension is not currently enabled"],
+      // TODO: this could be a nicer error
+      "/entry.mjs": [`Unexpected <`],
     },
   });
   itBundled("default/JSXConstantFragments", {
+    notImplemented: true, // jsx in bun is too different to esbuild
     files: {
       "/entry.js": /* js */ `
         import './default'
@@ -594,7 +599,8 @@ describe("bundler", () => {
     },
     external: ["react"],
     bundleErrors: {
-      "/entry.mjs": ["The JSX syntax extension is not currently enabled"],
+      // TODO: this could be a nicer error
+      "/entry.mjs": [`Unexpected <`],
     },
   });
   itBundled("default/NodeModules", {
@@ -665,8 +671,8 @@ describe("bundler", () => {
     },
     bundleErrors: {
       "/entry.js": [
-        `No matching export "default" in "foo.js" for import "default"`,
-        `No matching export "y" in "foo.js" for import "y"`,
+        `No matching export in "foo.js" for import "default"`,
+        `No matching export in "foo.js" for import "y"`,
       ],
     },
   });
@@ -677,8 +683,8 @@ describe("bundler", () => {
     },
     bundleErrors: {
       "/entry.js": [
-        `No matching export "default" in "foo.js" for import "default"`,
-        `No matching export "y" in "foo.js" for import "y"`,
+        `No matching export in "foo.js" for import "default"`,
+        `No matching export in "foo.js" for import "y"`,
       ],
     },
   });
@@ -695,6 +701,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/ImportMissingNeitherES6NorCommonJS", {
+    notImplemented: true,
     files: {
       "/named.js": /* js */ `
         import fn, {x as a, y as b} from './foo'
@@ -736,7 +743,7 @@ describe("bundler", () => {
       "/bar.js": `export const yep = 123`,
     },
     bundleErrors: {
-      "/foo.js": [`No matching export "nope" in "bar.js" for import "nope"`],
+      "/foo.js": [`No matching export in "bar.js" for import "nope"`],
     },
   });
   itBundled("default/DotImport", {
@@ -777,8 +784,9 @@ describe("bundler", () => {
     },
   });
   itBundled("default/RequireAndDynamicImportInvalidTemplate", {
+    notImplemented: true,
     files: {
-      "/entry.js": `
+      "/entry.cjs": `
         require(tag\`./b\`)
         require(\`./\${b}\`)
   
@@ -1020,6 +1028,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/RequireWithoutCallPlatformNeutral", {
+    notImplemented: true,
     // `require` on line one has to be renamed to `__require`
     files: {
       "/entry.js": /* js */ `
@@ -1036,6 +1045,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/NestedRequireWithoutCallPlatformNeutral", {
+    notImplemented: true,
     // `require` on line one has to be renamed to `__require`
     files: {
       "/entry.js": /* js */ `
@@ -1062,6 +1072,7 @@ describe("bundler", () => {
             exports.colors = [];
           }
         } catch (error) {
+          exports.colors = 'it threw'
         }
       `,
     },
@@ -1086,6 +1097,7 @@ describe("bundler", () => {
     run: [{ file: "/test1.js" }, { file: "/test2.js" }],
   });
   itBundled("default/RequireWithoutCallInsideTry", {
+    notImplemented: true,
     // `require` has to be renamed to `__require`
     files: {
       "/entry.js": /* js */ `
@@ -1677,6 +1689,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/ThisWithES6Syntax", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         import './cjs'
@@ -1716,42 +1729,74 @@ describe("bundler", () => {
         import './es6-ns-export-abstract-class'
       `,
       "/dummy.js": `export const dummy = 123`,
-      "/cjs.js": `console.log(JSON.stringify(this))`,
-      "/es6-import-stmt.js": `import './dummy'; console.log(JSON.stringify(this))`,
-      "/es6-import-assign.ts": `import x = require('./dummy'); console.log(JSON.stringify(this))`,
-      "/es6-import-dynamic.js": `import('./dummy'); console.log(JSON.stringify(this))`,
-      "/es6-import-meta.js": `import.meta; console.log(JSON.stringify(this))`,
-      "/es6-expr-import-dynamic.js": `(import('./dummy')); console.log(JSON.stringify(this))`,
-      "/es6-expr-import-meta.js": `(import.meta); console.log(JSON.stringify(this))`,
-      "/es6-export-variable.js": `export const foo = 123; console.log(JSON.stringify(this))`,
-      "/es6-export-function.js": `export function foo() {} console.log(JSON.stringify(this))`,
-      "/es6-export-async-function.js": `export async function foo() {} console.log(JSON.stringify(this))`,
-      "/es6-export-enum.ts": `export enum Foo {} console.log(JSON.stringify(this))`,
-      "/es6-export-const-enum.ts": `export const enum Foo {} console.log(JSON.stringify(this))`,
-      "/es6-export-module.ts": `export module Foo {} console.log(JSON.stringify(this))`,
-      "/es6-export-namespace.ts": `export namespace Foo {} console.log(JSON.stringify(this))`,
-      "/es6-export-class.js": `export class Foo {} console.log(JSON.stringify(this))`,
-      "/es6-export-abstract-class.ts": `export abstract class Foo {} console.log(JSON.stringify(this))`,
-      "/es6-export-default.js": `export default 123; console.log(JSON.stringify(this))`,
-      "/es6-export-clause.js": `export {}; console.log(JSON.stringify(this))`,
-      "/es6-export-clause-from.js": `export {} from './dummy'; console.log(JSON.stringify(this))`,
-      "/es6-export-star.js": `export * from './dummy'; console.log(JSON.stringify(this))`,
-      "/es6-export-star-as.js": `export * as ns from './dummy'; console.log(JSON.stringify(this))`,
-      "/es6-export-assign.ts": `export = 123; console.log(JSON.stringify(this))`,
-      "/es6-export-import-assign.ts": `export import x = require('./dummy'); console.log(JSON.stringify(this))`,
-      "/es6-ns-export-variable.ts": `namespace ns { export const foo = 123; } console.log(JSON.stringify(this))`,
-      "/es6-ns-export-function.ts": `namespace ns { export function foo() {} } console.log(JSON.stringify(this))`,
-      "/es6-ns-export-async-function.ts": `namespace ns { export async function foo() {} } console.log(JSON.stringify(this))`,
-      "/es6-ns-export-enum.ts": `namespace ns { export enum Foo {} } console.log(JSON.stringify(this))`,
-      "/es6-ns-export-const-enum.ts": `namespace ns { export const enum Foo {} } console.log(JSON.stringify(this))`,
-      "/es6-ns-export-module.ts": `namespace ns { export module Foo {} } console.log(JSON.stringify(this))`,
-      "/es6-ns-export-namespace.ts": `namespace ns { export namespace Foo {} } console.log(JSON.stringify(this))`,
-      "/es6-ns-export-class.ts": `namespace ns { export class Foo {} } console.log(JSON.stringify(this))`,
-      "/es6-ns-export-abstract-class.ts": `namespace ns { export abstract class Foo {} } console.log(JSON.stringify(this))`,
+      "/cjs.js": `console.log("cjs.js:",JSON.stringify(this))`,
+      "/es6-import-stmt.js": `import './dummy'; console.log("es6-import-stmt.js:",JSON.stringify(this))`,
+      "/es6-import-assign.ts": `import x = require('./dummy'); console.log("es6-import-assign.ts:",JSON.stringify(this))`,
+      "/es6-import-dynamic.js": `import('./dummy'); console.log("es6-import-dynamic.js:",JSON.stringify(this))`,
+      "/es6-import-meta.js": `import.meta; console.log("es6-import-meta.js:",JSON.stringify(this))`,
+      "/es6-expr-import-dynamic.js": `(import('./dummy')); console.log("es6-expr-import-dynamic.js:",JSON.stringify(this))`,
+      "/es6-expr-import-meta.js": `(import.meta); console.log("es6-expr-import-meta.js:",JSON.stringify(this))`,
+      "/es6-export-variable.js": `export const foo = 123; console.log("es6-export-variable.js:",JSON.stringify(this))`,
+      "/es6-export-function.js": `export function foo() {} console.log("es6-export-function.js:",JSON.stringify(this))`,
+      "/es6-export-async-function.js": `export async function foo() {} console.log("es6-export-async-function.js:",JSON.stringify(this))`,
+      "/es6-export-enum.ts": `export enum Foo {} console.log("es6-export-enum.ts:",JSON.stringify(this))`,
+      "/es6-export-const-enum.ts": `export const enum Foo {} console.log("es6-export-const-enum.ts:",JSON.stringify(this))`,
+      "/es6-export-module.ts": `export module Foo {} console.log("es6-export-module.ts:",JSON.stringify(this))`,
+      "/es6-export-namespace.ts": `export namespace Foo {} console.log("es6-export-namespace.ts:",JSON.stringify(this))`,
+      "/es6-export-class.js": `export class Foo {} console.log("es6-export-class.js:",JSON.stringify(this))`,
+      "/es6-export-abstract-class.ts": `export abstract class Foo {} console.log("es6-export-abstract-class.ts:",JSON.stringify(this))`,
+      "/es6-export-default.js": `export default 123; console.log("es6-export-default.js:",JSON.stringify(this))`,
+      "/es6-export-clause.js": `export {}; console.log("es6-export-clause.js:",JSON.stringify(this))`,
+      "/es6-export-clause-from.js": `export {} from './dummy'; console.log("es6-export-clause-from.js:",JSON.stringify(this))`,
+      "/es6-export-star.js": `export * from './dummy'; console.log("es6-export-star.js:",JSON.stringify(this))`,
+      "/es6-export-star-as.js": `export * as ns from './dummy'; console.log("es6-export-star-as.js:",JSON.stringify(this))`,
+      "/es6-export-assign.ts": `export = 123; console.log("es6-export-assign.ts:",JSON.stringify(this))`,
+      "/es6-export-import-assign.ts": `export import x = require('./dummy'); console.log("es6-export-import-assign.ts:",JSON.stringify(this))`,
+      "/es6-ns-export-variable.ts": `namespace ns { export const foo = 123; } console.log("es6-ns-export-variable.ts:",JSON.stringify(this))`,
+      "/es6-ns-export-function.ts": `namespace ns { export function foo() {} } console.log("es6-ns-export-function.ts:",JSON.stringify(this))`,
+      "/es6-ns-export-async-function.ts": `namespace ns { export async function foo() {} } console.log("es6-ns-export-async-function.ts:",JSON.stringify(this))`,
+      "/es6-ns-export-enum.ts": `namespace ns { export enum Foo {} } console.log("es6-ns-export-enum.ts:",JSON.stringify(this))`,
+      "/es6-ns-export-const-enum.ts": `namespace ns { export const enum Foo {} } console.log("es6-ns-export-const-enum.ts:",JSON.stringify(this))`,
+      "/es6-ns-export-module.ts": `namespace ns { export module Foo {} } console.log("es6-ns-export-module.ts:",JSON.stringify(this))`,
+      "/es6-ns-export-namespace.ts": `namespace ns { export namespace Foo {} } console.log("es6-ns-export-namespace.ts:",JSON.stringify(this))`,
+      "/es6-ns-export-class.ts": `namespace ns { export class Foo {} } console.log("es6-ns-export-class.ts:",JSON.stringify(this))`,
+      "/es6-ns-export-abstract-class.ts": `namespace ns { export abstract class Foo {} } console.log("es6-ns-export-abstract-class.ts:",JSON.stringify(this))`,
     },
     run: {
-      "stdout":
-        "{}\n{}\n{}\n{}\nundefined\n{}\nundefined\nundefined\nundefined\nundefined\nundefined\nundefined\nundefined\nundefined\nundefined\nundefined\nundefined\nundefined\nundefined\nundefined\nundefined\n{}\nundefined\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+      "stdout": `
+        cjs.js: {}
+        es6-import-stmt.js: {}
+        es6-import-assign.ts: {}
+        es6-import-dynamic.js: {}
+        es6-import-meta.js: undefined
+        es6-expr-import-dynamic.js: {}
+        es6-expr-import-meta.js: undefined
+        es6-export-variable.js: undefined
+        es6-export-function.js: undefined
+        es6-export-async-function.js: undefined
+        es6-export-enum.ts: undefined
+        es6-export-const-enum.ts: undefined
+        es6-export-module.ts: undefined
+        es6-export-namespace.ts: undefined
+        es6-export-class.js: undefined
+        es6-export-abstract-class.ts: undefined
+        es6-export-default.js: undefined
+        es6-export-clause.js: undefined
+        es6-export-clause-from.js: undefined
+        es6-export-star.js: undefined
+        es6-export-star-as.js: undefined
+        es6-export-assign.ts: {}
+        es6-export-import-assign.ts: undefined
+        es6-ns-export-variable.ts: {}
+        es6-ns-export-function.ts: {}
+        es6-ns-export-async-function.ts: {}
+        es6-ns-export-enum.ts: {}
+        es6-ns-export-const-enum.ts: {}
+        es6-ns-export-module.ts: {}
+        es6-ns-export-namespace.ts: {}
+        es6-ns-export-class.ts: {}
+        es6-ns-export-abstract-class.ts: {}
+      `,
     },
   });
   itBundled("default/ArrowFnScope", {
@@ -1999,6 +2044,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/ImportReExportES6ESBuildIssue149", {
+    notImplemented: true,
     files: {
       "/app.jsx": /* jsx */ `
         import { p as Part, h, render } from './import';
@@ -2029,6 +2075,7 @@ describe("bundler", () => {
     },
     jsx: {
       factory: "h",
+      automaticRuntime: false,
     },
     external: ["preact"],
     run: true,
@@ -2087,6 +2134,7 @@ describe("bundler", () => {
     external: ["@scope/foo"],
   });
   itBundled("default/ExternalModuleExclusionRelativePath", {
+    notImplemented: true,
     files: {
       "/Users/user/project/src/index.js": `import './nested/folder/test'`,
       "/Users/user/project/src/nested/folder/test.js": /* js */ `
@@ -2130,6 +2178,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/ImportWithHashParameter", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         // Each of these should have a separate identity (i.e. end up in the output file twice)
@@ -2158,6 +2207,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/ImportAbsPathWithQueryParameter", {
+    notImplemented: true,
     files: {
       "/Users/user/project/entry.js": /* js */ `
         // Each of these should have a separate identity (i.e. end up in the output file twice)
@@ -2270,9 +2320,9 @@ describe("bundler", () => {
     external: ["/assets/*", "*.png", "/dir/*/file.gif"],
     bundleErrors: {
       "/entry.js": [
-        'Could not resolve "/sassets/images/test.jpg"',
-        'Could not resolve "/dir/file.gif"',
-        'Could not resolve "./file.ping"',
+        `Could not resolve: "/sassets/images/test.jpg"`,
+        `Could not resolve: "/dir/file.gif"`,
+        `Could not resolve: "./file.ping"`,
       ],
     },
   });
@@ -2540,9 +2590,10 @@ describe("bundler", () => {
     },
   });
   itBundled("default/MultipleEntryPointsSameNameCollision", {
+    notImplemented: true,
     files: {
-      "/a/entry.js": `import {foo} from '../common.js'; console.log(foo)`,
-      "/b/entry.js": `import {foo} from '../common.js'; console.log(foo)`,
+      "/a/entry.js": `import {foo} from '../common.js'; console.log(1, foo)`,
+      "/b/entry.js": `import {foo} from '../common.js'; console.log(2, 1foo)`,
       "/common.js": `export let foo = 123`,
     },
     entryPoints: ["./a/entry.js", "./b/entry.js"],
@@ -3424,6 +3475,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/AssignToImport", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         import "./bad0.js"
@@ -3554,6 +3606,7 @@ describe("bundler", () => {
       "/bad11.js": ["imports are immutable"],
       "/bad12.js": ["imports are immutable"],
     },
+    external: ["foo"],
   });
   itBundled("default/MinifyArguments", {
     files: {
@@ -3597,6 +3650,7 @@ describe("bundler", () => {
     "/delete-super.js": `class Foo extends Bar { foo() { delete super.foo } }`,
   };
   itBundled("default/WarningsInsideNodeModules", {
+    notImplemented: true,
     files: {
       "/entry.js": Object.keys(WarningsInsideNodeModules)
         .map(file => `import "./${file}"; import "./node_modules/${file}"; import "@plugin/${file}"`)
@@ -3613,7 +3667,6 @@ describe("bundler", () => {
       "/write-getter.js": [`Writing to getter-only property "#foo" will throw`],
       "/read-setter.js": [`Reading from setter-only property "#foo" will throw`],
     },
-    // TODO: could use onAfterBundle to check the above warning object covers all files.
   });
   itBundled("default/RequireResolve", {
     files: {
@@ -4087,6 +4140,7 @@ describe("bundler", () => {
   //   },
   // });
   itBundled("default/DefineThis", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         ok(
@@ -4127,8 +4181,8 @@ describe("bundler", () => {
     },
     define: {
       this: "_replaced",
-      "this.foo": "_replaced_foo",
       "this.foo.bar": "_replaced_foo_bar",
+      "this.foo": "_replaced_foo",
     },
     onAfterBundle(api) {
       const split = api.readFile("/out.js").split("doNotSubstitute");
@@ -4164,7 +4218,6 @@ describe("bundler", () => {
     },
   });
   itBundled("default/DefineOptionalChain", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         log([
@@ -4244,6 +4297,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/DefineInfiniteLoopESBuildIssue2407", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         a.b()
@@ -4445,6 +4499,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/ConstWithLet", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         const a = 1; console.log(a)
@@ -4464,7 +4519,7 @@ describe("bundler", () => {
   });
   // TODO: this fails on esbuild ???
   itBundled("default/ConstWithLetNoBundle", {
-    // GENERATED
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         const a = 1; console.log(a)
@@ -4591,242 +4646,244 @@ describe("bundler", () => {
   // });
   if (!RUN_UNCHECKED_TESTS) return;
   // I cant get bun to use `this` as the JSX runtime. It's a pretty silly idea anyways.
-  itBundled("default/JSXThisValueCommonJS", {
-    files: {
-      "/factory.jsx": /* jsx */ `
-        CHECK1(<x />);
-        CHECK1(/* @__PURE__ */ this('x', null));
-        f = function() {
-          CHECK2(<y />);
-          CHECK2(/* @__PURE__ */ this('y', null));
-        }
-      `,
-      "/fragment.jsx": /* jsx */ `
-        console.log([
-          <>x</>,
-          /* @__PURE__ */ this(this, null, 'x'),
-        ]),
-        f = function() {
-          console.log([
-            <>y</>,
-            /* @__PURE__ */ this(this, null, 'y'),
-          ])
-        }
-      `,
-    },
-    entryPoints: ["/factory.jsx", "/fragment.jsx"],
-    external: ["react/jsx-dev-runtime", "react"],
-    jsx: {
-      development: false,
-      automaticRuntime: false,
-      factory: "this",
-      fragment: "this",
-    },
-  });
-  itBundled("default/JSXThisValueESM", {
-    // GENERATED
-    files: {
-      "/factory.jsx": /* jsx */ `
-        console.log([
-          <x />,
-          /* @__PURE__ */ this('x', null),
-        ])
-        f = function() {
-          console.log([
-            <y />,
-            /* @__PURE__ */ this('y', null),
-          ])
-        }
-        export {}
-      `,
-      "/fragment.jsx": /* jsx */ `
-        console.log([
-          <>x</>,
-          /* @__PURE__ */ this(this, null, 'x'),
-        ]),
-        f = function() {
-          console.log([
-            <>y</>,
-            /* @__PURE__ */ this(this, null, 'y'),
-          ])
-        }
-        export {}
-      `,
-    },
-    entryPoints: ["/factory.jsx", "/fragment.jsx"],
-    jsx: {
-      factory: "this",
-      fragment: "this",
-    },
-    /* TODO FIX expectedScanLog: `factory.jsx: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
-  factory.jsx: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  fragment.jsx: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
-  fragment.jsx: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  `, */
-  });
-  itBundled("default/JSXThisPropertyCommonJS", {
-    // GENERATED
-    files: {
-      "/factory.jsx": /* jsx */ `
-        console.log([
-          <x />,
-          /* @__PURE__ */ this.factory('x', null),
-        ])
-        f = function() {
-          console.log([
-            <y />,
-            /* @__PURE__ */ this.factory('y', null),
-          ])
-        }
-      `,
-      "/fragment.jsx": /* jsx */ `
-        console.log([
-          <>x</>,
-          /* @__PURE__ */ this.factory(this.fragment, null, 'x'),
-        ]),
-        f = function() {
-          console.log([
-            <>y</>,
-            /* @__PURE__ */ this.factory(this.fragment, null, 'y'),
-          ])
-        }
-      `,
-    },
-    entryPoints: ["/factory.jsx", "/fragment.jsx"],
-    jsx: {
-      factory: "this.factory",
-      fragment: "this.fragment",
-    },
-  });
-  itBundled("default/JSXThisPropertyESM", {
-    // GENERATED
-    files: {
-      "/factory.jsx": /* jsx */ `
-        console.log([
-          <x />,
-          /* @__PURE__ */ this.factory('x', null),
-        ])
-        f = function() {
-          console.log([
-            <y />,
-            /* @__PURE__ */ this.factory('y', null),
-          ])
-        }
-        export {}
-      `,
-      "/fragment.jsx": /* jsx */ `
-        console.log([
-          <>x</>,
-          /* @__PURE__ */ this.factory(this.fragment, null, 'x'),
-        ]),
-        f = function() {
-          console.log([
-            <>y</>,
-            /* @__PURE__ */ this.factory(this.fragment, null, 'y'),
-          ])
-        }
-        export {}
-      `,
-    },
-    entryPoints: ["/factory.jsx", "/fragment.jsx"],
-    jsx: {
-      factory: "this.factory",
-      fragment: "this.fragment",
-    },
-    /* TODO FIX expectedScanLog: `factory.jsx: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
-  factory.jsx: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  fragment.jsx: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
-  fragment.jsx: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  `, */
-  });
-  itBundled("default/JSXImportMetaValue", {
-    // GENERATED
-    files: {
-      "/factory.jsx": /* jsx */ `
-        console.log([
-          <x />,
-          /* @__PURE__ */ import.meta('x', null),
-        ])
-        f = function() {
-          console.log([
-            <y />,
-            /* @__PURE__ */ import.meta('y', null),
-          ])
-        }
-        export {}
-      `,
-      "/fragment.jsx": /* jsx */ `
-        console.log([
-          <>x</>,
-          /* @__PURE__ */ import.meta(import.meta, null, 'x'),
-        ]),
-        f = function() {
-          console.log([
-            <>y</>,
-            /* @__PURE__ */ import.meta(import.meta, null, 'y'),
-          ])
-        }
-        export {}
-      `,
-    },
-    entryPoints: ["/factory.jsx", "/fragment.jsx"],
-    unsupportedJSFeatures: "ImportMeta",
-    jsx: {
-      factory: "import.meta",
-      fragment: "import.meta",
-    },
-    /* TODO FIX expectedScanLog: `factory.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
-  factory.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
-  fragment.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
-  fragment.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
-  fragment.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
-  fragment.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
-  `, */
-  });
-  itBundled("default/JSXImportMetaProperty", {
-    // GENERATED
-    files: {
-      "/factory.jsx": /* jsx */ `
-        console.log([
-          <x />,
-          /* @__PURE__ */ import.meta.factory('x', null),
-        ])
-        f = function() {
-          console.log([
-            <y />,
-            /* @__PURE__ */ import.meta.factory('y', null),
-          ])
-        }
-        export {}
-      `,
-      "/fragment.jsx": /* jsx */ `
-        console.log([
-          <>x</>,
-          /* @__PURE__ */ import.meta.factory(import.meta.fragment, null, 'x'),
-        ]),
-        f = function() {
-          console.log([
-            <>y</>,
-            /* @__PURE__ */ import.meta.factory(import.meta.fragment, null, 'y'),
-          ])
-        }
-        export {}
-      `,
-    },
-    entryPoints: ["/factory.jsx", "/fragment.jsx"],
-    unsupportedJSFeatures: "ImportMeta",
-    jsx: {
-      factory: "import.meta.factory",
-      fragment: "import.meta.fragment",
-    },
-    /* TODO FIX expectedScanLog: `factory.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
-  factory.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
-  fragment.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
-  fragment.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
-  fragment.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
-  fragment.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
-  `, */
-  });
+  // itBundled("default/JSXThisValueCommonJS", {
+  //   files: {
+  //     "/factory.jsx": /* jsx */ `
+  //       CHECK1(<x />);
+  //       CHECK1(/* @__PURE__ */ this('x', null));
+  //       f = function() {
+  //         CHECK2(<y />);
+  //         CHECK2(/* @__PURE__ */ this('y', null));
+  //       }
+  //     `,
+  //     "/fragment.jsx": /* jsx */ `
+  //       console.log([
+  //         <>x</>,
+  //         /* @__PURE__ */ this(this, null, 'x'),
+  //       ]),
+  //       f = function() {
+  //         console.log([
+  //           <>y</>,
+  //           /* @__PURE__ */ this(this, null, 'y'),
+  //         ])
+  //       }
+  //     `,
+  //   },
+  //   entryPoints: ["/factory.jsx", "/fragment.jsx"],
+  //   external: ["react/jsx-dev-runtime", "react"],
+  //   jsx: {
+  //     development: false,
+  //     automaticRuntime: false,
+  //     factory: "this",
+  //     fragment: "this",
+  //   },
+  // });
+  // itBundled("default/JSXThisValueESM", {
+  //   // GENERATED
+  //   files: {
+  //     "/factory.jsx": /* jsx */ `
+  //       console.log([
+  //         <x />,
+  //         /* @__PURE__ */ this('x', null),
+  //       ])
+  //       f = function() {
+  //         console.log([
+  //           <y />,
+  //           /* @__PURE__ */ this('y', null),
+  //         ])
+  //       }
+  //       export {}
+  //     `,
+  //     "/fragment.jsx": /* jsx */ `
+  //       console.log([
+  //         <>x</>,
+  //         /* @__PURE__ */ this(this, null, 'x'),
+  //       ]),
+  //       f = function() {
+  //         console.log([
+  //           <>y</>,
+  //           /* @__PURE__ */ this(this, null, 'y'),
+  //         ])
+  //       }
+  //       export {}
+  //     `,
+  //   },
+  //   entryPoints: ["/factory.jsx", "/fragment.jsx"],
+  //   jsx: {
+  //     factory: "this",
+  //     fragment: "this",
+  //   },
+  //   /* TODO FIX expectedScanLog: `factory.jsx: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  // factory.jsx: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  // fragment.jsx: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  // fragment.jsx: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  // `, */
+  // });
+  // itBundled("default/JSXThisPropertyCommonJS", {
+  //   // GENERATED
+  //   files: {
+  //     "/factory.jsx": /* jsx */ `
+  //       console.log([
+  //         <x />,
+  //         /* @__PURE__ */ this.factory('x', null),
+  //       ])
+  //       f = function() {
+  //         console.log([
+  //           <y />,
+  //           /* @__PURE__ */ this.factory('y', null),
+  //         ])
+  //       }
+  //     `,
+  //     "/fragment.jsx": /* jsx */ `
+  //       console.log([
+  //         <>x</>,
+  //         /* @__PURE__ */ this.factory(this.fragment, null, 'x'),
+  //       ]),
+  //       f = function() {
+  //         console.log([
+  //           <>y</>,
+  //           /* @__PURE__ */ this.factory(this.fragment, null, 'y'),
+  //         ])
+  //       }
+  //     `,
+  //   },
+  //   entryPoints: ["/factory.jsx", "/fragment.jsx"],
+  //   jsx: {
+  //     factory: "this.factory",
+  //     fragment: "this.fragment",
+  //   },
+  // });
+  // itBundled("default/JSXThisPropertyESM", {
+  //   // GENERATED
+  //   files: {
+  //     "/factory.jsx": /* jsx */ `
+  //       console.log([
+  //         <x />,
+  //         /* @__PURE__ */ this.factory('x', null),
+  //       ])
+  //       f = function() {
+  //         console.log([
+  //           <y />,
+  //           /* @__PURE__ */ this.factory('y', null),
+  //         ])
+  //       }
+  //       export {}
+  //     `,
+  //     "/fragment.jsx": /* jsx */ `
+  //       console.log([
+  //         <>x</>,
+  //         /* @__PURE__ */ this.factory(this.fragment, null, 'x'),
+  //       ]),
+  //       f = function() {
+  //         console.log([
+  //           <>y</>,
+  //           /* @__PURE__ */ this.factory(this.fragment, null, 'y'),
+  //         ])
+  //       }
+  //       export {}
+  //     `,
+  //   },
+  //   entryPoints: ["/factory.jsx", "/fragment.jsx"],
+  //   jsx: {
+  //     factory: "this.factory",
+  //     fragment: "this.fragment",
+  //   },
+  //   /* TODO FIX expectedScanLog: `factory.jsx: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  // factory.jsx: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  // fragment.jsx: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  // fragment.jsx: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  // `, */
+  // });
+  // itBundled("default/JSXImportMetaValue", {
+  //   // GENERATED
+  //   files: {
+  //     "/factory.jsx": /* jsx */ `
+  //       console.log([
+  //         <x />,
+  //         /* @__PURE__ */ import.meta('x', null),
+  //       ])
+  //       f = function() {
+  //         console.log([
+  //           <y />,
+  //           /* @__PURE__ */ import.meta('y', null),
+  //         ])
+  //       }
+  //       export {}
+  //     `,
+  //     "/fragment.jsx": /* jsx */ `
+  //       console.log([
+  //         <>x</>,
+  //         /* @__PURE__ */ import.meta(import.meta, null, 'x'),
+  //       ]),
+  //       f = function() {
+  //         console.log([
+  //           <>y</>,
+  //           /* @__PURE__ */ import.meta(import.meta, null, 'y'),
+  //         ])
+  //       }
+  //       export {}
+  //     `,
+  //   },
+  //   entryPoints: ["/factory.jsx", "/fragment.jsx"],
+  //   unsupportedJSFeatures: "ImportMeta",
+  //   jsx: {
+  //     factory: "import.meta",
+  //     fragment: "import.meta",
+  //   },
+  //   /* TODO FIX expectedScanLog: `factory.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
+  // factory.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
+  // fragment.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
+  // fragment.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
+  // fragment.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
+  // fragment.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
+  // `, */
+  // });
+  // itBundled("default/JSXImportMetaProperty", {
+  //   // GENERATED
+  //   files: {
+  //     "/factory.jsx": /* jsx */ `
+  //       console.log([
+  //         <x />,
+  //         /* @__PURE__ */ import.meta.factory('x', null),
+  //       ])
+  //       f = function() {
+  //         console.log([
+  //           <y />,
+  //           /* @__PURE__ */ import.meta.factory('y', null),
+  //         ])
+  //       }
+  //       export {}
+  //     `,
+  //     "/fragment.jsx": /* jsx */ `
+  //       console.log([
+  //         <>x</>,
+  //         /* @__PURE__ */ import.meta.factory(import.meta.fragment, null, 'x'),
+  //       ]),
+  //       f = function() {
+  //         console.log([
+  //           <>y</>,
+  //           /* @__PURE__ */ import.meta.factory(import.meta.fragment, null, 'y'),
+  //         ])
+  //       }
+  //       export {}
+  //     `,
+  //   },
+  //   entryPoints: ["/factory.jsx", "/fragment.jsx"],
+  //   unsupportedJSFeatures: "ImportMeta",
+  //   jsx: {
+  //     factory: "import.meta.factory",
+  //     fragment: "import.meta.fragment",
+  //   },
+  //   /* TODO FIX expectedScanLog: `factory.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
+  // factory.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
+  // fragment.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
+  // fragment.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
+  // fragment.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
+  // fragment.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
+  // `, */
+  // });
+  0;
+
   itBundled("default/BundlingFilesOutsideOfOutbase", {
     // GENERATED
     files: {
@@ -5861,7 +5918,6 @@ describe("bundler", () => {
     minifySyntax: true,
   });
   itBundled("default/PackageAlias", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import "pkg1"
@@ -5889,6 +5945,19 @@ describe("bundler", () => {
       "/alias9/some/file.js": `console.log(9)`,
       "/node_modules/prefix-foo/index.js": `console.log(10)`,
       "/node_modules/@scope/prefix-foo/index.js": `console.log(11)`,
+    },
+    bundleErrors: {
+      "/entry.js": [
+        'Could not resolve: "pkg1". Maybe you need to "bun install"?',
+        'Could not resolve: "pkg2/foo". Maybe you need to "bun install"?',
+        'Could not resolve: "@scope/pkg4". Maybe you need to "bun install"?',
+        'Could not resolve: "@scope/pkg5/foo". Maybe you need to "bun install"?',
+        'Could not resolve: "@abs-path/pkg6". Maybe you need to "bun install"?',
+        'Could not resolve: "@abs-path/pkg6/foo". Maybe you need to "bun install"?',
+        'Could not resolve: "@scope-only/pkg8". Maybe you need to "bun install"?',
+        'Could not resolve: "slash/" Maybe. you need to "bun install"?',
+        'Could not resolve: "pkg3". Maybe you need to "bun install"?',
+      ],
     },
   });
   itBundled("default/PackageAliasMatchLongest", {

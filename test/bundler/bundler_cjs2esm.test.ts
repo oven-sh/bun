@@ -4,7 +4,6 @@ import { bundlerTest, expectBundled, itBundled, testForFile } from "./expectBund
 var { describe, test, expect } = testForFile(import.meta.path);
 
 describe("bundler", () => {
-  // TODO: I must be misunderstanding how the cjs to esm transforms work. since this should pass
   itBundled("cjs2esm/ModuleExportsFunction", {
     files: {
       "/entry.js": /* js */ `
@@ -19,8 +18,12 @@ describe("bundler", () => {
     },
     minifySyntax: true,
     platform: "bun",
+    // TODO: better assertion
     onAfterBundle(api) {
       assert(!api.readFile("/out.js").includes("__commonJS"), "should not include the commonJS helper");
+    },
+    run: {
+      stdout: "foo",
     },
   });
 });

@@ -7532,7 +7532,7 @@ const LinkerContext = struct {
                         source,
                         r,
                         c.allocator,
-                        "Detected cycle while resolving import {s}",
+                        "Detected cycle while resolving import \"{s}\"",
                         .{
                             named_import.alias.?,
                         },

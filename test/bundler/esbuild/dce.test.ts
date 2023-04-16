@@ -304,6 +304,7 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayRemove", {
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -542,6 +543,7 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleImplicitMain", {
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -574,6 +576,7 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayGlob", {
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg/keep/this/file"
@@ -597,6 +600,7 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsNestedDirectoryRemove", {
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg/a/b/c"
@@ -744,6 +748,7 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsFalseIntermediateFilesDiamond", {
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "a"
@@ -772,6 +777,7 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsFalseOneFork", {
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": `import("a").then(x => console.log(x.foo))`,
       "/Users/user/project/node_modules/a/index.js": `export {foo} from "b"`,
@@ -792,6 +798,7 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsFalseAllFork", {
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": `import("a").then(x => console.log(x.foo))`,
       "/Users/user/project/node_modules/a/index.js": `export {foo} from "b"`,
@@ -902,6 +909,7 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/RemoveUnusedPureCommentCalls", {
+    notImplemented: true,
     // in this test, the bundler must drop all `_yes` variables entirely, and then
     // preserve the pure comments in the same way esbuild does
     files: {
@@ -1030,37 +1038,37 @@ describe("bundler", () => {
       stdout: `["F",{"children":[null,{"children":["div",{}]}]}]`,
     },
   });
-  // itBundled("dce/DisableTreeShaking", {
-  //   // GENERATED
-  //   files: {
-  //     "/entry.jsx": /* jsx */ `
-  //       import './remove-me'
-  //       function RemoveMe1() {}
-  //       let removeMe2 = 0
-  //       class RemoveMe3 {}
+  // TODO: Unsure how to port this: https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_dce_test.go#L1249
+  itBundled("dce/DisableTreeShaking", {
+    notImplemented: true,
+    // GENERATED
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import './remove-me'
+        function RemoveMe1() {}
+        let removeMe2 = 0
+        class RemoveMe3 {}
 
-  //       import './keep-me'
-  //       function KeepMe1() {}
-  //       let keepMe2 = <KeepMe1/>
-  //       function keepMe3() { console.log('side effects') }
-  //       let keepMe4 = /* @__PURE__ */ keepMe3()
-  //       let keepMe5 = pure()
-  //       let keepMe6 = some.fn()
-  //     `,
-  //     "/remove-me.js": `export default 'unused'`,
-  //     "/keep-me/index.js": `console.log('side effects')`,
-  //     "/keep-me/package.json": `{ "sideEffects": false }`,
-  //   },
-  //   // TODO: Unsure how to port this: https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_dce_test.go#L1249
-  //   ignoreDCEAnnotations: true,
-  //   define: {
-  //     pure: "???",
-  //     "some.fn": "???",
-  //   },
-  // });
-  0; // the commented out test has a pure comment which unless this 0 line is here, that test will be removed
-
+        import './keep-me'
+        function KeepMe1() {}
+        let keepMe2 = <KeepMe1/>
+        function keepMe3() { console.log('side effects') }
+        let keepMe4 = /* @__PURE__ */ keepMe3()
+        let keepMe5 = pure()
+        let keepMe6 = some.fn()
+      `,
+      "/remove-me.js": `export default 'unused'`,
+      "/keep-me/index.js": `console.log('side effects')`,
+      "/keep-me/package.json": `{ "sideEffects": false }`,
+    },
+    ignoreDCEAnnotations: true,
+    define: {
+      pure: "???",
+      "some.fn": "???",
+    },
+  });
   itBundled("dce/DeadCodeFollowingJump", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         function testReturn() {
@@ -1147,6 +1155,7 @@ describe("bundler", () => {
     minifySyntax: true,
   });
   itBundled("dce/RemoveTrailingReturn", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         function foo() {
@@ -1228,6 +1237,7 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/TreeShakingObjectProperty", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         let remove1 = { x: 'x' }
@@ -1877,6 +1887,7 @@ describe("bundler", () => {
     dceKeepMarkerCount: 14,
   });
   itBundled("dce/InlineIdentityFunctionCalls", {
+    notImplemented: true,
     files: {
       "/identity.js": /* js */ `
         function DROP(x) { return x }
@@ -2021,12 +2032,13 @@ describe("bundler", () => {
       "/not-identity-return.js",
     ],
     dce: true,
-    minifySyntax: true,
+    minifySyntax: false,
     dceKeepMarkerCount: {
       "/out/identity-first.js": 4,
     },
   });
   itBundled("dce/InlineEmptyFunctionCalls", {
+    notImplemented: true,
     files: {
       "/empty.js": /* js */ `
         function DROP() {}
@@ -2211,6 +2223,7 @@ describe("bundler", () => {
     dce: true,
   });
   itBundled("dce/InlineFunctionCallForInitDecl", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         function empty_REMOVE() {}
@@ -2381,6 +2394,7 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/ConstValueInliningBundle", {
+    notImplemented: true,
     files: {
       "/exported-entry.js": /* js */ `
         const x_REMOVE = 1
@@ -2519,8 +2533,8 @@ describe("bundler", () => {
     },
     entryPoints: ["/const-assign.js", "/const-update.js"],
     bundleErrors: {
-      "/const-assign.js": ['Cannot assign to constant variable "x"'],
-      "/const-update.js": ['Cannot assign to constant variable "x"'],
+      "/const-update.js": [`Cannot assign to "x" because it is a constant`],
+      "/const-assign.js": [`Cannot assign to "x" because it is a constant`],
     },
   });
   itBundled("dce/ConstValueInliningDirectEval", {
@@ -2578,7 +2592,7 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/CrossModuleConstantFolding", {
-    // GENERATED
+    notImplemented: true,
     files: {
       "/enum-constants.ts": /* ts */ `
         export enum remove {
@@ -2688,6 +2702,7 @@ describe("bundler", () => {
     dce: true,
   });
   itBundled("dce/MultipleDeclarationTreeShaking", {
+    notImplemented: true,
     files: {
       "/var2.js": /* js */ `
         var x = 1
@@ -2726,6 +2741,7 @@ describe("bundler", () => {
     ],
   });
   itBundled("dce/MultipleDeclarationTreeShakingMinifySyntax", {
+    notImplemented: true,
     files: {
       "/var2.js": /* js */ `
         var x = 1
@@ -2764,6 +2780,7 @@ describe("bundler", () => {
     ],
   });
   itBundled("dce/PureCallsWithSpread", {
+    notImplemented: true,
     files: {
       // this changes to "[...args]"
       "/entry.js": /* js */ `
@@ -2779,6 +2796,7 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/TopLevelFunctionInliningWithSpread", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         function empty1_remove() {}

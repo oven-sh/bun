@@ -1,8 +1,10 @@
 # `bun build` tests using `expectBundled`
 
-Most bundler tests were ported [from esbuild][1], located in `test/bundler/esbuild`. Our own tests are in `bundler_*.test.ts`
+Most bundler tests were ported [from esbuild][1], located in `test/bundler/esbuild`. Our own tests are in `bundler_*.test.ts`. Not all esbuild tests were fully ported, check for `// GENERATED` to see which are missing.
 
 [1]: https://github.com/evanw/esbuild/tree/main/internal/bundler_tests
+
+## expectBundled
 
 Call `expectBundled` within a test to test the bundler. The `id` passed as the first argument must be unique across the all tests, and generally uses the format `file/TestName`. The second parameter is an options object.
 

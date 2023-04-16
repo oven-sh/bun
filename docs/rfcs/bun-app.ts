@@ -4,29 +4,35 @@ import { BuildManifest, BuildConfig, BundlerConfig } from "./bun-build-config";
 import { BuildResult } from "./bun-build";
 
 interface AppBuildConfig extends BuildConfig {
-  serve?: Array<AppServeConfig>;
+  serve?: Array<AppServeRouter>;
 }
 
 interface AppConfig {
   builds: { [k: string]: BundlerConfig };
-  fetch: Array<AppServeConfig>;
+  router: Array<AppServeRouter>;
 }
 
-type AppServeConfig =
+type AppServeRouter =
   | {
-      // serve static files
-      mode: "static";
+      // handler mode
+      mode: "static" | "build" | "handler";
+      // key borrowed from FileSystemRouter for consistence
+      // but slightly weird here
+      style: "static" | "nextjs";
+      // ser
       // directory to serve from
       // e.g. "./public"
       dir: string;
-      style: "static";
       // serve these files at a path
       // e.g. "/static"
       prefix?: string;
+
+      // only required in "handler" mode
+      handler?: string;
     }
   | {
       // serve the build outputs of a given build
-      mode: "outputs";
+      style: "build";
       // must match a `name` specified in one of the `AppConfig`s
       // serve the build outputs of the build
       // with the given name
@@ -34,31 +40,35 @@ type AppServeConfig =
       // serve these files at a path
       // e.g. "/static"
       prefix?: string;
+      // whether to serve entrypoints using their original names
+      // e.g. "index.tsx" instead of "index-[hash].js"
+      preserveNames?: boolean;
     }
   | {
       mode: "handler";
-      // request prefix, e.g. "/static"
-      // if incoming Request  doesn't match prefix, no JS runs
-      prefix?: string;
       // path to file that `export default`s a handler
       // this file is automatically added as an entrypoint in the build
       // e.g. ./serve.tsx
-
       handler: string;
-      // default { manifest: true }
-      context?: {
-        // if true, expose build manifest on ctx.manifest
-        // default true
-        manifest: boolean;
-        // check incoming request against this router
-        // return MatchedResult on ctx.match
-        match?: {
-          dir: string;
-          prefix: string;
-          style: "nextjs";
-        };
-      };
-      router?: FileSystemRouter;
+      // what config to use for the build
+      // e.g. "client"
+      build: string;
+
+      // router info - this is optional
+      // not necessary for simple handlers
+      // if a route is matched, the handler is called
+      // the MatchedRoute is passed as context.match
+      style?: "static" | "nextjs";
+      // request prefix, e.g. "/static"
+      // if incoming Request  doesn't match prefix, no JS runs
+      dir?: string;
+      // handle requests that match this prefix
+      // e.g. /api
+      prefix?: string;
+
+      // whether to provide a build manifest in context.handler
+      // default true
+      manifest?: boolean;
     };
 
 export declare class App {
@@ -91,7 +101,7 @@ export declare class App {
 // - manifest: always provided
 // - match: MatchedResult, only provided if `match` is specified in the `AppConfig`
 interface HandlerContext {
-  manifest: BuildManifest;
+  manifest?: BuildManifest;
   match?: MatchedRoute;
 }
 

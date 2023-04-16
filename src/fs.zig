@@ -1193,6 +1193,19 @@ pub const Path = struct {
     is_disabled: bool = false,
     is_symlink: bool = false,
 
+    pub fn packageName(this: *const Path) ?string {
+        var name_to_use = this.pretty;
+        if (strings.lastIndexOf(this.text, std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str)) |node_modules| {
+            name_to_use = this.text[node_modules + 14 ..];
+        }
+
+        const pkgname = bun.options.JSX.Pragma.parsePackageName(name_to_use);
+        if (pkgname.len == 0 or !std.ascii.isAlphanumeric(pkgname[0]))
+            return null;
+
+        return pkgname;
+    }
+
     pub fn loader(this: *const Path, loaders: *const bun.options.Loader.HashTable) ?bun.options.Loader {
         if (this.isDataURL()) {
             return bun.options.Loader.dataurl;

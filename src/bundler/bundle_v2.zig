@@ -936,7 +936,7 @@ const ParseTask = struct {
         errdefer resolve_queue.clearAndFree();
 
         var opts = js_parser.Parser.Options.init(task.jsx, loader);
-        opts.transform_require_to_import = false;
+        opts.legacy_transform_require_to_import = false;
         opts.can_import_from_bundle = false;
         opts.features.allow_runtime = !source.index.isRuntime();
         opts.features.dynamic_require = platform.isBun();
@@ -947,10 +947,13 @@ const ParseTask = struct {
         opts.features.jsx_optimization_inline = platform.isBun() and (bundler.options.jsx_optimization_inline orelse !task.jsx.development);
         opts.features.auto_import_jsx = task.jsx.parse and bundler.options.auto_import_jsx;
         opts.features.trim_unused_imports = loader.isTypeScript() or (bundler.options.trim_unused_imports orelse false);
-        opts.features.inlining = true;
+        opts.features.inlining = bundler.options.minify_syntax;
+        opts.features.minify_syntax = bundler.options.minify_syntax;
 
         opts.tree_shaking = task.tree_shaking;
         opts.module_type = task.module_type;
+        opts.features.unwrap_commonjs_packages = bundler.options.unwrap_commonjs_packages;
+
         task.jsx.parse = loader.isJSX();
 
         var ast: js_ast.Ast = if (!is_empty)
@@ -1833,44 +1836,21 @@ const LinkerGraph = struct {
                                 // and the import path refers to a server entry point
                                 if (import_record.tag == .none) {
                                     const other = this.useDirectiveBoundary(source_index);
-                                    import_record.module_id = bun.hash32(sources[source_index].path.pretty);
 
                                     if (use_directive.boundering(other)) |boundary| {
+                                        import_record.module_id = bun.hash32(sources[source_index].path.pretty);
+
                                         // That import is a React Server Component reference.
                                         switch (boundary) {
                                             .@"use client" => {
                                                 import_record.tag = .react_client_component;
                                                 import_record.path.namespace = "client";
                                                 import_record.print_namespace_in_path = true;
-
-                                                if (entry_point_kinds[source_index] == .none) {
-                                                    if (comptime Environment.allow_assert)
-                                                        debug("Adding client component entry point for {s}", .{sources[source_index].path.text});
-
-                                                    try this.entry_points.append(this.allocator, .{
-                                                        .source_index = source_index,
-                                                        .output_path = bun.PathString.init(sources[source_index].path.text),
-                                                        .output_path_was_auto_generated = true,
-                                                    });
-                                                    entry_point_kinds[source_index] = .react_client_component;
-                                                }
                                             },
                                             .@"use server" => {
                                                 import_record.tag = .react_server_component;
                                                 import_record.path.namespace = "server";
                                                 import_record.print_namespace_in_path = true;
-
-                                                if (entry_point_kinds[source_index] == .none) {
-                                                    if (comptime Environment.allow_assert)
-                                                        debug("Adding server component entry point for {s}", .{sources[source_index].path.text});
-
-                                                    try this.entry_points.append(this.allocator, .{
-                                                        .source_index = source_index,
-                                                        .output_path = bun.PathString.init(sources[source_index].path.text),
-                                                        .output_path_was_auto_generated = true,
-                                                    });
-                                                    entry_point_kinds[source_index] = .react_server_component;
-                                                }
                                             },
                                             else => unreachable,
                                         }
@@ -2673,7 +2653,6 @@ const LinkerContext = struct {
             var lazy_exports: []bool = this.graph.ast.items(.has_lazy_export);
             var symbols = &this.graph.symbols;
             defer this.graph.symbols = symbols.*;
-            var commonjs_named_exports: []js_ast.Ast.CommonJSNamedExports = this.graph.ast.items(.commonjs_named_exports);
 
             // Step 1: Figure out what modules must be CommonJS
             for (reachable) |source_index_| {

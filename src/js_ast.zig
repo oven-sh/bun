@@ -2238,8 +2238,8 @@ pub const E = struct {
     pub const RequireString = struct {
         import_record_index: u32 = 0,
 
-        /// TODO:
-        close_paren_loc: logger.Loc = logger.Loc.Empty,
+        unwrapped_id: u32 = std.math.maxInt(u32),
+
     };
 
     pub const RequireResolveString = struct {

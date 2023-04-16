@@ -332,7 +332,11 @@ pub const Runtime = struct {
         /// This is not normally a safe transformation.
         ///
         /// So we have a list of packages which we know are safe to do this with.
-        unwrap_commonjs_packages: []const string = .{},
+        unwrap_commonjs_packages: []const string = &.{},
+
+        pub fn shouldUnwrapRequire(this: *const Features, package_name: string) bool {
+            return package_name.len > 0 and strings.indexAny(this.unwrap_commonjs_packages, package_name) != null;
+        }
 
         pub const ReplaceableExport = union(enum) {
             delete: void,

@@ -1407,13 +1407,13 @@ pub const BundleOptions = struct {
     minify_whitespace: bool = false,
     minify_syntax: bool = false,
 
-    // This is a list of packages which even when require() is used, we will
-    // instead convert to ESM import statements.
-    //
-    // This is not normally a safe transformation.
-    //
-    // So we have a list of packages which we know are safe to do this with.
-    unwrap_commonjs_packages: []const string = default_unwrap_commonjs_packages,
+    /// This is a list of packages which even when require() is used, we will
+    /// instead convert to ESM import statements.
+    ///
+    /// This is not normally a safe transformation.
+    ///
+    /// So we have a list of packages which we know are safe to do this with.
+    unwrap_commonjs_packages: []const string = &default_unwrap_commonjs_packages,
 
     pub fn setProduction(this: *BundleOptions, value: bool) void {
         this.production = value;

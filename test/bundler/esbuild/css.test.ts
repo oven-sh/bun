@@ -350,7 +350,7 @@ var { describe, test, expect } = testForFile(import.meta.path);
 //     /* TODO FIX expectedScanLog: `entry.css: ERROR: Bundling with conditional "@import" rules is not currently supported
 //   `, */
 //   });
-//   itBundled("css/CSSAndJavaScriptCodeSplittingIssue1064", {
+//   itBundled("css/CSSAndJavaScriptCodeSplittingESBuildIssue1064", {
 //     // GENERATED
 //     files: {
 //       "/a.js": /* js */ `
@@ -376,7 +376,7 @@ var { describe, test, expect } = testForFile(import.meta.path);
 //     format: "esm",
 //     splitting: true,
 //   });
-//   itBundled("css/CSSExternalQueryAndHashNoMatchIssue1822", {
+//   itBundled("css/CSSExternalQueryAndHashNoMatchESBuildIssue1822", {
 //     // GENERATED
 //     files: {
 //       "/entry.css": /* css */ `
@@ -391,7 +391,7 @@ var { describe, test, expect } = testForFile(import.meta.path);
 //   NOTE: You can mark the path "foo/bar.png#baz" as external to exclude it from the bundle, which will remove this error.
 //   `, */
 //   });
-//   itBundled("css/CSSExternalQueryAndHashMatchIssue1822", {
+//   itBundled("css/CSSExternalQueryAndHashMatchESBuildIssue1822", {
 //     // GENERATED
 //     files: {
 //       "/entry.css": /* css */ `

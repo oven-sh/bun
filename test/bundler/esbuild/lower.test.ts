@@ -1,4 +1,4 @@
-import { expectBundled, itBundled, testForFile } from "../expectBundled";
+import { RUN_UNCHECKED_TESTS, expectBundled, itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:
@@ -7,7 +7,7 @@ var { describe, test, expect } = testForFile(import.meta.path);
 // For debug, all files are written to $TEMP/bun-bundle-tests/lower
 
 describe("bundler", () => {
-  return;
+  if (!RUN_UNCHECKED_TESTS) return;
   itBundled("lower/LowerOptionalCatchNameCollisionNoBundle", {
     // GENERATED
     files: {
@@ -1207,7 +1207,7 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: "es2021",
   });
-  itBundled("lower/LowerPrivateSuperStaticBundleIssue2158", {
+  itBundled("lower/LowerPrivateSuperStaticBundleESBuildIssue2158", {
     // GENERATED
     files: {
       "/entry.js": /* js */ `
@@ -1451,7 +1451,7 @@ describe("bundler", () => {
     unsupportedJSFeatures: "es2018",
     mode: "transform",
   });
-  itBundled("lower/ClassSuperThisIssue242NoBundle", {
+  itBundled("lower/ClassSuperThisESBuildIssue242NoBundle", {
     // GENERATED
     files: {
       "/entry.ts": /* ts */ `
@@ -1678,7 +1678,7 @@ describe("bundler", () => {
     },
     mode: "passthrough",
   });
-  itBundled("lower/LowerPrivateClassFieldStaticIssue1424", {
+  itBundled("lower/LowerPrivateClassFieldStaticESBuildIssue1424", {
     // GENERATED
     files: {
       "/entry.js": /* js */ `
@@ -1692,7 +1692,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("lower/LowerNullishCoalescingAssignmentIssue1493", {
+  itBundled("lower/LowerNullishCoalescingAssignmentESBuildIssue1493", {
     // GENERATED
     files: {
       "/entry.js": /* js */ `

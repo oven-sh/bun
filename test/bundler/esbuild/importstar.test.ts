@@ -1028,7 +1028,7 @@ describe("bundler", () => {
       stdout: '{"foo":"foo"}',
     },
   });
-  itBundled("importstar/Issue176", {
+  itBundled("importstar/ESBuildIssue176", {
     files: {
       "/entry.js": /* js */ `
         import * as things from './folders'
@@ -1102,7 +1102,7 @@ describe("bundler", () => {
       stdout: '{"bar":"bar","foo":"foo"}',
     },
   });
-  itBundled("importstar/ImportDefaultNamespaceComboIssue446", {
+  itBundled("importstar/ImportDefaultNamespaceComboESBuildIssue446", {
     files: {
       "/external-default2.js": /* js */ `
         import def, {default as default2} from 'external'

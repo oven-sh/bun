@@ -1,6 +1,13 @@
 import assert from "assert";
 import dedent from "dedent";
-import { ESBUILD_PATH, bundlerTest, expectBundled, itBundled, testForFile } from "../expectBundled";
+import {
+  ESBUILD_PATH,
+  RUN_UNCHECKED_TESTS,
+  bundlerTest,
+  expectBundled,
+  itBundled,
+  testForFile,
+} from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:
@@ -1012,27 +1019,39 @@ describe("bundler", () => {
       stdout: "./test.txt",
     },
   });
-  itBundled("default/RequireWithoutCall", {
-    // TODO: MANUAL CHECK: `require` on line one has to be renamed to `__require`
+  itBundled("default/RequireWithoutCallPlatformNeutral", {
+    // `require` on line one has to be renamed to `__require`
     files: {
       "/entry.js": /* js */ `
         const req = require
         req('./entry')
+        capture(req)
       `,
     },
     platform: "neutral",
+    onAfterBundle(api) {
+      const varName = api.captureFile("/out.js")[0];
+      const assignmentValue = api.readFile("/out.js").match(new RegExp(`${varName} = (.*);`))![1];
+      expect(assignmentValue).not.toBe("require");
+    },
   });
-  itBundled("default/NestedRequireWithoutCall", {
-    // TODO: MANUAL CHECK: `require` on line one has to be renamed to `__require`
+  itBundled("default/NestedRequireWithoutCallPlatformNeutral", {
+    // `require` on line one has to be renamed to `__require`
     files: {
       "/entry.js": /* js */ `
         (() => {
           const req = require
           req('./entry')
+          capture(req)
         })()
       `,
     },
     platform: "neutral",
+    onAfterBundle(api) {
+      const varName = api.captureFile("/out.js")[0];
+      const assignmentValue = api.readFile("/out.js").match(new RegExp(`${varName} = (.*);`))![1];
+      expect(assignmentValue).not.toBe("require");
+    },
   });
   itBundled("default/RequireWithCallInsideTry", {
     files: {
@@ -1067,7 +1086,7 @@ describe("bundler", () => {
     run: [{ file: "/test1.js" }, { file: "/test2.js" }],
   });
   itBundled("default/RequireWithoutCallInsideTry", {
-    // TODO: MANUAL CHECK: `require` on line one has to be renamed to `__require`
+    // `require` has to be renamed to `__require`
     files: {
       "/entry.js": /* js */ `
         try {
@@ -1075,10 +1094,16 @@ describe("bundler", () => {
           var aliasedRequire = require;
           aliasedRequire('./locale/' + name);
           getSetGlobalLocale(oldLocale);
+          capture(aliasedRequire)
         } catch (e) {}
       `,
     },
     platform: "neutral",
+    onAfterBundle(api) {
+      const varName = api.captureFile("/out.js")[0];
+      const assignmentValue = api.readFile("/out.js").match(new RegExp(`${varName} = (.*);`))![1];
+      expect(assignmentValue).not.toBe("require");
+    },
   });
   itBundled("default/RequirePropertyAccessCommonJS", {
     files: {
@@ -1886,10 +1911,6 @@ describe("bundler", () => {
     outfile: "/out.js",
     minifyIdentifiers: true,
     mode: "transform",
-    run: {
-      // TODO: use bun here after https://github.com/oven-sh/bun/issues/1724 is fixed
-      runtime: "node",
-    },
   });
   itBundled("default/WithStatementTaintingNoBundle", {
     // TODO: MANUAL CHECK: make sure the snapshot we use works.
@@ -1977,7 +1998,7 @@ describe("bundler", () => {
       assert(!text.includes("renameMe"), "Should have renamed all `renameMe` variabled");
     },
   });
-  itBundled("default/ImportReExportES6Issue149", {
+  itBundled("default/ImportReExportES6ESBuildIssue149", {
     files: {
       "/app.jsx": /* jsx */ `
         import { p as Part, h, render } from './import';
@@ -2405,7 +2426,7 @@ describe("bundler", () => {
       stdout: '[{},{},{"foo":123},{"bar":123}] true',
     },
   });
-  itBundled("default/EmptyExportClauseBundleAsCommonJSIssue910", {
+  itBundled("default/EmptyExportClauseBundleAsCommonJSESBuildIssue910", {
     files: {
       "/entry.js": `console.log(JSON.stringify(require('./types.mjs')))`,
       "/types.mjs": `export {}`,
@@ -2432,7 +2453,7 @@ describe("bundler", () => {
       assert(api.readFile("/out.js").includes('"use strict";'), '"use strict"; was emitted');
     },
   });
-  itBundled("default/UseStrictDirectiveBundleIssue1837", {
+  itBundled("default/UseStrictDirectiveBundleESBuildIssue1837", {
     files: {
       "/entry.js": /* js */ `
         const p = require('./cjs').foo;
@@ -2453,7 +2474,7 @@ describe("bundler", () => {
       stdout: "function",
     },
   });
-  itBundled("default/UseStrictDirectiveBundleIIFEIssue2264", {
+  itBundled("default/UseStrictDirectiveBundleIIFEESBuildIssue2264", {
     files: {
       "/entry.js": /* js */ `
         'use strict'
@@ -2465,7 +2486,7 @@ describe("bundler", () => {
       assert(api.readFile("/out.js").includes('"use strict";'), '"use strict"; should be emitted');
     },
   });
-  itBundled("default/UseStrictDirectiveBundleCJSIssue2264", {
+  itBundled("default/UseStrictDirectiveBundleCJSESBuildIssue2264", {
     files: {
       "/entry.js": /* js */ `
         'use strict'
@@ -2477,7 +2498,7 @@ describe("bundler", () => {
       assert(api.readFile("/out.js").includes('"use strict";'), '"use strict"; should be emitted');
     },
   });
-  itBundled("default/UseStrictDirectiveBundleESMIssue2264", {
+  itBundled("default/UseStrictDirectiveBundleESMESBuildIssue2264", {
     files: {
       "/entry.js": /* js */ `
         'use strict'
@@ -4222,7 +4243,7 @@ describe("bundler", () => {
       stdout: `[[1,1,1],[1,1,1],[2,2,2,null,null]]`,
     },
   });
-  itBundled("default/DefineInfiniteLoopIssue2407", {
+  itBundled("default/DefineInfiniteLoopESBuildIssue2407", {
     files: {
       "/entry.js": /* js */ `
         a.b()
@@ -4568,7 +4589,7 @@ describe("bundler", () => {
   //   mode: "transform",
   //   external: ["a", "b", "c", "react/jsx-dev-runtime"],
   // });
-  return;
+  if (!RUN_UNCHECKED_TESTS) return;
   // I cant get bun to use `this` as the JSX runtime. It's a pretty silly idea anyways.
   itBundled("default/JSXThisValueCommonJS", {
     files: {
@@ -4999,7 +5020,7 @@ describe("bundler", () => {
     },
     external: ["some-path"],
   });
-  itBundled("default/StrictModeNestedFnDeclKeepNamesVariableInliningIssue1552", {
+  itBundled("default/StrictModeNestedFnDeclKeepNamesVariableInliningESBuildIssue1552", {
     // GENERATED
     files: {
       "/entry.js": /* js */ `
@@ -5784,7 +5805,7 @@ describe("bundler", () => {
   b.js: NOTE: Another definition of "x" comes from "b.js" here:
   `, */
   });
-  itBundled("default/NonDeterminismIssue2537", {
+  itBundled("default/NonDeterminismESBuildIssue2537", {
     // GENERATED
     files: {
       "/entry.ts": /* ts */ `
@@ -6327,7 +6348,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("default/ErrorMessageCrashStdinIssue2913", {
+  itBundled("default/ErrorMessageCrashStdinESBuildIssue2913", {
     // GENERATED
     files: {
       "/project/node_modules/fflate/package.json": `{ "main": "main.js" }`,

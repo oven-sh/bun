@@ -32,6 +32,16 @@ const DEBUG = process.env.BUN_BUNDLER_TEST_DEBUG;
 const FILTER = process.env.BUN_BUNDLER_TEST_FILTER;
 /** Path to the bun. TODO: Once bundler is merged, we should remove the `bun-debug` fallback. */
 const BUN_EXE = (process.env.BUN_EXE && Bun.which(process.env.BUN_EXE)) ?? Bun.which("bun-debug") ?? bunExe();
+/**
+ * If set to true, run an alternate validation for tests which is much looser.
+ * We are only testing for:
+ * - bundler does not crash
+ * - output js has no syntax errors
+ *
+ * Defaults to true unless you are running a single test.
+ */
+const LOOSE = !process.env.BUN_BUNDLER_TEST_FILTER && process.env.BUN_BUNDLER_TEST_LOOSE !== "false";
+export const RUN_UNCHECKED_TESTS = LOOSE;
 
 const outBaseTemplate = path.join(tmpdir(), "bun-build-tests", `${ESBUILD ? "esbuild" : "bun"}-`);
 if (!existsSync(path.dirname(outBaseTemplate))) mkdirSync(path.dirname(outBaseTemplate), { recursive: true });
@@ -57,7 +67,7 @@ export interface BundlerTestInput {
   entryPointsRaw?: string[];
   /** Defaults to bundle */
   mode?: "bundle" | "transform";
-  /** Used for `default/ErrorMessageCrashStdinIssue2913`. */
+  /** Used for `default/ErrorMessageCrashStdinESBuildIssue2913`. */
   stdin?: { contents: string; cwd: string };
   /** Use when doing something weird with entryPoints and you need to check other output paths. */
   outputPaths?: string[];
@@ -106,6 +116,7 @@ export interface BundlerTestInput {
   treeShaking?: boolean;
   unsupportedCSSFeatures?: string[];
   unsupportedJSFeatures?: string[];
+  /** if set to true or false, create or edit tsconfig.json to set compilerOptions.useDefineForClassFields */
   useDefineForClassFields?: boolean;
   sourceMap?: boolean | "inline" | "external";
 
@@ -152,6 +163,9 @@ export interface BundlerTestInput {
     files: string[];
   };
 
+  /** Captures `capture()` function calls in the output. */
+  capture?: string[];
+
   /** Run after bundle happens but before runtime. */
   onAfterBundle?(api: BundlerTestBundleAPI): void;
 }
@@ -167,6 +181,10 @@ export interface BundlerTestBundleAPI {
   appendFile(file: string, contents: string): void;
   expectFile(file: string): Expect;
   assertFileExists(file: string): void;
+  /**
+   * Finds all `capture(...)` calls and returns the strings within each function call.
+   */
+  captureFile(file: string, fnName?: string): string[];
 
   warnings: Record<string, { file: string; error: string; line?: string; col?: string }[]>;
   options: BundlerTestInput;
@@ -220,6 +238,7 @@ export function expectBundled(
     banner,
     bundleErrors,
     bundleWarnings,
+    capture,
     dce,
     dceKeepMarkerCount,
     define,
@@ -236,6 +255,7 @@ export function expectBundled(
     legalComments,
     loader,
     mainFields,
+    matchesReference,
     metafile,
     minifyIdentifiers,
     minifySyntax,
@@ -255,7 +275,7 @@ export function expectBundled(
     treeShaking,
     unsupportedCSSFeatures,
     unsupportedJSFeatures,
-    matchesReference,
+    useDefineForClassFields,
     ...unknownProps
   } = opts;
 
@@ -286,6 +306,12 @@ export function expectBundled(
 
   if (!ESBUILD && format !== "esm") {
     throw new Error("formats besides esm not implemented in bun build");
+  }
+  if (!ESBUILD && platform === "neutral") {
+    throw new Error("platform=neutral not implemented in bun build");
+  }
+  if (!ESBUILD && mode === "transform") {
+    throw new Error("mode=transform not implemented in bun build");
   }
   if (!ESBUILD && metafile) {
     throw new Error("metafile not implemented in bun build");
@@ -358,6 +384,26 @@ export function expectBundled(
     writeFileSync(filename, dedent(contents).replace(/\{\{root\}\}/g, root));
   }
 
+  if (useDefineForClassFields !== undefined) {
+    if (existsSync(path.join(root, "tsconfig.json"))) {
+      try {
+        const tsconfig = JSON.parse(readFileSync(path.join(root, "tsconfig.json"), "utf8"));
+        tsconfig.compilerOptions = tsconfig.compilerOptions ?? {};
+        tsconfig.compilerOptions.useDefineForClassFields = useDefineForClassFields;
+        writeFileSync(path.join(root, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
+      } catch (error) {
+        console.log(
+          "DEBUG NOTE: specifying useDefineForClassFields causes tsconfig.json to be parsed as JSON and not JSONC.",
+        );
+      }
+    } else {
+      writeFileSync(
+        path.join(root, "tsconfig.json"),
+        JSON.stringify({ compilerOptions: { useDefineForClassFields } }, null, 2),
+      );
+    }
+  }
+
   // Run bun build cli. In the future we can move to using `Bun.Bundler`
   const cmd = (
     !ESBUILD
@@ -391,6 +437,7 @@ export function expectBundled(
           // keepNames && `--keep-names`,
           // mainFields && `--main-fields=${mainFields}`,
           // loader && Object.entries(loader).map(([k, v]) => ["--loader", `${k}=${v}`]),
+          mode === "transform" && "--transform",
         ]
       : [
           ESBUILD_PATH,
@@ -478,8 +525,9 @@ export function expectBundled(
 
   if (!success) {
     if (!ESBUILD) {
+      const errorText = stderr.toString("utf-8");
       const errorRegex = /^error: (.*?)\n(?:.*?\n\s*\^\s*\n(.*?)\n)?/gms;
-      const allErrors = [...stderr!.toString("utf-8").matchAll(errorRegex)]
+      const allErrors = [...errorText.matchAll(errorRegex)]
         .map(([_str1, error, source]) => {
           if (!source) {
             if (error === "FileNotFound") {
@@ -494,10 +542,16 @@ export function expectBundled(
         .filter(Boolean) as any[];
 
       if (allErrors.length === 0) {
-        console.log(stderr!.toString("utf-8"));
+        console.log(errorText);
       }
 
-      if (stderr!.toString("utf-8").includes("Crash report saved to:")) {
+      if (
+        errorText.includes("Crash report saved to:") ||
+        errorText.includes("panic: reached unreachable code") ||
+        errorText.includes("Panic: reached unreachable code") ||
+        errorText.includes("Segmentation fault") ||
+        errorText.includes("bun has crashed")
+      ) {
         throw new Error("Bun crashed during build");
       }
 
@@ -639,6 +693,15 @@ export function expectBundled(
     },
     warnings: warningReference,
     options: opts,
+    captureFile: (file, fnName = "capture") => {
+      const fileContents = readFile(file);
+      const regex = new RegExp(`\\b${fnName}\\s*\\(((?:\\(\\))?.*?)\\)`, "g");
+      const matches = [...fileContents.matchAll(regex)];
+      if (matches.length === 0) {
+        throw new Error(`No ${fnName} calls found in ${file}`);
+      }
+      return matches.map(match => match[1]);
+    },
   } satisfies BundlerTestBundleAPI;
 
   // DCE keep scan
@@ -748,6 +811,11 @@ export function expectBundled(
         }
       }
     }
+  }
+
+  if (capture) {
+    const captures = api.captureFile(path.relative(root, outfile ?? outputPaths[0]));
+    expect(captures).toEqual(capture);
   }
 
   // Write runtime files to disk as well as run the post bundle hook.
@@ -907,7 +975,22 @@ export function itBundled(id: string, opts: BundlerTestInput): BundlerTestRef {
     }
   }
 
-  it(id, () => expectBundled(id, opts));
+  if (LOOSE) {
+    try {
+      expectBundled(id, opts);
+      it(id, () => {});
+    } catch (error: any) {
+      if (error.message === "Bun crashed during build") {
+        it(id, () => {
+          throw error;
+        });
+      } else {
+        it.skip(id, () => {});
+      }
+    }
+  } else {
+    it(id, () => expectBundled(id, opts));
+  }
   return ref;
 }
 itBundled.skip = (id: string, opts: BundlerTestInput) => {

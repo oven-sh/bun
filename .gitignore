@@ -45,6 +45,7 @@ outcss
 txt.js
 .idea
 .vscode/cpp*
+.vscode/clang*
 
 node_modules_*
 *.jsb

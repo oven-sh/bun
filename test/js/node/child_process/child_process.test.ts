@@ -327,7 +327,7 @@ describe("Bun.spawn()", () => {
       stdout: "pipe",
     });
 
-    for await (const chunk of proc.stdout!) {
+    for await (const chunk of proc.stdout) {
       const text = new TextDecoder().decode(chunk);
       expect(text.trim()).toBe("hello");
     }

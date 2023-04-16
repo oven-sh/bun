@@ -18858,7 +18858,7 @@ pub const SSL = opaque {
             SSL_ERROR_HANDBACK => return error.Handback,
             SSL_ERROR_WANT_RENEGOTIATE => return error.WantRenegotiate,
             SSL_ERROR_HANDSHAKE_HINTS_READY => return error.HandshakeHintsReady,
-            else => void{},
+            else => {},
         };
     }
 

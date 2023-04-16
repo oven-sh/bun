@@ -12,7 +12,7 @@ ARG TRIPLET=${ARCH}-linux-gnu
 ARG BUILDARCH=amd64
 ARG WEBKIT_TAG=feb9
 ARG ZIG_TAG=jul1
-ARG ZIG_VERSION="0.11.0-dev.1783+436e99d13"
+ARG ZIG_VERSION="0.11.0-dev.2571+31738de28"
 ARG WEBKIT_BASENAME="bun-webkit-linux-$BUILDARCH"
 
 ARG ZIG_FOLDERNAME=zig-linux-${BUILD_MACHINE_ARCH}-${ZIG_VERSION}
@@ -20,7 +20,7 @@ ARG ZIG_FILENAME=${ZIG_FOLDERNAME}.tar.xz
 ARG WEBKIT_URL="https://github.com/oven-sh/WebKit/releases/download/$WEBKIT_TAG/${WEBKIT_BASENAME}.tar.gz"
 ARG ZIG_URL="https://ziglang.org/builds/${ZIG_FILENAME}"
 ARG GIT_SHA=""
-ARG BUN_BASE_VERSION=0.5
+ARG BUN_BASE_VERSION=0.6
 
 FROM bitnami/minideb:bullseye as bun-base
 

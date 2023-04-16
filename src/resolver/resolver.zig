@@ -102,6 +102,29 @@ pub const PathPair = struct {
     }
 };
 
+// this is ripped from esbuild, comments included
+pub const SideEffects = enum {
+    /// The default value conservatively considers all files to have side effects.
+    has_side_effects,
+
+    /// This file was listed as not having side effects by a "package.json"
+    /// file in one of our containing directories with a "sideEffects" field.
+    no_side_effects__package_json,
+
+    /// This file is considered to have no side effects because the AST was empty
+    /// after parsing finished. This should be the case for ".d.ts" files.
+    no_side_effects__empty_ast,
+
+    /// This file was loaded using a data-oriented loader (e.g. "text") that is
+    /// known to not have side effects.
+    no_side_effects__pure_data,
+
+    // / Same as above but it came from a plugin. We don't want to warn about
+    // / unused imports to these files since running the plugin is a side effect.
+    // / Removing the import would not call the plugin which is observable.
+    // no_side_effects__pure_data_from_plugin,
+};
+
 pub const Result = struct {
     path_pair: PathPair,
 
@@ -118,7 +141,7 @@ pub const Result = struct {
 
     // If present, any ES6 imports to this file can be considered to have no side
     // effects. This means they should be removed if unused.
-    primary_side_effects_data: ?SideEffectsData = null,
+    primary_side_effects_data: SideEffects = SideEffects.has_side_effects,
 
     // If true, unused imports are retained in TypeScript code. This matches the
     // behavior of the "importsNotUsedAsValues" field in "tsconfig.json" when the
@@ -538,6 +561,12 @@ pub const Resolver = struct {
     }
 
     pub fn isExternalPattern(r: *ThisResolver, import_path: string) bool {
+        if (r.opts.mark_bun_builtins_as_external) {
+            if (bun.JSC.HardcodedModule.Aliases.has(import_path)) {
+                return true;
+            }
+        }
+
         for (r.opts.external.patterns) |pattern| {
             if (import_path.len >= pattern.prefix.len + pattern.suffix.len and (strings.startsWith(
                 import_path,
@@ -769,7 +798,8 @@ pub const Resolver = struct {
             const data_url: DataURL = _data_url;
             // "import 'data:text/javascript,console.log(123)';"
             // "@import 'data:text/css,body{background:white}';"
-            if (data_url.decode_mime_type() != .Unsupported) {
+            const mime = data_url.decodeMimeType();
+            if (mime.category == .javascript or mime.category == .css or mime.category == .json or mime.category == .text) {
                 if (r.debug_logs) |*debug| {
                     debug.addNote("Putting this path in the \"dataurl\" namespace");
                     r.flushDebugLogs(.success) catch {};
@@ -857,11 +887,33 @@ pub const Resolver = struct {
         var module_type = result.module_type;
         while (iter.next()) |path| {
             var dir: *DirInfo = (r.readDirInfo(path.name.dir) catch continue) orelse continue;
+            var needs_side_effects = true;
             if (result.package_json) |existing| {
+                // if we don't have it here, they might put it in a sideEfffects
+                // map of the parent package.json
+                // TODO: check if webpack also does this parent lookup
+                needs_side_effects = existing.side_effects == .unspecified;
+
+                result.primary_side_effects_data = switch (existing.side_effects) {
+                    .unspecified => .has_side_effects,
+                    .false => .no_side_effects__package_json,
+                    .map => |map| if (map.contains(bun.StringHashMapUnowned.Key.init(path.text))) .has_side_effects else .no_side_effects__package_json,
+                };
+
                 if (existing.name.len == 0 or r.care_about_bin_folder) result.package_json = null;
             }
 
             result.package_json = result.package_json orelse dir.enclosing_package_json;
+
+            if (needs_side_effects) {
+                if (result.package_json) |package_json| {
+                    result.primary_side_effects_data = switch (package_json.side_effects) {
+                        .unspecified => .has_side_effects,
+                        .false => .no_side_effects__package_json,
+                        .map => |map| if (map.contains(bun.StringHashMapUnowned.Key.init(path.text))) .has_side_effects else .no_side_effects__package_json,
+                    };
+                }
+            }
 
             if (dir.enclosing_tsconfig_json) |tsconfig| {
                 result.jsx = tsconfig.mergeJSX(result.jsx);
@@ -1548,6 +1600,7 @@ pub const Resolver = struct {
 
         // this is the magic!
         if (global_cache.canUse(any_node_modules_folder) and r.usePackageManager() and esm_ != null) {
+            if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RunCommand) unreachable;
             const esm = esm_.?.withAutoVersion();
             load_module_from_cache: {
 
@@ -1867,7 +1920,7 @@ pub const Resolver = struct {
             }
             var dir_iterator = open_dir.iterate();
             while (dir_iterator.next() catch null) |_value| {
-                dir_entries_option.entries.addEntry(_value, allocator, void, void{}) catch unreachable;
+                dir_entries_option.entries.addEntry(_value, allocator, void, {}) catch unreachable;
             }
         }
 
@@ -2483,7 +2536,7 @@ pub const Resolver = struct {
                 }
                 var dir_iterator = open_dir.iterate();
                 while (try dir_iterator.next()) |_value| {
-                    dir_entries_option.entries.addEntry(_value, allocator, void, void{}) catch unreachable;
+                    dir_entries_option.entries.addEntry(_value, allocator, void, {}) catch unreachable;
                 }
             }
 

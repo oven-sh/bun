@@ -37,6 +37,7 @@ const FolderResolver = @import("../install/resolvers/folder_resolver.zig");
 
 const Architecture = @import("../install/npm.zig").Architecture;
 const OperatingSystem = @import("../install/npm.zig").OperatingSystem;
+pub const SideEffectsMap = std.HashMapUnmanaged(bun.StringHashMapUnowned.Key, void, bun.StringHashMapUnowned.Adapter, 80);
 pub const DependencyMap = struct {
     map: HashMap = .{},
     source_buf: []const u8 = "",
@@ -72,6 +73,7 @@ pub const PackageJSON = struct {
     }
 
     const node_modules_path = std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str;
+
     pub fn nameForImport(this: *const PackageJSON, allocator: std.mem.Allocator) !string {
         if (strings.indexOf(this.source.path.text, node_modules_path)) |_| {
             return this.name;
@@ -109,6 +111,12 @@ pub const PackageJSON = struct {
 
     package_manager_package_id: Install.PackageID = Install.invalid_package_id,
     dependencies: DependencyMap = .{},
+
+    side_effects: union(enum) {
+        unspecified: void,
+        false: void,
+        map: SideEffectsMap,
+    } = .{ .unspecified = {} },
 
     // Present if the "browser" field is present. This field is intended to be
     // used by bundlers and lets you redirect the paths of certain 3rd-party
@@ -641,107 +649,155 @@ pub const PackageJSON = struct {
             }
         }
 
-        if (json.asProperty("type")) |type_json| {
-            if (type_json.expr.asString(r.allocator)) |type_str| {
-                switch (options.ModuleType.List.get(type_str) orelse options.ModuleType.unknown) {
-                    .cjs => {
-                        package_json.module_type = .cjs;
-                    },
-                    .esm => {
-                        package_json.module_type = .esm;
-                    },
-                    .unknown => {
-                        r.log.addRangeWarningFmt(
-                            &json_source,
-                            json_source.rangeOfString(type_json.loc),
-                            r.allocator,
-                            "\"{s}\" is not a valid value for \"type\" field (must be either \"commonjs\" or \"module\")",
-                            .{type_str},
-                        ) catch unreachable;
-                    },
+        // If we're coming from `bun run`
+        // We do not need to parse all this stuff.
+        if (comptime !include_scripts) {
+            if (json.asProperty("type")) |type_json| {
+                if (type_json.expr.asString(r.allocator)) |type_str| {
+                    switch (options.ModuleType.List.get(type_str) orelse options.ModuleType.unknown) {
+                        .cjs => {
+                            package_json.module_type = .cjs;
+                        },
+                        .esm => {
+                            package_json.module_type = .esm;
+                        },
+                        .unknown => {
+                            r.log.addRangeWarningFmt(
+                                &json_source,
+                                json_source.rangeOfString(type_json.loc),
+                                r.allocator,
+                                "\"{s}\" is not a valid value for \"type\" field (must be either \"commonjs\" or \"module\")",
+                                .{type_str},
+                            ) catch unreachable;
+                        },
+                    }
+                } else {
+                    r.log.addWarning(&json_source, type_json.loc, "The value for \"type\" must be a string") catch unreachable;
                 }
-            } else {
-                r.log.addWarning(&json_source, type_json.loc, "The value for \"type\" must be a string") catch unreachable;
             }
-        }
 
-        // Read the "main" fields
-        for (r.opts.main_fields) |main| {
-            if (json.asProperty(main)) |main_json| {
-                const expr: js_ast.Expr = main_json.expr;
+            // Read the "main" fields
+            for (r.opts.main_fields) |main| {
+                if (json.asProperty(main)) |main_json| {
+                    const expr: js_ast.Expr = main_json.expr;
 
-                if ((expr.asString(r.allocator))) |str| {
-                    if (str.len > 0) {
-                        package_json.main_fields.put(main, r.allocator.dupe(u8, str) catch unreachable) catch unreachable;
+                    if ((expr.asString(r.allocator))) |str| {
+                        if (str.len > 0) {
+                            package_json.main_fields.put(main, r.allocator.dupe(u8, str) catch unreachable) catch unreachable;
+                        }
                     }
                 }
             }
-        }
 
-        // Read the "browser" property, but only when targeting the browser
-        if (r.opts.platform.supportsBrowserField()) {
-            // We both want the ability to have the option of CJS vs. ESM and the
-            // option of having node vs. browser. The way to do this is to use the
-            // object literal form of the "browser" field like this:
-            //
-            //   "main": "dist/index.node.cjs.js",
-            //   "module": "dist/index.node.esm.js",
-            //   "browser": {
-            //     "./dist/index.node.cjs.js": "./dist/index.browser.cjs.js",
-            //     "./dist/index.node.esm.js": "./dist/index.browser.esm.js"
-            //   },
-            //
-            if (json.asProperty("browser")) |browser_prop| {
-                switch (browser_prop.expr.data) {
-                    .e_object => |obj| {
-                        // The value is an object
+            // Read the "browser" property, but only when targeting the browser
+            if (r.opts.platform.supportsBrowserField()) {
+                // We both want the ability to have the option of CJS vs. ESM and the
+                // option of having node vs. browser. The way to do this is to use the
+                // object literal form of the "browser" field like this:
+                //
+                //   "main": "dist/index.node.cjs.js",
+                //   "module": "dist/index.node.esm.js",
+                //   "browser": {
+                //     "./dist/index.node.cjs.js": "./dist/index.browser.cjs.js",
+                //     "./dist/index.node.esm.js": "./dist/index.browser.esm.js"
+                //   },
+                //
+                if (json.asProperty("browser")) |browser_prop| {
+                    switch (browser_prop.expr.data) {
+                        .e_object => |obj| {
+                            // The value is an object
 
-                        // Remap all files in the browser field
-                        for (obj.properties.slice()) |*prop| {
-                            var _key_str = (prop.key orelse continue).asString(r.allocator) orelse continue;
-                            const value: js_ast.Expr = prop.value orelse continue;
+                            // Remap all files in the browser field
+                            for (obj.properties.slice()) |*prop| {
+                                var _key_str = (prop.key orelse continue).asString(r.allocator) orelse continue;
+                                const value: js_ast.Expr = prop.value orelse continue;
 
-                            // Normalize the path so we can compare against it without getting
-                            // confused by "./". There is no distinction between package paths and
-                            // relative paths for these values because some tools (i.e. Browserify)
-                            // don't make such a distinction.
-                            //
-                            // This leads to weird things like a mapping for "./foo" matching an
-                            // import of "foo", but that's actually not a bug. Or arguably it's a
-                            // bug in Browserify but we have to replicate this bug because packages
-                            // do this in the wild.
-                            const key = r.allocator.dupe(u8, r.fs.normalize(_key_str)) catch unreachable;
+                                // Normalize the path so we can compare against it without getting
+                                // confused by "./". There is no distinction between package paths and
+                                // relative paths for these values because some tools (i.e. Browserify)
+                                // don't make such a distinction.
+                                //
+                                // This leads to weird things like a mapping for "./foo" matching an
+                                // import of "foo", but that's actually not a bug. Or arguably it's a
+                                // bug in Browserify but we have to replicate this bug because packages
+                                // do this in the wild.
+                                const key = r.allocator.dupe(u8, r.fs.normalize(_key_str)) catch unreachable;
 
-                            switch (value.data) {
-                                .e_string => |str| {
-                                    // If this is a string, it's a replacement package
-                                    package_json.browser_map.put(key, str.string(r.allocator) catch unreachable) catch unreachable;
-                                },
-                                .e_boolean => |boolean| {
-                                    if (!boolean.value) {
-                                        package_json.browser_map.put(key, "") catch unreachable;
-                                    }
-                                },
-                                else => {
-                                    r.log.addWarning(&json_source, value.loc, "Each \"browser\" mapping must be a string or boolean") catch unreachable;
-                                },
+                                switch (value.data) {
+                                    .e_string => |str| {
+                                        // If this is a string, it's a replacement package
+                                        package_json.browser_map.put(key, str.string(r.allocator) catch unreachable) catch unreachable;
+                                    },
+                                    .e_boolean => |boolean| {
+                                        if (!boolean.value) {
+                                            package_json.browser_map.put(key, "") catch unreachable;
+                                        }
+                                    },
+                                    else => {
+                                        r.log.addWarning(&json_source, value.loc, "Each \"browser\" mapping must be a string or boolean") catch unreachable;
+                                    },
+                                }
                             }
-                        }
-                    },
-                    else => {},
+                        },
+                        else => {},
+                    }
                 }
             }
-        }
 
-        if (json.asProperty("exports")) |exports_prop| {
-            if (ExportsMap.parse(r.allocator, &json_source, r.log, exports_prop.expr, exports_prop.loc)) |exports_map| {
-                package_json.exports = exports_map;
+            if (json.asProperty("exports")) |exports_prop| {
+                if (ExportsMap.parse(r.allocator, &json_source, r.log, exports_prop.expr, exports_prop.loc)) |exports_map| {
+                    package_json.exports = exports_map;
+                }
             }
-        }
 
-        if (json.asProperty("imports")) |imports_prop| {
-            if (ExportsMap.parse(r.allocator, &json_source, r.log, imports_prop.expr, imports_prop.loc)) |imports_map| {
-                package_json.imports = imports_map;
+            if (json.asProperty("imports")) |imports_prop| {
+                if (ExportsMap.parse(r.allocator, &json_source, r.log, imports_prop.expr, imports_prop.loc)) |imports_map| {
+                    package_json.imports = imports_map;
+                }
+            }
+
+            if (json.get("sideEffects")) |side_effects_field| outer: {
+                if (side_effects_field.asBool()) |boolean| {
+                    if (!boolean)
+                        package_json.side_effects = .{ .false = {} };
+                } else if (side_effects_field.asArray()) |array_| {
+                    var array = array_;
+                    // TODO: switch to only storing hashes
+                    var map = SideEffectsMap{};
+                    map.ensureTotalCapacity(r.allocator, array.array.items.len) catch unreachable;
+                    while (array.next()) |item| {
+                        if (item.asString(r.allocator)) |name| {
+                            // TODO: support RegExp using JavaScriptCore <> C++ bindings
+                            if (strings.containsChar(name, '*')) {
+                                // https://sourcegraph.com/search?q=context:global+file:package.json+sideEffects%22:+%5B&patternType=standard&sm=1&groupBy=repo
+                                // a lot of these seem to be css files which we don't care about for now anyway
+                                // so we can just skip them in here
+                                if (strings.eqlComptime(std.fs.path.extension(name), ".css"))
+                                    continue;
+
+                                r.log.addWarning(
+                                    &json_source,
+                                    item.loc,
+                                    "wildcard sideEffects are not supported yet, which means this package will be deoptimized",
+                                ) catch unreachable;
+                                map.deinit(r.allocator);
+
+                                package_json.side_effects = .{ .unspecified = {} };
+                                break :outer;
+                            }
+
+                            var joined = [_]string{
+                                json_source.path.name.dirWithTrailingSlash(),
+                                name,
+                            };
+
+                            _ = map.getOrPutAssumeCapacity(
+                                bun.StringHashMapUnowned.Key.init(r.fs.join(&joined)),
+                            );
+                        }
+                    }
+                    package_json.side_effects = .{ .map = map };
+                }
             }
         }
 
@@ -938,8 +994,6 @@ pub const PackageJSON = struct {
             }
         }
 
-        // TODO: side effects
-
         if (generate_hash) {
             if (package_json.name.len > 0 and package_json.version.len > 0) {
                 package_json.generateHash();
@@ -989,7 +1043,7 @@ pub const ExportsMap = struct {
 
             switch (expr.data) {
                 .e_null => {
-                    return Entry{ .first_token = js_lexer.rangeOfIdentifier(this.source, expr.loc), .data = .{ .null = void{} } };
+                    return Entry{ .first_token = js_lexer.rangeOfIdentifier(this.source, expr.loc), .data = .{ .null = {} } };
                 },
                 .e_string => |str| {
                     return Entry{
@@ -1049,7 +1103,7 @@ pub const ExportsMap = struct {
                             map_data.deinit(this.allocator);
                             this.allocator.free(expansion_keys);
                             return Entry{
-                                .data = .{ .invalid = void{} },
+                                .data = .{ .invalid = {} },
                                 .first_token = first_token,
                             };
                         }
@@ -1103,7 +1157,7 @@ pub const ExportsMap = struct {
 
             this.log.addRangeWarning(this.source, first_token, "This value must be a string, an object, an array, or null") catch unreachable;
             return Entry{
-                .data = .{ .invalid = void{} },
+                .data = .{ .invalid = {} },
                 .first_token = first_token,
             };
         }
@@ -1455,7 +1509,7 @@ pub const ESModule = struct {
         }
 
         if (strings.eqlComptime(subpath, ".")) {
-            var main_export = ExportsMap.Entry{ .data = .{ .null = void{} }, .first_token = logger.Range.None };
+            var main_export = ExportsMap.Entry{ .data = .{ .null = {} }, .first_token = logger.Range.None };
             if (switch (exports.data) {
                 .string,
                 .array,

@@ -1,6 +1,6 @@
 # Contributing to Bun
 
-All contributions need test coverage. If you are adding a new feature, please add a test. If you are fixing a bug, please add a test that fails before your fix and passes after your fix.
+> **Important:** All contributions need test coverage. If you are adding a new feature, please add a test. If you are fixing a bug, please add a test that fails before your fix and passes after your fix.
 
 ## Bun's codebase
 
@@ -15,6 +15,10 @@ Today (February 2023), Bun's codebase has five distinct parts:
 - Shared utilities ([`src/string_immutable.zig`](src/string_immutable.zig))
 
 The JavaScript transpiler & module resolver is mostly independent from the runtime. It predates the runtime and is entirely in Zig. The JavaScript parser is mostly in [`src/js_parser.zig`](src/js_parser.zig). The JavaScript AST data structures are mostly in [`src/js_ast.zig`](src/js_ast.zig). The JavaScript lexer is in [`src/js_lexer.zig`](src/js_lexer.zig). A lot of this code started as a port of esbuild's equivalent code from Go to Zig, but has had many small changes since then.
+
+## Getting started
+
+Please refer to [Bun's Development Guide](https://bun.sh/docs/project/development) to get your dev environment setup!
 
 ## Memory management in Bun
 

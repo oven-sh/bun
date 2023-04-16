@@ -1,8 +1,8 @@
 {% callout %}
-**Note** — This page documents the `Bun.serve` API. This API is heavily optimized and represents the recommended way to build HTTP servers in Bun. Existing Node.js projects may use Bun's [nearly complete](/docs/ecosystem/nodejs#node_http) implementation of the Node.js [`http`](https://nodejs.org/api/http.html) and [`https`](https://nodejs.org/api/https.html) modules.
+**Note** — This page documents the `Bun.serve` API. This API is heavily optimized and represents the recommended way to build HTTP servers in Bun. Existing Node.js projects may use Bun's [nearly complete](/docs/runtime/nodejs-apis#node_http) implementation of the Node.js [`http`](https://nodejs.org/api/http.html) and [`https`](https://nodejs.org/api/https.html) modules.
 {% /callout %}
 
-## Send a request
+## Send a request (`fetch()`)
 
 Bun implements the Web `fetch` API for making HTTP requests. The `fetch` function is available in the global scope.
 
@@ -13,7 +13,7 @@ console.log(result.icons[0].src);
 // => "/logo-square.jpg"
 ```
 
-## Start a server
+## Start a server (`Bun.serve()`)
 
 Start an HTTP server in Bun with `Bun.serve`.
 

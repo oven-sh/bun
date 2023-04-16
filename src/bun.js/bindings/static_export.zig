@@ -12,5 +12,3 @@ pub fn Decl(comptime this: *const @This()) std.builtin.Type.Declaration {
 pub fn wrappedName(comptime this: *const @This()) []const u8 {
     return comptime "wrap" ++ this.symbol_name;
 }
-
-pub const c_char = enum(u8) { _ };

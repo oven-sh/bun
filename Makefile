@@ -1,4 +1,4 @@
-SHELL :=  $(shell which bash) # Use bash syntax to be consistent
+SHELL := $(shell which bash) # Use bash syntax to be consistent
 
 OS_NAME := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 ARCH_NAME_RAW := $(shell uname -m)
@@ -39,11 +39,11 @@ NATIVE_OR_OLD_MARCH = -march=nehalem
 endif
 
 MIN_MACOS_VERSION ?= $(DEFAULT_MIN_MACOS_VERSION)
-BUN_BASE_VERSION = 0.5
+BUN_BASE_VERSION = 0.6
 
 AR=
 
-BUN_OR_NODE = $(shell which bun || which node)
+BUN_OR_NODE = $(shell which bun 2>/dev/null || which node 2>/dev/null)
 
 CXX_VERSION=c++2a
 TRIPLET = $(OS_NAME)-$(ARCH_NAME)
@@ -52,30 +52,31 @@ PACKAGES_REALPATH = $(realpath packages)
 PACKAGE_DIR = $(PACKAGES_REALPATH)/$(PACKAGE_NAME)
 DEBUG_PACKAGE_DIR = $(PACKAGES_REALPATH)/debug-$(PACKAGE_NAME)
 RELEASE_BUN = $(PACKAGE_DIR)/bun
-DEBUG_BIN = $(DEBUG_PACKAGE_DIR)/
+DEBUG_BIN = $(DEBUG_PACKAGE_DIR)
 DEBUG_BUN = $(DEBUG_BIN)/bun-debug
 BUILD_ID = $(shell cat ./src/build-id)
 PACKAGE_JSON_VERSION = $(BUN_BASE_VERSION).$(BUILD_ID)
 BUN_BUILD_TAG = bun-v$(PACKAGE_JSON_VERSION)
 BUN_RELEASE_BIN = $(PACKAGE_DIR)/bun
-PRETTIER ?= $(shell which prettier || echo "./node_modules/.bin/prettier")
-DSYMUTIL ?= $(shell which dsymutil || which dsymutil-15)
+PRETTIER ?= $(shell which prettier 2>/dev/null || echo "./node_modules/.bin/prettier")
+ESBUILD = $(shell which esbuild 2>/dev/null || echo "./node_modules/.bin/esbuild")
+DSYMUTIL ?= $(shell which dsymutil 2>/dev/null || which dsymutil-15 2>/dev/null)
 WEBKIT_DIR ?= $(realpath src/bun.js/WebKit)
 WEBKIT_RELEASE_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Release
 WEBKIT_DEBUG_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Debug
 WEBKIT_RELEASE_DIR_LTO ?= $(WEBKIT_DIR)/WebKitBuild/ReleaseLTO
 
 
-NPM_CLIENT ?= $(shell which bun || which npm)
-ZIG ?= $(shell which zig || echo -e "error: Missing zig. Please make sure zig is in PATH. Or set ZIG=/path/to-zig-executable")
+NPM_CLIENT ?= $(shell which bun 2>/dev/null || which npm 2>/dev/null)
+ZIG ?= $(shell which zig 2>/dev/null || echo -e "error: Missing zig. Please make sure zig is in PATH. Or set ZIG=/path/to-zig-executable")
 
 # We must use the same compiler version for the JavaScriptCore bindings and JavaScriptCore
 # If we don't do this, strange memory allocation failures occur.
 # This is easier to happen than you'd expect.
 # Using realpath here causes issues because clang uses clang++ as a symlink
 # so if that's resolved, it won't build for C++
-REAL_CC = $(shell which clang-15 || which clang)
-REAL_CXX = $(shell which clang++-15 || which clang++)
+REAL_CC = $(shell which clang-15 2>/dev/null || which clang 2>/dev/null)
+REAL_CXX = $(shell which clang++-15 2>/dev/null || which clang++ 2>/dev/null)
 
 CC = $(REAL_CC)
 CXX = $(REAL_CXX)
@@ -85,7 +86,7 @@ CCACHE_PATH := $(shell which ccache 2>/dev/null)
 
 CCACHE_CC_FLAG = CC=$(CCACHE_CC_OR_CC)
 
-ifeq (,$(findstring,$(shell which ccache),ccache))
+ifeq (,$(findstring,$(shell which ccache 2>/dev/null),ccache))
 	CMAKE_CXX_COMPILER_LAUNCHER_FLAG := -DCMAKE_CXX_COMPILER_LAUNCHER=$(CCACHE_PATH) -DCMAKE_C_COMPILER_LAUNCHER=$(CCACHE_PATH)
 	CCACHE_CC_OR_CC := "$(CCACHE_PATH) $(REAL_CC)"
 	export CCACHE_COMPILERTYPE = clang
@@ -117,7 +118,7 @@ ifeq ($(OS_NAME),darwin)
 endif
 
 # macOS sed is different
-SED = $(shell which gsed || which sed)
+SED = $(shell which gsed 2>/dev/null || which sed 2>/dev/null)
 
 BUN_DIR ?= $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
 BUN_DEPS_DIR ?= $(shell pwd)/src/deps
@@ -146,7 +147,7 @@ CMAKE_FLAGS_WITHOUT_RELEASE = -DCMAKE_C_COMPILER=$(CC) \
 	-DCMAKE_OSX_DEPLOYMENT_TARGET=$(MIN_MACOS_VERSION) \
 	$(CMAKE_CXX_COMPILER_LAUNCHER_FLAG) \
 	-DCMAKE_AR=$(AR) \
-    -DCMAKE_RANLIB=$(which llvm-15-ranlib || which llvm-ranlib)
+    -DCMAKE_RANLIB=$(which llvm-15-ranlib 2>/dev/null || which llvm-ranlib 2>/dev/null)
 
 
 
@@ -168,7 +169,7 @@ endif
 
 ifeq ($(OS_NAME),linux)
 LIBICONV_PATH =
-AR = $(shell which llvm-ar-15 || which llvm-ar || which ar)
+AR = $(shell which llvm-ar-15 2>/dev/null || which llvm-ar 2>/dev/null || which ar 2>/dev/null)
 endif
 
 OPTIMIZATION_LEVEL=-O3 $(MARCH_NATIVE)
@@ -266,7 +267,7 @@ STRIP=/usr/bin/strip
 endif
 
 ifeq ($(OS_NAME),linux)
-STRIP=$(shell which llvm-strip || which llvm-strip-15 || which strip || echo "Missing strip")
+STRIP=$(shell which llvm-strip 2>/dev/null || which llvm-strip-15 2>/dev/null || which strip 2>/dev/null || echo "Missing strip")
 endif
 
 
@@ -540,13 +541,16 @@ tinycc:
 		make -j10 && \
 		cp $(TINYCC_DIR)/*.a $(BUN_DEPS_OUT_DIR)
 
+PYTHON=$(shell which python 2>/dev/null || which python3 2>/dev/null || which python2 2>/dev/null)
+
 .PHONY: builtins
 builtins: ## to generate builtins
+	@if [ -z "$(WEBKIT_DIR)" ] || [ ! -d "$(WEBKIT_DIR)/Source" ]; then echo "WebKit is not cloned. Please run make init-submodules"; exit 1; fi
 	rm -f src/bun.js/bindings/*Builtin*.cpp src/bun.js/bindings/*Builtin*.h src/bun.js/bindings/*Builtin*.cpp
 	rm -rf src/bun.js/builtins/cpp
 	mkdir -p src/bun.js/builtins/cpp
-	$(shell which python || which python2) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src)/bun.js/builtins/js  -o $(realpath src)/bun.js/builtins/cpp --framework WebCore --force
-	$(shell which python || which python2) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src)/bun.js/builtins/js  -o $(realpath src)/bun.js/builtins/cpp --framework WebCore --wrappers-only
+	$(PYTHON) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src)/bun.js/builtins/js  -o $(realpath src)/bun.js/builtins/cpp --framework WebCore --force
+	$(PYTHON) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src)/bun.js/builtins/js  -o $(realpath src)/bun.js/builtins/cpp --framework WebCore --wrappers-only
 	rm -rf /tmp/1.h src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h.1
 	echo -e '// clang-format off\nnamespace Zig { class GlobalObject; }\n#include "root.h"\n' >> /tmp/1.h
 	cat /tmp/1.h  src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h > src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h.1
@@ -665,7 +669,8 @@ require:
 	@echo "Checking if the required utilities are available..."
 	@if [ $(CLANG_VERSION) -lt "15" ]; then echo -e "ERROR: clang version >=15 required, found: $(CLANG_VERSION). Install with:\n\n    $(POSIX_PKG_MANAGER) install llvm@15"; exit 1; fi
 	@cmake --version >/dev/null 2>&1 || (echo -e "ERROR: cmake is required."; exit 1)
-	@esbuild --version >/dev/null 2>&1 || (echo -e "ERROR: esbuild is required."; exit 1)
+	@$(PYTHON) --version >/dev/null 2>&1 || (echo -e "ERROR: python is required."; exit 1)
+	@$(ESBUILD) --version >/dev/null 2>&1 || (echo -e "ERROR: esbuild is required."; exit 1)
 	@$(NPM_CLIENT) --version >/dev/null 2>&1 || (echo -e "ERROR: NPM client (bun or npm) is required."; exit 1)
 	@go version >/dev/null 2>&1 || (echo -e "ERROR: go is required."; exit 1)
 	@which aclocal > /dev/null || (echo -e  "ERROR: automake is required. Install with:\n\n    $(POSIX_PKG_MANAGER) install automake"; exit 1)
@@ -674,7 +679,7 @@ require:
 	@echo "You have the dependencies installed! Woo"
 
 init-submodules:
-	git submodule update --init --recursive --progress --depth=1
+	git submodule update --init --recursive --progress --depth=1 --checkout
 
 .PHONY: build-obj
 build-obj:
@@ -720,10 +725,10 @@ wasm: api build-obj-wasm-small
 	@cp src/api/schema.d.ts packages/bun-wasm/schema.d.ts
 	@cp src/api/schema.js packages/bun-wasm/schema.js
 	@cd packages/bun-wasm && $(NPM_CLIENT) run tsc -- -p .
-	@esbuild --sourcemap=external --external:fs --define:process.env.NODE_ENV='"production"' --outdir=packages/bun-wasm --target=esnext --bundle packages/bun-wasm/index.ts --format=esm --minify 2> /dev/null
+	@$(ESBUILD) --sourcemap=external --external:fs --define:process.env.NODE_ENV='"production"' --outdir=packages/bun-wasm --target=esnext --bundle packages/bun-wasm/index.ts --format=esm --minify 2> /dev/null
 	@mv packages/bun-wasm/index.js packages/bun-wasm/index.mjs
 	@mv packages/bun-wasm/index.js.map packages/bun-wasm/index.mjs.map
-	@esbuild --sourcemap=external --external:fs --define:process.env.NODE_ENV='"production"' --outdir=packages/bun-wasm --target=esnext --bundle packages/bun-wasm/index.ts --format=cjs --minify --platform=node 2> /dev/null
+	@$(ESBUILD) --sourcemap=external --external:fs --define:process.env.NODE_ENV='"production"' --outdir=packages/bun-wasm --target=esnext --bundle packages/bun-wasm/index.ts --format=cjs --minify --platform=node 2> /dev/null
 	@mv packages/bun-wasm/index.js packages/bun-wasm/index.cjs
 	@mv packages/bun-wasm/index.js.map packages/bun-wasm/index.cjs.map
 	@rm -rf packages/bun-wasm/*.tsbuildinfo
@@ -806,21 +811,21 @@ node-fallbacks:
 
 .PHONY: fallback_decoder
 fallback_decoder:
-	@esbuild --target=esnext  --bundle src/fallback.ts --format=iife --platform=browser --minify > src/fallback.out.js
+	@$(ESBUILD) --target=esnext  --bundle src/fallback.ts --format=iife --platform=browser --minify > src/fallback.out.js
 
 .PHONY: runtime_js
 runtime_js:
-	@NODE_ENV=production esbuild --define:process.env.NODE_ENV="production" --target=esnext  --bundle src/runtime/index.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.out.js; cat src/runtime.footer.js >> src/runtime.out.js
-	@NODE_ENV=production esbuild --define:process.env.NODE_ENV="production" --target=esnext  --bundle src/runtime/index-with-refresh.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.out.refresh.js; cat src/runtime.footer.with-refresh.js >> src/runtime.out.refresh.js
-	@NODE_ENV=production esbuild --define:process.env.NODE_ENV="production" --target=esnext  --bundle src/runtime/index-without-hmr.ts --format=iife --platform=node --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.node.pre.out.js; cat src/runtime.node.pre.out.js src/runtime.footer.node.js > src/runtime.node.out.js
-	@NODE_ENV=production esbuild --define:process.env.NODE_ENV="production" --target=esnext  --bundle src/runtime/index-without-hmr.ts --format=iife --platform=node --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.bun.pre.out.js; cat src/runtime.bun.pre.out.js src/runtime.footer.bun.js > src/runtime.bun.out.js
+	@NODE_ENV=production $(ESBUILD) --define:process.env.NODE_ENV="production" --target=esnext  --bundle src/runtime/index.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.out.js; cat src/runtime.footer.js >> src/runtime.out.js
+	@NODE_ENV=production $(ESBUILD) --define:process.env.NODE_ENV="production" --target=esnext  --bundle src/runtime/index-with-refresh.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.out.refresh.js; cat src/runtime.footer.with-refresh.js >> src/runtime.out.refresh.js
+	@NODE_ENV=production $(ESBUILD) --define:process.env.NODE_ENV="production" --target=esnext  --bundle src/runtime/index-without-hmr.ts --format=iife --platform=node --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.node.pre.out.js; cat src/runtime.node.pre.out.js src/runtime.footer.node.js > src/runtime.node.out.js
+	@NODE_ENV=production $(ESBUILD) --define:process.env.NODE_ENV="production" --target=esnext  --bundle src/runtime/index-without-hmr.ts --format=iife --platform=node --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.bun.pre.out.js; cat src/runtime.bun.pre.out.js src/runtime.footer.bun.js > src/runtime.bun.out.js
 
 .PHONY: runtime_js_dev
 runtime_js_dev:
-	@NODE_ENV=development esbuild --define:process.env.NODE_ENV="development" --target=esnext  --bundle src/runtime/index.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --external:/bun:* > src/runtime.out.js; cat src/runtime.footer.js >> src/runtime.out.js
-	@NODE_ENV=development esbuild --define:process.env.NODE_ENV="development" --target=esnext  --bundle src/runtime/index-with-refresh.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --external:/bun:* > src/runtime.out.refresh.js; cat src/runtime.footer.with-refresh.js >> src/runtime.out.refresh.js
-	@NODE_ENV=development esbuild --define:process.env.NODE_ENV="development" --target=esnext  --bundle src/runtime/index-without-hmr.ts --format=iife --platform=node --global-name=BUN_RUNTIME --external:/bun:* > src/runtime.node.pre.out.js; cat src/runtime.node.pre.out.js src/runtime.footer.node.js > src/runtime.node.out.js
-	@NODE_ENV=development esbuild --define:process.env.NODE_ENV="development" --target=esnext  --bundle src/runtime/index-without-hmr.ts --format=iife --platform=node --global-name=BUN_RUNTIME --external:/bun:* > src/runtime.bun.pre.out.js; cat src/runtime.bun.pre.out.js src/runtime.footer.bun.js > src/runtime.bun.out.js
+	@NODE_ENV=development $(ESBUILD) --define:process.env.NODE_ENV="development" --target=esnext  --bundle src/runtime/index.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --external:/bun:* > src/runtime.out.js; cat src/runtime.footer.js >> src/runtime.out.js
+	@NODE_ENV=development $(ESBUILD) --define:process.env.NODE_ENV="development" --target=esnext  --bundle src/runtime/index-with-refresh.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --external:/bun:* > src/runtime.out.refresh.js; cat src/runtime.footer.with-refresh.js >> src/runtime.out.refresh.js
+	@NODE_ENV=development $(ESBUILD) --define:process.env.NODE_ENV="development" --target=esnext  --bundle src/runtime/index-without-hmr.ts --format=iife --platform=node --global-name=BUN_RUNTIME --external:/bun:* > src/runtime.node.pre.out.js; cat src/runtime.node.pre.out.js src/runtime.footer.node.js > src/runtime.node.out.js
+	@NODE_ENV=development $(ESBUILD) --define:process.env.NODE_ENV="development" --target=esnext  --bundle src/runtime/index-without-hmr.ts --format=iife --platform=node --global-name=BUN_RUNTIME --external:/bun:* > src/runtime.bun.pre.out.js; cat src/runtime.bun.pre.out.js src/runtime.footer.bun.js > src/runtime.bun.out.js
 
 .PHONY: bun_error
 bun_error:
@@ -829,7 +834,7 @@ bun_error:
 .PHONY: generate-install-script
 generate-install-script:
 	@rm -f $(PACKAGES_REALPATH)/bun/install.js
-	@esbuild --log-level=error --define:BUN_VERSION="\"$(PACKAGE_JSON_VERSION)\"" --define:process.env.NODE_ENV="\"production\"" --platform=node  --format=cjs $(PACKAGES_REALPATH)/bun/install.ts > $(PACKAGES_REALPATH)/bun/install.js
+	@$(ESBUILD) --log-level=error --define:BUN_VERSION="\"$(PACKAGE_JSON_VERSION)\"" --define:process.env.NODE_ENV="\"production\"" --platform=node  --format=cjs $(PACKAGES_REALPATH)/bun/install.ts > $(PACKAGES_REALPATH)/bun/install.js
 
 .PHONY: fetch
 fetch: $(IO_FILES)
@@ -910,25 +915,6 @@ jsc-bindings: headers bindings
 .PHONY: clone-submodules
 clone-submodules:
 	git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress
-
-.PHONY: devcontainer
-devcontainer: $(OBJ_DIR) $(DEBUG_OBJ_DIR) clone-submodules mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks npm-install api analytics bun_error fallback_decoder bindings uws lolhtml usockets tinycc c-ares runtime_js_dev sqlite
-
-.PHONY: devcontainer-build
-devcontainer-build:
-	DOCKER_BUILDARCH="$(DOCKER_BUILDARCH)" devcontainer build --workspace-folder .
-
-.PHONY: devcontainer-up
-devcontainer-up:
-	DOCKER_BUILDARCH="$(DOCKER_BUILDARCH)" devcontainer up --workspace-folder .
-
-.PHONY: devcontainer-rebuild
-devcontainer-rebuild:
-	DOCKER_BUILDARCH="$(DOCKER_BUILDARCH)" devcontainer up --workspace-folder . --remove-existing-container
-
-.PHONY: devcontainer-sh
-devcontainer-sh:
-	DOCKER_BUILDARCH="$(DOCKER_BUILDARCH)" devcontainer exec --workspace-folder . zsh
 
 CLANG_FORMAT := $(shell command -v clang-format 2> /dev/null)
 
@@ -1098,7 +1084,7 @@ dev-obj-linux:
 dev: mkdir-dev dev-obj bun-link-lld-debug
 
 mkdir-dev:
-	mkdir -p $(DEBUG_PACKAGE_DIR)/bin
+	mkdir -p $(DEBUG_PACKAGE_DIR)
 
 test-all:
 	$(RELEASE_BUN) test
@@ -1121,10 +1107,10 @@ jsc-copy-headers:
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/JSModuleNamespaceObject.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSModuleNamespaceObject.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/jit/JIT.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JIT.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/StructureStubInfo.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/StructureStubInfo.h
-	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/PolymorphicAccess.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/PolymorphicAccess.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/AccessCase.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/AccessCase.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/ObjectPropertyConditionSet.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/ObjectPropertyConditionSet.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/PolyProtoAccessChain.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/PolyProtoAccessChain.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/InlineCacheCompiler.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/InlineCacheCompiler.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/PutKind.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/PutKind.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/StructureStubClearingWatchpoint.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/StructureStubClearingWatchpoint.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/AdaptiveInferredPropertyValueWatchpointBase.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/AdaptiveInferredPropertyValueWatchpointBase.h
@@ -1844,3 +1830,19 @@ vendor: require init-submodules vendor-without-check
 .PHONY: bun
 bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local
 
+.PHONY: regenerate-bindings
+regenerate-bindings:
+	@make clean-bindings builtins
+	@make bindings -j$(CPU_COUNT)
+
+.PHONY: setup
+setup: require
+	make init-submodules
+	cd test && $(NPM_CLIENT) install --production
+	cd packages/bun-types && $(NPM_CLIENT) install --production
+	make vendor-without-check builtins identifier-cache clean-bindings
+	make bindings -j$(CPU_COUNT)
+	@echo ""
+	@echo "Development environment setup complete"
+	@echo "Run \`make dev\` to build \`bun-debug\`"
+	@echo ""

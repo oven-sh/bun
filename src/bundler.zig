@@ -120,6 +120,7 @@ pub const ParseResult = struct {
     source: logger.Source,
     loader: options.Loader,
     ast: js_ast.Ast,
+    already_bundled: bool = false,
     input_fd: ?StoredFileDescriptorType = null,
     empty: bool = false,
     pending_imports: _resolver.PendingResolution.List = .{},
@@ -381,6 +382,7 @@ pub const Bundler = struct {
         to.log.* = logger.Log.init(allocator);
         to.setLog(to.log);
         to.macro_context = null;
+        to.linker.resolver = &to.resolver;
     }
 
     pub inline fn getPackageManager(this: *Bundler) *PackageManager {
@@ -563,6 +565,8 @@ pub const Bundler = struct {
 
         try this.runEnvLoader();
 
+        this.options.jsx.setProduction(this.env.isProduction());
+
         js_ast.Expr.Data.Store.create(this.allocator);
         js_ast.Stmt.Data.Store.create(this.allocator);
 
@@ -582,15 +586,8 @@ pub const Bundler = struct {
         if (this.options.define.dots.get("NODE_ENV")) |NODE_ENV| {
             if (NODE_ENV.len > 0 and NODE_ENV[0].data.value == .e_string and NODE_ENV[0].data.value.e_string.eqlComptime("production")) {
                 this.options.production = true;
-                this.options.jsx.development = false;
 
-                if (this.options.jsx.import_source.ptr == options.JSX.Pragma.Defaults.ImportSourceDev) {
-                    this.options.jsx.import_source = options.JSX.Pragma.Defaults.ImportSource;
-                }
-
-                if (options.JSX.Pragma.Defaults.ImportSource == this.options.jsx.import_source.ptr or
-                    strings.eqlComptime(this.options.jsx.import_source, comptime options.JSX.Pragma.Defaults.ImportSource) or strings.eqlComptime(this.options.jsx.package_name, "react"))
-                {
+                if (strings.eqlComptime(this.options.jsx.package_name, "react")) {
                     if (this.options.jsx_optimization_inline == null) {
                         this.options.jsx_optimization_inline = true;
                     }
@@ -987,7 +984,7 @@ pub const Bundler = struct {
         }
 
         switch (loader) {
-            .jsx, .tsx, .js, .ts, .json, .toml => {
+            .jsx, .tsx, .js, .ts, .json, .toml, .text => {
                 var result = bundler.parse(
                     ParseOptions{
                         .allocator = bundler.allocator,
@@ -1053,6 +1050,9 @@ pub const Bundler = struct {
                 }
 
                 output_file.value = .{ .move = file_op };
+            },
+            .dataurl, .base64 => {
+                Output.panic("TODO: dataurl, base64", .{}); // TODO
             },
             .css => {
                 const CSSBuildContext = struct {
@@ -1145,7 +1145,7 @@ pub const Bundler = struct {
         comptime enable_source_map: bool,
         source_map_context: ?js_printer.SourceMapHandler,
     ) !usize {
-        var symbols: [][]js_ast.Symbol = &([_][]js_ast.Symbol{ast.symbols});
+        var symbols = js_ast.Symbol.NestedList.init(&[_]js_ast.Symbol.List{ast.symbols});
 
         return switch (format) {
             .cjs => try js_printer.printCommonJS(
@@ -1156,7 +1156,6 @@ pub const Bundler = struct {
                 source,
                 false,
                 js_printer.Options{
-                    .to_module_ref = Ref.RuntimeRef,
                     .externals = ast.externals,
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
@@ -1165,8 +1164,6 @@ pub const Bundler = struct {
                     .rewrite_require_resolve = bundler.options.platform != .node,
                     .minify_whitespace = bundler.options.minify_whitespace,
                 },
-                Linker,
-                &bundler.linker,
                 enable_source_map,
             ),
 
@@ -1178,7 +1175,6 @@ pub const Bundler = struct {
                 source,
                 false,
                 js_printer.Options{
-                    .to_module_ref = Ref.RuntimeRef,
                     .externals = ast.externals,
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
@@ -1187,98 +1183,42 @@ pub const Bundler = struct {
                     .rewrite_require_resolve = bundler.options.platform != .node,
                     .minify_whitespace = bundler.options.minify_whitespace,
                 },
-                Linker,
-                &bundler.linker,
                 enable_source_map,
             ),
-            .esm_ascii => if (bundler.options.platform.isBun())
-                try js_printer.printAst(
+            .esm_ascii => switch (bundler.options.platform.isBun()) {
+                inline else => |is_bun| try js_printer.printAst(
                     Writer,
                     writer,
                     ast,
                     js_ast.Symbol.Map.initList(symbols),
                     source,
-                    true,
+                    is_bun,
                     js_printer.Options{
-                        .to_module_ref = Ref.RuntimeRef,
                         .externals = ast.externals,
                         .runtime_imports = ast.runtime_imports,
                         .require_ref = ast.require_ref,
                         .css_import_behavior = bundler.options.cssImportBehavior(),
                         .source_map_handler = source_map_context,
-                        .rewrite_require_resolve = bundler.options.platform != .node,
-                        .minify_whitespace = bundler.options.minify_whitespace,
                     },
-                    Linker,
-                    &bundler.linker,
-                    enable_source_map,
-                )
-            else
-                try js_printer.printAst(
-                    Writer,
-                    writer,
-                    ast,
-                    js_ast.Symbol.Map.initList(symbols),
-                    source,
-                    false,
-                    js_printer.Options{
-                        .to_module_ref = Ref.RuntimeRef,
-                        .externals = ast.externals,
-                        .runtime_imports = ast.runtime_imports,
-                        .require_ref = ast.require_ref,
-                        .css_import_behavior = bundler.options.cssImportBehavior(),
-                        .source_map_handler = source_map_context,
-                        .rewrite_require_resolve = bundler.options.platform != .node,
-                        .minify_whitespace = bundler.options.minify_whitespace,
-                    },
-                    Linker,
-                    &bundler.linker,
                     enable_source_map,
                 ),
-            .cjs_ascii => if (bundler.options.platform.isBun())
-                try js_printer.printCommonJS(
-                    Writer,
-                    writer,
-                    ast,
-                    js_ast.Symbol.Map.initList(symbols),
-                    source,
-                    true,
-                    js_printer.Options{
-                        .to_module_ref = Ref.RuntimeRef,
-                        .externals = ast.externals,
-                        .runtime_imports = ast.runtime_imports,
-                        .require_ref = ast.require_ref,
-                        .css_import_behavior = bundler.options.cssImportBehavior(),
-                        .source_map_handler = source_map_context,
-                        .rewrite_require_resolve = bundler.options.platform != .node,
-                        .minify_whitespace = bundler.options.minify_whitespace,
-                    },
-                    Linker,
-                    &bundler.linker,
-                    enable_source_map,
-                )
-            else
-                try js_printer.printCommonJS(
-                    Writer,
-                    writer,
-                    ast,
-                    js_ast.Symbol.Map.initList(symbols),
-                    source,
-                    false,
-                    js_printer.Options{
-                        .to_module_ref = Ref.RuntimeRef,
-                        .externals = ast.externals,
-                        .runtime_imports = ast.runtime_imports,
-                        .require_ref = ast.require_ref,
-                        .css_import_behavior = bundler.options.cssImportBehavior(),
-                        .source_map_handler = source_map_context,
-                        .rewrite_require_resolve = bundler.options.platform != .node,
-                        .minify_whitespace = bundler.options.minify_whitespace,
-                    },
-                    Linker,
-                    &bundler.linker,
-                    enable_source_map,
-                ),
+            },
+            .cjs_ascii => try js_printer.printCommonJS(
+                Writer,
+                writer,
+                ast,
+                js_ast.Symbol.Map.initList(symbols),
+                source,
+                true,
+                js_printer.Options{
+                    .externals = ast.externals,
+                    .runtime_imports = ast.runtime_imports,
+                    .require_ref = ast.require_ref,
+                    .css_import_behavior = bundler.options.cssImportBehavior(),
+                    .source_map_handler = source_map_context,
+                },
+                enable_source_map,
+            ),
         };
     }
 
@@ -1337,6 +1277,8 @@ pub const Bundler = struct {
         replace_exports: runtime.Runtime.Features.ReplaceableExport.Map = .{},
         hoist_bun_plugin: bool = false,
         inject_jest_globals: bool = false,
+
+        dont_bundle_twice: bool = false,
     };
 
     pub fn parse(
@@ -1437,12 +1379,15 @@ pub const Bundler = struct {
                 jsx.parse = loader.isJSX();
 
                 var opts = js_parser.Parser.Options.init(jsx, loader);
-                opts.enable_bundling = false;
+                opts.enable_legacy_bundling = false;
                 opts.transform_require_to_import = bundler.options.allow_runtime and !bundler.options.platform.isBun();
                 opts.features.allow_runtime = bundler.options.allow_runtime;
                 opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
-                opts.features.should_fold_numeric_constants = platform.isBun();
+                opts.features.should_fold_typescript_constant_expressions = loader.isTypeScript() or platform.isBun() or bundler.options.inlining;
                 opts.features.dynamic_require = platform.isBun();
+
+                // @bun annotation
+                opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
 
                 opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
 
@@ -1470,6 +1415,8 @@ pub const Bundler = struct {
                 opts.features.jsx_optimization_hoist = bundler.options.jsx_optimization_hoist orelse opts.features.jsx_optimization_inline;
                 opts.features.hoist_bun_plugin = this_parse.hoist_bun_plugin;
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
+                opts.features.minify_syntax = bundler.options.minify_syntax;
+
                 if (bundler.macro_context == null) {
                     bundler.macro_context = js_ast.Macro.MacroContext.init(bundler);
                 }
@@ -1488,20 +1435,29 @@ pub const Bundler = struct {
                 opts.features.is_macro_runtime = platform == .bun_macro;
                 opts.features.replace_exports = this_parse.replace_exports;
 
-                const value = (bundler.resolver.caches.js.parse(
+                return switch ((bundler.resolver.caches.js.parse(
                     allocator,
                     opts,
                     bundler.options.define,
                     bundler.log,
                     &source,
-                ) catch null) orelse return null;
-                return ParseResult{
-                    .ast = value,
-                    .source = source,
-                    .loader = loader,
-                    .input_fd = input_fd,
+                ) catch null) orelse return null) {
+                    .ast => |value| ParseResult{
+                        .ast = value,
+                        .source = source,
+                        .loader = loader,
+                        .input_fd = input_fd,
+                    },
+                    .already_bundled => ParseResult{
+                        .ast = undefined,
+                        .already_bundled = true,
+                        .source = source,
+                        .loader = loader,
+                        .input_fd = input_fd,
+                    },
                 };
             },
+            // TODO: use lazy export AST
             .json => {
                 var expr = json_parser.ParseJSON(&source, bundler.log, allocator) catch return null;
                 var stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
@@ -1525,6 +1481,30 @@ pub const Bundler = struct {
             },
             .toml => {
                 var expr = TOML.parse(&source, bundler.log, allocator) catch return null;
+                var stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
+                    .value = js_ast.StmtOrExpr{ .expr = expr },
+                    .default_name = js_ast.LocRef{
+                        .loc = logger.Loc{},
+                        .ref = Ref.None,
+                    },
+                }, logger.Loc{ .start = 0 });
+                var stmts = allocator.alloc(js_ast.Stmt, 1) catch unreachable;
+                stmts[0] = stmt;
+                var parts = allocator.alloc(js_ast.Part, 1) catch unreachable;
+                parts[0] = js_ast.Part{ .stmts = stmts };
+
+                return ParseResult{
+                    .ast = js_ast.Ast.initTest(parts),
+                    .source = source,
+                    .loader = loader,
+                    .input_fd = input_fd,
+                };
+            },
+            // TODO: use lazy export AST
+            .text => {
+                var expr = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{
+                    .data = source.contents,
+                }, logger.Loc.Empty);
                 var stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
                     .value = js_ast.StmtOrExpr{ .expr = expr },
                     .default_name = js_ast.LocRef{
@@ -1742,46 +1722,15 @@ pub const Bundler = struct {
         return entry_point_i;
     }
 
-    pub fn bundle(
+    pub fn transform(
+        bundler: *Bundler,
         allocator: std.mem.Allocator,
         log: *logger.Log,
         opts: Api.TransformOptions,
     ) !options.TransformResult {
-        var bundler = try Bundler.init(allocator, log, opts, null, null);
-        bundler.configureLinker();
-        try bundler.configureRouter(false);
-        try bundler.configureDefines();
-        bundler.macro_context = js_ast.Macro.MacroContext.init(&bundler);
-
-        if (bundler.env.map.get("BUN_CONFIG_MINIFY_WHITESPACE") != null) {
-            bundler.options.minify_whitespace = true;
-        }
-
-        if (bundler.env.map.get("BUN_CONFIG_INLINE") != null) {
-            bundler.options.inlining = true;
-        }
-
-        var skip_normalize = false;
-        var load_from_routes = false;
-        if (bundler.options.routes.routes_enabled and bundler.options.entry_points.len == 0) {
-            if (bundler.router) |router| {
-                bundler.options.entry_points = try router.getEntryPoints();
-                skip_normalize = true;
-                load_from_routes = true;
-            }
-        }
-
-        //  100.00 µs std.fifo.LinearFifo(resolver.Result,std.fifo.LinearFifoBufferType { .Dynamic = {}}).writeItemAssumeCapacity
-        if (bundler.options.resolve_mode != .lazy) {
-            try bundler.resolve_queue.ensureUnusedCapacity(3);
-        }
-
+        _ = opts;
         var entry_points = try allocator.alloc(_resolver.Result, bundler.options.entry_points.len);
-        if (skip_normalize) {
-            entry_points = entry_points[0..bundler.enqueueEntryPoints(entry_points, false)];
-        } else {
-            entry_points = entry_points[0..bundler.enqueueEntryPoints(entry_points, true)];
-        }
+        entry_points = entry_points[0..bundler.enqueueEntryPoints(entry_points, true)];
 
         if (log.level == .verbose) {
             bundler.resolver.debug_logs = try DebugLogs.init(allocator);
@@ -1791,20 +1740,6 @@ pub const Bundler = struct {
 
         if (bundler.options.output_dir_handle == null) {
             const outstream = std.io.getStdOut();
-
-            if (load_from_routes) {
-                if (bundler.options.framework) |*framework| {
-                    if (framework.client.isEnabled()) {
-                        did_start = true;
-                        try switch (bundler.options.import_path_format) {
-                            .relative => bundler.processResolveQueue(.relative, true, @TypeOf(outstream), outstream),
-                            .absolute_url => bundler.processResolveQueue(.absolute_url, true, @TypeOf(outstream), outstream),
-                            .absolute_path => bundler.processResolveQueue(.absolute_path, true, @TypeOf(outstream), outstream),
-                            .package_path => bundler.processResolveQueue(.package_path, true, @TypeOf(outstream), outstream),
-                        };
-                    }
-                }
-            }
 
             if (!did_start) {
                 try switch (bundler.options.import_path_format) {
@@ -1819,20 +1754,6 @@ pub const Bundler = struct {
                 Output.printError("Invalid or missing output directory.", .{});
                 Global.crash();
             };
-
-            if (load_from_routes) {
-                if (bundler.options.framework) |*framework| {
-                    if (framework.client.isEnabled()) {
-                        did_start = true;
-                        try switch (bundler.options.import_path_format) {
-                            .relative => bundler.processResolveQueue(.relative, true, std.fs.Dir, output_dir),
-                            .absolute_url => bundler.processResolveQueue(.absolute_url, true, std.fs.Dir, output_dir),
-                            .absolute_path => bundler.processResolveQueue(.absolute_path, true, std.fs.Dir, output_dir),
-                            .package_path => bundler.processResolveQueue(.package_path, true, std.fs.Dir, output_dir),
-                        };
-                    }
-                }
-            }
 
             if (!did_start) {
                 try switch (bundler.options.import_path_format) {

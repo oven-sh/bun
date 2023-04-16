@@ -148,7 +148,7 @@ pub const Fs = struct {
         var file_handle: std.fs.File = if (_file_handle) |__file| std.fs.File{ .handle = __file } else undefined;
 
         if (_file_handle == null) {
-            if (FeatureFlags.store_file_descriptors and dirname_fd > 0) {
+            if (FeatureFlags.store_file_descriptors and dirname_fd != bun.invalid_fd and dirname_fd > 0) {
                 file_handle = std.fs.Dir.openFile(std.fs.Dir{ .fd = dirname_fd }, std.fs.path.basename(path), .{ .mode = .read_only }) catch |err| brk: {
                     switch (err) {
                         error.FileNotFound => {
@@ -221,7 +221,7 @@ pub const JavaScript = struct {
         defines: *Define,
         log: *logger.Log,
         source: *const logger.Source,
-    ) anyerror!?js_ast.Ast {
+    ) anyerror!?js_ast.Result {
         var temp_log = logger.Log.init(allocator);
         var parser = js_parser.Parser.init(opts, &temp_log, source, defines, allocator) catch {
             temp_log.appendToMaybeRecycled(log, source) catch {};
@@ -238,7 +238,7 @@ pub const JavaScript = struct {
         };
 
         temp_log.appendToMaybeRecycled(log, source) catch {};
-        return if (result.ok) result.ast else null;
+        return result;
     }
 
     pub fn scan(

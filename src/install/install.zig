@@ -44,7 +44,7 @@ const Integrity = @import("./integrity.zig").Integrity;
 const clap = bun.clap;
 const ExtractTarball = @import("./extract_tarball.zig");
 const Npm = @import("./npm.zig");
-const Bitset = @import("./bit_set.zig").DynamicBitSetUnmanaged;
+const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const z_allocator = @import("../memory_allocator.zig").z_allocator;
 const Syscall = bun.JSC.Node.Syscall;
 const RunCommand = @import("../cli/run_command.zig").RunCommand;
@@ -339,6 +339,7 @@ const NetworkTask = struct {
             this.getCompletionCallback(),
             this.package_manager.httpProxy(url),
             null,
+            null,
         );
         this.callback = .{
             .package_manifest = .{
@@ -414,6 +415,7 @@ const NetworkTask = struct {
             0,
             this.getCompletionCallback(),
             this.package_manager.httpProxy(url),
+            null,
             null,
         );
         this.callback = .{ .extract = tarball };
@@ -1051,7 +1053,7 @@ const PackageInstall = struct {
                                 path,
                                 0,
                             )) {
-                                0 => void{},
+                                0 => {},
                                 else => |errno| switch (std.os.errno(errno)) {
                                     .OPNOTSUPP => return error.NotSupported,
                                     .NOENT => return error.FileNotFound,
@@ -1085,7 +1087,7 @@ const PackageInstall = struct {
         };
 
         return Result{
-            .success = void{},
+            .success = {},
         };
     }
 
@@ -1109,7 +1111,7 @@ const PackageInstall = struct {
             this.destination_dir_subpath,
             0,
         )) {
-            0 => .{ .success = void{} },
+            0 => .{ .success = {} },
             else => |errno| switch (std.os.errno(errno)) {
                 .OPNOTSUPP => error.NotSupported,
                 .NOENT => error.FileNotFound,
@@ -1196,7 +1198,7 @@ const PackageInstall = struct {
         };
 
         return Result{
-            .success = void{},
+            .success = {},
         };
     }
 
@@ -1257,7 +1259,7 @@ const PackageInstall = struct {
         };
 
         return Result{
-            .success = void{},
+            .success = {},
         };
     }
 
@@ -1352,7 +1354,7 @@ const PackageInstall = struct {
         };
 
         return Result{
-            .success = void{},
+            .success = {},
         };
     }
 
@@ -1530,7 +1532,7 @@ const PackageInstall = struct {
         }
 
         if (supported_method_to_use != .copyfile) return Result{
-            .success = void{},
+            .success = {},
         };
 
         // TODO: linux io_uring
@@ -4261,6 +4263,8 @@ pub const PackageManager = struct {
             String.Builder.stringHash("turbo"),
             String.Builder.stringHash("bun"),
             String.Builder.stringHash("rome"),
+            String.Builder.stringHash("zig"),
+            String.Builder.stringHash("@oven-sh/zig"),
         };
 
         pub const LogLevel = enum {
@@ -6978,9 +6982,9 @@ pub const PackageManager = struct {
                             &installer,
                             .{
                                 .onExtract = PackageInstaller.installEnqueuedPackages,
-                                .onResolve = void{},
-                                .onPackageManifestError = void{},
-                                .onPackageDownloadError = void{},
+                                .onResolve = {},
+                                .onPackageManifestError = {},
+                                .onPackageDownloadError = {},
                             },
                             log_level,
                         );
@@ -6997,9 +7001,9 @@ pub const PackageManager = struct {
                     &installer,
                     .{
                         .onExtract = PackageInstaller.installEnqueuedPackages,
-                        .onResolve = void{},
-                        .onPackageManifestError = void{},
-                        .onPackageDownloadError = void{},
+                        .onResolve = {},
+                        .onPackageManifestError = {},
+                        .onPackageDownloadError = {},
                     },
                     log_level,
                 );
@@ -7012,9 +7016,9 @@ pub const PackageManager = struct {
                     &installer,
                     .{
                         .onExtract = PackageInstaller.installEnqueuedPackages,
-                        .onResolve = void{},
-                        .onPackageManifestError = void{},
-                        .onPackageDownloadError = void{},
+                        .onResolve = {},
+                        .onPackageManifestError = {},
+                        .onPackageDownloadError = {},
                     },
                     log_level,
                 );

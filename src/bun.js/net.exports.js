@@ -110,7 +110,6 @@ const Socket = (function (InternalSocket) {
           self.#writeCallback = null;
           callback(error);
         }
-        console.error(error);
         self.emit("error", error);
       },
       open(socket) {
@@ -119,12 +118,42 @@ const Socket = (function (InternalSocket) {
         socket.ref();
         self.#socket = socket;
         self.connecting = false;
-        self.emit("connect");
+        self.emit("connect", self);
         Socket.#Drain(socket);
+      },
+      handshake(socket, success, verifyError) {
+        const { data: self } = socket;
+        self._securePending = false;
+        self.secureConnecting = false;
+        self._secureEstablished = !!success;
+
+        // Needs getPeerCertificate support (not implemented yet)
+        // if (!verifyError && !this.isSessionReused()) {
+        //   const hostname = options.servername ||
+        //                  options.host ||
+        //                  (options.socket && options.socket._host) ||
+        //                  'localhost';
+        //   const cert = this.getPeerCertificate(true);
+        //   verifyError = options.checkServerIdentity(hostname, cert);
+        // }
+
+        if (self._requestCert || self._rejectUnauthorized) {
+          if (verifyError) {
+            self.authorized = false;
+            self.authorizationError = verifyError.code || verifyError.message;
+            if (self._rejectUnauthorized) {
+              self.destroy(verifyError);
+              return;
+            }
+          }
+        } else {
+          self.authorized = true;
+        }
+        self.emit("secureConnect", verifyError);
       },
       timeout(socket) {
         const self = socket.data;
-        self.emit("timeout");
+        self.emit("timeout", self);
       },
       binaryType: "buffer",
     };
@@ -133,6 +162,8 @@ const Socket = (function (InternalSocket) {
       const self = socket.data;
       if (self.#closed) return;
       self.#closed = true;
+      //socket cannot be used after close
+      self.#socket = null;
       const queue = self.#readQueue;
       if (queue.isEmpty()) {
         if (self.push(null)) return;
@@ -142,6 +173,7 @@ const Socket = (function (InternalSocket) {
 
     static #Drain(socket) {
       const self = socket.data;
+
       const callback = self.#writeCallback;
       if (callback) {
         const chunk = self.#writeChunk;
@@ -171,8 +203,12 @@ const Socket = (function (InternalSocket) {
       open(socket) {
         const self = this.data;
         const options = self[bunSocketServerOptions];
-        const { pauseOnConnect, connectionListener } = options;
-        const _socket = new Socket(options);
+        const { pauseOnConnect, connectionListener, InternalSocketClass, requestCert, rejectUnauthorized } = options;
+        const _socket = new InternalSocketClass({});
+        _socket.isServer = true;
+        _socket._requestCert = requestCert;
+        _socket._rejectUnauthorized = rejectUnauthorized;
+
         _socket.#attach(this.localPort, socket);
         if (self.maxConnections && self[bunSocketServerConnections] >= self.maxConnections) {
           const data = {
@@ -183,6 +219,7 @@ const Socket = (function (InternalSocket) {
             remotePort: _socket.remotePort,
             remoteFamily: _socket.remoteFamily || "IPv4",
           };
+
           socket.end();
 
           self.emit("drop", data);
@@ -194,10 +231,46 @@ const Socket = (function (InternalSocket) {
         }
 
         self[bunSocketServerConnections]++;
+
         if (typeof connectionListener == "function") {
-          connectionListener(_socket);
+          if (InternalSocketClass.name === "TLSSocket") {
+            // add secureConnection event handler
+            self.once("secureConnection", () => connectionListener(_socket));
+          } else {
+            connectionListener(_socket);
+          }
         }
+
         self.emit("connection", _socket);
+      },
+      handshake({ data: self }, success, verifyError) {
+        self._securePending = false;
+        self.secureConnecting = false;
+        self._secureEstablished = !!success;
+
+        // Needs getPeerCertificate support (not implemented yet)
+        // if (!verifyError && !this.isSessionReused()) {
+        //   const hostname = options.servername ||
+        //                  options.host ||
+        //                  (options.socket && options.socket._host) ||
+        //                  'localhost';
+        //   const cert = this.getPeerCertificate(true);
+        //   verifyError = options.checkServerIdentity(hostname, cert);
+        // }
+
+        if (self._requestCert || self._rejectUnauthorized) {
+          if (verifyError) {
+            self.authorized = false;
+            self.authorizationError = verifyError.code || verifyError.message;
+            if (self._rejectUnauthorized) {
+              self.destroy(verifyError);
+              return;
+            }
+          }
+        } else {
+          self.authorized = true;
+        }
+        self.emit("secureConnect", verifyError);
       },
       error(socket, error) {
         Socket.#Handlers.error(socket, error);
@@ -221,6 +294,8 @@ const Socket = (function (InternalSocket) {
     #writeCallback;
     #writeChunk;
     #pendingRead;
+
+    isServer = false;
 
     constructor(options) {
       const { signal, write, read, allowHalfOpen = false, ...opts } = options || {};
@@ -254,7 +329,7 @@ const Socket = (function (InternalSocket) {
       socket.ref();
       this.#socket = socket;
       this.connecting = false;
-      this.emit("connect");
+      this.emit("connect", this);
       Socket.#Drain(socket);
     }
 
@@ -290,16 +365,31 @@ const Socket = (function (InternalSocket) {
           noDelay,
           keepAlive,
           keepAliveInitialDelay,
+          requestCert,
+          rejectUnauthorized,
+          pauseOnConnect,
         } = port;
+      }
+
+      if (!pauseOnConnect) {
+        this.resume();
       }
       this.connecting = true;
       this.remotePort = port;
-      if (connectListener) this.on("connect", connectListener);
+
       const bunTLS = this[bunTlsSymbol];
       var tls = undefined;
       if (typeof bunTLS === "function") {
-        tls = bunTLS.call(this, port, host);
-      }
+        tls = bunTLS.call(this, port, host, true);
+        //Client always request Cert
+        this._requestCert = true;
+        this._rejectUnauthorized = rejectUnauthorized;
+        this.authorized = false;
+        this.secureConnecting = true;
+        this._secureEstablished = false;
+        this._securePending = true;
+        if (connectListener) this.on("secureConnect", connectListener);
+      } else if (connectListener) this.on("connect", connectListener);
 
       bunConnect(
         path
@@ -326,7 +416,7 @@ const Socket = (function (InternalSocket) {
     }
 
     _final(callback) {
-      this.#socket.end();
+      this.#socket?.end();
       callback();
     }
 
@@ -613,19 +703,28 @@ class Server extends EventEmitter {
     }
 
     try {
+      var tls = undefined;
+      var TLSSocketClass = undefined;
+      const bunTLS = this[bunTlsSymbol];
+      if (typeof bunTLS === "function") {
+        [tls, TLSSocketClass] = bunTLS.call(this, port, hostname, false);
+      }
+
+      this[bunSocketServerOptions].InternalSocketClass = TLSSocketClass || SocketClass;
+
       this.#server = Bun.listen(
         path
           ? {
               exclusive,
               unix: path,
-              tls: false,
+              tls,
               socket: SocketClass[bunSocketServerHandlers],
             }
           : {
               exclusive,
               port,
               hostname,
-              tls: false,
+              tls,
               socket: SocketClass[bunSocketServerHandlers],
             },
       );
@@ -645,7 +744,7 @@ class Server extends EventEmitter {
       setTimeout(emitListeningNextTick, 1, this, onListen);
     } catch (err) {
       this.#listening = false;
-      process.nextTick(emitErrorNextTick, this, err);
+      setTimeout(emitErrorNextTick, 1, this, err);
     }
     return this;
   }

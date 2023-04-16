@@ -99,6 +99,14 @@ $ docker run --rm --init --ulimit memlock=-1:-1 oven/bun:edge
 this is some output
 ``` -->
 
+## Uninstalling
+
+Bun's binary and install cache is located in `~/.bun` by default. To uninstall bun, delete this directory and edit your shell config (`.bashrc`, `.zshrc`, or similar) to remove `~/.bun/bin` from the `$PATH` variable.
+
+```sh
+$ rm -rf ~/.bun # make sure to remove ~/.bun/bin from $PATH
+```
+
 ## TypeScript
 
 To install TypeScript definitions for Bun's built-in APIs in your project, install `bun-types`.
@@ -117,7 +125,7 @@ Then include `"bun-types"` in the `compilerOptions.types` in your `tsconfig.json
   }
 ```
 
-Refer to [Ecosystem > TypeScript](/docs/ecosystem/typescript) for a complete guide to TypeScript support in Bun.
+Refer to [Ecosystem > TypeScript](/docs/runtime/typescript) for a complete guide to TypeScript support in Bun.
 
 ## Completions
 

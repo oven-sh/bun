@@ -299,7 +299,7 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
     std.c._exit(128 + @truncate(u8, @intCast(u8, @max(signal, 0))));
 }
 
-pub noinline fn globalError(err: anyerror) noreturn {
+pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace())) noreturn {
     @setCold(true);
 
     if (@atomicRmw(bool, &globalError_ranOnce, .Xchg, true, .Monotonic)) {
@@ -466,6 +466,14 @@ pub noinline fn globalError(err: anyerror) noreturn {
         error.NotOpenForReading, error.Unexpected => {
             const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
 
+            if (trace_) |trace| {
+                print_stacktrace: {
+                    var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+                    Output.disableBuffering();
+                    std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig(std.io.getStdErr())) catch break :print_stacktrace;
+                }
+            }
+
             if (limit.cur > 0 and limit.cur < (8096 * 2)) {
                 Output.prettyError(
                     \\
@@ -527,11 +535,12 @@ pub noinline fn globalError(err: anyerror) noreturn {
 
             Output.flush();
 
-            print_stacktrace: {
-                var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
-                var trace = @errorReturnTrace() orelse break :print_stacktrace;
-                Output.disableBuffering();
-                std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig(std.io.getStdErr())) catch break :print_stacktrace;
+            if (trace_) |trace| {
+                print_stacktrace: {
+                    var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+                    Output.disableBuffering();
+                    std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig(std.io.getStdErr())) catch break :print_stacktrace;
+                }
             }
 
             Global.exit(1);
@@ -541,6 +550,15 @@ pub noinline fn globalError(err: anyerror) noreturn {
                 "\n<r><red>error<r><d>:<r> <b>MissingPackageJSON<r>\nbun could not find a package.json file.\n",
                 .{},
             );
+
+            if (trace_) |trace| {
+                print_stacktrace: {
+                    var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+                    Output.disableBuffering();
+                    std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig(std.io.getStdErr())) catch break :print_stacktrace;
+                }
+            }
+
             Global.exit(1);
         },
         error.MissingValue => {
@@ -550,12 +568,12 @@ pub noinline fn globalError(err: anyerror) noreturn {
     }
 
     Report.fatal(err, null);
-
-    print_stacktrace: {
-        var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
-        var trace = @errorReturnTrace() orelse break :print_stacktrace;
-        Output.disableBuffering();
-        std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig(std.io.getStdErr())) catch break :print_stacktrace;
+    if (trace_) |trace| {
+        print_stacktrace: {
+            var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+            Output.disableBuffering();
+            std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig(std.io.getStdErr())) catch break :print_stacktrace;
+        }
     }
 
     if (bun.auto_reload_on_crash) {

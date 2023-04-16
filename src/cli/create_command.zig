@@ -540,7 +540,7 @@ pub const CreateCommand = struct {
                     destination,
                     &archive_context,
                     void,
-                    void{},
+                    {},
                     1,
                     false,
                     false,
@@ -757,17 +757,17 @@ pub const CreateCommand = struct {
 
                 const Prune = struct {
                     pub const packages = ComptimeStringMap(void, .{
-                        .{ "@parcel/babel-preset", void{} },
-                        .{ "@parcel/core", void{} },
-                        .{ "@swc/cli", void{} },
-                        .{ "@swc/core", void{} },
-                        .{ "@webpack/cli", void{} },
-                        .{ "react-scripts", void{} },
-                        .{ "webpack-cli", void{} },
-                        .{ "webpack", void{} },
+                        .{ "@parcel/babel-preset", {} },
+                        .{ "@parcel/core", {} },
+                        .{ "@swc/cli", {} },
+                        .{ "@swc/core", {} },
+                        .{ "@webpack/cli", {} },
+                        .{ "react-scripts", {} },
+                        .{ "webpack-cli", {} },
+                        .{ "webpack", {} },
 
                         // one of cosmic config's imports breaks stuff
-                        .{ "cosmiconfig", void{} },
+                        .{ "cosmiconfig", {} },
                     });
                     pub var prune_count: u16 = 0;
 
@@ -1852,7 +1852,7 @@ pub const Example = struct {
 
         // ensure very stable memory address
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
-        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, api_url, header_entries, headers_buf, mutable, "", 60 * std.time.ns_per_min, http_proxy);
+        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, api_url, header_entries, headers_buf, mutable, "", 60 * std.time.ns_per_min, http_proxy, null);
         async_http.client.progress_node = progress;
         const response = try async_http.sendSync(true);
 
@@ -1916,7 +1916,7 @@ pub const Example = struct {
 
         // ensure very stable memory address
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
-        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy);
+        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy, null);
         async_http.client.progress_node = progress;
         var response = try async_http.sendSync(true);
 
@@ -1992,7 +1992,7 @@ pub const Example = struct {
 
         http_proxy = env_loader.getHttpProxy(parsed_tarball_url);
 
-        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, parsed_tarball_url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy);
+        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, parsed_tarball_url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy, null);
         async_http.client.progress_node = progress;
 
         refresher.maybeRefresh();
@@ -2022,7 +2022,7 @@ pub const Example = struct {
         var mutable = try ctx.allocator.create(MutableString);
         mutable.* = try MutableString.init(ctx.allocator, 2048);
 
-        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy);
+        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy, null);
 
         if (Output.enable_ansi_colors) {
             async_http.client.progress_node = progress_node;

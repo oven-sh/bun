@@ -44,17 +44,16 @@ it("onAborted() and onWritable are not called after receiving an empty response 
         env: bunEnv,
       });
 
-      const reader = bunProcess.stdout?.getReader();
+      const reader = bunProcess.stdout.getReader();
       let hostname, port;
       {
-        const chunks = [];
+        const chunks: Buffer[] = [];
         var decoder = new TextDecoder();
         while (!hostname && !port) {
-          // @ts-expect-error TODO
-          var { value, done } = await reader?.read();
+          var { value, done } = await reader.read();
           if (done) break;
           if (chunks.length > 0) {
-            chunks.push(value);
+            chunks.push(value!);
           }
           try {
             if (chunks.length > 0) {
@@ -63,7 +62,7 @@ it("onAborted() and onWritable are not called after receiving an empty response 
 
             ({ hostname, port } = JSON.parse(decoder.decode(value).trim()));
           } catch {
-            chunks.push(value);
+            chunks.push(value!);
           }
         }
       }

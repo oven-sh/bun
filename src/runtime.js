@@ -1,4 +1,5 @@
-var $$mod$ = Symbol.for;
+var tagSymbol;
+var cjsRequireSymbol;
 var __create = Object.create;
 var __descs = Object.getOwnPropertyDescriptors;
 var __defProp = Object.defineProperty;
@@ -7,28 +8,83 @@ var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 
-// We're disabling Object.freeze because it breaks CJS => ESM and can cause
-// issues with Suspense and other things that expect the CJS module namespace
-// to be mutable when the ESM module namespace is NOT mutable
-// var __objectFreezePolyfill = new WeakSet();
-
-// globalThis.Object.freeze = function freeze(obj) {
-//   __objectFreezePolyfill.add(obj);
-//   return obj;
-// };
-
-// globalThis.Object.isFrozen = function isFrozen(obj) {
-//   return __objectFreezePolyfill.has(obj);
-// };
-
 export var __markAsModule = target => __defProp(target, "__esModule", { value: true, configurable: true });
 
+// This is used to implement "export * from" statements. It copies properties
+// from the imported module to the current module's ESM export object. If the
+// current module is an entry point and the target format is CommonJS, we
+// also copy the properties to "module.exports" in addition to our module's
+// internal ESM export object.
+export var __reExport = (target, mod, secondTarget) => {
+  for (let key of __getOwnPropNames(mod))
+    if (!__hasOwnProp.call(target, key) && key !== "default")
+      __defProp(target, key, {
+        get: () => mod[key],
+        enumerable: true,
+      });
+
+  if (secondTarget) {
+    for (let key of __getOwnPropNames(mod))
+      if (!__hasOwnProp.call(secondTarget, key) && key !== "default")
+        __defProp(secondTarget, key, {
+          get: () => mod[key],
+          enumerable: true,
+        });
+
+    return secondTarget;
+  }
+};
+
+// Converts the module from CommonJS to ESM. When in node mode (i.e. in an
+// ".mjs" file, package.json has "type: module", or the "__esModule" export
+// in the CommonJS file is falsy or missing), the "default" property is
+// overridden to point to the original CommonJS exports object instead.
+export var __toESM = (mod, isNodeMode, target) => {
+  target = mod != null ? __create(__getProtoOf(mod)) : {};
+  const to =
+    isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target;
+
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  for (let key of __getOwnPropNames(mod))
+    if (!__hasOwnProp.call(to, key))
+      __defProp(to, key, {
+        get: () => mod[key],
+        enumerable: true,
+      });
+
+  return to;
+};
+
+// Converts the module from ESM to CommonJS. This clones the input module
+// object with the addition of a non-enumerable "__esModule" property set
+// to "true", which overwrites any existing export named "__esModule".
+export var __toCommonJS = /* @__PURE__ */ from => {
+  const moduleCache = (__toCommonJS.moduleCache ??= new WeakMap());
+  var cached = moduleCache.get(from);
+  if (cached) return cached;
+  var to = __defProp({}, "__esModule", { value: true });
+  var desc = { enumerable: false };
+  if ((from && typeof from === "object") || typeof from === "function")
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key))
+        __defProp(to, key, {
+          get: () => from[key],
+          enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable,
+        });
+
+  moduleCache.set(from, to);
+  return to;
+};
+
 // lazy require to prevent loading one icon from a design system
-export var $$lzy = (target, module, props) => {
+export var $$lzy = (target, mod, props) => {
   for (let key in props) {
     if (!__hasOwnProp.call(target, key))
       __defProp(target, key, {
-        get: () => module()[props[key]],
+        get: () => mod()[props[key]],
         enumerable: true,
         configurable: true,
       });
@@ -36,27 +92,16 @@ export var $$lzy = (target, module, props) => {
   return target;
 };
 
-export var __toModule = module => {
-  return __reExport(
-    __markAsModule(
-      __defProp(
-        module != null ? __create(__getProtoOf(module)) : {},
-        "default",
-        module && module.__esModule && "default" in module
-          ? { get: () => module.default, enumerable: true, configurable: true }
-          : { value: module, enumerable: true, configurable: true },
-      ),
-    ),
-    module,
-  );
-};
+// When you do know the module is CJS
+export var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
 
-var tagSymbol = Symbol.for("CommonJSTransformed");
-var cjsRequireSymbol = Symbol.for("CommonJS");
-export var __commonJS = (cb, name) => {
+// When you don't know if the module is going to be ESM or CJS
+export var __cJS2eSM = (cb, name) => {
   var mod;
   var origExports;
   var has_run = false;
+  tagSymbol ??= Symbol.for("CommonJSTransformed");
+  cjsRequireSymbol ??= Symbol.for("CommonJS");
 
   const requireFunction = function load() {
     if (has_run) {
@@ -125,27 +170,14 @@ export var __commonJS = (cb, name) => {
   return requireFunction;
 };
 
-export var __cJS2eSM = __commonJS;
-
-export var __internalIsCommonJSNamespace = namespace =>
+export var __internalIsCommonJSNamespace = /* @__PURE__ */ namespace =>
   namespace != null &&
   typeof namespace === "object" &&
   ((namespace.default && namespace.default[cjsRequireSymbol]) || namespace[cjsRequireSymbol]);
 
 // require()
-export var __require = namespace => {
-  if (__internalIsCommonJSNamespace(namespace)) {
-    return namespace.default();
-  }
-
-  return namespace;
-};
-
-// require().default
-// this currently does nothing
-// get rid of this wrapper once we're more confident we do not need special handling for default
-__require.d = namespace => {
-  return namespace;
+export var __require = /* @__PURE__ */ id => {
+  return import.meta.require(id);
 };
 
 export var $$m = __commonJS;
@@ -162,7 +194,8 @@ export var __name = (target, name) => {
 
 // ESM export -> CJS export
 // except, writable incase something re-exports
-export var __export = (target, all) => {
+
+export var __export = /* @__PURE__ */ (target, all) => {
   for (var name in all)
     __defProp(target, name, {
       get: all[name],
@@ -190,18 +223,6 @@ export var __exportDefault = (target, value) => {
     enumerable: true,
     configurable: true,
   });
-};
-
-export var __reExport = (target, module, desc) => {
-  if ((module && typeof module === "object") || typeof module === "function")
-    for (let key of __getOwnPropNames(module))
-      if (!__hasOwnProp.call(target, key) && key !== "default")
-        __defProp(target, key, {
-          get: () => module[key],
-          configurable: true,
-          enumerable: !(desc = __getOwnPropDesc(module, key)) || desc.enumerable,
-        });
-  return target;
 };
 
 function hasAnyProps(obj) {
@@ -236,3 +257,8 @@ export var __decorateClass = (decorators, target, key, kind) => {
 };
 
 export var __decorateParam = (index, decorator) => (target, key) => decorator(target, key, index);
+
+export var __esm = (fn, res) => () => (fn && (res = fn((fn = 0))), res);
+
+// This is used for JSX inlining with React.
+export var $$typeof = /* @__PURE__ */ Symbol.for("react.element");

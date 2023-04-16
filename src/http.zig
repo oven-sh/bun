@@ -3911,7 +3911,7 @@ pub const Server = struct {
             if (node_modules_bundle.getPackageIDByName(package_name) != null) return;
         }
 
-        _ = this.bundler.resolver.resolve(this.bundler.fs.top_level_dir, this.bundler.options.jsx.import_source, .internal) catch {
+        _ = this.bundler.resolver.resolve(this.bundler.fs.top_level_dir, this.bundler.options.jsx.importSource(), .internal) catch {
             // if they don't have React, they can't use fast refresh
             this.bundler.options.jsx.supports_fast_refresh = false;
             return;

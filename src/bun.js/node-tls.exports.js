@@ -2,16 +2,49 @@ function parseCertString() {
   throw Error("Not implemented");
 }
 
-var InternalSecureContext = class SecureContext {};
+function mapStringArray(item) {
+  return item.toString();
+}
+
+var InternalSecureContext = class SecureContext {
+  context;
+
+  constructor(options) {
+    const context = {};
+    if (options) {
+      if (options.key) {
+        context.key = (Array.isArray(options.key) ? options.key : [options.key]).map(mapStringArray);
+      } else context.key = undefined;
+
+      if (options.passphrase) context.passphrase = options.passphrase;
+      else context.passphrase = undefined;
+
+      if (options.cert) {
+        context.cert = (Array.isArray(options.cert) ? options.cert : [options.cert]).map(mapStringArray);
+      } else context.cert = undefined;
+
+      if (options.ca) {
+        context.ca = (Array.isArray(options.ca) ? options.ca : [options.ca]).map(mapStringArray);
+      } else context.ca = undefined;
+
+      const secureOptions = options.secureOptions || 0;
+
+      if (secureOptions) context.secureOptions = secureOptions;
+      else context.secureOptions = undefined;
+    }
+    this.context = context;
+  }
+};
+
 function SecureContext() {
   return new InternalSecureContext();
 }
 
 function createSecureContext(options) {
-  return new SecureContext();
+  return new SecureContext(options);
 }
 
-const { [Symbol.for("::bunternal::")]: InternalTCPSocket } = import.meta.require("net");
+const { [Symbol.for("::bunternal::")]: InternalTCPSocket, Server: NetServer } = import.meta.require("net");
 
 const buntls = Symbol.for("::buntls::");
 
@@ -36,8 +69,14 @@ const TLSSocket = (function (InternalTLSSocket) {
   );
 })(
   class TLSSocket extends InternalTCPSocket {
+    #secureContext;
     constructor(options) {
       super(options);
+      this.#secureContext = options.secureContext || createSecureContext(options);
+      this.authorized = false;
+      this.secureConnecting = true;
+      this._secureEstablished = false;
+      this._securePending = true;
     }
 
     _secureEstablished = false;
@@ -48,7 +87,7 @@ const TLSSocket = (function (InternalTLSSocket) {
     _SNICallback;
     servername;
     alpnProtocol;
-    authorized = true;
+    authorized = false;
     authorizationError;
 
     encrypted = true;
@@ -78,24 +117,12 @@ const TLSSocket = (function (InternalTLSSocket) {
       throw Error("Not implented in Bun yet");
     }
 
-    emit(event, args) {
-      super.emit(event, args);
-
-      if (event === "connect" && !this._readableState?.destroyed) {
-        this.authorized = true;
-        this.secureConnecting = false;
-        this._secureEstablished = true;
-        this._securePending = false;
-
-        super.emit("secureConnect", args);
-      }
-    }
-
     [buntls](port, host) {
       var { servername } = this;
       if (servername) {
         return {
           serverName: typeof servername === "string" ? servername : host,
+          ...this.#secureContext,
         };
       }
 
@@ -103,6 +130,97 @@ const TLSSocket = (function (InternalTLSSocket) {
     }
   },
 );
+
+class Server extends NetServer {
+  key;
+  cert;
+  ca;
+  passphrase;
+  secureOptions;
+  _rejectUnauthorized;
+  _requestCert;
+
+  constructor(options, secureConnectionListener) {
+    super(options, secureConnectionListener);
+    this.setSecureContext(options);
+  }
+  emit(event, args) {
+    super.emit(event, args);
+
+    if (event === "connection") {
+      // grabs secureConnect to emit secureConnection
+      args.once("secureConnect", () => {
+        super.emit("secureConnection", args);
+      });
+    }
+  }
+  setSecureContext(options) {
+    if (options instanceof InternalSecureContext) {
+      options = options.context;
+    }
+    if (options) {
+      if (options.key) {
+        this.key = (Array.isArray(options.key) ? options.key : [options.key]).map(mapStringArray);
+      } else this.key = undefined;
+
+      if (options.passphrase) this.passphrase = options.passphrase;
+      else this.passphrase = undefined;
+
+      if (options.cert) {
+        this.cert = (Array.isArray(options.cert) ? options.cert : [options.cert]).map(mapStringArray);
+      } else this.cert = undefined;
+
+      if (options.ca) {
+        this.ca = (Array.isArray(options.ca) ? options.ca : [options.ca]).map(mapStringArray);
+      } else this.ca = undefined;
+
+      const secureOptions = options.secureOptions || 0;
+
+      if (secureOptions) this.secureOptions = secureOptions;
+      else this.secureOptions = undefined;
+
+      const requestCert = options.requestCert || false;
+
+      if (requestCert) this._requestCert = requestCert;
+      else this._requestCert = undefined;
+
+      const rejectUnauthorized = options.rejectUnauthorized || false;
+
+      if (rejectUnauthorized) {
+        this._rejectUnauthorized = rejectUnauthorized;
+      } else this._rejectUnauthorized = undefined;
+    }
+  }
+
+  getTicketKeys() {
+    throw Error("Not implented in Bun yet");
+  }
+
+  setTicketKeys() {
+    throw Error("Not implented in Bun yet");
+  }
+
+  [buntls](port, host, isClient) {
+    return [
+      {
+        serverName: host || "localhost",
+        key: this.key,
+        cert: this.cert,
+        ca: this.ca,
+        passphrase: this.passphrase,
+        secureOptions: this.secureOptions,
+        // Client always is NONE on set_verify
+        rejectUnauthorized: isClient ? false : this._rejectUnauthorized,
+        requestCert: isClient ? false : this._requestCert,
+      },
+      SocketClass,
+    ];
+  }
+}
+
+function createServer(options, connectionListener) {
+  return new Server(options, connectionListener);
+}
 export const CLIENT_RENEG_LIMIT = 3,
   CLIENT_RENEG_WINDOW = 600,
   DEFAULT_ECDH_CURVE = "auto",
@@ -123,6 +241,7 @@ export const CLIENT_RENEG_LIMIT = 3,
             host: host,
             port: port,
           };
+
     return new TLSSocket(options).connect(options, connectListener);
   },
   connect = createConnection;
@@ -151,6 +270,8 @@ var exports = {
   [Symbol.for("CommonJS")]: 0,
   connect,
   createConnection,
+  Server,
+  createServer,
 };
 
 export default exports;

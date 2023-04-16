@@ -174,7 +174,7 @@ pub const ExternalModules = struct {
         return result;
     }
 
-    pub const NodeBuiltinPatterns = [_]string{
+    const NodeBuiltinPatternsRaw = [_]string{
         "_http_agent",
         "_http_client",
         "_http_common",
@@ -231,6 +231,14 @@ pub const ExternalModules = struct {
         "wasi",
         "worker_threads",
         "zlib",
+    };
+
+    pub const NodeBuiltinPatterns = NodeBuiltinPatternsRaw ++ brk: {
+        var builtins = NodeBuiltinPatternsRaw;
+        for (&builtins) |*builtin| {
+            builtin.* = "node:" ++ builtin.*;
+        }
+        break :brk builtins;
     };
 
     pub const BunNodeBuiltinPatternsCompat = [_]string{
@@ -292,62 +300,62 @@ pub const ExternalModules = struct {
     };
 
     pub const NodeBuiltinsMap = ComptimeStringMap(void, .{
-        .{ "_http_agent", void{} },
-        .{ "_http_client", void{} },
-        .{ "_http_common", void{} },
-        .{ "_http_incoming", void{} },
-        .{ "_http_outgoing", void{} },
-        .{ "_http_server", void{} },
-        .{ "_stream_duplex", void{} },
-        .{ "_stream_passthrough", void{} },
-        .{ "_stream_readable", void{} },
-        .{ "_stream_transform", void{} },
-        .{ "_stream_wrap", void{} },
-        .{ "_stream_writable", void{} },
-        .{ "_tls_common", void{} },
-        .{ "_tls_wrap", void{} },
-        .{ "assert", void{} },
-        .{ "async_hooks", void{} },
-        .{ "buffer", void{} },
-        .{ "child_process", void{} },
-        .{ "cluster", void{} },
-        .{ "console", void{} },
-        .{ "constants", void{} },
-        .{ "crypto", void{} },
-        .{ "dgram", void{} },
-        .{ "diagnostics_channel", void{} },
-        .{ "dns", void{} },
-        .{ "domain", void{} },
-        .{ "events", void{} },
-        .{ "fs", void{} },
-        .{ "http", void{} },
-        .{ "http2", void{} },
-        .{ "https", void{} },
-        .{ "inspector", void{} },
-        .{ "module", void{} },
-        .{ "net", void{} },
-        .{ "os", void{} },
-        .{ "path", void{} },
-        .{ "perf_hooks", void{} },
-        .{ "process", void{} },
-        .{ "punycode", void{} },
-        .{ "querystring", void{} },
-        .{ "readline", void{} },
-        .{ "repl", void{} },
-        .{ "stream", void{} },
-        .{ "string_decoder", void{} },
-        .{ "sys", void{} },
-        .{ "timers", void{} },
-        .{ "tls", void{} },
-        .{ "trace_events", void{} },
-        .{ "tty", void{} },
-        .{ "url", void{} },
-        .{ "util", void{} },
-        .{ "v8", void{} },
-        .{ "vm", void{} },
-        .{ "wasi", void{} },
-        .{ "worker_threads", void{} },
-        .{ "zlib", void{} },
+        .{ "_http_agent", {} },
+        .{ "_http_client", {} },
+        .{ "_http_common", {} },
+        .{ "_http_incoming", {} },
+        .{ "_http_outgoing", {} },
+        .{ "_http_server", {} },
+        .{ "_stream_duplex", {} },
+        .{ "_stream_passthrough", {} },
+        .{ "_stream_readable", {} },
+        .{ "_stream_transform", {} },
+        .{ "_stream_wrap", {} },
+        .{ "_stream_writable", {} },
+        .{ "_tls_common", {} },
+        .{ "_tls_wrap", {} },
+        .{ "assert", {} },
+        .{ "async_hooks", {} },
+        .{ "buffer", {} },
+        .{ "child_process", {} },
+        .{ "cluster", {} },
+        .{ "console", {} },
+        .{ "constants", {} },
+        .{ "crypto", {} },
+        .{ "dgram", {} },
+        .{ "diagnostics_channel", {} },
+        .{ "dns", {} },
+        .{ "domain", {} },
+        .{ "events", {} },
+        .{ "fs", {} },
+        .{ "http", {} },
+        .{ "http2", {} },
+        .{ "https", {} },
+        .{ "inspector", {} },
+        .{ "module", {} },
+        .{ "net", {} },
+        .{ "os", {} },
+        .{ "path", {} },
+        .{ "perf_hooks", {} },
+        .{ "process", {} },
+        .{ "punycode", {} },
+        .{ "querystring", {} },
+        .{ "readline", {} },
+        .{ "repl", {} },
+        .{ "stream", {} },
+        .{ "string_decoder", {} },
+        .{ "sys", {} },
+        .{ "timers", {} },
+        .{ "tls", {} },
+        .{ "trace_events", {} },
+        .{ "tty", {} },
+        .{ "url", {} },
+        .{ "util", {} },
+        .{ "v8", {} },
+        .{ "vm", {} },
+        .{ "wasi", {} },
+        .{ "worker_threads", {} },
+        .{ "zlib", {} },
     });
 };
 
@@ -375,6 +383,32 @@ pub const Platform = enum {
     bun,
     bun_macro,
     node,
+
+    pub const Map = ComptimeStringMap(
+        Platform,
+        .{
+            .{
+                "neutral",
+                Platform.neutral,
+            },
+            .{
+                "browser",
+                Platform.browser,
+            },
+            .{
+                "bun",
+                Platform.bun,
+            },
+            .{
+                "bun_macro",
+                Platform.bun_macro,
+            },
+            .{
+                "node",
+                Platform.node,
+            },
+        },
+    );
 
     pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Platform {
         if (!value.jsType().isStringLike()) {
@@ -624,7 +658,7 @@ pub const Platform = enum {
     };
 };
 
-pub const Loader = enum(u4) {
+pub const Loader = enum {
     jsx,
     js,
     ts,
@@ -635,6 +669,18 @@ pub const Loader = enum(u4) {
     toml,
     wasm,
     napi,
+    base64,
+    dataurl,
+    text,
+
+    pub const HashTable = bun.StringArrayHashMap(Loader);
+
+    pub fn canHaveSourceMap(this: Loader) bool {
+        return switch (this) {
+            .jsx, .js, .ts, .tsx => true,
+            else => false,
+        };
+    }
 
     pub fn canBeRunByBun(this: Loader) bool {
         return switch (this) {
@@ -656,6 +702,7 @@ pub const Loader = enum(u4) {
         map.set(Loader.toml, "input.toml");
         map.set(Loader.wasm, "input.wasm");
         map.set(Loader.napi, "input.node");
+        map.set(Loader.text, "input.txt");
         break :brk map;
     };
 
@@ -681,26 +728,34 @@ pub const Loader = enum(u4) {
         };
     }
 
+    pub const names = bun.ComptimeStringMap(Loader, .{
+        .{ "js", Loader.js },
+        .{ "mjs", Loader.js },
+        .{ "cjs", Loader.js },
+        .{ "cts", Loader.ts },
+        .{ "mts", Loader.ts },
+        .{ "jsx", Loader.jsx },
+        .{ "ts", Loader.ts },
+        .{ "tsx", Loader.tsx },
+        .{ "css", Loader.css },
+        .{ "file", Loader.file },
+        .{ "json", Loader.json },
+        .{ "toml", Loader.toml },
+        .{ "wasm", Loader.wasm },
+        .{ "node", Loader.napi },
+        .{ "dataurl", Loader.dataurl },
+        .{ "base64", Loader.base64 },
+        .{ "txt", Loader.text },
+        .{ "text", Loader.text },
+    });
+
     pub fn fromString(slice_: string) ?Loader {
-        const LoaderMatcher = strings.ExactSizeMatcher(4);
         var slice = slice_;
         if (slice.len > 0 and slice[0] == '.') {
             slice = slice[1..];
         }
 
-        return switch (LoaderMatcher.matchLower(slice)) {
-            LoaderMatcher.case("js") => Loader.js,
-            LoaderMatcher.case("jsx") => Loader.jsx,
-            LoaderMatcher.case("ts") => Loader.ts,
-            LoaderMatcher.case("tsx") => Loader.tsx,
-            LoaderMatcher.case("css") => Loader.css,
-            LoaderMatcher.case("file") => Loader.file,
-            LoaderMatcher.case("json") => Loader.json,
-            LoaderMatcher.case("toml") => Loader.toml,
-            LoaderMatcher.case("wasm") => Loader.wasm,
-            LoaderMatcher.case("node") => Loader.napi,
-            else => null,
-        };
+        return names.getWithEql(slice, strings.eqlCaseInsensitiveASCIIICheckLength);
     }
 
     pub fn supportsClientEntryPoint(this: Loader) bool {
@@ -721,6 +776,7 @@ pub const Loader = enum(u4) {
             .toml => .toml,
             .wasm => .wasm,
             .napi => .napi,
+            .text => .text,
             else => .file,
         };
     }
@@ -736,6 +792,7 @@ pub const Loader = enum(u4) {
             .toml => .toml,
             .wasm => .wasm,
             .napi => .napi,
+            .text => .text,
             else => .file,
         };
     }
@@ -757,6 +814,10 @@ pub const Loader = enum(u4) {
     pub fn isJavaScriptLikeOrJSON(loader: Loader) bool {
         return switch (loader) {
             .jsx, .js, .ts, .tsx, .json => true,
+
+            // toml is included because we can serialize to the same AST as JSON
+            .toml => true,
+
             else => false,
         };
     }
@@ -787,6 +848,8 @@ pub const defaultLoaders = ComptimeStringMap(Loader, .{
     .{ ".toml", Loader.toml },
     .{ ".wasm", Loader.wasm },
     .{ ".node", Loader.napi },
+    .{ ".txt", Loader.text },
+    .{ ".text", Loader.text },
 });
 
 // https://webpack.js.org/guides/package-exports/#reference-syntax
@@ -805,14 +868,14 @@ pub const ESMConditions = struct {
         try import_condition_map.ensureTotalCapacity(defaults.len + 1);
         try require_condition_map.ensureTotalCapacity(defaults.len + 1);
 
-        import_condition_map.putAssumeCapacityNoClobber(Platform.default_conditions_strings.import, void{});
-        require_condition_map.putAssumeCapacityNoClobber(Platform.default_conditions_strings.require, void{});
-        default_condition_amp.putAssumeCapacityNoClobber(Platform.default_conditions_strings.default, void{});
+        import_condition_map.putAssumeCapacityNoClobber(Platform.default_conditions_strings.import, {});
+        require_condition_map.putAssumeCapacityNoClobber(Platform.default_conditions_strings.require, {});
+        default_condition_amp.putAssumeCapacityNoClobber(Platform.default_conditions_strings.default, {});
 
         for (defaults) |default| {
-            default_condition_amp.putAssumeCapacityNoClobber(default, void{});
-            import_condition_map.putAssumeCapacityNoClobber(default, void{});
-            require_condition_map.putAssumeCapacityNoClobber(default, void{});
+            default_condition_amp.putAssumeCapacityNoClobber(default, {});
+            import_condition_map.putAssumeCapacityNoClobber(default, {});
+            require_condition_map.putAssumeCapacityNoClobber(default, {});
         }
 
         return ESMConditions{
@@ -825,6 +888,8 @@ pub const ESMConditions = struct {
 
 pub const JSX = struct {
     pub const RuntimeMap = bun.ComptimeStringMap(JSX.Runtime, .{
+        .{ "classic", JSX.Runtime.classic },
+        .{ "automatic", JSX.Runtime.automatic },
         .{ "react", JSX.Runtime.classic },
         .{ "react-jsx", JSX.Runtime.automatic },
         .{ "react-jsxDEV", JSX.Runtime.automatic },
@@ -836,11 +901,11 @@ pub const JSX = struct {
         factory: []const string = Defaults.Factory,
         fragment: []const string = Defaults.Fragment,
         runtime: JSX.Runtime = JSX.Runtime.automatic,
+        import_source: ImportSource = .{},
 
         /// Facilitates automatic JSX importing
         /// Set on a per file basis like this:
         /// /** @jsxImportSource @emotion/core */
-        import_source: string = "react/jsx-dev-runtime",
         classic_import_source: string = "react",
         package_name: []const u8 = "react",
         // https://github.com/facebook/react/commit/2f26eb85d657a08c21edbac1e00f9626d68f84ae
@@ -848,11 +913,20 @@ pub const JSX = struct {
         supports_fast_refresh: bool = true,
         use_embedded_refresh_runtime: bool = false,
 
-        jsx: string = Defaults.JSXFunctionDev,
-        // jsx_static: string = Defaults.JSXStaticFunction,
-
         development: bool = true,
         parse: bool = true,
+
+        pub const ImportSource = struct {
+            development: string = "react/jsx-dev-runtime",
+            production: string = "react/jsx-runtime",
+        };
+
+        pub fn importSource(this: *const Pragma) string {
+            return switch (this.development) {
+                true => this.import_source.development,
+                false => this.import_source.production,
+            };
+        }
 
         pub fn parsePackageName(str: string) string {
             if (str[0] == '@') {
@@ -876,6 +950,36 @@ pub const JSX = struct {
             return strings.eqlComptime(pragma.package_name, "react") or strings.eqlComptime(pragma.package_name, "@emotion/jsx") or strings.eqlComptime(pragma.package_name, "@emotion/react");
         }
 
+        pub fn setImportSource(pragma: *Pragma, allocator: std.mem.Allocator) void {
+            strings.concatIfNeeded(
+                allocator,
+                &pragma.import_source.development,
+                &[_]string{
+                    pragma.package_name,
+                    "jsx-dev-runtime",
+                },
+                &.{
+                    Defaults.ImportSourceDev,
+                },
+            ) catch unreachable;
+
+            strings.concatIfNeeded(
+                allocator,
+                &pragma.import_source.production,
+                &[_]string{
+                    pragma.package_name,
+                    "jsx-runtime",
+                },
+                &.{
+                    Defaults.ImportSource,
+                },
+            ) catch unreachable;
+        }
+
+        pub fn setProduction(pragma: *Pragma, is_production: bool) void {
+            pragma.development = !is_production;
+        }
+
         pub const Defaults = struct {
             pub const Factory = &[_]string{"createElement"};
             pub const Fragment = &[_]string{"Fragment"};
@@ -891,36 +995,38 @@ pub const JSX = struct {
         // saves an allocation for the majority case
         pub fn memberListToComponentsIfDifferent(allocator: std.mem.Allocator, original: []const string, new: string) ![]const string {
             var splitter = std.mem.split(u8, new, ".");
+            const count = strings.countChar(new, '.') + 1;
 
             var needs_alloc = false;
-            var count: usize = 0;
+            var current_i: usize = 0;
             while (splitter.next()) |str| {
-                const i = (splitter.index orelse break);
-                count = i;
-                if (i > original.len) {
+                if (str.len == 0) continue;
+                if (current_i >= original.len) {
                     needs_alloc = true;
                     break;
                 }
 
-                if (!strings.eql(original[i], str)) {
+                if (!strings.eql(original[current_i], str)) {
                     needs_alloc = true;
                     break;
                 }
+                current_i += 1;
             }
 
             if (!needs_alloc) {
                 return original;
             }
 
-            var out = try allocator.alloc(string, count + 1);
+            var out = try allocator.alloc(string, count);
 
             splitter = std.mem.split(u8, new, ".");
             var i: usize = 0;
             while (splitter.next()) |str| {
+                if (str.len == 0) continue;
                 out[i] = str;
                 i += 1;
             }
-            return out;
+            return out[0..i];
         }
 
         pub fn fromApi(jsx: api.Api.Jsx, allocator: std.mem.Allocator) !Pragma {
@@ -937,23 +1043,9 @@ pub const JSX = struct {
             pragma.runtime = jsx.runtime;
 
             if (jsx.import_source.len > 0) {
-                pragma.import_source = jsx.import_source;
-                if (jsx.import_source.len > "solid-js".len and strings.eqlComptime(jsx.import_source[0.."solid-js".len], "solid-js")) {
-                    pragma.runtime = .solid;
-                    pragma.supports_fast_refresh = false;
-                }
-                pragma.package_name = parsePackageName(pragma.import_source);
-            } else if (jsx.development) {
-                pragma.import_source = Defaults.ImportSourceDev;
-                pragma.package_name = "react";
-            } else {
-                pragma.import_source = Defaults.ImportSource;
-            }
-
-            if (jsx.development) {
-                pragma.jsx = Defaults.JSXFunctionDev;
-            } else {
-                pragma.jsx = Defaults.JSXFunction;
+                pragma.package_name = parsePackageName(pragma.importSource());
+                pragma.setImportSource(allocator);
+                pragma.classic_import_source = pragma.package_name;
             }
 
             pragma.supports_fast_refresh = if (pragma.runtime == .solid) false else pragma.supports_fast_refresh;
@@ -1007,6 +1099,7 @@ pub fn definesFromTransformOptions(
     platform: Platform,
     loader: ?*DotEnv.Loader,
     framework_env: ?*const Env,
+    NODE_ENV: ?string,
 ) !*defines.Define {
     var input_user_define = _input_define orelse std.mem.zeroes(Api.StringMap);
 
@@ -1046,8 +1139,35 @@ pub fn definesFromTransformOptions(
         }
     }
 
-    if (input_user_define.keys.len == 0) {
-        try user_defines.put(DefaultUserDefines.NodeEnv.Key, DefaultUserDefines.NodeEnv.Value);
+    if (NODE_ENV) |node_env| {
+        if (node_env.len > 0) {
+            var quoted_node_env: string = "";
+            if ((strings.startsWithChar(node_env, '"') and strings.endsWithChar(node_env, '"')) or
+                (strings.startsWithChar(node_env, '\'') and strings.endsWithChar(node_env, '\'')))
+            {
+                quoted_node_env = node_env;
+            } else {
+                // avoid allocating if we can
+                if (strings.eqlComptime(node_env, "production")) {
+                    quoted_node_env = "\"production\"";
+                } else if (strings.eqlComptime(node_env, "development")) {
+                    quoted_node_env = "\"development\"";
+                } else if (strings.eqlComptime(node_env, "test")) {
+                    quoted_node_env = "\"test\"";
+                } else {
+                    quoted_node_env = try std.fmt.allocPrint(allocator, "\"{s}\"", .{node_env});
+                }
+            }
+
+            _ = try user_defines.getOrPutValue(
+                "process.env.NODE_ENV",
+                quoted_node_env,
+            );
+            _ = try user_defines.getOrPutValue(
+                "process.env.BUN_ENV",
+                quoted_node_env,
+            );
+        }
     }
 
     if (hmr) {
@@ -1090,6 +1210,7 @@ const default_loader_ext = [_]string{
     ".mts",  ".cts",
 
     ".toml", ".wasm",
+    ".txt",  ".text",
 };
 
 pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.LoaderMap, platform: Platform) !bun.StringArrayHashMap(Loader) {
@@ -1108,6 +1229,7 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
                 .toml => Loader.toml,
                 .wasm => Loader.wasm,
                 .napi => Loader.napi,
+                .text => Loader.text,
                 else => unreachable,
             };
 
@@ -1124,6 +1246,7 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
                 .json => Loader.json,
                 .toml => Loader.toml,
                 .wasm => Loader.wasm,
+                .text => Loader.text,
                 else => unreachable,
             };
 
@@ -1181,20 +1304,45 @@ pub const SourceMapOption = enum {
     });
 };
 
+pub const OutputFormat = enum {
+    preserve,
+
+    /// ES module format
+    /// This is the default format
+    esm,
+    /// Immediately-invoked function expression
+    /// (
+    ///   function(){}
+    /// )();
+    iife,
+    /// CommonJS
+    cjs,
+
+    pub fn keepES6ImportExportSyntax(this: OutputFormat) bool {
+        return this == .esm;
+    }
+
+    pub inline fn isESM(this: OutputFormat) bool {
+        return this == .esm;
+    }
+};
+
 /// BundleOptions is used when ResolveMode is not set to "disable".
 /// BundleOptions is effectively webpack + babel
 pub const BundleOptions = struct {
     footer: string = "",
     banner: string = "",
     define: *defines.Define,
-    loaders: bun.StringArrayHashMap(Loader),
+    loaders: Loader.HashTable,
     resolve_dir: string = "/",
     jsx: JSX.Pragma = JSX.Pragma{},
     auto_import_jsx: bool = true,
     allow_runtime: bool = true,
 
     trim_unused_imports: ?bool = null,
-
+    mark_bun_builtins_as_external: bool = false,
+    react_server_components: bool = false,
+    react_server_components_boundary: string = "",
     hot_module_reloading: bool = false,
     inject: ?[]string = null,
     origin: URL = URL{},
@@ -1212,6 +1360,9 @@ pub const BundleOptions = struct {
     production: bool = false,
     serve: bool = false,
 
+    // only used by bundle_v2
+    output_format: OutputFormat = .esm,
+
     append_package_version_in_query_string: bool = false,
 
     jsx_optimization_inline: ?bool = null,
@@ -1224,6 +1375,7 @@ pub const BundleOptions = struct {
     log: *logger.Log,
     external: ExternalModules = ExternalModules{},
     entry_points: []const string,
+    entry_names: []const u8 = "",
     extension_order: []const string = &Defaults.ExtensionOrder,
     esm_extension_order: []const string = &Defaults.ModuleExtensionOrder,
     out_extensions: bun.StringHashMap(string),
@@ -1241,6 +1393,7 @@ pub const BundleOptions = struct {
 
     conditions: ESMConditions = undefined,
     tree_shaking: bool = false,
+    code_splitting: bool = false,
     sourcemap: SourceMapOption = SourceMapOption.none,
 
     disable_transpilation: bool = false,
@@ -1252,11 +1405,31 @@ pub const BundleOptions = struct {
 
     inlining: bool = false,
     minify_whitespace: bool = false,
+    minify_syntax: bool = false,
+
+    // This is a list of packages which even when require() is used, we will
+    // instead convert to ESM import statements.
+    //
+    // This is not normally a safe transformation.
+    //
+    // So we have a list of packages which we know are safe to do this with.
+    unwrap_commonjs_packages: []const string = default_unwrap_commonjs_packages,
 
     pub fn setProduction(this: *BundleOptions, value: bool) void {
         this.production = value;
         this.jsx.development = !value;
     }
+
+    pub const default_unwrap_commonjs_packages = [_]string{
+        "__bun-test-unwrap-commonjs__",
+        "react",
+        "react-client",
+        "react-dom",
+        "react-is",
+        "react-refresh",
+        "react-server",
+        "scheduler",
+    };
 
     pub inline fn cssImportBehavior(this: *const BundleOptions) Api.CssInJsBehavior {
         switch (this.platform) {
@@ -1287,6 +1460,10 @@ pub const BundleOptions = struct {
             this.platform,
             loader_,
             env,
+            if (loader_) |e|
+                e.map.get("BUN_ENV") orelse e.map.get("NODE_ENV")
+            else
+                null,
         );
         this.defines_loaded = true;
     }
@@ -1837,6 +2014,10 @@ pub const OutputFile = struct {
         };
     }
 
+    pub fn moveTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
+        try bun.C.moveFileZ(file.value.move.dir, &(try std.os.toPosixPath(file.value.move.getPathname())), dir, &(try std.os.toPosixPath(rel_path)));
+    }
+
     pub fn copyTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
         var dir_obj = std.fs.Dir{ .fd = dir };
         const file_out = (try dir_obj.createFile(rel_path, .{}));
@@ -2324,3 +2505,90 @@ pub const RouteConfig = struct {
 };
 
 pub const GlobalCache = @import("./resolver/resolver.zig").GlobalCache;
+
+pub const PathTemplate = struct {
+    data: string = "",
+    placeholder: Placeholder = .{},
+
+    pub fn format(self: PathTemplate, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        var remain = self.data;
+        while (strings.indexOfChar(remain, '[')) |j| {
+            try writer.writeAll(remain[0..j]);
+            remain = remain[j + 1 ..];
+            if (remain.len == 0) {
+                // TODO: throw error
+                try writer.writeAll("[");
+                break;
+            }
+
+            var count: isize = 1;
+            var end_len: usize = remain.len;
+            for (remain) |*c| {
+                count += switch (c.*) {
+                    '[' => 1,
+                    ']' => -1,
+                    else => 0,
+                };
+
+                if (count == 0) {
+                    end_len = @ptrToInt(c) - @ptrToInt(remain.ptr);
+                    std.debug.assert(end_len <= remain.len);
+                    break;
+                }
+            }
+
+            const placeholder = remain[0..end_len];
+
+            const field = PathTemplate.Placeholder.map.get(placeholder) orelse {
+                try writer.writeAll(placeholder);
+                remain = remain[end_len..];
+                continue;
+            };
+
+            switch (field) {
+                .dir => try writer.writeAll(self.placeholder.dir),
+                .name => try writer.writeAll(self.placeholder.name),
+                .ext => try writer.writeAll(self.placeholder.ext),
+                .hash => {
+                    if (self.placeholder.hash) |hash| {
+                        try writer.print("{any}", .{bun.fmt.hexIntLower(hash)});
+                    }
+                },
+            }
+            remain = remain[end_len + 1 ..];
+        }
+
+        try writer.writeAll(remain);
+    }
+
+    pub const Placeholder = struct {
+        dir: []const u8 = "",
+        name: []const u8 = "",
+        ext: []const u8 = "",
+        hash: ?u64 = null,
+
+        pub const map = bun.ComptimeStringMap(
+            std.meta.FieldEnum(Placeholder),
+            .{
+                .{ "dir", .dir },
+                .{ "name", .name },
+                .{ "ext", .ext },
+                .{ "hash", .hash },
+            },
+        );
+    };
+
+    pub const chunk = PathTemplate{
+        .data = "./chunk-[hash].[ext]",
+        .placeholder = .{
+            .name = "chunk",
+            .ext = "js",
+            .dir = "",
+        },
+    };
+
+    pub const file = PathTemplate{
+        .data = "./[name]-[hash].[ext]",
+        .placeholder = .{},
+    };
+};

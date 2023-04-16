@@ -1,10 +1,10 @@
 {% callout %}
-**Note** — The `Bun.file` and `Bun.write` APIs documented on this page are heavily optimized and represent the recommended way to perform file-system tasks using Bun. Existing Node.js projects may use Bun's [nearly complete](/docs/ecosystem/nodejs#node_fs) implementation of the [`node:fs`](https://nodejs.org/api/fs.html) module.
+**Note** — The `Bun.file` and `Bun.write` APIs documented on this page are heavily optimized and represent the recommended way to perform file-system tasks using Bun. Existing Node.js projects may use Bun's [nearly complete](/docs/runtime/nodejs-apis#node_fs) implementation of the [`node:fs`](https://nodejs.org/api/fs.html) module.
 {% /callout %}
 
 Bun provides a set of optimized APIs for reading and writing files.
 
-## Reading files
+## Reading files (`Bun.file()`)
 
 `Bun.file(path): BunFile`
 
@@ -56,7 +56,7 @@ Bun.stdout;
 Bun.stderr;
 ```
 
-## Writing files
+## Writing files (`Bun.write()`)
 
 `Bun.write(destination, data): Promise<number>`
 
@@ -233,7 +233,7 @@ interface Bun {
   file(path: string | number | URL, options?: { type?: string }): BunFile;
 
   write(
-    destination: string | number | FileBlob | URL,
+    destination: string | number | BunFile | URL,
     input: string | Blob | ArrayBuffer | SharedArrayBuffer | TypedArray | Response,
   ): Promise<number>;
 }

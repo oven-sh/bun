@@ -294,6 +294,10 @@ pub const Runtime = struct {
 
         inject_jest_globals: bool = false,
 
+        commonjs_named_exports: bool = true,
+
+        minify_syntax: bool = false,
+
         /// Instead of jsx("div", {}, void 0)
         /// ->
         /// {
@@ -310,7 +314,7 @@ pub const Runtime = struct {
         jsx_optimization_hoist: bool = false,
 
         trim_unused_imports: bool = false,
-        should_fold_numeric_constants: bool = false,
+        should_fold_typescript_constant_expressions: bool = false,
 
         /// Use `import.meta.require()` instead of require()?
         /// This is only supported in Bun.
@@ -319,6 +323,16 @@ pub const Runtime = struct {
         replace_exports: ReplaceableExport.Map = .{},
 
         hoist_bun_plugin: bool = false,
+
+        dont_bundle_twice: bool = false,
+
+        /// This is a list of packages which even when require() is used, we will
+        /// instead convert to ESM import statements.
+        ///
+        /// This is not normally a safe transformation.
+        ///
+        /// So we have a list of packages which we know are safe to do this with.
+        unwrap_commonjs_packages: []const string = .{},
 
         pub const ReplaceableExport = union(enum) {
             delete: void,
@@ -362,6 +376,7 @@ pub const Runtime = struct {
         __merge: ?GeneratedSymbol = null,
         __decorateClass: ?GeneratedSymbol = null,
         __decorateParam: ?GeneratedSymbol = null,
+        @"$$typeof": ?GeneratedSymbol = null,
 
         pub const all = [_][]const u8{
             // __HMRClient goes first
@@ -384,7 +399,35 @@ pub const Runtime = struct {
             "__merge",
             "__decorateClass",
             "__decorateParam",
+            "$$typeof",
         };
+        const all_sorted: [all.len]string = brk: {
+            var list = all;
+            const Sorter = struct {
+                fn compare(_: void, a: []const u8, b: []const u8) bool {
+                    return std.mem.order(u8, a, b) == .lt;
+                }
+            };
+            std.sort.sort(string, &list, {}, Sorter.compare);
+            break :brk list;
+        };
+
+        /// When generating the list of runtime imports, we sort it for determinism.
+        /// This is a lookup table so we don't need to resort the strings each time
+        pub const all_sorted_index = brk: {
+            var out: [all.len]usize = undefined;
+            inline for (all, 0..) |name, i| {
+                for (all_sorted, 0..) |cmp, j| {
+                    if (strings.eqlComptime(name, cmp)) {
+                        out[i] = j;
+                        break;
+                    }
+                }
+            }
+
+            break :brk out;
+        };
+
         pub const Name = "bun:wrap";
         pub const alt_name = "bun:wrap";
 
@@ -493,6 +536,11 @@ pub const Runtime = struct {
                                 return Entry{ .key = 17, .value = val.ref };
                             }
                         },
+                        18 => {
+                            if (@field(this.runtime_imports, all[18])) |val| {
+                                return Entry{ .key = 18, .value = val.ref };
+                            }
+                        },
                         else => {
                             return null;
                         },
@@ -555,6 +603,7 @@ pub const Runtime = struct {
                 15 => (@field(imports, all[15]) orelse return null).ref,
                 16 => (@field(imports, all[16]) orelse return null).ref,
                 17 => (@field(imports, all[17]) orelse return null).ref,
+                18 => (@field(imports, all[18]) orelse return null).ref,
                 else => null,
             };
         }

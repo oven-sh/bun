@@ -2,9 +2,7 @@
   "configurations": [
     {
       "name": "Mac",
-      "forcedInclude": [
-        "${workspaceFolder}/src/bun.js/bindings/root.h"
-      ],
+      "forcedInclude": ["${workspaceFolder}/src/bun.js/bindings/root.h"],
       "includePath": [
         "${workspaceFolder}/../webkit-build/include/",
         "${workspaceFolder}/bun-webkit/include/",
@@ -57,7 +55,7 @@
         "DU_DISABLE_RENAMING=1"
       ],
       "macFrameworkPath": [],
-      "compilerPath": "/opt/homebrew/opt/llvm/bin/clang++",
+      "compilerPath": "${workspaceFolder}/.vscode/clang++",
       "cStandard": "c17",
       "cppStandard": "c++20"
     }

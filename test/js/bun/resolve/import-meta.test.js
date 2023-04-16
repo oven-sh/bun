@@ -1,10 +1,10 @@
-import { it, expect } from "bun:test";
+import { spawnSync } from "bun";
+import { expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import * as Module from "node:module";
-import sync from "./require-json.json";
-import { spawnSync } from "bun";
-import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
+import sync from "./require-json.json";
 
 const { path, dir } = import.meta;
 

@@ -1,5 +1,6 @@
 import { it, expect } from "bun:test";
 import * as os from "node:os";
+import { realpathSync } from "fs";
 
 it("arch", () => {
   expect(["x64", "x86", "arm64"].some(arch => os.arch() === arch)).toBe(true);
@@ -46,7 +47,7 @@ it("tmpdir", () => {
     if (dir.length > 1 && dir.endsWith("/")) {
       dir = dir.substring(0, dir.length - 1);
     }
-    expect(os.tmpdir()).toBe(dir);
+    expect(realpathSync(os.tmpdir())).toBe(realpathSync(dir));
   }
 });
 

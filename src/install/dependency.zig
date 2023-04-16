@@ -64,7 +64,7 @@ pub fn isLessThan(string_buf: []const u8, lhs: Dependency, rhs: Dependency) bool
 
     const lhs_name = lhs.name.slice(string_buf);
     const rhs_name = rhs.name.slice(string_buf);
-    return strings.cmpStringsAsc(void{}, lhs_name, rhs_name);
+    return strings.cmpStringsAsc({}, lhs_name, rhs_name);
 }
 
 pub fn countWithDifferentBuffers(this: *const Dependency, name_buf: []const u8, version_buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {

@@ -13,6 +13,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const Ref = @import("ast/base.zig").Ref;
+const Index = @import("ast/base.zig").Index;
 const RefHashCtx = @import("ast/base.zig").RefHashCtx;
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const ImportRecord = @import("import_record.zig").ImportRecord;
@@ -23,7 +24,16 @@ const RefCtx = @import("./ast/base.zig").RefCtx;
 const JSONParser = bun.JSON;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
 const ComptimeStringMap = bun.ComptimeStringMap;
-const JSPrinter = bun.js_printer;
+const JSPrinter = @import("./js_printer.zig");
+const ThreadlocalArena = @import("./mimalloc_arena.zig").Arena;
+
+/// This is the index to the automatically-generated part containing code that
+/// calls "__export(exports, { ... getters ... })". This is used to generate
+/// getters on an exports object for ES6 export statements, and is both for
+/// ES6 star imports and CommonJS-style modules. All files have one of these,
+/// although it may contain no statements if there is nothing to export.
+pub const namespace_export_part_index = 0;
+
 pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
     var max_size = 0;
     var max_align = 1;
@@ -99,21 +109,38 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
         pub threadlocal var _self: *Self = undefined;
 
         pub fn reclaim() []*Block {
-            if (_self.overflow.used == 0) return &[_]*Block{};
+            var overflow = &_self.overflow;
 
-            var used = _self.overflow.allocator.dupe(*Block, _self.overflow.slice()) catch unreachable;
-            var new_head = _self.overflow.allocator.create(Block) catch unreachable;
-            new_head.* = .{};
-
-            var to_move = _self.overflow.ptrs[0.._self.overflow.allocated][_self.overflow.used..];
-            if (to_move.len > 0) {
-                to_move = to_move[1..];
+            if (overflow.used == 0) {
+                if (overflow.allocated == 0 or overflow.ptrs[0].used == 0) {
+                    return &.{};
+                }
             }
 
-            bun.copy(*Block, _self.overflow.ptrs[1..], to_move);
-            _self.overflow.ptrs[0] = new_head;
-            _self.overflow.allocated = 1 + @truncate(Overflow.UsedSize, to_move.len);
-            reset();
+            var to_move = overflow.ptrs[0..overflow.allocated][overflow.used..];
+
+            // This returns the list of maxed out blocks
+            var used_list = overflow.slice();
+
+            // The last block may be partially used.
+            if (overflow.allocated > overflow.used and to_move.len > 0 and to_move.ptr[0].used > 0) {
+                to_move = to_move[1..];
+                used_list.len += 1;
+            }
+
+            var used = overflow.allocator.dupe(*Block, used_list) catch unreachable;
+
+            for (to_move, overflow.ptrs[0..to_move.len]) |b, *out| {
+                b.* = Block{
+                    .items = undefined,
+                    .used = 0,
+                };
+                out.* = b;
+            }
+
+            overflow.allocated = @truncate(Overflow.UsedSize, to_move.len);
+            overflow.used = 0;
+
             return used;
         }
 
@@ -150,25 +177,27 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
 
         fn deinit() void {
             var sliced = _self.overflow.slice();
+            var allocator = _self.overflow.allocator;
 
             if (sliced.len > 1) {
                 var i: usize = 1;
                 const end = sliced.len;
                 while (i < end) {
                     var ptrs = @ptrCast(*[2]Block, sliced[i]);
-                    default_allocator.free(ptrs);
+                    allocator.free(ptrs);
                     i += 2;
                 }
                 _self.overflow.allocated = 1;
             }
             var base_store = @fieldParentPtr(WithBase, "store", _self);
             if (_self.overflow.ptrs[0] == &base_store.head) {
-                default_allocator.destroy(base_store);
+                allocator.destroy(base_store);
             }
             _self = undefined;
         }
 
-        pub fn append(comptime ValueType: type, value: ValueType) *ValueType {
+        pub fn append(comptime Disabler: type, comptime ValueType: type, value: ValueType) *ValueType {
+            Disabler.assert();
             return _self._append(ValueType, value);
         }
 
@@ -219,7 +248,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
 pub const BindingNodeIndex = Binding;
 pub const StmtNodeIndex = Stmt;
 pub const ExprNodeIndex = Expr;
-pub const BabyList = @import("./baby_list.zig").BabyList;
+pub const BabyList = bun.BabyList;
 
 /// Slice that stores capacity and length in the same space as a regular slice.
 pub const ExprNodeList = BabyList(Expr);
@@ -249,7 +278,13 @@ pub const AssignTarget = enum(u2) {
     }
 };
 
-pub const LocRef = struct { loc: logger.Loc, ref: ?Ref = null };
+pub const LocRef = struct {
+    loc: logger.Loc = logger.Loc.Empty,
+
+    // TODO: remove this optional and make Ref a function getter
+    // That will make this struct 128 bits instead of 192 bits and we can remove some heap allocations
+    ref: ?Ref = null,
+};
 
 pub const Flags = struct {
     pub const JSXElement = enum {
@@ -337,7 +372,7 @@ pub const Binding = struct {
     }
 
     pub fn toExpr(binding: *const Binding, wrapper: anytype) Expr {
-        var loc = binding.loc;
+        const loc = binding.loc;
 
         switch (binding.data) {
             .b_missing => {
@@ -370,24 +405,26 @@ pub const Binding = struct {
                 var properties = wrapper
                     .allocator
                     .alloc(G.Property, b.properties.len) catch unreachable;
-                var i: usize = 0;
-                while (i < properties.len) : (i += 1) {
-                    const item = b.properties[i];
-                    properties[i] = G.Property{
+                for (properties, b.properties) |*property, item| {
+                    property.* = .{
                         .flags = item.flags,
                         .key = item.key,
                         .kind = if (item.flags.contains(.is_spread))
-                            G.Property.Kind.spread
+                            .spread
                         else
-                            G.Property.Kind.normal,
+                            .normal,
                         .value = toExpr(&item.value, wrapper),
                         .initializer = item.default_value,
                     };
                 }
-                return Expr.init(E.Object, E.Object{
-                    .properties = G.Property.List.init(properties),
-                    .is_single_line = b.is_single_line,
-                }, loc);
+                return Expr.init(
+                    E.Object,
+                    E.Object{
+                        .properties = G.Property.List.init(properties),
+                        .is_single_line = b.is_single_line,
+                    },
+                    loc,
+                );
             },
             else => {
                 Global.panic("Interanl error", .{});
@@ -498,8 +535,8 @@ pub const B = union(Binding.Tag) {
 };
 
 pub const ClauseItem = struct {
-    alias: string,
-    alias_loc: logger.Loc,
+    alias: string = "",
+    alias_loc: logger.Loc = logger.Loc.Empty,
     name: LocRef,
 
     /// This is the original name of the symbol stored in "Name". It's needed for
@@ -510,7 +547,7 @@ pub const ClauseItem = struct {
     /// In this case both "foo" and "bar" are aliases because it's a re-export.
     /// We need to preserve both aliases in case the symbol is renamed. In this
     /// example, "foo" is "OriginalName" and "bar" is "Alias".
-    original_name: string,
+    original_name: string = "",
 
     pub const default_alias: string = "default";
 };
@@ -623,131 +660,191 @@ pub const G = struct {
 };
 
 pub const Symbol = struct {
-    // This is the name that came from the parser. Printed names may be renamed
-    // during minification or to avoid name collisions. Do not use the original
-    // name during printing.
+    /// This is the name that came from the parser. Printed names may be renamed
+    /// during minification or to avoid name collisions. Do not use the original
+    /// name during printing.
     original_name: string,
 
-    // This is used for symbols that represent items in the import clause of an
-    // ES6 import statement. These should always be referenced by EImportIdentifier
-    // instead of an EIdentifier. When this is present, the expression should
-    // be printed as a property access off the namespace instead of as a bare
-    // identifier.
-    //
-    // For correctness, this must be stored on the symbol instead of indirectly
-    // associated with the Ref for the symbol somehow. In ES6 "flat bundling"
-    // mode, re-exported symbols are collapsed using MergeSymbols() and renamed
-    // symbols from other files that end up at this symbol must be able to tell
-    // if it has a namespace alias.
+    /// This is used for symbols that represent items in the import clause of an
+    /// ES6 import statement. These should always be referenced by EImportIdentifier
+    /// instead of an EIdentifier. When this is present, the expression should
+    /// be printed as a property access off the namespace instead of as a bare
+    /// identifier.
+    ///
+    /// For correctness, this must be stored on the symbol instead of indirectly
+    /// associated with the Ref for the symbol somehow. In ES6 "flat bundling"
+    /// mode, re-exported symbols are collapsed using MergeSymbols() and renamed
+    /// symbols from other files that end up at this symbol must be able to tell
+    /// if it has a namespace alias.
     namespace_alias: ?G.NamespaceAlias = null,
 
-    // Used by the parser for single pass parsing.
+    /// Used by the parser for single pass parsing.
     link: Ref = Ref.None,
 
-    // An estimate of the number of uses of this symbol. This is used to detect
-    // whether a symbol is used or not. For example, TypeScript imports that are
-    // unused must be removed because they are probably type-only imports. This
-    // is an estimate and may not be completely accurate due to oversights in the
-    // code. But it should always be non-zero when the symbol is used.
+    /// An estimate of the number of uses of this symbol. This is used to detect
+    /// whether a symbol is used or not. For example, TypeScript imports that are
+    /// unused must be removed because they are probably type-only imports. This
+    /// is an estimate and may not be completely accurate due to oversights in the
+    /// code. But it should always be non-zero when the symbol is used.
     use_count_estimate: u32 = 0,
 
-    // This is for generating cross-chunk imports and exports for code splitting.
-    chunk_index: ?u32 = null,
+    /// This is for generating cross-chunk imports and exports for code splitting.
+    ///
+    /// Do not use this directly. Use `chunkIndex()` instead.
+    chunk_index: u32 = invalid_chunk_index,
 
-    // This is used for minification. Symbols that are declared in sibling scopes
-    // can share a name. A good heuristic (from Google Closure Compiler) is to
-    // assign names to symbols from sibling scopes in declaration order. That way
-    // local variable names are reused in each global function like this, which
-    // improves gzip compression:
-    //
-    //   function x(a, b) { ... }
-    //   function y(a, b, c) { ... }
-    //
-    // The parser fills this in for symbols inside nested scopes. There are three
-    // slot namespaces: regular symbols, label symbols, and private symbols.
-    nested_scope_slot: ?u32 = null,
+    /// This is used for minification. Symbols that are declared in sibling scopes
+    /// can share a name. A good heuristic (from Google Closure Compiler) is to
+    /// assign names to symbols from sibling scopes in declaration order. That way
+    /// local variable names are reused in each global function like this, which
+    /// improves gzip compression:
+    ///
+    ///   function x(a, b) { ... }
+    ///   function y(a, b, c) { ... }
+    ///
+    /// The parser fills this in for symbols inside nested scopes. There are three
+    /// slot namespaces: regular symbols, label symbols, and private symbols.
+    ///
+    /// Do not use this directly. Use `nestedScopeSlot()` instead.
+    nested_scope_slot: u32 = invalid_nested_scope_slot,
 
+    /// The kind of symbol. This is used to determine how to print the symbol
+    /// and how to deal with conflicts, renaming, etc.
     kind: Kind = Kind.other,
 
-    // Certain symbols must not be renamed or minified. For example, the
-    // "arguments" variable is declared by the runtime for every function.
-    // Renaming can also break any identifier used inside a "with" statement.
+    /// Certain symbols must not be renamed or minified. For example, the
+    /// "arguments" variable is declared by the runtime for every function.
+    /// Renaming can also break any identifier used inside a "with" statement.
     must_not_be_renamed: bool = false,
 
-    // We automatically generate import items for property accesses off of
-    // namespace imports. This lets us remove the expensive namespace imports
-    // while bundling in many cases, replacing them with a cheap import item
-    // instead:
-    //
-    //   import * as ns from 'path'
-    //   ns.foo()
-    //
-    // That can often be replaced by this, which avoids needing the namespace:
-    //
-    //   import {foo} from 'path'
-    //   foo()
-    //
-    // However, if the import is actually missing then we don't want to report a
-    // compile-time error like we do for real import items. This status lets us
-    // avoid this. We also need to be able to replace such import items with
-    // undefined, which this status is also used for.
+    /// We automatically generate import items for property accesses off of
+    /// namespace imports. This lets us remove the expensive namespace imports
+    /// while bundling in many cases, replacing them with a cheap import item
+    /// instead:
+    ///
+    ///   import * as ns from 'path'
+    ///   ns.foo()
+    ///
+    /// That can often be replaced by this, which avoids needing the namespace:
+    ///
+    ///   import {foo} from 'path'
+    ///   foo()
+    ///
+    /// However, if the import is actually missing then we don't want to report a
+    /// compile-time error like we do for real import items. This status lets us
+    /// avoid this. We also need to be able to replace such import items with
+    /// undefined, which this status is also used for.
     import_item_status: ImportItemStatus = ImportItemStatus.none,
 
-    // Sometimes we lower private symbols even if they are supported. For example,
-    // consider the following TypeScript code:
-    //
-    //   class Foo {
-    //     #foo = 123
-    //     bar = this.#foo
-    //   }
-    //
-    // If "useDefineForClassFields: false" is set in "tsconfig.json", then "bar"
-    // must use assignment semantics instead of define semantics. We can compile
-    // that to this code:
-    //
-    //   class Foo {
-    //     constructor() {
-    //       this.#foo = 123;
-    //       this.bar = this.#foo;
-    //     }
-    //     #foo;
-    //   }
-    //
-    // However, we can't do the same for static fields:
-    //
-    //   class Foo {
-    //     static #foo = 123
-    //     static bar = this.#foo
-    //   }
-    //
-    // Compiling these static fields to something like this would be invalid:
-    //
-    //   class Foo {
-    //     static #foo;
-    //   }
-    //   Foo.#foo = 123;
-    //   Foo.bar = Foo.#foo;
-    //
-    // Thus "#foo" must be lowered even though it's supported. Another case is
-    // when we're converting top-level class declarations to class expressions
-    // to avoid the TDZ and the class shadowing symbol is referenced within the
-    // class body:
-    //
-    //   class Foo {
-    //     static #foo = Foo
-    //   }
-    //
-    // This cannot be converted into something like this:
-    //
-    //   var Foo = class {
-    //     static #foo;
-    //   };
-    //   Foo.#foo = Foo;
-    //
+    /// --- Not actually used yet -----------------------------------------------
+    /// Sometimes we lower private symbols even if they are supported. For example,
+    /// consider the following TypeScript code:
+    ///
+    ///   class Foo {
+    ///     #foo = 123
+    ///     bar = this.#foo
+    ///   }
+    ///
+    /// If "useDefineForClassFields: false" is set in "tsconfig.json", then "bar"
+    /// must use assignment semantics instead of define semantics. We can compile
+    /// that to this code:
+    ///
+    ///   class Foo {
+    ///     constructor() {
+    ///       this.#foo = 123;
+    ///       this.bar = this.#foo;
+    ///     }
+    ///     #foo;
+    ///   }
+    ///
+    /// However, we can't do the same for static fields:
+    ///
+    ///   class Foo {
+    ///     static #foo = 123
+    ///     static bar = this.#foo
+    ///   }
+    ///
+    /// Compiling these static fields to something like this would be invalid:
+    ///
+    ///   class Foo {
+    ///     static #foo;
+    ///   }
+    ///   Foo.#foo = 123;
+    ///   Foo.bar = Foo.#foo;
+    ///
+    /// Thus "#foo" must be lowered even though it's supported. Another case is
+    /// when we're converting top-level class declarations to class expressions
+    /// to avoid the TDZ and the class shadowing symbol is referenced within the
+    /// class body:
+    ///
+    ///   class Foo {
+    ///     static #foo = Foo
+    ///   }
+    ///
+    /// This cannot be converted into something like this:
+    ///
+    ///   var Foo = class {
+    ///     static #foo;
+    ///   };
+    ///   Foo.#foo = Foo;
+    ///
+    /// --- Not actually used yet -----------------------------------------------
     private_symbol_must_be_lowered: bool = false,
 
+    remove_overwritten_function_declaration: bool = false,
+
+    /// In debug mode, sometimes its helpful to know what source file
+    /// A symbol came from. This is used for that.
+    ///
+    /// We don't want this in non-debug mode because it increases the size of
+    /// the symbol table.
+    debug_mode_source_index: if (Environment.allow_assert)
+        Index.Int
+    else
+        u0 = 0,
+
+    const invalid_chunk_index = std.math.maxInt(u32);
+    const invalid_nested_scope_slot = std.math.maxInt(u32);
+
+    pub const SlotNamespace = enum {
+        default,
+        label,
+        private_name,
+        mangled_prop,
+        must_not_be_renamed,
+    };
+
+    /// This is for generating cross-chunk imports and exports for code splitting.
+    pub inline fn chunkIndex(this: *const Symbol) ?u32 {
+        const i = this.chunk_index;
+        return if (i == invalid_chunk_index) null else i;
+    }
+
+    pub inline fn nestedScopeSlot(this: *const Symbol) ?u32 {
+        const i = this.nested_scope_slot;
+        return if (i == invalid_nested_scope_slot) null else i;
+    }
+
+    pub fn slotNamespace(this: *const Symbol) SlotNamespace {
+        const kind = this.kind;
+
+        if (kind == .unbound or this.must_not_be_renamed) {
+            return .must_not_be_renamed;
+        }
+
+        if (kind.isPrivate()) {
+            return .private_name;
+        }
+
+        return switch (kind) {
+            // .mangled_prop => .mangled_prop,
+            .label => .label,
+            else => .default,
+        };
+    }
+
     pub inline fn hasLink(this: *const Symbol) bool {
-        return !this.link.isNull();
+        return this.link.tag != .invalid;
     }
 
     pub const Kind = enum {
@@ -835,11 +932,54 @@ pub const Symbol = struct {
         pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
             return try std.json.stringify(@tagName(self), opts, o);
         }
+
+        pub inline fn isPrivate(kind: Symbol.Kind) bool {
+            return @enumToInt(kind) >= @enumToInt(Symbol.Kind.private_field) and @enumToInt(kind) <= @enumToInt(Symbol.Kind.private_static_get_set_pair);
+        }
+
+        pub inline fn isHoisted(kind: Symbol.Kind) bool {
+            return switch (kind) {
+                .hoisted, .hoisted_function => true,
+                else => false,
+            };
+        }
+
+        pub inline fn isHoistedOrFunction(kind: Symbol.Kind) bool {
+            return switch (kind) {
+                .hoisted, .hoisted_function, .generator_or_async_function => true,
+                else => false,
+            };
+        }
+
+        pub inline fn isFunction(kind: Symbol.Kind) bool {
+            return switch (kind) {
+                .hoisted_function, .generator_or_async_function => true,
+                else => false,
+            };
+        }
     };
+
+    pub const isKindPrivate = Symbol.Kind.isPrivate;
+    pub const isKindHoisted = Symbol.Kind.isHoisted;
+    pub const isKindHoistedOrFunction = Symbol.Kind.isHoistedOrFunction;
+    pub const isKindFunction = Symbol.Kind.isFunction;
 
     pub const Use = struct {
         count_estimate: u32 = 0,
     };
+
+    pub const List = BabyList(Symbol);
+    pub const NestedList = BabyList(List);
+
+    pub fn mergeContentsWith(this: *Symbol, old: *Symbol) void {
+        this.use_count_estimate += old.use_count_estimate;
+        if (old.must_not_be_renamed) {
+            this.original_name = old.original_name;
+            this.must_not_be_renamed = true;
+        }
+
+        // TODO: MustStartWithCapitalLetterForJSX
+    }
 
     pub const Map = struct {
         // This could be represented as a "map[Ref]Symbol" but a two-level array was
@@ -849,34 +989,94 @@ pub const Symbol = struct {
         // single inner array, so you can join the maps together by just make a
         // single outer array containing all of the inner arrays. See the comment on
         // "Ref" for more detail.
-        symbols_for_source: [][]Symbol,
+        symbols_for_source: NestedList = NestedList{},
 
-        pub fn get(self: *Map, ref: Ref) ?*Symbol {
-            if (Ref.isSourceIndexNull(ref.sourceIndex()) or ref.isSourceContentsSlice()) {
-                return null;
+        pub fn dump(this: Map) void {
+            defer Output.flush();
+            for (this.symbols_for_source.slice(), 0..) |symbols, i| {
+                Output.prettyln("\n\n-- Source ID: {d} ({d} symbols) --\n\n", .{ i, symbols.len });
+                for (symbols.slice(), 0..) |symbol, inner_index| {
+                    Output.prettyln(
+                        " name: {s}\n  tag: {s}\n       {any}\n",
+                        .{
+                            symbol.original_name, @tagName(symbol.kind),
+                            if (symbol.hasLink()) symbol.link else Ref{
+                                .source_index = @truncate(Ref.Int, i),
+                                .inner_index = @truncate(Ref.Int, inner_index),
+                                .tag = .symbol,
+                            },
+                        },
+                    );
+                }
             }
-
-            return &self.symbols_for_source[ref.sourceIndex()][ref.innerIndex()];
         }
 
-        pub fn getConst(self: *Map, ref: Ref) ?*const Symbol {
+        pub fn assignChunkIndex(this: *Map, decls_: DeclaredSymbol.List, chunk_index: u32) void {
+            const Iterator = struct {
+                map: *Map,
+                chunk_index: u32,
+
+                pub fn next(self: @This(), ref: Ref) void {
+                    var symbol = self.map.get(ref).?;
+                    symbol.chunk_index = self.chunk_index;
+                }
+            };
+            var decls = decls_;
+
+            DeclaredSymbol.forEachTopLevelSymbol(&decls, Iterator{ .map = this, .chunk_index = chunk_index }, Iterator.next);
+        }
+
+        pub fn merge(this: *Map, old: Ref, new: Ref) Ref {
+            if (old.eql(new)) {
+                return new;
+            }
+
+            var old_symbol = this.get(old).?;
+            if (old_symbol.hasLink()) {
+                const old_link = old_symbol.link;
+                old_symbol.link = this.merge(old_link, new);
+                return old_symbol.link;
+            }
+
+            var new_symbol = this.get(new).?;
+
+            if (new_symbol.hasLink()) {
+                const new_link = new_symbol.link;
+                new_symbol.link = this.merge(old, new_link);
+                return new_symbol.link;
+            }
+
+            old_symbol.link = new;
+            new_symbol.mergeContentsWith(old_symbol);
+            return new;
+        }
+
+        pub fn get(self: *const Map, ref: Ref) ?*Symbol {
             if (Ref.isSourceIndexNull(ref.sourceIndex()) or ref.isSourceContentsSlice()) {
                 return null;
             }
 
-            return &self.symbols_for_source[ref.sourceIndex()][ref.innerIndex()];
+            return self.symbols_for_source.at(ref.sourceIndex()).mut(ref.innerIndex());
+        }
+
+        pub fn getConst(self: *const Map, ref: Ref) ?*const Symbol {
+            if (Ref.isSourceIndexNull(ref.sourceIndex()) or ref.isSourceContentsSlice()) {
+                return null;
+            }
+
+            return self.symbols_for_source.at(ref.sourceIndex()).at(ref.innerIndex());
         }
 
         pub fn init(sourceCount: usize, allocator: std.mem.Allocator) !Map {
-            var symbols_for_source: [][]Symbol = try allocator.alloc([]Symbol, sourceCount);
+            var symbols_for_source: NestedList = NestedList.init(try allocator.alloc([]Symbol, sourceCount));
             return Map{ .symbols_for_source = symbols_for_source };
         }
 
-        pub fn initList(list: [][]Symbol) Map {
+        pub fn initList(list: NestedList) Map {
             return Map{ .symbols_for_source = list };
         }
 
-        pub fn getWithLink(symbols: *Map, ref: Ref) ?*Symbol {
+        pub fn getWithLink(symbols: *const Map, ref: Ref) ?*Symbol {
             var symbol: *Symbol = symbols.get(ref) orelse return null;
             if (symbol.hasLink()) {
                 return symbols.get(symbol.link) orelse symbol;
@@ -892,50 +1092,33 @@ pub const Symbol = struct {
             return symbol;
         }
 
-        pub fn follow(symbols: *Map, ref: Ref) Ref {
-            if (symbols.get(ref)) |symbol| {
-                const link = symbol.link;
-                if (link.isNull())
-                    return ref;
-
-                if (link.eql(ref)) {
-                    symbol.link = ref;
+        pub fn followAll(symbols: *Map) void {
+            for (symbols.symbols_for_source.slice()) |list| {
+                for (list.slice()) |*symbol| {
+                    if (!symbol.hasLink()) continue;
+                    symbol.link = follow(symbols, symbol.link);
                 }
+            }
+        }
 
-                return symbol.link;
-            } else {
+        pub fn follow(symbols: *const Map, ref: Ref) Ref {
+            var symbol = symbols.get(ref) orelse return ref;
+            if (!symbol.hasLink()) {
                 return ref;
             }
+
+            const link = follow(symbols, symbol.link);
+
+            if (!symbol.link.eql(link)) {
+                symbol.link = link;
+            }
+
+            return link;
         }
     };
 
-    pub inline fn isKindPrivate(kind: Symbol.Kind) bool {
-        return @enumToInt(kind) >= @enumToInt(Symbol.Kind.private_field) and @enumToInt(kind) <= @enumToInt(Symbol.Kind.private_static_get_set_pair);
-    }
-
-    pub inline fn isKindHoisted(kind: Symbol.Kind) bool {
-        return switch (kind) {
-            .hoisted, .hoisted_function => true,
-            else => false,
-        };
-    }
-
     pub inline fn isHoisted(self: *const Symbol) bool {
         return Symbol.isKindHoisted(self.kind);
-    }
-
-    pub inline fn isKindHoistedOrFunction(kind: Symbol.Kind) bool {
-        return switch (kind) {
-            .hoisted, .hoisted_function, .generator_or_async_function => true,
-            else => false,
-        };
-    }
-
-    pub inline fn isKindFunction(kind: Symbol.Kind) bool {
-        return switch (kind) {
-            .hoisted_function, .generator_or_async_function => true,
-            else => false,
-        };
     }
 
     pub fn isReactComponentishName(symbol: *const Symbol) bool {
@@ -1095,13 +1278,13 @@ pub const E = struct {
         target: ExprNodeIndex,
         optional_chain: ?OptionalChain = null,
 
-        pub fn hasSameFlagsAs(a: *Index, b: *Index) bool {
+        pub fn hasSameFlagsAs(a: *E.Index, b: *E.Index) bool {
             return (a.optional_chain == b.optional_chain);
         }
     };
 
     pub const Arrow = struct {
-        args: []G.Arg,
+        args: []G.Arg = &[_]G.Arg{},
         body: G.FnBody,
 
         is_async: bool = false,
@@ -1140,32 +1323,36 @@ pub const E = struct {
         }
     };
 
-    // This is similar to an EIdentifier but it represents a reference to an ES6
-    // import item.
-    //
-    // Depending on how the code is linked, the file containing this EImportIdentifier
-    // may or may not be in the same module group as the file it was imported from.
-    //
-    // If it's the same module group than we can just merge the import item symbol
-    // with the corresponding symbol that was imported, effectively renaming them
-    // to be the same thing and statically binding them together.
-    //
-    // But if it's a different module group, then the import must be dynamically
-    // evaluated using a property access off the corresponding namespace symbol,
-    // which represents the result of a require() call.
-    //
-    // It's stored as a separate type so it's not easy to confuse with a plain
-    // identifier. For example, it'd be bad if code trying to convert "{x: x}" into
-    // "{x}" shorthand syntax wasn't aware that the "x" in this case is actually
-    // "{x: importedNamespace.x}". This separate type forces code to opt-in to
-    // doing this instead of opt-out.
+    /// This is similar to an `Identifier` but it represents a reference to an ES6
+    /// import item.
+    ///
+    /// Depending on how the code is linked, the file containing this EImportIdentifier
+    /// may or may not be in the same module group as the file it was imported from.
+    ///
+    /// If it's the same module group than we can just merge the import item symbol
+    /// with the corresponding symbol that was imported, effectively renaming them
+    /// to be the same thing and statically binding them together.
+    ///
+    /// But if it's a different module group, then the import must be dynamically
+    /// evaluated using a property access off the corresponding namespace symbol,
+    /// which represents the result of a require() call.
+    ///
+    /// It's stored as a separate type so it's not easy to confuse with a plain
+    /// identifier. For example, it'd be bad if code trying to convert "{x: x}" into
+    /// "{x}" shorthand syntax wasn't aware that the "x" in this case is actually
+    /// "{x: importedNamespace.x}". This separate type forces code to opt-in to
+    /// doing this instead of opt-out.
     pub const ImportIdentifier = struct {
         ref: Ref = Ref.None,
 
-        // If true, this was originally an identifier expression such as "foo". If
-        // false, this could potentially have been a member access expression such
-        // as "ns.foo" off of an imported namespace object.
+        /// If true, this was originally an identifier expression such as "foo". If
+        /// false, this could potentially have been a member access expression such
+        /// as "ns.foo" off of an imported namespace object.
         was_originally_identifier: bool = false,
+    };
+
+    pub const CommonJSExportIdentifier = struct {
+        ref: Ref = Ref.None,
     };
 
     // This is similar to EIdentifier but it represents class-private fields and
@@ -1242,6 +1429,49 @@ pub const E = struct {
 
     pub const Number = struct {
         value: f64,
+
+        const double_digit = [_]string{ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62", "63", "64", "65", "66", "67", "68", "69", "70", "71", "72", "73", "74", "75", "76", "77", "78", "79", "80", "81", "82", "83", "84", "85", "86", "87", "88", "89", "90", "91", "92", "93", "94", "95", "96", "97", "98", "99", "100" };
+        const neg_double_digit = [_]string{ "-0", "-1", "-2", "-3", "-4", "-5", "-6", "-7", "-8", "-9", "-11", "-12", "-13", "-14", "-15", "-16", "-17", "-18", "-19", "-20", "-21", "-22", "-23", "-24", "-25", "-26", "-27", "-28", "-29", "-30", "-31", "-32", "-33", "-34", "-35", "-36", "-37", "-38", "-39", "-40", "-41", "-42", "-43", "-44", "-45", "-46", "-47", "-48", "-49", "-50", "-51", "-52", "-53", "-54", "-55", "-56", "-57", "-58", "-59", "-60", "-61", "-62", "-63", "-64", "-65", "-66", "-67", "-68", "-69", "-70", "-71", "-72", "-73", "-74", "-75", "-76", "-77", "-78", "-79", "-80", "-81", "-82", "-83", "-84", "-85", "-86", "-87", "-88", "-89", "-90", "-91", "-92", "-93", "-94", "-95", "-96", "-97", "-98", "-99", "-100" };
+
+        /// String concatenation with numbers is required by the TypeScript compiler for
+        /// "constant expression" handling in enums. However, we don't want to introduce
+        /// correctness bugs by accidentally stringifying a number differently than how
+        /// a real JavaScript VM would do it. So we are conservative and we only do this
+        /// when we know it'll be the same result.
+        pub fn toStringSafely(this: Number, allocator: std.mem.Allocator) ?string {
+            return toStringFromF64Safe(this.value, allocator);
+        }
+
+        pub fn toStringFromF64Safe(value: f64, allocator: std.mem.Allocator) ?string {
+            if (value == @trunc(value)) {
+                const int_value = @floatToInt(i64, value);
+                const abs = @intCast(u64, std.math.absInt(int_value) catch return null);
+                if (abs < double_digit.len) {
+                    return if (value < 0)
+                        neg_double_digit[abs]
+                    else
+                        double_digit[abs];
+                }
+
+                if (abs <= std.math.maxInt(i32)) {
+                    return std.fmt.allocPrint(allocator, "{d}", .{@intCast(i32, int_value)}) catch return null;
+                }
+            }
+
+            if (std.math.isNan(value)) {
+                return "NaN";
+            }
+
+            if (std.math.isNegativeInf(value)) {
+                return "-Infinity";
+            }
+
+            if (std.math.isInf(value)) {
+                return "Infinity";
+            }
+
+            return null;
+        }
 
         pub inline fn toU64(self: Number) u64 {
             @setRuntimeSafety(false);
@@ -1551,11 +1781,11 @@ pub const E = struct {
         }
 
         pub fn alphabetizeProperties(this: *Object) void {
-            std.sort.sort(G.Property, this.properties.slice(), void{}, Sorter.isLessThan);
+            std.sort.sort(G.Property, this.properties.slice(), {}, Sorter.isLessThan);
         }
 
         pub fn packageJSONSort(this: *Object) void {
-            std.sort.sort(G.Property, this.properties.slice(), void{}, PackageJSONSort.Fields.isLessThan);
+            std.sort.sort(G.Property, this.properties.slice(), {}, PackageJSONSort.Fields.isLessThan);
         }
 
         const PackageJSONSort = struct {
@@ -1714,6 +1944,19 @@ pub const E = struct {
             };
         }
 
+        pub fn javascriptLength(s: *const String) u32 {
+            if (s.rope_len > 0) {
+                // We only support ascii ropes for now
+                return s.rope_len;
+            }
+
+            if (s.isUTF8()) {
+                return @truncate(u32, bun.simdutf.length.utf16.from.utf8.le(s.data));
+            }
+
+            return @truncate(u32, s.slice16().len);
+        }
+
         pub inline fn len(s: *const String) usize {
             return if (s.rope_len > 0) s.rope_len else s.data.len;
         }
@@ -1835,6 +2078,96 @@ pub const E = struct {
         tag: ?ExprNodeIndex = null,
         head: E.String,
         parts: []TemplatePart = &([_]TemplatePart{}),
+
+        /// "`a${'b'}c`" => "`abc`"
+        pub fn fold(
+            this: *Template,
+            allocator: std.mem.Allocator,
+            loc: logger.Loc,
+        ) Expr {
+            if (this.tag != null) {
+                return Expr{
+                    .data = .{
+                        .e_template = this,
+                    },
+                    .loc = loc,
+                };
+            }
+
+            // we only fold utf-8/ascii for now
+            if (this.parts.len == 0 or !this.head.isUTF8()) {
+                return Expr.init(E.String, this.head, loc);
+            }
+
+            var parts = std.ArrayList(TemplatePart).initCapacity(allocator, this.parts.len) catch unreachable;
+            var head = Expr.init(E.String, this.head, loc);
+            for (this.parts) |part_| {
+                var part = part_;
+
+                switch (part.value.data) {
+                    .e_number => {
+                        if (part.value.data.e_number.toStringSafely(allocator)) |s| {
+                            part.value = Expr.init(E.String, E.String.init(s), part.value.loc);
+                        }
+                    },
+                    .e_null => {
+                        part.value = Expr.init(E.String, E.String.init("null"), part.value.loc);
+                    },
+                    .e_boolean => {
+                        part.value = Expr.init(E.String, E.String.init(if (part.value.data.e_boolean.value)
+                            "true"
+                        else
+                            "false"), part.value.loc);
+                    },
+                    .e_undefined => {
+                        part.value = Expr.init(E.String, E.String.init("undefined"), part.value.loc);
+                    },
+                    else => {},
+                }
+
+                if (part.value.data == .e_string and part.tail.isUTF8() and part.value.data.e_string.isUTF8()) {
+                    if (parts.items.len == 0) {
+                        if (part.value.data.e_string.len() > 0) {
+                            head.data.e_string.push(part.value.data.e_string);
+                        }
+
+                        if (part.tail.len() > 0) {
+                            head.data.e_string.push(Expr.init(E.String, part.tail, part.tail_loc).data.e_string);
+                        }
+
+                        continue;
+                    } else {
+                        var prev_part = &parts.items[parts.items.len - 1];
+
+                        if (part.value.data.e_string.len() > 0) {
+                            prev_part.tail.push(part.value.data.e_string);
+                        }
+
+                        if (part.tail.len() > 0) {
+                            prev_part.tail.push(Expr.init(E.String, part.tail, part.tail_loc).data.e_string);
+                        }
+                    }
+                } else {
+                    parts.appendAssumeCapacity(part);
+                }
+            }
+
+            if (parts.items.len == 0) {
+                parts.deinit();
+
+                return head;
+            }
+
+            return Expr.init(
+                E.Template,
+                E.Template{
+                    .tag = null,
+                    .parts = parts.items,
+                    .head = head.data.e_string.*,
+                },
+                loc,
+            );
+        }
     };
 
     pub const RegExp = struct {
@@ -1902,33 +2235,55 @@ pub const E = struct {
         no: ExprNodeIndex,
     };
 
-    pub const Require = struct {
+    pub const RequireString = struct {
         import_record_index: u32 = 0,
+
+        /// TODO:
+        close_paren_loc: logger.Loc = logger.Loc.Empty,
     };
 
-    pub const RequireOrRequireResolve = struct {
+    pub const RequireResolveString = struct {
         import_record_index: u32 = 0,
+
+        /// TODO:
+        close_paren_loc: logger.Loc = logger.Loc.Empty,
     };
 
     pub const Import = struct {
         expr: ExprNodeIndex,
         import_record_index: u32,
 
-        // Comments inside "import()" expressions have special meaning for Webpack.
-        // Preserving comments inside these expressions makes it possible to use
-        // esbuild as a TypeScript-to-JavaScript frontend for Webpack to improve
-        // performance. We intentionally do not interpret these comments in esbuild
-        // because esbuild is not Webpack. But we do preserve them since doing so is
-        // harmless, easy to maintain, and useful to people. See the Webpack docs for
-        // more info: https://webpack.js.org/api/module-methods/#magic-comments.
-        // TODO:
+        /// Comments inside "import()" expressions have special meaning for Webpack.
+        /// Preserving comments inside these expressions makes it possible to use
+        /// esbuild as a TypeScript-to-JavaScript frontend for Webpack to improve
+        /// performance. We intentionally do not interpret these comments in esbuild
+        /// because esbuild is not Webpack. But we do preserve them since doing so is
+        /// harmless, easy to maintain, and useful to people. See the Webpack docs for
+        /// more info: https://webpack.js.org/api/module-methods/#magic-comments.
+        /// TODO:
         leading_interior_comments: []G.Comment = &([_]G.Comment{}),
+
+        pub fn isImportRecordNull(this: *const Import) bool {
+            return this.import_record_index == std.math.maxInt(u32);
+        }
     };
 };
 
 pub const Stmt = struct {
     loc: logger.Loc,
     data: Data,
+
+    pub const Batcher = bun.Batcher(Stmt);
+
+    pub fn assign(a: Expr, b: Expr, allocator: std.mem.Allocator) Stmt {
+        return Stmt.alloc(
+            S.SExpr,
+            S.SExpr{
+                .value = Expr.assign(a, b, allocator),
+            },
+            a.loc,
+        );
+    }
 
     const Serializable = struct {
         type: Tag,
@@ -1963,6 +2318,7 @@ pub const Stmt = struct {
     pub var icount: usize = 0;
     pub fn init(comptime StatementType: type, origData: *StatementType, loc: logger.Loc) Stmt {
         icount += 1;
+
         return switch (comptime StatementType) {
             S.Empty => Stmt{ .loc = loc, .data = Data{ .s_empty = S.Empty{} } },
             S.Block => Stmt.comptime_init("s_block", S.Block, origData, loc),
@@ -1973,7 +2329,6 @@ pub const Stmt = struct {
             S.Debugger => Stmt.comptime_init("s_debugger", S.Debugger, origData, loc),
             S.Directive => Stmt.comptime_init("s_directive", S.Directive, origData, loc),
             S.DoWhile => Stmt.comptime_init("s_do_while", S.DoWhile, origData, loc),
-            S.Empty => Stmt.comptime_init("s_empty", S.Empty, origData, loc),
             S.Enum => Stmt.comptime_init("s_enum", S.Enum, origData, loc),
             S.ExportClause => Stmt.comptime_init("s_export_clause", S.ExportClause, origData, loc),
             S.ExportDefault => Stmt.comptime_init("s_export_default", S.ExportDefault, origData, loc),
@@ -1988,7 +2343,6 @@ pub const Stmt = struct {
             S.If => Stmt.comptime_init("s_if", S.If, origData, loc),
             S.Import => Stmt.comptime_init("s_import", S.Import, origData, loc),
             S.Label => Stmt.comptime_init("s_label", S.Label, origData, loc),
-            S.LazyExport => Stmt.comptime_init("s_lazy_export", S.LazyExport, origData, loc),
             S.Local => Stmt.comptime_init("s_local", S.Local, origData, loc),
             S.Namespace => Stmt.comptime_init("s_namespace", S.Namespace, origData, loc),
             S.Return => Stmt.comptime_init("s_return", S.Return, origData, loc),
@@ -2002,7 +2356,24 @@ pub const Stmt = struct {
         };
     }
     inline fn comptime_alloc(comptime tag_name: string, comptime typename: type, origData: anytype, loc: logger.Loc) Stmt {
-        return Stmt{ .loc = loc, .data = @unionInit(Data, tag_name, Data.Store.append(typename, origData)) };
+        return Stmt{
+            .loc = loc,
+            .data = @unionInit(
+                Data,
+                tag_name,
+                Data.Store.append(
+                    typename,
+                    origData,
+                ),
+            ),
+        };
+    }
+
+    fn allocateData(allocator: std.mem.Allocator, comptime tag_name: string, comptime typename: type, origData: anytype, loc: logger.Loc) Stmt {
+        var value = allocator.create(@TypeOf(origData)) catch unreachable;
+        value.* = origData;
+
+        return comptime_init(tag_name, *typename, value, loc);
     }
 
     inline fn comptime_init(comptime tag_name: string, comptime TypeName: type, origData: TypeName, loc: logger.Loc) Stmt {
@@ -2010,6 +2381,8 @@ pub const Stmt = struct {
     }
 
     pub fn alloc(comptime StatementData: type, origData: StatementData, loc: logger.Loc) Stmt {
+        Stmt.Data.Store.assert();
+
         icount += 1;
         return switch (StatementData) {
             S.Block => Stmt.comptime_alloc("s_block", S.Block, origData, loc),
@@ -2035,7 +2408,6 @@ pub const Stmt = struct {
             S.If => Stmt.comptime_alloc("s_if", S.If, origData, loc),
             S.Import => Stmt.comptime_alloc("s_import", S.Import, origData, loc),
             S.Label => Stmt.comptime_alloc("s_label", S.Label, origData, loc),
-            S.LazyExport => Stmt.comptime_alloc("s_lazy_export", S.LazyExport, origData, loc),
             S.Local => Stmt.comptime_alloc("s_local", S.Local, origData, loc),
             S.Namespace => Stmt.comptime_alloc("s_namespace", S.Namespace, origData, loc),
             S.Return => Stmt.comptime_alloc("s_return", S.Return, origData, loc),
@@ -2045,6 +2417,52 @@ pub const Stmt = struct {
             S.TypeScript => Stmt{ .loc = loc, .data = Data{ .s_type_script = S.TypeScript{} } },
             S.While => Stmt.comptime_alloc("s_while", S.While, origData, loc),
             S.With => Stmt.comptime_alloc("s_with", S.With, origData, loc),
+            else => @compileError("Invalid type in Stmt.init"),
+        };
+    }
+
+    pub const Disabler = bun.DebugOnlyDisabler(@This());
+
+    /// When the lifetime of an Stmt.Data's pointer must exist longer than reset() is called, use this function.
+    /// Be careful to free the memory (or use an allocator that does it for you)
+    /// Also, prefer Stmt.init or Stmt.alloc when possible. This will be slower.
+    pub fn allocate(allocator: std.mem.Allocator, comptime StatementData: type, origData: StatementData, loc: logger.Loc) Stmt {
+        Stmt.Data.Store.assert();
+
+        icount += 1;
+        return switch (StatementData) {
+            S.Block => Stmt.allocateData(allocator, "s_block", S.Block, origData, loc),
+            S.Break => Stmt.allocateData(allocator, "s_break", S.Break, origData, loc),
+            S.Class => Stmt.allocateData(allocator, "s_class", S.Class, origData, loc),
+            S.Comment => Stmt.allocateData(allocator, "s_comment", S.Comment, origData, loc),
+            S.Continue => Stmt.allocateData(allocator, "s_continue", S.Continue, origData, loc),
+            S.Debugger => Stmt{ .loc = loc, .data = .{ .s_debugger = origData } },
+            S.Directive => Stmt.allocateData(allocator, "s_directive", S.Directive, origData, loc),
+            S.DoWhile => Stmt.allocateData(allocator, "s_do_while", S.DoWhile, origData, loc),
+            S.Empty => Stmt{ .loc = loc, .data = Data{ .s_empty = S.Empty{} } },
+            S.Enum => Stmt.allocateData(allocator, "s_enum", S.Enum, origData, loc),
+            S.ExportClause => Stmt.allocateData(allocator, "s_export_clause", S.ExportClause, origData, loc),
+            S.ExportDefault => Stmt.allocateData(allocator, "s_export_default", S.ExportDefault, origData, loc),
+            S.ExportEquals => Stmt.allocateData(allocator, "s_export_equals", S.ExportEquals, origData, loc),
+            S.ExportFrom => Stmt.allocateData(allocator, "s_export_from", S.ExportFrom, origData, loc),
+            S.ExportStar => Stmt.allocateData(allocator, "s_export_star", S.ExportStar, origData, loc),
+            S.SExpr => Stmt.allocateData(allocator, "s_expr", S.SExpr, origData, loc),
+            S.ForIn => Stmt.allocateData(allocator, "s_for_in", S.ForIn, origData, loc),
+            S.ForOf => Stmt.allocateData(allocator, "s_for_of", S.ForOf, origData, loc),
+            S.For => Stmt.allocateData(allocator, "s_for", S.For, origData, loc),
+            S.Function => Stmt.allocateData(allocator, "s_function", S.Function, origData, loc),
+            S.If => Stmt.allocateData(allocator, "s_if", S.If, origData, loc),
+            S.Import => Stmt.allocateData(allocator, "s_import", S.Import, origData, loc),
+            S.Label => Stmt.allocateData(allocator, "s_label", S.Label, origData, loc),
+            S.Local => Stmt.allocateData(allocator, "s_local", S.Local, origData, loc),
+            S.Namespace => Stmt.allocateData(allocator, "s_namespace", S.Namespace, origData, loc),
+            S.Return => Stmt.allocateData(allocator, "s_return", S.Return, origData, loc),
+            S.Switch => Stmt.allocateData(allocator, "s_switch", S.Switch, origData, loc),
+            S.Throw => Stmt.allocateData(allocator, "s_throw", S.Throw, origData, loc),
+            S.Try => Stmt.allocateData(allocator, "s_try", S.Try, origData, loc),
+            S.TypeScript => Stmt{ .loc = loc, .data = Data{ .s_type_script = S.TypeScript{} } },
+            S.While => Stmt.allocateData(allocator, "s_while", S.While, origData, loc),
+            S.With => Stmt.allocateData(allocator, "s_with", S.With, origData, loc),
             else => @compileError("Invalid type in Stmt.init"),
         };
     }
@@ -2066,9 +2484,9 @@ pub const Stmt = struct {
         s_export_from,
         s_export_star,
         s_expr,
+        s_for,
         s_for_in,
         s_for_of,
-        s_for,
         s_function,
         s_if,
         s_import,
@@ -2118,7 +2536,6 @@ pub const Stmt = struct {
         s_if: *S.If,
         s_import: *S.Import,
         s_label: *S.Label,
-        s_lazy_export: *S.LazyExport,
         s_local: *S.Local,
         s_namespace: *S.Namespace,
         s_return: *S.Return,
@@ -2131,6 +2548,8 @@ pub const Stmt = struct {
         s_type_script: S.TypeScript,
         s_empty: S.Empty, // special case, its a zero value type
         s_debugger: S.Debugger,
+
+        s_lazy_export: Expr.Data,
 
         pub const Store = struct {
             const Union = [_]type{
@@ -2155,7 +2574,6 @@ pub const Stmt = struct {
                 S.If,
                 S.Import,
                 S.Label,
-                S.LazyExport,
                 S.Local,
                 S.Namespace,
                 S.Return,
@@ -2166,12 +2584,13 @@ pub const Stmt = struct {
                 S.While,
                 S.With,
             };
-            pub const All = NewBaseStore(Union, 128);
+            const All = NewBaseStore(Union, 128);
+            pub threadlocal var memory_allocator: ?*ASTMemoryAllocator = null;
 
             threadlocal var has_inited = false;
             pub threadlocal var disable_reset = false;
             pub fn create(allocator: std.mem.Allocator) void {
-                if (has_inited) {
+                if (has_inited or memory_allocator != null) {
                     return;
                 }
 
@@ -2180,25 +2599,29 @@ pub const Stmt = struct {
             }
 
             pub fn reset() void {
-                if (disable_reset) return;
+                if (disable_reset or memory_allocator != null) return;
                 All.reset();
             }
 
             pub fn deinit() void {
-                if (!has_inited) return;
+                if (!has_inited or memory_allocator != null) return;
                 All.deinit();
                 has_inited = false;
             }
 
-            pub fn assert() void {
+            pub inline fn assert() void {
                 if (comptime Environment.allow_assert) {
-                    if (!has_inited)
+                    if (!has_inited and memory_allocator == null)
                         bun.unreachablePanic("Store must be init'd", .{});
                 }
             }
 
             pub fn append(comptime ValueType: type, value: anytype) *ValueType {
-                return All.append(ValueType, value);
+                if (memory_allocator) |allocator| {
+                    return allocator.append(ValueType, value);
+                }
+
+                return All.append(Disabler, ValueType, value);
             }
 
             pub fn toOwnedSlice() []*Store.All.Block {
@@ -2228,6 +2651,15 @@ pub const Expr = struct {
     loc: logger.Loc,
     data: Data,
 
+    pub fn isAnonymousNamed(expr: Expr) bool {
+        return switch (expr.data) {
+            .e_arrow => true,
+            .e_function => |func| func.func.name == null,
+            .e_class => |class| class.class_name == null,
+            else => false,
+        };
+    }
+
     pub fn clone(this: Expr, allocator: std.mem.Allocator) !Expr {
         return .{
             .loc = this.loc,
@@ -2248,6 +2680,16 @@ pub const Expr = struct {
         }, this.loc);
     }
 
+    pub fn canBeInlinedFromPropertyAccess(this: Expr) bool {
+        return switch (this.data) {
+            // if the array has a spread we must keep it
+            // https://github.com/oven-sh/bun/issues/2594
+            .e_spread => false,
+
+            .e_missing => false,
+            else => true,
+        };
+    }
     pub fn canBeConstValue(this: Expr) bool {
         return this.data.canBeConstValue();
     }
@@ -2563,23 +3005,6 @@ pub const Expr = struct {
         return [2]f64{ left.e_number.value, right.e_number.value };
     }
 
-    pub fn isAnonymousNamed(e: *Expr) bool {
-        switch (e.data) {
-            .e_arrow => {
-                return true;
-            },
-            .e_function => |func| {
-                return func.func.name == null;
-            },
-            .e_class => |class| {
-                return class.class_name == null;
-            },
-            else => {
-                return false;
-            },
-        }
-    }
-
     pub var icount: usize = 0;
 
     // We don't need to dynamically allocate booleans
@@ -2587,15 +3012,23 @@ pub const Expr = struct {
     var false_bool = E.Boolean{ .value = false };
     var bool_values = [_]*E.Boolean{ &false_bool, &true_bool };
 
-    pub fn init(comptime Type: type, st: Type, loc: logger.Loc) Expr {
+    /// When the lifetime of an Expr.Data's pointer must exist longer than reset() is called, use this function.
+    /// Be careful to free the memory (or use an allocator that does it for you)
+    /// Also, prefer Expr.init or Expr.alloc when possible. This will be slower.
+    pub fn allocate(allocator: std.mem.Allocator, comptime Type: type, st: Type, loc: logger.Loc) Expr {
         icount += 1;
+        Data.Store.assert();
 
         switch (Type) {
             E.Array => {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_array = Data.Store.All.append(Type, st),
+                        .e_array = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2603,7 +3036,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_class = Data.Store.All.append(Type, st),
+                        .e_class = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2611,7 +3048,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_unary = Data.Store.All.append(Type, st),
+                        .e_unary = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2619,7 +3060,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_binary = Data.Store.All.append(Type, st),
+                        .e_binary = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2667,7 +3112,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_new = Data.Store.All.append(Type, st),
+                        .e_new = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2683,7 +3132,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_function = Data.Store.All.append(Type, st),
+                        .e_function = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2699,7 +3152,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_call = Data.Store.All.append(Type, st),
+                        .e_call = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2707,7 +3164,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_dot = Data.Store.All.append(Type, st),
+                        .e_dot = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2715,7 +3176,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_index = Data.Store.All.append(Type, st),
+                        .e_index = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2723,7 +3188,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_arrow = Data.Store.All.append(Type, st),
+                        .e_arrow = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2751,6 +3220,17 @@ pub const Expr = struct {
                     },
                 };
             },
+            E.CommonJSExportIdentifier => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_commonjs_export_identifier = .{
+                            .ref = st.ref,
+                        },
+                    },
+                };
+            },
+
             E.PrivateIdentifier => {
                 return Expr{
                     .loc = loc,
@@ -2763,7 +3243,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_jsx_element = Data.Store.All.append(Type, st),
+                        .e_jsx_element = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2782,7 +3266,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_big_int = Data.Store.All.append(Type, st),
+                        .e_big_int = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2790,7 +3278,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_object = Data.Store.All.append(Type, st),
+                        .e_object = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2798,7 +3290,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_spread = Data.Store.All.append(Type, st),
+                        .e_spread = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2813,7 +3309,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_string = Data.Store.All.append(Type, st),
+                        .e_string = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2821,7 +3321,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_template_part = Data.Store.All.append(Type, st),
+                        .e_template_part = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2829,7 +3333,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_template = Data.Store.All.append(Type, st),
+                        .e_template = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2837,7 +3345,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_reg_exp = Data.Store.All.append(Type, st),
+                        .e_reg_exp = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2845,7 +3357,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_await = Data.Store.All.append(Type, st),
+                        .e_await = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2853,7 +3369,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_yield = Data.Store.All.append(Type, st),
+                        .e_yield = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2861,15 +3381,19 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_if = Data.Store.All.append(Type, st),
+                        .e_if = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
-            E.RequireOrRequireResolve => {
+            E.RequireResolveString => {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_require_or_require_resolve = st,
+                        .e_require_resolve_string = st,
                     },
                 };
             },
@@ -2877,15 +3401,19 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_import = Data.Store.All.append(Type, st),
+                        .e_import = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
-            E.Require => {
+            E.RequireString => {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_require = st,
+                        .e_require_string = st,
                     },
                 };
             },
@@ -2893,7 +3421,341 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_string = Data.Store.All.append(@TypeOf(st.*), st.*),
+                        .e_string = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st.*;
+                            break :brk item;
+                        },
+                    },
+                };
+            },
+
+            else => {
+                @compileError("Invalid type passed to Expr.init: " ++ @typeName(Type));
+            },
+        }
+    }
+
+    pub const Disabler = bun.DebugOnlyDisabler(@This());
+
+    pub fn init(comptime Type: type, st: Type, loc: logger.Loc) Expr {
+        icount += 1;
+        Data.Store.assert();
+
+        switch (Type) {
+            E.Array => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_array = Data.Store.append(Type, st),
+                    },
+                };
+            },
+            E.Class => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_class = Data.Store.append(Type, st),
+                    },
+                };
+            },
+            E.Unary => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_unary = Data.Store.append(Type, st),
+                    },
+                };
+            },
+            E.Binary => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_binary = Data.Store.append(Type, st),
+                    },
+                };
+            },
+            E.This => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_this = st,
+                    },
+                };
+            },
+            E.Boolean => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_boolean = st,
+                    },
+                };
+            },
+            E.Super => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_super = st,
+                    },
+                };
+            },
+            E.Null => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_null = st,
+                    },
+                };
+            },
+            E.Undefined => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_undefined = st,
+                    },
+                };
+            },
+            E.New => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_new = Data.Store.append(Type, st),
+                    },
+                };
+            },
+            E.NewTarget => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_new_target = st,
+                    },
+                };
+            },
+            E.Function => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_function = Data.Store.append(Type, st),
+                    },
+                };
+            },
+            E.ImportMeta => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_import_meta = st,
+                    },
+                };
+            },
+            E.Call => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_call = Data.Store.append(Type, st),
+                    },
+                };
+            },
+            E.Dot => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_dot = Data.Store.append(Type, st),
+                    },
+                };
+            },
+            E.Index => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_index = Data.Store.append(Type, st),
+                    },
+                };
+            },
+            E.Arrow => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_arrow = Data.Store.append(Type, st),
+                    },
+                };
+            },
+            E.Identifier => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_identifier = E.Identifier{
+                            .ref = st.ref,
+                            .must_keep_due_to_with_stmt = st.must_keep_due_to_with_stmt,
+                            .can_be_removed_if_unused = st.can_be_removed_if_unused,
+                            .call_can_be_unwrapped_if_unused = st.call_can_be_unwrapped_if_unused,
+                        },
+                    },
+                };
+            },
+            E.ImportIdentifier => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_import_identifier = .{
+                            .ref = st.ref,
+                            .was_originally_identifier = st.was_originally_identifier,
+                        },
+                    },
+                };
+            },
+            E.CommonJSExportIdentifier => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_commonjs_export_identifier = .{
+                            .ref = st.ref,
+                        },
+                    },
+                };
+            },
+            E.PrivateIdentifier => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_private_identifier = st,
+                    },
+                };
+            },
+            E.JSXElement => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_jsx_element = Data.Store.append(Type, st),
+                    },
+                };
+            },
+            E.Missing => {
+                return Expr{ .loc = loc, .data = Data{ .e_missing = E.Missing{} } };
+            },
+            E.Number => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_number = st,
+                    },
+                };
+            },
+            E.BigInt => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_big_int = Data.Store.append(Type, st),
+                    },
+                };
+            },
+            E.Object => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_object = Data.Store.append(Type, st),
+                    },
+                };
+            },
+            E.Spread => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_spread = Data.Store.append(Type, st),
+                    },
+                };
+            },
+            E.String => {
+                if (comptime Environment.isDebug) {
+                    // Sanity check: assert string is not a null ptr
+                    if (st.data.len > 0 and st.isUTF8()) {
+                        std.debug.assert(@ptrToInt(st.data.ptr) > 0);
+                        std.debug.assert(st.data[0] > 0);
+                    }
+                }
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_string = Data.Store.append(Type, st),
+                    },
+                };
+            },
+            E.TemplatePart => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_template_part = Data.Store.append(Type, st),
+                    },
+                };
+            },
+            E.Template => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_template = Data.Store.append(Type, st),
+                    },
+                };
+            },
+            E.RegExp => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_reg_exp = Data.Store.append(Type, st),
+                    },
+                };
+            },
+            E.Await => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_await = Data.Store.append(Type, st),
+                    },
+                };
+            },
+            E.Yield => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_yield = Data.Store.append(Type, st),
+                    },
+                };
+            },
+            E.If => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_if = Data.Store.append(Type, st),
+                    },
+                };
+            },
+            E.RequireResolveString => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_require_resolve_string = st,
+                    },
+                };
+            },
+            E.Import => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_import = Data.Store.append(Type, st),
+                    },
+                };
+            },
+            E.RequireString => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_require_string = st,
+                    },
+                };
+            },
+            *E.String => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_string = Data.Store.append(@TypeOf(st.*), st.*),
                     },
                 };
             },
@@ -2936,11 +3798,13 @@ pub const Expr = struct {
         e_await,
         e_yield,
         e_if,
-        e_require_or_require_resolve,
+        e_require_resolve_string,
         e_import,
         e_this,
         e_class,
-        e_require,
+        e_require_string,
+
+        e_commonjs_export_identifier,
 
         // This should never make it to the printer
         inline_identifier,
@@ -2999,11 +3863,11 @@ pub const Expr = struct {
                 .e_await => writer.writeAll("await"),
                 .e_yield => writer.writeAll("yield"),
                 .e_if => writer.writeAll("if"),
-                .e_require_or_require_resolve => writer.writeAll("require_or_require_resolve"),
+                .e_require_resolve_string => writer.writeAll("require_or_require_resolve"),
                 .e_import => writer.writeAll("import"),
                 .e_this => writer.writeAll("this"),
                 .e_class => writer.writeAll("class"),
-                .e_require => writer.writeAll("require"),
+                .e_require_string => writer.writeAll("require"),
                 else => writer.writeAll(@tagName(tag)),
             };
         }
@@ -3342,9 +4206,9 @@ pub const Expr = struct {
                 },
             }
         }
-        pub fn isRequireOrRequireResolve(self: Tag) bool {
+        pub fn isRequireResolveString(self: Tag) bool {
             switch (self) {
-                .e_require_or_require_resolve => {
+                .e_require_resolve_string => {
                     return true;
                 },
                 else => {
@@ -3504,16 +4368,6 @@ pub const Expr = struct {
         return null;
     }
 
-    pub fn assignStmt(a: Expr, b: Expr, allocator: std.mem.Allocator) Stmt {
-        return Stmt.alloc(
-            S.SExpr,
-            S.SExpr{
-                .value = Expr.assign(a, b, allocator),
-            },
-            a.loc,
-        );
-    }
-
     pub fn isOptionalChain(self: *const @This()) bool {
         return switch (self.data) {
             .e_dot => self.data.e_dot.optional_chain != null,
@@ -3594,14 +4448,15 @@ pub const Expr = struct {
         e_identifier: E.Identifier,
         e_import_identifier: E.ImportIdentifier,
         e_private_identifier: E.PrivateIdentifier,
+        e_commonjs_export_identifier: E.CommonJSExportIdentifier,
 
         e_boolean: E.Boolean,
         e_number: E.Number,
         e_big_int: *E.BigInt,
         e_string: *E.String,
 
-        e_require: E.Require,
-        e_require_or_require_resolve: E.RequireOrRequireResolve,
+        e_require_string: E.RequireString,
+        e_require_resolve_string: E.RequireResolveString,
 
         e_missing: E.Missing,
         e_this: E.This,
@@ -3955,7 +4810,7 @@ pub const Expr = struct {
             const medium = 256;
             const rare = 24;
 
-            pub const All = NewBaseStore(
+            const All = NewBaseStore(
                 &([_]type{
                     E.Array,
                     E.Unary,
@@ -3986,10 +4841,12 @@ pub const Expr = struct {
                 512,
             );
 
+            pub threadlocal var memory_allocator: ?*ASTMemoryAllocator = null;
+
             threadlocal var has_inited = false;
             pub threadlocal var disable_reset = false;
             pub fn create(allocator: std.mem.Allocator) void {
-                if (has_inited) {
+                if (has_inited or memory_allocator != null) {
                     return;
                 }
 
@@ -3997,34 +4854,34 @@ pub const Expr = struct {
                 _ = All.init(allocator);
             }
 
-            pub fn assert() void {
-                if (comptime Environment.allow_assert) {
-                    if (!has_inited)
-                        bun.unreachablePanic("Store must be init'd", .{});
-                }
-            }
-
             pub fn reset() void {
-                if (disable_reset) return;
+                if (disable_reset or memory_allocator != null) return;
                 All.reset();
             }
 
             pub fn deinit() void {
-                if (!has_inited) return;
+                if (!has_inited or memory_allocator != null) return;
                 All.deinit();
                 has_inited = false;
             }
 
-            pub fn append(comptime ValueType: type, value: anytype) *ValueType {
-                if (ValueType == E.Identifier) {
-                    return E.Identifier.append(ValueType, value);
-                } else {
-                    return All.append(ValueType, value);
+            pub inline fn assert() void {
+                if (comptime Environment.allow_assert) {
+                    if (!has_inited and memory_allocator == null)
+                        bun.unreachablePanic("Store must be init'd", .{});
                 }
             }
 
+            pub fn append(comptime ValueType: type, value: anytype) *ValueType {
+                if (memory_allocator) |allocator| {
+                    return allocator.append(ValueType, value);
+                }
+
+                return All.append(Disabler, ValueType, value);
+            }
+
             pub fn toOwnedSlice() []*Store.All.Block {
-                if (!has_inited or Store.All._self.overflow.used == 0 or disable_reset) return &[_]*Store.All.Block{};
+                if (!has_inited or Store.All._self.overflow.used == 0 or disable_reset or memory_allocator != null) return &[_]*Store.All.Block{};
                 return Store.All.reclaim();
             }
         };
@@ -4075,10 +4932,6 @@ pub const S = struct {
 
     // This is an "export = value;" statement in TypeScript
     pub const ExportEquals = struct { value: ExprNodeIndex };
-
-    // The decision of whether to export an expression using "module.exports" or
-    // "export default" is deferred until linking using this statement kind
-    pub const LazyExport = struct { value: ExprNodeIndex };
 
     pub const Label = struct { name: LocRef, stmt: StmtNodeIndex };
 
@@ -4210,6 +5063,8 @@ pub const S = struct {
         // The TypeScript compiler doesn't generate code for "import foo = bar"
         // statements where the import is never used.
         was_ts_import_equals: bool = false,
+
+        was_commonjs_export: bool = false,
 
         pub const Kind = enum(u2) {
             k_var,
@@ -4534,9 +5389,11 @@ pub const ArrayBinding = struct {
 };
 
 pub const Ast = struct {
+    pub const TopLevelSymbolToParts = std.ArrayHashMapUnmanaged(Ref, BabyList(u32), Ref.ArrayHashCtx, false);
+
     approximate_newline_count: usize = 0,
     has_lazy_export: bool = false,
-    runtime_imports: Runtime.Imports,
+    runtime_imports: Runtime.Imports = .{},
 
     runtime_import_record_id: ?u32 = null,
     needs_runtime: bool = false,
@@ -4554,24 +5411,25 @@ pub const Ast = struct {
 
     // This is a list of ES6 features. They are ranges instead of booleans so
     // that they can be used in log messages. Check to see if "Len > 0".
-    import_keyword: ?logger.Range = null, // Does not include TypeScript-specific syntax or "import()"
-    export_keyword: ?logger.Range = null, // Does not include TypeScript-specific syntax
-    top_level_await_keyword: ?logger.Range = null,
+    import_keyword: logger.Range = logger.Range.None, // Does not include TypeScript-specific syntax or "import()"
+    export_keyword: logger.Range = logger.Range.None, // Does not include TypeScript-specific syntax
+    top_level_await_keyword: logger.Range = logger.Range.None,
 
-    // These are stored at the AST level instead of on individual AST nodes so
-    // they can be manipulated efficiently without a full AST traversal
-    import_records: []ImportRecord = &([_]ImportRecord{}),
+    /// These are stored at the AST level instead of on individual AST nodes so
+    /// they can be manipulated efficiently without a full AST traversal
+    import_records: ImportRecord.List = .{},
 
     hashbang: ?string = null,
     directive: ?string = null,
     url_for_css: ?string = null,
-    parts: []Part,
-    symbols: []Symbol = &([_]Symbol{}),
-    module_scope: ?Scope = null,
+    parts: Part.List = Part.List{},
+    // This list may be mutated later, so we should store the capacity
+    symbols: Symbol.List = Symbol.List{},
+    module_scope: Scope = Scope{},
     // char_freq:    *CharFreq,
-    exports_ref: ?Ref = null,
-    module_ref: ?Ref = null,
-    wrapper_ref: ?Ref = null,
+    exports_ref: Ref = Ref.None,
+    module_ref: Ref = Ref.None,
+    wrapper_ref: Ref = Ref.None,
     require_ref: Ref = Ref.None,
 
     bun_plugin: BunPlugin = .{},
@@ -4583,21 +5441,41 @@ pub const Ast = struct {
     // These are used when bundling. They are filled in during the parser pass
     // since we already have to traverse the AST then anyway and the parser pass
     // is conveniently fully parallelized.
-    named_imports: NamedImports = undefined,
-    named_exports: NamedExports = undefined,
+    named_imports: NamedImports = NamedImports.init(bun.failing_allocator),
+    named_exports: NamedExports = NamedExports.init(bun.failing_allocator),
     export_star_import_records: []u32 = &([_]u32{}),
+
+    allocator: std.mem.Allocator,
+    top_level_symbols_to_parts: TopLevelSymbolToParts = .{},
+
+    commonjs_named_exports: CommonJSNamedExports = .{},
+
+    redirect_import_record_index: ?u32 = null,
+
+    /// Only populated when bundling
+    platform: bun.options.Platform = .browser,
+
+    const_values: ConstValuesMap = .{},
+
+    pub const CommonJSNamedExport = struct {
+        loc_ref: LocRef,
+        needs_decl: bool = true,
+    };
+    pub const CommonJSNamedExports = bun.StringArrayHashMapUnmanaged(CommonJSNamedExport);
 
     pub const NamedImports = std.ArrayHashMap(Ref, NamedImport, RefHashCtx, true);
     pub const NamedExports = bun.StringArrayHashMap(NamedExport);
+    pub const ConstValuesMap = std.ArrayHashMapUnmanaged(Ref, Expr, RefHashCtx, false);
 
     pub fn initTest(parts: []Part) Ast {
         return Ast{
-            .parts = parts,
+            .parts = Part.List.init(parts),
+            .allocator = bun.default_allocator,
             .runtime_imports = .{},
         };
     }
 
-    pub const empty = Ast{ .parts = &[_]Part{}, .runtime_imports = undefined };
+    pub const empty = Ast{ .parts = Part.List{}, .runtime_imports = .{}, .allocator = bun.default_allocator };
 
     pub fn toJSON(self: *const Ast, _: std.mem.Allocator, stream: anytype) !void {
         const opts = std.json.StringifyOptions{ .whitespace = std.json.StringifyOptions.Whitespace{
@@ -4609,16 +5487,16 @@ pub const Ast = struct {
     /// Do not call this if it wasn't globally allocated!
     pub fn deinit(this: *Ast) void {
         // TODO: assert mimalloc-owned memory
-        if (this.parts.len > 0) bun.default_allocator.free(this.parts);
+        if (this.parts.len > 0) this.parts.deinitWithAllocator(bun.default_allocator);
         if (this.externals.len > 0) bun.default_allocator.free(this.externals);
-        if (this.symbols.len > 0) bun.default_allocator.free(this.symbols);
-        if (this.import_records.len > 0) bun.default_allocator.free(this.import_records);
+        if (this.symbols.len > 0) this.symbols.deinitWithAllocator(bun.default_allocator);
+        if (this.import_records.len > 0) this.import_records.deinitWithAllocator(bun.default_allocator);
     }
 };
 
 pub const Span = struct {
-    text: string,
-    range: logger.Range,
+    text: string = "",
+    range: logger.Range = .{},
 };
 
 pub const ExportsKind = enum {
@@ -4646,7 +5524,11 @@ pub const ExportsKind = enum {
     // "exports") with getters for the export names. All named imports to this
     // module are allowed. Direct named imports reference the corresponding export
     // directly. Other imports go through property accesses on "exports".
-    esm_with_dyn,
+    esm_with_dynamic_fallback,
+
+    pub fn isDynamic(self: ExportsKind) bool {
+        return self == .esm_with_dynamic_fallback or self == .cjs;
+    }
 
     pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
         return try std.json.stringify(@tagName(self), opts, o);
@@ -4656,11 +5538,103 @@ pub const ExportsKind = enum {
 pub const DeclaredSymbol = struct {
     ref: Ref,
     is_top_level: bool = false,
+
+    pub const List = struct {
+        entries: bun.MultiArrayList(DeclaredSymbol) = .{},
+
+        pub fn refs(this: *const List) []Ref {
+            return this.entries.items(.ref);
+        }
+
+        pub fn toOwnedSlice(this: *List) List {
+            var new = this.*;
+
+            this.* = .{};
+            return new;
+        }
+
+        pub fn clone(this: *const List, allocator: std.mem.Allocator) !List {
+            return List{ .entries = try this.entries.clone(allocator) };
+        }
+
+        pub inline fn len(this: List) usize {
+            return this.entries.len;
+        }
+
+        pub fn append(this: *List, allocator: std.mem.Allocator, entry: DeclaredSymbol) !void {
+            try this.ensureUnusedCapacity(allocator, 1);
+            this.appendAssumeCapacity(entry);
+        }
+
+        pub fn appendList(this: *List, allocator: std.mem.Allocator, other: List) !void {
+            try this.ensureUnusedCapacity(allocator, other.len());
+            this.appendListAssumeCapacity(other);
+        }
+
+        pub fn appendListAssumeCapacity(this: *List, other: List) void {
+            this.entries.appendListAssumeCapacity(other.entries);
+        }
+
+        pub fn appendAssumeCapacity(this: *List, entry: DeclaredSymbol) void {
+            this.entries.appendAssumeCapacity(entry);
+        }
+
+        pub fn ensureTotalCapacity(this: *List, allocator: std.mem.Allocator, count: usize) !void {
+            try this.entries.ensureTotalCapacity(allocator, count);
+        }
+
+        pub fn ensureUnusedCapacity(this: *List, allocator: std.mem.Allocator, count: usize) !void {
+            try this.entries.ensureUnusedCapacity(allocator, count);
+        }
+
+        pub fn clearRetainingCapacity(this: *List) void {
+            this.entries.clearRetainingCapacity();
+        }
+
+        pub fn deinit(this: *List, allocator: std.mem.Allocator) void {
+            this.entries.deinit(allocator);
+        }
+
+        pub fn initCapacity(allocator: std.mem.Allocator, capacity: usize) !List {
+            var entries = bun.MultiArrayList(DeclaredSymbol){};
+            try entries.ensureUnusedCapacity(allocator, capacity);
+            return List{ .entries = entries };
+        }
+
+        pub fn fromSlice(allocator: std.mem.Allocator, entries: []const DeclaredSymbol) !List {
+            var this = try List.initCapacity(allocator, entries.len);
+            errdefer this.deinit(allocator);
+            for (entries) |entry| {
+                this.appendAssumeCapacity(entry);
+            }
+
+            return this;
+        }
+    };
+
+    fn forEachTopLevelSymbolWithType(decls: *List, comptime Ctx: type, ctx: Ctx, comptime Fn: fn (Ctx, Ref) void) void {
+        var entries = decls.entries.slice();
+        const is_top_level = entries.items(.is_top_level);
+        const refs = entries.items(.ref);
+
+        // TODO: SIMD
+        for (is_top_level, refs) |top, ref| {
+            if (top) {
+                @call(.always_inline, Fn, .{ ctx, ref });
+            }
+        }
+    }
+
+    pub fn forEachTopLevelSymbol(decls: *List, ctx: anytype, comptime Fn: anytype) void {
+        forEachTopLevelSymbolWithType(decls, @TypeOf(ctx), ctx, Fn);
+    }
 };
 
-pub const Dependency = packed struct {
-    source_index: u32 = 0,
-    part_index: u32 = 0,
+pub const Dependency = struct {
+    source_index: Index = Index.invalid,
+    part_index: Index.Int = 0,
+
+    pub const List = BabyList(Dependency);
 };
 
 pub const ExprList = std.ArrayList(Expr);
@@ -4673,24 +5647,27 @@ pub const BindingList = std.ArrayList(Binding);
 // shaking and can be assigned to separate chunks (i.e. output files) by code
 // splitting.
 pub const Part = struct {
-    stmts: []Stmt,
+    pub const ImportRecordIndices = BabyList(u32);
+    pub const List = BabyList(Part);
+
+    stmts: []Stmt = &([_]Stmt{}),
     scopes: []*Scope = &([_]*Scope{}),
 
     // Each is an index into the file-level import record list
-    import_record_indices: []u32 = &([_]u32{}),
+    import_record_indices: ImportRecordIndices = .{},
 
     // All symbols that are declared in this part. Note that a given symbol may
     // have multiple declarations, and so may end up being declared in multiple
     // parts (e.g. multiple "var" declarations with the same name). Also note
     // that this list isn't deduplicated and may contain duplicates.
-    declared_symbols: []DeclaredSymbol = &([_]DeclaredSymbol{}),
+    declared_symbols: DeclaredSymbol.List = .{},
 
     // An estimate of the number of uses of all symbols used within this part.
     symbol_uses: SymbolUseMap = SymbolUseMap{},
 
     // The indices of the other parts in this file that are needed if this part
     // is needed.
-    dependencies: []Dependency = &([_]Dependency{}),
+    dependencies: Dependency.List = .{},
 
     // If true, this part can be removed if none of the declared symbols are
     // used. If the file containing this part is imported, then all parts that
@@ -4708,6 +5685,8 @@ pub const Part = struct {
 
     tag: Tag = Tag.none,
 
+    valid_in_development: if (bun.Environment.allow_assert) bool else void = bun.DebugOnlyDefault(true),
+
     pub const Tag = enum {
         none,
         jsx_import,
@@ -4717,6 +5696,8 @@ pub const Part = struct {
         dirname_filename,
         bun_plugin,
         bun_test,
+        dead_due_to_inlining,
+        commonjs_named_export,
     };
 
     pub const SymbolUseMap = std.ArrayHashMapUnmanaged(Ref, Symbol.Use, RefHashCtx, false);
@@ -4725,9 +5706,9 @@ pub const Part = struct {
     }
 };
 
-pub const Result = struct {
+pub const Result = union(enum) {
+    already_bundled: void,
     ast: Ast,
-    ok: bool = false,
 };
 
 pub const StmtOrExpr = union(enum) {
@@ -4737,10 +5718,10 @@ pub const StmtOrExpr = union(enum) {
 
 pub const NamedImport = struct {
     // Parts within this file that use this import
-    local_parts_with_uses: []u32 = &([_]u32{}),
+    local_parts_with_uses: BabyList(u32) = BabyList(u32){},
 
     alias: ?string,
-    alias_loc: ?logger.Loc,
+    alias_loc: ?logger.Loc = null,
     namespace_ref: ?Ref,
     import_record_index: u32,
 
@@ -4760,7 +5741,7 @@ pub const NamedExport = struct {
     alias_loc: logger.Loc,
 };
 
-pub const StrictModeKind = enum(u7) {
+pub const StrictModeKind = enum(u4) {
     sloppy_mode,
     explicit_strict_mode,
     implicit_strict_mode_import,
@@ -4777,10 +5758,10 @@ pub const Scope = struct {
 
     id: usize = 0,
     kind: Kind = Kind.block,
-    parent: ?*Scope,
-    children: std.ArrayListUnmanaged(*Scope) = .{},
+    parent: ?*Scope = null,
+    children: BabyList(*Scope) = .{},
     members: MemberHashMap = .{},
-    generated: std.ArrayListUnmanaged(Ref) = .{},
+    generated: BabyList(Ref) = .{},
 
     // This is used to store the ref of the label symbol for ScopeLabel scopes.
     label_ref: ?Ref = null,
@@ -4797,6 +5778,8 @@ pub const Scope = struct {
     strict_mode: StrictModeKind = StrictModeKind.sloppy_mode,
 
     is_after_const_local_prefix: bool = false,
+
+    pub const NestedScopeMap = std.AutoArrayHashMap(u32, bun.BabyList(*Scope));
 
     pub fn getMemberHash(name: []const u8) u64 {
         return bun.StringHashMapContext.hash(.{}, name);
@@ -4900,10 +5883,12 @@ pub const Scope = struct {
         // "var foo; function foo() {}"
         // "function foo() {} var foo;"
         // "function *foo() {} function *foo() {}" but not "{ function *foo() {} function *foo() {} }"
-        if (Symbol.isKindHoistedOrFunction(new) and Symbol.isKindHoistedOrFunction(existing) and (scope.kind == .entry or scope.kind == .function_body or
-            (Symbol.isKindHoisted(new) and Symbol.isKindHoisted(existing))))
+        if (Symbol.isKindHoistedOrFunction(new) and
+            Symbol.isKindHoistedOrFunction(existing) and
+            (scope.kind == .entry or scope.kind == .function_body or scope.kind == .function_args or
+            (new == existing and Symbol.isKindHoisted(existing))))
         {
-            return .keep_existing;
+            return .replace_with_new;
         }
 
         // "get #foo() {} set #foo() {}"
@@ -4958,7 +5943,7 @@ pub const Scope = struct {
     pub fn recursiveSetStrictMode(s: *Scope, kind: StrictModeKind) void {
         if (s.strict_mode == .sloppy_mode) {
             s.strict_mode = kind;
-            for (s.children.items) |child| {
+            for (s.children.slice()) |child| {
                 child.recursiveSetStrictMode(kind);
             }
         }
@@ -5693,8 +6678,8 @@ pub const Macro = struct {
                 .e_if => |value| {
                     return JSNode{ .loc = this.loc, .data = .{ .e_if = value } };
                 },
-                .e_require_or_require_resolve => |value| {
-                    return JSNode{ .loc = this.loc, .data = .{ .e_require_or_require_resolve = value } };
+                .e_require_resolve_string => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_require_resolve_string = value } };
                 },
                 .e_import => |value| {
                     return JSNode{ .loc = this.loc, .data = .{ .e_import = value } };
@@ -5705,8 +6690,8 @@ pub const Macro = struct {
                 .e_class => |value| {
                     return JSNode{ .loc = this.loc, .data = .{ .e_class = value } };
                 },
-                .e_require => |value| {
-                    return JSNode{ .loc = this.loc, .data = .{ .e_require = value } };
+                .e_require_string => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_require_string = value } };
                 },
                 .e_missing => |value| {
                     return JSNode{ .loc = this.loc, .data = .{ .e_missing = value } };
@@ -5812,8 +6797,8 @@ pub const Macro = struct {
                 .e_if => |value| {
                     return Expr{ .loc = this.loc, .data = .{ .e_if = value } };
                 },
-                .e_require_or_require_resolve => |value| {
-                    return Expr{ .loc = this.loc, .data = .{ .e_require_or_require_resolve = value } };
+                .e_require_resolve_string => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_require_resolve_string = value } };
                 },
                 .e_import => |value| {
                     return Expr{ .loc = this.loc, .data = .{ .e_import = value } };
@@ -5824,8 +6809,8 @@ pub const Macro = struct {
                 .e_class => |value| {
                     return Expr{ .loc = this.loc, .data = .{ .e_class = value } };
                 },
-                .e_require => |value| {
-                    return Expr{ .loc = this.loc, .data = .{ .e_require = value } };
+                .e_require_string => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_require_string = value } };
                 },
                 .e_missing => |value| {
                     return Expr{ .loc = this.loc, .data = .{ .e_missing = value } };
@@ -5924,8 +6909,8 @@ pub const Macro = struct {
             s_block: *S.Block,
 
             e_reg_exp: *E.RegExp,
-            e_require_or_require_resolve: E.RequireOrRequireResolve,
-            e_require: E.Require,
+            e_require_resolve_string: E.RequireResolveString,
+            e_require_string: E.RequireString,
 
             g_property: *G.Property,
 
@@ -5972,11 +6957,11 @@ pub const Macro = struct {
             e_await,
             e_yield,
             e_if,
-            e_require_or_require_resolve,
+            e_require_resolve_string,
             e_import,
             e_this,
             e_class,
-            e_require,
+            e_require_string,
             s_import,
             s_block,
 
@@ -6039,7 +7024,7 @@ pub const Macro = struct {
                 .{ "dynamic", Tag.e_import },
                 .{ "this", Tag.e_this },
                 .{ "class", Tag.e_class },
-                .{ "require", Tag.e_require },
+                .{ "require", Tag.e_require_string },
                 .{ "import", Tag.s_import },
                 .{ "property", Tag.g_property },
                 .{ "block", Tag.s_block },
@@ -6082,11 +7067,11 @@ pub const Macro = struct {
                 list.set(Tag.e_await, Expr.Tag.e_await);
                 list.set(Tag.e_yield, Expr.Tag.e_yield);
                 list.set(Tag.e_if, Expr.Tag.e_if);
-                list.set(Tag.e_require_or_require_resolve, Expr.Tag.e_require_or_require_resolve);
+                list.set(Tag.e_require_resolve_string, Expr.Tag.e_require_resolve_string);
                 list.set(Tag.e_import, Expr.Tag.e_import);
                 list.set(Tag.e_this, Expr.Tag.e_this);
                 list.set(Tag.e_class, Expr.Tag.e_class);
-                list.set(Tag.e_require, Expr.Tag.e_require);
+                list.set(Tag.e_require_string, Expr.Tag.e_require_string);
                 break :brk list;
             };
 
@@ -6122,11 +7107,11 @@ pub const Macro = struct {
                 list.set(Expr.Tag.e_await, Tag.e_await);
                 list.set(Expr.Tag.e_yield, Tag.e_yield);
                 list.set(Expr.Tag.e_if, Tag.e_if);
-                list.set(Expr.Tag.e_require_or_require_resolve, Tag.e_require_or_require_resolve);
+                list.set(Expr.Tag.e_require_resolve_string, Tag.e_require_resolve_string);
                 list.set(Expr.Tag.e_import, Tag.e_import);
                 list.set(Expr.Tag.e_this, Tag.e_this);
                 list.set(Expr.Tag.e_class, Tag.e_class);
-                list.set(Expr.Tag.e_require, Tag.e_require);
+                list.set(Expr.Tag.e_require_string, Tag.e_require_string);
                 break :brk list;
             };
 
@@ -6884,7 +7869,7 @@ pub const Macro = struct {
                         // Tag.e_import => {},
 
                         // Tag.e_class => {},
-                        // Tag.e_require => {},
+                        // Tag.e_require_string => {},
                         // Tag.s_import => {},
 
                         // Tag.s_block => {},
@@ -8337,6 +9322,116 @@ pub const Macro = struct {
     };
 };
 
+pub const ASTMemoryAllocator = struct {
+    stack_allocator: std.heap.StackFallbackAllocator(8096) = undefined,
+    bump_allocator: std.mem.Allocator = undefined,
+    allocator: std.mem.Allocator,
+    previous: ?*ASTMemoryAllocator = null,
+
+    pub fn push(this: *ASTMemoryAllocator) void {
+        if (Stmt.Data.Store.memory_allocator == this) {
+            return;
+        }
+        this.stack_allocator.fallback_allocator = this.allocator;
+        this.bump_allocator = this.stack_allocator.get();
+        var prev = Stmt.Data.Store.memory_allocator;
+        if (this.previous) |other| {
+            other.previous = prev;
+        } else {
+            this.previous = prev;
+        }
+        Stmt.Data.Store.memory_allocator = this;
+        Expr.Data.Store.memory_allocator = this;
+    }
+
+    pub fn pop(this: *ASTMemoryAllocator) void {
+        var prev = this.previous;
+        std.debug.assert(prev != this);
+        Stmt.Data.Store.memory_allocator = prev;
+        Expr.Data.Store.memory_allocator = prev;
+        this.previous = null;
+    }
+
+    pub fn append(this: ASTMemoryAllocator, comptime ValueType: type, value: anytype) *ValueType {
+        const ptr = this.bump_allocator.create(ValueType) catch unreachable;
+        ptr.* = value;
+        return ptr;
+    }
+};
+
+pub const UseDirective = enum {
+    none,
+    @"use client",
+    @"use server",
+
+    pub const Flags = struct {
+        is_client: bool = false,
+        is_server: bool = false,
+    };
+
+    pub fn isBoundary(this: UseDirective, other: UseDirective) bool {
+        if (this == other or other == .none)
+            return false;
+
+        return true;
+    }
+
+    pub fn boundering(this: UseDirective, other: UseDirective) ?UseDirective {
+        if (this == other or other == .none)
+            return null;
+
+        return other;
+    }
+
+    pub const EntryPoint = struct {
+        source_index: Index.Int,
+        use_directive: UseDirective,
+    };
+
+    pub const List = std.MultiArrayList(UseDirective.EntryPoint);
+
+    // TODO: remove this, add an onModuleDirective() callback to the parser
+    pub fn parse(contents: []const u8) UseDirective {
+        const truncated = std.mem.trimLeft(u8, contents, " \t\n\r;");
+
+        if (truncated.len < "'use client';".len)
+            return .none;
+
+        const directive_string = truncated[0.."'use client';".len].*;
+
+        const first_quote = directive_string[0];
+        const last_quote = directive_string[directive_string.len - 2];
+        if (first_quote != last_quote or (first_quote != '"' and first_quote != '\'' and first_quote != '`'))
+            return .none;
+
+        const unquoted = directive_string[1 .. directive_string.len - 2];
+
+        if (strings.eqlComptime(
+            unquoted,
+            "use client",
+        )) {
+            return .@"use client";
+        }
+
+        if (strings.eqlComptime(
+            unquoted,
+            "use server",
+        )) {
+            return .@"use server";
+        }
+
+        return .none;
+    }
+
+    pub fn platform(this: UseDirective, default: bun.options.Platform) bun.options.Platform {
+        return switch (this) {
+            .none => default,
+            .@"use client" => .browser,
+            .@"use server" => .bun,
+        };
+    }
+};
+
 // test "Binding.init" {
 //     var binding = Binding.alloc(
 //         std.heap.page_allocator,
@@ -8449,7 +9544,7 @@ pub const Macro = struct {
 //     printmem("E.Await:                   {d} bits\n", .{@bitSizeOf(E.Await)});
 //     printmem("E.Yield:                   {d} bits\n", .{@bitSizeOf(E.Yield)});
 //     printmem("E.If:                      {d} bits\n", .{@bitSizeOf(E.If)});
-//     printmem("E.RequireOrRequireResolve: {d} bits\n", .{@bitSizeOf(E.RequireOrRequireResolve)});
+//     printmem("E.RequireResolveString: {d} bits\n", .{@bitSizeOf(E.RequireResolveString)});
 //     printmem("E.Import:                  {d} bits\n", .{@bitSizeOf(E.Import)});
 //     printmem("----------Expr:            {d} bits\n", .{@bitSizeOf(Expr)});
 // }
@@ -8525,3 +9620,4 @@ pub const Macro = struct {
 // Stmt               | 192
 // STry               | 384
 // -- ESBuild bit sizes
+

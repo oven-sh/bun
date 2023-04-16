@@ -116,7 +116,7 @@ for (let [gcTick, label] of [
           cmd: ["sleep", "0.1"],
         });
         gcTick();
-        for await (const _ of proc.stdout!) {
+        for await (const _ of proc.stdout) {
           throw new Error("should not happen");
         }
         gcTick();
@@ -264,7 +264,7 @@ for (let [gcTick, label] of [
           stderr: "inherit",
         });
 
-        var stdout = proc.stdout!;
+        var stdout = proc.stdout;
         var reader = stdout.getReader();
         proc.stdin!.write("hey\n");
         await proc.stdin!.end();
@@ -319,7 +319,7 @@ for (let [gcTick, label] of [
             describe("should should allow reading stdout", () => {
               it("before exit", async () => {
                 const process = callback();
-                const output = await readableStreamToText(process.stdout!);
+                const output = await readableStreamToText(process.stdout);
                 await process.exited;
                 const expected = fixture + "\n";
 
@@ -366,7 +366,7 @@ for (let [gcTick, label] of [
               it("after exit", async () => {
                 const process = callback();
                 await process.exited;
-                const output = await readableStreamToText(process.stdout!);
+                const output = await readableStreamToText(process.stdout);
                 const expected = fixture + "\n";
                 expect(output.length).toBe(expected.length);
                 expect(output).toBe(expected);

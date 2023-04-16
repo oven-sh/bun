@@ -113,3 +113,51 @@ pub const hardcode_localhost_to_127_0_0_1 = true;
 pub const support_jsxs_in_jsx_transform = false;
 
 pub const use_simdutf = !@import("bun").JSC.is_bindgen;
+
+pub const inline_properties_in_transpiler = true;
+
+pub const same_target_becomes_destructuring = true;
+
+pub const react_server_components = true;
+
+pub const help_catch_memory_issues = @import("bun").Environment.allow_assert;
+
+/// This performs similar transforms as https://github.com/rollup/plugins/tree/master/packages/commonjs
+///
+/// Though, not exactly the same.
+///
+/// There are two scenarios where this kicks in:
+///
+/// 1) You import a CommonJS module using ESM.
+///
+/// Semantically, CommonJS expects us to wrap everything in a closure. That
+/// bloats the code. We want to make the generated code as small as we can.
+///
+/// To avoid that, we attempt to unwrap the CommonJS module into ESM.
+///
+/// But, we can't always do that. When you have cyclical require() or directly
+/// mutate exported bindings, we can't unwrap it.
+///
+/// However, in the simple case, where you do something like
+///
+///     exports.foo = 123;
+///     exports.bar = 456;
+///
+/// We can unwrap it into
+///
+///    export const foo = 123;
+///    export const bar = 456;
+///
+/// 2) You import a CommonJS module using CommonJS.
+///
+/// This is a bit more complicated. We want to avoid the closure wrapper, but
+/// it's really difficult to track down all the places where you mutate the
+/// exports object. `require.cache` makes it even more complicated.
+/// So, we just wrap the entire module in a closure.
+///
+/// But what if we previously unwrapped it? 
+/// 
+/// In that case, we wrap it again in the printer.
+pub const unwrap_commonjs_to_esm = true;
+
+pub const boundary_based_chunking = true;

@@ -1,7 +1,8 @@
 #include "root.h"
 #include "ZigGlobalObject.h"
-
+#include <JavaScriptCore/GlobalObjectMethodTable.h>
 #include "helpers.h"
+#include "BunClientData.h"
 
 #include "JavaScriptCore/AggregateError.h"
 #include "JavaScriptCore/BytecodeIndex.h"
@@ -54,7 +55,6 @@
 #include "JavaScriptCore/StackFrame.h"
 #include "JavaScriptCore/StackVisitor.h"
 #include "JavaScriptCore/VM.h"
-#include "JavaScriptCore/VMEntryScope.h"
 #include "JavaScriptCore/WasmFaultSignalHandler.h"
 #include "wtf/Gigacage.h"
 #include "wtf/URL.h"
@@ -111,6 +111,8 @@
 #include "JavaScriptCore/DateInstance.h"
 
 #include "BunPlugin.h"
+#include "JSEnvironmentVariableMap.h"
+#include "DOMIsoSubspaces.h"
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
@@ -169,6 +171,11 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
 #include "JSDOMFormData.h"
 
+#include "ErrorStackTrace.h"
+#include "CallSite.h"
+#include "CallSitePrototype.h"
+#include "DOMWrapperWorld-class.h"
+
 constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 
 #ifdef __APPLE__
@@ -195,7 +202,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::AllowUnfinalizedAccessScope scope;
 
         JSC::Options::useConcurrentJIT() = true;
-        JSC::Options::useSigillCrashAnalyzer() = true;
+        // JSC::Options::useSigillCrashAnalyzer() = true;
         JSC::Options::useWebAssembly() = true;
         JSC::Options::useSourceProviderCache() = true;
         // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
@@ -3080,6 +3087,17 @@ JSC_DEFINE_HOST_FUNCTION(functionGetDirectStreamDetails, (JSC::JSGlobalObject * 
     resultObject->putDirect(vm, clientData->builtinNames().dataPublicName(), typeValue, 0);
 
     return JSC::JSValue::encode(resultObject);
+}
+
+JSC::GCClient::IsoSubspace* GlobalObject::subspaceForImpl(JSC::VM& vm)
+{
+    return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::Yes>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForWorkerGlobalScope.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWorkerGlobalScope = std::forward<decltype(space)>(space); },
+        [](auto& spaces) { return spaces.m_subspaceForWorkerGlobalScope.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForWorkerGlobalScope = std::forward<decltype(space)>(space); },
+        [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForJSWorkerGlobalScope; });
 }
 
 void GlobalObject::addBuiltinGlobals(JSC::VM& vm)

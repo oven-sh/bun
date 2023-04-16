@@ -219,22 +219,23 @@ pub const Linker = struct {
         var needs_bundle = false;
         var had_resolve_errors = false;
         var needs_require = false;
+        _ = needs_require;
         var node_module_bundle_import_path: ?string = null;
 
         const is_deferred = result.pending_imports.len > 0;
 
-        var import_records = result.ast.import_records;
+        var import_records = result.ast.import_records.listManaged(linker.allocator);
         defer {
-            result.ast.import_records = import_records;
+            result.ast.import_records = ImportRecord.List.fromList(import_records);
         }
         // Step 1. Resolve imports & requires
         switch (result.loader) {
             .jsx, .js, .ts, .tsx => {
                 var record_i: u32 = 0;
-                const record_count = @truncate(u32, import_records.len);
+                const record_count = @truncate(u32, import_records.items.len);
 
                 outer: while (record_i < record_count) : (record_i += 1) {
-                    var import_record = &import_records[record_i];
+                    var import_record = &import_records.items[record_i];
                     if (import_record.is_unused or
                         (is_bun and is_deferred and !result.isPendingImport(record_i))) continue;
 
@@ -373,7 +374,6 @@ pub const Linker = struct {
                                     if (node_modules_bundle.getPackage(package_name)) |pkg| {
                                         const import_path = text[@min(text.len, package_name.len + 1)..];
                                         if (node_modules_bundle.findModuleIDInPackageIgnoringExtension(pkg, import_path)) |found_module| {
-                                            import_record.is_bundled = true;
                                             node_module_bundle_import_path = node_module_bundle_import_path orelse
                                                 linker.nodeModuleBundleImportPath(origin);
 
@@ -401,7 +401,6 @@ pub const Linker = struct {
                                         if (node_modules_bundle.getPackage(package_name)) |pkg| {
                                             const import_path = runtime[@min(runtime.len, package_name.len + 1)..];
                                             if (node_modules_bundle.findModuleInPackage(pkg, import_path)) |found_module| {
-                                                import_record.is_bundled = true;
                                                 node_module_bundle_import_path = node_module_bundle_import_path orelse
                                                     linker.nodeModuleBundleImportPath(origin);
 
@@ -531,7 +530,6 @@ pub const Linker = struct {
                                                 );
                                             }
 
-                                            import_record.is_bundled = true;
                                             node_module_bundle_import_path = node_module_bundle_import_path orelse
                                                 linker.nodeModuleBundleImportPath(origin);
                                             import_record.path.text = node_module_bundle_import_path.?;
@@ -569,8 +567,6 @@ pub const Linker = struct {
                         if (loader != .napi and resolved_import.shouldAssumeCommonJS(import_record.kind)) {
                             import_record.do_commonjs_transform_in_printer = true;
                             import_record.module_id = @truncate(u32, std.hash.Wyhash.hash(0, path.pretty));
-                            result.ast.needs_runtime = true;
-                            needs_require = true;
                         }
                     } else |err| {
                         switch (err) {
@@ -800,66 +796,67 @@ pub const Linker = struct {
         if (had_resolve_errors) return error.ResolveError;
         result.ast.externals = try externals.toOwnedSlice();
 
-        if (result.ast.needs_runtime and (result.ast.runtime_import_record_id == null or import_records.len == 0)) {
-            var new_import_records = try linker.allocator.alloc(ImportRecord, import_records.len + 1);
-            bun.copy(ImportRecord, new_import_records, import_records);
+        //     if (result.ast.needs_runtime and (result.ast.runtime_import_record_id == null or import_records.items.len == 0)) {
+        //         var new_import_records = try linker.allocator.alloc(ImportRecord, import_records.items.len + 1);
+        //         bun.copy(ImportRecord, new_import_records, import_records.items);
 
-            new_import_records[new_import_records.len - 1] = ImportRecord{
-                .kind = .stmt,
-                .path = if (linker.options.node_modules_bundle != null)
-                    Fs.Path.init(node_module_bundle_import_path orelse linker.nodeModuleBundleImportPath(origin))
-                else if (import_path_format == .absolute_url)
-                    Fs.Path.initWithNamespace(try origin.joinAlloc(linker.allocator, "", "", "bun:wrap", "", ""), "bun")
-                else
-                    try linker.generateImportPath(source_dir, Linker.runtime_source_path, false, "bun", origin, import_path_format),
+        //         new_import_records[new_import_records.len - 1] = ImportRecord{
+        //             .kind = .stmt,
+        //             .path = if (linker.options.node_modules_bundle != null)
+        //                 Fs.Path.init(node_module_bundle_import_path orelse linker.nodeModuleBundleImportPath(origin))
+        //             else if (import_path_format == .absolute_url)
+        //                 Fs.Path.initWithNamespace(try origin.joinAlloc(linker.allocator, "", "", "bun:wrap", "", ""), "bun")
+        //             else
+        //                 try linker.generateImportPath(source_dir, Linker.runtime_source_path, false, "bun", origin, import_path_format),
 
-                .range = logger.Range{ .loc = logger.Loc{ .start = 0 }, .len = 0 },
-            };
-            result.ast.runtime_import_record_id = @truncate(u32, new_import_records.len - 1);
-            import_records = new_import_records;
-        }
+        //             .range = logger.Range{ .loc = logger.Loc{ .start = 0 }, .len = 0 },
+        //         };
+        //         result.ast.runtime_import_record_id = @truncate(u32, import_records.items.len - 1);
+        //         import_records.items = new_import_records;
+        //         import_records.capacity = new_import_records.len;
+        //     }
 
-        // We _assume_ you're importing ESM.
-        // But, that assumption can be wrong without parsing code of the imports.
-        // That's where in here, we inject
-        // > import {require} from 'bun:wrap';
-        // Since they definitely aren't using require, we don't have to worry about the symbol being renamed.
-        if (needs_require and !result.ast.uses_require_ref) {
-            result.ast.uses_require_ref = true;
-            const PrependPart = struct {
-                stmts: [1]js_ast.Stmt,
-                import_statement: js_ast.S.Import,
-                clause_items: [1]js_ast.ClauseItem,
-            };
-            var prepend = linker.allocator.create(PrependPart) catch unreachable;
+        //     // We _assume_ you're importing ESM.
+        //     // But, that assumption can be wrong without parsing code of the imports.
+        //     // That's where in here, we inject
+        //     // > import {require} from 'bun:wrap';
+        //     // Since they definitely aren't using require, we don't have to worry about the symbol being renamed.
+        //     if (needs_require and !result.ast.uses_require_ref) {
+        //         result.ast.uses_require_ref = true;
+        //         const PrependPart = struct {
+        //             stmts: [1]js_ast.Stmt,
+        //             import_statement: js_ast.S.Import,
+        //             clause_items: [1]js_ast.ClauseItem,
+        //         };
+        //         var prepend = linker.allocator.create(PrependPart) catch unreachable;
 
-            prepend.* = .{
-                .clause_items = .{
-                    .{
-                        .alias = require_alias,
-                        .original_name = "",
-                        .alias_loc = logger.Loc.Empty,
-                        .name = js_ast.LocRef{
-                            .loc = logger.Loc.Empty,
-                            .ref = result.ast.require_ref,
-                        },
-                    },
-                },
-                .import_statement = .{
-                    .namespace_ref = Ref.None,
-                    .items = &prepend.clause_items,
-                    .import_record_index = result.ast.runtime_import_record_id.?,
-                },
-                .stmts = undefined,
-            };
+        //         prepend.* = .{
+        //             .clause_items = .{
+        //                 .{
+        //                     .alias = require_alias,
+        //                     .original_name = "",
+        //                     .alias_loc = logger.Loc.Empty,
+        //                     .name = js_ast.LocRef{
+        //                         .loc = logger.Loc.Empty,
+        //                         .ref = result.ast.require_ref,
+        //                     },
+        //                 },
+        //             },
+        //             .import_statement = .{
+        //                 .namespace_ref = Ref.None,
+        //                 .items = &prepend.clause_items,
+        //                 .import_record_index = result.ast.runtime_import_record_id.?,
+        //             },
+        //             .stmts = undefined,
+        //         };
 
-            prepend.stmts[0] = .{
-                .data = .{ .s_import = &prepend.import_statement },
-                .loc = logger.Loc.Empty,
-            };
+        //         prepend.stmts[0] = .{
+        //             .data = .{ .s_import = &prepend.import_statement },
+        //             .loc = logger.Loc.Empty,
+        //         };
 
-            result.ast.prepend_part = js_ast.Part{ .stmts = &prepend.stmts };
-        }
+        //         result.ast.prepend_part = js_ast.Part{ .stmts = &prepend.stmts };
+        //     }
     }
 
     const ImportPathsList = allocators.BSSStringList(512, 128);
@@ -904,7 +901,12 @@ pub const Linker = struct {
                     pretty = _pretty;
                     relative_name = try linker.allocator.dupe(u8, relative_name);
                 } else {
-                    pretty = try linker.allocator.dupe(u8, relative_name);
+                    if (relative_name.len > 1 and !(relative_name[0] == std.fs.path.sep or relative_name[0] == '.')) {
+                        pretty = try strings.concat(linker.allocator, &.{ "./", relative_name });
+                    } else {
+                        pretty = try linker.allocator.dupe(u8, relative_name);
+                    }
+
                     relative_name = pretty;
                 }
 

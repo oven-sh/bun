@@ -1,6 +1,7 @@
 #include "Process.h"
 #include "JavaScriptCore/JSMicrotask.h"
 #include "JavaScriptCore/ObjectConstructor.h"
+#include "JavaScriptCore/NumberPrototype.h"
 #include "node_api.h"
 #include <dlfcn.h>
 #include "ZigGlobalObject.h"
@@ -8,6 +9,7 @@
 #include "JSEnvironmentVariableMap.h"
 #include "ImportMetaObject.h"
 #include <sys/stat.h>
+#include "ZigConsoleClient.h"
 #pragma mark - Node.js Process
 
 namespace Zig {

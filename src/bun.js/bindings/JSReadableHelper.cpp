@@ -12,6 +12,8 @@
 #include "headers.h"
 #include "JSDOMConvertEnumeration.h"
 #include "JavaScriptCore/StrongInlines.h"
+#include "BunClientData.h"
+
 namespace WebCore {
 using namespace JSC;
 

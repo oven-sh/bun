@@ -610,16 +610,16 @@ pub const Snapshots = struct {
         );
 
         var parse_result = try parser.parse();
-        var ast = if (parse_result.ok) parse_result.ast else return error.ParseError;
+        var ast = if (parse_result == .ast) parse_result.ast else return error.ParseError;
         defer ast.deinit();
 
-        if (ast.exports_ref == null) return;
-        const exports_ref = ast.exports_ref.?;
+        if (ast.exports_ref.isNull()) return;
+        const exports_ref = ast.exports_ref;
 
         // TODO: when common js transform changes, keep this updated or add flag to support this version
 
         const export_default = brk: {
-            for (ast.parts) |part| {
+            for (ast.parts.slice()) |part| {
                 for (part.stmts) |stmt| {
                     if (stmt.data == .s_export_default and stmt.data.s_export_default.value == .expr) {
                         break :brk stmt.data.s_export_default.value.expr;
@@ -1478,10 +1478,16 @@ pub const Expect = struct {
         const thisValue = callFrame.this();
 
         const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
             return .zero;
         };
         value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalObject.throw("toBeFalsy() must be called in a test", .{});
+            return .zero;
+        }
+        active_test_expectation_counter.actual += 1;
 
         const not = this.op.contains(.not);
         var pass = false;

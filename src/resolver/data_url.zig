@@ -76,29 +76,6 @@ pub const PercentEncoding = struct {
     }
 };
 
-pub const MimeType = enum {
-    Unsupported,
-    TextCSS,
-    TextJavaScript,
-    ApplicationJSON,
-
-    pub const Map = ComptimeStringMap(MimeType, .{
-        .{ "text/css", MimeType.TextCSS },
-        .{ "text/javascript", MimeType.TextJavaScript },
-        .{ "application/json", MimeType.ApplicationJSON },
-    });
-
-    pub fn decode(str: string) MimeType {
-        // Remove things like ";charset=utf-8"
-        var mime_type = str;
-        if (strings.indexOfChar(mime_type, ';')) |semicolon| {
-            mime_type = mime_type[0..semicolon];
-        }
-
-        return Map.get(mime_type) orelse MimeType.Unsupported;
-    }
-};
-
 pub const DataURL = struct {
     mime_type: string,
     data: string,
@@ -124,7 +101,7 @@ pub const DataURL = struct {
         return parsed;
     }
 
-    pub fn decode_mime_type(d: DataURL) MimeType {
-        return MimeType.decode(d.mime_type);
+    pub fn decodeMimeType(d: DataURL) bun.HTTP.MimeType {
+        return bun.HTTP.MimeType.init(d.mime_type);
     }
 };

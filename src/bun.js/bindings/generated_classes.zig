@@ -90,6 +90,9 @@ pub const JSBlob = struct {
             @compileLog("Expected Blob.getFormData to be a callback but received " ++ @typeName(@TypeOf(Blob.getFormData)));
         if (@TypeOf(Blob.getJSON) != CallbackType)
             @compileLog("Expected Blob.getJSON to be a callback but received " ++ @typeName(@TypeOf(Blob.getJSON)));
+        if (@TypeOf(Blob.getLastModified) != GetterType)
+            @compileLog("Expected Blob.getLastModified to be a getter");
+
         if (@TypeOf(Blob.getSize) != GetterType)
             @compileLog("Expected Blob.getSize to be a getter");
 
@@ -110,12 +113,88 @@ pub const JSBlob = struct {
             @export(Blob.getArrayBuffer, .{ .name = "BlobPrototype__getArrayBuffer" });
             @export(Blob.getFormData, .{ .name = "BlobPrototype__getFormData" });
             @export(Blob.getJSON, .{ .name = "BlobPrototype__getJSON" });
+            @export(Blob.getLastModified, .{ .name = "BlobPrototype__getLastModified" });
             @export(Blob.getSize, .{ .name = "BlobPrototype__getSize" });
             @export(Blob.getSlice, .{ .name = "BlobPrototype__getSlice" });
             @export(Blob.getStream, .{ .name = "BlobPrototype__getStream" });
             @export(Blob.getText, .{ .name = "BlobPrototype__getText" });
             @export(Blob.getType, .{ .name = "BlobPrototype__getType" });
             @export(Blob.getWriter, .{ .name = "BlobPrototype__getWriter" });
+        }
+    }
+};
+pub const JSBundler = struct {
+    const Bundler = Classes.Bundler;
+    const GetterType = fn (*Bundler, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*Bundler, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*Bundler, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*Bundler, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*Bundler, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*Bundler {
+        JSC.markBinding(@src());
+        return Bundler__fromJS(value);
+    }
+
+    /// Get the Bundler constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        return Bundler__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of Bundler
+    pub fn toJS(this: *Bundler, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = Bundler__create(globalObject, this);
+            std.debug.assert(value__.as(Bundler).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return Bundler__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of Bundler.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*Bundler) bool {
+        JSC.markBinding(@src());
+        return Bundler__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *Bundler, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(Bundler__dangerouslySetPtr(value, null));
+    }
+
+    extern fn Bundler__fromJS(JSC.JSValue) ?*Bundler;
+    extern fn Bundler__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn Bundler__create(globalObject: *JSC.JSGlobalObject, ptr: ?*Bundler) JSC.JSValue;
+
+    extern fn Bundler__dangerouslySetPtr(JSC.JSValue, ?*Bundler) bool;
+
+    comptime {
+        if (@TypeOf(Bundler.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*Bundler)) {
+            @compileLog("Bundler.constructor is not a constructor");
+        }
+
+        if (@TypeOf(Bundler.finalize) != (fn (*Bundler) callconv(.C) void)) {
+            @compileLog("Bundler.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(Bundler.handleRequest) != CallbackType)
+            @compileLog("Expected Bundler.handleRequest to be a callback but received " ++ @typeName(@TypeOf(Bundler.handleRequest)));
+        if (@TypeOf(Bundler.write) != CallbackType)
+            @compileLog("Expected Bundler.write to be a callback but received " ++ @typeName(@TypeOf(Bundler.write)));
+        if (!JSC.is_bindgen) {
+            @export(Bundler.constructor, .{ .name = "BundlerClass__construct" });
+            @export(Bundler.finalize, .{ .name = "BundlerClass__finalize" });
+            @export(Bundler.handleRequest, .{ .name = "BundlerPrototype__handleRequest" });
+            @export(Bundler.hasPendingActivity, .{ .name = "Bundler__hasPendingActivity" });
+            @export(Bundler.write, .{ .name = "BundlerPrototype__write" });
         }
     }
 };
@@ -3384,6 +3463,9 @@ pub const JSTCPSocket = struct {
             @compileLog("TCPSocket.finalize is not a finalizer");
         }
 
+        if (@TypeOf(TCPSocket.getAuthorized) != GetterType)
+            @compileLog("Expected TCPSocket.getAuthorized to be a getter");
+
         if (@TypeOf(TCPSocket.getData) != GetterType)
             @compileLog("Expected TCPSocket.getData to be a getter");
 
@@ -3393,6 +3475,8 @@ pub const JSTCPSocket = struct {
             @compileLog("Expected TCPSocket.end to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.end)));
         if (@TypeOf(TCPSocket.flush) != CallbackType)
             @compileLog("Expected TCPSocket.flush to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.flush)));
+        if (@TypeOf(TCPSocket.getAuthorizationError) != CallbackType)
+            @compileLog("Expected TCPSocket.getAuthorizationError to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getAuthorizationError)));
         if (@TypeOf(TCPSocket.getListener) != GetterType)
             @compileLog("Expected TCPSocket.getListener to be a getter");
 
@@ -3421,6 +3505,8 @@ pub const JSTCPSocket = struct {
             @export(TCPSocket.end, .{ .name = "TCPSocketPrototype__end" });
             @export(TCPSocket.finalize, .{ .name = "TCPSocketClass__finalize" });
             @export(TCPSocket.flush, .{ .name = "TCPSocketPrototype__flush" });
+            @export(TCPSocket.getAuthorizationError, .{ .name = "TCPSocketPrototype__getAuthorizationError" });
+            @export(TCPSocket.getAuthorized, .{ .name = "TCPSocketPrototype__getAuthorized" });
             @export(TCPSocket.getData, .{ .name = "TCPSocketPrototype__getData" });
             @export(TCPSocket.getListener, .{ .name = "TCPSocketPrototype__getListener" });
             @export(TCPSocket.getLocalPort, .{ .name = "TCPSocketPrototype__getLocalPort" });
@@ -3532,6 +3618,9 @@ pub const JSTLSSocket = struct {
             @compileLog("TLSSocket.finalize is not a finalizer");
         }
 
+        if (@TypeOf(TLSSocket.getAuthorized) != GetterType)
+            @compileLog("Expected TLSSocket.getAuthorized to be a getter");
+
         if (@TypeOf(TLSSocket.getData) != GetterType)
             @compileLog("Expected TLSSocket.getData to be a getter");
 
@@ -3541,6 +3630,8 @@ pub const JSTLSSocket = struct {
             @compileLog("Expected TLSSocket.end to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.end)));
         if (@TypeOf(TLSSocket.flush) != CallbackType)
             @compileLog("Expected TLSSocket.flush to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.flush)));
+        if (@TypeOf(TLSSocket.getAuthorizationError) != CallbackType)
+            @compileLog("Expected TLSSocket.getAuthorizationError to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getAuthorizationError)));
         if (@TypeOf(TLSSocket.getListener) != GetterType)
             @compileLog("Expected TLSSocket.getListener to be a getter");
 
@@ -3569,6 +3660,8 @@ pub const JSTLSSocket = struct {
             @export(TLSSocket.end, .{ .name = "TLSSocketPrototype__end" });
             @export(TLSSocket.finalize, .{ .name = "TLSSocketClass__finalize" });
             @export(TLSSocket.flush, .{ .name = "TLSSocketPrototype__flush" });
+            @export(TLSSocket.getAuthorizationError, .{ .name = "TLSSocketPrototype__getAuthorizationError" });
+            @export(TLSSocket.getAuthorized, .{ .name = "TLSSocketPrototype__getAuthorized" });
             @export(TLSSocket.getData, .{ .name = "TLSSocketPrototype__getData" });
             @export(TLSSocket.getListener, .{ .name = "TLSSocketPrototype__getListener" });
             @export(TLSSocket.getLocalPort, .{ .name = "TLSSocketPrototype__getLocalPort" });
@@ -3840,6 +3933,7 @@ pub const JSTranspiler = struct {
 
 comptime {
     _ = JSBlob;
+    _ = JSBundler;
     _ = JSCryptoHasher;
     _ = JSDirent;
     _ = JSExpect;

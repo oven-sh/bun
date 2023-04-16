@@ -5,6 +5,7 @@
 #include "ZigGlobalObject.h"
 #include "JSDOMOperation.h"
 #include "headers.h"
+#include "BunClientData.h"
 
 namespace WebCore {
 

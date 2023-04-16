@@ -16,10 +16,9 @@ type AppServeRouter =
   | {
       // handler mode
       mode: "static" | "build" | "handler";
-      // key borrowed from FileSystemRouter for consistence
+      // key borrowed from FileSystemRouter for consistency
       // but slightly weird here
       style: "static" | "nextjs";
-      // ser
       // directory to serve from
       // e.g. "./public"
       dir: string;
@@ -50,9 +49,6 @@ type AppServeRouter =
       // this file is automatically added as an entrypoint in the build
       // e.g. ./serve.tsx
       handler: string;
-      // what config to use for the build
-      // e.g. "client"
-      build: string;
 
       // router info - this is optional
       // not necessary for simple handlers
@@ -65,10 +61,16 @@ type AppServeRouter =
       // handle requests that match this prefix
       // e.g. /api
       prefix?: string;
+      // what config to use for to build the matched file
+      // e.g. "client"
+      build: string;
 
       // whether to provide a build manifest in context.handler
       // default true
       manifest?: boolean;
+      // whether to parse query params
+      // provided as context.queryParams
+      queryParams?: boolean;
     };
 
 export declare class App {
@@ -97,12 +99,30 @@ export declare class App {
   handle(req: Request): Promise<Response | null>;
 }
 
+/////////////////////////////////////////
+/////////////////////////////////////////
+/////////     HANDLER SPEC     //////////
+/////////////////////////////////////////
+/////////////////////////////////////////
+interface Handler {
+  default: (req: Request, context: HandlerContext) => Promise<Response | null>;
+  // optional function that returns a list of imports
+  // these modules are loaded synchronously by Bun
+  // and passed into handler as context.imports
+  getImports?: (context: HandlerContext) => Import[];
+}
+
+type Import = { names: { [k: string]: string }; from: string };
+
 // the data that is passed as context to the Request handler
-// - manifest: always provided
+// - manifest
 // - match: MatchedResult, only provided if `match` is specified in the `AppConfig`
+// - imports: only provided if `getImports` is specified in the `Handler`
+
 interface HandlerContext {
   manifest?: BuildManifest;
   match?: MatchedRoute;
+  imports: unknown; // depends on result of `getImports`
 }
 
 /////////////////////////////////////

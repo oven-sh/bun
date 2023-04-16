@@ -2952,6 +2952,18 @@ pub const Parser = struct {
                         sliced.items[0] = stmt;
                         try p.appendPart(parts_list, sliced.items);
                     },
+
+                    // Hoist functions to the top in the output
+                    // This is normally done by the JS parser, but we need to do it here
+                    // incase we have CommonJS exports converted to ESM exports there are assignments
+                    // to the exports object that need to be hoisted.
+                    .s_function => {
+                        var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
+                        sliced.items.len = 1;
+                        sliced.items[0] = stmt;
+                        try p.appendPart(&before, sliced.items);
+                    },
+
                     else => {
                         var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
                         sliced.items.len = 1;
@@ -3011,13 +3023,13 @@ pub const Parser = struct {
         var did_import_fast_refresh = false;
         _ = did_import_fast_refresh;
 
-        if (comptime FeatureFlags.commonjs_to_esm) {
+        if (comptime FeatureFlags.unwrap_commonjs_to_esm) {
             if (p.commonjs_named_exports.count() > 0) {
                 var export_refs = p.commonjs_named_exports.values();
                 var export_names = p.commonjs_named_exports.keys();
 
                 if (!p.commonjs_named_exports_deoptimized) {
-                    // We make this safe by doing toCommonJS() at runtimes
+                    // We make this safe by doing toCommonJS() at runtime
                     for (export_refs, export_names) |*export_ref, alias| {
                         if (export_ref.needs_decl) {
                             var this_stmts = p.allocator.alloc(Stmt, 2) catch unreachable;
@@ -3033,6 +3045,7 @@ pub const Parser = struct {
                                 S.Local{
                                     .kind = .k_var,
                                     .is_export = false,
+                                    .was_commonjs_export = true,
                                     .decls = decls,
                                 },
                                 export_ref.loc_ref.loc,
@@ -3056,7 +3069,8 @@ pub const Parser = struct {
                             before.append(.{
                                 .stmts = this_stmts,
                                 .declared_symbols = declared_symbols,
-                                .can_be_removed_if_unused = true,
+                                .tag = .commonjs_named_export,
+                                .can_be_removed_if_unused = p.stmtsCanBeRemovedIfUnused(this_stmts),
                             }) catch unreachable;
                         }
                     }
@@ -3094,7 +3108,7 @@ pub const Parser = struct {
                             const left = bin.left;
                             const right = bin.right;
                             if (bin.op == .bin_assign and
-                                right.data == .e_require and
+                                right.data == .e_require_string and
                                 left.data == .e_dot and
                                 strings.eqlComptime(left.data.e_dot.name, "exports") and
                                 left.data.e_dot.target.data == .e_identifier and
@@ -3104,7 +3118,7 @@ pub const Parser = struct {
                                     .ast = js_ast.Ast{
                                         .allocator = p.allocator,
                                         .import_records = ImportRecord.List.init(p.import_records.items),
-                                        .redirect_import_record_index = right.data.e_require.import_record_index,
+                                        .redirect_import_record_index = right.data.e_require_string.import_record_index,
                                         .named_imports = p.named_imports,
                                         .named_exports = p.named_exports,
                                     },
@@ -3180,6 +3194,10 @@ pub const Parser = struct {
                     exports_kind = .esm;
                 },
             }
+        }
+
+        if (exports_kind == .esm and p.commonjs_named_exports.count() > 0) {
+            exports_kind = .esm_with_dynamic_fallback;
         }
 
         // Auto inject jest globals into the test file
@@ -3416,7 +3434,7 @@ pub const Parser = struct {
         //                             if (use_automatic_identifier) {
         //                                 break :brk automatic_identifier;
         //                             } else if (p.options.features.dynamic_require) {
-        //                                 break :brk p.newExpr(E.Require{ .import_record_index = import_record_id }, loc);
+        //                                 break :brk p.newExpr(E.RequireString{ .import_record_index = import_record_id }, loc);
         //                             } else {
         //                                 require_call_args_base[require_call_args_i] = automatic_identifier;
         //                                 require_call_args_i += 1;
@@ -3487,7 +3505,7 @@ pub const Parser = struct {
         //                         // }
 
         //                         p.import_records.items[import_record_id].tag = .jsx_import;
-        //                         if (dot_call_target.data != .e_require) {
+        //                         if (dot_call_target.data != .e_require_string) {
         //                             // When everything is CommonJS
         //                             // We import JSX like this:
         //                             // var {jsxDev} = require("react/jsx-dev")
@@ -3525,7 +3543,7 @@ pub const Parser = struct {
         //                             if (p.options.can_import_from_bundle or p.options.enable_legacy_bundling or !p.options.features.allow_runtime) {
         //                                 break :brk classic_identifier;
         //                             } else if (p.options.features.dynamic_require) {
-        //                                 break :brk p.newExpr(E.Require{ .import_record_index = import_record_id }, loc);
+        //                                 break :brk p.newExpr(E.RequireString{ .import_record_index = import_record_id }, loc);
         //                             } else {
         //                                 const require_call_args_start = require_call_args_i;
         //                                 require_call_args_base[require_call_args_i] = classic_identifier;
@@ -3570,7 +3588,7 @@ pub const Parser = struct {
         //                             decl_i += 1;
         //                         }
 
-        //                         if (dot_call_target.data != .e_require) {
+        //                         if (dot_call_target.data != .e_require_string) {
         //                             jsx_part_stmts[stmt_i] = p.s(S.Import{
         //                                 .namespace_ref = classic_namespace_ref,
         //                                 .star_name_loc = loc,
@@ -4508,6 +4526,7 @@ fn NewParser_(
         commonjs_named_exports: js_ast.Ast.CommonJSNamedExports = .{},
         commonjs_named_exports_deoptimized: bool = false,
         commonjs_named_exports_needs_conversion: u32 = std.math.maxInt(u32),
+        had_commonjs_named_exports_this_visit: bool = false,
 
         parse_pass_symbol_uses: ParsePassSymbolUsageType = undefined,
         // duplicate_case_checker: void,
@@ -14093,6 +14112,8 @@ fn NewParser_(
             p.scopes_for_current_part.clearRetainingCapacity();
             p.import_records_for_current_part.clearRetainingCapacity();
 
+            p.had_commonjs_named_exports_this_visit = false;
+
             const allocator = p.allocator;
             var opts = PrependTempRefsOpts{};
             var partStmts = ListManaged(Stmt).fromOwnedSlice(allocator, stmts);
@@ -14200,8 +14221,10 @@ fn NewParser_(
                     ),
                     .scopes = try p.scopes_for_current_part.toOwnedSlice(p.allocator),
                     .can_be_removed_if_unused = p.stmtsCanBeRemovedIfUnused(_stmts),
+                    .tag = if (p.had_commonjs_named_exports_this_visit) js_ast.Part.Tag.commonjs_named_export else .none,
                 });
                 p.symbol_uses = .{};
+                p.had_commonjs_named_exports_this_visit = false;
             } else if (p.declared_symbols.len() > 0 or p.symbol_uses.count() > 0) {
 
                 // if the part is dead, invalidate all the usage counts
@@ -17021,7 +17044,7 @@ fn NewParser_(
                         }
                     }
 
-                    if (comptime FeatureFlags.commonjs_to_esm) {
+                    if (comptime FeatureFlags.unwrap_commonjs_to_esm) {
                         if (!p.is_control_flow_dead and id.ref.eql(p.exports_ref) and !p.commonjs_named_exports_deoptimized) {
                             if (identifier_opts.is_delete_target) {
                                 p.deoptimizeCommonJSNamedExports();
@@ -17068,34 +17091,38 @@ fn NewParser_(
                     }
                 },
                 .e_string => |str| {
-                    // minify "long-string".length to 11
-                    if (strings.eqlComptime(name, "length")) {
-                        return p.newExpr(E.Number{ .value = @intToFloat(f64, str.javascriptLength()) }, loc);
+                    if (p.options.features.minify_syntax) {
+                        // minify "long-string".length to 11
+                        if (strings.eqlComptime(name, "length")) {
+                            return p.newExpr(E.Number{ .value = @intToFloat(f64, str.javascriptLength()) }, loc);
+                        }
                     }
                 },
                 .e_object => |obj| {
                     if (comptime FeatureFlags.inline_properties_in_transpiler) {
-                        //
-                        // Rewrite a property access like this:
-                        //   { f: () => {} }.f
-                        // To:
-                        //   () => {}
-                        //
-                        // To avoid thinking too much about edgecases, only do this for:
-                        //   1) Objects with a single property
-                        //   2) Not a method, not a computed property
-                        if (obj.properties.len == 1 and
-                            !identifier_opts.is_delete_target and
-                            identifier_opts.assign_target == .none and !identifier_opts.is_call_target)
-                        {
-                            const prop: G.Property = obj.properties.ptr[0];
-                            if (prop.value != null and
-                                prop.flags.count() == 0 and
-                                prop.key != null and
-                                prop.key.?.data == .e_string and
-                                prop.key.?.data.e_string.eql([]const u8, name))
+                        if (p.options.features.minify_syntax) {
+                            //
+                            // Rewrite a property access like this:
+                            //   { f: () => {} }.f
+                            // To:
+                            //   () => {}
+                            //
+                            // To avoid thinking too much about edgecases, only do this for:
+                            //   1) Objects with a single property
+                            //   2) Not a method, not a computed property
+                            if (obj.properties.len == 1 and
+                                !identifier_opts.is_delete_target and
+                                identifier_opts.assign_target == .none and !identifier_opts.is_call_target)
                             {
-                                return prop.value.?;
+                                const prop: G.Property = obj.properties.ptr[0];
+                                if (prop.value != null and
+                                    prop.flags.count() == 0 and
+                                    prop.key != null and
+                                    prop.key.?.data == .e_string and
+                                    prop.key.?.data.e_string.eql([]const u8, name))
+                                {
+                                    return prop.value.?;
+                                }
                             }
                         }
                     }
@@ -17557,7 +17584,7 @@ fn NewParser_(
                 .s_expr => |data| {
                     p.stmt_expr_value = data.value.data;
                     const is_top_level = p.current_scope == p.module_scope;
-                    if (comptime FeatureFlags.commonjs_to_esm) {
+                    if (comptime FeatureFlags.unwrap_commonjs_to_esm) {
                         p.commonjs_named_exports_needs_conversion = if (is_top_level)
                             std.math.maxInt(u32)
                         else
@@ -17569,7 +17596,7 @@ fn NewParser_(
                     // simplify unused
                     data.value = SideEffects.simpifyUnusedExpr(p, data.value) orelse data.value.toEmpty();
 
-                    if (comptime FeatureFlags.commonjs_to_esm) {
+                    if (comptime FeatureFlags.unwrap_commonjs_to_esm) {
                         if (is_top_level) {
                             if (data.value.data == .e_binary) {
                                 const to_convert = p.commonjs_named_exports_needs_conversion;
@@ -17589,9 +17616,9 @@ fn NewParser_(
                                                 .value = bin.right,
                                             };
                                             p.recordDeclaredSymbol(ref) catch unreachable;
-                                            p.ignoreUsage(ref);
                                             p.esm_export_keyword.loc = stmt.loc;
                                             p.esm_export_keyword.len = 5;
+                                            p.had_commonjs_named_exports_this_visit = true;
                                             var clause_items = p.allocator.alloc(js_ast.ClauseItem, 1) catch unreachable;
                                             clause_items[0] = js_ast.ClauseItem{
                                                 // We want the generated name to not conflict
@@ -17608,6 +17635,7 @@ fn NewParser_(
                                                         S.Local{
                                                             .kind = .k_var,
                                                             .is_export = false,
+                                                            .was_commonjs_export = true,
                                                             .decls = decls,
                                                         },
                                                         stmt.loc,
@@ -19480,11 +19508,16 @@ fn NewParser_(
                                 break :list_getter &after;
                             },
                             .s_function => |data| {
-                                // Manually hoist block-level function declarations to preserve semantics.
-                                // This is only done for function declarations that are not generators
-                                // or async functions, since this is a backwards-compatibility hack from
-                                // Annex B of the JavaScript standard.
-                                if (!p.current_scope.kindStopsHoisting() and p.symbols.items[data.func.name.?.ref.?.innerIndex()].kind == .hoisted_function) {
+                                if (
+                                // Hoist module-level functions when
+                                ((FeatureFlags.unwrap_commonjs_to_esm and p.current_scope == p.module_scope and !data.func.flags.contains(.is_export)) or
+
+                                    // Manually hoist block-level function declarations to preserve semantics.
+                                    // This is only done for function declarations that are not generators
+                                    // or async functions, since this is a backwards-compatibility hack from
+                                    // Annex B of the JavaScript standard.
+                                    !p.current_scope.kindStopsHoisting()) and p.symbols.items[data.func.name.?.ref.?.innerIndex()].kind == .hoisted_function)
+                                {
                                     break :list_getter &before;
                                 }
                             },
@@ -19627,22 +19660,22 @@ fn NewParser_(
                     try stmts.resize(total_size);
                 }
 
-                var i: usize = 0;
+                var remain = stmts.items;
 
                 for (before.items) |item| {
-                    stmts.items[i] = item;
-                    i += 1;
+                    remain[0] = item;
+                    remain = remain[1..];
                 }
 
                 const visited_slice = visited.items[0..visited_count];
                 for (visited_slice) |item| {
-                    stmts.items[i] = item;
-                    i += 1;
+                    remain[0] = item;
+                    remain = remain[1..];
                 }
 
                 for (after.items) |item| {
-                    stmts.items[i] = item;
-                    i += 1;
+                    remain[0] = item;
+                    remain = remain[1..];
                 }
             }
 
@@ -19667,7 +19700,7 @@ fn NewParser_(
                         switch (stmt.data) {
                             .s_empty, .s_comment, .s_directive, .s_debugger, .s_type_script => continue,
                             .s_local => |local| {
-                                if (!local.is_export and local.kind == .k_const) {
+                                if (!local.is_export and local.kind == .k_const and !local.was_commonjs_export) {
                                     var decls: []Decl = local.decls;
                                     var end: usize = 0;
                                     for (decls) |decl| {

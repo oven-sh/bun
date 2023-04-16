@@ -326,6 +326,14 @@ pub const Runtime = struct {
 
         dont_bundle_twice: bool = false,
 
+        /// This is a list of packages which even when require() is used, we will
+        /// instead convert to ESM import statements.
+        ///
+        /// This is not normally a safe transformation.
+        ///
+        /// So we have a list of packages which we know are safe to do this with.
+        unwrap_commonjs_packages: []const string = .{},
+
         pub const ReplaceableExport = union(enum) {
             delete: void,
             replace: JSAst.Expr,

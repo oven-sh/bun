@@ -490,6 +490,7 @@ pub const Options = struct {
     css_import_behavior: Api.CssInJsBehavior = Api.CssInJsBehavior.facade,
 
     commonjs_named_exports: js_ast.Ast.CommonJSNamedExports = .{},
+    commonjs_named_exports_deoptimized: bool = false,
     commonjs_named_exports_ref: Ref = Ref.None,
 
     minify_whitespace: bool = false,
@@ -1942,7 +1943,7 @@ fn NewPrinter(
 
                     for (p.options.commonjs_named_exports.keys(), p.options.commonjs_named_exports.values()) |key, value| {
                         if (value.loc_ref.ref.?.eql(id.ref)) {
-                            if (value.needs_decl) {
+                            if (p.options.commonjs_named_exports_deoptimized or value.needs_decl) {
                                 p.printSymbol(p.options.commonjs_named_exports_ref);
                                 p.print(".");
                                 p.print(key);
@@ -2074,7 +2075,7 @@ fn NewPrinter(
                         p.print(")");
                     }
                 },
-                .e_require => |e| {
+                .e_require_string => |e| {
                     if (rewrite_esm_to_cjs and p.importRecord(e.import_record_index).is_legacy_bundled) {
                         p.printIndent();
                         p.printBundledRequire(e);
@@ -2086,7 +2087,7 @@ fn NewPrinter(
                         p.printRequireOrImportExpr(e.import_record_index, &([_]G.Comment{}), level, flags);
                     }
                 },
-                .e_require_or_require_resolve => |e| {
+                .e_require_resolve_string => |e| {
                     if (p.options.rewrite_require_resolve) {
                         // require.resolve("../src.js") => "../src.js"
                         p.printSpaceBeforeIdentifier();
@@ -4869,7 +4870,7 @@ fn NewPrinter(
             std.fmt.formatInt(module_id, 16, .lower, .{}, p) catch unreachable;
         }
 
-        pub fn printBundledRequire(p: *Printer, require: E.Require) void {
+        pub fn printBundledRequire(p: *Printer, require: E.RequireString) void {
             if (p.importRecord(require.import_record_index).is_internal) {
                 return;
             }

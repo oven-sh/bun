@@ -2673,6 +2673,7 @@ const LinkerContext = struct {
             var lazy_exports: []bool = this.graph.ast.items(.has_lazy_export);
             var symbols = &this.graph.symbols;
             defer this.graph.symbols = symbols.*;
+            var commonjs_named_exports: []js_ast.Ast.CommonJSNamedExports = this.graph.ast.items(.commonjs_named_exports);
 
             // Step 1: Figure out what modules must be CommonJS
             for (reachable) |source_index_| {
@@ -5344,8 +5345,8 @@ const LinkerContext = struct {
                                         loc,
                                     ),
                                     .value = Expr.init(
-                                        E.Require,
-                                        E.Require{
+                                        E.RequireString,
+                                        E.RequireString{
                                             .import_record_index = import_record_index,
                                         },
                                         loc,
@@ -5389,8 +5390,8 @@ const LinkerContext = struct {
                                             loc,
                                         ),
                                         .value = Expr.init(
-                                            E.Require,
-                                            E.Require{
+                                            E.RequireString,
+                                            E.RequireString{
                                                 .import_record_index = import_record_index,
                                             },
                                             loc,
@@ -5692,8 +5693,8 @@ const LinkerContext = struct {
                                     }
 
                                     break :brk Expr.init(
-                                        E.Require,
-                                        E.Require{
+                                        E.RequireString,
+                                        E.RequireString{
                                             .import_record_index = s.import_record_index,
                                         },
                                         stmt.loc,
@@ -5850,7 +5851,30 @@ const LinkerContext = struct {
                                 stmt.loc,
                             );
                             stmt.data.s_local.is_export = false;
-                            
+                        } else if (FeatureFlags.unwrap_commonjs_to_esm and s.was_commonjs_export and wrap == .cjs) {
+                            std.debug.assert(stmt.data.s_local.decls.len == 1);
+                            const decl = stmt.data.s_local.decls[0];
+                            stmt = Stmt.alloc(
+                                S.SExpr,
+                                S.SExpr{
+                                    .value = Expr.init(
+                                        E.Binary,
+                                        E.Binary{
+                                            .op = .bin_assign,
+                                            .left = Expr.init(
+                                                E.CommonJSExportIdentifier,
+                                                E.CommonJSExportIdentifier{
+                                                    .ref = decl.binding.data.b_identifier.ref,
+                                                },
+                                                decl.binding.loc,
+                                            ),
+                                            .right = decl.value orelse Expr.init(E.Undefined, E.Undefined{}, Logger.Loc.Empty),
+                                        },
+                                        stmt.loc,
+                                    ),
+                                },
+                                stmt.loc,
+                            );
                         }
                     },
 
@@ -5986,7 +6010,10 @@ const LinkerContext = struct {
         // const resolved_exports: []ResolvedExports = c.graph.meta.items(.resolved_exports);
         const all_flags: []const JSMeta.Flags = c.graph.meta.items(.flags);
         const flags = all_flags[part_range.source_index.get()];
-        const wrapper_part_index = c.graph.meta.items(.wrapper_part_index)[part_range.source_index.get()];
+        const wrapper_part_index = if (flags.wrap != .none)
+            c.graph.meta.items(.wrapper_part_index)[part_range.source_index.get()]
+        else
+            Index.invalid;
 
         // referencing everything by array makes the code a lot more annoying :(
         const ast: js_ast.Ast = c.graph.ast.get(part_range.source_index.get());
@@ -6041,7 +6068,6 @@ const LinkerContext = struct {
             const index = part_range.part_index_begin + @truncate(u32, index_);
             if (!part.is_live) {
                 // Skip the part if it's not in this chunk
-
                 continue;
             }
 
@@ -6175,17 +6201,20 @@ const LinkerContext = struct {
         // TODO: mergeAdjacentLocalStmts
 
         var out_stmts: []js_ast.Stmt = stmts.all_stmts.items;
+
         // Optionally wrap all statements in a closure
         if (needs_wrapper) {
             switch (flags.wrap) {
                 .cjs => {
+                    var uses_exports_ref = ast.uses_exports_ref;
+
                     // Only include the arguments that are actually used
                     var args = std.ArrayList(js_ast.G.Arg).initCapacity(
                         temp_allocator,
-                        if (ast.uses_module_ref or ast.uses_exports_ref) 2 else 0,
+                        if (ast.uses_module_ref or uses_exports_ref) 2 else 0,
                     ) catch unreachable;
 
-                    if (ast.uses_module_ref or ast.uses_exports_ref) {
+                    if (ast.uses_module_ref or uses_exports_ref) {
                         args.appendAssumeCapacity(
                             js_ast.G.Arg{
                                 .binding = js_ast.Binding.alloc(
@@ -6310,30 +6339,32 @@ const LinkerContext = struct {
                             var stmt: Stmt = stmt_;
                             switch (stmt.data) {
                                 .s_local => |local| {
-                                    var value: Expr = Expr.init(E.Missing, E.Missing{}, Logger.Loc.Empty);
-                                    for (local.decls) |*decl| {
-                                        const binding = decl.binding.toExpr(&hoisty);
-                                        if (decl.value) |other| {
-                                            value = value.joinWithComma(
-                                                binding.assign(
-                                                    other,
+                                    if (local.was_commonjs_export or ast.commonjs_named_exports.count() == 0) {
+                                        var value: Expr = Expr.init(E.Missing, E.Missing{}, Logger.Loc.Empty);
+                                        for (local.decls) |*decl| {
+                                            const binding = decl.binding.toExpr(&hoisty);
+                                            if (decl.value) |other| {
+                                                value = value.joinWithComma(
+                                                    binding.assign(
+                                                        other,
+                                                        temp_allocator,
+                                                    ),
                                                     temp_allocator,
-                                                ),
-                                                temp_allocator,
-                                            );
+                                                );
+                                            }
                                         }
-                                    }
 
-                                    if (value.isEmpty()) {
-                                        continue;
+                                        if (value.isEmpty()) {
+                                            continue;
+                                        }
+                                        stmt = Stmt.alloc(
+                                            S.SExpr,
+                                            S.SExpr{
+                                                .value = value,
+                                            },
+                                            stmt.loc,
+                                        );
                                     }
-                                    stmt = Stmt.alloc(
-                                        S.SExpr,
-                                        S.SExpr{
-                                            .value = value,
-                                        },
-                                        stmt.loc,
-                                    );
                                 },
                                 .s_class, .s_function => {
                                     stmts.outside_wrapper_prefix.append(stmt) catch unreachable;
@@ -6347,7 +6378,7 @@ const LinkerContext = struct {
                         inner_stmts.len = end;
                     }
 
-                    if (!c.options.minify_syntax and hoisty.decls.items.len > 0) {
+                    if (hoisty.decls.items.len > 0) {
                         stmts.outside_wrapper_prefix.append(
                             Stmt.alloc(
                                 S.Local,
@@ -6443,6 +6474,7 @@ const LinkerContext = struct {
 
             .commonjs_named_exports = ast.commonjs_named_exports,
             .commonjs_named_exports_ref = ast.exports_ref,
+            .commonjs_named_exports_deoptimized = flags.wrap == .cjs,
             .const_values = c.graph.const_values,
 
             .allocator = allocator,
@@ -6812,6 +6844,12 @@ const LinkerContext = struct {
         var _parts = parts[id].slice();
         for (_parts, 0..) |part, part_index| {
             var can_be_removed_if_unused = part.can_be_removed_if_unused;
+
+            if (can_be_removed_if_unused and part.tag == .commonjs_named_export) {
+                if (c.graph.meta.items(.flags)[id].wrap == .cjs) {
+                    can_be_removed_if_unused = false;
+                }
+            }
 
             // Also include any statement-level imports
             for (part.import_record_indices.slice()) |import_record_Index| {

@@ -918,6 +918,8 @@ pub const Command = struct {
             transform_only: bool = false,
             minify_syntax: bool = false,
             minify_whitespace: bool = false,
+
+            always_
         };
 
         const _ctx = Command.Context{

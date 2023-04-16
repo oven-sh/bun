@@ -5064,6 +5064,8 @@ pub const S = struct {
         // statements where the import is never used.
         was_ts_import_equals: bool = false,
 
+        was_commonjs_export: bool = false,
+
         pub const Kind = enum(u2) {
             k_var,
             k_let,
@@ -5695,6 +5697,7 @@ pub const Part = struct {
         bun_plugin,
         bun_test,
         dead_due_to_inlining,
+        commonjs_named_export,
     };
 
     pub const SymbolUseMap = std.ArrayHashMapUnmanaged(Ref, Symbol.Use, RefHashCtx, false);

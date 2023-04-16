@@ -4349,6 +4349,7 @@ pub fn concatWithLength(
         @memcpy(remain.ptr, arg.ptr, arg.len);
         remain = remain[arg.len..];
     }
+    std.debug.assert(remain.len == 0); // all bytes should be used
     return out;
 }
 

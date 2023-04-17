@@ -1029,8 +1029,12 @@ export class ClientRequest extends OutgoingMessage {
 
     if (typeof input === "string") {
       const urlStr = input;
-      console.log(urlStr);
-      input = urlToHttpOptions(new URL(urlStr));
+      try {
+        var urlObject = new URL(urlStr);
+      } catch (e) {
+        throw new TypeError(`Invalid URL: ${urlStr}`);
+      }
+      input = urlToHttpOptions(urlObject);
     } else if (input && typeof input === "object" && input instanceof URL) {
       // url.URL instance
       input = urlToHttpOptions(input);

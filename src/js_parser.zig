@@ -3270,7 +3270,9 @@ pub const Parser = struct {
 
         var wrapper_expr: ?Expr = null;
 
-        if (p.esm_export_keyword.len > 0 or p.top_level_await_keyword.len > 0) {
+        if (p.commonjs_named_exports_deoptimized and p.commonjs_named_exports.count() > 0) {
+            exports_kind = .cjs;
+        } else if (p.esm_export_keyword.len > 0 or p.top_level_await_keyword.len > 0) {
             exports_kind = .esm;
         } else if (uses_exports_ref or uses_module_ref or p.has_top_level_return) {
             exports_kind = .cjs;
@@ -15777,6 +15779,13 @@ fn NewParser_(
                         target.data.e_array.items.ptr[0].canBeInlinedFromPropertyAccess())
                     {
                         return target.data.e_array.items.ptr[0];
+                    } else if (FeatureFlags.unwrap_commonjs_to_esm and
+                        // If you're accessing the exports object in a way that is not statically analyzable
+                        // We must deoptimize
+                        target.data == .e_identifier and
+                        target.data.e_identifier.ref.eql(p.exports_ref))
+                    {
+                        p.deoptimizeCommonJSNamedExports();
                     }
                     // Create an error for assigning to an import namespace when bundling. Even
                     // though this is a run-time error, we make it a compile-time error when

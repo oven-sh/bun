@@ -1838,19 +1838,51 @@ const LinkerGraph = struct {
                                     const other = this.useDirectiveBoundary(source_index);
 
                                     if (use_directive.boundering(other)) |boundary| {
-                                        import_record.module_id = bun.hash32(sources[source_index].path.pretty);
 
                                         // That import is a React Server Component reference.
                                         switch (boundary) {
                                             .@"use client" => {
+                                                import_record.module_id = bun.hash32(sources[source_index].path.pretty);
                                                 import_record.tag = .react_client_component;
                                                 import_record.path.namespace = "client";
                                                 import_record.print_namespace_in_path = true;
+
+                                                // TODO: to make chunking work better for client components
+                                                // we should create a virtual module for each server entry point that corresponds to a client component
+                                                // This virtual module do the equivalent of
+                                                //
+                                                //    export * as id$function from "$id$";
+                                                //
+                                                //
+                                                if (entry_point_kinds[source_index] == .none) {
+                                                    if (comptime Environment.allow_assert)
+                                                        debug("Adding client component entry point for {s}", .{sources[source_index].path.text});
+
+                                                    try this.entry_points.append(this.allocator, .{
+                                                        .source_index = source_index,
+                                                        .output_path = bun.PathString.init(sources[source_index].path.text),
+                                                        .output_path_was_auto_generated = true,
+                                                    });
+                                                    entry_point_kinds[source_index] = .react_client_component;
+                                                }
                                             },
                                             .@"use server" => {
+                                                import_record.module_id = bun.hash32(sources[source_index].path.pretty);
                                                 import_record.tag = .react_server_component;
                                                 import_record.path.namespace = "server";
                                                 import_record.print_namespace_in_path = true;
+
+                                                if (entry_point_kinds[source_index] == .none) {
+                                                    if (comptime Environment.allow_assert)
+                                                        debug("Adding server component entry point for {s}", .{sources[source_index].path.text});
+
+                                                    try this.entry_points.append(this.allocator, .{
+                                                        .source_index = source_index,
+                                                        .output_path = bun.PathString.init(sources[source_index].path.text),
+                                                        .output_path_was_auto_generated = true,
+                                                    });
+                                                    entry_point_kinds[source_index] = .react_server_component;
+                                                }
                                             },
                                             else => unreachable,
                                         }
@@ -7092,16 +7124,30 @@ const LinkerContext = struct {
                             },
                         ) catch unreachable;
                     } else {
-                        c.log.addRangeErrorFmt(
-                            source,
-                            r,
-                            c.allocator,
-                            "No matching export in \"{s}\" for import \"{s}\"",
-                            .{
-                                next_source.path.pretty,
-                                named_import.alias.?,
-                            },
-                        ) catch unreachable;
+                        if (!strings.eql(symbol.original_name, named_import.alias.?)) {
+                            c.log.addRangeErrorFmt(
+                                source,
+                                r,
+                                c.allocator,
+                                "No matching export \"{s}\" in \"{s}\" for import \"{s}\"",
+                                .{
+                                    symbol.original_name,
+                                    next_source.path.pretty,
+                                    named_import.alias.?,
+                                },
+                            ) catch unreachable;
+                        } else {
+                            c.log.addRangeErrorFmt(
+                                source,
+                                r,
+                                c.allocator,
+                                "No matching export in \"{s}\" for import \"{s}\"",
+                                .{
+                                    next_source.path.pretty,
+                                    named_import.alias.?,
+                                },
+                            ) catch unreachable;
+                        }
                     }
                 },
                 .probably_typescript_type => {

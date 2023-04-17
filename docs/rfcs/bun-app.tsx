@@ -3,25 +3,22 @@ import { FileSystemRouter, MatchedRoute, ServeOptions, Server } from "bun";
 import { BuildManifest, BuildConfig, BundlerConfig } from "./bun-build-config";
 import { BuildResult } from "./bun-build";
 
-interface AppBuildConfig extends BuildConfig {
-  serve?: Array<AppServeRouter>;
-}
-
 interface AppConfig {
-  builds: { [k: string]: BundlerConfig };
-  router: Array<AppServeRouter>;
+  configs: Array<BuildConfig & { name: string }>;
+  routers: Array<AppServeRouter>;
 }
 
 type AppServeRouter =
   | {
       // handler mode
-      mode: "static" | "build" | "handler";
-      // key borrowed from FileSystemRouter for consistency
-      // but slightly weird here
-      style: "static" | "nextjs";
+      mode: "static";
       // directory to serve from
       // e.g. "./public"
       dir: string;
+      // specify build to use
+      // no "building" happens with mode static, but
+      // this is needed to know the outdir
+      build: string;
       // serve these files at a path
       // e.g. "/static"
       prefix?: string;
@@ -31,11 +28,12 @@ type AppServeRouter =
     }
   | {
       // serve the build outputs of a given build
-      style: "build";
+      mode: "build";
+      dir: string;
       // must match a `name` specified in one of the `AppConfig`s
       // serve the build outputs of the build
       // with the given name
-      build: "client";
+      build: string;
       // serve these files at a path
       // e.g. "/static"
       prefix?: string;
@@ -49,7 +47,6 @@ type AppServeRouter =
       // this file is automatically added as an entrypoint in the build
       // e.g. ./serve.tsx
       handler: string;
-
       // router info - this is optional
       // not necessary for simple handlers
       // if a route is matched, the handler is called
@@ -84,7 +81,7 @@ export declare class App {
    *   condition ? {} : undefined
    * ])
    */
-  constructor(options: AppBuildConfig | (AppBuildConfig | undefined)[]);
+  constructor(options: AppConfig);
   // run a build and start the dev server
   serve(options: Partial<ServeOptions>): Promise<Server>;
   // run full build
@@ -133,19 +130,22 @@ interface HandlerContext {
 
 // simple static file server
 {
-  const server = new App([
-    {
-      name: "static-server",
-      outdir: "./.build/client",
-      serve: [
-        {
-          mode: "static",
-          dir: "./public",
-          "style": "static",
-        },
-      ],
-    },
-  ]);
+  const server = new App({
+    configs: [
+      {
+        name: "static-server",
+        outdir: "./out",
+      },
+    ],
+    routers: [
+      {
+        // this adds every file in `./public` as an "entrypoint"
+        mode: "static",
+        dir: "./public",
+        build: "static-server",
+      },
+    ],
+  });
 
   // serves files from `./public` on port 3000
   await server.serve({
@@ -156,7 +156,7 @@ interface HandlerContext {
   await server.build();
 }
 
-// simple HTTP server
+// simple API server
 {
   /////////////////
   // handler.tsx //
@@ -169,22 +169,24 @@ interface HandlerContext {
   /////////////
   // app.tsx //
   /////////////
-  const app = new App([
-    {
-      name: "simple-http",
-      target: "bun",
-      entrypoints: [],
-      outdir: "./.build/server",
-      serve: [
-        {
-          mode: "handler",
-          handler: "./handler.tsx", // automatically included as entrypoing
-          prefix: "/api",
-        },
-      ],
-      // bundler config..
-    },
-  ]);
+  const app = new App({
+    configs: [
+      {
+        name: "simple-http",
+        target: "bun",
+        outdir: "./.build/server",
+        // bundler config...
+      },
+    ],
+    routers: [
+      {
+        mode: "handler",
+        handler: "./handler.tsx", // automatically included as entrypoing
+        prefix: "/api",
+        build: "simple-http",
+      },
+    ],
+  });
 
   app.serve({
     port: 3000,
@@ -202,37 +204,55 @@ interface HandlerContext {
   // @ts-ignore
   export default (req: Request, context: HandlerContext) => {
     const { manifest } = context;
-    const path = new URL(req.url).pathname;
-    const builtComponent = manifest.inputs.get(".pages/" + path + ".tsx");
-
-    const { default: Page } = await import(builtComponent);
-    const stream = renderToReadableStream(builtComponent);
+    const { default: Page } = await import(context.match!.filePath);
+    const stream = renderToReadableStream(<Page />, {
+      // get path to client build for hydration
+      bootstrapModules: [manifest?.inputs["./client-entry.tsx"].output.path],
+    });
     return new Response(stream);
   };
 
   /////////////
   // app.tsx //
   /////////////
-  const router = new Bun.FileSystemRouter({
-    dir: "./app",
-    style: "nextjs",
-  });
-
-  const app = new App([
-    {
-      name: "react-ssr",
-      target: "bun",
-      entrypoints: ["./handler.tsx", ...Object.values(router.routes)], // path to static directory
-      outdir: "./.build/server",
-      serve: [
-        {
-          mode: "handler",
-          handler: "./handler.tsx",
+  const projectRoot = process.cwd();
+  const app = new App({
+    configs: [
+      {
+        name: "react-ssr",
+        target: "bun",
+        outdir: "./.build/server",
+        // bundler config
+      },
+      {
+        name: "react-client",
+        target: "browser",
+        outdir: "./.build/client",
+        transform: {
+          exports: {
+            pick: ["default"],
+          },
         },
-      ],
-      // bundler config
-    },
-  ]);
+      },
+    ],
+    routers: [
+      {
+        mode: "handler",
+        handler: "./handler.tsx",
+        build: "react-ssr",
+        style: "nextjs",
+        dir: projectRoot + "/pages",
+      },
+      {
+        mode: "build",
+        build: "react-client",
+        dir: "./pages",
+        // style: "build",
+        // dir: projectRoot + "/pages",
+        prefix: "_pages",
+      },
+    ],
+  });
 
   app.serve({
     port: 3000,

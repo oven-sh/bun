@@ -706,6 +706,37 @@ test("only class decorator", () => {
   expect(a).toBe(1);
 });
 
+test("decorators with different property key types", () => {
+  function d1(x) {
+    return function (target, propertyKey) {
+      expect(propertyKey).toBeDefined();
+      expect(propertyKey).toBe(x);
+    };
+  }
+  function foo(x, y, z) {
+    class A {
+      @d1(arguments[0])
+      [arguments[0]]() {}
+      @d1(y)
+      [y] = 10;
+      @d1(z)
+      [arguments[2]] = 20;
+      @d1("string")
+      "string" = 30;
+      @d1("string method")
+      "string method"() {}
+      @d1(12e3)
+      12e3 = "number key";
+      @d1(12e3 + 1)
+      [12e3 + 1]() {}
+    }
+
+    return A;
+  }
+
+  let A = foo("a", "b", "c");
+});
+
 test("only property decorators", () => {
   let a = 0;
   class A {

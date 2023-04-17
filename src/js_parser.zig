@@ -4388,7 +4388,7 @@ pub const KnownGlobal = enum {
 
     pub const map = bun.ComptimeEnumMap(KnownGlobal);
 
-    pub fn maybeMarkConstructorAsPure(e: *E.New, symbols: []const Symbol) void {
+    pub noinline fn maybeMarkConstructorAsPure(e: *E.New, symbols: []const Symbol) void {
         const id = if (e.target.data == .e_identifier) e.target.data.e_identifier.ref else return;
         const symbol = &symbols[id.innerIndex()];
         if (symbol.kind != .unbound)
@@ -4407,7 +4407,7 @@ pub const KnownGlobal = enum {
                 }
 
                 if (n == 1) {
-                    switch (e.args[0].data) {
+                    switch (e.args.ptr[0].data) {
                         .e_null, .e_undefined => {
                             // "new WeakSet(null)" is pure
                             // "new WeakSet(void 0)" is pure
@@ -4437,7 +4437,7 @@ pub const KnownGlobal = enum {
                 }
 
                 if (n == 1) {
-                    switch (e.args[0].knownPrimitiveType()) {
+                    switch (e.args.ptr[0].knownPrimitive()) {
                         .null, .undefined, .boolean, .number, .string => {
                             // "new Date('')" is pure
                             // "new Date(0)" is pure
@@ -4465,7 +4465,7 @@ pub const KnownGlobal = enum {
                 }
 
                 if (n == 1) {
-                    switch (e.args[0].data) {
+                    switch (e.args.ptr[0].data) {
                         .e_array, .e_null, .e_undefined => {
                             // "new Set([a, b, c])" is pure
                             // "new Set(null)" is pure
@@ -4489,7 +4489,7 @@ pub const KnownGlobal = enum {
                 }
 
                 if (n == 1) {
-                    switch (e.args[0].data) {
+                    switch (e.args.ptr[0].data) {
                         .e_null, .e_undefined => {
                             // "new Map(null)" is pure
                             // "new Map(void 0)" is pure
@@ -4497,7 +4497,7 @@ pub const KnownGlobal = enum {
                         },
                         .e_array => |array| {
                             var all_items_are_arrays = true;
-                            for (array.items) |item| {
+                            for (array.items.slice()) |item| {
                                 if (item.data != .e_array) {
                                     all_items_are_arrays = false;
                                     break;
@@ -16342,6 +16342,10 @@ fn NewParser_(
 
                     for (e_.args.slice()) |*arg| {
                         arg.* = p.visitExpr(arg.*);
+                    }
+
+                    if (p.options.features.minify_syntax) {
+                        KnownGlobal.maybeMarkConstructorAsPure(e_, p.symbols.items);
                     }
                 },
                 .e_arrow => |e_| {

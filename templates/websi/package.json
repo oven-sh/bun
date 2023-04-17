@@ -1,0 +1,17 @@
+{
+  "version": "0.1.10",
+  "name": "@bun-examples/websi",
+  "devDependencies": {
+    "bun-types": "latest"
+  },
+  "dependencies": {
+    "websi": "^0.3.0"
+  },
+  "scripts": {
+    "start": "bun --hot main.ts"
+  },
+  "module": "main.ts",
+  "bun-create": {
+    "start": "bun run start"
+  }
+}

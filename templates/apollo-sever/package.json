@@ -1,0 +1,16 @@
+{
+  "version": "1.0.14",
+  "name": "@bun-examples/apollo-server",
+  "dependencies": {
+    "@apollo/server": "^4.3.2",
+    "graphql": "^16.6.0"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "bun run src/index.js"
+  },
+  "module": "src/index.js",
+  "bun-create": {
+    "start": "bun run src/index.js"
+  }
+}

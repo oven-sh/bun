@@ -1,0 +1,19 @@
+{
+  "name": "@bun-examples/kingworld",
+  "version": "1.0.30",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "nodemon --config nodemon.json"
+  },
+  "dependencies": {
+    "kingworld": "latest"
+  },
+  "devDependencies": {
+    "bun-types": "latest",
+    "nodemon": "^2.0.20"
+  },
+  "module": "index.js",
+  "bun-create": {
+    "start": "bun run src/index.ts"
+  }
+}

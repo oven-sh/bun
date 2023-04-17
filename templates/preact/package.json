@@ -1,0 +1,17 @@
+{
+  "name": "@bun-examples/preact",
+  "version": "0.0.5",
+  "type": "module",
+  "devDependencies": {
+    "bun-types": "^0.5.0"
+  },
+  "dependencies": {
+    "preact": "^10.13.0"
+  },
+  "bun-create": {
+    "postinstall": [
+      "bun bun ./src/index.jsx"
+    ],
+    "start": "bun dev"
+  }
+}

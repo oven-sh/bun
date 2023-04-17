@@ -1,0 +1,18 @@
+{
+  "name": "@bun-examples/elysia",
+  "version": "1.0.30",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "bun run --hot src/index.ts"
+  },
+  "dependencies": {
+    "elysia": "latest"
+  },
+  "devDependencies": {
+    "bun-types": "latest"
+  },
+  "module": "src/index.js",
+  "bun-create": {
+    "start": "bun run src/index.ts"
+  }
+}

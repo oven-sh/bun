@@ -1,0 +1,6 @@
+{
+    "restartable": "rs",
+    "ignore": [".git", "node_modules/", "__tests__", "test"],
+    "exec": "bun src/index.ts",
+    "ext": "js, json, ts"
+}

@@ -1,0 +1,52 @@
+{
+  "name": "bun-examples-all",
+  "private": false,
+  "version": "0.0.1681741054711",
+  "description": "All bun-examples",
+  "examples": {
+    "@bun-examples/apollo-server": {
+      "version": "1.0.14",
+      "description": ""
+    },
+    "@bun-examples/bun-bakery": {
+      "version": "1.0.95",
+      "description": ""
+    },
+    "@bun-examples/discord-interactions": {
+      "version": "0.0.100",
+      "description": ""
+    },
+    "@bun-examples/elysia": {
+      "version": "1.0.30",
+      "description": ""
+    },
+    "@bun-examples/hono": {
+      "version": "1.0.89",
+      "description": ""
+    },
+    "@bun-examples/kingworld": {
+      "version": "1.0.30",
+      "description": ""
+    },
+    "@bun-examples/next": {
+      "version": "0.0.137",
+      "description": ""
+    },
+    "@bun-examples/preact": {
+      "version": "0.0.5",
+      "description": ""
+    },
+    "@bun-examples/react": {
+      "version": "0.1.81",
+      "description": ""
+    },
+    "@bun-examples/svelte-kit": {
+      "version": "0.0.27",
+      "description": ""
+    },
+    "@bun-examples/websi": {
+      "version": "0.1.10",
+      "description": ""
+    }
+  }
+}

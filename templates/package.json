@@ -1,0 +1,5 @@
+{
+  "devDependencies": {
+    "semver": "^7.3.8"
+  }
+}

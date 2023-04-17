@@ -1,0 +1,11 @@
+{
+  "module": "index.ts",
+  "devDependencies": {
+    "bun-types": "latest"
+  },
+  "type": "module",
+  "dependencies": {
+    "@stricjs/arrow": "^1.1.9",
+    "@stricjs/kit": "^1.0.16"
+  }
+}

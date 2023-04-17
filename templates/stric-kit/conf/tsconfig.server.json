@@ -1,0 +1,24 @@
+{
+    "compilerOptions": {
+        "module": "esnext",
+        "target": "esnext",
+        "moduleResolution": "node",
+        "strict": true,
+        "downlevelIteration": true,
+        "skipLibCheck": true,
+        "allowSyntheticDefaultImports": true,
+        "forceConsistentCasingInFileNames": true,
+        "allowUmdGlobalAccess": true,
+        "allowJs": true,
+        "types": [
+            "bun-types" // add Bun global
+        ],
+        "composite": true,
+        "rootDir": ".."
+    },
+    "include": [
+        "../src/routes",
+        "../index.ts",
+        "../global.d.ts"
+    ]
+}

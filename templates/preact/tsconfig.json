@@ -1,0 +1,14 @@
+{
+    "compilerOptions": {
+        "jsxImportSource": "preact",
+        "jsxFactory": "h",
+        "jsxFragmentFactory": "Fragment",
+        "baseUrl": ".",
+        "paths": {
+            "react": ["node_modules/preact/compat"],
+        },
+    },
+    "include": [
+        "src"
+    ]
+}

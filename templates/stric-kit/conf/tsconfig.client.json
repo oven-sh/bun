@@ -1,0 +1,16 @@
+{
+    "compilerOptions": {
+      "module": "None",
+      "allowUmdGlobalAccess": true,
+      "esModuleInterop": true,
+      "target": "ESNext",
+      "moduleResolution": "node",
+      "composite": true,
+      "rootDir": ".."
+    },
+    "include": [
+      "../src/pages/**/*.ts",
+      "../src/stric-pages.d.ts",
+      "../global.d.ts"
+    ]
+}

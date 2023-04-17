@@ -1,0 +1,35 @@
+{
+  "name": "@bun-examples/svelte-kit",
+  "version": "0.0.27",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-kit sync && svelte-check --tsconfig tsconfig.json",
+    "check:watch": "svelte-kit sync && svelte-check --tsconfig tsconfig.json --watch"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-auto": "^1.0.0",
+    "@sveltejs/kit": "^1.0.12",
+    "svelte": "^3.55.1",
+    "svelte-check": "^2.10.2",
+    "svelte-preprocess": "^5.0.0",
+    "tslib": "^2.4.1",
+    "typescript": "^4.9.4",
+    "vite": "^4.0.4"
+  },
+  "type": "module",
+  "dependencies": {
+    "@bun-community/sveltekit-adapter-bun": "^0.0.6",
+    "@rollup/plugin-commonjs": "^24.0.0",
+    "@rollup/plugin-json": "^6.0.0",
+    "@rollup/plugin-node-resolve": "^15.0.1",
+    "rollup": "^3.7.5"
+  },
+  "bun-create": {
+    "postinstall": [
+      "npm run build"
+    ],
+    "start": "bun run main.ts"
+  }
+}

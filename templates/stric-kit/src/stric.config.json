@@ -1,0 +1,14 @@
+{
+    "listen": {
+        "port": 8080
+    },
+    "static": "public",
+    "page": {
+        "list": [
+            {
+                "path": "/",
+                "source": "App.ts"
+            }
+        ]
+    }
+}

@@ -19001,6 +19001,7 @@ fn NewParser_(
                                 .e_identifier => |k| p.newExpr(E.Identifier{ .ref = k.ref }, loc),
                                 .e_number => |k| p.newExpr(E.Number{ .value = k.value }, loc),
                                 .e_string => |k| p.newExpr(E.String{ .data = k.data }, loc),
+                                .e_index => |k| p.newExpr(E.Index{ .target = k.target, .index = k.index }, loc),
                                 else => undefined,
                             };
 

@@ -2975,6 +2975,26 @@ pub const Parser = struct {
                         // we might also need to do this for classes but i'm not sure yet.
                         try p.appendPart(&before, sliced.items);
                     },
+                    .s_class => |class| {
+                        // Move class export statements to the top of the file if we can
+                        // This automatically resolves some cyclical import issues
+                        // https://github.com/kysely-org/kysely/issues/412
+                        var list = if (!p.options.bundle and class.is_export and class.class.extends == null) &before else &parts;
+                        var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
+                        sliced.items.len = 1;
+                        sliced.items[0] = stmt;
+                        try p.appendPart(list, sliced.items);
+                    },
+                    .s_export_default => |value| {
+                        // We move export default statements when we can
+                        // This automatically resolves some cyclical import issues in packages like luxon
+                        // https://github.com/oven-sh/bun/issues/1961
+                        var list = if (!p.options.bundle and value.canBeMovedAround()) &before else &parts;
+                        var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
+                        sliced.items.len = 1;
+                        sliced.items[0] = stmt;
+                        try p.appendPart(list, sliced.items);
+                    },
 
                     else => {
                         var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);

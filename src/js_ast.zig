@@ -4949,6 +4949,21 @@ pub const S = struct {
     pub const ExportDefault = struct {
         default_name: LocRef, // value may be a SFunction or SClass
         value: StmtOrExpr,
+
+        pub fn canBeMovedAround(self: ExportDefault) bool {
+            return switch (self.value) {
+                .expr => |e| switch (e.data) {
+                    .e_class => |class| class.extends == null,
+                    .e_arrow, .e_function => true,
+                    else => e.canBeConstValue(),
+                },
+                .stmt => |s| switch (s.data) {
+                    .s_class => |class| class.class.extends == null,
+                    .s_function => true,
+                    else => false,
+                },
+            };
+        }
     };
 
     pub const Enum = struct {

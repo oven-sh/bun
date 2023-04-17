@@ -48,8 +48,6 @@ pub const JSBundler = struct {
     configs: Config.List = .{},
     has_pending_activity: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(true),
 
-    pub usingnamespace JSC.Codegen.JSBundler;
-
     const OwnedString = bun.MutableString;
 
     pub const Config = struct {
@@ -277,56 +275,26 @@ pub const JSBundler = struct {
         }
     };
 
-    pub fn constructor(
+    fn build(
         globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) ?*JSBundler {
-        var temp = std.heap.ArenaAllocator.init(getAllocator(globalThis));
-        const arguments = callframe.arguments(3);
-        var args = JSC.Node.ArgumentsSlice.init(
-            globalThis.bunVM(),
-            arguments.ptr[0..arguments.len],
-        );
-        _ = args;
-
-        defer temp.deinit();
-
-        return null;
+        arguments: []const JSC.JSValue,
+    ) JSC.JSValue {
+        _ = arguments;
+        globalThis.throw("Not implemented yet!", .{});
+        return JSC.JSValue.jsUndefined();
     }
 
-    pub fn handleRequest(
-        this: *JSBundler,
+    pub fn buildFn(
+        // this
+        _: void,
         globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
-        _ = callframe;
-        _ = globalThis;
-        _ = this;
-
-        return .zero;
-    }
-
-    pub fn write(
-        this: *JSBundler,
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
-        _ = callframe;
-        _ = globalThis;
-        _ = this;
-
-        return .zero;
-    }
-
-    pub fn hasPendingActivity(this: *JSBundler) callconv(.C) bool {
-        @fence(.Acquire);
-        return this.has_pending_activity.load(.Acquire);
-    }
-
-    pub fn finalize(
-        this: *JSBundler,
-    ) callconv(.C) void {
-        this.heap.deinit();
-        JSC.VirtualMachine.get().allocator.destroy(this);
+        // function
+        _: js.JSObjectRef,
+        // thisObject
+        _: js.JSObjectRef,
+        arguments_: []const js.JSValueRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        return build(globalThis, @ptrCast([]const JSC.JSValue, arguments_)).asObjectRef();
     }
 };

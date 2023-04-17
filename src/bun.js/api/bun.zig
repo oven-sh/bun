@@ -1277,6 +1277,9 @@ pub const Class = NewClass(
         .spawnSync = .{
             .rfn = &JSC.wrapWithHasContainer(JSC.Subprocess, "spawnSync", false, false, false),
         },
+        .build = .{
+            .rfn = &Bun.JSBundler.buildFn,
+        },
 
         .listen = .{
             .rfn = &JSC.wrapWithHasContainer(JSC.API.Listener, "listen", false, false, false),
@@ -1319,9 +1322,6 @@ pub const Class = NewClass(
         },
         .Transpiler = .{
             .get = getTranspilerConstructor,
-        },
-        .Bundler = .{
-            .get = getBundlerConstructor,
         },
         .hash = .{
             .get = getHashObject,
@@ -2341,16 +2341,6 @@ pub fn mmapFile(
             _ = JSC.Node.Syscall.munmap(@ptrCast([*]align(std.mem.page_size) u8, @alignCast(std.mem.page_size, ptr))[0..@ptrToInt(size)]);
         }
     }.x, @intToPtr(?*anyopaque, map.len), exception);
-}
-
-pub fn getBundlerConstructor(
-    _: void,
-    ctx: js.JSContextRef,
-    _: js.JSValueRef,
-    _: js.JSStringRef,
-    _: js.ExceptionRef,
-) js.JSValueRef {
-    return JSC.API.JSBundler.getConstructor(ctx).asObjectRef();
 }
 
 pub fn getTranspilerConstructor(

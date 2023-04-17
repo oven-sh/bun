@@ -1,6 +1,5 @@
 std::unique_ptr<IsoSubspace> m_subspaceForBlob;
-std::unique_ptr<IsoSubspace> m_subspaceForBlobConstructor;std::unique_ptr<IsoSubspace> m_subspaceForBundler;
-std::unique_ptr<IsoSubspace> m_subspaceForBundlerConstructor;std::unique_ptr<IsoSubspace> m_subspaceForCryptoHasher;
+std::unique_ptr<IsoSubspace> m_subspaceForBlobConstructor;std::unique_ptr<IsoSubspace> m_subspaceForCryptoHasher;
 std::unique_ptr<IsoSubspace> m_subspaceForCryptoHasherConstructor;std::unique_ptr<IsoSubspace> m_subspaceForDirent;
 std::unique_ptr<IsoSubspace> m_subspaceForDirentConstructor;std::unique_ptr<IsoSubspace> m_subspaceForExpect;
 std::unique_ptr<IsoSubspace> m_subspaceForExpectConstructor;std::unique_ptr<IsoSubspace> m_subspaceForExpectAny;

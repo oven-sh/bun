@@ -28,24 +28,4 @@ export default [
       },
     },
   }),
-
-  define({
-    name: "Bundler",
-    construct: true,
-    finalize: true,
-    hasPendingActivity: true,
-    configurable: false,
-    klass: {},
-    JSType: "0b11101110",
-    proto: {
-      handle: {
-        fn: "handleRequest",
-        length: 2,
-      },
-      write: {
-        fn: "write",
-        length: 1,
-      },
-    },
-  }),
 ];

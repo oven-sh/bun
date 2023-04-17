@@ -7064,13 +7064,35 @@ const LinkerContext = struct {
                 },
 
                 .dynamic_fallback_interop_default => {
+                    // if the file was rewritten from CommonJS into ESM
+                    // and the developer imported an export that doesn't exist
+                    // We don't do a runtime error since that CJS would have returned undefined.
                     const named_import: js_ast.NamedImport = named_imports[prev_source_index].get(prev_import_ref).?;
-                    to_mark_as_esm_with_dynamic_fallback.put(other_id, {}) catch unreachable;
-                    if (named_import.namespace_ref != null and named_import.namespace_ref.?.isValid()) {
 
-                        // If the file was rewritten to ESM from CJS, the "default" export should alias to the namespace export.
+                    // For code like this:
+                    //
+                    //     import React from 'react';
+                    //
+                    // Normally, this would be rewritten to:
+                    //
+                    //    const React = import_react().default;
+                    //
+                    // Instead, we rewrite to
+                    //
+                    //    const React = import_react();
+                    //
+                    // But it means we now definitely need to wrap the module.
+                    //
+                    // We want to keep doing this transform though for each file
+                    // so defer marking the export kind as esm_with_fallback until after
+                    // we've visited every import.
+                    to_mark_as_esm_with_dynamic_fallback.put(other_id, {}) catch unreachable;
+
+                    if (named_import.namespace_ref != null and named_import.namespace_ref.?.isValid()) {
                         if (strings.eqlComptime(named_import.alias orelse "", "default")) {
                             result.kind = .normal;
+                            // Referencing the exports_ref directly feels wrong.
+                            // TODO: revisit this.
                             result.ref = c.graph.ast.items(.exports_ref)[other_id];
                             result.name_loc = named_import.alias_loc orelse Logger.Loc.Empty;
                         } else {

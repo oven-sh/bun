@@ -1,6 +1,7 @@
 import EventEmitter3 from "eventemitter3";
 import { group } from "mitata";
 import EventEmitterNative from "node:events";
+import EventEmitter2 from "../../src/bun.js/events.exports.js";
 
 export const implementations = [
   {
@@ -8,6 +9,7 @@ export const implementations = [
     name: process.isBun ? (EventEmitterNative.init ? "bun" : "C++") : "node:events",
     monkey: true,
   },
+  { EventEmitter: EventEmitter2, name: "alt" },
   // { EventEmitter: EventEmitter3, name: "EventEmitter3" },
 ].filter(Boolean);
 

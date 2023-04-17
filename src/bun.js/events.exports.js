@@ -1,4 +1,7 @@
 // Reimplementation of https://nodejs.org/api/events.html
+
+import { inspect } from "util";
+
 // Reference: https://github.com/nodejs/node/blob/main/lib/events.js
 const SymbolFor = Symbol.for;
 const ObjectDefineProperty = Object.defineProperty;
@@ -41,15 +44,22 @@ EventEmitter.prototype.setMaxListeners = function setMaxListeners(n) {
 };
 
 EventEmitter.prototype.getMaxListeners = function getMaxListeners() {
-  return this._maxListeners ?? EventEmitter.defaultMaxListeners;
+  return this._maxListeners ?? defaultMaxListeners;
 };
 
 function emitError(emitter, args) {
   var { _events: events } = emitter;
+  args[0] ??= new Error("Unhandled error.");
   if (!events) throw args[0];
+  var errorMonitor = events[kErrorMonitor];
+  if (errorMonitor) {
+    for (var handler of ArrayPrototypeSlice.call(errorMonitor)) {
+      handler.apply(emitter, args);
+    }
+  }
   var handlers = events.error;
   if (!handlers) throw args[0];
-  for (var handler of handlers.slice()) {
+  for (var handler of ArrayPrototypeSlice.call(handlers)) {
     handler.apply(emitter, args);
   }
   return true;
@@ -94,7 +104,6 @@ const emitWithoutRejectionCapture = function emit(type, ...args) {
 };
 
 const emitWithRejectionCapture = function emit(type, ...args) {
-  console.log("emit", type, args);
   if (type === "error") {
     return emitError(this, args);
   }
@@ -114,7 +123,6 @@ const emitWithRejectionCapture = function emit(type, ...args) {
 EventEmitter.prototype.emit = emitWithoutRejectionCapture;
 
 EventEmitter.prototype.addListener = function addListener(type, fn) {
-  console.log("addListener", type, fn);
   var events = this._events;
   if (!events) {
     events = this._events = { __proto__: null };
@@ -128,7 +136,10 @@ EventEmitter.prototype.addListener = function addListener(type, fn) {
     this._eventsCount++;
   } else {
     handlers.push(fn);
-    // TODO: overflow check
+    var m = this._maxListeners ?? defaultMaxListeners;
+    if (m > 0 && handlers.length > m && !handlers.warned) {
+      overflowWarning(this, type, handlers);
+    }
   }
   return this;
 };
@@ -149,10 +160,26 @@ EventEmitter.prototype.prependListener = function prependListener(type, fn) {
     this._eventsCount++;
   } else {
     handlers.unshift(fn);
-    // TODO: overflow check
+    var m = this._maxListeners ?? defaultMaxListeners;
+    if (m > 0 && handlers.length > m && !handlers.warned) {
+      overflowWarning(this, type, handlers);
+    }
   }
   return this;
 };
+
+function overflowWarning(emitter, type, handlers) {
+  handlers.warned = true;
+  const warn = new Error(
+    `Possible EventEmitter memory leak detected. ${handlers.length} ${String(type)} listeners ` +
+      `added to [${emitter.constructor.name}]. Use emitter.setMaxListeners() to increase limit`,
+  );
+  warn.name = "MaxListenersExceededWarning";
+  warn.emitter = emitter;
+  warn.type = type;
+  warn.count = handlers.length;
+  process.emitWarning(warn);
+}
 
 function onceWrapper(type, listener, ...args) {
   this.removeListener(type, listener);
@@ -245,8 +272,7 @@ EventEmitter.prototype[kCapture] = false;
 function once(emitter, type, { signal } = {}) {
   validateAbortSignal(signal, "options.signal");
   if (signal?.aborted) {
-    // TODO: use AbortError
-    throw new Error(undefined, { cause: signal?.reason });
+    throw new AbortError(undefined, { cause: signal?.reason });
   }
   return new Promise((resolve, reject) => {
     const errorListener = err => {
@@ -274,8 +300,7 @@ function once(emitter, type, { signal } = {}) {
     function abortListener() {
       eventTargetAgnosticRemoveListener(emitter, type, resolver);
       eventTargetAgnosticRemoveListener(emitter, "error", errorListener);
-      // TODO: use AbortError
-      reject(new Error(undefined, { cause: signal?.reason }));
+      reject(new AbortError(undefined, { cause: signal?.reason }));
     }
     if (signal != null) {
       eventTargetAgnosticAddListener(signal, "abort", abortListener, { once: true });
@@ -285,12 +310,16 @@ function once(emitter, type, { signal } = {}) {
 EventEmitter.once = once;
 
 function on(emitter, type, { signal, close, highWatermark = Number.MAX_SAFE_INTEGER, lowWatermark = 1 } = {}) {
-  throw new Error("events.on is not implemented");
+  throw new Error("events.on is not implemented. See https://github.com/oven-sh/bun/issues/2679");
 }
 EventEmitter.on = on;
 
 function getEventListeners(emitter, type) {
-  // TODO: EventTarget support
+  if (emitter instanceof EventTarget) {
+    throw new Error(
+      "getEventListeners with an EventTarget is not implemented. See https://github.com/oven-sh/bun/issues/2678",
+    );
+  }
   return emitter.listeners(type);
 }
 EventEmitter.getEventListeners = getEventListeners;
@@ -376,6 +405,17 @@ function eventTargetAgnosticAddListener(emitter, name, listener, flags) {
   }
 }
 
+class AbortError extends Error {
+  constructor(message = "The operation was aborted", options = undefined) {
+    if (options !== undefined && typeof options !== "object") {
+      throw new codes.ERR_INVALID_ARG_TYPE("options", "Object", options);
+    }
+    super(message, options);
+    this.code = "ABORT_ERR";
+    this.name = "AbortError";
+  }
+}
+
 function ERR_INVALID_ARG_TYPE(name, type, value) {
   const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value}`);
   err.code = "ERR_INVALID_ARG_TYPE";
@@ -411,7 +451,7 @@ function validateNumber(value, name, min = undefined, max) {
 
 export class EventEmitterAsyncResource extends EventEmitter {
   constructor(options = undefined) {
-    throw new Error("EventEmitterAsyncResource is not implemented");
+    throw new Error("EventEmitterAsyncResource is not implemented. See https://github.com/oven-sh/bun/issues/2681");
   }
 }
 

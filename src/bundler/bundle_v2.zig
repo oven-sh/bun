@@ -7151,30 +7151,16 @@ const LinkerContext = struct {
                             },
                         ) catch unreachable;
                     } else {
-                        if (!strings.eql(symbol.original_name, named_import.alias.?)) {
-                            c.log.addRangeErrorFmt(
-                                source,
-                                r,
-                                c.allocator,
-                                "No matching export \"{s}\" in \"{s}\" for import \"{s}\"",
-                                .{
-                                    symbol.original_name,
-                                    next_source.path.pretty,
-                                    named_import.alias.?,
-                                },
-                            ) catch unreachable;
-                        } else {
-                            c.log.addRangeErrorFmt(
-                                source,
-                                r,
-                                c.allocator,
-                                "No matching export in \"{s}\" for import \"{s}\"",
-                                .{
-                                    next_source.path.pretty,
-                                    named_import.alias.?,
-                                },
-                            ) catch unreachable;
-                        }
+                        c.log.addRangeErrorFmt(
+                            source,
+                            r,
+                            c.allocator,
+                            "No matching export in \"{s}\" for import \"{s}\"",
+                            .{
+                                next_source.path.pretty,
+                                named_import.alias.?,
+                            },
+                        ) catch unreachable;
                     }
                 },
                 .probably_typescript_type => {

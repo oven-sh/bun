@@ -782,12 +782,12 @@ fn NewLexer_(
         }
 
         inline fn nextCodepointSlice(it: *LexerType) []const u8 {
-            const cp_len = strings.wtf8ByteSequenceLength(it.source.contents.ptr[it.current]);
+            const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(it.source.contents.ptr[it.current]);
             return if (!(cp_len + it.current > it.source.contents.len)) it.source.contents[it.current .. cp_len + it.current] else "";
         }
 
         inline fn nextCodepoint(it: *LexerType) CodePoint {
-            const cp_len = strings.wtf8ByteSequenceLength(it.source.contents.ptr[it.current]);
+            const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(it.source.contents.ptr[it.current]);
             const slice = if (!(cp_len + it.current > it.source.contents.len)) it.source.contents[it.current .. cp_len + it.current] else "";
 
             const code_point = switch (slice.len) {

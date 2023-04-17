@@ -5525,6 +5525,10 @@ pub const ExportsKind = enum {
     // directly. Other imports go through property accesses on "exports".
     esm_with_dynamic_fallback,
 
+    // Like "esm_with_dynamic_fallback", but the module was originally a CommonJS
+    // module.
+    esm_with_dynamic_fallback_from_cjs,
+
     pub fn isDynamic(self: ExportsKind) bool {
         return self == .esm_with_dynamic_fallback or self == .cjs;
     }

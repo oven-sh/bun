@@ -3290,7 +3290,7 @@ pub const Parser = struct {
         }
 
         if (exports_kind == .esm and p.commonjs_named_exports.count() > 0 and !p.unwrap_all_requires) {
-            exports_kind = .esm_with_dynamic_fallback;
+            exports_kind = .esm_with_dynamic_fallback_from_cjs;
         }
 
         // Auto inject jest globals into the test file

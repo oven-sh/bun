@@ -598,54 +598,42 @@ pub const Platform = enum {
         break :brk array;
     };
 
-    pub const default_conditions_strings = .{
-        .browser = @as(string, "browser"),
-        .import = @as(string, "import"),
-        .worker = @as(string, "worker"),
-        .require = @as(string, "require"),
-        .node = @as(string, "node"),
-        .default = @as(string, "default"),
-        .bun = @as(string, "bun"),
-        .bun_macro = @as(string, "bun_macro"),
-        .module = @as(string, "module"), // used in tslib
-        .development = @as(string, "development"),
-        .production = @as(string, "production"),
-    };
-
     pub const DefaultConditions: std.EnumArray(Platform, []const string) = brk: {
         var array = std.EnumArray(Platform, []const string).initUndefined();
 
         array.set(Platform.node, &[_]string{
-            default_conditions_strings.node,
-            default_conditions_strings.module,
+            "node",
+            "module",
         });
 
         var listc = [_]string{
-            default_conditions_strings.browser,
-            default_conditions_strings.module,
+            "browser",
+            "module",
         };
         array.set(Platform.browser, &listc);
         array.set(
             Platform.bun,
             &[_]string{
-                default_conditions_strings.bun,
-                default_conditions_strings.worker,
-                default_conditions_strings.module,
-                default_conditions_strings.node,
-                default_conditions_strings.browser,
+                "bun",
+                "worker",
+                "module",
+                "node",
+                "default",
+                "browser",
             },
         );
         array.set(
             Platform.bun_macro,
             &[_]string{
-                default_conditions_strings.bun,
-                default_conditions_strings.worker,
-                default_conditions_strings.module,
-                default_conditions_strings.node,
-                default_conditions_strings.browser,
+                "bun",
+                "worker",
+                "module",
+                "node",
+                "default",
+                "browser",
             },
         );
-        // array.set(Platform.bun_macro, [_]string{ default_conditions_strings.bun_macro, default_conditions_strings.browser, default_conditions_strings.default, },);
+        // array.set(Platform.bun_macro, [_]string{ "bun_macro", "browser", "default", },);
 
         // Original comment:
         // The neutral platform is for people that don't want esbuild to try to
@@ -868,15 +856,16 @@ pub const ESMConditions = struct {
         try import_condition_map.ensureTotalCapacity(defaults.len + 1);
         try require_condition_map.ensureTotalCapacity(defaults.len + 1);
 
-        import_condition_map.putAssumeCapacityNoClobber(Platform.default_conditions_strings.import, {});
-        require_condition_map.putAssumeCapacityNoClobber(Platform.default_conditions_strings.require, {});
-        default_condition_amp.putAssumeCapacityNoClobber(Platform.default_conditions_strings.default, {});
+        import_condition_map.putAssumeCapacity("import", {});
+        require_condition_map.putAssumeCapacity("require", {});
 
         for (defaults) |default| {
             default_condition_amp.putAssumeCapacityNoClobber(default, {});
             import_condition_map.putAssumeCapacityNoClobber(default, {});
             require_condition_map.putAssumeCapacityNoClobber(default, {});
         }
+
+        default_condition_amp.putAssumeCapacity("default", {});
 
         return ESMConditions{
             .default = default_condition_amp,

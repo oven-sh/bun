@@ -37,6 +37,8 @@ const NODE_HTTP_WARNING =
   "WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.";
 
 var _globalAgent;
+var _defaultHTTPSAgent;
+var kInternalRequest = Symbol("kInternalRequest");
 
 var FakeSocket = class Socket {
   on() {
@@ -97,6 +99,8 @@ export class Agent extends EventEmitter {
     this.#scheduling = options.scheduling || "lifo";
     this.#maxTotalSockets = options.maxTotalSockets;
     this.#totalSocketCount = 0;
+    this.#defaultPort = options.defaultPort || 80;
+    this.#protocol = options.protocol || "http:";
   }
 
   get defaultPort() {
@@ -226,7 +230,7 @@ export class Server extends EventEmitter {
   }
 
   address() {
-    return this.#server.hostname;
+    return this.#server?.hostname;
   }
 
   listen(port, host, onListen) {
@@ -322,13 +326,20 @@ function destroyBodyStreamNT(bodyStream) {
 }
 
 var defaultIncomingOpts = { type: "request" };
+
+function getDefaultHTTPSAgent() {
+  return (_defaultHTTPSAgent ??= new Agent({ defaultPort: 443, protocol: "https:" }));
+}
+
 export class IncomingMessage extends Readable {
-  constructor(req, { type = "request" } = defaultIncomingOpts) {
+  constructor(req, defaultIncomingOpts) {
     const method = req.method;
 
     super();
 
     const url = new URL(req.url);
+
+    var { type = "request", [kInternalRequest]: nodeReq } = defaultIncomingOpts || {};
 
     this.#noBody =
       type === "request" // TODO: Add logic for checking for body on response
@@ -349,6 +360,7 @@ export class IncomingMessage extends Readable {
     this.#fakeSocket = undefined;
 
     this.url = url.pathname + url.search;
+    this.#nodeReq = nodeReq;
     assignHeaders(this, req);
   }
 
@@ -363,6 +375,11 @@ export class IncomingMessage extends Readable {
   #req;
   url;
   #type;
+  #nodeReq;
+
+  get req() {
+    return this.#nodeReq;
+  }
 
   _construct(callback) {
     // TODO: streaming
@@ -373,7 +390,6 @@ export class IncomingMessage extends Readable {
 
     const contentLength = this.#req.headers.get("content-length");
     const length = contentLength ? parseInt(contentLength, 10) : 0;
-
     if (length === 0) {
       this.#noBody = true;
       callback();
@@ -898,6 +914,7 @@ export class ClientRequest extends OutgoingMessage {
   #protocol;
   #method;
   #port;
+  #useDefaultPort;
   #joinDuplicateHeaders;
   #maxHeaderSize;
   #agent = _globalAgent;
@@ -967,17 +984,21 @@ export class ClientRequest extends OutgoingMessage {
     var method = this.#method,
       body = this.#body;
 
-    this.#fetchRequest = fetch(`${this.#protocol}//${this.#host}:${this.#port}${this.#path}`, {
-      method,
-      headers: this.getHeaders(),
-      body: body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS" ? body : undefined,
-      redirect: "manual",
-      verbose: Boolean(__DEBUG__),
-      signal: this[kAbortController].signal,
-    })
+    this.#fetchRequest = fetch(
+      `${this.#protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}${this.#path}`,
+      {
+        method,
+        headers: this.getHeaders(),
+        body: body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS" ? body : undefined,
+        redirect: "manual",
+        verbose: Boolean(__DEBUG__),
+        signal: this[kAbortController].signal,
+      },
+    )
       .then(response => {
         var res = (this.#res = new IncomingMessage(response, {
           type: "response",
+          [kInternalRequest]: this,
         }));
         this.emit("response", res);
       })
@@ -1008,6 +1029,7 @@ export class ClientRequest extends OutgoingMessage {
 
     if (typeof input === "string") {
       const urlStr = input;
+      console.log(urlStr);
       input = urlToHttpOptions(new URL(urlStr));
     } else if (input && typeof input === "object" && input instanceof URL) {
       // url.URL instance
@@ -1025,8 +1047,29 @@ export class ClientRequest extends OutgoingMessage {
       options = ObjectAssign(input || {}, options);
     }
 
-    const defaultAgent = options._defaultAgent || Agent.globalAgent;
+    var defaultAgent = options._defaultAgent || Agent.globalAgent;
+
     const protocol = (this.#protocol = options.protocol ||= defaultAgent.protocol);
+    switch (this.#agent?.protocol) {
+      case undefined: {
+        break;
+      }
+      case "http:": {
+        if (protocol === "https:") {
+          defaultAgent = this.#agent = getDefaultHTTPSAgent();
+          break;
+        }
+      }
+      case "https:": {
+        if (protocol === "https") {
+          defaultAgent = this.#agent = Agent.globalAgent;
+          break;
+        }
+      }
+      default: {
+        break;
+      }
+    }
 
     if (options.path) {
       const path = String(options.path);
@@ -1044,7 +1087,10 @@ export class ClientRequest extends OutgoingMessage {
       // throw new ERR_INVALID_PROTOCOL(protocol, expectedProtocol);
     }
 
-    this.#port = options.port || options.defaultPort || this.#agent?.defaultPort || (protocol === "https:" ? 443 : 80);
+    const defaultPort = protocol === "https:" ? 443 : 80;
+
+    this.#port = options.port || options.defaultPort || this.#agent?.defaultPort || defaultPort;
+    this.#useDefaultPort = this.#port === defaultPort;
     const host =
       (this.#host =
       options.host =

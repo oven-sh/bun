@@ -177,6 +177,11 @@ describe("EventEmitter", () => {
     expect(myEmitter.addListener("foo", () => {})).toBe(myEmitter);
   });
 
+  test("addListener validates function", () => {
+    var myEmitter = new EventEmitter();
+    expect(() => myEmitter.addListener("foo", {} as any)).toThrow();
+  });
+
   test("removeListener return type", () => {
     var myEmitter = new EventEmitter();
     expect(myEmitter.removeListener("foo", () => {})).toBe(myEmitter);

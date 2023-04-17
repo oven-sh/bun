@@ -1,7 +1,4 @@
 // Reimplementation of https://nodejs.org/api/events.html
-
-import { inspect } from "util";
-
 // Reference: https://github.com/nodejs/node/blob/main/lib/events.js
 const SymbolFor = Symbol.for;
 const ObjectDefineProperty = Object.defineProperty;
@@ -121,6 +118,7 @@ const emitWithRejectionCapture = function emit(type, ...args) {
 EventEmitter.prototype.emit = emitWithoutRejectionCapture;
 
 EventEmitter.prototype.addListener = function addListener(type, fn) {
+  checkListener(fn);
   var events = this._events;
   if (!events) {
     events = this._events = { __proto__: null };
@@ -145,6 +143,7 @@ EventEmitter.prototype.addListener = function addListener(type, fn) {
 EventEmitter.prototype.on = EventEmitter.prototype.addListener;
 
 EventEmitter.prototype.prependListener = function prependListener(type, fn) {
+  checkListener(fn);
   var events = this._events;
   if (!events) {
     events = this._events = { __proto__: null };
@@ -184,14 +183,16 @@ function onceWrapper(type, listener, ...args) {
   listener.apply(this, args);
 }
 
-EventEmitter.prototype.once = function once(type, listener) {
-  const bound = onceWrapper.bind(this, type, listener);
-  bound.listener = listener;
+EventEmitter.prototype.once = function once(type, fn) {
+  checkListener(fn);
+  const bound = onceWrapper.bind(this, type, fn);
+  bound.listener = fn;
   this.addListener(type, bound);
   return this;
 };
 
 EventEmitter.prototype.prependOnceListener = function prependOnceListener(type, fn) {
+  checkListener(fn);
   const bound = onceWrapper.bind(this, type, fn);
   bound.listener = fn;
   this.prependListener(type, bound);
@@ -199,6 +200,7 @@ EventEmitter.prototype.prependOnceListener = function prependOnceListener(type, 
 };
 
 EventEmitter.prototype.removeListener = function removeListener(type, fn) {
+  checkListener(fn);
   var { _events: events } = this;
   if (!events) return this;
   var handlers = events[type];
@@ -444,6 +446,12 @@ function validateNumber(value, name, min = undefined, max) {
       `${min != null ? `>= ${min}` : ""}${min != null && max != null ? " && " : ""}${max != null ? `<= ${max}` : ""}`,
       value,
     );
+  }
+}
+
+function checkListener(listener) {
+  if (typeof listener !== "function") {
+    throw new TypeError("The listener must be a function");
   }
 }
 

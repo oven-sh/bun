@@ -19002,7 +19002,7 @@ fn NewParser_(
                                 .e_number => |k| p.newExpr(E.Number{ .value = k.value }, loc),
                                 .e_string => |k| p.newExpr(E.String{ .data = k.data }, loc),
                                 .e_index => |k| p.newExpr(E.Index{ .target = k.target, .index = k.index }, loc),
-                                else => undefined,
+                                else => unreachable,
                             };
 
                             const descriptor_kind: f64 = if (!prop.flags.contains(.is_method)) 2 else 1;
@@ -19043,7 +19043,7 @@ fn NewParser_(
                                 target = p.newExpr(E.This{}, prop.key.?.loc);
                             }
 
-                            if (prop.flags.contains(.is_computed)) {
+                            if (prop.flags.contains(.is_computed) or prop.key.?.data == .e_number) {
                                 target = p.newExpr(E.Index{
                                     .target = target,
                                     .index = prop.key.?,

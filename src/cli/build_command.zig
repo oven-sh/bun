@@ -145,7 +145,7 @@ pub const BuildCommand = struct {
             {
                 dump: {
                     defer Output.flush();
-                    var writer = Output.errorWriter();
+                    var writer = Output.writer();
                     var output_dir = this_bundler.options.output_dir;
                     if (ctx.bundler_options.outfile.len > 0 and output_files.len == 1 and output_files[0].value == .buffer) {
                         output_dir = std.fs.path.dirname(ctx.bundler_options.outfile) orelse ".";

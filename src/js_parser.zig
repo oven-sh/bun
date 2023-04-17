@@ -3267,15 +3267,15 @@ pub const Parser = struct {
         var exports_kind = js_ast.ExportsKind.none;
         const exports_ref_usage_count = p.symbols.items[p.exports_ref.innerIndex()].use_count_estimate;
         const uses_exports_ref = exports_ref_usage_count > 0;
-        const uses_module_ref = p.symbols.items[p.module_ref.innerIndex()].use_count_estimate > 0;
-
-        var wrapper_expr: ?Expr = null;
-
         if (uses_exports_ref and p.commonjs_named_exports.count() > 0) {
             p.deoptimizeCommonJSNamedExports();
         }
 
-        if (p.commonjs_named_exports_deoptimized and p.commonjs_named_exports.count() > 0) {
+        const uses_module_ref = p.symbols.items[p.module_ref.innerIndex()].use_count_estimate > 0;
+
+        var wrapper_expr: ?Expr = null;
+
+        if (p.isDeoptimizedCommonJS()) {
             exports_kind = .cjs;
         } else if (p.esm_export_keyword.len > 0 or p.top_level_await_keyword.len > 0) {
             exports_kind = .esm;
@@ -5522,9 +5522,13 @@ fn NewParser_(
                     "Multiple exports with the same name \"{s}\"",
                     .{std.mem.trim(u8, alias, "\"'")},
                 );
-            } else {
+            } else if (!p.isDeoptimizedCommonJS()) {
                 try p.named_exports.put(alias, js_ast.NamedExport{ .alias_loc = loc, .ref = ref });
             }
+        }
+
+        fn isDeoptimizedCommonJS(p: *P) bool {
+            return p.commonjs_named_exports_deoptimized and p.commonjs_named_exports.count() > 0;
         }
 
         pub fn recordUsage(p: *P, ref: Ref) void {

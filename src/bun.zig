@@ -877,7 +877,7 @@ pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) []const u8) {
 
 pub fn ComptimeEnumMap(comptime T: type) type {
     comptime {
-        var entries: [std.enums.values(T).len].{ string, T } = undefined;
+        var entries: [std.enums.values(T).len]struct { string, T } = undefined;
         var i: usize = 0;
         inline for (std.enums.values(T)) |value| {
             entries[i] = .{ .@"0" = @tagName(value), .@"1" = value };

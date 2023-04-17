@@ -4390,6 +4390,10 @@ pub const KnownGlobal = enum {
     Date,
     Set,
     Map,
+    Headers,
+    Response,
+    TextEncoder,
+    TextDecoder,
 
     pub const map = bun.ComptimeEnumMap(KnownGlobal);
 
@@ -4408,6 +4412,7 @@ pub const KnownGlobal = enum {
                 if (n == 0) {
                     // "new WeakSet()" is pure
                     e.can_be_unwrapped_if_unused = true;
+
                     return;
                 }
 
@@ -4438,6 +4443,7 @@ pub const KnownGlobal = enum {
                 if (n == 0) {
                     // "new Date()" is pure
                     e.can_be_unwrapped_if_unused = true;
+
                     return;
                 }
 
@@ -4482,6 +4488,60 @@ pub const KnownGlobal = enum {
                         },
                     }
                 }
+            },
+
+            .Headers => {
+                const n = e.args.len;
+
+                if (n == 0) {
+                    // "new Headers()" is pure
+                    e.can_be_unwrapped_if_unused = true;
+
+                    return;
+                }
+            },
+
+            .Response => {
+                const n = e.args.len;
+
+                if (n == 0) {
+                    // "new Response()" is pure
+                    e.can_be_unwrapped_if_unused = true;
+
+                    return;
+                }
+
+                if (n == 1) {
+                    switch (e.args.ptr[0].knownPrimitive()) {
+                        .null, .undefined, .boolean, .number, .string => {
+                            // "new Response('')" is pure
+                            // "new Response(0)" is pure
+                            // "new Response(null)" is pure
+                            // "new Response(true)" is pure
+                            // "new Response(false)" is pure
+                            // "new Response(undefined)" is pure
+
+                            e.can_be_unwrapped_if_unused = true;
+                        },
+                        else => {
+                            // "new Response(x)" is impure
+                        },
+                    }
+                }
+            },
+            .TextDecoder, .TextEncoder => {
+                const n = e.args.len;
+
+                if (n == 0) {
+                    // "new TextEncoder()" is pure
+                    // "new TextDecoder()" is pure
+                    e.can_be_unwrapped_if_unused = true;
+
+                    return;
+                }
+
+                // We _could_ validate the encoding argument
+                // But let's not bother
             },
 
             .Map => {

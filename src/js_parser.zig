@@ -3265,10 +3265,15 @@ pub const Parser = struct {
 
         // Analyze cross-part dependencies for tree shaking and code splitting
         var exports_kind = js_ast.ExportsKind.none;
-        const uses_exports_ref = p.symbols.items[p.exports_ref.innerIndex()].use_count_estimate > 0;
+        const exports_ref_usage_count = p.symbols.items[p.exports_ref.innerIndex()].use_count_estimate;
+        const uses_exports_ref = exports_ref_usage_count > 0;
         const uses_module_ref = p.symbols.items[p.module_ref.innerIndex()].use_count_estimate > 0;
 
         var wrapper_expr: ?Expr = null;
+
+        if (uses_exports_ref and p.commonjs_named_exports.count() > 0) {
+            p.deoptimizeCommonJSNamedExports();
+        }
 
         if (p.commonjs_named_exports_deoptimized and p.commonjs_named_exports.count() > 0) {
             exports_kind = .cjs;
@@ -15779,13 +15784,6 @@ fn NewParser_(
                         target.data.e_array.items.ptr[0].canBeInlinedFromPropertyAccess())
                     {
                         return target.data.e_array.items.ptr[0];
-                    } else if (FeatureFlags.unwrap_commonjs_to_esm and
-                        // If you're accessing the exports object in a way that is not statically analyzable
-                        // We must deoptimize
-                        target.data == .e_identifier and
-                        target.data.e_identifier.ref.eql(p.exports_ref))
-                    {
-                        p.deoptimizeCommonJSNamedExports();
                     }
                     // Create an error for assigning to an import namespace when bundling. Even
                     // though this is a run-time error, we make it a compile-time error when

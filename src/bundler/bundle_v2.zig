@@ -7022,6 +7022,29 @@ const LinkerContext = struct {
                     }
                 },
 
+                .dynamic_fallback_interop_default => {
+                    const named_import: js_ast.NamedImport = named_imports[prev_source_index].get(prev_import_ref).?;
+                    if (named_import.namespace_ref != null and named_import.namespace_ref.?.isValid()) {
+
+                        // TODO: why do we need to do this?
+                        // Why is the namespace_ref incorrect? It implies we need to link
+                        // it somewhere
+                        const ref_to_use = c.graph.ast.items(.exports_ref)[other_id];
+
+                        // If the file was rewritten to ESM from CJS, the "default" export should alias to the namespace export.
+                        if (strings.eqlComptime(named_import.alias orelse "", "default")) {
+                            result.kind = .normal;
+                            result.ref = ref_to_use;
+                            result.name_loc = named_import.alias_loc orelse Logger.Loc.Empty;
+                        } else {
+                            result.kind = .normal_and_namespace;
+                            result.namespace_ref = ref_to_use;
+                            result.alias = named_import.alias.?;
+                            result.name_loc = named_import.alias_loc orelse Logger.Loc.Empty;
+                        }
+                    }
+                },
+
                 .dynamic_fallback => {
                     // If it's a file with dynamic export fallback, rewrite the import to a property access
                     const named_import: js_ast.NamedImport = named_imports[prev_source_index].get(prev_import_ref).?;
@@ -7422,7 +7445,10 @@ const LinkerContext = struct {
                     .source_index = Index.source(other_source_index),
                     .import_ref = c.graph.ast.items(.exports_ref)[other_id],
                 },
-                .status = .dynamic_fallback,
+                .status = if (c.graph.ast.items(.commonjs_named_exports)[other_source_index].count() > 0)
+                    .dynamic_fallback_interop_default
+                else
+                    .dynamic_fallback,
                 .tracker = tracker,
             };
         }
@@ -7889,6 +7915,10 @@ pub const ImportTracker = struct {
 
         /// The import is missing but there is a dynamic fallback object
         dynamic_fallback,
+
+        /// The import is missing but there is a dynamic fallback object
+        /// and the file was originally CommonJS.
+        dynamic_fallback_interop_default,
 
         /// The import was treated as a CommonJS import but the file is known to have no exports
         cjs_without_exports,

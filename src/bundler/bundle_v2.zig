@@ -388,8 +388,8 @@ pub const BundleV2 = struct {
         _ = package_bundle_map;
 
         var generator = try allocator.create(BundleV2);
-        bundler.options.mark_bun_builtins_as_external = bundler.options.platform.isBun();
-        bundler.resolver.opts.mark_bun_builtins_as_external = bundler.options.platform.isBun();
+        bundler.options.mark_builtins_as_external = bundler.options.platform.isBun() or bundler.options.platform == .node;
+        bundler.resolver.opts.mark_builtins_as_external = bundler.options.platform.isBun() or bundler.options.platform == .node;
 
         var this = generator;
 

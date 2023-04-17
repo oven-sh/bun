@@ -561,7 +561,11 @@ pub const Resolver = struct {
     }
 
     pub fn isExternalPattern(r: *ThisResolver, import_path: string) bool {
-        if (r.opts.mark_bun_builtins_as_external) {
+        if (r.opts.mark_builtins_as_external) {
+            if (strings.hasPrefixComptime(import_path, "node:") or strings.hasPrefixComptime(import_path, "bun:")) {
+                return true;
+            }
+
             if (bun.JSC.HardcodedModule.Aliases.has(import_path)) {
                 return true;
             }

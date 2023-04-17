@@ -1340,7 +1340,7 @@ pub const BundleOptions = struct {
     allow_runtime: bool = true,
 
     trim_unused_imports: ?bool = null,
-    mark_bun_builtins_as_external: bool = false,
+    mark_builtins_as_external: bool = false,
     react_server_components: bool = false,
     react_server_components_boundary: string = "",
     hot_module_reloading: bool = false,

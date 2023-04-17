@@ -3976,10 +3976,10 @@ pub const JSValue = enum(JSValueReprInt) {
         return @field(Enum, map_name).getWithEql(target_str, ZigString.eqlComptime) orelse {
             const one_of = struct {
                 pub const list = brk: {
-                    var str = "'";
+                    var str: []const u8 = "'";
                     const field_names = std.meta.fieldNames(Enum);
                     for (field_names, 0..) |entry, i| {
-                        str = str ++ entry.key ++ "'";
+                        str = str ++ entry ++ "'";
                         if (i < field_names.len - 2) {
                             str = str ++ ", '";
                         } else if (i == field_names.len - 2) {
@@ -4009,8 +4009,10 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn getOptionalEnum(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime Enum: type) !?Enum {
         if (get(this, globalThis, property_name)) |prop| {
-            return toEnum(prop, globalThis, property_name, Enum);
+            return try toEnum(prop, globalThis, property_name, Enum);
         }
+
+        return null;
     }
 
     pub fn getArray(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) !?JSValue {
@@ -4065,7 +4067,7 @@ pub const JSValue = enum(JSValueReprInt) {
                     }
 
                     if (prop.isNumber()) {
-                        return prop.toNumber() != 0;
+                        return prop.asDouble() != 0;
                     }
 
                     globalThis.throwInvalidArguments(property_name ++ " must be a boolean", .{});
@@ -4081,6 +4083,7 @@ pub const JSValue = enum(JSValueReprInt) {
                     globalThis.throwInvalidArguments(property_name ++ " must be a string", .{});
                     return error.JSError;
                 },
+                else => @compileError("TODO:" ++ @typeName(T)),
             }
         }
 

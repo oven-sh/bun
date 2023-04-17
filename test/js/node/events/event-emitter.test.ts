@@ -34,24 +34,6 @@ describe("node:events", () => {
     controller.abort();
   });
 
-  // Next two tests are checking exact behavior
-  // https://nodejs.org/api/events.html#awaiting-multiple-events-emitted-on-processnexttick
-  // TODO: not skip this test
-  test.skip("once (multiple, only first hits)", async () => {
-    const emitter = new EventEmitter();
-    let a, b;
-    EventEmitter.once(emitter, "hey").then(() => {
-      a = true;
-    });
-    EventEmitter.once(emitter, "hey").then(() => {
-      b = true;
-    });
-    emitter.emit("hey");
-    await sleep(5);
-    expect(a).toBe(true);
-    expect(b).toBe(false);
-  });
-
   test("once (two events in same tick)", done => {
     const emitter = new EventEmitter();
     EventEmitter.once(emitter, "hey").then(() => {

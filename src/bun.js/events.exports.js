@@ -6,16 +6,14 @@ import { inspect } from "util";
 const SymbolFor = Symbol.for;
 const ObjectDefineProperty = Object.defineProperty;
 const kCapture = Symbol("kCapture");
-const kErrorMonitor = Symbol("events.errorMonitor");
+const kErrorMonitor = SymbolFor("events.errorMonitor");
 const kMaxEventTargetListeners = Symbol("events.maxEventTargetListeners");
 const kMaxEventTargetListenersWarned = Symbol("events.maxEventTargetListenersWarned");
-const kWatermarkData = Symbol.for("nodejs.watermarkData");
+const kWatermarkData = SymbolFor("nodejs.watermarkData");
 const kRejection = SymbolFor("nodejs.rejection");
-const captureRejectionSymbol = Symbol.for("nodejs.rejection");
+const captureRejectionSymbol = SymbolFor("nodejs.rejection");
 const ArrayPrototypeSlice = Array.prototype.slice;
 var { isPromise } = import.meta.primordials;
-
-var errorMonitor = Symbol.for("events.errorMonitor");
 
 var defaultMaxListeners = 10;
 
@@ -357,7 +355,7 @@ ObjectDefineProperty(EventEmitter, "captureRejections", {
   },
   enumerable: true,
 });
-EventEmitter.errorMonitor = errorMonitor;
+EventEmitter.errorMonitor = kErrorMonitor;
 Object.defineProperties(EventEmitter, {
   defaultMaxListeners: {
     enumerable: true,

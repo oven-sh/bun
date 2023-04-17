@@ -16239,7 +16239,22 @@ fn NewParser_(
                                 return p.newExpr(E.Null{}, expr.loc);
                             }
 
+                            if (p.options.warn_about_unbundled_modules) {
+                                const r = js_lexer.rangeOfIdentifier(p.source, e_.target.loc);
+                                p.log.addRangeDebug(p.source, r, "This call to \"require\" will not be bundled because it has dynamic arguments") catch unreachable;
+                            }
+
                             p.ignoreUsage(p.require_ref);
+
+                            if (!could_be_require_resolve) {
+                                return p.newExpr(
+                                    E.Call{
+                                        .target = p.valueForRequire(e_.target.loc),
+                                        .args = e_.args,
+                                    },
+                                    expr.loc,
+                                );
+                            }
                         }
 
                         if (p.options.warn_about_unbundled_modules) {

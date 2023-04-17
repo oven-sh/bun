@@ -32,16 +32,7 @@ const DEBUG = process.env.BUN_BUNDLER_TEST_DEBUG;
 const FILTER = process.env.BUN_BUNDLER_TEST_FILTER;
 /** Path to the bun. TODO: Once bundler is merged, we should remove the `bun-debug` fallback. */
 const BUN_EXE = (process.env.BUN_EXE && Bun.which(process.env.BUN_EXE)) ?? Bun.which("bun-debug") ?? bunExe();
-/**
- * If set to true, run an alternate validation for tests which is much looser.
- * We are only testing for:
- * - bundler does not crash
- * - output js has no syntax errors
- *
- * Defaults to true unless you are running a single test.
- */
-const LOOSE = !process.env.BUN_BUNDLER_TEST_FILTER && process.env.BUN_BUNDLER_TEST_LOOSE !== "false";
-export const RUN_UNCHECKED_TESTS = LOOSE;
+export const RUN_UNCHECKED_TESTS = true;
 
 const outBaseTemplate = path.join(tmpdir(), "bun-build-tests", `${ESBUILD ? "esbuild" : "bun"}-`);
 if (!existsSync(path.dirname(outBaseTemplate))) mkdirSync(path.dirname(outBaseTemplate), { recursive: true });
@@ -55,6 +46,9 @@ if (ESBUILD) {
 export const ESBUILD_PATH = import.meta.resolveSync("esbuild/bin/esbuild");
 
 export interface BundlerTestInput {
+  /** Temporary flag to mark failing tests as skipped. */
+  notImplemented?: boolean;
+
   // file options
   files: Record<string, string>;
   /** Files to be written only after the bundle is done. */
@@ -310,9 +304,6 @@ export function expectBundled(
   if (!ESBUILD && platform === "neutral") {
     throw new Error("platform=neutral not implemented in bun build");
   }
-  if (!ESBUILD && mode === "transform") {
-    throw new Error("mode=transform not implemented in bun build");
-  }
   if (!ESBUILD && metafile) {
     throw new Error("metafile not implemented in bun build");
   }
@@ -339,6 +330,15 @@ export function expectBundled(
   }
   if (!ESBUILD && loader) {
     throw new Error("loader not implemented in bun build");
+  }
+  if (!ESBUILD && sourceMap) {
+    throw new Error("sourceMap not implemented in bun build");
+  }
+  if (!ESBUILD && banner) {
+    throw new Error("banner not implemented in bun build");
+  }
+  if (!ESBUILD && inject) {
+    throw new Error("inject not implemented in bun build");
   }
   if (ESBUILD && skipOnEsbuild) {
     return testRef(id, opts);
@@ -975,18 +975,16 @@ export function itBundled(id: string, opts: BundlerTestInput): BundlerTestRef {
     }
   }
 
-  if (LOOSE) {
+  if (opts.notImplemented) {
     try {
       expectBundled(id, opts);
-      it(id, () => {});
+      it(id, () => {
+        throw new Error(
+          `Test ${id} passes but was marked as "notImplemented"\nPlease remove "notImplemented: true" from this test.`,
+        );
+      });
     } catch (error: any) {
-      if (error.message === "Bun crashed during build") {
-        it(id, () => {
-          throw error;
-        });
-      } else {
-        it.skip(id, () => {});
-      }
+      it.skip(id, () => {});
     }
   } else {
     it(id, () => expectBundled(id, opts));

@@ -155,8 +155,8 @@ pub const help_catch_memory_issues = @import("bun").Environment.allow_assert;
 /// exports object. `require.cache` makes it even more complicated.
 /// So, we just wrap the entire module in a closure.
 ///
-/// But what if we previously unwrapped it? 
-/// 
+/// But what if we previously unwrapped it?
+///
 /// In that case, we wrap it again in the printer.
 pub const unwrap_commonjs_to_esm = true;
 

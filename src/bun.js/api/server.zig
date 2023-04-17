@@ -5003,13 +5003,14 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                         },
                     };
                     resp.onData(*RequestContext, RequestContext.onBufferedBodyChunk, ctx);
-                } else {
-                    // no content-length or 0 content-length
-                    // no transfer-encoding
+                } else if (request_object.body == .Locked) {
+                    // This branch should never be taken, but we are handling it anyway.
                     var old = request_object.body;
                     old.Locked.onReceiveValue = null;
                     request_object.body = .{ .Null = {} };
                     old.resolve(&request_object.body, this.globalThis);
+                } else {
+                    request_object.body = .{ .Null = {} };
                 }
             }
 

@@ -5025,7 +5025,6 @@ pub const S = struct {
     pub const With = struct {
         value: ExprNodeIndex,
         body: StmtNodeIndex,
-        body_loc: logger.Loc,
     };
 
     pub const Try = struct {

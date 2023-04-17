@@ -8992,14 +8992,10 @@ fn NewParser_(
                     const test_ = try p.parseExpr(.lowest);
                     try p.lexer.expect(.t_close_paren);
 
-                    const body_loc = p.lexer.loc();
-                    _ = try p.pushScopeForParsePass(.block, body_loc);
-                    defer p.popScope();
-
                     var stmtOpts = ParseStatementOptions{};
                     const body = try p.parseStmt(&stmtOpts);
 
-                    return p.s(S.With{ .body = body, .body_loc = body_loc, .value = test_ }, loc);
+                    return p.s(S.With{ .body = body, .value = test_ }, loc);
                 },
                 .t_switch => {
                     try p.lexer.next();

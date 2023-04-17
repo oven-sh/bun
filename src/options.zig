@@ -1837,6 +1837,8 @@ pub const BundleOptions = struct {
 
         opts.tree_shaking = opts.serve or opts.platform.isBun() or opts.production or is_generating_bundle;
         opts.inlining = opts.tree_shaking;
+        if (opts.inlining)
+            opts.minify_syntax = true;
 
         if (opts.origin.isAbsolute()) {
             opts.import_path_format = ImportPathFormat.absolute_url;

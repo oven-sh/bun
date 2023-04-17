@@ -101,7 +101,6 @@ pub const ThreadPool = struct {
     }
 
     pub fn start(this: *ThreadPool, v2: *BundleV2) !void {
-        v2.bundler.env.loadProcess();
         this.v2 = v2;
 
         this.cpu_count = @truncate(u32, @max(std.Thread.getCpuCount() catch 2, 2));
@@ -140,9 +139,9 @@ pub const ThreadPool = struct {
         quit: bool = false,
 
         ast_memory_allocator: js_ast.ASTMemoryAllocator = undefined,
-
         has_notify_started: bool = false,
         has_created: bool = false,
+
         pub fn get() *Worker {
             var worker = @ptrCast(
                 *ThreadPool.Worker,

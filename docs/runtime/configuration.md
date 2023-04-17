@@ -103,7 +103,7 @@ disableManifest = false
 
 To configure lockfile behavior:
 
-```toml {% disabled %}
+```toml
 [install.lockfile]
 
 # path to read bun.lockb from

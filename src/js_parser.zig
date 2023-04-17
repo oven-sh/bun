@@ -2966,11 +2966,14 @@ pub const Parser = struct {
                         var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
                         sliced.items.len = 1;
                         sliced.items[0] = stmt;
-                        if (p.options.bundle) {
-                            try p.appendPart(&before, sliced.items);
-                        } else {
-                            try p.appendPart(&parts, sliced.items);
-                        }
+                        // since we convert top-level function statements to look like this:
+                        //
+                        //   let foo = function () { ... }
+                        //
+                        // we have to hoist them to the top of the file, even when not bundling
+                        //
+                        // we might also need to do this for classes but i'm not sure yet.
+                        try p.appendPart(&before, sliced.items);
                     },
 
                     else => {

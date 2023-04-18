@@ -2,11 +2,12 @@
 # For more information see: https://help.github.com/actions/language-and-framework-guides/publishing-nodejs-packages
 
 name: Publish bun-create templates
-
 on:
   push:
     branches:
       - "main"
+    paths:
+      - "templates/**"
 
 jobs:
   publish-npm:
@@ -26,7 +27,7 @@ jobs:
       - run: bun run publish.ts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - uses: "EndBug/add-and-commit@v9"
 
+      - uses: "EndBug/add-and-commit@v9"
         with:
           default_author: github_actions

@@ -82,7 +82,7 @@ const debugTreeShake = Output.scoped(.TreeShake, true);
 const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 
 pub const ThreadPool = struct {
-    pool: ThreadPoolLib = undefined,
+    pool: *ThreadPoolLib = undefined,
     // Hardcode 512 as max number of threads for now.
     workers: [512]Worker = undefined,
     workers_used: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
@@ -100,7 +100,7 @@ pub const ThreadPool = struct {
         return this.pool.go(allocator, Function);
     }
 
-    pub fn start(this: *ThreadPool, v2: *BundleV2) !void {
+    pub fn start(this: *ThreadPool, v2: *BundleV2, existing_thread_pool: ?*ThreadPoolLib) !void {
         this.v2 = v2;
 
         this.cpu_count = @truncate(u32, @max(std.Thread.getCpuCount() catch 2, 2));
@@ -110,12 +110,15 @@ pub const ThreadPool = struct {
                 this.cpu_count = @max(cpu_count, 2);
             } else |_| {}
         }
-
         this.cpu_count = @min(this.cpu_count, @truncate(u32, this.workers.len - 1));
-
-        this.pool = ThreadPoolLib.init(.{
-            .max_threads = this.cpu_count,
-        });
+        if (existing_thread_pool) |pool| {
+            this.pool = pool;
+        } else {
+            this.pool = try v2.graph.allocator.create(ThreadPoolLib);
+            this.pool.* = ThreadPoolLib.init(.{
+                .max_threads = this.cpu_count,
+            });
+        }
         this.pool.on_thread_spawn = Worker.onSpawn;
         this.pool.threadpool_context = this;
         var workers_used: u32 = 0;
@@ -374,28 +377,18 @@ pub const BundleV2 = struct {
         return source_index.get();
     }
 
-    pub fn generate(
+    pub fn init(
         bundler: *ThisBundler,
         allocator: std.mem.Allocator,
-        estimated_input_lines_of_code: *usize,
-        package_bundle_map: options.BundlePackage.Map,
         event_loop: EventLoop,
-        unique_key: u64,
         enable_reloading: bool,
-    ) !std.ArrayList(options.OutputFile) {
-        _ = try bundler.fs.fs.openTmpDir();
-        bundler.resetStore();
-        try bundler.configureDefines();
-        _ = estimated_input_lines_of_code;
-        _ = package_bundle_map;
-
+        thread_pool: ?*ThreadPoolLib,
+    ) !*BundleV2 {
         var generator = try allocator.create(BundleV2);
         bundler.options.mark_builtins_as_external = bundler.options.platform.isBun() or bundler.options.platform == .node;
         bundler.resolver.opts.mark_builtins_as_external = bundler.options.platform.isBun() or bundler.options.platform == .node;
 
         var this = generator;
-
-        defer allocator.destroy(generator);
         generator.* = BundleV2{
             .bundler = bundler,
             .client_bundler = bundler,
@@ -430,14 +423,20 @@ pub const BundleV2 = struct {
 
         pool.* = ThreadPool{};
         generator.graph.pool = pool;
+        try pool.start(
+            this,
+            thread_pool,
+        );
 
+        return generator;
+    }
+
+    pub fn enqueueEntryPoints(this: *BundleV2, user_entry_points: []const string) !ThreadPoolLib.Batch {
         var batch = ThreadPoolLib.Batch{};
-
-        try pool.start(this);
 
         {
             // Add the runtime
-            try this.graph.input_files.append(allocator, Graph.InputFile{
+            try this.graph.input_files.append(this.graph.allocator, Graph.InputFile{
                 .source = ParseTask.runtime_source,
                 .loader = .js,
                 .side_effects = _resolver.SideEffects.no_side_effects__pure_data,
@@ -455,7 +454,7 @@ pub const BundleV2 = struct {
             batch.push(ThreadPoolLib.Batch.from(&runtime_parse_task.task));
         }
 
-        if (bundler.router) |router| {
+        if (this.bundler.router) |router| {
             defer this.bundler.resetStore();
             Analytics.Features.filesystem_router = true;
 
@@ -465,7 +464,7 @@ pub const BundleV2 = struct {
             try this.graph.path_to_source_index_map.ensureUnusedCapacity(this.graph.allocator, @truncate(u32, entry_points.len));
 
             for (entry_points) |entry_point| {
-                const resolved = bundler.resolveEntryPoint(entry_point) catch continue;
+                const resolved = this.bundler.resolveEntryPoint(entry_point) catch continue;
                 if (try this.enqueueItem(null, &batch, resolved)) |source_index| {
                     this.graph.entry_points.append(this.graph.allocator, Index.source(source_index)) catch unreachable;
                 } else {}
@@ -474,26 +473,23 @@ pub const BundleV2 = struct {
 
         {
             // Setup entry points
-            try this.graph.entry_points.ensureUnusedCapacity(this.graph.allocator, bundler.options.entry_points.len);
-            try this.graph.input_files.ensureUnusedCapacity(this.graph.allocator, bundler.options.entry_points.len);
-            try this.graph.path_to_source_index_map.ensureUnusedCapacity(this.graph.allocator, @truncate(u32, bundler.options.entry_points.len));
+            try this.graph.entry_points.ensureUnusedCapacity(this.graph.allocator, user_entry_points.len);
+            try this.graph.input_files.ensureUnusedCapacity(this.graph.allocator, user_entry_points.len);
+            try this.graph.path_to_source_index_map.ensureUnusedCapacity(this.graph.allocator, @truncate(u32, user_entry_points.len));
 
             defer this.bundler.resetStore();
-            for (bundler.options.entry_points) |entry_point| {
-                const resolved = bundler.resolveEntryPoint(entry_point) catch continue;
+            for (user_entry_points) |entry_point| {
+                const resolved = this.bundler.resolveEntryPoint(entry_point) catch continue;
                 if (try this.enqueueItem(null, &batch, resolved)) |source_index| {
                     this.graph.entry_points.append(this.graph.allocator, Index.source(source_index)) catch unreachable;
                 } else {}
             }
         }
 
-        this.graph.pool.pool.schedule(batch);
-        this.waitForParse();
+        return batch;
+    }
 
-        if (this.bundler.log.msgs.items.len > 0) {
-            return error.BuildFailed;
-        }
-
+    fn cloneAST(this: *BundleV2) !void {
         this.linker.allocator = this.bundler.allocator;
         this.linker.graph.allocator = this.bundler.allocator;
         this.linker.graph.ast = try this.graph.ast.clone(this.linker.allocator);
@@ -503,6 +499,34 @@ pub const BundleV2 = struct {
                 new_child.parent = new_module_scope;
             }
         }
+    }
+
+    pub fn generateFromCLI(
+        bundler: *ThisBundler,
+        allocator: std.mem.Allocator,
+        event_loop: EventLoop,
+        unique_key: u64,
+        enable_reloading: bool,
+    ) !std.ArrayList(options.OutputFile) {
+        var this = try BundleV2.init(bundler, allocator, event_loop, enable_reloading, null);
+
+        if (this.bundler.log.msgs.items.len > 0) {
+            return error.BuildFailed;
+        }
+
+        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(this.bundler.options.entry_points));
+
+        if (this.bundler.log.msgs.items.len > 0) {
+            return error.BuildFailed;
+        }
+
+        this.waitForParse();
+
+        if (this.bundler.log.msgs.items.len > 0) {
+            return error.BuildFailed;
+        }
+
+        try this.cloneAST();
 
         var chunks = try this.linker.link(
             this,
@@ -512,9 +536,7 @@ pub const BundleV2 = struct {
             unique_key,
         );
 
-        const output_files = try this.linker.generateChunksInParallel(chunks);
-
-        return output_files;
+        return try this.linker.generateChunksInParallel(chunks);
     }
 
     pub fn onParseTaskComplete(parse_result: *ParseTask.Result, this: *BundleV2) void {
@@ -2853,6 +2875,11 @@ const LinkerContext = struct {
             // are ignored for those modules.
             {
                 var export_star_ctx: ?ExportStarContext = null;
+                defer {
+                    if (export_star_ctx) |*export_ctx| {
+                        export_ctx.source_index_stack.deinit();
+                    }
+                }
                 var resolved_exports: []ResolvedExports = this.graph.meta.items(.resolved_exports);
                 var resolved_export_stars: []ExportData = this.graph.meta.items(.resolved_export_star);
                 var has_lazy_export: []bool = this.graph.ast.items(.has_lazy_export);

@@ -120,11 +120,9 @@ pub const BuildCommand = struct {
                 break :brk result.output_files;
             }
 
-            break :brk (BundleV2.generate(
+            break :brk (BundleV2.generateFromCLI(
                 &this_bundler,
                 allocator,
-                &estimated_input_lines_of_code_,
-                ctx.debug.package_bundle_map,
                 bun.JSC.AnyEventLoop.init(ctx.allocator),
                 std.crypto.random.int(u64),
                 ctx.debug.hot_reload == .watch,

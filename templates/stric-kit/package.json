@@ -1,4 +1,6 @@
 {
+  "name": "@bun-examples/stric-kit",
+  "version": "0.0.1",
   "module": "index.ts",
   "devDependencies": {
     "bun-types": "latest"

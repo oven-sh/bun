@@ -1,6 +1,6 @@
 {
   "version": "0.0.101",
-  "name": "@bun-examples/discord-interactions",
+  "name": "@bun-examples/discord-bot",
   "dependencies": {
     "slash-create": "^5.9.0"
   },

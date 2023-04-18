@@ -1,9 +1,10 @@
 {
+  "name": "@bun-examples/websi",
+  "version": "0.0.1",
   "devDependencies": {
     "semver": "^7.3.8",
     "bun-types": "canary"
   },
-  "name": "templates",
   "module": "index.ts",
   "type": "module"
 }

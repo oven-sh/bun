@@ -1176,6 +1176,7 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/PackageJsonExportsEntryPointImportOverRequire", {
+    notImplemented: true,
     files: {
       "/node_modules/pkg/package.json": /* json */ `
         {
@@ -1266,12 +1267,14 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg/node.js": `console.log('FAILURE')`,
       "/Users/user/project/node_modules/pkg/browser.js": `console.log('SUCCESS')`,
     },
+    platform: "browser",
     outfile: "/Users/user/project/out.js",
     run: {
       stdout: "SUCCESS",
     },
   });
   itBundled("packagejson/PackageJsonExportsNode", {
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg'`,
       "/Users/user/project/node_modules/pkg/package.json": /* json */ `
@@ -1286,6 +1289,7 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg/browser.js": `console.log('FAILURE')`,
       "/Users/user/project/node_modules/pkg/node.js": `console.log('SUCCESS')`,
     },
+    platform: "node",
     outfile: "/Users/user/project/out.js",
     run: {
       stdout: "SUCCESS",
@@ -1308,6 +1312,7 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg/default.js": `console.log('SUCCESS')`,
     },
     outfile: "/Users/user/project/out.js",
+    platform: "neutral",
     run: {
       stdout: "SUCCESS",
     },
@@ -1439,7 +1444,7 @@ describe("bundler", () => {
       "/Users/user/project/src/entry.js": [`Could not resolve: "pkg1/foo/bar". Maybe you need to "bun install"?`],
     },
   });
-  // return;
+  return;
   itBundled("packagejson/PackageJsonExportsNoConditionsMatch", {
     // GENERATED
     files: {

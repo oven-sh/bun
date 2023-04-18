@@ -273,10 +273,6 @@ export function expectBundled(
     ...unknownProps
   } = opts;
 
-  if (!ESBUILD && platform === "neutral") {
-    platform = "browser";
-  }
-
   // TODO: Remove this check once all options have been implemented
   if (Object.keys(unknownProps).length > 0) {
     throw new Error("expectBundled recieved unexpected options: " + Object.keys(unknownProps).join(", "));

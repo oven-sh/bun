@@ -21,7 +21,7 @@
   },
   "bun-create": {
     "postinstall": [
-      "echo 'Important note! Next.js uses Node.js under the hood. The build performance and startup times may feel slow compared to frameworks that take advantage of Bun.'"
+      "echo 'Important note! Next.js uses Node.js under the hood. The build performance and\nstartup times may feel slow compared to frameworks that take advantage of Bun.\n'"
     ],
     "start": "bun run dev"
   }

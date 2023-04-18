@@ -1610,21 +1610,21 @@ pub const CreateCommand = struct {
         }
 
         if (is_nextjs) {
-            Output.pretty(
-                \\
-                \\<r><d>#<r> When dependencies change, run this to update node_modules.bun:
-                \\
-                \\  <b><cyan>bun bun --use next<r>
-                \\
-            , .{});
+            // Output.pretty(
+            //     \\
+            //     \\<r><d>#<r> When dependencies change, run this to update node_modules.bun:
+            //     \\
+            //     \\  <b><cyan>bun bun --use next<r>
+            //     \\
+            // , .{});
         } else if (is_create_react_app) {
-            Output.pretty(
-                \\
-                \\<r><d>#<r> When dependencies change, run this to update node_modules.bun:
-                \\
-                \\  <b><cyan>bun bun {s}<r>
-                \\
-            , .{create_react_app_entry_point_path});
+            // Output.pretty(
+            //     \\
+            //     \\<r><d>#<r> When dependencies change, run this to update node_modules.bun:
+            //     \\
+            //     \\  <b><cyan>bun bun {s}<r>
+            //     \\
+            // , .{create_react_app_entry_point_path});
         }
 
         Output.pretty(

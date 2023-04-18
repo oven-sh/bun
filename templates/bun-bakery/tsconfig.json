@@ -1,6 +1,8 @@
 {
   "compilerOptions": {
-    "types": ["bun-types"],
+    "types": [
+      "bun-types"
+    ],
     "module": "esnext",
     "moduleResolution": "Node"
   }

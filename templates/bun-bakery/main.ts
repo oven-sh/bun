@@ -1,8 +1,10 @@
-import {Router} from "@kapsonfire/bun-bakery"
+import { Router } from "@kapsonfire/bun-bakery";
 
-
+const PORT = 3000;
 new Router({
-    port: 3000,
-    assetsPath: import.meta.dir + '/assets/',
-    routesPath: import.meta.dir + '/routes/'
-})
+  port: PORT,
+  assetsPath: import.meta.dir + "/assets/",
+  routesPath: import.meta.dir + "/routes/",
+});
+
+console.log(`Server running on port ${PORT}`);

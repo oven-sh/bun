@@ -1,5 +1,6 @@
 // Reimplementation of https://nodejs.org/api/events.html
 // Reference: https://github.com/nodejs/node/blob/main/lib/events.js
+var { isPromise, Array, Object } = import.meta.primordials;
 const SymbolFor = Symbol.for;
 const ObjectDefineProperty = Object.defineProperty;
 const kCapture = Symbol("kCapture");
@@ -10,7 +11,6 @@ const kWatermarkData = SymbolFor("nodejs.watermarkData");
 const kRejection = SymbolFor("nodejs.rejection");
 const captureRejectionSymbol = SymbolFor("nodejs.rejection");
 const ArrayPrototypeSlice = Array.prototype.slice;
-var { isPromise } = import.meta.primordials;
 
 var defaultMaxListeners = 10;
 
@@ -106,7 +106,7 @@ const emitWithRejectionCapture = function emit(type, ...args) {
   if (events === undefined) return false;
   var handlers = events[type];
   if (handlers === undefined) return false;
-  for (var handler of handlers.slice()) {
+  for (var handler of [...handlers]) {
     var result = handler.apply(this, args);
     if (result !== undefined && isPromise(result)) {
       addCatch(this, result, type, args);
@@ -326,8 +326,8 @@ EventEmitter.getEventListeners = getEventListeners;
 
 function setMaxListeners(n, ...eventTargets) {
   validateNumber(n, "setMaxListeners", 0);
-  if (eventTargets) {
-    var { length } = eventTargets;
+  var length;
+  if (eventTargets && (length = eventTargets.length)) {
     for (let i = 0; i < length; i++) {
       eventTargets[i].setMaxListeners(n);
     }

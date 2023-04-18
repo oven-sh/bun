@@ -1,8 +1,6 @@
 import * as path from "path";
-
-import { existsSync, statSync } from "fs";
+import { statSync } from "fs";
 import type { ServeOptions } from "bun";
-import { execSync } from "child_process";
 
 const projectRoot = import.meta.dir;
 const PUBLIC_DIR = path.resolve(projectRoot, "public");

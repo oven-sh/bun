@@ -18,7 +18,7 @@
     "typescript": "latest"
   },
   "scripts": {
-    "predev": "NODE_ENV=development bun build ./src/index.jsx --outfile build/bundle.js",
+    "predev": "NODE_ENV=development bun build ./src/index.jsx --outfile ./.build/bundle.js",
     "dev": "bun run dev.tsx"
   },
   "bun-create": {

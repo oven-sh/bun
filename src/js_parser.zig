@@ -1725,8 +1725,16 @@ pub const SideEffects = enum(u1) {
                 // can be removed. The annotation causes us to ignore the target.
                 if (call.can_be_unwrapped_if_unused) {
                     if (call.args.len > 0) {
-                        return Expr.joinAllWithCommaCallback(call.args.slice(), @TypeOf(p), p, simpifyUnusedExpr, p.allocator);
+                        return Expr.joinAllWithCommaCallback(
+                            call.args.slice(),
+                            @TypeOf(p),
+                            p,
+                            simpifyUnusedExpr,
+                            p.allocator,
+                        );
                     }
+
+                    return null;
                 }
             },
             else => {},

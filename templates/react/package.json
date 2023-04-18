@@ -18,14 +18,11 @@
     "typescript": "latest"
   },
   "scripts": {
-    "prestart": "NODE_ENV=development bun build ./src/index.jsx --outfile build/bundle.js",
-    "start": "bun run dev.tsx"
+    "predev": "NODE_ENV=development bun build ./src/index.jsx --outfile build/bundle.js",
+    "dev": "bun run dev.tsx"
   },
   "bun-create": {
-    "prestart": [
-      "bun bun ./src/index.jsx --outfile ./build/bundle.js --platform browser --splitting --tree-shaking"
-    ],
-    "start": "bun run dev.tsx"
+    "start": "bun run dev"
   },
   "module": "index.ts",
   "type": "module"

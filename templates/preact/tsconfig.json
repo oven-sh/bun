@@ -1,14 +1,33 @@
 {
-    "compilerOptions": {
-        "jsxImportSource": "preact",
-        "jsxFactory": "h",
-        "jsxFragmentFactory": "Fragment",
-        "baseUrl": ".",
-        "paths": {
-            "react": ["node_modules/preact/compat"],
-        },
+  "compilerOptions": {
+    "lib": [
+      "ESNext"
+    ],
+    "module": "esnext",
+    "target": "esnext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "downlevelIteration": true,
+    "skipLibCheck": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "allowJs": true,
+    "types": [
+      "bun-types" // add Bun global
+    ],
+    // Preact configuration
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact-",
+    "jsxFactory": "h",
+    "jsxFragmentFactory": "Fragment",
+    "baseUrl": ".",
+    "paths": {
+      "react": [
+        "node_modules/preact/compat"
+      ],
+      "preact-jsx-dev-runtime": [
+        "node_modules/preact/jsx-runtime"
+      ],
     },
-    "include": [
-        "src"
-    ]
+  }
 }

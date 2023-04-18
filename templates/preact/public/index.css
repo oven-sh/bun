@@ -67,3 +67,39 @@ button:focus-visible {
     background-color: #f9f9f9;
   }
 }
+#app {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+.h-full {
+  min-height: 100vh;
+}
+.column-center {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+.row {
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+}
+
+.logo {
+  height: 6em;
+  padding: 1.5em;
+}
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.preact:hover {
+  filter: drop-shadow(0 0 2em #673ab8aa);
+}
+
+.read-the-docs {
+  color: #888;
+}

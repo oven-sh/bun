@@ -2957,15 +2957,48 @@ pub const PackageManager = struct {
 
                                             // If it's an exact package version already living in the cache
                                             // We can skip the network request, even if it's beyond the caching period
-                                            if (dependency.version.tag == .npm and dependency.version.value.npm.version.isExact()) {
-                                                if (loaded_manifest.?.findByVersion(dependency.version.value.npm.version.head.head.range.left.version)) |find_result| {
+
+                                            if (dependency.version.tag == .npm) {
+                                                if (dependency.version.value.npm.version.isExact()) {
+                                                    if (manifest.findByVersion(dependency.version.value.npm.version.head.head.range.left.version)) |find_result| {
+                                                        if (this.getOrPutResolvedPackageWithFindResult(
+                                                            name_hash,
+                                                            name,
+                                                            version,
+                                                            id,
+                                                            dependency.behavior,
+                                                            &manifest,
+                                                            find_result,
+                                                            successFn,
+                                                        ) catch null) |new_resolve_result| {
+                                                            resolve_result_ = new_resolve_result;
+                                                            _ = this.network_dedupe_map.remove(task_id);
+                                                            continue :retry_with_new_resolve_result;
+                                                        }
+                                                    }
+                                                }
+                                            } else if (this.lockfile.dependency_overrides.getOverrides(
+                                                name_str,
+                                                this.lockfile.str(&version.literal),
+                                            )) |found_| blk: {
+                                                const found: Lockfile.DependencyOverride = found_;
+                                                const semver: Semver.Version.ParseResult = Semver.Version.parse(
+                                                    SlicedString.init(found.version, found.version),
+                                                    this.allocator,
+                                                );
+
+                                                if (semver.stopped_at < found.version.len or
+                                                    !semver.valid or
+                                                    semver.wildcard != .none) break :blk;
+
+                                                if (manifest.findByVersion(semver.version.fill())) |find_result| {
                                                     if (this.getOrPutResolvedPackageWithFindResult(
                                                         name_hash,
                                                         name,
                                                         version,
                                                         id,
                                                         dependency.behavior,
-                                                        &loaded_manifest.?,
+                                                        &manifest,
                                                         find_result,
                                                         successFn,
                                                     ) catch null) |new_resolve_result| {
@@ -5166,10 +5199,8 @@ pub const PackageManager = struct {
         manager.lockfile = brk: {
             var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-            if (root_dir.entries.hasComptimeQuery("bun.lockb")) {
-                var parts = [_]string{
-                    "./bun.lockb",
-                };
+            if (root_dir.entries.hasComptimeQuery(Lockfile.default_filename)) {
+                var parts = [_]string{"./" ++ Lockfile.default_filename};
                 var lockfile_path = Path.joinAbsStringBuf(
                     Fs.FileSystem.instance.top_level_dir,
                     &buf,
@@ -7069,6 +7100,7 @@ pub const PackageManager = struct {
         // but we force allowing updates to the lockfile when you do bun add
         var had_any_diffs = false;
         manager.progress = .{};
+        manager.lockfile.dependency_overrides = .{};
 
         // Step 2. Parse the package.json file
         //
@@ -7259,6 +7291,8 @@ pub const PackageManager = struct {
                 _ = manager.getCacheDirectory();
                 _ = manager.getTemporaryDirectory();
             }
+
+            try manager.lockfile.loadOverridesFromNonBunLockfile(ctx.allocator);
             manager.enqueueDependencyList(root.dependencies, true);
         } else {
             // Anything that needs to be downloaded from an update needs to be scheduled here

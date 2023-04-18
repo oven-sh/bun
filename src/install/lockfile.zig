@@ -111,7 +111,7 @@ package_index: PackageIndex.Map,
 string_pool: StringPool,
 allocator: Allocator,
 scratch: Scratch = .{},
-
+dependency_overrides: DependencyOverrides,
 scripts: Scripts = .{},
 workspace_paths: NameHashMap = .{},
 
@@ -186,6 +186,23 @@ pub const LoadFromDiskResult = union(Tag) {
         ok,
     };
 };
+
+/// Tries to find another lockfile and uses the specific versions as overrides
+pub fn loadOverridesFromNonBunLockfile(this: *Lockfile, allocator: Allocator) !void {
+    if (comptime Environment.allow_assert) std.debug.assert(FileSystem.instance_loaded);
+    const dir = std.fs.cwd();
+
+    if (dir.openFileZ("yarn.lock", .{})) |file| {
+        defer file.close();
+        this.dependency_overrides = try Yarn.loadFromFile(this, allocator, file);
+        this.dependency_overrides.print_debug();
+    } else |_| {}
+    // else if (std.fs.cwd().openFileZ("package-lock.json", .{})) |file| {
+    //     defer file.close();
+    //     return loadFromPackageLockJSONFile(this, allocator, file);
+    // }
+
+}
 
 pub fn loadFromDisk(this: *Lockfile, allocator: Allocator, log: *logger.Log, filename: stringZ) LoadFromDiskResult {
     if (comptime Environment.allow_assert) std.debug.assert(FileSystem.instance_loaded);
@@ -1265,6 +1282,7 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) !void {
         .allocator = allocator,
         .scratch = Scratch.init(allocator),
         .scripts = .{},
+        .dependency_overrides = .{},
         .workspace_paths = .{},
     };
 }
@@ -3682,12 +3700,103 @@ pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Ve
     return null;
 }
 
-const DependencyOverride = struct {
-    version: ?string = null,
-    dependencies: ?[]string = null,
+pub const DependencyOverride = struct {
+    version: string,
+    dependencies: []string,
 };
 
-const DependencyOverrideMap = std.StringHashMapUnmanaged(DependencyOverride);
+const DependencyOverrideMap =
+    std.HashMapUnmanaged(string, DependencyOverride, DependencyOverrides.KeyContext, std.hash_map.default_max_load_percentage);
+
+//
+
+// const DependencyOverrides = {
+//   ["library_with_build_info_2@0.0.1"]: {
+//     version: "0.0.1"
+//     dependencies: ["add@2.0.2"],
+//   },
+//   ["library_with_build_info_3@^0.0.4"]: {
+//     version: "0.0.4"
+//     dependencies: ["add@2.0.2"],
+//   },
+
+//   ["add@2.0.2"]: {
+//     version: "2.0.2",
+//   },
+
+//   ["add@v2.0.2||2.0.5"]: {
+//     version: "2.0.2",
+//   },
+// };
+
+const DependencyOverrides = struct {
+    // All the strings in this data structure live in the allocated file
+    map: DependencyOverrideMap = .{},
+    dependencies_buffer: ?[]string = null,
+    string_buffer: ?string = null,
+
+    const Self = @This();
+
+    pub const KeyContext = struct {
+        pub fn hash(self: @This(), s: []const u8) u64 {
+            _ = self;
+            if (strings.indexAnyComptime(s, "@")) |delim| {
+                const pkg_name = s[0..delim];
+                const pkg_version = s[delim + 1 ..];
+                return std.hash_map.hashString(pkg_name) ^ std.hash_map.hashString(pkg_version);
+            }
+            return 0;
+        }
+        pub fn eql(self: @This(), a: []const u8, b: []const u8) bool {
+            _ = self;
+            return std.hash_map.eqlString(a, b);
+        }
+    };
+
+    pub const KeyContext2 = struct {
+        // const name_and_version = struct { pkg_name: string, pkg_version: string };
+        const name_and_version = struct { pkg_name: []const u8, pkg_version: []const u8 };
+
+        pub fn hash(self: @This(), key: name_and_version) u64 {
+            _ = self;
+            return std.hash_map.hashString(key.pkg_name) ^ std.hash_map.hashString(key.pkg_version);
+        }
+        pub fn eql(self: @This(), key: name_and_version, other: string) bool {
+            _ = self;
+            return std.hash_map.eqlString(key.pkg_name, other[0..key.pkg_name.len]) and
+                std.hash_map.eqlString(key.pkg_version, other[key.pkg_name.len + 1 ..]);
+        }
+    };
+
+    pub fn getOverrides(self: Self, pkg_name: string, pkg_version: string) ?DependencyOverride {
+        return self.map.getAdapted(KeyContext2.name_and_version{
+            .pkg_name = pkg_name,
+            .pkg_version = pkg_version,
+        }, KeyContext2{});
+    }
+
+    pub fn print_debug(self: Self) void {
+        const map = self.map;
+        std.debug.print("{{", .{});
+        if (map.count() != 0) {
+            var map_iter = map.iterator();
+
+            while (map_iter.next()) |entry| {
+                std.debug.print("\n\t\"{s}\": {{ version: \"{s}\", dependencies: {{", .{ entry.key_ptr.*, entry.value_ptr.*.version });
+                var first = true;
+                for (entry.value_ptr.*.dependencies) |dep| {
+                    if (!first) std.debug.print(",", .{});
+                    std.debug.print(" \"{s}\"", .{dep});
+                    first = false;
+                }
+                if (!first) std.debug.print(" ", .{});
+
+                std.debug.print("}} }},", .{});
+            }
+        }
+        std.debug.print("\n}}\n\n", .{});
+    }
+};
 
 pub const Yarn = struct {
     /// Toggles which comments we should allow besides the headers in the parser
@@ -3704,12 +3813,14 @@ pub const Yarn = struct {
         .SWAR => @typeInfo(usize).Int.bits / 8,
     };
 
+    const advance_int = std.meta.Int(.unsigned, ADVANCE_WIDTH * 8);
+
     /// Note that we don't have to use this when it's okay for us to match just the '\n' in a "\r\n"
     const NEWLINES = "\n" ++ if (ALLOW_CARRIAGE_RETURNS) "\r" else "";
 
     const YARN_LOCK_HEADER_0 = "# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.";
     const YARN_LOCK_HEADER_1 = "# yarn lockfile v";
-    const YARN_LOCK_HEADER_META_HASH = "# bun ./bun.lockb --hash: ";
+    const YARN_LOCK_HEADER_META_HASH = "# bun ./" ++ default_filename ++ " --hash: ";
     // followed by: "{}-{}-{}-{}" where each {} is 8 bytes represented as 16 hex characters
 
     pub const min_alloc_size = YARN_LOCK_HEADER_0.len +
@@ -3745,6 +3856,19 @@ pub const Yarn = struct {
         return advanceUntilAnyInternal(cur, chars_, advance_over_current, ADVANCE_IMPL);
     }
 
+    inline fn getMatchMaskSWAR(word: advance_int, comptime chars: string) advance_int {
+        const width = ADVANCE_WIDTH;
+        const mask1 = @bitCast(advance_int, @splat(width, @as(u8, 0x7F)));
+        const mask2 = @bitCast(advance_int, @splat(width, @as(u8, 0x80)));
+
+        // Algorithm from here: http://0x80.pl/notesen/2023-03-06-swar-find-any.html
+        const lo7bits = word & mask1;
+        var t0 = @bitCast(advance_int, @splat(width, @as(u8, 0xFF)));
+        inline for (chars) |chr|
+            t0 &= mask1 + (lo7bits ^ comptime @bitCast(advance_int, @splat(width, @as(u8, chr))));
+        return ((t0 | word) & mask2) ^ mask2;
+    }
+
     inline fn advanceUntilAnyInternal(cur: *string, comptime chars_: string, comptime advance_over_current: bool, impl: @TypeOf(ADVANCE_IMPL)) !void {
         comptime std.debug.assert(chars_.len > 0);
         // SWAR trick only works for characters below 0x80, switch to naive version if this wouldn't work
@@ -3763,7 +3887,6 @@ pub const Yarn = struct {
 
         if (impl != .naive and advance_over_current) cur.* = cur.*[1..];
         const width = ADVANCE_WIDTH;
-        const width_int = std.meta.Int(.unsigned, width * 8);
         comptime std.debug.assert(over_allocated_space >= width);
 
         switch (impl) {
@@ -3775,19 +3898,7 @@ pub const Yarn = struct {
             },
 
             .SWAR => while (true) {
-                comptime var one_in_each_byte: width_int = 0;
-                comptime for (0..width) |i| {
-                    one_in_each_byte |= 1 << (i * 8);
-                };
-
-                // Algorithm from here: http://0x80.pl/notesen/2023-03-06-swar-find-any.html
-                const word = std.mem.readIntSliceLittle(width_int, cur.*);
-                const mask = one_in_each_byte * 0x7F;
-                const mask2 = one_in_each_byte * 0x80;
-                const lo7bits = word & mask;
-                var t0: width_int = std.math.maxInt(width_int);
-                inline for (chars) |chr| t0 &= (lo7bits ^ (comptime chr * one_in_each_byte)) + mask;
-                const match_mask = ((t0 | word) & mask2) ^ mask2;
+                const match_mask = getMatchMaskSWAR(std.mem.readIntSliceLittle(advance_int, cur.*), chars);
                 cur.* = cur.*[@ctz(match_mask) / 8 ..]; // do a ctz no matter what, avoid the branch
                 if (match_mask != 0) break;
             },
@@ -3840,9 +3951,16 @@ pub const Yarn = struct {
         return advanceOverComptime(cur, delim);
     }
 
+    const alloc_int = usize;
+
+    /// Estimates how many dependencies occurs in the file by counting how many runs of exactly 4 spaces there are.
+    ///     - Should be correct unless there's a pathological file, in which case we just overallocated a lil bit.
+    ///
+    /// Estimates the maximum number of "titles" which all resolve to the same version by counting the number of commas between colons. E.g. `pad@3.2.0, pad@3.x:` should give us 2.
+    ///     - We take the max because we only need to hold one set of titles in memory at once.
     pub fn estimateAllocations(file_buffer: []u8) struct {
-        max_titles: u32,
-        num_dependencies: u32,
+        max_titles: alloc_int,
+        num_dependencies: alloc_int,
     } {
         const VEC_SIZE = 64;
         const VEC_TYPE = @Vector(VEC_SIZE, u8);
@@ -3852,10 +3970,10 @@ pub const Yarn = struct {
             @compileError(std.fmt.comptimePrint("Did not overallocate enough space! Should have overallocated {} bytes for `estimateAllocations`, got {}.\nPlease update `over_allocated_space` to be {}\n", .{ VEC_SIZE, over_allocated_space, VEC_SIZE }));
 
         var cur: string = file_buffer[0..];
-        var num_dependencies: u32 = 0;
-        var max_commas_before_colon: u32 = 0;
-        var current_num_commas: u32 = 0;
-        var space_run: u32 = 0;
+        var num_dependencies: alloc_int = 0;
+        var max_commas_before_colon: alloc_int = 0;
+        var current_num_commas: alloc_int = 0;
+        var space_run: alloc_int = 0;
 
         while (cur.len >= VEC_SIZE) : (cur = cur[VEC_SIZE..]) {
             const vec: VEC_TYPE = cur[0..VEC_SIZE].*;
@@ -3916,26 +4034,25 @@ pub const Yarn = struct {
     // We could do that, but I doubt anyone cares. Just error.
     // Btw the yarn parser doesn't handle stacked escapes properly.
     // https://github.com/yarnpkg/yarn/blob/158d96dce95313d9a00218302631cd263877d164/src/lockfile/parse.js#L101
-    fn parseYarnFile(this: *Lockfile, allocator: Allocator, file_buffer: []u8, sentinels_start: usize) !DependencyOverrideMap {
+    fn parse(this: *Lockfile, allocator: Allocator, file_buffer: []u8, sentinels_start: usize) !DependencyOverrides {
         if (over_allocated_space < SENTINELS.len)
             @compileError(std.fmt.comptimePrint("Did not overallocate enough space! Should have overallocated {} bytes for \"{s}\", got {}", .{ SENTINELS.len, SENTINELS, over_allocated_space }));
 
-        // TODO: We could preallocate more things to limit dynamic allocations.
-        // const DependencyOverrides = std.ArrayListUnmanaged(DependencyOverride);
-        var map = DependencyOverrideMap{};
-        errdefer map.clearAndFree(allocator);
+        var map: DependencyOverrideMap = .{};
+        errdefer map.clearAndFree(allocator); // caller owns this
 
-        // We reuse this a bunch
-        var pkg_deps: std.ArrayListUnmanaged(string) = .{};
-        defer pkg_deps.deinit(allocator);
-        var pkg_titles: std.ArrayListUnmanaged(string) = .{};
-        defer pkg_titles.deinit(allocator);
+        const estimated_allocations = estimateAllocations(file_buffer);
 
-        // " " ** 4
+        const pkg_deps = try allocator.alloc(string, estimated_allocations.num_dependencies);
+        errdefer allocator.free(pkg_deps); // caller owns this
 
-        try pkg_deps.ensureTotalCapacityPrecise(allocator, 32);
-        try pkg_titles.ensureTotalCapacityPrecise(allocator, 32);
+        const pkg_titles = try allocator.alloc(string, estimated_allocations.max_titles);
+        defer allocator.free(pkg_titles);
 
+        // cursors
+        var pkg_deps_i: usize = 0;
+        var starting_pkg_deps_i: usize = pkg_deps_i;
+        var pkg_titles_i: usize = 0;
         var cur = file_buffer;
 
         // We try to match headers outside of the regular comment matching facilities for speed
@@ -3952,25 +4069,25 @@ pub const Yarn = struct {
         }
 
         if (advanceOverComptime(&cur, YARN_LOCK_HEADER_META_HASH)) try parseMetaHash(&this.meta_hash, &cur);
+        // TODO: We currently parse the MetaHash for no reason. Remove it?
 
         // TODO: see if this improves performance by making the loop branches more predictable?
         if (ALLOW_CARRIAGE_RETURNS and cur[0] == '\r') cur = cur[1..];
         if (cur[0] == '\n') cur = cur[1..];
-        var dep_override: DependencyOverride = undefined;
+        var dep_override_version: ?string = null;
         var found_newline = false;
         NEXT_DEPENDENCY: while (true) : ({
-            if (dep_override.version == null) return error.@"Version not specified for package";
-            const deps = try allocator.alloc(string, pkg_deps.items.len);
-            std.mem.copy(string, deps, pkg_deps.items);
-            dep_override.dependencies = deps;
-            pkg_deps.clearRetainingCapacity();
-            for (pkg_titles.items) |pkg_title| {
+            for (pkg_titles[0..pkg_titles_i]) |pkg_title| {
                 if (map.get(pkg_title)) |_| return error.@"Duplicate package titles found";
-                try map.putNoClobber(allocator, pkg_title, dep_override);
+                try map.putNoClobber(allocator, pkg_title, DependencyOverride{
+                    .version = dep_override_version orelse return error.@"Version not specified for package",
+                    .dependencies = pkg_deps[starting_pkg_deps_i..pkg_deps_i],
+                });
             }
-            pkg_titles.clearRetainingCapacity();
+
+            starting_pkg_deps_i = pkg_deps_i;
+            pkg_titles_i = 0;
         }) {
-            dep_override = .{};
             while (true) {
                 switch (cur[0]) {
                     '\n', if (ALLOW_CARRIAGE_RETURNS) '\r' => {},
@@ -3983,28 +4100,8 @@ pub const Yarn = struct {
 
             // if we hit the sentinels, this is a valid place to stop.
             comptime std.debug.assert(SENTINELS[0] == '\n');
-            if (sentinelCmp(@ptrToInt(cur.ptr), sentinels_start, SENTINELS[1])) {
-                std.debug.print("{{", .{});
-                if (map.count() != 0) {
-                    var map_iter = map.iterator();
-
-                    while (map_iter.next()) |entry| {
-                        std.debug.print("\n\t\"{s}\": {{ version: \"{s}\", dependencies: {{", .{ entry.key_ptr.*, entry.value_ptr.*.version.? });
-                        var first = true;
-                        for (entry.value_ptr.*.dependencies.?) |dep| {
-                            if (!first) std.debug.print(",", .{});
-                            std.debug.print(" \"{s}\"", .{dep});
-                            first = false;
-                        }
-                        if (!first) std.debug.print(" ", .{});
-
-                        std.debug.print("}} }},", .{});
-                    }
-                }
-                std.debug.print("\n}}\n\n", .{});
-
-                return map;
-            }
+            if (sentinelCmp(@ptrToInt(cur.ptr), sentinels_start, SENTINELS[1]))
+                return DependencyOverrides{ .map = map, .dependencies_buffer = pkg_deps };
 
             // Otherwise, start matching dependencies
             if (!found_newline) return error.@"No newline before dependency name";
@@ -4043,25 +4140,10 @@ pub const Yarn = struct {
                     true => try advanceUntilAny(&cur, "\"", false),
                     false => try advanceUntilAny(&cur, ":,", false),
                 }
-                // const packages = {
-                //   ["library_with_build_info_2@0.0.1"]: {
-                //     dependencies: ["add@2.0.2"],
-                //   },
-                //   ["library_with_build_info_3@^0.0.4"]: {
-                //     dependencies: ["add@2.0.2"],
-                //   },
 
-                //   ["add@2.0.2"]: {
-                //     version: "2.0.2",
-                //   },
-
-                //   // pretend this is the same object as ["add@2.0.2"]
-                //   ["add@v2.0.2||2.0.5"]: {
-                //     version: "2.0.2",
-                //   },
-                // };
                 var package_title = name_start[0 .. @ptrToInt(&cur[0]) - @ptrToInt(name_start.ptr)];
-                try pkg_titles.append(allocator, package_title);
+                pkg_titles[pkg_titles_i] = package_title;
+                pkg_titles_i += 1;
                 // dependency.version.literal = String.init(version, version);
                 // dependency.version.tag = Dependency.Version.Tag.infer(version);
                 // dependency.name = package.name;
@@ -4112,7 +4194,7 @@ pub const Yarn = struct {
                     const data = string_start[0 .. @ptrToInt(&cur[0]) - @ptrToInt(string_start.ptr)];
 
                     switch (@intToEnum(YarnFields, field.value)) {
-                        .version => dep_override.version = data,
+                        .version => dep_override_version = data,
                         .resolved => {},
                     }
 
@@ -4214,7 +4296,8 @@ pub const Yarn = struct {
                     at_place[0] = '@';
 
                     const dependency_ver = new_string_start[0 .. @ptrToInt(&cur[0]) - @ptrToInt(new_string_start.ptr)];
-                    try pkg_deps.append(allocator, dependency_ver);
+                    pkg_deps[pkg_deps_i] = dependency_ver;
+                    pkg_deps_i += 1;
 
                     cur = cur[@boolToInt(is_quoted2)..]; // skip last '"'
 
@@ -4242,32 +4325,16 @@ pub const Yarn = struct {
         }
     }
 
-    pub fn loadFromYarnFile(this: *Lockfile, allocator: Allocator, filename: stringZ) LoadFromDiskResult {
-        // if (comptime Environment.allow_assert) std.debug.assert(FileSystem.instance_loaded);
-        var file = std.io.getStdIn();
-
-        if (filename.len > 0)
-            file = std.fs.cwd().openFileZ(filename, .{ .mode = .read_only }) catch |err| {
-                return switch (err) {
-                    error.FileNotFound, error.AccessDenied, error.BadPathName => LoadFromDiskResult{ .not_found = {} },
-                    else => LoadFromDiskResult{ .err = .{ .step = .open_file, .value = err } },
-                };
-            };
-
-        defer file.close();
-
-        const file_size: u64 = (file.stat() catch |err| {
-            return LoadFromDiskResult{ .err = .{ .step = .read_file, .value = err } };
-        }).size;
+    /// Takes in a file owned by the caller to parse as a yarn.lock file
+    pub fn loadFromFile(this: *Lockfile, allocator: Allocator, file: std.fs.File) !DependencyOverrides {
+        const file_size: u64 = (try file.stat()).size;
 
         // allocate enough to alleviate the need for bounds checking.
         // "optionalDependencies" has the most amount of characters in the inner loop we might try to match
         const alloc_size = over_allocated_space + @max(file_size, min_alloc_size);
 
-        const file_buffer = allocator.alloc(u8, alloc_size) catch |err| {
-            return LoadFromDiskResult{ .err = .{ .step = .read_file, .value = err } };
-        };
-        defer allocator.free(file_buffer);
+        const file_buffer = try allocator.alloc(u8, alloc_size);
+        // defer allocator.free(file_buffer);
 
         const sentinels_start = @ptrToInt(&file_buffer[file_size]);
         for (file_buffer[file_size..][0..SENTINELS.len], SENTINELS) |*cur, sentinel|
@@ -4275,16 +4342,9 @@ pub const Yarn = struct {
 
         // Because we make assumptions about what we will never find after the buffer, we need to zero out memory
         std.mem.set(u8, file_buffer[file_size + SENTINELS.len .. alloc_size], 0);
+        std.debug.assert(try file.readAll(file_buffer[0..file_size]) == file_size);
 
-        std.debug.assert(file.readAll(file_buffer[0..file_size]) catch |err| {
-            return LoadFromDiskResult{ .err = .{ .step = .read_file, .value = err } };
-        } == file_size);
-
-        _ = parseYarnFile(this, allocator, file_buffer, sentinels_start) catch |err| {
-            return LoadFromDiskResult{ .err = .{ .step = .parse_file, .value = err } };
-        };
-
-        return LoadFromDiskResult{ .ok = this };
+        return parse(this, allocator, file_buffer, sentinels_start);
     }
 
     inline fn parseMetaHash(meta_hash: *MetaHash, cur: *[]u8) !void {
@@ -4481,7 +4541,11 @@ pub const Yarn = struct {
             Lockfile.Package.Alphabetizer.isAlphabetical,
         );
 
-        // TODO: find max dependencies.len and allocate just that.
+        var max_deps_len: usize = 0;
+        for (dependency_lists) |dep_list| max_deps_len = @max(max_deps_len, dep_list.get(dependencies_buffer).len);
+
+        const alphabetized_dependencies_global = try this.lockfile.allocator.alloc(DependencyID, max_deps_len);
+        defer this.lockfile.allocator.free(alphabetized_dependencies_global);
 
         // When printing, we start at 1
         for (alphabetized_names) |i| {
@@ -4508,7 +4572,7 @@ pub const Yarn = struct {
                         try writer.writeAll(", ");
                     }
                     const version_name = dependency_version.literal.slice(string_buf);
-                    const needs_quote = always_needs_quote or
+                    const needs_quote = always_needs_quote or dependency_version.tag == .dist_tag or
                         (version_name.len != 0 and try needsQuoteVersionSubstring(version_name));
 
                     if (needs_quote) try writer.writeByte('"');
@@ -4516,10 +4580,9 @@ pub const Yarn = struct {
                     try writer.writeAll(name);
                     try writer.writeByte('@');
 
-                    switch (version_name.len) {
-                        0 => try std.fmt.format(writer, "^{any}", .{version_formatter}),
-                        else => try writer.writeAll(version_name),
-                    }
+                    if (dependency_version.tag == .dist_tag or version_name.len == 0) {
+                        try std.fmt.format(writer, "^{any}", .{version_formatter});
+                    } else try writer.writeAll(version_name);
 
                     if (needs_quote) try writer.writeByte('"');
                     prev_dependency_version = dependency_version.*;
@@ -4528,26 +4591,33 @@ pub const Yarn = struct {
                 try writer.writeAll(":\n");
             }
 
-            {
-                const url_formatter = resolution.fmtURL(&this.options, string_buf);
-                const YarnFields = enum { version, resolved };
-                inline for (@typeInfo(YarnFields).Enum.fields) |field| {
-                    const format = "{any}";
-                    const formatter = switch (@intToEnum(YarnFields, field.value)) {
-                        .version => version_formatter,
-                        .resolved => url_formatter,
-                    };
+            { // TODO: if package is not npm, go fetch version from package.json
+                if (resolution.tag != .npm) {}
 
-                    try writer.writeAll(" " ** 2 ++ field.name ++ " ");
-                    const needs_quote = try fmtNeedsQuote(format, .{formatter});
+                const format = "{any}";
+
+                {
+                    try writer.writeAll(" " ** 2 ++ "version" ++ " ");
+                    const needs_quote = try fmtNeedsQuote(format, .{version_formatter});
                     if (needs_quote) try writer.writeByte('"');
-                    try std.fmt.format(writer, format, .{formatter});
+                    try std.fmt.format(writer, format, .{version_formatter});
+                    if (needs_quote) try writer.writeByte('"');
+                    try writer.writeByte('\n');
+                }
+
+                {
+                    const url_formatter = resolution.fmtURL(&this.options, string_buf);
+
+                    try writer.writeAll(" " ** 2 ++ "resolved" ++ " ");
+                    const needs_quote = try fmtNeedsQuote(format, .{url_formatter});
+                    if (needs_quote) try writer.writeByte('"');
+                    try std.fmt.format(writer, format, .{url_formatter});
                     if (needs_quote) try writer.writeByte('"');
                     try writer.writeByte('\n');
                 }
 
                 if (meta.integrity.tag != .unknown) {
-                    // Integrity is never quoted because it always starts with sha and contains only base64
+                    // Integrity is never quoted because it always starts with "sha" and contains only base64
                     // followed by equal signs
                     try std.fmt.format(writer, "  integrity {any}\n", .{&meta.integrity});
                 }
@@ -4555,19 +4625,17 @@ pub const Yarn = struct {
                 if (dependencies.len > 0) {
                     var behavior = Behavior.uninitialized;
                     var dependency_behavior_change_count: u8 = 0;
-
-                    const alphabetized_dependencies = try this.lockfile.allocator.alloc(DependencyID, dependencies.len);
-                    defer this.lockfile.allocator.free(alphabetized_dependencies);
-                    for (alphabetized_dependencies, 0..) |*v, j| v.* = @intCast(DependencyID, j);
+                    var alphabetized_deps = alphabetized_dependencies_global[0..dependencies.len];
+                    for (alphabetized_deps, 0..) |*v, j| v.* = @intCast(DependencyID, j);
 
                     std.sort.sort(
                         DependencyID,
-                        alphabetized_dependencies,
+                        alphabetized_deps,
                         Lockfile.Package.DependencyAlphabetizer{ .dependencies = dependencies, .buf = string_buf },
                         Lockfile.Package.DependencyAlphabetizer.isAlphabetical,
                     );
 
-                    for (alphabetized_dependencies) |j| {
+                    for (alphabetized_deps) |j| {
                         const dep = dependencies[j];
                         if (dep.behavior != behavior) {
                             if (dep.behavior.isOptional()) {

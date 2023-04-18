@@ -129,7 +129,7 @@ pub const PackageManagerCommand = struct {
             Output.flush();
             return;
         } else if (strings.eqlComptime(subcommand, "hash")) {
-            const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
+            const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, Lockfile.default_filename);
             handleLoadLockfileErrors(load_lockfile, pm);
 
             _ = try pm.lockfile.hasMetaHashChanged(false);
@@ -140,7 +140,7 @@ pub const PackageManagerCommand = struct {
             Output.enableBuffering();
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "hash-print")) {
-            const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
+            const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, Lockfile.default_filename);
             handleLoadLockfileErrors(load_lockfile, pm);
 
             Output.flush();
@@ -149,7 +149,7 @@ pub const PackageManagerCommand = struct {
             Output.enableBuffering();
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "hash-string")) {
-            const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
+            const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, Lockfile.default_filename);
             handleLoadLockfileErrors(load_lockfile, pm);
 
             _ = try pm.lockfile.hasMetaHashChanged(true);
@@ -173,7 +173,7 @@ pub const PackageManagerCommand = struct {
             Output.writer().writeAll(outpath) catch {};
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "ls")) {
-            const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
+            const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, Lockfile.default_filename);
             handleLoadLockfileErrors(load_lockfile, pm);
 
             Output.flush();

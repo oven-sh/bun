@@ -106,7 +106,7 @@ pub const External = [size]u8;
 const size = @sizeOf(Dependency.Version.External) +
     @sizeOf(PackageNameHash) +
     @sizeOf(Dependency.Behavior) +
-    @sizeOf(String);
+    String.max_inline_len;
 
 pub const Context = struct {
     allocator: std.mem.Allocator,

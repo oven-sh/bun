@@ -2085,7 +2085,8 @@ pub const E = struct {
             allocator: std.mem.Allocator,
             loc: logger.Loc,
         ) Expr {
-            if (this.tag != null) {
+            if (this.tag != null or !this.head.isUTF8()) {
+                // we only fold utf-8/ascii for now
                 return Expr{
                     .data = .{
                         .e_template = this,
@@ -2094,8 +2095,7 @@ pub const E = struct {
                 };
             }
 
-            // we only fold utf-8/ascii for now
-            if (this.parts.len == 0 or !this.head.isUTF8()) {
+            if (this.parts.len == 0) {
                 return Expr.init(E.String, this.head, loc);
             }
 

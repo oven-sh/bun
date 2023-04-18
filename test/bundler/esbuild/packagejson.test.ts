@@ -7,9 +7,7 @@ var { describe, test, expect } = testForFile(import.meta.path);
 // For debug, all files are written to $TEMP/bun-bundle-tests/packagejson
 
 describe("bundler", () => {
-  if (!RUN_UNCHECKED_TESTS) return;
   itBundled("packagejson/PackageJsonMain", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -26,9 +24,11 @@ describe("bundler", () => {
         }
       `,
     },
+    run: {
+      stdout: "123",
+    },
   });
   itBundled("packagejson/PackageJsonBadMain", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -45,9 +45,12 @@ describe("bundler", () => {
         }
       `,
     },
+    run: {
+      stdout: "123",
+    },
   });
   itBundled("packagejson/PackageJsonSyntaxErrorComment", {
-    // GENERATED
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -65,11 +68,12 @@ describe("bundler", () => {
         }
       `,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/node_modules/demo-pkg/package.json: ERROR: JSON does not support comments
-  `, */
+    bundleErrors: {
+      "/Users/user/project/node_modules/demo-pkg/package.json": ["JSON does not support comments"],
+    },
   });
   itBundled("packagejson/PackageJsonSyntaxErrorTrailingComma", {
-    // GENERATED
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -87,8 +91,9 @@ describe("bundler", () => {
         }
       `,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/node_modules/demo-pkg/package.json: ERROR: JSON does not support trailing commas
-  `, */
+    bundleErrors: {
+      "/Users/user/project/node_modules/demo-pkg/package.json": ["JSON does not support trailing commas"],
+    },
   });
   itBundled("packagejson/PackageJsonModule", {
     // GENERATED
@@ -110,13 +115,15 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/demo-pkg/main.esm.js": /* js */ `
         export default function() {
-          return 123
+          return 234
         }
       `,
     },
+    run: {
+      stdout: "234",
+    },
   });
   itBundled("packagejson/PackageJsonBrowserString", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -133,13 +140,15 @@ describe("bundler", () => {
         }
       `,
     },
+    run: {
+      stdout: "123",
+    },
   });
   itBundled("packagejson/PackageJsonBrowserMapRelativeToRelative", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
-        console.log(fn())
+        console.log(JSON.stringify(fn()))
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
         {
@@ -165,13 +174,15 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/lib/util.js": `module.exports = 'util'`,
       "/Users/user/project/node_modules/demo-pkg/lib/util-browser.js": `module.exports = 'util-browser'`,
     },
+    run: {
+      stdout: `["main-browser","util-browser"]`,
+    },
   });
   itBundled("packagejson/PackageJsonBrowserMapRelativeToModule", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
-        console.log(fn())
+        console.log(JSON.stringify(fn()))
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
         {
@@ -190,13 +201,15 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/util.js": `module.exports = 'util'`,
       "/Users/user/project/node_modules/util-browser/index.js": `module.exports = 'util-browser'`,
     },
+    run: {
+      stdout: `["main","util-browser"]`,
+    },
   });
   itBundled("packagejson/PackageJsonBrowserMapRelativeDisabled", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
-        console.log(fn())
+        console.log(JSON.stringify(fn(123)))
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
         {
@@ -209,14 +222,16 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/main.js": /* js */ `
         const util = require('./util-node')
         module.exports = function(obj) {
-          return util.inspect(obj)
+          return [util.inspect, obj]
         }
       `,
       "/Users/user/project/node_modules/demo-pkg/util-node.js": `module.exports = require('util')`,
     },
+    run: {
+      stdout: `[null,123]`,
+    },
   });
   itBundled("packagejson/PackageJsonBrowserMapModuleToRelative", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -246,9 +261,11 @@ describe("bundler", () => {
         }
       `,
     },
+    run: {
+      stdout: "123",
+    },
   });
   itBundled("packagejson/PackageJsonBrowserMapModuleToModule", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -278,9 +295,12 @@ describe("bundler", () => {
         }
       `,
     },
+    run: {
+      stdout: "123",
+    },
   });
   itBundled("packagejson/PackageJsonBrowserMapModuleDisabled", {
-    // GENERATED
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -295,8 +315,9 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
         const fn = require('node-pkg')
+        console.log(fn)
         module.exports = function() {
-          return fn()
+          return typeof fn === 'function' ? fn() : 123
         }
       `,
       "/Users/user/project/node_modules/node-pkg/index.js": /* js */ `
@@ -305,9 +326,11 @@ describe("bundler", () => {
         }
       `,
     },
+    run: {
+      stdout: "{}\n123",
+    },
   });
   itBundled("packagejson/PackageJsonBrowserMapNativeModuleDisabled", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -323,13 +346,15 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
         const fs = require('fs')
         module.exports = function() {
-          return fs.readFile()
+          return fs.readFile === undefined
         }
       `,
     },
+    run: {
+      stdout: "true",
+    },
   });
   itBundled("packagejson/PackageJsonBrowserMapAvoidMissing", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import 'component-classes'`,
       "/Users/user/project/node_modules/component-classes/package.json": /* json */ `
@@ -343,18 +368,27 @@ describe("bundler", () => {
         try {
           var index = require('indexof');
         } catch (err) {
+          console.log('catch')
           var index = require('component-indexof');
         }
+        console.log(index())
       `,
       "/Users/user/project/node_modules/component-indexof/index.js": /* js */ `
         module.exports = function() {
           return 234
         }
       `,
+      "/Users/user/project/node_modules/indexof/index.js": /* js */ `
+        module.exports = function() {
+          return 123
+        }
+      `,
+    },
+    run: {
+      stdout: "234",
     },
   });
   itBundled("packagejson/PackageJsonBrowserOverModuleBrowser", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -374,19 +408,21 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/demo-pkg/main.esm.js": /* js */ `
         export default function() {
-          return 123
+          return 234
         }
       `,
       "/Users/user/project/node_modules/demo-pkg/main.browser.js": /* js */ `
         module.exports = function() {
-          return 123
+          return 345
         }
       `,
     },
     platform: "browser",
+    run: {
+      stdout: "345",
+    },
   });
   itBundled("packagejson/PackageJsonBrowserOverMainNode", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -406,19 +442,21 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/demo-pkg/main.esm.js": /* js */ `
         export default function() {
-          return 123
+          return 234
         }
       `,
       "/Users/user/project/node_modules/demo-pkg/main.browser.js": /* js */ `
         module.exports = function() {
-          return 123
+          return 345
         }
       `,
     },
     platform: "node",
+    run: {
+      stdout: "123",
+    },
   });
   itBundled("packagejson/PackageJsonBrowserWithModuleBrowser", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -441,24 +479,26 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/demo-pkg/main.esm.js": /* js */ `
         export default function() {
-          return 123
+          return 234
         }
       `,
       "/Users/user/project/node_modules/demo-pkg/main.browser.js": /* js */ `
         module.exports = function() {
-          return 123
+          return 345
         }
       `,
       "/Users/user/project/node_modules/demo-pkg/main.browser.esm.js": /* js */ `
         export default function() {
-          return 123
+          return 456
         }
       `,
     },
     platform: "browser",
+    run: {
+      stdout: "456",
+    },
   });
   itBundled("packagejson/PackageJsonBrowserWithMainNode", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -481,30 +521,33 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/demo-pkg/main.esm.js": /* js */ `
         export default function() {
-          return 123
+          return 234
         }
       `,
       "/Users/user/project/node_modules/demo-pkg/main.browser.js": /* js */ `
         module.exports = function() {
-          return 123
+          return 345
         }
       `,
       "/Users/user/project/node_modules/demo-pkg/main.browser.esm.js": /* js */ `
         export default function() {
-          return 123
+          return 456
         }
       `,
     },
     platform: "node",
+    run: {
+      stdout: "123",
+    },
   });
   itBundled("packagejson/PackageJsonBrowserNodeModulesNoExt", {
-    // GENERATED
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
-        import {browser as a} from 'demo-pkg/no-ext'
-        import {node as b} from 'demo-pkg/no-ext.js'
-        import {browser as c} from 'demo-pkg/ext'
-        import {browser as d} from 'demo-pkg/ext.js'
+        import {value as a} from 'demo-pkg/no-ext'
+        import {value as b} from 'demo-pkg/no-ext.js'
+        import {value as c} from 'demo-pkg/ext'
+        import {value as d} from 'demo-pkg/ext.js'
         console.log(a)
         console.log(b)
         console.log(c)
@@ -518,20 +561,28 @@ describe("bundler", () => {
           }
         }
       `,
-      "/Users/user/project/node_modules/demo-pkg/no-ext.js": `export let node = 'node'`,
-      "/Users/user/project/node_modules/demo-pkg/no-ext-browser.js": `export let browser = 'browser'`,
-      "/Users/user/project/node_modules/demo-pkg/ext.js": `export let node = 'node'`,
-      "/Users/user/project/node_modules/demo-pkg/ext-browser.js": `export let browser = 'browser'`,
+      "/Users/user/project/node_modules/demo-pkg/no-ext.js": `export let value = 'node'`,
+      "/Users/user/project/node_modules/demo-pkg/no-ext-browser.js": `export let value = 'browser'`,
+      "/Users/user/project/node_modules/demo-pkg/ext.js": `export let value = 'node'`,
+      "/Users/user/project/node_modules/demo-pkg/ext-browser.js": `export let value = 'browser'`,
+    },
+    run: {
+      stdout: `
+        browser
+        node
+        browser
+        browser
+      `,
     },
   });
   itBundled("packagejson/PackageJsonBrowserNodeModulesIndexNoExt", {
-    // GENERATED
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
-        import {browser as a} from 'demo-pkg/no-ext'
-        import {node as b} from 'demo-pkg/no-ext/index.js'
-        import {browser as c} from 'demo-pkg/ext'
-        import {browser as d} from 'demo-pkg/ext/index.js'
+        import {value as a} from 'demo-pkg/no-ext'
+        import {value as b} from 'demo-pkg/no-ext/index.js'
+        import {value as c} from 'demo-pkg/ext'
+        import {value as d} from 'demo-pkg/ext/index.js'
         console.log(a)
         console.log(b)
         console.log(c)
@@ -545,20 +596,27 @@ describe("bundler", () => {
           }
         }
       `,
-      "/Users/user/project/node_modules/demo-pkg/no-ext/index.js": `export let node = 'node'`,
-      "/Users/user/project/node_modules/demo-pkg/no-ext-browser/index.js": `export let browser = 'browser'`,
-      "/Users/user/project/node_modules/demo-pkg/ext/index.js": `export let node = 'node'`,
-      "/Users/user/project/node_modules/demo-pkg/ext-browser/index.js": `export let browser = 'browser'`,
+      "/Users/user/project/node_modules/demo-pkg/no-ext/index.js": `export let value = 'node'`,
+      "/Users/user/project/node_modules/demo-pkg/no-ext-browser/index.js": `export let value = 'browser'`,
+      "/Users/user/project/node_modules/demo-pkg/ext/index.js": `export let value = 'node'`,
+      "/Users/user/project/node_modules/demo-pkg/ext-browser/index.js": `export let value = 'browser'`,
+    },
+    run: {
+      stdout: `
+        browser
+        node
+        browser
+        browser
+      `,
     },
   });
   itBundled("packagejson/PackageJsonBrowserNoExt", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
-        import {browser as a} from './demo-pkg/no-ext'
-        import {node as b} from './demo-pkg/no-ext.js'
-        import {browser as c} from './demo-pkg/ext'
-        import {browser as d} from './demo-pkg/ext.js'
+        import {value as a} from './demo-pkg/no-ext'
+        import {value as b} from './demo-pkg/no-ext.js'
+        import {value as c} from './demo-pkg/ext'
+        import {value as d} from './demo-pkg/ext.js'
         console.log(a)
         console.log(b)
         console.log(c)
@@ -572,20 +630,27 @@ describe("bundler", () => {
           }
         }
       `,
-      "/Users/user/project/src/demo-pkg/no-ext.js": `export let node = 'node'`,
-      "/Users/user/project/src/demo-pkg/no-ext-browser.js": `export let browser = 'browser'`,
-      "/Users/user/project/src/demo-pkg/ext.js": `export let node = 'node'`,
-      "/Users/user/project/src/demo-pkg/ext-browser.js": `export let browser = 'browser'`,
+      "/Users/user/project/src/demo-pkg/no-ext.js": `export let value = 'node'`,
+      "/Users/user/project/src/demo-pkg/no-ext-browser.js": `export let value = 'browser'`,
+      "/Users/user/project/src/demo-pkg/ext.js": `export let value = 'node'`,
+      "/Users/user/project/src/demo-pkg/ext-browser.js": `export let value = 'browser'`,
+    },
+    run: {
+      stdout: `
+        browser
+        node
+        browser
+        browser
+      `,
     },
   });
   itBundled("packagejson/PackageJsonBrowserIndexNoExt", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
-        import {browser as a} from './demo-pkg/no-ext'
-        import {node as b} from './demo-pkg/no-ext/index.js'
-        import {browser as c} from './demo-pkg/ext'
-        import {browser as d} from './demo-pkg/ext/index.js'
+        import {value as a} from './demo-pkg/no-ext'
+        import {value as b} from './demo-pkg/no-ext/index.js'
+        import {value as c} from './demo-pkg/ext'
+        import {value as d} from './demo-pkg/ext/index.js'
         console.log(a)
         console.log(b)
         console.log(c)
@@ -599,30 +664,41 @@ describe("bundler", () => {
           }
         }
       `,
-      "/Users/user/project/src/demo-pkg/no-ext/index.js": `export let node = 'node'`,
-      "/Users/user/project/src/demo-pkg/no-ext-browser/index.js": `export let browser = 'browser'`,
-      "/Users/user/project/src/demo-pkg/ext/index.js": `export let node = 'node'`,
-      "/Users/user/project/src/demo-pkg/ext-browser/index.js": `export let browser = 'browser'`,
+      "/Users/user/project/src/demo-pkg/no-ext/index.js": `export let value = 'node'`,
+      "/Users/user/project/src/demo-pkg/no-ext-browser/index.js": `export let value = 'browser'`,
+      "/Users/user/project/src/demo-pkg/ext/index.js": `export let value = 'node'`,
+      "/Users/user/project/src/demo-pkg/ext-browser/index.js": `export let value = 'browser'`,
+    },
+    run: {
+      stdout: `
+        browser
+        node
+        browser
+        browser
+      `,
     },
   });
   itBundled("packagejson/PackageJsonBrowserESBuildIssue2002A", {
-    // GENERATED
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": `require('pkg/sub')`,
       "/Users/user/project/src/node_modules/pkg/package.json": /* json */ `
         {
-        "browser": {
-          "./sub": "./sub/foo.js"
+          "browser": {
+            "./sub": "./sub/foo.js"
+          }
         }
-      }
       `,
       "/Users/user/project/src/node_modules/pkg/sub/foo.js": `require('sub')`,
       "/Users/user/project/src/node_modules/sub/package.json": `{ "main": "./bar" }`,
-      "/Users/user/project/src/node_modules/sub/bar.js": `works()`,
+      "/Users/user/project/src/node_modules/sub/bar.js": `console.log('it works')`,
+    },
+    run: {
+      stdout: "it works",
     },
   });
   itBundled("packagejson/PackageJsonBrowserESBuildIssue2002B", {
-    // GENERATED
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": `require('pkg/sub')`,
       "/Users/user/project/src/node_modules/pkg/package.json": /* json */ `
@@ -634,11 +710,14 @@ describe("bundler", () => {
       }
       `,
       "/Users/user/project/src/node_modules/pkg/sub/foo.js": `require('sub')`,
-      "/Users/user/project/src/node_modules/pkg/sub/bar.js": `works()`,
+      "/Users/user/project/src/node_modules/pkg/sub/bar.js": `console.log('it works')`,
+    },
+    run: {
+      stdout: "it works",
     },
   });
   itBundled("packagejson/PackageJsonBrowserESBuildIssue2002C", {
-    // GENERATED
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": `require('pkg/sub')`,
       "/Users/user/project/src/node_modules/pkg/package.json": /* json */ `
@@ -650,11 +729,13 @@ describe("bundler", () => {
       }
       `,
       "/Users/user/project/src/node_modules/pkg/sub/foo.js": `require('sub')`,
-      "/Users/user/project/src/node_modules/sub/index.js": `works()`,
+      "/Users/user/project/src/node_modules/sub/index.js": `console.log('it works')`,
+    },
+    run: {
+      stdout: "it works",
     },
   });
   itBundled("packagejson/PackageJsonDualPackageHazardImportOnly", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import value from 'demo-pkg'
@@ -669,9 +750,11 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/main.js": `module.exports = 'main'`,
       "/Users/user/project/node_modules/demo-pkg/module.js": `export default 'module'`,
     },
+    run: {
+      stdout: "module",
+    },
   });
   itBundled("packagejson/PackageJsonDualPackageHazardRequireOnly", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `console.log(require('demo-pkg'))`,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
@@ -683,9 +766,12 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/main.js": `module.exports = 'main'`,
       "/Users/user/project/node_modules/demo-pkg/module.js": `export default 'module'`,
     },
+    run: {
+      stdout: "main",
+    },
   });
   itBundled("packagejson/PackageJsonDualPackageHazardImportAndRequireSameFile", {
-    // GENERATED
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import value from 'demo-pkg'
@@ -700,9 +786,11 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/main.js": `module.exports = 'main'`,
       "/Users/user/project/node_modules/demo-pkg/module.js": `export default 'module'`,
     },
+    run: {
+      stdout: "main main",
+    },
   });
   itBundled("packagejson/PackageJsonDualPackageHazardImportAndRequireSeparateFiles", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import './test-main'
@@ -721,16 +809,18 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/demo-pkg/main.js": `module.exports = 'main'`,
       "/Users/user/project/node_modules/demo-pkg/module.js": `export default 'module'`,
+    },
+    run: {
+      stdout: "main\nmain",
     },
   });
   itBundled("packagejson/PackageJsonDualPackageHazardImportAndRequireForceModuleBeforeMain", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import './test-main'
         import './test-module'
       `,
-      "/Users/user/project/src/test-main.js": `console.log(require('demo-pkg'))`,
+      "/Users/user/project/src/test-main.js": `console.log(require('demo-pkg').default)`,
       "/Users/user/project/src/test-module.js": /* js */ `
         import value from 'demo-pkg'
         console.log(value)
@@ -745,9 +835,11 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/module.js": `export default 'module'`,
     },
     mainFields: ["module", "main"],
+    run: {
+      stdout: "module\nmodule",
+    },
   });
   itBundled("packagejson/PackageJsonDualPackageHazardImportAndRequireImplicitMain", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import './test-index'
@@ -766,15 +858,17 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/index.js": `module.exports = 'index'`,
       "/Users/user/project/node_modules/demo-pkg/module.js": `export default 'module'`,
     },
+    run: {
+      stdout: "index\nindex",
+    },
   });
   itBundled("packagejson/PackageJsonDualPackageHazardImportAndRequireImplicitMainForceModuleBeforeMain", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import './test-index'
         import './test-module'
       `,
-      "/Users/user/project/src/test-index.js": `console.log(require('demo-pkg'))`,
+      "/Users/user/project/src/test-index.js": `console.log(require('demo-pkg').default)`,
       "/Users/user/project/src/test-module.js": /* js */ `
         import value from 'demo-pkg'
         console.log(value)
@@ -788,9 +882,12 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/module.js": `export default 'module'`,
     },
     mainFields: ["module", "main"],
+    run: {
+      stdout: "module\nmodule",
+    },
   });
   itBundled("packagejson/PackageJsonDualPackageHazardImportAndRequireBrowser", {
-    // GENERATED
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import './test-main'
@@ -816,7 +913,13 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/main.browser.js": `module.exports = 'browser main'`,
       "/Users/user/project/node_modules/demo-pkg/module.browser.js": `export default 'browser module'`,
     },
+    run: {
+      stdout: "browser main\nbrowser main",
+    },
   });
+  if (!RUN_UNCHECKED_TESTS) {
+    return;
+  }
   itBundled("packagejson/PackageJsonMainFieldsA", {
     // GENERATED
     files: {

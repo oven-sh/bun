@@ -83,4 +83,20 @@ describe("bundler", () => {
     },
     capture: ['"Hello\0"'],
   });
+  itBundled("edgecase/CryptoPlatformBrowser", {
+    files: {
+      "/entry.ts": /* js */ `
+        import * as crypto from "node:crypto";
+        console.log(crypto);
+      `,
+    },
+    platform: "browser",
+    onAfterBundle(api) {
+      assert(!api.readFile("/out.js").includes("\0"), "bundle has a null byte in it!");
+    },
+    run: {
+      // TODO: decide what this should do
+      stdout: "undefined",
+    },
+  });
 });

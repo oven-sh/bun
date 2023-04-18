@@ -49,6 +49,7 @@ describe("bundler", () => {
       "!1",
       "!1",
     ],
+    minifySyntax: true,
     platform: "bun",
     minifySyntax: true,
   });

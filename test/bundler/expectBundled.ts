@@ -362,6 +362,10 @@ export function expectBundled(
       : entryPaths.map(file => path.join(outdir!, path.basename(file)))
   ).map(x => x.replace(/\.ts$/, ".js"));
 
+  if (mode === "transform" && !outfile) {
+    throw new Error("transform mode requires one single outfile");
+  }
+
   if (outdir) {
     entryNames ??= "[name].[ext]";
   }
@@ -410,7 +414,7 @@ export function expectBundled(
           "build",
           ...entryPaths,
           ...(entryPointsRaw ?? []),
-          outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
+          mode === "bundle" ? [outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`] : [],
           define && Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
           `--platform=${platform}`,
           external && external.map(x => ["--external", x]),
@@ -605,6 +609,11 @@ export function expectBundled(
     return testRef(id, opts);
   } else if (expectedErrors) {
     throw new Error("Errors were expected while bundling:\n" + expectedErrors.map(formatError).join("\n"));
+  }
+
+  if (mode === "transform" && !ESBUILD) {
+    mkdirSync(path.dirname(outfile!), { recursive: true });
+    Bun.write(outfile!, stdout);
   }
 
   // Check for warnings

@@ -1,12 +1,12 @@
 # This workflow will run tests using node and then publish a package to GitHub Packages when a release is created
 # For more information see: https://help.github.com/actions/language-and-framework-guides/publishing-nodejs-packages
 
-name: Publish NPM Packages
+name: Publish bun-create templates
 
 on:
   push:
     branches:
-      - 'main'
+      - "main"
 
 jobs:
   publish-npm:
@@ -19,11 +19,14 @@ jobs:
           node-version: 16
           registry-url: https://registry.npmjs.org/
 
-      - run: npm install
+      - uses: actions/setup-bun
 
-      - run: node publish.js
+      - run: bun install
+
+      - run: bun run publish.ts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - uses: "EndBug/add-and-commit@v9"
+
         with:
           default_author: github_actions

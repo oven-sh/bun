@@ -1,6 +1,6 @@
 {
   "name": "@bun-examples/react",
-  "version": "0.1.81",
+  "version": "0.1.82",
   "dependencies": {
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
@@ -12,12 +12,21 @@
     ]
   },
   "devDependencies": {
+    "@types/react": "^18.0.37",
+    "@types/react-dom": "^18.0.11",
+    "bun-types": "canary",
     "typescript": "latest"
   },
+  "scripts": {
+    "prestart": "NODE_ENV=development bun build ./src/index.jsx --outfile build/bundle.js",
+    "start": "bun run dev.tsx"
+  },
   "bun-create": {
-    "postinstall": [
-      "bun bun ./src/index.jsx"
+    "prestart": [
+      "bun bun ./src/index.jsx --outfile ./build/bundle.js --platform browser --splitting --tree-shaking"
     ],
-    "start": "bun dev"
-  }
+    "start": "bun run dev.tsx"
+  },
+  "module": "index.ts",
+  "type": "module"
 }

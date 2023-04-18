@@ -1547,7 +1547,7 @@ pub const CreateCommand = struct {
 
         Output.pretty(
             \\
-            \\<d>Come hang out in bun's Discord: https://bun.sh/discord<r>
+            \\<d>Come hang out in Bun's Discord: https://bun.sh/discord<r>
             \\
         , .{});
 
@@ -2117,18 +2117,18 @@ pub const CreateListExamplesCommand = struct {
         Output.prettyln("Welcome to bun! Create a new project by pasting any of the following:\n\n", .{});
         Output.flush();
 
-        Example.print(examples.items, null);
+        Example.print(examples.items, "./my-app");
 
-        Output.prettyln("<r><d>#<r> You can also paste a GitHub repository:\n\n  <b>bun create <cyan>ahfarmer/calculator calc<r>\n\n", .{});
+        Output.prettyln("<r><d>#<r> To clone from a GitHub repository:\n\n  <b>bun create <cyan>ahfarmer/calculator calc<r>\n\n", .{});
 
         if (env_loader.map.get("HOME")) |homedir| {
             Output.prettyln(
-                "<d>This command is completely optional. To add a new local template, create a folder in {s}/.bun-create/. To publish a new template, git clone https://github.com/oven-sh/bun, add a new folder to the \"examples\" folder, and submit a PR.<r>",
+                "<d>This command is completely optional. To add a new local template, create a folder in {s}/.bun-create/. To publish a new template, fork https://github.com/oven-sh/bun, add a new directory to the \"templates\" folder, and submit a PR.<r>",
                 .{homedir},
             );
         } else {
             Output.prettyln(
-                "<d>This command is completely optional. To add a new local template, create a folder in $HOME/.bun-create/. To publish a new template, git clone https://github.com/oven-sh/bun, add a new folder to the \"examples\" folder, and submit a PR.<r>",
+                "<d>This command is completely optional. To add a new local template, create a folder in $HOME/.bun-create/. To publish a new template, fork https://github.com/oven-sh/bun, add a new directory to the \"templates\" folder, and submit a PR.<r>",
                 .{},
             );
         }

@@ -1,5 +1,9 @@
 {
   "devDependencies": {
-    "semver": "^7.3.8"
-  }
+    "semver": "^7.3.8",
+    "bun-types": "canary"
+  },
+  "name": "templates",
+  "module": "index.ts",
+  "type": "module"
 }

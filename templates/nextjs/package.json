@@ -1,7 +1,6 @@
 {
-  "name": "next",
-  "version": "0.1.0",
-  "private": true,
+  "name": "@bun-examples/nextjs",
+  "version": "0.0.1",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

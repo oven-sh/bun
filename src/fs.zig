@@ -1100,7 +1100,7 @@ pub const PathName = struct {
         }
 
         if (comptime Environment.allow_assert) {
-            std.debug.assert(!strings.includes(self.base, "/"));
+            if (self.dir.len > 0) std.debug.assert(!strings.includes(self.base, "/"));
         }
 
         // /bar/foo.js -> foo

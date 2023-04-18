@@ -948,6 +948,7 @@ const ParseTask = struct {
         opts.features.trim_unused_imports = loader.isTypeScript() or (bundler.options.trim_unused_imports orelse false);
         opts.features.inlining = bundler.options.minify_syntax;
         opts.features.minify_syntax = bundler.options.minify_syntax;
+        opts.features.should_fold_typescript_constant_expressions = opts.features.inlining or loader.isTypeScript();
 
         opts.tree_shaking = task.tree_shaking;
         opts.module_type = task.module_type;

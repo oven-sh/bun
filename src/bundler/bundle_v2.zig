@@ -315,10 +315,13 @@ pub const BundleV2 = struct {
         return visitor.reachable.toOwnedSlice();
     }
 
+    fn isDone(ptr: *anyopaque) bool {
+        var this = bun.cast(*BundleV2, ptr);
+        return this.graph.parse_pending == 0;
+    }
+
     pub fn waitForParse(this: *BundleV2) void {
-        while (this.graph.parse_pending > 0) {
-            this.loop().tick(this);
-        }
+        this.loop().tick(this, isDone);
 
         debug("Parsed {d} files, producing {d} ASTs", .{ this.graph.input_files.len, this.graph.ast.len });
     }

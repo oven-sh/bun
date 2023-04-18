@@ -763,20 +763,17 @@ pub const MiniEventLoop = struct {
     pub fn tick(
         this: *MiniEventLoop,
         context: *anyopaque,
+        comptime isDone: fn (*anyopaque) bool,
     ) void {
-        while (true) {
-            _ = this.tickConcurrentWithCount();
-            while (this.tasks.readItem()) |task| {
-                task.run(context);
+        while (!isDone(context)) {
+            if (this.tickConcurrentWithCount() == 0 and this.tasks.count == 0) {
+                this.loop.num_polls += 1;
+                this.loop.tick();
+                this.loop.num_polls -= 1;
             }
 
-            if (this.tickConcurrentWithCount() == 0) {
-                if (this.loop.active > 0 or this.loop.num_polls > 0) {
-                    this.loop.run();
-                    continue;
-                }
-
-                break;
+            while (this.tasks.readItem()) |task| {
+                task.run(context);
             }
         }
     }
@@ -845,6 +842,7 @@ pub const AnyEventLoop = union(enum) {
     pub fn tick(
         this: *AnyEventLoop,
         context: *anyopaque,
+        comptime isDone: fn (*anyopaque) bool,
     ) void {
         switch (this.*) {
             .jsc => {
@@ -852,7 +850,7 @@ pub const AnyEventLoop = union(enum) {
                 this.jsc.autoTick();
             },
             .mini => {
-                this.mini.tick(context);
+                this.mini.tick(context, isDone);
             },
         }
     }

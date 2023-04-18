@@ -4,6 +4,9 @@
     "bun-types": "latest"
   },
   "type": "module",
+  "scripts": {
+    "dev": "bun run index.ts"
+  },
   "dependencies": {
     "@stricjs/arrow": "^1.1.9",
     "@stricjs/kit": "^1.0.16"

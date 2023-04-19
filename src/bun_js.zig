@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -11,7 +11,7 @@ const C = bun.C;
 const std = @import("std");
 
 const lex = bun.js_lexer;
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const options = @import("options.zig");
 const js_parser = bun.js_parser;
 const json_parser = bun.JSON;
@@ -28,8 +28,8 @@ const bundler = bun.bundler;
 const NodeModuleBundle = @import("node_module_bundle.zig").NodeModuleBundle;
 const DotEnv = @import("env_loader.zig");
 const which = @import("which.zig").which;
-const JSC = @import("bun").JSC;
-const AsyncHTTP = @import("bun").HTTP.AsyncHTTP;
+const JSC = @import("root").bun.JSC;
+const AsyncHTTP = @import("root").bun.HTTP.AsyncHTTP;
 const Arena = @import("./mimalloc_arena.zig").Arena;
 
 const OpaqueWrap = JSC.OpaqueWrap;

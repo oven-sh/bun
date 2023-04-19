@@ -2,7 +2,7 @@
 // https://github.com/kprotty/zap/blob/blog/src/thread_pool.zig
 
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const ThreadPool = @This();
 const Futex = @import("./futex.zig");
 
@@ -614,7 +614,7 @@ fn join(self: *ThreadPool) void {
     thread.join_event.notify();
 }
 
-const Output = @import("bun").Output;
+const Output = @import("root").bun.Output;
 
 pub const Thread = struct {
     next: ?*Thread = null,

@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 
 pub const CachedBitset = extern struct {
     range: [2]i32,

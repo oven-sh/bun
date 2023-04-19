@@ -4,7 +4,7 @@ const Environment = @import("./env.zig");
 const string = bun.string;
 const stringZ = bun.stringZ;
 const CodePoint = bun.CodePoint;
-const bun = @import("bun");
+const bun = @import("root").bun;
 pub const joiner = @import("./string_joiner.zig");
 const log = bun.Output.scoped(.STR, true);
 
@@ -1877,7 +1877,7 @@ pub fn elementLengthLatin1IntoUTF8(comptime Type: type, latin1_: Type) usize {
     return latin1_.len + total_non_ascii_count;
 }
 
-const JSC = @import("bun").JSC;
+const JSC = @import("root").bun.JSC;
 
 pub fn copyLatin1IntoUTF16(comptime Buffer: type, buf_: Buffer, comptime Type: type, latin1_: Type) EncodeIntoResult {
     var buf = buf_;

@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 fn isValid(buf: *[bun.MAX_PATH_BYTES]u8, segment: []const u8, bin: []const u8) ?u16 {
     bun.copy(u8, buf, segment);
     buf[segment.len] = std.fs.path.sep;

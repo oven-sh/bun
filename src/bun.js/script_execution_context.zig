@@ -1,4 +1,4 @@
-const JSC = @import("bun").JSC;
+const JSC = @import("root").bun.JSC;
 
 pub const ScriptExecutionContext = extern struct {
     main_file_path: JSC.ZigString,

@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -19,7 +19,7 @@ const linker = @import("../linker.zig");
 const options = @import("../options.zig");
 const initializeStore = @import("./create_command.zig").initializeStore;
 const lex = bun.js_lexer;
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const JSPrinter = bun.js_printer;
 
 fn exists(path: anytype) bool {

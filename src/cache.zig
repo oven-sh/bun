@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
@@ -12,7 +12,7 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 
 const js_ast = bun.JSAst;
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const js_parser = bun.js_parser;
 const json_parser = bun.JSON;
 const options = @import("./options.zig");

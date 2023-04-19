@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const builtin = @import("builtin");
 const os = std.os;
 const mem = std.mem;

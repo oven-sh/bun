@@ -9,12 +9,12 @@ const std = @import("std");
 const os = std.os;
 
 const Dir = std.fs.Dir;
-const JSC = @import("bun").JSC;
+const JSC = @import("root").bun.JSC;
 const PathString = JSC.PathString;
 
 const IteratorError = error{ AccessDenied, SystemResources } || os.UnexpectedError;
 const mem = std.mem;
-const strings = @import("bun").strings;
+const strings = @import("root").bun.strings;
 const Maybe = JSC.Maybe;
 const File = std.fs.File;
 const Result = Maybe(?Entry);

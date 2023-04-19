@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const logger = bun.logger;
 const Environment = @import("../env.zig");
 const Install = @import("./install.zig");

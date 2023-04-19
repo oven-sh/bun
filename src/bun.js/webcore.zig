@@ -5,9 +5,9 @@ pub usingnamespace @import("./webcore/blob.zig");
 pub usingnamespace @import("./webcore/request.zig");
 pub usingnamespace @import("./webcore/body.zig");
 
-const JSC = @import("bun").JSC;
+const JSC = @import("root").bun.JSC;
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 pub const AbortSignal = @import("./bindings/bindings.zig").AbortSignal;
 
@@ -366,7 +366,7 @@ pub const Prompt = struct {
 
 pub const Crypto = struct {
     const UUID = @import("./uuid.zig");
-    const BoringSSL = @import("bun").BoringSSL;
+    const BoringSSL = @import("root").bun.BoringSSL;
     pub const Class = JSC.NewClass(
         void,
         .{ .name = "crypto" },

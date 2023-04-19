@@ -1,7 +1,7 @@
 // @link "deps/zlib/libz.a"
 
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 
 test "Zlib Read" {
     const expected_text = @embedFile("./zlib.test.txt");

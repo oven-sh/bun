@@ -1,10 +1,10 @@
 const std = @import("std");
-const JSC = @import("bun").JSC;
+const JSC = @import("root").bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const VirtualMachine = JSC.VirtualMachine;
 const Lock = @import("../lock.zig").Lock;
 const Microtask = JSC.Microtask;
-const bun = @import("bun");
+const bun = @import("root").bun;
 const Environment = bun.Environment;
 const Fetch = JSC.WebCore.Fetch;
 const WebCore = JSC.WebCore;
@@ -21,8 +21,8 @@ const JSValue = JSC.JSValue;
 const js = JSC.C;
 pub const WorkPool = @import("../work_pool.zig").WorkPool;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
-const NetworkThread = @import("bun").HTTP.NetworkThread;
-const uws = @import("bun").uws;
+const NetworkThread = @import("root").bun.HTTP.NetworkThread;
+const uws = @import("root").bun.uws;
 
 pub fn ConcurrentPromiseTask(comptime Context: type) type {
     return struct {
@@ -258,7 +258,7 @@ pub const ConcurrentTask = struct {
     }
 };
 
-const AsyncIO = @import("bun").AsyncIO;
+const AsyncIO = @import("root").bun.AsyncIO;
 
 // This type must be unique per JavaScript thread
 pub const GarbageCollectionController = struct {

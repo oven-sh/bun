@@ -3,7 +3,7 @@ const std = @import("std");
 const strings = @import("../string_immutable.zig");
 const FeatureFlags = @import("../feature_flags.zig");
 const default_allocator = @import("../memory_allocator.zig").c_allocator;
-const bun = @import("bun");
+const bun = @import("root").bun;
 const Fs = @import("../fs.zig");
 
 threadlocal var parser_join_input_buffer: [4096]u8 = undefined;

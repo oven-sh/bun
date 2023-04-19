@@ -1,6 +1,6 @@
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
-const bindings = @import("bun").JSC;
+const bindings = @import("root").bun.JSC;
 pub const struct_JSC__CallFrame = bindings.CallFrame;
 pub const struct_JSC__StringPrototype = bindings.StringPrototype;
 pub const struct_JSC__SetIteratorPrototype = bindings.SetIteratorPrototype;

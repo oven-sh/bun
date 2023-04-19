@@ -1,6 +1,6 @@
 const Fs = @import("./fs.zig");
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;

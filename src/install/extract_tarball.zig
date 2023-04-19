@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const default_allocator = bun.default_allocator;
 const Global = bun.Global;
 const json_parser = bun.JSON;

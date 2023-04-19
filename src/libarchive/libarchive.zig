@@ -1,7 +1,7 @@
 // @link "../deps/libarchive.a"
 
 const lib = @import("./libarchive-bindings.zig");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -14,7 +14,7 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
 const struct_archive = lib.struct_archive;
-const JSC = @import("bun").JSC;
+const JSC = @import("root").bun.JSC;
 pub const Seek = enum(c_int) {
     set = std.os.SEEK_SET,
     current = std.os.SEEK_CUR,

@@ -1,11 +1,11 @@
-const JSC = @import("bun").JSC;
+const JSC = @import("root").bun.JSC;
 const std = @import("std");
 const Flavor = JSC.Node.Flavor;
 const ArgumentsSlice = JSC.Node.ArgumentsSlice;
 const system = std.os.system;
 const Maybe = JSC.Maybe;
 const Encoding = JSC.Node.Encoding;
-const FeatureFlags = @import("bun").FeatureFlags;
+const FeatureFlags = @import("root").bun.FeatureFlags;
 const Args = JSC.Node.NodeFS.Arguments;
 const d = JSC.d;
 

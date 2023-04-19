@@ -7,7 +7,7 @@ const Environment = @import("./env.zig");
 const FeatureFlags = @import("./feature_flags.zig");
 const Allocator = mem.Allocator;
 const assert = std.debug.assert;
-const bun = @import("bun");
+const bun = @import("root").bun;
 
 pub const GlobalArena = struct {
     arena: Arena,

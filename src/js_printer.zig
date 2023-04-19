@@ -1,5 +1,5 @@
 const std = @import("std");
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const js_lexer = bun.js_lexer;
 const importRecord = @import("import_record.zig");
 const js_ast = bun.JSAst;
@@ -9,7 +9,7 @@ const runtime = @import("runtime.zig");
 const Lock = @import("./lock.zig").Lock;
 const Api = @import("./api/schema.zig").Api;
 const fs = @import("fs.zig");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;

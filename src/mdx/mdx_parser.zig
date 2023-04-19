@@ -1,5 +1,5 @@
 const std = @import("std");
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const mdx_lexer = @import("./mdx_lexer.zig");
 const Lexer = mdx_lexer.Lexer;
 const importRecord = @import("../import_record.zig");
@@ -10,7 +10,7 @@ const ParseStatementOptions = @import("../js_parser/js_parser.zig").ParseStateme
 const options = @import("../options.zig");
 
 const fs = @import("../fs.zig");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;

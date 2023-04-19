@@ -1,8 +1,8 @@
 const std = @import("std");
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const JSXRuntime = @import("options.zig").JSX.Runtime;
 const Runtime = @import("runtime.zig").Runtime;
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -18,8 +18,8 @@ const RefHashCtx = @import("ast/base.zig").RefHashCtx;
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const ImportRecord = @import("import_record.zig").ImportRecord;
 const allocators = @import("allocators.zig");
-const JSC = @import("bun").JSC;
-const HTTP = @import("bun").HTTP;
+const JSC = @import("root").bun.JSC;
+const HTTP = @import("root").bun.HTTP;
 const RefCtx = @import("./ast/base.zig").RefCtx;
 const JSONParser = bun.JSON;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
@@ -5983,7 +5983,7 @@ pub const BunPlugin = struct {
 };
 
 pub const Macro = struct {
-    const JavaScript = @import("bun").JSC;
+    const JavaScript = @import("root").bun.JSC;
     const JSCBase = @import("./bun.js/base.zig");
     const Resolver = @import("./resolver/resolver.zig").Resolver;
     const isPackagePath = @import("./resolver/resolver.zig").isPackagePath;

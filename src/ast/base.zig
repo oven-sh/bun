@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const unicode = std.unicode;
 
 pub const JavascriptString = []u16;

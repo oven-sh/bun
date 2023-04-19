@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -12,13 +12,13 @@ const C = bun.C;
 
 const sync = @import("../sync.zig");
 const std = @import("std");
-const HTTP = @import("bun").HTTP;
+const HTTP = @import("root").bun.HTTP;
 const NetworkThread = HTTP.NetworkThread;
 const URL = @import("../url.zig").URL;
 const Fs = @import("../fs.zig");
 const Analytics = @import("./analytics_schema.zig").analytics;
 const Writer = @import("./analytics_schema.zig").Writer;
-const Headers = @import("bun").HTTP.Headers;
+const Headers = @import("root").bun.HTTP.Headers;
 const Futex = @import("../futex.zig");
 const Semver = @import("../install/semver.zig");
 
@@ -465,7 +465,7 @@ pub const EventList = struct {
         var in_buffer = &this.in_buffer;
         var buffer_writer = in_buffer.writer();
         var analytics_writer = AnalyticsWriter.init(&buffer_writer);
-        const Root = @import("bun");
+        const Root = @import("root").bun;
         const start_time: i128 = if (@hasDecl(Root, "start_time"))
             Root.start_time
         else

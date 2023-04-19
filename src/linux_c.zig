@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 pub const SystemErrno = enum(u8) {
     SUCCESS = 0,
     EPERM = 1,

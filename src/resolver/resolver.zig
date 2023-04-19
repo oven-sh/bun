@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -12,7 +12,7 @@ const default_allocator = bun.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const C = bun.C;
 const ast = @import("../import_record.zig");
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const options = @import("../options.zig");
 const Fs = @import("../fs.zig");
 const std = @import("std");

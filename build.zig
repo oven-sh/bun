@@ -44,10 +44,6 @@ const color_map = std.ComptimeStringMap([]const u8, .{
 });
 
 fn addInternalPackages(b: *Build, step: *CompileStep, _: std.mem.Allocator, _: []const u8, target: anytype) !void {
-    var bun = b.createModule(.{
-        .source_file = FileSource.relative("src/bun_redirect.zig"),
-    });
-
     var io: *Module = brk: {
         if (target.isDarwin()) {
             break :brk b.createModule(.{
@@ -65,7 +61,6 @@ fn addInternalPackages(b: *Build, step: *CompileStep, _: std.mem.Allocator, _: [
     };
 
     step.addModule("async_io", io);
-    step.addModule("bun", bun);
 }
 
 const BunBuildOptions = struct {

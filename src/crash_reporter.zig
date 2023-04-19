@@ -28,7 +28,7 @@ noinline fn sigaction_handler(sig: i32, info: *const std.os.siginfo_t, _: ?*cons
 }
 
 noinline fn sigpipe_handler(_: i32, _: *const std.os.siginfo_t, _: ?*const anyopaque) callconv(.C) void {
-    const bun = @import("bun");
+    const bun = @import("root").bun;
     bun.Output.debug("SIGPIPE received\n", .{});
 }
 

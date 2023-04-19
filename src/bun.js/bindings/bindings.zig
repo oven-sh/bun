@@ -1,9 +1,9 @@
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const hasRef = std.meta.trait.hasField("ref");
-const C_API = @import("bun").JSC.C;
+const C_API = @import("root").bun.JSC.C;
 const StringPointer = @import("../../api/schema.zig").Api.StringPointer;
 const Exports = @import("./exports.zig");
 const strings = bun.strings;
@@ -13,7 +13,7 @@ const ZigException = Exports.ZigException;
 const ZigStackTrace = Exports.ZigStackTrace;
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
-const JSC = @import("bun").JSC;
+const JSC = @import("root").bun.JSC;
 const Shimmer = JSC.Shimmer;
 const FFI = @import("./FFI.zig");
 const NullableAllocator = @import("../../nullable_allocator.zig").NullableAllocator;
@@ -746,7 +746,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn toJSStringRef(this: *const ZigString) C_API.JSStringRef {
-        if (comptime @hasDecl(@import("bun"), "bindgen")) {
+        if (comptime @hasDecl(@import("root").bun, "bindgen")) {
             return undefined;
         }
 

@@ -53,4 +53,49 @@ describe("bundler", () => {
     platform: "bun",
     minifySyntax: true,
   });
+  itBundled("minify/FunctionExpressionRemoveName", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(function remove() {});
+        capture(function() {});
+        capture(function rename_me() { rename_me() });
+      `,
+    },
+    // capture is pretty stupid and will stop at first )
+    capture: ["function(", "function(", "function e("],
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    platform: "bun",
+  });
+  itBundled("minify/PrivateIdentifiersNameCollision", {
+    files: {
+      "/entry.js": /* js */ `
+        class C {
+          ${new Array(500)
+            .fill(null)
+            .map((_, i) => `#identifier${i} = 123;`)
+            .join("\n")}
+          a = 456;
+
+          getAllValues() {
+            return [
+              ${new Array(500)
+                .fill(null)
+                .map((_, i) => `this.#identifier${i}`)
+                .join(",")}
+            ]
+          }
+        }
+        
+        const values = new C().getAllValues();
+        for (const value of values) {
+          if(value !== 123) { throw new Error("Expected 123!"); }
+        }
+
+        console.log("a = " + new C().a);
+      `,
+    },
+    minifyIdentifiers: true,
+    run: { stdout: "a = 456" },
+  });
 });

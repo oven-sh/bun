@@ -30,6 +30,8 @@ const ESBUILD = process.env.BUN_BUNDLER_TEST_USE_ESBUILD;
 const DEBUG = process.env.BUN_BUNDLER_TEST_DEBUG;
 /** Set this to the id of a bundle test to run just that test */
 const FILTER = process.env.BUN_BUNDLER_TEST_FILTER;
+/** Set this to hide skips */
+const HIDE_SKIP = process.env.BUN_BUNDLER_TEST_HIDE_SKIP;
 /** Path to the bun. TODO: Once bundler is merged, we should remove the `bun-debug` fallback. */
 const BUN_EXE = (process.env.BUN_EXE && Bun.which(process.env.BUN_EXE)) ?? Bun.which("bun-debug") ?? bunExe();
 export const RUN_UNCHECKED_TESTS = true;
@@ -332,6 +334,9 @@ export function expectBundled(
   }
   if (!ESBUILD && inject) {
     throw new Error("inject not implemented in bun build");
+  }
+  if (!ESBUILD && !minifyIdentifiers) {
+    // throw new Error("REMOVE THIS ERROR");
   }
   if (ESBUILD && skipOnEsbuild) {
     return testRef(id, opts);
@@ -972,7 +977,7 @@ export function itBundled(id: string, opts: BundlerTestInput): BundlerTestRef {
     try {
       expectBundled(id, opts, true);
     } catch (error) {
-      it.skip(id, () => {});
+      if (!HIDE_SKIP) it.skip(id, () => {});
       return ref;
     }
   }
@@ -986,7 +991,7 @@ export function itBundled(id: string, opts: BundlerTestInput): BundlerTestRef {
         );
       });
     } catch (error: any) {
-      it.skip(id, () => {});
+      if (!HIDE_SKIP) it.skip(id, () => {});
     }
   } else {
     it(id, () => expectBundled(id, opts));
@@ -995,7 +1000,7 @@ export function itBundled(id: string, opts: BundlerTestInput): BundlerTestRef {
 }
 itBundled.skip = (id: string, opts: BundlerTestInput) => {
   const { it } = testForFile(callerSourceOrigin());
-  it.skip(id, () => expectBundled(id, opts));
+  if (!HIDE_SKIP) it.skip(id, () => expectBundled(id, opts));
   return testRef(id, opts);
 };
 
@@ -1009,7 +1014,7 @@ export function bundlerTest(id: string, cb: () => void) {
 }
 bundlerTest.skip = (id: string, cb: any) => {
   const { it } = testForFile(callerSourceOrigin());
-  it.skip(id, cb);
+  if (!HIDE_SKIP) it.skip(id, cb);
 };
 
 function formatError(err: { file: string; error: string; line?: string; col?: string }) {

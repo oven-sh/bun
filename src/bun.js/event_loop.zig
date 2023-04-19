@@ -1,10 +1,10 @@
 const std = @import("std");
-const JSC = @import("bun").JSC;
+const JSC = @import("root").bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const VirtualMachine = JSC.VirtualMachine;
 const Lock = @import("../lock.zig").Lock;
 const Microtask = JSC.Microtask;
-const bun = @import("bun");
+const bun = @import("root").bun;
 const Environment = bun.Environment;
 const Fetch = JSC.WebCore.Fetch;
 const WebCore = JSC.WebCore;
@@ -21,8 +21,8 @@ const JSValue = JSC.JSValue;
 const js = JSC.C;
 pub const WorkPool = @import("../work_pool.zig").WorkPool;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
-const NetworkThread = @import("bun").HTTP.NetworkThread;
-const uws = @import("bun").uws;
+const NetworkThread = @import("root").bun.HTTP.NetworkThread;
+const uws = @import("root").bun.uws;
 
 pub fn ConcurrentPromiseTask(comptime Context: type) type {
     return struct {
@@ -258,7 +258,7 @@ pub const ConcurrentTask = struct {
     }
 };
 
-const AsyncIO = @import("bun").AsyncIO;
+const AsyncIO = @import("root").bun.AsyncIO;
 
 // This type must be unique per JavaScript thread
 pub const GarbageCollectionController = struct {
@@ -763,20 +763,17 @@ pub const MiniEventLoop = struct {
     pub fn tick(
         this: *MiniEventLoop,
         context: *anyopaque,
+        comptime isDone: fn (*anyopaque) bool,
     ) void {
-        while (true) {
-            _ = this.tickConcurrentWithCount();
-            while (this.tasks.readItem()) |task| {
-                task.run(context);
+        while (!isDone(context)) {
+            if (this.tickConcurrentWithCount() == 0 and this.tasks.count == 0) {
+                this.loop.num_polls += 1;
+                this.loop.tick();
+                this.loop.num_polls -= 1;
             }
 
-            if (this.tickConcurrentWithCount() == 0) {
-                if (this.loop.active > 0 or this.loop.num_polls > 0) {
-                    this.loop.run();
-                    continue;
-                }
-
-                break;
+            while (this.tasks.readItem()) |task| {
+                task.run(context);
             }
         }
     }
@@ -845,6 +842,7 @@ pub const AnyEventLoop = union(enum) {
     pub fn tick(
         this: *AnyEventLoop,
         context: *anyopaque,
+        comptime isDone: fn (*anyopaque) bool,
     ) void {
         switch (this.*) {
             .jsc => {
@@ -852,7 +850,7 @@ pub const AnyEventLoop = union(enum) {
                 this.jsc.autoTick();
             },
             .mini => {
-                this.mini.tick(context);
+                this.mini.tick(context, isDone);
             },
         }
     }

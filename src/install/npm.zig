@@ -1,5 +1,5 @@
 const URL = @import("../url.zig").URL;
-const bun = @import("bun");
+const bun = @import("root").bun;
 const std = @import("std");
 const MutableString = @import("../string_mutable.zig").MutableString;
 const Semver = @import("./semver.zig");
@@ -12,15 +12,15 @@ const ExternalStringMap = @import("./install.zig").ExternalStringMap;
 const ExternalStringList = @import("./install.zig").ExternalStringList;
 const ExternalSlice = @import("./install.zig").ExternalSlice;
 const initializeStore = @import("./install.zig").initializeStore;
-const logger = @import("bun").logger;
-const Output = @import("bun").Output;
+const logger = @import("root").bun.logger;
+const Output = @import("root").bun.Output;
 const Integrity = @import("./integrity.zig").Integrity;
 const Bin = @import("./bin.zig").Bin;
-const Environment = @import("bun").Environment;
+const Environment = @import("root").bun.Environment;
 const Aligner = @import("./install.zig").Aligner;
-const HTTPClient = @import("bun").HTTP;
+const HTTPClient = @import("root").bun.HTTP;
 const json_parser = bun.JSON;
-const default_allocator = @import("bun").default_allocator;
+const default_allocator = @import("root").bun.default_allocator;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 const SlicedString = Semver.SlicedString;
@@ -151,7 +151,7 @@ pub const Registry = struct {
         not_found: void,
     };
 
-    const Pico = @import("bun").picohttp;
+    const Pico = @import("root").bun.picohttp;
     pub fn getPackageMetadata(
         allocator: std.mem.Allocator,
         response: Pico.Response,

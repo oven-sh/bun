@@ -1,10 +1,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const C = bun.C;
 const string = bun.string;
 const strings = bun.strings;
-const JSC = @import("bun").JSC;
+const JSC = @import("root").bun.JSC;
 const Environment = bun.Environment;
 const Global = bun.Global;
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;

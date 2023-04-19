@@ -1,7 +1,7 @@
 const std = @import("std");
 const expect = std.testing.expect;
 
-const bun = @import("bun");
+const bun = @import("root").bun;
 
 const strings = bun.strings;
 const js_lexer = bun.js_lexer;
@@ -33,7 +33,7 @@ pub const MutableString = struct {
     }
 
     pub fn owns(this: *const MutableString, slice: []const u8) bool {
-        return @import("bun").isSliceInBuffer(slice, this.list.items.ptr[0..this.list.capacity]);
+        return @import("root").bun.isSliceInBuffer(slice, this.list.items.ptr[0..this.list.capacity]);
     }
 
     pub fn growIfNeeded(self: *MutableString, amount: usize) !void {

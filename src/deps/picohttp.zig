@@ -1,10 +1,10 @@
 const std = @import("std");
 const c = @import("picohttpparser.zig");
-const ExactSizeMatcher = @import("bun").ExactSizeMatcher;
+const ExactSizeMatcher = @import("root").bun.ExactSizeMatcher;
 const Match = ExactSizeMatcher(2);
-const Output = @import("bun").Output;
-const Environment = @import("bun").Environment;
-const StringBuilder = @import("bun").StringBuilder;
+const Output = @import("root").bun.Output;
+const Environment = @import("root").bun.Environment;
+const StringBuilder = @import("root").bun.StringBuilder;
 
 const fmt = std.fmt;
 

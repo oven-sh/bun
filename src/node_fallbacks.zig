@@ -1,7 +1,7 @@
 const std = @import("std");
 const string = @import("./string_types.zig").string;
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const Fs = @import("./fs.zig");
 const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 

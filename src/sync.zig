@@ -1,6 +1,6 @@
 const std = @import("std");
 const system = std.system;
-const bun = @import("bun");
+const bun = @import("root").bun;
 
 // https://gist.github.com/kprotty/0d2dc3da4840341d6ff361b27bdac7dc
 pub const ThreadPool = struct {

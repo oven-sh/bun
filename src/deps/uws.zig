@@ -1,5 +1,5 @@
 pub const is_bindgen = @import("std").meta.globalOption("bindgen", bool) orelse false;
-const bun = @import("bun");
+const bun = @import("root").bun;
 const Api = bun.ApiSchema;
 const std = @import("std");
 const Environment = bun.Environment;
@@ -13,7 +13,7 @@ pub const Socket = opaque {};
 
 const uws = @This();
 
-const BoringSSL = @import("bun").BoringSSL;
+const BoringSSL = @import("root").bun.BoringSSL;
 fn NativeSocketHandleType(comptime ssl: bool) type {
     if (ssl) {
         return BoringSSL.SSL;

@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const Environment = @import("./env.zig");
 
 const PlatformSpecific = switch (@import("builtin").target.os.tag) {

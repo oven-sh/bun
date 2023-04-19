@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const Environment = bun.Environment;
 const std = @import("std");
 

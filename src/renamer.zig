@@ -1,5 +1,5 @@
 const js_ast = bun.JSAst;
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -11,8 +11,7 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
 const Ref = @import("./ast/base.zig").Ref;
-const RefCtx = @import("./ast/base.zig").RefCtx;
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const JSLexer = @import("./js_lexer.zig");
 
 pub const NoOpRenamer = struct {

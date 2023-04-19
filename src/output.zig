@@ -1,14 +1,14 @@
 const Output = @This();
-const bun = @import("bun");
+const bun = @import("root").bun;
 const std = @import("std");
 const Environment = @import("./env.zig");
-const string = @import("bun").string;
-const root = @import("bun");
-const strings = @import("bun").strings;
-const StringTypes = @import("bun").StringTypes;
-const Global = @import("bun").Global;
-const ComptimeStringMap = @import("bun").ComptimeStringMap;
-const use_mimalloc = @import("bun").use_mimalloc;
+const string = @import("root").bun.string;
+const root = @import("root").bun;
+const strings = @import("root").bun.strings;
+const StringTypes = @import("root").bun.StringTypes;
+const Global = @import("root").bun.Global;
+const ComptimeStringMap = @import("root").bun.ComptimeStringMap;
+const use_mimalloc = @import("root").bun.use_mimalloc;
 
 const SystemTimer = @import("./system_timer.zig").Timer;
 
@@ -455,7 +455,7 @@ pub const color_map = ComptimeStringMap(string, .{
 });
 const RESET: string = "\x1b[0m";
 pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
-    if (comptime @import("bun").fast_debug_build_mode)
+    if (comptime @import("root").bun.fast_debug_build_mode)
         return fmt;
 
     comptime var new_fmt: [fmt.len * 4]u8 = undefined;
@@ -548,7 +548,7 @@ pub noinline fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime 
 }
 
 pub noinline fn prettyWithPrinterFn(comptime fmt: string, args: anytype, comptime printFn: anytype, ctx: anytype) void {
-    if (comptime @import("bun").fast_debug_build_mode)
+    if (comptime @import("root").bun.fast_debug_build_mode)
         return printFn(ctx, comptime prettyFmt(fmt, false), args);
 
     if (enable_ansi_colors) {
@@ -616,7 +616,7 @@ pub noinline fn printError(comptime fmt: string, args: anytype) void {
 }
 
 pub const DebugTimer = struct {
-    timer: @import("bun").DebugOnly(std.time.Timer) = undefined,
+    timer: @import("root").bun.DebugOnly(std.time.Timer) = undefined,
 
     pub fn start() DebugTimer {
         if (comptime Environment.isDebug) {

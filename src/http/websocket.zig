@@ -4,7 +4,7 @@ const std = @import("std");
 const native_endian = @import("builtin").target.cpu.arch.endian();
 
 const os = std.os;
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;

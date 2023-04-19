@@ -1,4 +1,4 @@
-const JSC = @import("bun").JSC;
+const JSC = @import("root").bun.JSC;
 
 pub const Classes = struct {
     pub const Blob = JSC.WebCore.Blob;

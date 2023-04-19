@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -13,7 +13,7 @@ const Api = @import("../api/schema.zig").Api;
 const std = @import("std");
 const options = @import("../options.zig");
 const cache = @import("../cache.zig");
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const js_ast = bun.JSAst;
 
 const fs = @import("../fs.zig");
@@ -1068,7 +1068,7 @@ pub const ExportsMap = struct {
                 .e_object => |e_obj| {
                     var map_data = Entry.Data.Map.List{};
                     map_data.ensureTotalCapacity(this.allocator, e_obj.*.properties.len) catch unreachable;
-                    map_data.len = map_data.capacity;
+                    map_data.len = e_obj.*.properties.len;
                     var expansion_keys = this.allocator.alloc(Entry.Data.Map.MapEntry, e_obj.*.properties.len) catch unreachable;
                     var expansion_key_i: usize = 0;
                     var map_data_slices = map_data.slice();

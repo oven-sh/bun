@@ -1,7 +1,7 @@
 const boring = @import("./deps/boringssl.translated.zig");
 pub usingnamespace boring;
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 
 const builtin = @import("builtin");
 var loaded = false;

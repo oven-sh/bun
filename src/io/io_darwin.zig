@@ -16,7 +16,7 @@ const os = struct {
     pub const ESPIPE = 29;
 };
 
-const SystemErrno = @import("bun").C.SystemErrno;
+const SystemErrno = @import("root").bun.C.SystemErrno;
 pub const Errno = error{
     EPERM,
     ENOENT,

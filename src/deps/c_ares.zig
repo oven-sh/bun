@@ -1,6 +1,6 @@
 const c = @import("std").c;
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const strings = bun.strings;
 const iovec = @import("std").os.iovec;
 const struct_in_addr = std.os.sockaddr.in;

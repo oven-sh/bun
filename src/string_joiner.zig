@@ -1,7 +1,7 @@
 /// Rope-like data structure for joining many small strings into one big string.
 const std = @import("std");
 const default_allocator = bun.default_allocator;
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Allocator = std.mem.Allocator;
 const ObjectPool = @import("./pool.zig").ObjectPool;

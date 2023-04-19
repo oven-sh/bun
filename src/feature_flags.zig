@@ -112,7 +112,7 @@ pub const hardcode_localhost_to_127_0_0_1 = true;
 /// so we just disable it
 pub const support_jsxs_in_jsx_transform = false;
 
-pub const use_simdutf = !@import("bun").JSC.is_bindgen;
+pub const use_simdutf = !@import("root").bun.JSC.is_bindgen;
 
 pub const inline_properties_in_transpiler = true;
 
@@ -120,7 +120,7 @@ pub const same_target_becomes_destructuring = true;
 
 pub const react_server_components = true;
 
-pub const help_catch_memory_issues = @import("bun").Environment.allow_assert;
+pub const help_catch_memory_issues = @import("root").bun.Environment.allow_assert;
 
 /// This performs similar transforms as https://github.com/rollup/plugins/tree/master/packages/commonjs
 ///

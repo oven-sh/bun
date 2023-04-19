@@ -1,6 +1,6 @@
 const std = @import("std");
 const Command = @import("../cli.zig").Command;
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -12,7 +12,7 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 
 const lex = bun.js_lexer;
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 
 const options = @import("../options.zig");
 const js_parser = bun.js_parser;
@@ -121,11 +121,9 @@ pub const BuildCommand = struct {
                 break :brk result.output_files;
             }
 
-            break :brk (BundleV2.generate(
+            break :brk (BundleV2.generateFromCLI(
                 &this_bundler,
                 allocator,
-                &estimated_input_lines_of_code_,
-                ctx.debug.package_bundle_map,
                 bun.JSC.AnyEventLoop.init(ctx.allocator),
                 std.crypto.random.int(u64),
                 ctx.debug.hot_reload == .watch,

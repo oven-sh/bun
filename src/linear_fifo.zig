@@ -11,7 +11,7 @@ const Allocator = mem.Allocator;
 const debug = std.debug;
 const assert = debug.assert;
 const testing = std.testing;
-const bun = @import("bun");
+const bun = @import("root").bun;
 
 pub const LinearFifoBufferType = union(enum) {
     /// The buffer is internal to the fifo; it is of the specified size.

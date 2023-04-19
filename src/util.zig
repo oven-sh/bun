@@ -1,6 +1,6 @@
 // Things that maybe should go in Zig standard library at some point
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 
 pub fn Key(comptime Map: type) type {
     return FieldType(Map.KV, "key").?;

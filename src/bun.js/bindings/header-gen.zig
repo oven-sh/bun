@@ -8,7 +8,7 @@ const UnionMeta = std.builtin.Type.Union;
 const warn = std.debug.warn;
 const StaticExport = @import("./static_export.zig");
 const typeBaseName = @import("../../meta.zig").typeBaseName;
-const bun = @import("bun");
+const bun = @import("root").bun;
 const TypeNameMap = bun.StringHashMap([]const u8);
 
 fn isCppObject(comptime Type: type) bool {

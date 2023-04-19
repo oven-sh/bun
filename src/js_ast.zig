@@ -552,6 +552,143 @@ pub const ClauseItem = struct {
     pub const default_alias: string = "default";
 };
 
+pub const SlotCounts = struct {
+    slots: [4]u32,
+
+    pub const Empty = SlotCounts{ .slots = .{ 0, 0, 0, 0 } };
+
+    pub fn unionMax(this: *SlotCounts, other: SlotCounts) void {
+        for (&this.slots, other.slots) |*a, b| {
+            if (a.* < b) a.* = b;
+        }
+    }
+};
+
+pub const CharAndCount = struct {
+    char: u8 = 0,
+    count: i32 = 0,
+    index: usize = 0,
+
+    pub const Array = [64]CharAndCount;
+
+    pub fn lessThan(_: void, a: CharAndCount, b: CharAndCount) bool {
+        return a.count > b.count or (a.count == b.count and a.index < b.index);
+    }
+};
+
+pub const CharFreq = struct {
+    freqs: [64]i32 = undefined,
+
+    pub fn scan(this: *CharFreq, text: string, delta: i32) void {
+        if (delta == 0) return;
+        var freqs = this.freqs;
+        defer this.freqs = freqs;
+
+        // TODO: SIMD
+        // TODO: WTF8 handling / indexOfNonASCII
+        for (text) |c| {
+            const i: usize = switch (c) {
+                'a'...'z' => @intCast(usize, c) - 'a',
+                'A'...'Z' => @intCast(usize, c) - ('A' - 26),
+                '0'...'9' => @intCast(usize, c) + (53 - '0'),
+                '_' => 62,
+                '$' => 63,
+                else => continue,
+            };
+            freqs[i] += delta;
+        }
+    }
+
+    pub fn include(this: *CharFreq, other: CharFreq) void {
+        var left = this.freqs;
+        defer this.freqs = left;
+        const right = other.freqs;
+
+        // TODO: SIMD
+        inline for (&left, right) |*dest, src| {
+            dest.* += src;
+        }
+    }
+
+    pub fn compile(this: *CharFreq, allocator: std.mem.Allocator) NameMinifier {
+        var array: CharAndCount.Array = brk: {
+            var _array: CharAndCount.Array = undefined;
+            const freqs = this.freqs;
+
+            for (&_array, NameMinifier.default_tail, &freqs, 0..) |*dest, char, freq, i| {
+                dest.* = CharAndCount{
+                    .char = char,
+                    .index = i,
+                    .count = freq,
+                };
+            }
+            break :brk _array;
+        };
+
+        std.sort.sort(CharAndCount, &array, {}, CharAndCount.lessThan);
+
+        var minifier = NameMinifier.init(allocator);
+        // TODO: investigate counting number of < 0 and > 0 and pre-allocating
+        for (array) |item| {
+            if (item.char < '0' or item.char > '9') {
+                minifier.head.append(item.char) catch unreachable;
+            }
+            minifier.tail.append(item.char) catch unreachable;
+        }
+
+        return minifier;
+    }
+};
+
+pub const NameMinifier = struct {
+    head: std.ArrayList(u8),
+    tail: std.ArrayList(u8),
+
+    pub const default_head = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$";
+    pub const default_tail = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$";
+
+    pub fn init(allocator: std.mem.Allocator) NameMinifier {
+        return .{
+            .head = std.ArrayList(u8).init(allocator),
+            .tail = std.ArrayList(u8).init(allocator),
+        };
+    }
+
+    pub fn numberToMinifiedName(this: *NameMinifier, allocator: std.mem.Allocator, _i: i32) !string {
+        var i = _i;
+        var j = @intCast(usize, @mod(i, 54));
+        var name = std.ArrayList(u8).init(allocator);
+        try name.appendSlice(this.head.items[j .. j + 1]);
+        i = @divFloor(i, 54);
+
+        while (i > 0) {
+            i -= 1;
+            j = @intCast(usize, @mod(i, 64));
+            try name.appendSlice(this.tail.items[j .. j + 1]);
+            i = @divFloor(i, 64);
+        }
+
+        return name.items;
+    }
+
+    pub fn defaultNumberToMinifiedName(allocator: std.mem.Allocator, _i: i32) !string {
+        var i = _i;
+        var j = @intCast(usize, @mod(i, 54));
+        var name = std.ArrayList(u8).init(allocator);
+        try name.appendSlice(default_head[j .. j + 1]);
+        i = @divFloor(i, 54);
+
+        while (i > 0) {
+            i -= 1;
+            j = @intCast(usize, @mod(i, 64));
+            try name.appendSlice(default_tail[j .. j + 1]);
+            i = @divFloor(i, 64);
+        }
+
+        return name.items;
+    }
+};
+
 pub const G = struct {
     pub const Decl = struct {
         binding: BindingNodeIndex,
@@ -707,6 +844,10 @@ pub const Symbol = struct {
     ///
     /// Do not use this directly. Use `nestedScopeSlot()` instead.
     nested_scope_slot: u32 = invalid_nested_scope_slot,
+
+    did_keep_name: bool = true,
+
+    must_start_with_capital_letter_for_jsx: bool = false,
 
     /// The kind of symbol. This is used to determine how to print the symbol
     /// and how to deal with conflicts, renaming, etc.
@@ -5408,6 +5549,8 @@ pub const Ast = struct {
     has_lazy_export: bool = false,
     runtime_imports: Runtime.Imports = .{},
 
+    nested_scope_slot_counts: SlotCounts = SlotCounts.Empty,
+
     runtime_import_record_id: ?u32 = null,
     needs_runtime: bool = false,
     externals: []u32 = &[_]u32{},
@@ -5439,7 +5582,7 @@ pub const Ast = struct {
     // This list may be mutated later, so we should store the capacity
     symbols: Symbol.List = Symbol.List{},
     module_scope: Scope = Scope{},
-    // char_freq:    *CharFreq,
+    char_freq: ?CharFreq = null,
     exports_ref: Ref = Ref.None,
     module_ref: Ref = Ref.None,
     wrapper_ref: Ref = Ref.None,

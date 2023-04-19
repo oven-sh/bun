@@ -494,6 +494,7 @@ pub const Options = struct {
     commonjs_named_exports_ref: Ref = Ref.None,
 
     minify_whitespace: bool = false,
+    minify_identifiers: bool = false,
 
     require_or_import_meta_for_source_callback: RequireOrImportMeta.Callback = .{},
 

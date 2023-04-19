@@ -5386,6 +5386,57 @@ fn NewParser_(
             }
         }
 
+        fn computeCharacterFrequency(p: *P) ?js_ast.CharFreq {
+            if (!p.options.features.minify_identifiers or p.source.index.isRuntime()) {
+                return null;
+            }
+
+            // Add everything in the file to the histogram
+            var freq: js_ast.CharFreq = .{};
+            freq.scan(p.source.contents, 1);
+
+            // Subtract out all comments
+            for (p.lexer.comments_to_preserve_before.items) |comment| {
+                freq.scan(comment.text, -1);
+            }
+
+            // Subtract out all import paths
+            for (p.import_records.items) |record| {
+                freq.scan(record.path.text, -1);
+            }
+
+            const ScopeVisitor = struct {
+                pub fn visit(symbols: []const js_ast.Symbol, char_freq: *js_ast.CharFreq, scope: *js_ast.Scope) void {
+                    var iter = scope.members.iterator();
+
+                    while (iter.next()) |entry| {
+                        const symbol: *const Symbol = &symbols[entry.value_ptr.ref.innerIndex()];
+
+                        if (symbol.slotNamespace() != .must_not_be_renamed) {
+                            char_freq.scan(symbol.original_name, -@intCast(i32, symbol.use_count_estimate));
+                        }
+                    }
+
+                    if (scope.label_ref) |ref| {
+                        const symbol = &symbols[ref.innerIndex()];
+
+                        if (symbol.slotNamespace() != .must_not_be_renamed) {
+                            char_freq.scan(symbol.original_name, -@intCast(i32, symbol.use_count_estimate) - 1);
+                        }
+                    }
+
+                    for (scope.children.slice()) |child| {
+                        visit(symbols, char_freq, child);
+                    }
+                }
+            };
+            ScopeVisitor.visit(p.symbols.items, &freq, p.module_scope);
+
+            // TODO: mangledProps
+
+            return freq;
+        }
+
         pub fn newExpr(p: *P, t: anytype, loc: logger.Loc) Expr {
             const Type = @TypeOf(t);
 
@@ -21023,6 +21074,8 @@ fn NewParser_(
                 .import_keyword = p.esm_import_keyword,
                 .export_keyword = p.esm_export_keyword,
                 .top_level_symbols_to_parts = top_level_symbols_to_parts,
+                .char_freq = p.computeCharacterFrequency(),
+
                 .require_ref = if (p.runtime_imports.__require != null)
                     p.runtime_imports.__require.?.ref
                 else

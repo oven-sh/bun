@@ -11,6 +11,7 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
 const Ref = @import("./ast/base.zig").Ref;
+const RefCtx = @import("./ast/base.zig").RefCtx;
 const logger = @import("bun").logger;
 const JSLexer = @import("./js_lexer.zig");
 
@@ -48,6 +49,7 @@ pub const NoOpRenamer = struct {
 pub const Renamer = union(enum) {
     NumberRenamer: *NumberRenamer,
     NoOpRenamer: *NoOpRenamer,
+    MinifyRenamer: *MinifyRenamer,
 
     pub fn symbols(this: Renamer) js_ast.Symbol.Map {
         return switch (this) {
@@ -70,8 +72,291 @@ pub const Renamer = union(enum) {
     pub fn deinit(renamer: Renamer) void {
         switch (renamer) {
             .NumberRenamer => |r| r.deinit(),
+            .MinifyRenamer => |r| r.deinit(),
             else => {},
         }
+    }
+};
+
+pub const SymbolSlot = struct {
+    name: string = "",
+    count: u32 = 0,
+    needs_capital_for_jsx: bool = false,
+};
+
+pub const MinifyRenamer = struct {
+    reserved_names: bun.StringHashMapUnmanaged(u32),
+    allocator: std.mem.Allocator,
+    slots: [4]std.ArrayList(SymbolSlot),
+    top_level_symbol_to_slot: TopLevelSymbolSlotMap,
+    symbols: js_ast.Symbol.Map,
+
+    pub const TopLevelSymbolSlotMap = std.HashMapUnmanaged(Ref, usize, RefCtx, 80);
+
+    pub fn init(
+        allocator: std.mem.Allocator,
+        symbols: js_ast.Symbol.Map,
+        first_top_level_slots: js_ast.SlotCounts,
+        reserved_names: bun.StringHashMapUnmanaged(u32),
+    ) !*MinifyRenamer {
+        var renamer = try allocator.create(MinifyRenamer);
+        renamer.* = MinifyRenamer{
+            .symbols = symbols,
+            .reserved_names = reserved_names,
+            .slots = [4]std.ArrayList(SymbolSlot){
+                try std.ArrayList(SymbolSlot).initCapacity(allocator, first_top_level_slots.slots[0]),
+                try std.ArrayList(SymbolSlot).initCapacity(allocator, first_top_level_slots.slots[1]),
+                try std.ArrayList(SymbolSlot).initCapacity(allocator, first_top_level_slots.slots[2]),
+                try std.ArrayList(SymbolSlot).initCapacity(allocator, first_top_level_slots.slots[3]),
+            },
+            .top_level_symbol_to_slot = TopLevelSymbolSlotMap{},
+            .allocator = allocator,
+        };
+
+        return renamer;
+    }
+
+    pub fn deinit(this: *MinifyRenamer) void {
+        _ = this;
+    }
+
+    pub fn toRenamer(this: *MinifyRenamer) Renamer {
+        return .{
+            .MinifyRenamer = this,
+        };
+    }
+
+    pub fn nameForSymbol(this: *MinifyRenamer, _ref: Ref) string {
+        var ref = this.symbols.follow(_ref);
+        const symbol = this.symbols.get(ref).?;
+
+        const ns = symbol.slotNamespace();
+        if (ns == .must_not_be_renamed) {
+            return symbol.original_name;
+        }
+
+        var i = symbol.nestedScopeSlot() orelse this.top_level_symbol_to_slot.get(ref) orelse return symbol.original_name;
+
+        return this.slots[@enumToInt(ns)].items[i].name;
+    }
+
+    pub fn originalName(this: *MinifyRenamer, ref: Ref) ?string {
+        _ = ref;
+        _ = this;
+        return null;
+    }
+
+    pub fn accumulateSymbolUseCounts(
+        this: *MinifyRenamer,
+        top_level_symbols: *StableSymbolCount.Array,
+        symbol_uses: js_ast.Part.SymbolUseMap,
+        stable_source_indices: []const u32,
+    ) !void {
+        // NOTE: This function is run in parallel. Make sure to avoid data races.
+        var iter = symbol_uses.iterator();
+        while (iter.next()) |value| {
+            try this.accumulateSymbolUseCount(top_level_symbols, value.key_ptr.*, value.value_ptr.*.count_estimate, stable_source_indices);
+        }
+    }
+
+    pub fn accumulateSymbolUseCount(
+        this: *MinifyRenamer,
+        top_level_symbols: *StableSymbolCount.Array,
+        _ref: Ref,
+        count: u32,
+        stable_source_indices: []const u32,
+    ) !void {
+        var ref = this.symbols.follow(_ref);
+        var symbol = this.symbols.get(ref).?;
+
+        while (symbol.namespace_alias != null) {
+            ref = this.symbols.follow(symbol.namespace_alias.?.namespace_ref);
+            symbol = this.symbols.get(ref).?;
+        }
+
+        const ns = symbol.slotNamespace();
+        if (ns == .must_not_be_renamed) return;
+
+        if (symbol.nestedScopeSlot()) |i| {
+            var slot = &this.slots[@enumToInt(ns)].items[i];
+            slot.count += count;
+            if (symbol.must_start_with_capital_letter_for_jsx) {
+                slot.needs_capital_for_jsx = true;
+            }
+            return;
+        }
+
+        try top_level_symbols.append(StableSymbolCount{
+            .stable_source_index = stable_source_indices[ref.sourceIndex()],
+            .ref = ref,
+            .count = count,
+        });
+    }
+
+    pub fn allocateTopLevelSymbolSlots(this: *MinifyRenamer, top_level_symbols: StableSymbolCount.Array) !void {
+        for (top_level_symbols.items) |stable| {
+            const symbol = this.symbols.get(stable.ref).?;
+            var slots = &this.slots[@enumToInt(symbol.slotNamespace())];
+
+            var existing = try this.top_level_symbol_to_slot.getOrPut(this.allocator, stable.ref);
+            if (existing.found_existing) {
+                var slot = &slots.items[existing.value_ptr.*];
+                slot.count += stable.count;
+                if (symbol.must_start_with_capital_letter_for_jsx) {
+                    slot.needs_capital_for_jsx = true;
+                }
+            } else {
+                existing.value_ptr.* = slots.items.len;
+                try slots.append(SymbolSlot{
+                    .count = stable.count,
+                    .needs_capital_for_jsx = symbol.must_start_with_capital_letter_for_jsx,
+                });
+            }
+        }
+    }
+
+    pub fn assignNamesByFrequency(this: *MinifyRenamer, name_minifier: *js_ast.NameMinifier) !void {
+        for (&this.slots, 0..) |*slots, ns| {
+            var sorted = try SlotAndCount.Array.initCapacity(this.allocator, slots.items.len);
+            sorted.items.len = slots.items.len;
+
+            for (sorted.items, 0..) |*slot, i| {
+                slot.* = SlotAndCount{
+                    .slot = @intCast(u32, i),
+                    .count = slot.count,
+                };
+            }
+            std.sort.sort(SlotAndCount, sorted.items, {}, SlotAndCount.lessThan);
+
+            var next_name: i32 = 0;
+            for (sorted.items) |data| {
+                var slot = &slots.items[data.slot];
+                var name: string = try name_minifier.numberToMinifiedName(this.allocator, next_name);
+                next_name += 1;
+
+                switch (@intToEnum(js_ast.Symbol.SlotNamespace, ns)) {
+                    .default => {
+                        while (this.reserved_names.contains(name)) {
+                            name = try name_minifier.numberToMinifiedName(this.allocator, next_name);
+                            next_name += 1;
+                        }
+
+                        if (slot.needs_capital_for_jsx) {
+                            while (name[0] >= 'a' and name[0] <= 'z') {
+                                name = try name_minifier.numberToMinifiedName(this.allocator, next_name);
+                                next_name += 1;
+                            }
+                        }
+                    },
+                    .label => {
+                        while (JSLexer.Keywords.get(name)) |_| {
+                            name = try name_minifier.numberToMinifiedName(this.allocator, next_name);
+                            next_name += 1;
+                        }
+                    },
+                    .private_name => {
+                        // name = "#" + name
+                    },
+                    else => {},
+                }
+
+                slot.name = name;
+            }
+        }
+    }
+};
+
+pub fn assignNestedScopeSlots(module_scope: *js_ast.Scope, symbols: []js_ast.Symbol) js_ast.SlotCounts {
+    var slot_counts = js_ast.SlotCounts.Empty;
+
+    var valid_slot: u32 = 1;
+    for (module_scope.members.items) |member| {
+        symbols[member.ref.innerIndex()].nested_scope_slot = valid_slot;
+    }
+    for (module_scope.generated.items) |ref| {
+        symbols[ref.innerIndex()].nested_scope_slot = valid_slot;
+    }
+
+    for (module_scope.children.items) |child| {
+        var slots = js_ast.SlotCounts.Empty;
+        slot_counts.unionMax(assignNestedScopeSlots(child, symbols, &slots));
+    }
+
+    for (module_scope.members.items) |member| {
+        symbols[member.ref.innerIndex()].nested_scope_slot = 0;
+    }
+    for (module_scope.generated.items) |ref| {
+        symbols[ref.innerIndex()].nested_scope_slot = 0;
+    }
+
+    return js_ast.SlotCounts.Empty;
+}
+
+pub fn assignNestedScopeSlotsHelper(allocator: std.mem.Allocator, scope: *js_ast.Scope, symbols: []js_ast.Symbol, slot: *js_ast.SlotCounts) js_ast.SlotCounts {
+    var sorted_members = allocator.alloc(i32, scope.members.len);
+    for (scope.members.items, 0..) |member, i| {
+        sorted_members[i] = member.ref.innerIndex();
+    }
+    std.sort.sort(i32, sorted_members, {}, std.sort.desc(i32));
+
+    for (sorted_members) |inner_index| {
+        var symbol = &symbols[inner_index];
+        const ns = symbol.slotNamespace();
+        if (ns != .must_not_be_renamed and symbol.nestedScopeSlot() == null) {
+            symbol.nested_scope_slot = slot[ns];
+            slot[ns] += 1;
+        }
+    }
+
+    for (scope.generated) |ref| {
+        var symbol = &symbols[ref.innerIndex()];
+        const ns = symbol.slotNamespace();
+        if (ns != .must_not_be_renamed and symbol.nestedScopeSlot() == null) {
+            symbol.nested_scope_slot = slot[ns];
+            slot[ns] += 1;
+        }
+    }
+
+    if (scope.label_ref) |ref| {
+        var symbol = &symbols[ref.innerIndex()];
+        const ns = @enumToInt(js_ast.Symbol.SlotNamespace.label);
+        symbol.nested_scope_slot = slot[ns];
+        slot[ns] += 1;
+    }
+
+    var slot_counts = slot;
+    for (scope.children.items) |child| {
+        slot_counts.unionMax(assignNestedScopeSlotsHelper(allocator, child, symbols, slot));
+    }
+
+    return slot_counts;
+}
+
+pub const StableSymbolCount = struct {
+    stable_source_index: u32,
+    ref: Ref,
+    count: u32,
+
+    pub const Array = std.ArrayList(StableSymbolCount);
+
+    pub fn lessThan(_: void, i: StableSymbolCount, j: StableSymbolCount) bool {
+        if (i.count > j.count) return true;
+        if (i.count < j.count) return false;
+        if (i.stable_source_index < j.stable_source_index) return true;
+        if (i.stable_source_index > j.stable_source_index) return false;
+
+        return i.ref.innerIndex() < j.ref.innerIndex();
+    }
+};
+
+const SlotAndCount = struct {
+    slot: u32,
+    count: u32,
+
+    pub const Array = std.ArrayList(SlotAndCount);
+
+    pub fn lessThan(_: void, a: SlotAndCount, b: SlotAndCount) bool {
+        return a.count > b.count or (a.count == b.count and a.slot < b.slot);
     }
 };
 
@@ -429,6 +714,7 @@ pub const NumberRenamer = struct {
 pub const ExportRenamer = struct {
     string_buffer: bun.MutableString,
     used: bun.StringHashMap(u32),
+    count: i32 = 0,
 
     pub fn init(allocator: std.mem.Allocator) ExportRenamer {
         return ExportRenamer{
@@ -473,6 +759,12 @@ pub const ExportRenamer = struct {
         }
 
         return entry.key_ptr.*;
+    }
+
+    pub fn nextMinifiedName(this: *ExportRenamer, allocator: std.mem.Allocator) !string {
+        const name = try js_ast.NameMinifier.defaultNumberToMinifiedName(allocator, this.count);
+        this.count += 1;
+        return name;
     }
 };
 

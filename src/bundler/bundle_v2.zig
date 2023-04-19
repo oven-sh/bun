@@ -76,6 +76,8 @@ const B = js_ast.B;
 const Binding = js_ast.Binding;
 const AutoBitSet = bun.bit_set.AutoBitSet;
 const renamer = bun.renamer;
+const StableSymbolCount = renamer.StableSymbolCount;
+const MinifyRenamer = renamer.MinifyRenamer;
 const Scope = js_ast.Scope;
 const JSC = bun.JSC;
 const debugTreeShake = Output.scoped(.TreeShake, true);
@@ -418,6 +420,7 @@ pub const BundleV2 = struct {
         generator.linker.resolver = &generator.bundler.resolver;
         generator.linker.graph.code_splitting = bundler.options.code_splitting;
         generator.graph.code_splitting = bundler.options.code_splitting;
+        generator.linker.options.minify_identifiers = bundler.options.minify_identifiers;
         var pool = try generator.graph.allocator.create(ThreadPool);
         if (enable_reloading) {
             Watcher.enableHotModuleReloading(generator);
@@ -948,6 +951,7 @@ const ParseTask = struct {
         opts.features.trim_unused_imports = loader.isTypeScript() or (bundler.options.trim_unused_imports orelse false);
         opts.features.inlining = bundler.options.minify_syntax;
         opts.features.minify_syntax = bundler.options.minify_syntax;
+        opts.features.minify_identifiers = bundler.options.minify_identifiers;
 
         opts.tree_shaking = task.tree_shaking;
         opts.module_type = task.module_type;
@@ -2038,6 +2042,7 @@ const LinkerContext = struct {
         tree_shaking: bool = true,
         minify_whitespace: bool = false,
         minify_syntax: bool = false,
+        minify_identifiers: bool = false,
 
         mode: Mode = Mode.bundle,
 
@@ -4259,7 +4264,7 @@ const LinkerContext = struct {
 
                         for (stable_ref_list.items, clause_items.slice()) |stable_ref, *clause_item| {
                             const ref = stable_ref.ref;
-                            const alias = r.nextRenamedName(c.graph.symbols.get(ref).?.original_name);
+                            const alias = if (c.options.minify_identifiers) try r.nextMinifiedName(c.allocator) else r.nextRenamedName(c.graph.symbols.get(ref).?.original_name);
 
                             clause_item.* = .{
                                 .name = .{
@@ -4380,64 +4385,126 @@ const LinkerContext = struct {
         chunk: *Chunk,
         files_in_order: []const u32,
     ) !renamer.Renamer {
-
-        // TODO: minify identifiers
         const all_module_scopes = c.graph.ast.items(.module_scope);
         const all_flags: []const JSMeta.Flags = c.graph.meta.items(.flags);
         const all_parts: []const js_ast.Part.List = c.graph.ast.items(.parts);
         const all_wrapper_refs: []const Ref = c.graph.ast.items(.wrapper_ref);
         const all_import_records: []const ImportRecord.List = c.graph.ast.items(.import_records);
 
+        var reserved_names = try renamer.computeInitialReservedNames(allocator);
+        for (files_in_order) |source_index| {
+            renamer.computeReservedNamesForScope(&all_module_scopes[source_index], &c.graph.symbols, &reserved_names, allocator);
+        }
+
         var r = try renamer.NumberRenamer.init(
             allocator,
             allocator,
             c.graph.symbols,
-            brk: {
-                var reserved_names = try renamer.computeInitialReservedNames(allocator);
-
-                for (files_in_order) |source_index| {
-                    renamer.computeReservedNamesForScope(&all_module_scopes[source_index], &c.graph.symbols, &reserved_names, allocator);
-                }
-
-                break :brk reserved_names;
-            },
+            reserved_names,
         );
-        {
-            var sorted_imports_from_other_chunks: std.ArrayList(StableRef) = brk: {
-                var list = std.ArrayList(StableRef).init(allocator);
-                var count: u32 = 0;
-                var imports_from_other_chunks = chunk.content.javascript.imports_from_other_chunks.values();
-                for (imports_from_other_chunks) |item| {
-                    count += item.len;
-                }
 
-                list.ensureTotalCapacityPrecise(count) catch unreachable;
-                list.items.len = count;
-                var remain = list.items;
-                const stable_source_indices = c.graph.stable_source_indices;
-                for (imports_from_other_chunks) |item| {
-                    for (item.slice()) |ref| {
-                        remain[0] = StableRef{
-                            .stable_source_index = stable_source_indices[ref.ref.sourceIndex()],
-                            .ref = ref.ref,
-                        };
-                        remain = remain[1..];
-                    }
-                }
-
-                std.sort.sort(StableRef, list.items, {}, StableRef.isLessThan);
-                break :brk list;
-            };
-            defer sorted_imports_from_other_chunks.deinit();
-
-            for (sorted_imports_from_other_chunks.items) |stable_ref| {
-                r.addTopLevelSymbol(stable_ref.ref);
+        var sorted_imports_from_other_chunks: std.ArrayList(StableRef) = brk: {
+            var list = std.ArrayList(StableRef).init(allocator);
+            var count: u32 = 0;
+            var imports_from_other_chunks = chunk.content.javascript.imports_from_other_chunks.values();
+            for (imports_from_other_chunks) |item| {
+                count += item.len;
             }
+
+            list.ensureTotalCapacityPrecise(count) catch unreachable;
+            list.items.len = count;
+            var remain = list.items;
+            const stable_source_indices = c.graph.stable_source_indices;
+            for (imports_from_other_chunks) |item| {
+                for (item.slice()) |ref| {
+                    remain[0] = StableRef{
+                        .stable_source_index = stable_source_indices[ref.ref.sourceIndex()],
+                        .ref = ref.ref,
+                    };
+                    remain = remain[1..];
+                }
+            }
+
+            std.sort.sort(StableRef, list.items, {}, StableRef.isLessThan);
+            break :brk list;
+        };
+
+        for (sorted_imports_from_other_chunks.items) |stable_ref| {
+            r.addTopLevelSymbol(stable_ref.ref);
         }
 
         var sorted_ = std.ArrayList(u32).init(r.temp_allocator);
         var sorted = &sorted_;
         defer sorted.deinit();
+
+        if (c.options.minify_identifiers) {
+            defer sorted_imports_from_other_chunks.deinit();
+
+            var first_top_level_slots = js_ast.SlotCounts.Empty;
+            for (0..files_in_order.len) |i| {
+                first_top_level_slots.unionMax(c.graph.ast.get(i).nested_scope_slot_counts);
+            }
+
+            var minify_renamer = try MinifyRenamer.init(allocator, c.graph.symbols, first_top_level_slots, reserved_names);
+
+            var all_top_level_symbols = try allocator.alloc(renamer.StableSymbolCount.Array, files_in_order.len);
+            for (0..files_in_order.len) |i| {
+                all_top_level_symbols[i] = renamer.StableSymbolCount.Array.init(allocator);
+            }
+
+            var stable_source_indices = c.graph.stable_source_indices;
+            var freq = js_ast.CharFreq{};
+            for (files_in_order, all_top_level_symbols) |source_index, *top_level_symbols| {
+                const ast: js_ast.Ast = c.graph.ast.get(source_index);
+
+                if (ast.char_freq) |char_freq| {
+                    freq.include(char_freq);
+                }
+
+                if (ast.uses_exports_ref) {
+                    try minify_renamer.accumulateSymbolUseCount(top_level_symbols, ast.exports_ref, 1, stable_source_indices);
+                }
+                if (ast.uses_module_ref) {
+                    try minify_renamer.accumulateSymbolUseCount(top_level_symbols, ast.module_ref, 1, stable_source_indices);
+                }
+
+                for (ast.parts.slice()) |part| {
+                    if (!part.is_live) {
+                        continue;
+                    }
+
+                    try minify_renamer.accumulateSymbolUseCounts(top_level_symbols, part.symbol_uses, stable_source_indices);
+
+                    for (part.declared_symbols.refs()) |declared_ref| {
+                        try minify_renamer.accumulateSymbolUseCount(top_level_symbols, declared_ref, 1, stable_source_indices);
+                    }
+                }
+
+                std.sort.sort(renamer.StableSymbolCount, top_level_symbols.items, {}, StableSymbolCount.lessThan);
+            }
+
+            var capacity = sorted_imports_from_other_chunks.items.len;
+            for (all_top_level_symbols) |symbols| {
+                capacity += symbols.items.len;
+            }
+
+            var top_level_symbols = try StableSymbolCount.Array.initCapacity(allocator, capacity);
+            for (sorted_imports_from_other_chunks.items) |stable| {
+                try minify_renamer.accumulateSymbolUseCount(&top_level_symbols, stable.ref, 1, stable_source_indices);
+            }
+            for (all_top_level_symbols) |symbols| {
+                try top_level_symbols.appendSlice(symbols.items);
+            }
+
+            try minify_renamer.allocateTopLevelSymbolSlots(top_level_symbols);
+
+            var minifier = freq.compile(allocator);
+            try minify_renamer.assignNamesByFrequency(&minifier);
+
+            return minify_renamer.toRenamer();
+        }
+
+        sorted_imports_from_other_chunks.deinit();
 
         for (files_in_order) |source_index| {
             const wrap = all_flags[source_index].wrap;
@@ -4646,6 +4713,7 @@ const LinkerContext = struct {
                 .allocator = allocator,
                 .require_ref = runtimeRequireRef,
                 .minify_whitespace = c.options.minify_whitespace,
+                .minify_identifiers = c.options.minify_identifiers,
                 .const_values = c.graph.const_values,
             };
 

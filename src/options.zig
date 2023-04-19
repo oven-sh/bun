@@ -1395,6 +1395,7 @@ pub const BundleOptions = struct {
     inlining: bool = false,
     minify_whitespace: bool = false,
     minify_syntax: bool = false,
+    minify_identifiers: bool = false,
 
     /// This is a list of packages which even when require() is used, we will
     /// instead convert to ESM import statements.

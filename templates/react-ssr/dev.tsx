@@ -17,7 +17,7 @@ await build({
   entrypoints: [import.meta.dir + "/hydrate.tsx", ...Object.values(srcRouter.routes)],
   outdir: "./.build",
   platform: "browser",
-  // splitting: true,
+  splitting: true,
   env: {
     NODE_ENV: "development",
   },
@@ -53,7 +53,7 @@ export default {
       const builtMatch = buildRouter.match(request);
       if (!builtMatch) {
         // error
-        return new Response("Unknown error", { status: 50 });
+        return new Response("Unknown error", { status: 500 });
       }
 
       console.log(builtMatch);

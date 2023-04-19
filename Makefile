@@ -185,13 +185,12 @@ DEFAULT_USE_BMALLOC := 1
 USE_BMALLOC ?= DEFAULT_USE_BMALLOC
 
 # Set via postinstall
-AUTO_JSX_BASE_DIR ?= $(realpath $(firstword $(wildcard bun-webkit)))
-
-ifeq (,$(AUTO_JSX_BASE_DIR))
-AUTO_JSX_BASE_DIR ?= $(HOME)/webkit-build
+ifeq (,$(realpath $(JSC_BASE_DIR)))
+	JSC_BASE_DIR = $(realpath $(firstword $(wildcard bun-webkit)))
+	ifeq (,$(JSC_BASE_DIR))
+		JSC_BASE_DIR = $(HOME)/webkit-build
+	endif
 endif
-
-JSC_BASE_DIR ?= $(AUTO_JSX_BASE_DIR)
 
 DEFAULT_JSC_LIB :=
 DEFAULT_JSC_LIB_DEBUG :=
@@ -518,6 +517,11 @@ bun:
 
 npm-install:
 	$(NPM_CLIENT) install --ignore-scripts --production
+
+npm-install-dev:
+	$(NPM_CLIENT) install
+	cd test && $(NPM_CLIENT) install --production
+	cd packages/bun-types && $(NPM_CLIENT) install --production
 
 print-%  : ; @echo $* = $($*)
 get-%  : ; @echo $($*)
@@ -1821,11 +1825,17 @@ copy-to-bun-release-dir-bin:
 PACKAGE_MAP = --pkg-begin async_io $(BUN_DIR)/src/io/io_darwin.zig --pkg-begin bun $(BUN_DIR)/src/bun_redirect.zig --pkg-end --pkg-end --pkg-begin javascript_core $(BUN_DIR)/src/jsc.zig --pkg-begin bun $(BUN_DIR)/src/bun_redirect.zig --pkg-end --pkg-end --pkg-begin bun $(BUN_DIR)/src/bun_redirect.zig --pkg-end
 
 
+.PHONY: vendor-without-npm
+vendor-without-npm: node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws tinycc c-ares
+
 .PHONY: vendor-without-check
-vendor-without-check: npm-install node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws tinycc c-ares
+vendor-without-check: npm-install vendor-without-npm
 
 .PHONY: vendor
 vendor: require init-submodules vendor-without-check
+
+.PHONY: vendor-dev
+vendor-dev: require init-submodules npm-install-dev vendor-without-npm
 
 .PHONY: bun
 bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local
@@ -1836,11 +1846,8 @@ regenerate-bindings:
 	@make bindings -j$(CPU_COUNT)
 
 .PHONY: setup
-setup: require
-	make init-submodules
-	cd test && $(NPM_CLIENT) install --production
-	cd packages/bun-types && $(NPM_CLIENT) install --production
-	make vendor-without-check builtins identifier-cache clean-bindings
+setup: vendor-dev builtins identifier-cache clean-bindings
+	make jsc-check
 	make bindings -j$(CPU_COUNT)
 	@echo ""
 	@echo "Development environment setup complete"

@@ -208,6 +208,7 @@ pub const Arguments = struct {
         clap.parseParam("--server-components        Enable React Server Components (experimental)") catch unreachable,
         clap.parseParam("--splitting                      Split up code!") catch unreachable,
         clap.parseParam("--transform                      Do not bundle") catch unreachable,
+        clap.parseParam("--minify                         Minify (experimental)") catch unreachable,
         clap.parseParam("--minify-syntax                  Minify syntax and inline data (experimental)") catch unreachable,
         clap.parseParam("--minify-whitespace              Minify whitespace (experimental)") catch unreachable,
         clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
@@ -479,9 +480,10 @@ pub const Arguments = struct {
 
         if (cmd == .BuildCommand) {
             ctx.bundler_options.transform_only = args.flag("--transform");
-            ctx.bundler_options.minify_syntax = args.flag("--minify-syntax");
-            ctx.bundler_options.minify_whitespace = args.flag("--minify-whitespace");
-            ctx.bundler_options.minify_identifiers = args.flag("--minify-identifiers");
+            const minify_flag = args.flag("--minify");
+            ctx.bundler_options.minify_syntax = minify_flag or args.flag("--minify-syntax");
+            ctx.bundler_options.minify_whitespace = minify_flag or args.flag("--minify-whitespace");
+            ctx.bundler_options.minify_identifiers = minify_flag or args.flag("--minify-identifiers");
             if (args.option("--outdir")) |outdir| {
                 if (outdir.len > 0) {
                     ctx.bundler_options.outdir = outdir;

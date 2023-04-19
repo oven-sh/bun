@@ -416,7 +416,11 @@ pub const BundleV2 = struct {
         generator.linker.resolver = &generator.bundler.resolver;
         generator.linker.graph.code_splitting = bundler.options.code_splitting;
         generator.graph.code_splitting = bundler.options.code_splitting;
+
+        generator.linker.options.minify_syntax = bundler.options.minify_syntax;
         generator.linker.options.minify_identifiers = bundler.options.minify_identifiers;
+        generator.linker.options.minify_whitespace = bundler.options.minify_whitespace;
+
         var pool = try generator.graph.allocator.create(ThreadPool);
         if (enable_reloading) {
             Watcher.enableHotModuleReloading(generator);
@@ -6593,6 +6597,7 @@ const LinkerContext = struct {
             .commonjs_named_exports_ref = ast.exports_ref,
             .commonjs_named_exports_deoptimized = flags.wrap == .cjs,
             .const_values = c.graph.const_values,
+            .minify_whitespace = c.options.minify_whitespace,
 
             .allocator = allocator,
             .to_esm_ref = toESMRef,

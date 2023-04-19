@@ -59,6 +59,7 @@ pub const BuildCommand = struct {
         this_bundler.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
         this_bundler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         this_bundler.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
+        this_bundler.resolver.opts.minify_identifiers = this_bundler.options.minify_identifiers;
 
         this_bundler.configureLinker();
 

@@ -99,4 +99,22 @@ describe("bundler", () => {
       stdout: "undefined",
     },
   });
+  // https://github.com/oven-sh/bun/issues/2699
+  itBundled("edgecase/ImportNamedFromExportStarCJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import { foo } from './foo';
+        console.log(foo);
+      `,
+      "/foo.js": /* js */ `
+        export * from './bar.cjs';
+      `,
+      "/bar.cjs": /* js */ `
+        module.exports = { foo: 'bar' };
+      `,
+    },
+    run: {
+      stdout: "bar",
+    },
+  });
 });

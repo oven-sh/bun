@@ -335,9 +335,6 @@ export function expectBundled(
   if (!ESBUILD && inject) {
     throw new Error("inject not implemented in bun build");
   }
-  if (!ESBUILD && !minifyIdentifiers) {
-    // throw new Error("REMOVE THIS ERROR");
-  }
   if (ESBUILD && skipOnEsbuild) {
     return testRef(id, opts);
   }

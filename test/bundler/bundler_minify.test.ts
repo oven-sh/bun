@@ -1,5 +1,7 @@
-import { describe } from "bun:test";
-import { itBundled } from "./expectBundled";
+import assert from "assert";
+import dedent from "dedent";
+import { bundlerTest, expectBundled, itBundled, testForFile } from "./expectBundled";
+var { describe, test, expect } = testForFile(import.meta.path);
 
 describe("bundler", () => {
   itBundled("minify/TemplateStringFolding", {
@@ -97,5 +99,28 @@ describe("bundler", () => {
     },
     minifyIdentifiers: true,
     run: { stdout: "a = 456" },
+  });
+  itBundled("minify/MergeAdjacentVars", {
+    files: {
+      "/entry.js": /* js */ `
+        var a = 1;
+        var b = 2;
+        var c = 3;
+        
+        // some code to prevent inlining
+        a = 4;
+        console.log(a, b, c)
+        b = 5;
+        console.log(a, b, c)
+        c = 6;
+        console.log(a, b, c)
+      `,
+    },
+    minifySyntax: true,
+    run: { stdout: "4 2 3\n4 5 3\n4 5 6" },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      assert([...code.matchAll(/var /g)].length === 1, "expected only 1 variable declaration statement");
+    },
   });
 });

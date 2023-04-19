@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://bun.sh"><img src="https://user-images.githubusercontent.com/709451/182802334-d9c42afe-f35d-4a7b-86ea-9985f73f20c3.png" alt="Logo" height=170></a>
+  <a href="https://bun.sh"><img src="https://user-images.githubusercontent.com/3084745/233164339-31089120-7451-41c5-8505-6082cbbfe06f.svg" alt="Logo" height=170></a>
 </p>
 <h1 align="center">Bun</h1>
 
@@ -48,7 +48,7 @@ bunx cowsay 'Hello, world!'   # execute a package
 Bun supports Linux (x64 & arm64) and macOS (x64 & Apple Silicon).
 
 > **Linux users** — Kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1.
-> 
+>
 > **Windows users** — Bun does not currently provide a native Windows build. We're working on this; progress can be tracked at [this issue](https://github.com/oven-sh/bun/issues/43). In the meantime, use one of the installation methods below for Windows Subsystem for Linux.
 
 ```sh
@@ -66,7 +66,6 @@ brew install bun
 docker pull oven/bun
 docker run --rm --init --ulimit memlock=-1:-1 oven/bun
 ```
-
 
 ### Upgrade
 
@@ -126,7 +125,6 @@ bun upgrade --canary
   - [Utils](https://bun.sh/docs/api/utils)
   - [DNS](https://bun.sh/docs/api/dns)
   - [Node-API](https://bun.sh/docs/api/node-api)
-
 
 ## Contributing
 

@@ -1,15 +1,10 @@
 {
-  "name": "@bun-examples/react",
+  "name": "@bun-examples/react-ssr",
   "version": "0.1.82",
   "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
+    "react": "next",
+    "react-dom": "next",
     "web-vitals": "^3.0.3"
-  },
-  "eslintConfig": {
-    "extends": [
-      "react-app"
-    ]
   },
   "devDependencies": {
     "@types/react": "^18.0.37",
@@ -18,7 +13,6 @@
     "typescript": "latest"
   },
   "scripts": {
-    "shell": "echo $SHELL",
     "dev": "bun run dev.tsx"
   },
   "bun-create": {

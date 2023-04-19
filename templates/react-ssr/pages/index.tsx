@@ -2,7 +2,15 @@ export default function () {
   return (
     <html>
       <body>
-        <h1>Hello world!</h1>
+        <div>
+          <h1>Home page</h1>
+          <p>
+            <a href="/">Home</a>
+          </p>
+          <p>
+            <a href="/settings">Settings</a>
+          </p>
+        </div>
       </body>
     </html>
   );

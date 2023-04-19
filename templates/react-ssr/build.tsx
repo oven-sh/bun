@@ -7,6 +7,7 @@ export async function build(params: {
   rsc?: boolean;
   splitting?: boolean;
   entrypoints?: string[];
+  env: Record<string, string>;
 }) {
   const args = [BUN_EXE, "build"] as [string, ...string[]];
   if (params.entryNames) {
@@ -31,11 +32,8 @@ export async function build(params: {
 
   const proc = Bun.spawn(args, {
     cwd: import.meta.dir,
-
     stderr: "inherit",
-    env: {
-      NODE_ENV: "development",
-    },
+    env: params.env || {},
   });
 
   const text = await new Response(proc.stdout).text();

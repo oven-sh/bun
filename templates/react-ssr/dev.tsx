@@ -1,7 +1,7 @@
 import * as path from "path";
 import { statSync } from "fs";
 import type { ServeOptions } from "bun";
-import { renderToReadableStream } from "react-dom/server";
+import { renderToReadableStream, renderToString } from "react-dom/server";
 import { build } from "./build";
 
 const PROJECT_ROOT = import.meta.dir;
@@ -13,17 +13,17 @@ const srcRouter = new Bun.FileSystemRouter({
   style: "nextjs",
 });
 
-console.log(import.meta.dir);
-// await build({
-//   entrypoints: [import.meta.dir + "/hydrate.tsx", ...Object.values(srcRouter.routes)],
-//   outdir: "./.build",
-//   splitting: true,
-//   platform: "browser",
+await build({
+  entrypoints: [import.meta.dir + "/hydrate.tsx", ...Object.values(srcRouter.routes)],
+  outdir: "./.build",
+  platform: "browser",
+  // splitting: true,
+  env: {
+    NODE_ENV: "development",
+  },
+});
 
-//   // entryNames: "[name].[ext]",
-// });
-
-const builtRouter = new Bun.FileSystemRouter({
+const buildRouter = new Bun.FileSystemRouter({
   dir: "./.build",
   style: "nextjs",
 });
@@ -50,7 +50,7 @@ export default {
     const match = srcRouter.match(request);
     if (match) {
       console.log(match);
-      const builtMatch = builtRouter.match(request);
+      const builtMatch = buildRouter.match(request);
       if (!builtMatch) {
         // error
         return new Response("Unknown error", { status: 50 });
@@ -59,12 +59,13 @@ export default {
       console.log(builtMatch);
       const Component = await import(match.filePath);
       const stream = await renderToReadableStream(<Component.default />, {
-        bootstrapScriptContent: `
-        globalThis.PATH_TO_PAGE = "/${builtMatch.src}";
-      `,
+        bootstrapScriptContent: `globalThis.PATH_TO_PAGE = "/${builtMatch.src}";`,
         bootstrapModules: ["/hydrate.js"],
       });
-      return new Response(stream);
+
+      return new Response(stream, {
+        "headers": { "Content-Type": "text/html; charset=utf-8" },
+      });
     }
     let reqPath = new URL(request.url).pathname;
     console.log(request.method, reqPath);
@@ -77,16 +78,6 @@ export default {
     // check /.build
     const buildResponse = serveFromDir({ directory: BUILD_DIR, path: reqPath });
     if (buildResponse) return buildResponse;
-    // const publicFilePath = path.join(PUBLIC_DIR, reqPath);
-    // if (existsSync(publicFilePath)) {
-    //   return new Response(Bun.file(publicFilePath));
-    // }
-
-    // // serve build files
-    // const buildFilePath = path.join(BUILD_DIR, reqPath);
-    // if (existsSync(buildFilePath)) {
-    //   return new Response(Bun.file(buildFilePath));
-    // }
 
     return new Response("File not found", {
       status: 404,

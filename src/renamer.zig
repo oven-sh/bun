@@ -79,11 +79,60 @@ pub const Renamer = union(enum) {
 };
 
 pub const SymbolSlot = struct {
-    name: string = "",
+    // Most minified names are under 15 bytes
+    // Instead of allocating a string for every symbol slot
+    // We can store the string inline!
+    // But we have to be very careful of where it's used.
+    // Or we WILL run into memory bugs.
+    name: TinyString = TinyString{ .string = "" },
     count: u32 = 0,
     needs_capital_for_jsx: bool = false,
 
     pub const List = std.EnumArray(js_ast.Symbol.SlotNamespace, std.ArrayList(SymbolSlot));
+
+    pub const InlineString = struct {
+        bytes: [15]u8 = [_]u8{0} ** 15,
+        len: u8 = 0,
+
+        pub fn init(str: []const u8) InlineString {
+            var this: InlineString = .{};
+            this.len = @intCast(u8, @min(str.len, 15));
+            for (this.bytes[0..this.len], str[0..this.len]) |*b, c| {
+                b.* = c;
+            }
+            return this;
+        }
+
+        // do not make this *const or you will run into memory bugs.
+        // we cannot let the compiler decide to copy this struct because
+        // that would cause this to become a pointer to stack memory.
+        pub fn slice(this: *InlineString) string {
+            return this.bytes[0..this.len];
+        }
+    };
+
+    pub const TinyString = union(enum) {
+        inline_string: InlineString,
+        string: string,
+
+        pub fn init(input: string, allocator: std.mem.Allocator) !TinyString {
+            if (input.len <= 15) {
+                return TinyString{ .inline_string = InlineString.init(input) };
+            } else {
+                return TinyString{ .string = try allocator.dupe(u8, input) };
+            }
+        }
+
+        // do not make this *const or you will run into memory bugs.
+        // we cannot let the compiler decide to copy this struct because
+        // that would cause this to become a pointer to stack memory.
+        pub fn slice(this: *TinyString) string {
+            return switch (this.*) {
+                .inline_string => this.inline_string.slice(),
+                .string => this.string,
+            };
+        }
+    };
 };
 
 pub const MinifyRenamer = struct {
@@ -144,7 +193,8 @@ pub const MinifyRenamer = struct {
             this.top_level_symbol_to_slot.get(ref) orelse
             return symbol.original_name;
 
-        return this.slots.get(ns).items[i].name;
+        // This has to be a pointer because the string might be stored inline
+        return this.slots.getPtr(ns).items[i].name.slice();
     }
 
     pub fn originalName(this: *MinifyRenamer, ref: Ref) ?string {
@@ -185,7 +235,7 @@ pub const MinifyRenamer = struct {
         if (ns == .must_not_be_renamed) return;
 
         if (symbol.nestedScopeSlot()) |i| {
-            var slot = &this.slots.get(ns).items[i];
+            var slot = &this.slots.getPtr(ns).items[i];
             slot.count += count;
             if (symbol.must_start_with_capital_letter_for_jsx) {
                 slot.needs_capital_for_jsx = true;
@@ -282,7 +332,7 @@ pub const MinifyRenamer = struct {
                     else => {},
                 }
 
-                slot.name = this.allocator.dupe(u8, name_buf.items) catch unreachable;
+                slot.name = SymbolSlot.TinyString.init(name_buf.items, this.allocator) catch unreachable;
             }
         }
     }

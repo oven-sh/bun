@@ -495,6 +495,7 @@ pub const Options = struct {
 
     minify_whitespace: bool = false,
     minify_identifiers: bool = false,
+    minify_syntax: bool = false,
 
     require_or_import_meta_for_source_callback: RequireOrImportMeta.Callback = .{},
 
@@ -950,12 +951,20 @@ fn NewPrinter(
             return .comma;
         }
 
-        pub inline fn printUndefined(p: *Printer, _: Level) void {
-            // void 0 is more efficient in output size
-            // however, "void 0" is the same as "undefined" is a point of confusion for many
-            // since we are optimizing for development, undefined is more clear.
-            // an ideal development bundler would output very readable code, even without source maps.
-            p.print("undefined");
+        pub inline fn printUndefined(p: *Printer, loc: logger.Loc, level: Level) void {
+            if (p.options.minify_syntax) {
+                if (level.gte(Level.prefix)) {
+                    p.addSourceMapping(loc);
+                    p.print("(void 0)");
+                } else {
+                    p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(loc);
+                    p.print("void 0");
+                }
+            } else {
+                p.addSourceMapping(loc);
+                p.print("undefined");
+            }
         }
 
         pub fn printBody(p: *Printer, stmt: Stmt) void {
@@ -1904,8 +1913,7 @@ fn NewPrinter(
             switch (expr.data) {
                 .e_missing => {},
                 .e_undefined => {
-                    p.addSourceMapping(expr.loc);
-                    p.printUndefined(level);
+                    p.printUndefined(expr.loc, level);
                 },
                 .e_super => {
                     p.printSpaceBeforeIdentifier();
@@ -2451,9 +2459,17 @@ fn NewPrinter(
                     }
                 },
                 .e_boolean => |e| {
-                    p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
-                    p.print(if (e.value) "true" else "false");
+                    if (p.options.minify_syntax) {
+                        if (level.gte(Level.prefix)) {
+                            p.print(if (e.value) "(!0)" else "(!1)");
+                        } else {
+                            p.print(if (e.value) "!0" else "!1");
+                        }
+                    } else {
+                        p.printSpaceBeforeIdentifier();
+                        p.print(if (e.value) "true" else "false");
+                    }
                 },
                 .e_string => |e| {
                     e.resovleRopeIfNeeded(p.options.allocator);
@@ -2588,8 +2604,7 @@ fn NewPrinter(
                     const symbol = p.symbols().get(ref).?;
 
                     if (symbol.import_item_status == .missing) {
-                        p.addSourceMapping(expr.loc);
-                        p.printUndefined(level);
+                        p.printUndefined(expr.loc, level);
                         didPrint = true;
                     } else if (symbol.namespace_alias) |namespace| {
                         if (namespace.import_record_index < p.import_records.len) {

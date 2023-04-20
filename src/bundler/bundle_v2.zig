@@ -4760,6 +4760,7 @@ const LinkerContext = struct {
                 .require_ref = runtimeRequireRef,
                 .minify_whitespace = c.options.minify_whitespace,
                 .minify_identifiers = c.options.minify_identifiers,
+                .minify_syntax = c.options.minify_syntax,
                 .const_values = c.graph.const_values,
             };
 
@@ -5383,6 +5384,7 @@ const LinkerContext = struct {
             .require_or_import_meta_for_source_callback = js_printer.RequireOrImportMeta.Callback.init(LinkerContext, requireOrImportMetaForSource, c),
 
             .minify_whitespace = c.options.minify_whitespace,
+            .minify_syntax = c.options.minify_syntax,
             .const_values = c.graph.const_values,
         };
 
@@ -6599,6 +6601,7 @@ const LinkerContext = struct {
             .commonjs_named_exports_deoptimized = flags.wrap == .cjs,
             .const_values = c.graph.const_values,
             .minify_whitespace = c.options.minify_whitespace,
+            .minify_syntax = c.options.minify_syntax,
 
             .allocator = allocator,
             .to_esm_ref = toESMRef,

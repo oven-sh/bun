@@ -4320,9 +4320,11 @@ fn NewPrinter(
                         }
 
                         if (!record.path.is_disabled and std.mem.indexOfScalar(u32, p.imported_module_ids.items, module_id) == null) {
-                            p.printWhitespacer(ws("import * as "));
+                            p.printWhitespacer(ws("import * as"));
+                            p.print(" ");
                             p.printModuleId(module_id);
-                            p.printWhitespacer(ws(" from "));
+                            p.print(" ");
+                            p.printWhitespacer(ws("from "));
                             p.print("\"");
                             p.print(record.path.text);
                             p.print("\"");
@@ -4504,13 +4506,15 @@ fn NewPrinter(
                         }
                         p.printSpace();
 
-                        p.printWhitespacer(ws("* as "));
+                        p.printWhitespacer(ws("* as"));
+                        p.print(" ");
                         p.printSymbol(s.namespace_ref);
                         item_count += 1;
                     }
 
                     if (item_count > 0) {
-                        p.printWhitespacer(ws(" from "));
+                        p.print(" ");
+                        p.printWhitespacer(ws("from "));
                     }
 
                     p.printImportRecordPath(record);

@@ -74,26 +74,23 @@ export interface BundlerConfig {
       };
 
   /** Documentation: https://esbuild.github.io/api/#external */
-  external?: {
-    // exclude matching identifiers
-    match?: (string | RegExp)[];
-  };
+  external?: Array<string | RegExp>;
+
+  // set environment variables
+  env?: Record<string, string>;
 
   // transform options only apply to entrypoints
-  transform?: {
-    imports?: {
-      rename?: Record<string, string>;
-    };
-    exports?: {
-      pick?: string[];
-      omit?: string[];
-      rename?: Record<string, string>;
-    };
+  imports?: {
+    rename?: Record<string, string>;
+  };
+  exports?: {
+    pick?: string[];
+    omit?: string[];
+    rename?: Record<string, string>;
   };
 
-  resolve?: {
-    conditions?: string[];
-  };
+  // export conditions in priority order
+  conditions?: string[];
 
   origin?: string; // e.g. http://mydomain.com
   assetOrigin?: string; // e.g. http://assets.mydomain.com

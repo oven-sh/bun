@@ -4431,13 +4431,6 @@ const LinkerContext = struct {
             renamer.computeReservedNamesForScope(&all_module_scopes[source_index], &c.graph.symbols, &reserved_names, allocator);
         }
 
-        var r = try renamer.NumberRenamer.init(
-            allocator,
-            allocator,
-            c.graph.symbols,
-            reserved_names,
-        );
-
         var sorted_imports_from_other_chunks: std.ArrayList(StableRef) = brk: {
             var list = std.ArrayList(StableRef).init(allocator);
             var count: u32 = 0;
@@ -4463,74 +4456,84 @@ const LinkerContext = struct {
             std.sort.sort(StableRef, list.items, {}, StableRef.isLessThan);
             break :brk list;
         };
-
-        for (sorted_imports_from_other_chunks.items) |stable_ref| {
-            r.addTopLevelSymbol(stable_ref.ref);
-        }
-
-        var sorted_ = std.ArrayList(u32).init(r.temp_allocator);
-        var sorted = &sorted_;
-        defer sorted.deinit();
+        defer sorted_imports_from_other_chunks.deinit();
 
         if (c.options.minify_identifiers) {
-            defer sorted_imports_from_other_chunks.deinit();
-
-            var first_top_level_slots = js_ast.SlotCounts.Empty;
-            for (0..files_in_order.len) |i| {
-                first_top_level_slots.unionMax(c.graph.ast.get(i).nested_scope_slot_counts);
-            }
+            const first_top_level_slots: js_ast.SlotCounts = brk: {
+                var slots = js_ast.SlotCounts.Empty;
+                const nested_scope_slot_counts = c.graph.ast.items(.nested_scope_slot_counts);
+                for (files_in_order) |i| {
+                    slots.unionMax(nested_scope_slot_counts[i]);
+                }
+                break :brk slots;
+            };
 
             var minify_renamer = try MinifyRenamer.init(allocator, c.graph.symbols, first_top_level_slots, reserved_names);
 
-            var all_top_level_symbols = try allocator.alloc(renamer.StableSymbolCount.Array, files_in_order.len);
-            for (0..files_in_order.len) |i| {
-                all_top_level_symbols[i] = renamer.StableSymbolCount.Array.init(allocator);
-            }
+            var top_level_symbols = renamer.StableSymbolCount.Array.init(allocator);
+            defer top_level_symbols.deinit();
+
+            var top_level_symbols_all = renamer.StableSymbolCount.Array.init(allocator);
 
             var stable_source_indices = c.graph.stable_source_indices;
-            var freq = js_ast.CharFreq{};
+            var freq = js_ast.CharFreq{
+                .freqs = [_]i32{0} ** 64,
+            };
             var capacity = sorted_imports_from_other_chunks.items.len;
+            {
+                const char_freqs = c.graph.ast.items(.char_freq);
+                for (files_in_order) |source_index| {
+                    if (char_freqs[source_index]) |char_freq| {
+                        freq.include(char_freq);
+                    }
+                }
+            }
 
-            for (files_in_order, all_top_level_symbols) |source_index, *top_level_symbols| {
-                const ast: js_ast.Ast = c.graph.ast.get(source_index);
-                top_level_symbols.ensureUnusedCapacity(ast.symbols.len) catch unreachable;
+            const uses_exports_ref_list = c.graph.ast.items(.uses_exports_ref);
+            const uses_module_ref_list = c.graph.ast.items(.uses_module_ref);
+            const exports_ref_list = c.graph.ast.items(.exports_ref);
+            const module_ref_list = c.graph.ast.items(.module_ref);
+            const parts_list = c.graph.ast.items(.parts);
 
-                if (ast.char_freq) |char_freq| {
-                    freq.include(char_freq);
+            for (files_in_order) |source_index| {
+                const uses_exports_ref = uses_exports_ref_list[source_index];
+                const uses_module_ref = uses_module_ref_list[source_index];
+                const exports_ref = exports_ref_list[source_index];
+                const module_ref = module_ref_list[source_index];
+                const parts = parts_list[source_index];
+
+                top_level_symbols.clearRetainingCapacity();
+
+                if (uses_exports_ref) {
+                    try minify_renamer.accumulateSymbolUseCount(&top_level_symbols, exports_ref, 1, stable_source_indices);
+                }
+                if (uses_module_ref) {
+                    try minify_renamer.accumulateSymbolUseCount(&top_level_symbols, module_ref, 1, stable_source_indices);
                 }
 
-                if (ast.uses_exports_ref) {
-                    try minify_renamer.accumulateSymbolUseCount(top_level_symbols, ast.exports_ref, 1, stable_source_indices);
-                }
-                if (ast.uses_module_ref) {
-                    try minify_renamer.accumulateSymbolUseCount(top_level_symbols, ast.module_ref, 1, stable_source_indices);
-                }
-
-                for (ast.parts.slice()) |part| {
+                for (parts.slice()) |part| {
                     if (!part.is_live) {
                         continue;
                     }
 
-                    try minify_renamer.accumulateSymbolUseCounts(top_level_symbols, part.symbol_uses, stable_source_indices);
+                    try minify_renamer.accumulateSymbolUseCounts(&top_level_symbols, part.symbol_uses, stable_source_indices);
 
                     for (part.declared_symbols.refs()) |declared_ref| {
-                        try minify_renamer.accumulateSymbolUseCount(top_level_symbols, declared_ref, 1, stable_source_indices);
+                        try minify_renamer.accumulateSymbolUseCount(&top_level_symbols, declared_ref, 1, stable_source_indices);
                     }
                 }
 
                 std.sort.sort(renamer.StableSymbolCount, top_level_symbols.items, {}, StableSymbolCount.lessThan);
                 capacity += top_level_symbols.items.len;
+                top_level_symbols_all.appendSlice(top_level_symbols.items) catch unreachable;
             }
 
-            var top_level_symbols = try StableSymbolCount.Array.initCapacity(allocator, capacity);
+            top_level_symbols.clearRetainingCapacity();
             for (sorted_imports_from_other_chunks.items) |stable| {
                 try minify_renamer.accumulateSymbolUseCount(&top_level_symbols, stable.ref, 1, stable_source_indices);
             }
-            for (all_top_level_symbols) |symbols| {
-                try top_level_symbols.appendSlice(symbols.items);
-            }
-
-            try minify_renamer.allocateTopLevelSymbolSlots(top_level_symbols);
+            top_level_symbols_all.appendSlice(top_level_symbols.items) catch unreachable;
+            try minify_renamer.allocateTopLevelSymbolSlots(top_level_symbols_all);
 
             var minifier = freq.compile(allocator);
             try minify_renamer.assignNamesByFrequency(&minifier);
@@ -4538,7 +4541,19 @@ const LinkerContext = struct {
             return minify_renamer.toRenamer();
         }
 
-        sorted_imports_from_other_chunks.deinit();
+        var r = try renamer.NumberRenamer.init(
+            allocator,
+            allocator,
+            c.graph.symbols,
+            reserved_names,
+        );
+        for (sorted_imports_from_other_chunks.items) |stable_ref| {
+            r.addTopLevelSymbol(stable_ref.ref);
+        }
+
+        var sorted_ = std.ArrayList(u32).init(r.temp_allocator);
+        var sorted = &sorted_;
+        defer sorted.deinit();
 
         for (files_in_order) |source_index| {
             const wrap = all_flags[source_index].wrap;

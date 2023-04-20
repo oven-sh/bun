@@ -30,6 +30,12 @@ pub const path = @import("./resolver/resolve_path.zig");
 pub const fmt = struct {
     pub usingnamespace std.fmt;
 
+    pub fn quote(self: string) strings.QuotedFormatter {
+        return strings.QuotedFormatter{
+            .text = self,
+        };
+    }
+
     pub fn formatIp(address: std.net.Address, into: []u8) ![]u8 {
         // std.net.Address.format includes `:<port>` and square brackets (IPv6)
         //  while Node does neither.  This uses format then strips these to bring

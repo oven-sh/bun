@@ -914,7 +914,7 @@ const ParseTask = struct {
                         .contents = NodeFallbackModules.contentsFromPath(file_path.text) orelse "",
                     };
 
-                break :brk try resolver.caches.fs.readFile(
+                break :brk resolver.caches.fs.readFile(
                     bundler.fs,
                     file_path.text,
                     task.contents_or_fd.fd.dir,
@@ -923,7 +923,29 @@ const ParseTask = struct {
                         task.contents_or_fd.fd.file
                     else
                         null,
-                );
+                ) catch |err| {
+                    switch (err) {
+                        error.FileNotFound => {
+                            log.addErrorFmt(
+                                &Logger.Source.initEmptyFile(file_path.text),
+                                Logger.Loc.Empty,
+                                allocator,
+                                "File not found {}",
+                                .{bun.fmt.quote(file_path.text)},
+                            ) catch {};
+                        },
+                        else => {
+                            log.addErrorFmt(
+                                &Logger.Source.initEmptyFile(file_path.text),
+                                Logger.Loc.Empty,
+                                allocator,
+                                "{s} reading file: {}",
+                                .{ @errorName(err), bun.fmt.quote(file_path.text) },
+                            ) catch {};
+                        },
+                    }
+                    return err;
+                };
             },
             .contents => |contents| CacheEntry{
                 .contents = contents,

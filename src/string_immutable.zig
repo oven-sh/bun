@@ -686,6 +686,25 @@ pub fn endsWithAny(self: string, str: string) bool {
     return false;
 }
 
+pub fn quotedWriter(writer: anytype, self: string) !void {
+    var remain = self;
+    if (strings.containsNewlineOrNonASCIIOrQuote(remain)) {
+        try bun.js_printer.writeJSONString(self, @TypeOf(writer), writer, strings.Encoding.utf8);
+    } else {
+        try writer.writeAll("\"");
+        try writer.writeAll(self);
+        try writer.writeAll("\"");
+    }
+}
+
+pub const QuotedFormatter = struct {
+    text: []const u8,
+
+    pub fn format(this: QuotedFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try strings.quotedWriter(writer, this.text);
+    }
+};
+
 pub fn quotedAlloc(allocator: std.mem.Allocator, self: string) !string {
     var count: usize = 0;
     for (self) |char| {
@@ -3212,6 +3231,41 @@ pub fn indexOfNewlineOrNonASCIICheckStart(slice_: []const u8, offset: u32, compt
     }
 
     return null;
+}
+
+pub fn containsNewlineOrNonASCIIOrQuote(slice_: []const u8) bool {
+    const slice = slice_;
+    var remaining = slice;
+
+    if (remaining.len == 0)
+        return false;
+
+    if (comptime Environment.enableSIMD) {
+        while (remaining.len >= ascii_vector_size) {
+            const vec: AsciiVector = remaining[0..ascii_vector_size].*;
+            const cmp = @bitCast(AsciiVectorU1, (vec > max_16_ascii)) | @bitCast(AsciiVectorU1, (vec < min_16_ascii)) |
+                @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '\r'))) |
+                @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '\n'))) |
+                @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '"')));
+
+            if (@reduce(.Max, cmp) > 0) {
+                return true;
+            }
+
+            remaining = remaining[ascii_vector_size..];
+        }
+
+        if (comptime Environment.allow_assert) std.debug.assert(remaining.len < ascii_vector_size);
+    }
+
+    for (remaining) |*char_| {
+        const char = char_.*;
+        if (char > 127 or char < 0x20 or char == '\n' or char == '\r' or char == '"') {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 pub fn indexOfNeedsEscape(slice: []const u8) ?u32 {

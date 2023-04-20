@@ -5884,10 +5884,10 @@ pub fn printWithWriterAndPlatform(
             printer.printStmt(stmt) catch |err| {
                 return .{ .err = err };
             };
-            printer.printSemicolonIfNeeded();
             if (printer.writer.getError()) {} else |err| {
                 return .{ .err = err };
             }
+            printer.printSemicolonIfNeeded();
         }
     }
 

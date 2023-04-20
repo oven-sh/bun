@@ -227,8 +227,10 @@ pub const MinifyRenamer = struct {
         var symbol = this.symbols.get(ref).?;
 
         while (symbol.namespace_alias != null) {
-            ref = this.symbols.follow(symbol.namespace_alias.?.namespace_ref);
-            symbol = this.symbols.get(ref).?;
+            const ref_ = this.symbols.follow(symbol.namespace_alias.?.namespace_ref);
+            if (ref_.eql(ref)) break;
+            ref = ref_;
+            symbol = this.symbols.get(ref_).?;
         }
 
         const ns = symbol.slotNamespace();

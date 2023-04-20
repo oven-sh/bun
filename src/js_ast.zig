@@ -699,7 +699,7 @@ pub const NameMinifier = struct {
         };
     }
 
-    pub fn numberToMinifiedName(this: *NameMinifier, name: *std.ArrayList(u8), _i: isize) !string {
+    pub fn numberToMinifiedName(this: *NameMinifier, name: *std.ArrayList(u8), _i: isize) !void {
         name.clearRetainingCapacity();
         var i = _i;
         var j = @intCast(usize, @mod(i, 54));
@@ -712,8 +712,6 @@ pub const NameMinifier = struct {
             try name.appendSlice(this.tail.items[j .. j + 1]);
             i = @divFloor(i, 64);
         }
-
-        return name.items;
     }
 
     pub fn defaultNumberToMinifiedName(allocator: std.mem.Allocator, _i: isize) !string {

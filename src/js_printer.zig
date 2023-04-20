@@ -5738,20 +5738,20 @@ pub fn printAst(
     if (tree.prepend_part) |part| {
         for (part.stmts) |stmt| {
             try printer.printStmt(stmt);
-            printer.printSemicolonIfNeeded();
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }
+            printer.printSemicolonIfNeeded();
         }
     }
 
     for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
             try printer.printStmt(stmt);
-            printer.printSemicolonIfNeeded();
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }
+            printer.printSemicolonIfNeeded();
         }
     }
 
@@ -5928,19 +5928,19 @@ pub fn printCommonJS(
     if (tree.prepend_part) |part| {
         for (part.stmts) |stmt| {
             try printer.printStmt(stmt);
-            printer.printSemicolonIfNeeded();
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }
+            printer.printSemicolonIfNeeded();
         }
     }
     for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
             try printer.printStmt(stmt);
-            printer.printSemicolonIfNeeded();
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }
+            printer.printSemicolonIfNeeded();
         }
     }
 
@@ -6007,20 +6007,20 @@ pub fn printCommonJSThreaded(
     if (tree.prepend_part) |part| {
         for (part.stmts) |stmt| {
             try printer.printStmt(stmt);
-            printer.printSemicolonIfNeeded();
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }
+            printer.printSemicolonIfNeeded();
         }
     }
 
     for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
             try printer.printStmt(stmt);
-            printer.printSemicolonIfNeeded();
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }
+            printer.printSemicolonIfNeeded();
         }
     }
 

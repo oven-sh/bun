@@ -51,19 +51,24 @@ var failingTests = [];
 
 async function runTest(path) {
   const name = path.replace(cwd, "").slice(1);
-  const {
-    stdout,
-    stderr,
-    status: exitCode,
-    error: timedOut,
-  } = spawnSync("bun", ["test", path], {
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 500_000,
-    env: {
-      ...process.env,
-      FORCE_COLOR: "1",
-    },
-  });
+  try {
+    var {
+      stdout,
+      stderr,
+      status: exitCode,
+      error: timedOut,
+    } = spawnSync("bun", ["test", path], {
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 1000 * 60 * 3,
+      env: {
+        ...process.env,
+        FORCE_COLOR: "1",
+      },
+    });
+  } catch (e) {
+    console.error(e);
+  }
+
   const passed = exitCode === 0 && !timedOut;
 
   if (!passed) {
@@ -81,8 +86,8 @@ async function runTest(path) {
     action.startGroup(`${prefix} - ${name}`);
   }
 
-  dump(stdout);
-  dump(stderr);
+  stdout && stdout?.byteLength && dump(stdout);
+  stderr && stderr?.byteLength && dump(stderr);
 
   if (isAction) {
     action.endGroup();

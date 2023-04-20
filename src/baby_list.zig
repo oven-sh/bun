@@ -99,6 +99,14 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub inline fn fromList(list_: anytype) ListType {
+            if (comptime @TypeOf(list_) == ListType) {
+                return list_;
+            }
+
+            if (comptime @TypeOf(list_) == []const Elem) {
+                return init(list_);
+            }
+
             if (comptime Environment.allow_assert) {
                 std.debug.assert(list_.items.len <= list_.capacity);
             }
@@ -107,6 +115,17 @@ pub fn BabyList(comptime Type: type) type {
                 .ptr = list_.items.ptr,
                 .len = @truncate(u32, list_.items.len),
                 .cap = @truncate(u32, list_.capacity),
+            };
+        }
+
+        pub inline fn fromSlice(allocator: std.mem.Allocator, items: []const Elem) !ListType {
+            var allocated = try allocator.alloc(Elem, items.len);
+            bun.copy(Elem, allocated, items);
+
+            return ListType{
+                .ptr = allocated.ptr,
+                .len = @truncate(u32, allocated.len),
+                .cap = @truncate(u32, allocated.len),
             };
         }
 

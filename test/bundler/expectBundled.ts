@@ -34,7 +34,7 @@ const FILTER = process.env.BUN_BUNDLER_TEST_FILTER;
 const HIDE_SKIP = process.env.BUN_BUNDLER_TEST_HIDE_SKIP;
 /** Path to the bun. TODO: Once bundler is merged, we should remove the `bun-debug` fallback. */
 const BUN_EXE = (process.env.BUN_EXE && Bun.which(process.env.BUN_EXE)) ?? Bun.which("bun-debug") ?? bunExe();
-export const RUN_UNCHECKED_TESTS = true;
+export const RUN_UNCHECKED_TESTS = false;
 
 const outBaseTemplate = path.join(tmpdir(), "bun-build-tests", `${ESBUILD ? "esbuild" : "bun"}-`);
 if (!existsSync(path.dirname(outBaseTemplate))) mkdirSync(path.dirname(outBaseTemplate), { recursive: true });

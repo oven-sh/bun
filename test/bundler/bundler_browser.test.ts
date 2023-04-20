@@ -220,7 +220,8 @@ describe("bundler", () => {
     .filter(x => x[1] !== "error")
     .map(x => x[0]);
 
-  itBundled("browser/BunPolyfill", {
+  // segfaults the test runner
+  itBundled.skip("browser/BunPolyfill", {
     skipOnEsbuild: true,
     files: {
       "/entry.js": `

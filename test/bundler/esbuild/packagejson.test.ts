@@ -917,9 +917,6 @@ describe("bundler", () => {
       stdout: "browser main\nbrowser main",
     },
   });
-  if (!RUN_UNCHECKED_TESTS) {
-    return;
-  }
   itBundled("packagejson/MainFieldsA", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `

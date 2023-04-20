@@ -32,6 +32,10 @@ describe("bundler", () => {
       "/foo.js": `export const foo = 123`,
     },
     run: {
+      // esbuild:
+      // stdout: '{"default":{"foo":123},"foo":123} 123 234',
+
+      // bun:
       stdout: '{"foo":123} 123 234',
     },
   });

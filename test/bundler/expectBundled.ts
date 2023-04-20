@@ -1023,6 +1023,9 @@ export function itBundled(id: string, opts: BundlerTestInput): BundlerTestRef {
   return ref;
 }
 itBundled.skip = (id: string, opts: BundlerTestInput) => {
+  if (FILTER && id !== FILTER) {
+    return testRef(id, opts);
+  }
   const { it } = testForFile(callerSourceOrigin());
   if (!HIDE_SKIP) it.skip(id, () => expectBundled(id, opts));
   return testRef(id, opts);
@@ -1037,6 +1040,9 @@ export function bundlerTest(id: string, cb: () => void) {
   it(id, cb);
 }
 bundlerTest.skip = (id: string, cb: any) => {
+  if (FILTER && id !== FILTER) {
+    return;
+  }
   const { it } = testForFile(callerSourceOrigin());
   if (!HIDE_SKIP) it.skip(id, cb);
 };

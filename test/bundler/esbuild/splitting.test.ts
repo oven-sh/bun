@@ -365,44 +365,106 @@ describe("bundler", () => {
     ],
   });
   itBundled("splitting/CrossChunkAssignmentDependenciesRecursive", {
-    // GENERATED
     files: {
       "/a.js": /* js */ `
         import { setX } from './x'
-        setX()
+        globalThis.a = { setX };
       `,
       "/b.js": /* js */ `
         import { setZ } from './z'
-        setZ()
+        globalThis.b = { setZ };
       `,
       "/c.js": /* js */ `
         import { setX2 } from './x'
         import { setY2 } from './y'
         import { setZ2 } from './z'
-        setX2();
-        setY2();
-        setZ2();
+        globalThis.c = { setX2, setY2, setZ2 };
       `,
       "/x.js": /* js */ `
         let _x
         export function setX(v) { _x = v }
         export function setX2(v) { _x = v }
+        globalThis.x = { setX, setX2 };
       `,
       "/y.js": /* js */ `
         import { setX } from './x'
         let _y
         export function setY(v) { _y = v }
         export function setY2(v) { setX(v); _y = v }
+        globalThis.y = { setY, setY2 };
       `,
       "/z.js": /* js */ `
         import { setY } from './y'
         let _z
         export function setZ(v) { _z = v }
         export function setZ2(v) { setY(v); _z = v }
+        globalThis.z = { setZ, setZ2, setY };
       `,
     },
     entryPoints: ["/a.js", "/b.js", "/c.js"],
     splitting: true,
+
+    runtimeFiles: {
+      "/test_all.js": /* js */ `
+        import './out/a.js';
+        import './out/b.js';
+        import './out/c.js';
+        try {
+          a; b; c; x; y; z; // throw if not defined
+        } catch (error) {
+          throw new Error('chunks were not emitted right.')
+        }
+        import assert from 'assert';
+        assert(a.setX === x.setX, 'a.setX');
+        assert(b.setZ === z.setZ, 'b.setZ');
+        assert(c.setX2 === x.setX2, 'c.setX2');
+        assert(c.setY2 === y.setY2, 'c.setY2');
+        assert(c.setZ2 === z.setZ2, 'c.setZ2');
+        assert(z.setY === y.setY, 'z.setY');
+      `,
+      "/test_a_only.js": /* js */ `
+        import './out/a.js';
+        try {
+          a; x; // throw if not defined
+        } catch (error) {
+          throw new Error('chunks were not emitted right.')
+        }
+        import assert from 'assert';
+        assert(a.setX === x.setX, 'a.setX');
+        assert(globalThis.b === undefined, 'b should not be loaded');
+        assert(globalThis.c === undefined, 'c should not be loaded');
+        assert(globalThis.y === undefined, 'y should not be loaded');
+        assert(globalThis.z === undefined, 'z should not be loaded');
+      `,
+      "/test_b_only.js": /* js */ `
+        import './out/b.js';
+        try {
+          b; x; y; z; // throw if not defined
+        } catch (error) {
+          throw new Error('chunks were not emitted right.')
+        }
+        import assert from 'assert';
+        assert(globalThis.a === undefined, 'a should not be loaded');
+        assert(globalThis.c === undefined, 'c should not be loaded');
+      `,
+      "/test_c_only.js": /* js */ `
+        import './out/c.js';
+        try {
+          c; x; y; z; // throw if not defined
+        } catch (error) {
+          throw new Error('chunks were not emitted right.')
+        }
+        import assert from 'assert';
+        assert(globalThis.a === undefined, 'a should not be loaded');
+        assert(globalThis.b === undefined, 'b should not be loaded');
+      `,
+    },
+    run: [
+      { file: "/test_all.js" },
+      { file: "/test_a_only.js" },
+      { file: "/test_b_only.js" },
+      { file: "/test_c_only.js" },
+    ],
   });
   itBundled("splitting/DuplicateChunkCollision", {
     files: {
@@ -495,8 +557,7 @@ describe("bundler", () => {
       );
     },
   });
-  itBundled("splitting/EdgeCaseESBuildIssue2793WithSplitting", {
-    // GENERATED
+  const EdgeCaseESBuildIssue2793WithSplitting = itBundled("splitting/EdgeCaseESBuildIssue2793WithSplitting", {
     files: {
       "/src/a.js": `export const A = 42;`,
       "/src/b.js": `export const B = async () => (await import(".")).A`,
@@ -507,21 +568,31 @@ describe("bundler", () => {
     },
     outdir: "/out",
     entryPoints: ["/src/index.js"],
-
     splitting: true,
+    platform: "browser",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import { A, B } from './out/index.js'
+        console.log(A, B() instanceof Promise, await B())
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "42 true 42",
+    },
   });
   itBundled("splitting/EdgeCaseESBuildIssue2793WithoutSplitting", {
-    // GENERATED
-    files: {
-      "/src/a.js": `export const A = 42;`,
-      "/src/b.js": `export const B = async () => (await import(".")).A`,
-      "/src/index.js": /* js */ `
-        export * from "./a"
-        export * from "./b"
+    ...EdgeCaseESBuildIssue2793WithSplitting.options,
+    splitting: false,
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import { A, B } from './out/index.js'
+        console.log(A, B() instanceof Promise, await B())
       `,
     },
-    entryPoints: ["/src/index.js"],
-
-    outdir: "/out",
+    run: {
+      file: "/test.js",
+      stdout: "42 true 42",
+    },
   });
 });

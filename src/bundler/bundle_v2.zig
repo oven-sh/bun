@@ -4460,7 +4460,7 @@ const LinkerContext = struct {
 
         if (c.options.minify_identifiers) {
             const first_top_level_slots: js_ast.SlotCounts = brk: {
-                var slots = js_ast.SlotCounts.Empty;
+                var slots = js_ast.SlotCounts{};
                 const nested_scope_slot_counts = c.graph.ast.items(.nested_scope_slot_counts);
                 for (files_in_order) |i| {
                     slots.unionMax(nested_scope_slot_counts[i]);

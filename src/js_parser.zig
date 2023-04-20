@@ -21079,6 +21079,15 @@ fn NewParser_(
                 .top_level_symbols_to_parts = top_level_symbols_to_parts,
                 .char_freq = p.computeCharacterFrequency(),
 
+                // Assign slots to symbols in nested scopes. This is some precomputation for
+                // the symbol renaming pass that will happen later in the linker. It's done
+                // now in the parser because we want it to be done in parallel per file and
+                // we're already executing code in parallel here
+                .nested_scope_slot_counts = if (p.options.features.minify_identifiers)
+                    renamer.assignNestedScopeSlots(p.allocator, p.module_scope, p.symbols.items)
+                else
+                    js_ast.SlotCounts{},
+
                 .require_ref = if (p.runtime_imports.__require != null)
                     p.runtime_imports.__require.?.ref
                 else

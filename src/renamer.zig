@@ -82,12 +82,14 @@ pub const SymbolSlot = struct {
     name: string = "",
     count: u32 = 0,
     needs_capital_for_jsx: bool = false,
+
+    pub const List = std.EnumArray(js_ast.Symbol.SlotNamespace, std.ArrayList(SymbolSlot));
 };
 
 pub const MinifyRenamer = struct {
     reserved_names: bun.StringHashMapUnmanaged(u32),
     allocator: std.mem.Allocator,
-    slots: [4]std.ArrayList(SymbolSlot),
+    slots: SymbolSlot.List = undefined,
     top_level_symbol_to_slot: TopLevelSymbolSlotMap,
     symbols: js_ast.Symbol.Map,
 
@@ -100,15 +102,18 @@ pub const MinifyRenamer = struct {
         reserved_names: bun.StringHashMapUnmanaged(u32),
     ) !*MinifyRenamer {
         var renamer = try allocator.create(MinifyRenamer);
+        var slots = SymbolSlot.List.initUndefined();
+
+        for (first_top_level_slots.slots.values, 0..) |count, ns| {
+            slots.values[ns] = try std.ArrayList(SymbolSlot).initCapacity(allocator, count);
+            slots.values[ns].items.len = count;
+            std.mem.set(SymbolSlot, slots.values[ns].items[0..count], SymbolSlot{});
+        }
+
         renamer.* = MinifyRenamer{
             .symbols = symbols,
             .reserved_names = reserved_names,
-            .slots = [4]std.ArrayList(SymbolSlot){
-                try std.ArrayList(SymbolSlot).initCapacity(allocator, first_top_level_slots.slots[0]),
-                try std.ArrayList(SymbolSlot).initCapacity(allocator, first_top_level_slots.slots[1]),
-                try std.ArrayList(SymbolSlot).initCapacity(allocator, first_top_level_slots.slots[2]),
-                try std.ArrayList(SymbolSlot).initCapacity(allocator, first_top_level_slots.slots[3]),
-            },
+            .slots = slots,
             .top_level_symbol_to_slot = TopLevelSymbolSlotMap{},
             .allocator = allocator,
         };
@@ -127,7 +132,7 @@ pub const MinifyRenamer = struct {
     }
 
     pub fn nameForSymbol(this: *MinifyRenamer, _ref: Ref) string {
-        var ref = this.symbols.follow(_ref);
+        const ref = this.symbols.follow(_ref);
         const symbol = this.symbols.get(ref).?;
 
         const ns = symbol.slotNamespace();
@@ -135,9 +140,11 @@ pub const MinifyRenamer = struct {
             return symbol.original_name;
         }
 
-        var i = symbol.nestedScopeSlot() orelse this.top_level_symbol_to_slot.get(ref) orelse return symbol.original_name;
+        const i = symbol.nestedScopeSlot() orelse
+            this.top_level_symbol_to_slot.get(ref) orelse
+            return symbol.original_name;
 
-        return this.slots[@enumToInt(ns)].items[i].name;
+        return this.slots.get(ns).items[i].name;
     }
 
     pub fn originalName(this: *MinifyRenamer, ref: Ref) ?string {
@@ -178,7 +185,7 @@ pub const MinifyRenamer = struct {
         if (ns == .must_not_be_renamed) return;
 
         if (symbol.nestedScopeSlot()) |i| {
-            var slot = &this.slots[@enumToInt(ns)].items[i];
+            var slot = &this.slots.get(ns).items[i];
             slot.count += count;
             if (symbol.must_start_with_capital_letter_for_jsx) {
                 slot.needs_capital_for_jsx = true;
@@ -196,7 +203,7 @@ pub const MinifyRenamer = struct {
     pub fn allocateTopLevelSymbolSlots(this: *MinifyRenamer, top_level_symbols: StableSymbolCount.Array) !void {
         for (top_level_symbols.items) |stable| {
             const symbol = this.symbols.get(stable.ref).?;
-            var slots = &this.slots[@enumToInt(symbol.slotNamespace())];
+            var slots = this.slots.getPtr(symbol.slotNamespace());
 
             var existing = try this.top_level_symbol_to_slot.getOrPut(this.allocator, stable.ref);
             if (existing.found_existing) {
@@ -219,8 +226,13 @@ pub const MinifyRenamer = struct {
         var name_buf = try std.ArrayList(u8).initCapacity(this.allocator, 64);
         defer name_buf.deinit();
 
-        for (&this.slots, 0..) |*slots, ns| {
-            var sorted = try SlotAndCount.Array.initCapacity(this.allocator, slots.items.len);
+        var sorted = SlotAndCount.Array.init(this.allocator);
+        defer sorted.deinit();
+
+        inline for (comptime std.enums.values(js_ast.Symbol.SlotNamespace)) |ns| {
+            var slots = this.slots.getPtr(ns);
+            sorted.clearRetainingCapacity();
+            try sorted.ensureUnusedCapacity(slots.items.len);
             sorted.items.len = slots.items.len;
 
             for (sorted.items, 0..) |*slot, i| {
@@ -244,7 +256,7 @@ pub const MinifyRenamer = struct {
                 // only have to worry about collisions with keywords for labels. We do
                 // not have to worry about either for private names because they start
                 // with a "#" character.
-                switch (@intToEnum(js_ast.Symbol.SlotNamespace, ns)) {
+                switch (comptime ns) {
                     .default => {
                         while (this.reserved_names.contains(name_buf.items)) {
                             try name_minifier.numberToMinifiedName(&name_buf, next_name);
@@ -276,67 +288,93 @@ pub const MinifyRenamer = struct {
     }
 };
 
-pub fn assignNestedScopeSlots(module_scope: *js_ast.Scope, symbols: []js_ast.Symbol) js_ast.SlotCounts {
-    var slot_counts = js_ast.SlotCounts.Empty;
+pub fn assignNestedScopeSlots(allocator: std.mem.Allocator, module_scope: *js_ast.Scope, symbols: []js_ast.Symbol) js_ast.SlotCounts {
+    var slot_counts = js_ast.SlotCounts{};
+    var sorted_members = std.ArrayList(u32).init(allocator);
+    defer sorted_members.deinit();
 
-    var valid_slot: u32 = 1;
-    for (module_scope.members.items) |member| {
+    // Temporarily set the nested scope slots of top-level symbols to valid so
+    // they aren't renamed in nested scopes. This prevents us from accidentally
+    // assigning nested scope slots to variables declared using "var" in a nested
+    // scope that are actually hoisted up to the module scope to become a top-
+    // level symbol.
+    const valid_slot: u32 = 0;
+    var members = module_scope.members.valueIterator();
+    while (members.next()) |member| {
         symbols[member.ref.innerIndex()].nested_scope_slot = valid_slot;
     }
-    for (module_scope.generated.items) |ref| {
+    for (module_scope.generated.slice()) |ref| {
         symbols[ref.innerIndex()].nested_scope_slot = valid_slot;
     }
 
-    for (module_scope.children.items) |child| {
-        var slots = js_ast.SlotCounts.Empty;
-        slot_counts.unionMax(assignNestedScopeSlotsHelper(child, symbols, &slots));
+    for (module_scope.children.slice()) |child| {
+        slot_counts.unionMax(assignNestedScopeSlotsHelper(&sorted_members, child, symbols, js_ast.SlotCounts{}));
     }
 
-    for (module_scope.members.items) |member| {
-        symbols[member.ref.innerIndex()].nested_scope_slot = 0;
+    // Then set the nested scope slots of top-level symbols back to zero. Top-
+    // level symbols are not supposed to have nested scope slots.
+    members = module_scope.members.valueIterator();
+
+    while (members.next()) |member| {
+        symbols[member.ref.innerIndex()].nested_scope_slot = js_ast.Symbol.invalid_nested_scope_slot;
     }
-    for (module_scope.generated.items) |ref| {
-        symbols[ref.innerIndex()].nested_scope_slot = 0;
+    for (module_scope.generated.slice()) |ref| {
+        symbols[ref.innerIndex()].nested_scope_slot = js_ast.Symbol.invalid_nested_scope_slot;
     }
 
-    return js_ast.SlotCounts.Empty;
+    return slot_counts;
 }
 
-pub fn assignNestedScopeSlotsHelper(allocator: std.mem.Allocator, scope: *js_ast.Scope, symbols: []js_ast.Symbol, slot: *js_ast.SlotCounts) js_ast.SlotCounts {
-    var sorted_members = allocator.alloc(i32, scope.members.len);
-    for (scope.members.items, 0..) |member, i| {
-        sorted_members[i] = member.ref.innerIndex();
-    }
-    std.sort.sort(i32, sorted_members, {}, std.sort.desc(i32));
+pub fn assignNestedScopeSlotsHelper(sorted_members: *std.ArrayList(u32), scope: *js_ast.Scope, symbols: []js_ast.Symbol, slot_to_copy: js_ast.SlotCounts) js_ast.SlotCounts {
+    var slot = slot_to_copy;
+    // Sort member map keys for determinism
+    {
+        sorted_members.clearRetainingCapacity();
+        sorted_members.ensureUnusedCapacity(scope.members.count()) catch unreachable;
+        sorted_members.items.len = scope.members.count();
+        var sorted_members_buf = sorted_members.items;
+        var members = scope.members.valueIterator();
+        var i: usize = 0;
+        while (members.next()) |member| {
+            sorted_members_buf[i] = member.ref.innerIndex();
+            i += 1;
+        }
+        std.sort.sort(u32, sorted_members_buf, {}, std.sort.asc(u32));
 
-    for (sorted_members) |inner_index| {
-        var symbol = &symbols[inner_index];
-        const ns = symbol.slotNamespace();
-        if (ns != .must_not_be_renamed and symbol.nestedScopeSlot() == null) {
-            symbol.nested_scope_slot = slot[ns];
-            slot[ns] += 1;
+        // Assign slots for this scope's symbols. Only do this if the slot is
+        // not already assigned. Nested scopes have copies of symbols from parent
+        // scopes and we want to use the slot from the parent scope, not child scopes.
+        for (sorted_members_buf) |inner_index| {
+            var symbol = &symbols[inner_index];
+            const ns = symbol.slotNamespace();
+            if (ns != .must_not_be_renamed and symbol.nestedScopeSlot() == null) {
+                symbol.nested_scope_slot = slot.slots.get(ns);
+                slot.slots.getPtr(ns).* += 1;
+            }
         }
     }
 
-    for (scope.generated) |ref| {
+    for (scope.generated.slice()) |ref| {
         var symbol = &symbols[ref.innerIndex()];
         const ns = symbol.slotNamespace();
         if (ns != .must_not_be_renamed and symbol.nestedScopeSlot() == null) {
-            symbol.nested_scope_slot = slot[ns];
-            slot[ns] += 1;
+            symbol.nested_scope_slot = slot.slots.get(ns);
+            slot.slots.getPtr(ns).* += 1;
         }
     }
 
+    // Labels are always declared in a nested scope, so we don't need to check.
     if (scope.label_ref) |ref| {
         var symbol = &symbols[ref.innerIndex()];
-        const ns = @enumToInt(js_ast.Symbol.SlotNamespace.label);
-        symbol.nested_scope_slot = slot[ns];
-        slot[ns] += 1;
+        const ns = js_ast.Symbol.SlotNamespace.label;
+        symbol.nested_scope_slot = slot.slots.get(ns);
+        slot.slots.getPtr(ns).* += 1;
     }
 
+    // Assign slots for the symbols of child scopes
     var slot_counts = slot;
-    for (scope.children.items) |child| {
-        slot_counts.unionMax(assignNestedScopeSlotsHelper(allocator, child, symbols, slot));
+    for (scope.children.slice()) |child| {
+        slot_counts.unionMax(assignNestedScopeSlotsHelper(sorted_members, child, symbols, slot));
     }
 
     return slot_counts;

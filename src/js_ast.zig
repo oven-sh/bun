@@ -553,12 +553,10 @@ pub const ClauseItem = struct {
 };
 
 pub const SlotCounts = struct {
-    slots: [4]u32,
-
-    pub const Empty = SlotCounts{ .slots = .{ 0, 0, 0, 0 } };
+    slots: Symbol.SlotNamespace.CountsArray = Symbol.SlotNamespace.CountsArray.initFill(0),
 
     pub fn unionMax(this: *SlotCounts, other: SlotCounts) void {
-        for (&this.slots, other.slots) |*a, b| {
+        for (&this.slots.values, other.slots.values) |*a, b| {
             if (a.* < b) a.* = b;
         }
     }
@@ -988,14 +986,16 @@ pub const Symbol = struct {
         u0 = 0,
 
     const invalid_chunk_index = std.math.maxInt(u32);
-    const invalid_nested_scope_slot = std.math.maxInt(u32);
+    pub const invalid_nested_scope_slot = std.math.maxInt(u32);
 
     pub const SlotNamespace = enum {
+        must_not_be_renamed,
         default,
         label,
         private_name,
         mangled_prop,
-        must_not_be_renamed,
+
+        pub const CountsArray = std.EnumArray(SlotNamespace, u32);
     };
 
     /// This is for generating cross-chunk imports and exports for code splitting.
@@ -5592,7 +5592,7 @@ pub const Ast = struct {
     has_lazy_export: bool = false,
     runtime_imports: Runtime.Imports = .{},
 
-    nested_scope_slot_counts: SlotCounts = SlotCounts.Empty,
+    nested_scope_slot_counts: SlotCounts = SlotCounts{},
 
     runtime_import_record_id: ?u32 = null,
     needs_runtime: bool = false,

@@ -577,15 +577,60 @@ pub const CharAndCount = struct {
 };
 
 pub const CharFreq = struct {
-    freqs: [64]i32 = undefined,
+    const Vector = @Vector(64, i32);
+    const Buffer = [64]i32;
 
+    freqs: Buffer align(@alignOf(Vector)) = undefined,
+
+    const scan_big_chunk_size = 32;
     pub fn scan(this: *CharFreq, text: string, delta: i32) void {
-        if (delta == 0) return;
-        var freqs = this.freqs;
-        defer this.freqs = freqs;
+        if (delta == 0)
+            return;
 
-        // TODO: SIMD
-        // TODO: WTF8 handling / indexOfNonASCII
+        if (text.len < scan_big_chunk_size) {
+            scanSmall(&this.freqs, text, delta);
+        } else {
+            scanBig(&this.freqs, text, delta);
+        }
+    }
+
+    fn scanBig(out: *align(@alignOf(Vector)) Buffer, text: string, delta: i32) void {
+        // https://zig.godbolt.org/z/P5dPojWGK
+        var freqs = out.*;
+        defer out.* = freqs;
+        var deltas: [255]i32 = [_]i32{0} ** 255;
+        var remain = text;
+
+        std.debug.assert(remain.len >= scan_big_chunk_size);
+
+        const unrolled = remain.len - (remain.len % scan_big_chunk_size);
+        var remain_end = remain.ptr + unrolled;
+        var unrolled_ptr = remain.ptr;
+        remain = remain[unrolled..];
+
+        while (unrolled_ptr != remain_end) : (unrolled_ptr += scan_big_chunk_size) {
+            const chunk = unrolled_ptr[0..scan_big_chunk_size].*;
+            comptime var i: usize = 0;
+            inline while (i < scan_big_chunk_size) : (i += scan_big_chunk_size) {
+                deltas[@as(usize, chunk[i])] += delta;
+            }
+        }
+
+        for (remain) |c| {
+            deltas[@as(usize, c)] += delta;
+        }
+
+        freqs[0..26].* = deltas['a' .. 'a' + 26].*;
+        freqs[26 .. 26 * 2].* = deltas['A' .. 'A' + 26].*;
+        freqs[26 * 2 .. 62].* = deltas['0' .. '0' + 10].*;
+        freqs[62] = deltas['_'];
+        freqs[63] = deltas['$'];
+    }
+
+    fn scanSmall(out: *align(@alignOf(Vector)) [64]i32, text: string, delta: i32) void {
+        var freqs: [64]i32 = out.*;
+        defer out.* = freqs;
+
         for (text) |c| {
             const i: usize = switch (c) {
                 'a'...'z' => @intCast(usize, c) - 'a',
@@ -600,14 +645,12 @@ pub const CharFreq = struct {
     }
 
     pub fn include(this: *CharFreq, other: CharFreq) void {
-        var left = this.freqs;
+        // https://zig.godbolt.org/z/Mq8eK6K9s
+        var left: @Vector(64, i32) = this.freqs;
         defer this.freqs = left;
-        const right = other.freqs;
+        const right: @Vector(64, i32) = other.freqs;
 
-        // TODO: SIMD
-        inline for (&left, right) |*dest, src| {
-            dest.* += src;
-        }
+        left += right;
     }
 
     pub fn compile(this: *CharFreq, allocator: std.mem.Allocator) NameMinifier {
@@ -628,6 +671,8 @@ pub const CharFreq = struct {
         std.sort.sort(CharAndCount, &array, {}, CharAndCount.lessThan);
 
         var minifier = NameMinifier.init(allocator);
+        minifier.head.ensureTotalCapacityPrecise(NameMinifier.default_head.len) catch unreachable;
+        minifier.tail.ensureTotalCapacityPrecise(NameMinifier.default_tail.len) catch unreachable;
         // TODO: investigate counting number of < 0 and > 0 and pre-allocating
         for (array) |item| {
             if (item.char < '0' or item.char > '9') {
@@ -654,10 +699,10 @@ pub const NameMinifier = struct {
         };
     }
 
-    pub fn numberToMinifiedName(this: *NameMinifier, allocator: std.mem.Allocator, _i: i32) !string {
+    pub fn numberToMinifiedName(this: *NameMinifier, name: *std.ArrayList(u8), _i: isize) !string {
+        name.clearRetainingCapacity();
         var i = _i;
         var j = @intCast(usize, @mod(i, 54));
-        var name = std.ArrayList(u8).init(allocator);
         try name.appendSlice(this.head.items[j .. j + 1]);
         i = @divFloor(i, 54);
 
@@ -671,7 +716,7 @@ pub const NameMinifier = struct {
         return name.items;
     }
 
-    pub fn defaultNumberToMinifiedName(allocator: std.mem.Allocator, _i: i32) !string {
+    pub fn defaultNumberToMinifiedName(allocator: std.mem.Allocator, _i: isize) !string {
         var i = _i;
         var j = @intCast(usize, @mod(i, 54));
         var name = std.ArrayList(u8).init(allocator);

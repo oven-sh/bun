@@ -216,6 +216,9 @@ pub const MinifyRenamer = struct {
     }
 
     pub fn assignNamesByFrequency(this: *MinifyRenamer, name_minifier: *js_ast.NameMinifier) !void {
+        var preallocated_buffer = try std.ArrayList(u8).initCapacity(this.allocator, 64);
+        defer preallocated_buffer.deinit();
+
         for (&this.slots, 0..) |*slots, ns| {
             var sorted = try SlotAndCount.Array.initCapacity(this.allocator, slots.items.len);
             sorted.items.len = slots.items.len;
@@ -228,29 +231,31 @@ pub const MinifyRenamer = struct {
             }
             std.sort.sort(SlotAndCount, sorted.items, {}, SlotAndCount.lessThan);
 
-            var next_name: i32 = 0;
+            var next_name: isize = 0;
+
             for (sorted.items) |data| {
                 var slot = &slots.items[data.slot];
-                var name: string = try name_minifier.numberToMinifiedName(this.allocator, next_name);
+
+                var name: string = try name_minifier.numberToMinifiedName(&preallocated_buffer, next_name);
                 next_name += 1;
 
                 switch (@intToEnum(js_ast.Symbol.SlotNamespace, ns)) {
                     .default => {
                         while (this.reserved_names.contains(name)) {
-                            name = try name_minifier.numberToMinifiedName(this.allocator, next_name);
+                            name = try name_minifier.numberToMinifiedName(&preallocated_buffer, next_name);
                             next_name += 1;
                         }
 
                         if (slot.needs_capital_for_jsx) {
                             while (name[0] >= 'a' and name[0] <= 'z') {
-                                name = try name_minifier.numberToMinifiedName(this.allocator, next_name);
+                                name = try name_minifier.numberToMinifiedName(&preallocated_buffer, next_name);
                                 next_name += 1;
                             }
                         }
                     },
                     .label => {
                         while (JSLexer.Keywords.get(name)) |_| {
-                            name = try name_minifier.numberToMinifiedName(this.allocator, next_name);
+                            name = try name_minifier.numberToMinifiedName(&preallocated_buffer, next_name);
                             next_name += 1;
                         }
                     },
@@ -260,7 +265,7 @@ pub const MinifyRenamer = struct {
                     else => {},
                 }
 
-                slot.name = name;
+                slot.name = this.allocator.dupe(u8, name) catch unreachable;
             }
         }
     }
@@ -349,7 +354,7 @@ pub const StableSymbolCount = struct {
     }
 };
 
-const SlotAndCount = struct {
+const SlotAndCount = packed struct {
     slot: u32,
     count: u32,
 
@@ -714,7 +719,7 @@ pub const NumberRenamer = struct {
 pub const ExportRenamer = struct {
     string_buffer: bun.MutableString,
     used: bun.StringHashMap(u32),
-    count: i32 = 0,
+    count: isize = 0,
 
     pub fn init(allocator: std.mem.Allocator) ExportRenamer {
         return ExportRenamer{

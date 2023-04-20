@@ -5392,7 +5392,10 @@ fn NewParser_(
             }
 
             // Add everything in the file to the histogram
-            var freq: js_ast.CharFreq = .{};
+            var freq: js_ast.CharFreq = .{
+                .freqs = [_]i32{0} ** 64,
+            };
+
             freq.scan(p.source.contents, 1);
 
             // Subtract out all comments

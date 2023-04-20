@@ -4489,8 +4489,11 @@ const LinkerContext = struct {
 
             var stable_source_indices = c.graph.stable_source_indices;
             var freq = js_ast.CharFreq{};
+            var capacity = sorted_imports_from_other_chunks.items.len;
+
             for (files_in_order, all_top_level_symbols) |source_index, *top_level_symbols| {
                 const ast: js_ast.Ast = c.graph.ast.get(source_index);
+                top_level_symbols.ensureUnusedCapacity(ast.symbols.len) catch unreachable;
 
                 if (ast.char_freq) |char_freq| {
                     freq.include(char_freq);
@@ -4516,11 +4519,7 @@ const LinkerContext = struct {
                 }
 
                 std.sort.sort(renamer.StableSymbolCount, top_level_symbols.items, {}, StableSymbolCount.lessThan);
-            }
-
-            var capacity = sorted_imports_from_other_chunks.items.len;
-            for (all_top_level_symbols) |symbols| {
-                capacity += symbols.items.len;
+                capacity += top_level_symbols.items.len;
             }
 
             var top_level_symbols = try StableSymbolCount.Array.initCapacity(allocator, capacity);

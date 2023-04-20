@@ -1126,7 +1126,7 @@ pub const ImportScanner = struct {
                 },
                 .s_local => |st| {
                     if (st.is_export) {
-                        for (st.decls) |decl| {
+                        for (st.decls.slice()) |decl| {
                             p.recordExportedBinding(decl.binding);
                         }
                     }
@@ -1134,7 +1134,7 @@ pub const ImportScanner = struct {
                     // Remove unused import-equals statements, since those likely
                     // correspond to types instead of values
                     if (st.was_ts_import_equals and !st.is_export and st.decls.len > 0) {
-                        var decl = st.decls[0];
+                        var decl = st.decls.ptr[0];
 
                         // Skip to the underlying reference
                         var value = decl.value;
@@ -1234,7 +1234,7 @@ pub const ImportScanner = struct {
                                     decls[0] = G.Decl{ .binding = p.b(B.Identifier{ .ref = st.default_name.ref.? }, stmt.loc), .value = ex };
 
                                     stmt = p.s(S.Local{
-                                        .decls = decls,
+                                        .decls = G.Decl.List.init(decls),
                                         .kind = S.Local.Kind.k_var,
                                         .is_export = false,
                                     }, ex.loc);
@@ -1254,7 +1254,7 @@ pub const ImportScanner = struct {
                                             decls[0] = G.Decl{ .binding = p.b(B.Identifier{ .ref = st.default_name.ref.? }, stmt.loc), .value = p.newExpr(E.Function{ .func = func.func }, stmt.loc) };
 
                                             stmt = p.s(S.Local{
-                                                .decls = decls,
+                                                .decls = Decl.List.init(decls),
                                                 .kind = S.Local.Kind.k_var,
                                                 .is_export = false,
                                             }, stmt.loc);
@@ -1283,7 +1283,7 @@ pub const ImportScanner = struct {
                                             };
 
                                             stmt = p.s(S.Local{
-                                                .decls = decls,
+                                                .decls = Decl.List.init(decls),
                                                 .kind = S.Local.Kind.k_var,
                                                 .is_export = false,
                                             }, stmt.loc);
@@ -1787,18 +1787,18 @@ pub const SideEffects = enum(u1) {
                 // Omit everything except the identifiers
 
                 // common case: single var foo = blah, don't need to allocate
-                if (local.decls.len == 1 and local.decls[0].binding.data == .b_identifier) {
-                    const prev = local.decls[0];
-                    stmt.data.s_local.decls[0] = G.Decl{ .binding = prev.binding };
+                if (local.decls.len == 1 and local.decls.ptr[0].binding.data == .b_identifier) {
+                    const prev = local.decls.ptr[0];
+                    stmt.data.s_local.decls.ptr[0] = G.Decl{ .binding = prev.binding };
                     return true;
                 }
 
                 var decls = std.ArrayList(G.Decl).initCapacity(allocator, local.decls.len) catch unreachable;
-                for (local.decls) |decl| {
+                for (local.decls.slice()) |decl| {
                     findIdentifiers(decl.binding, &decls);
                 }
 
-                local.decls = decls.toOwnedSlice() catch @panic("TODO");
+                local.decls.update(decls);
                 return true;
             },
 
@@ -2194,7 +2194,7 @@ const IdentifierOpts = packed struct {
 };
 
 fn statementCaresAboutScope(stmt: Stmt) bool {
-    switch (stmt.data) {
+    return switch (stmt.data) {
         .s_block,
         .s_empty,
         .s_debugger,
@@ -2213,20 +2213,12 @@ fn statementCaresAboutScope(stmt: Stmt) bool {
         .s_break,
         .s_continue,
         .s_directive,
-        => {
-            return false;
-        },
-        // This is technically incorrect.
-        // var does not care about the scope
-        // However, we are choosing _not_ to relocate vars to the top level
+        .s_label,
+        => false,
 
-        .s_local => |local| {
-            return local.kind != .k_var;
-        },
-        else => {
-            return true;
-        },
-    }
+        .s_local => |local| local.kind != .k_var,
+        else => true,
+    };
 }
 
 const ExprIn = struct {
@@ -2672,6 +2664,8 @@ pub const Parser = struct {
 
         module_type: options.ModuleType = .unknown,
 
+        transform_only: bool = false,
+
         pub fn init(jsx: options.JSX.Pragma, loader: options.Loader) Options {
             var opts = Options{
                 .ts = loader.isTypeScript(),
@@ -2767,6 +2761,7 @@ pub const Parser = struct {
     pub fn toLazyExportAST(this: *Parser, expr: Expr, comptime runtime_api_call: []const u8) !js_ast.Result {
         var p: JavaScriptParser = undefined;
         try JavaScriptParser.init(this.allocator, this.log, this.source, this.define, this.lexer, this.options, &p);
+        p.lexer.track_comments = this.options.features.minify_identifiers;
         p.should_fold_typescript_constant_expressions = this.options.features.should_fold_typescript_constant_expressions;
         defer p.lexer.deinit();
         var result: js_ast.Result = undefined;
@@ -2925,14 +2920,14 @@ pub const Parser = struct {
                 switch (stmt.data) {
                     .s_local => |local| {
                         if (local.decls.len > 1) {
-                            for (local.decls) |decl| {
+                            for (local.decls.slice()) |decl| {
                                 var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
                                 sliced.items.len = 1;
                                 var _local = local.*;
                                 var list = try ListManaged(G.Decl).initCapacity(p.allocator, 1);
                                 list.items.len = 1;
                                 list.items[0] = decl;
-                                _local.decls = list.items;
+                                _local.decls.update(list);
                                 sliced.items[0] = p.s(_local, stmt.loc);
                                 try p.appendPart(&parts, sliced.items);
                             }
@@ -3051,7 +3046,7 @@ pub const Parser = struct {
             var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
             part_stmts[0] = p.s(S.Local{
                 .kind = .k_var,
-                .decls = decls,
+                .decls = Decl.List.init(decls),
             }, logger.Loc.Empty);
             before.append(js_ast.Part{
                 .stmts = part_stmts,
@@ -3116,7 +3111,7 @@ pub const Parser = struct {
                                     .kind = .k_var,
                                     .is_export = false,
                                     .was_commonjs_export = true,
-                                    .decls = decls,
+                                    .decls = Decl.List.init(decls),
                                 },
                                 export_ref.loc_ref.loc,
                             );
@@ -3289,7 +3284,7 @@ pub const Parser = struct {
             exports_kind = .esm;
         } else if (uses_exports_ref or uses_module_ref or p.has_top_level_return) {
             exports_kind = .cjs;
-            if (!p.options.bundle) {
+            if (!p.options.bundle and (!p.options.transform_only or p.options.features.dynamic_require)) {
                 if (p.options.legacy_transform_require_to_import or (p.options.features.dynamic_require and !p.options.enable_legacy_bundling)) {
                     var args = p.allocator.alloc(Expr, 2) catch unreachable;
 
@@ -5240,7 +5235,7 @@ fn NewParser_(
                             switch (stmt.data) {
                                 .s_local => |local| {
                                     if (local.is_export) break :can_remove_part false;
-                                    for (local.decls) |decl| {
+                                    for (local.decls.slice()) |decl| {
                                         if (isBindingUsed(p, decl.binding, default_export_ref))
                                             break :can_remove_part false;
                                     }
@@ -5384,6 +5379,60 @@ fn NewParser_(
             } else {
                 return Stmt.alloc(Type, t, loc);
             }
+        }
+
+        fn computeCharacterFrequency(p: *P) ?js_ast.CharFreq {
+            if (!p.options.features.minify_identifiers or (p.options.bundle and p.source.index.isRuntime())) {
+                return null;
+            }
+
+            // Add everything in the file to the histogram
+            var freq: js_ast.CharFreq = .{
+                .freqs = [_]i32{0} ** 64,
+            };
+
+            freq.scan(p.source.contents, 1);
+
+            // Subtract out all comments
+            for (p.lexer.all_comments.items) |comment_range| {
+                freq.scan(p.source.textForRange(comment_range), -1);
+            }
+
+            // Subtract out all import paths
+            for (p.import_records.items) |record| {
+                freq.scan(record.path.text, -1);
+            }
+
+            const ScopeVisitor = struct {
+                pub fn visit(symbols: []const js_ast.Symbol, char_freq: *js_ast.CharFreq, scope: *js_ast.Scope) void {
+                    var iter = scope.members.iterator();
+
+                    while (iter.next()) |entry| {
+                        const symbol: *const Symbol = &symbols[entry.value_ptr.ref.innerIndex()];
+
+                        if (symbol.slotNamespace() != .must_not_be_renamed) {
+                            char_freq.scan(symbol.original_name, -@intCast(i32, symbol.use_count_estimate));
+                        }
+                    }
+
+                    if (scope.label_ref) |ref| {
+                        const symbol = &symbols[ref.innerIndex()];
+
+                        if (symbol.slotNamespace() != .must_not_be_renamed) {
+                            char_freq.scan(symbol.original_name, -@intCast(i32, symbol.use_count_estimate) - 1);
+                        }
+                    }
+
+                    for (scope.children.slice()) |child| {
+                        visit(symbols, char_freq, child);
+                    }
+                }
+            };
+            ScopeVisitor.visit(p.symbols.items, &freq, p.module_scope);
+
+            // TODO: mangledProps
+
+            return freq;
         }
 
         pub fn newExpr(p: *P, t: anytype, loc: logger.Loc) Expr {
@@ -5808,7 +5857,7 @@ fn NewParser_(
                     },
                     .s_local => |local| {
                         if (local.decls.len > 0) {
-                            var first: *Decl = &local.decls[0];
+                            var first: *Decl = &local.decls.ptr[0];
                             if (first.value) |*value| {
                                 if (first.binding.data == .b_identifier) {
                                     break :brk value;
@@ -8914,7 +8963,7 @@ fn NewParser_(
                     try p.lexer.next();
                     const decls = try p.parseAndDeclareDecls(.hoisted, opts);
                     try p.lexer.expectOrInsertSemicolon();
-                    return p.s(S.Local{ .kind = .k_var, .decls = decls, .is_export = opts.is_export }, loc);
+                    return p.s(S.Local{ .kind = .k_var, .decls = Decl.List.fromList(decls), .is_export = opts.is_export }, loc);
                 },
                 .t_const => {
                     if (opts.lexical_decl != .allow_all) {
@@ -8932,12 +8981,12 @@ fn NewParser_(
                     try p.lexer.expectOrInsertSemicolon();
 
                     if (!opts.is_typescript_declare) {
-                        try p.requireInitializers(decls);
+                        try p.requireInitializers(decls.items);
                     }
 
                     // When HMR is enabled, replace all const/let exports with var
                     const kind = if (p.options.features.hot_module_reloading and opts.is_export) S.Local.Kind.k_var else S.Local.Kind.k_const;
-                    return p.s(S.Local{ .kind = kind, .decls = decls, .is_export = opts.is_export }, loc);
+                    return p.s(S.Local{ .kind = kind, .decls = Decl.List.fromList(decls), .is_export = opts.is_export }, loc);
                 },
                 .t_if => {
                     try p.lexer.next();
@@ -9168,7 +9217,7 @@ fn NewParser_(
                         bad_let_range = p.lexer.range();
                     }
 
-                    var decls: []G.Decl = &([_]G.Decl{});
+                    var decls: G.Decl.List = .{};
                     var init_loc = p.lexer.loc();
                     var is_var = false;
                     switch (p.lexer.token) {
@@ -9177,15 +9226,15 @@ fn NewParser_(
                             is_var = true;
                             try p.lexer.next();
                             var stmtOpts = ParseStatementOptions{};
-                            decls = try p.parseAndDeclareDecls(.hoisted, &stmtOpts);
-                            init_ = p.s(S.Local{ .kind = .k_var, .decls = decls }, init_loc);
+                            decls.update(try p.parseAndDeclareDecls(.hoisted, &stmtOpts));
+                            init_ = p.s(S.Local{ .kind = .k_var, .decls = Decl.List.fromList(decls) }, init_loc);
                         },
                         // for (const )
                         .t_const => {
                             try p.lexer.next();
                             var stmtOpts = ParseStatementOptions{};
-                            decls = try p.parseAndDeclareDecls(.cconst, &stmtOpts);
-                            init_ = p.s(S.Local{ .kind = .k_const, .decls = decls }, init_loc);
+                            decls.update(try p.parseAndDeclareDecls(.cconst, &stmtOpts));
+                            init_ = p.s(S.Local{ .kind = .k_const, .decls = Decl.List.fromList(decls) }, init_loc);
                         },
                         // for (;)
                         .t_semicolon => {},
@@ -9226,7 +9275,7 @@ fn NewParser_(
                             }
                         }
 
-                        try p.forbidInitializers(decls, "of", false);
+                        try p.forbidInitializers(decls.slice(), "of", false);
                         try p.lexer.next();
                         const value = try p.parseExpr(.comma);
                         try p.lexer.expect(.t_close_paren);
@@ -9237,7 +9286,7 @@ fn NewParser_(
 
                     // Detect for-in loops
                     if (p.lexer.token == .t_in) {
-                        try p.forbidInitializers(decls, "in", is_var);
+                        try p.forbidInitializers(decls.slice(), "in", is_var);
                         try p.lexer.next();
                         const value = try p.parseExpr(.lowest);
                         try p.lexer.expect(.t_close_paren);
@@ -9251,7 +9300,7 @@ fn NewParser_(
                         switch (init_stmt.data) {
                             .s_local => {
                                 if (init_stmt.data.s_local.kind == .k_const) {
-                                    try p.requireInitializers(decls);
+                                    try p.requireInitializers(decls.slice());
                                 }
                             },
                             else => {},
@@ -9662,14 +9711,14 @@ fn NewParser_(
                                         // of the declared bindings. That "export var" statement will later
                                         // cause identifiers to be transformed into property accesses.
                                         if (opts.is_namespace_scope and opts.is_export) {
-                                            var decls: []G.Decl = &([_]G.Decl{});
+                                            var decls: G.Decl.List = .{};
                                             switch (stmt.data) {
                                                 .s_local => |local| {
                                                     var _decls = try ListManaged(G.Decl).initCapacity(p.allocator, local.decls.len);
-                                                    for (local.decls) |decl| {
+                                                    for (local.decls.slice()) |decl| {
                                                         try extractDeclsForBinding(decl.binding, &_decls);
                                                     }
-                                                    decls = _decls.items;
+                                                    decls.update(_decls);
                                                 },
                                                 else => {},
                                             }
@@ -9954,7 +10003,7 @@ fn NewParser_(
                 .binding = p.b(B.Identifier{ .ref = ref }, default_name_loc),
                 .value = value,
             };
-            return p.s(S.Local{ .kind = kind, .decls = decls, .is_export = opts.is_export, .was_ts_import_equals = true }, loc);
+            return p.s(S.Local{ .kind = kind, .decls = Decl.List.init(decls), .is_export = opts.is_export, .was_ts_import_equals = true }, loc);
         }
 
         fn parseClauseAlias(p: *P, kind: string) !string {
@@ -10180,11 +10229,11 @@ fn NewParser_(
                                 .stmt = p.s(S.Local{
                                     // Replace all "export let" with "export var" when HMR is enabled
                                     .kind = if (opts.is_export and p.options.features.hot_module_reloading) .k_var else .k_let,
-                                    .decls = decls,
+                                    .decls = G.Decl.List.fromList(decls),
                                     .is_export = opts.is_export,
                                 }, let_range.loc),
                             },
-                            .decls = decls,
+                            .decls = decls.items,
                         };
                     }
                 },
@@ -10443,7 +10492,7 @@ fn NewParser_(
             };
         }
 
-        fn parseAndDeclareDecls(p: *P, kind: Symbol.Kind, opts: *ParseStatementOptions) anyerror![]G.Decl {
+        fn parseAndDeclareDecls(p: *P, kind: Symbol.Kind, opts: *ParseStatementOptions) anyerror!ListManaged(G.Decl) {
             var decls = ListManaged(G.Decl).init(p.allocator);
 
             while (true) {
@@ -10487,7 +10536,7 @@ fn NewParser_(
                 try p.lexer.next();
             }
 
-            return decls.items;
+            return decls;
         }
 
         pub fn parseTypescriptEnumStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions) anyerror!Stmt {
@@ -12505,14 +12554,15 @@ fn NewParser_(
                     },
                     .t_question_dot => {
                         try p.lexer.next();
-                        var optional_start = js_ast.OptionalChain.start;
+                        var optional_start: ?js_ast.OptionalChain = js_ast.OptionalChain.start;
 
-                        // TODO: Remove unnecessary optional chains
-                        //                     		if p.options.mangleSyntax {
-                        // 	if isNullOrUndefined, _, ok := toNullOrUndefinedWithSideEffects(left.Data); ok and !isNullOrUndefined {
-                        // 		optionalStart = js_ast.OptionalChainNone
-                        // 	}
-                        // }
+                        // Remove unnecessary optional chains
+                        if (p.options.features.minify_syntax) {
+                            const result = SideEffects.toNullOrUndefined(left.data);
+                            if (result.ok and !result.value) {
+                                optional_start = null;
+                            }
+                        }
 
                         switch (p.lexer.token) {
                             .t_open_bracket => {
@@ -12609,7 +12659,7 @@ fn NewParser_(
                         }
 
                         // Only continue if we have started
-                        if (optional_start == .start) {
+                        if ((optional_start orelse .ccontinue) == .start) {
                             optional_start = .ccontinue;
                         }
                     },
@@ -14386,7 +14436,7 @@ fn NewParser_(
                         decls[0] = Decl{
                             .binding = p.b(B.Identifier{ .ref = ref }, local.loc),
                         };
-                        try partStmts.append(p.s(S.Local{ .decls = decls }, local.loc));
+                        try partStmts.append(p.s(S.Local{ .decls = G.Decl.List.init(decls) }, local.loc));
                     }
                 }
                 p.relocated_top_level_vars.clearRetainingCapacity();
@@ -14537,7 +14587,7 @@ fn NewParser_(
                         }
                     },
                     .s_local => |st| {
-                        for (st.decls) |*decl| {
+                        for (st.decls.slice()) |*decl| {
                             if (!p.bindingCanBeRemovedIfUnused(decl.binding)) {
                                 return false;
                             }
@@ -17797,20 +17847,20 @@ fn NewParser_(
                     p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
 
                     const decls_len = if (!(data.is_export and p.options.features.replace_exports.entries.len > 0))
-                        p.visitDecls(data.decls, data.kind == .k_const, false)
+                        p.visitDecls(data.decls.slice(), data.kind == .k_const, false)
                     else
-                        p.visitDecls(data.decls, data.kind == .k_const, true);
+                        p.visitDecls(data.decls.slice(), data.kind == .k_const, true);
 
                     const is_now_dead = data.decls.len > 0 and decls_len == 0;
                     if (is_now_dead) {
                         return;
                     }
 
-                    data.decls.len = decls_len;
+                    data.decls.len = @truncate(u32, decls_len);
 
                     // Handle being exported inside a namespace
                     if (data.is_export and p.enclosing_namespace_arg_ref != null) {
-                        for (data.decls) |*d| {
+                        for (data.decls.slice()) |*d| {
                             if (d.value) |val| {
                                 p.recordUsage((p.enclosing_namespace_arg_ref orelse unreachable));
                                 // TODO: is it necessary to lowerAssign? why does esbuild do it _most_ of the time?
@@ -17827,7 +17877,7 @@ fn NewParser_(
                     // Edgecase:
                     //  `export var` is skipped because it's unnecessary. That *should* be a noop, but it loses the `is_export` flag if we're in HMR.
                     if (data.kind == .k_var and !data.is_export) {
-                        const relocated = p.maybeRelocateVarsToTopLevel(data.decls, .normal);
+                        const relocated = p.maybeRelocateVarsToTopLevel(data.decls.slice(), .normal);
                         if (relocated.ok) {
                             if (relocated.stmt) |new_stmt| {
                                 stmts.append(new_stmt) catch unreachable;
@@ -17892,7 +17942,7 @@ fn NewParser_(
                                                             .kind = .k_var,
                                                             .is_export = false,
                                                             .was_commonjs_export = true,
-                                                            .decls = decls,
+                                                            .decls = G.Decl.List.init(decls),
                                                         },
                                                         stmt.loc,
                                                     ),
@@ -18088,7 +18138,7 @@ fn NewParser_(
                         // must be done inside the scope of the for loop or they won't be relocated.
                         if (data.init) |init_| {
                             if (init_.data == .s_local and init_.data.s_local.kind == .k_var) {
-                                const relocate = p.maybeRelocateVarsToTopLevel(init_.data.s_local.decls, .normal);
+                                const relocate = p.maybeRelocateVarsToTopLevel(init_.data.s_local.decls.slice(), .normal);
                                 if (relocate.stmt) |relocated| {
                                     data.init = relocated;
                                 }
@@ -18111,7 +18161,7 @@ fn NewParser_(
                             // Lower for-in variable initializers in case the output is used in strict mode
                             var local = data.init.data.s_local;
                             if (local.decls.len == 1) {
-                                var decl: *G.Decl = &local.decls[0];
+                                var decl: *G.Decl = &local.decls.ptr[0];
                                 if (decl.binding.data == .b_identifier) {
                                     if (decl.value) |val| {
                                         stmts.append(
@@ -18128,7 +18178,7 @@ fn NewParser_(
                         }
 
                         if (data.init.data == .s_local and data.init.data.s_local.kind == .k_var) {
-                            const relocate = p.maybeRelocateVarsToTopLevel(data.init.data.s_local.decls, RelocateVars.Mode.for_in_or_for_of);
+                            const relocate = p.maybeRelocateVarsToTopLevel(data.init.data.s_local.decls.slice(), RelocateVars.Mode.for_in_or_for_of);
                             if (relocate.stmt) |relocated_stmt| {
                                 data.init = relocated_stmt;
                             }
@@ -18143,7 +18193,7 @@ fn NewParser_(
                     data.body = p.visitLoopBody(data.body);
 
                     if (data.init.data == .s_local and data.init.data.s_local.kind == .k_var) {
-                        const relocate = p.maybeRelocateVarsToTopLevel(data.init.data.s_local.decls, RelocateVars.Mode.for_in_or_for_of);
+                        const relocate = p.maybeRelocateVarsToTopLevel(data.init.data.s_local.decls.slice(), RelocateVars.Mode.for_in_or_for_of);
                         if (relocate.stmt) |relocated_stmt| {
                             data.init = relocated_stmt;
                         }
@@ -18452,7 +18502,7 @@ fn NewParser_(
                         switch (child_stmt.data) {
                             .s_local => |local| {
                                 if (local.is_export) {
-                                    p.markExportedDeclsInsideNamespace(data.arg, local.decls);
+                                    p.markExportedDeclsInsideNamespace(data.arg, local.decls.slice());
                                 }
                             },
                             else => {},
@@ -18599,7 +18649,7 @@ fn NewParser_(
                     var local = p.s(
                         S.Local{
                             .is_export = true,
-                            .decls = decls,
+                            .decls = Decl.List.init(decls),
                         },
                         loc,
                     );
@@ -18620,7 +18670,7 @@ fn NewParser_(
                     var local = p.s(
                         S.Local{
                             .is_export = true,
-                            .decls = decls,
+                            .decls = Decl.List.init(decls),
                         },
                         loc,
                     );
@@ -18832,7 +18882,7 @@ fn NewParser_(
                         p.s(
                             S.Local{
                                 .kind = .k_var,
-                                .decls = decls,
+                                .decls = G.Decl.List.init(decls),
                                 .is_export = is_export,
                             },
                             stmt_loc,
@@ -18844,7 +18894,7 @@ fn NewParser_(
                         p.s(
                             S.Local{
                                 .kind = .k_let,
-                                .decls = decls,
+                                .decls = G.Decl.List.init(decls),
                             },
                             stmt_loc,
                         ),
@@ -19161,7 +19211,7 @@ fn NewParser_(
                     st.value = p.visitExprInOut(st.value, ExprIn{ .assign_target = assign_target });
                 },
                 .s_local => |st| {
-                    for (st.decls) |*dec| {
+                    for (st.decls.slice()) |*dec| {
                         p.visitBinding(dec.binding, null);
                         if (dec.value) |val| {
                             dec.value = p.visitExpr(val);
@@ -19396,7 +19446,7 @@ fn NewParser_(
                 p.popScope();
             }
 
-            return p.stmtsToSingleStmt(stmt.loc, stmts.toOwnedSlice() catch @panic("TODO"));
+            return p.stmtsToSingleStmt(stmt.loc, stmts.items);
         }
 
         // One statement could potentially expand to several statements
@@ -19405,7 +19455,7 @@ fn NewParser_(
                 return Stmt{ .data = Prefill.Data.SEmpty, .loc = loc };
             }
 
-            if (stmts.len == 1 and std.meta.activeTag(stmts[0].data) != .s_local or (std.meta.activeTag(stmts[0].data) == .s_local and stmts[0].data.s_local.kind == S.Local.Kind.k_var)) {
+            if (stmts.len == 1 and !statementCaresAboutScope(stmts[0])) {
                 // "let" and "const" must be put in a block when in a single-statement context
                 return stmts[0];
             }
@@ -19884,7 +19934,7 @@ fn NewParser_(
                         before.appendAssumeCapacity(p.s(
                             S.Local{
                                 .kind = .k_let,
-                                .decls = let_decls.items,
+                                .decls = Decl.List.fromList(let_decls),
                             },
                             let_decls.items[0].value.?.loc,
                         ));
@@ -19900,7 +19950,7 @@ fn NewParser_(
                             before.appendAssumeCapacity(p.s(
                                 S.Local{
                                     .kind = .k_var,
-                                    .decls = var_decls.items,
+                                    .decls = Decl.List.fromList(var_decls),
                                 },
                                 var_decls.items[0].value.?.loc,
                             ));
@@ -19953,7 +20003,7 @@ fn NewParser_(
                 // if this fails it means that scope pushing/popping is not balanced
                 assert(p.current_scope == initial_scope);
 
-            if (!p.options.features.inlining) {
+            if (!p.options.features.minify_syntax) {
                 return;
             }
 
@@ -19971,7 +20021,7 @@ fn NewParser_(
                             .s_empty, .s_comment, .s_directive, .s_debugger, .s_type_script => continue,
                             .s_local => |local| {
                                 if (!local.is_export and local.kind == .k_const and !local.was_commonjs_export) {
-                                    var decls: []Decl = local.decls;
+                                    var decls: []Decl = local.decls.slice();
                                     var end: usize = 0;
                                     for (decls) |decl| {
                                         if (decl.binding.data == .b_identifier) {
@@ -19982,7 +20032,7 @@ fn NewParser_(
                                         decls[end] = decl;
                                         end += 1;
                                     }
-                                    local.decls.len = end;
+                                    local.decls.len = @truncate(u32, end);
                                     if (end == 0) {
                                         stmt.* = stmt.*.toEmpty();
                                     }
@@ -19996,6 +20046,8 @@ fn NewParser_(
                     }
                 }
             }
+
+            var is_control_flow_dead = false;
 
             // Inline single-use variable declarations where possible:
             //
@@ -20018,6 +20070,10 @@ fn NewParser_(
                 var output = ListManaged(Stmt).initCapacity(p.allocator, stmts.items.len) catch unreachable;
 
                 for (stmts.items) |stmt| {
+                    if (is_control_flow_dead and !SideEffects.shouldKeepStmtInDeadControlFlow(stmt, p.allocator)) {
+                        // Strip unnecessary statements if the control flow is dead here
+                        continue;
+                    }
 
                     // Keep inlining variables until a failure or until there are none left.
                     // That handles cases like this:
@@ -20044,7 +20100,7 @@ fn NewParser_(
                                     break;
                                 }
 
-                                var last: *Decl = &local.decls[local.decls.len - 1];
+                                var last: *Decl = local.decls.last().?;
                                 // The variable must be initialized, since we will be substituting
                                 // the value into the usage.
                                 if (last.value == null)
@@ -20088,11 +20144,101 @@ fn NewParser_(
                         break;
                     }
 
-                    if (stmt.data != .s_empty) {
-                        output.appendAssumeCapacity(
-                            stmt,
-                        );
+                    switch (stmt.data) {
+                        .s_empty => continue,
+
+                        // skip directives for now
+                        .s_directive => continue,
+
+                        .s_local => |local| {
+                            // Merge adjacent local statements
+                            if (output.items.len > 0) {
+                                var prev_stmt = &output.items[output.items.len - 1];
+                                if (prev_stmt.data == .s_local and local.kind == prev_stmt.data.s_local.kind and local.is_export == prev_stmt.data.s_local.is_export) {
+                                    prev_stmt.data.s_local.decls.append(p.allocator, local.decls.slice()) catch unreachable;
+                                    continue;
+                                }
+                            }
+                        },
+
+                        .s_expr => |s_expr| {
+                            // Merge adjacent expression statements
+                            if (output.items.len > 0) {
+                                var prev_stmt = &output.items[output.items.len - 1];
+                                if (prev_stmt.data == .s_expr) {
+                                    prev_stmt.data.s_expr.does_not_affect_tree_shaking = prev_stmt.data.s_expr.does_not_affect_tree_shaking and
+                                        s_expr.does_not_affect_tree_shaking;
+                                    prev_stmt.data.s_expr.value = prev_stmt.data.s_expr.value.joinWithComma(
+                                        s_expr.value,
+                                        p.allocator,
+                                    );
+                                    continue;
+                                }
+                            }
+                        },
+                        .s_switch => |s_switch| {
+                            // Absorb a previous expression statement
+                            if (output.items.len > 0) {
+                                var prev_stmt = &output.items[output.items.len - 1];
+                                if (prev_stmt.data == .s_expr) {
+                                    s_switch.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_switch.test_, p.allocator);
+                                    output.items.len -= 1;
+                                }
+                            }
+                        },
+                        .s_if => |s_if| {
+                            // Absorb a previous expression statement
+                            if (output.items.len > 0) {
+                                var prev_stmt = &output.items[output.items.len - 1];
+                                if (prev_stmt.data == .s_expr) {
+                                    s_if.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_if.test_, p.allocator);
+                                    output.items.len -= 1;
+                                }
+                            }
+
+                            // TODO: optimize jump
+                        },
+
+                        .s_return => |ret| {
+                            // Merge return statements with the previous expression statement
+                            if (output.items.len > 0 and ret.value != null) {
+                                var prev_stmt = &output.items[output.items.len - 1];
+                                if (prev_stmt.data == .s_expr) {
+                                    ret.value = prev_stmt.data.s_expr.value.joinWithComma(ret.value.?, p.allocator);
+                                    prev_stmt.* = stmt;
+                                    continue;
+                                }
+                            }
+
+                            is_control_flow_dead = true;
+                        },
+
+                        .s_break, .s_continue => {
+                            is_control_flow_dead = true;
+                        },
+
+                        .s_throw => {
+                            // Merge throw statements with the previous expression statement
+                            if (output.items.len > 0) {
+                                var prev_stmt = &output.items[output.items.len - 1];
+                                if (prev_stmt.data == .s_expr) {
+                                    prev_stmt.* = p.s(S.Throw{
+                                        .value = prev_stmt.data.s_expr.value.joinWithComma(
+                                            stmt.data.s_throw.value,
+                                            p.allocator,
+                                        ),
+                                    }, stmt.loc);
+                                    continue;
+                                }
+                            }
+
+                            is_control_flow_dead = true;
+                        },
+
+                        else => {},
                     }
+
+                    output.append(stmt) catch unreachable;
                 }
                 stmts.deinit();
                 stmts.* = output;
@@ -20815,7 +20961,7 @@ fn NewParser_(
 
                 toplevel_stmts[toplevel_stmts_i] = p.s(
                     S.Local{
-                        .decls = first_decl,
+                        .decls = G.Decl.List.init(first_decl),
                     },
                     logger.Loc.Empty,
                 );
@@ -20873,7 +21019,7 @@ fn NewParser_(
                     if (named_export_i > 0) {
                         toplevel_stmts[toplevel_stmts_i] = p.s(
                             S.Local{
-                                .decls = exports_decls[0..named_export_i],
+                                .decls = G.Decl.List.init(exports_decls[0..named_export_i]),
                             },
                             logger.Loc.Empty,
                         );
@@ -21023,6 +21169,17 @@ fn NewParser_(
                 .import_keyword = p.esm_import_keyword,
                 .export_keyword = p.esm_export_keyword,
                 .top_level_symbols_to_parts = top_level_symbols_to_parts,
+                .char_freq = p.computeCharacterFrequency(),
+
+                // Assign slots to symbols in nested scopes. This is some precomputation for
+                // the symbol renaming pass that will happen later in the linker. It's done
+                // now in the parser because we want it to be done in parallel per file and
+                // we're already executing code in parallel here
+                .nested_scope_slot_counts = if (p.options.features.minify_identifiers)
+                    renamer.assignNestedScopeSlots(p.allocator, p.module_scope, p.symbols.items)
+                else
+                    js_ast.SlotCounts{},
+
                 .require_ref = if (p.runtime_imports.__require != null)
                     p.runtime_imports.__require.?.ref
                 else

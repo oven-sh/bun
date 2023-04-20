@@ -44,9 +44,7 @@ const ObjectPool = @import("./pool.zig").ObjectPool;
 const Lock = @import("./lock.zig").Lock;
 const RequestDataPool = ObjectPool([32_000]u8, null, false, 1);
 const ResolveWatcher = @import("./resolver/resolver.zig").ResolveWatcher;
-pub fn constStrToU8(s: string) []u8 {
-    return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
-}
+const constStrToU8 = bun.constStrToU8;
 
 pub const MutableStringAPIWriter = NewApiWriter(*MutableString);
 

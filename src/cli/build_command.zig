@@ -27,7 +27,6 @@ const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const bundler = bun.bundler;
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
-const GenerateNodeModuleBundle = @import("../bundler/generate_node_modules_bundle.zig");
 const DotEnv = @import("../env_loader.zig");
 
 const fs = @import("../fs.zig");
@@ -53,11 +52,15 @@ pub const BuildCommand = struct {
         this_bundler.resolver.opts.react_server_components = ctx.bundler_options.react_server_components;
         this_bundler.options.code_splitting = ctx.bundler_options.code_splitting;
         this_bundler.resolver.opts.code_splitting = ctx.bundler_options.code_splitting;
+
         this_bundler.options.minify_syntax = ctx.bundler_options.minify_syntax;
-        this_bundler.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
+        this_bundler.resolver.opts.minify_syntax = ctx.bundler_options.minify_syntax;
 
         this_bundler.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
         this_bundler.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
+
+        this_bundler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
+        this_bundler.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
 
         this_bundler.configureLinker();
 
@@ -99,6 +102,8 @@ pub const BuildCommand = struct {
             if (ctx.bundler_options.transform_only) {
                 this_bundler.linker.options.resolve_mode = .lazy;
                 this_bundler.options.import_path_format = .relative;
+                this_bundler.options.allow_runtime = false;
+                this_bundler.resolver.opts.allow_runtime = false;
 
                 // TODO: refactor this .transform function
                 const result = try this_bundler.transform(

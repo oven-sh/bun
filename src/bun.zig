@@ -236,7 +236,7 @@ pub const MutableString = @import("string_mutable.zig").MutableString;
 pub const RefCount = @import("./ref_count.zig").RefCount;
 
 pub inline fn constStrToU8(s: []const u8) []u8 {
-    return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
+    return @constCast(s);
 }
 
 pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.MAX_PATH_BYTES;

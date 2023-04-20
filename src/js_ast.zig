@@ -552,10 +552,190 @@ pub const ClauseItem = struct {
     pub const default_alias: string = "default";
 };
 
+pub const SlotCounts = struct {
+    slots: Symbol.SlotNamespace.CountsArray = Symbol.SlotNamespace.CountsArray.initFill(0),
+
+    pub fn unionMax(this: *SlotCounts, other: SlotCounts) void {
+        for (&this.slots.values, other.slots.values) |*a, b| {
+            if (a.* < b) a.* = b;
+        }
+    }
+};
+
+pub const CharAndCount = struct {
+    char: u8 = 0,
+    count: i32 = 0,
+    index: usize = 0,
+
+    pub const Array = [64]CharAndCount;
+
+    pub fn lessThan(_: void, a: CharAndCount, b: CharAndCount) bool {
+        return a.count > b.count or (a.count == b.count and a.index < b.index);
+    }
+};
+
+pub const CharFreq = struct {
+    const Vector = @Vector(64, i32);
+    const Buffer = [64]i32;
+
+    freqs: Buffer align(@alignOf(Vector)) = undefined,
+
+    const scan_big_chunk_size = 32;
+    pub fn scan(this: *CharFreq, text: string, delta: i32) void {
+        if (delta == 0)
+            return;
+
+        if (text.len < scan_big_chunk_size) {
+            scanSmall(&this.freqs, text, delta);
+        } else {
+            scanBig(&this.freqs, text, delta);
+        }
+    }
+
+    fn scanBig(out: *align(@alignOf(Vector)) Buffer, text: string, delta: i32) void {
+        // https://zig.godbolt.org/z/P5dPojWGK
+        var freqs = out.*;
+        defer out.* = freqs;
+        var deltas: [255]i32 = [_]i32{0} ** 255;
+        var remain = text;
+
+        std.debug.assert(remain.len >= scan_big_chunk_size);
+
+        const unrolled = remain.len - (remain.len % scan_big_chunk_size);
+        var remain_end = remain.ptr + unrolled;
+        var unrolled_ptr = remain.ptr;
+        remain = remain[unrolled..];
+
+        while (unrolled_ptr != remain_end) : (unrolled_ptr += scan_big_chunk_size) {
+            const chunk = unrolled_ptr[0..scan_big_chunk_size].*;
+            comptime var i: usize = 0;
+            inline while (i < scan_big_chunk_size) : (i += scan_big_chunk_size) {
+                deltas[@as(usize, chunk[i])] += delta;
+            }
+        }
+
+        for (remain) |c| {
+            deltas[@as(usize, c)] += delta;
+        }
+
+        freqs[0..26].* = deltas['a' .. 'a' + 26].*;
+        freqs[26 .. 26 * 2].* = deltas['A' .. 'A' + 26].*;
+        freqs[26 * 2 .. 62].* = deltas['0' .. '0' + 10].*;
+        freqs[62] = deltas['_'];
+        freqs[63] = deltas['$'];
+    }
+
+    fn scanSmall(out: *align(@alignOf(Vector)) [64]i32, text: string, delta: i32) void {
+        var freqs: [64]i32 = out.*;
+        defer out.* = freqs;
+
+        for (text) |c| {
+            const i: usize = switch (c) {
+                'a'...'z' => @intCast(usize, c) - 'a',
+                'A'...'Z' => @intCast(usize, c) - ('A' - 26),
+                '0'...'9' => @intCast(usize, c) + (53 - '0'),
+                '_' => 62,
+                '$' => 63,
+                else => continue,
+            };
+            freqs[i] += delta;
+        }
+    }
+
+    pub fn include(this: *CharFreq, other: CharFreq) void {
+        // https://zig.godbolt.org/z/Mq8eK6K9s
+        var left: @Vector(64, i32) = this.freqs;
+        defer this.freqs = left;
+        const right: @Vector(64, i32) = other.freqs;
+
+        left += right;
+    }
+
+    pub fn compile(this: *const CharFreq, allocator: std.mem.Allocator) NameMinifier {
+        var array: CharAndCount.Array = brk: {
+            var _array: CharAndCount.Array = undefined;
+            const freqs = this.freqs;
+
+            for (&_array, NameMinifier.default_tail, &freqs, 0..) |*dest, char, freq, i| {
+                dest.* = CharAndCount{
+                    .char = char,
+                    .index = i,
+                    .count = freq,
+                };
+            }
+            break :brk _array;
+        };
+
+        std.sort.sort(CharAndCount, &array, {}, CharAndCount.lessThan);
+
+        var minifier = NameMinifier.init(allocator);
+        minifier.head.ensureTotalCapacityPrecise(NameMinifier.default_head.len) catch unreachable;
+        minifier.tail.ensureTotalCapacityPrecise(NameMinifier.default_tail.len) catch unreachable;
+        // TODO: investigate counting number of < 0 and > 0 and pre-allocating
+        for (array) |item| {
+            if (item.char < '0' or item.char > '9') {
+                minifier.head.append(item.char) catch unreachable;
+            }
+            minifier.tail.append(item.char) catch unreachable;
+        }
+
+        return minifier;
+    }
+};
+
+pub const NameMinifier = struct {
+    head: std.ArrayList(u8),
+    tail: std.ArrayList(u8),
+
+    pub const default_head = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$";
+    pub const default_tail = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$";
+
+    pub fn init(allocator: std.mem.Allocator) NameMinifier {
+        return .{
+            .head = std.ArrayList(u8).init(allocator),
+            .tail = std.ArrayList(u8).init(allocator),
+        };
+    }
+
+    pub fn numberToMinifiedName(this: *NameMinifier, name: *std.ArrayList(u8), _i: isize) !void {
+        name.clearRetainingCapacity();
+        var i = _i;
+        var j = @intCast(usize, @mod(i, 54));
+        try name.appendSlice(this.head.items[j .. j + 1]);
+        i = @divFloor(i, 54);
+
+        while (i > 0) {
+            i -= 1;
+            j = @intCast(usize, @mod(i, 64));
+            try name.appendSlice(this.tail.items[j .. j + 1]);
+            i = @divFloor(i, 64);
+        }
+    }
+
+    pub fn defaultNumberToMinifiedName(allocator: std.mem.Allocator, _i: isize) !string {
+        var i = _i;
+        var j = @intCast(usize, @mod(i, 54));
+        var name = std.ArrayList(u8).init(allocator);
+        try name.appendSlice(default_head[j .. j + 1]);
+        i = @divFloor(i, 54);
+
+        while (i > 0) {
+            i -= 1;
+            j = @intCast(usize, @mod(i, 64));
+            try name.appendSlice(default_tail[j .. j + 1]);
+            i = @divFloor(i, 64);
+        }
+
+        return name.items;
+    }
+};
+
 pub const G = struct {
     pub const Decl = struct {
         binding: BindingNodeIndex,
         value: ?ExprNodeIndex = null,
+
+        pub const List = BabyList(Decl);
     };
 
     pub const NamespaceAlias = struct {
@@ -708,6 +888,10 @@ pub const Symbol = struct {
     /// Do not use this directly. Use `nestedScopeSlot()` instead.
     nested_scope_slot: u32 = invalid_nested_scope_slot,
 
+    did_keep_name: bool = true,
+
+    must_start_with_capital_letter_for_jsx: bool = false,
+
     /// The kind of symbol. This is used to determine how to print the symbol
     /// and how to deal with conflicts, renaming, etc.
     kind: Kind = Kind.other,
@@ -804,14 +988,16 @@ pub const Symbol = struct {
         u0 = 0,
 
     const invalid_chunk_index = std.math.maxInt(u32);
-    const invalid_nested_scope_slot = std.math.maxInt(u32);
+    pub const invalid_nested_scope_slot = std.math.maxInt(u32);
 
     pub const SlotNamespace = enum {
+        must_not_be_renamed,
         default,
         label,
         private_name,
         mangled_prop,
-        must_not_be_renamed,
+
+        pub const CountsArray = std.EnumArray(SlotNamespace, u32);
     };
 
     /// This is for generating cross-chunk imports and exports for code splitting.
@@ -5071,7 +5257,7 @@ pub const S = struct {
 
     pub const Local = struct {
         kind: Kind = Kind.k_var,
-        decls: []G.Decl,
+        decls: G.Decl.List = .{},
         is_export: bool = false,
         // The TypeScript compiler doesn't generate code for "import foo = bar"
         // statements where the import is never used.
@@ -5408,6 +5594,8 @@ pub const Ast = struct {
     has_lazy_export: bool = false,
     runtime_imports: Runtime.Imports = .{},
 
+    nested_scope_slot_counts: SlotCounts = SlotCounts{},
+
     runtime_import_record_id: ?u32 = null,
     needs_runtime: bool = false,
     externals: []u32 = &[_]u32{},
@@ -5439,7 +5627,7 @@ pub const Ast = struct {
     // This list may be mutated later, so we should store the capacity
     symbols: Symbol.List = Symbol.List{},
     module_scope: Scope = Scope{},
-    // char_freq:    *CharFreq,
+    char_freq: ?CharFreq = null,
     exports_ref: Ref = Ref.None,
     module_ref: Ref = Ref.None,
     wrapper_ref: Ref = Ref.None,

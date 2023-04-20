@@ -322,9 +322,6 @@ export function expectBundled(
   if (!ESBUILD && keepNames) {
     throw new Error("keepNames not implemented in bun build");
   }
-  if (!ESBUILD && minifyIdentifiers) {
-    throw new Error("minifyIdentifiers not implemented in bun build");
-  }
   if (!ESBUILD && mainFields) {
     throw new Error("mainFields not implemented in bun build");
   }

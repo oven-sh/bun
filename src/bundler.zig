@@ -738,8 +738,6 @@ pub const Bundler = struct {
         Output.flush();
     }
 
-    pub const GenerateNodeModulesBundle = @import("./bundler/generate_node_modules_bundle.zig");
-
     pub const BuildResolveResultPair = struct {
         written: usize,
         input_fd: ?StoredFileDescriptorType,
@@ -1155,6 +1153,9 @@ pub const Bundler = struct {
                     .source_map_handler = source_map_context,
                     .rewrite_require_resolve = bundler.options.platform != .node,
                     .minify_whitespace = bundler.options.minify_whitespace,
+                    .minify_syntax = bundler.options.minify_syntax,
+                    .minify_identifiers = bundler.options.minify_identifiers,
+                    .transform_only = bundler.options.transform_only,
                 },
                 enable_source_map,
             ),
@@ -1174,6 +1175,9 @@ pub const Bundler = struct {
                     .css_import_behavior = bundler.options.cssImportBehavior(),
                     .rewrite_require_resolve = bundler.options.platform != .node,
                     .minify_whitespace = bundler.options.minify_whitespace,
+                    .minify_syntax = bundler.options.minify_syntax,
+                    .minify_identifiers = bundler.options.minify_identifiers,
+                    .transform_only = bundler.options.transform_only,
                 },
                 enable_source_map,
             ),
@@ -1191,6 +1195,10 @@ pub const Bundler = struct {
                         .require_ref = ast.require_ref,
                         .css_import_behavior = bundler.options.cssImportBehavior(),
                         .source_map_handler = source_map_context,
+                        .minify_whitespace = bundler.options.minify_whitespace,
+                        .minify_syntax = bundler.options.minify_syntax,
+                        .minify_identifiers = bundler.options.minify_identifiers,
+                        .transform_only = bundler.options.transform_only,
                     },
                     enable_source_map,
                 ),
@@ -1208,6 +1216,10 @@ pub const Bundler = struct {
                     .require_ref = ast.require_ref,
                     .css_import_behavior = bundler.options.cssImportBehavior(),
                     .source_map_handler = source_map_context,
+                    .minify_whitespace = bundler.options.minify_whitespace,
+                    .minify_syntax = bundler.options.minify_syntax,
+                    .minify_identifiers = bundler.options.minify_identifiers,
+                    .transform_only = bundler.options.transform_only,
                 },
                 enable_source_map,
             ),
@@ -1377,6 +1389,7 @@ pub const Bundler = struct {
                 opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
                 opts.features.should_fold_typescript_constant_expressions = loader.isTypeScript() or platform.isBun() or bundler.options.inlining;
                 opts.features.dynamic_require = platform.isBun();
+                opts.transform_only = bundler.options.transform_only;
 
                 // @bun annotation
                 opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
@@ -1400,7 +1413,7 @@ pub const Bundler = struct {
                 opts.filepath_hash_for_hmr = file_hash orelse 0;
                 opts.features.auto_import_jsx = bundler.options.auto_import_jsx;
                 opts.warn_about_unbundled_modules = platform.isNotBun();
-                opts.features.jsx_optimization_inline = (bundler.options.jsx_optimization_inline orelse (platform.isBun() and jsx.parse and
+                opts.features.jsx_optimization_inline = opts.features.allow_runtime and (bundler.options.jsx_optimization_inline orelse (platform.isBun() and jsx.parse and
                     !jsx.development)) and
                     (jsx.runtime == .automatic or jsx.runtime == .classic);
 
@@ -1408,6 +1421,7 @@ pub const Bundler = struct {
                 opts.features.hoist_bun_plugin = this_parse.hoist_bun_plugin;
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
                 opts.features.minify_syntax = bundler.options.minify_syntax;
+                opts.features.minify_identifiers = bundler.options.minify_identifiers;
 
                 if (bundler.macro_context == null) {
                     bundler.macro_context = js_ast.Macro.MacroContext.init(bundler);
@@ -1727,7 +1741,7 @@ pub const Bundler = struct {
         if (log.level == .verbose) {
             bundler.resolver.debug_logs = try DebugLogs.init(allocator);
         }
-
+        bundler.options.transform_only = true;
         var did_start = false;
 
         if (bundler.options.output_dir_handle == null) {

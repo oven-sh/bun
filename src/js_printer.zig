@@ -494,6 +494,9 @@ pub const Options = struct {
     commonjs_named_exports_ref: Ref = Ref.None,
 
     minify_whitespace: bool = false,
+    minify_identifiers: bool = false,
+    minify_syntax: bool = false,
+    transform_only: bool = false,
 
     require_or_import_meta_for_source_callback: RequireOrImportMeta.Callback = .{},
 
@@ -690,7 +693,6 @@ fn NewPrinter(
     comptime Writer: type,
     comptime rewrite_esm_to_cjs: bool,
     comptime is_bun_platform: bool,
-    comptime is_inside_bundle: bool,
     comptime is_json: bool,
     comptime generate_source_map: bool,
 ) type {
@@ -950,12 +952,20 @@ fn NewPrinter(
             return .comma;
         }
 
-        pub inline fn printUndefined(p: *Printer, _: Level) void {
-            // void 0 is more efficient in output size
-            // however, "void 0" is the same as "undefined" is a point of confusion for many
-            // since we are optimizing for development, undefined is more clear.
-            // an ideal development bundler would output very readable code, even without source maps.
-            p.print("undefined");
+        pub inline fn printUndefined(p: *Printer, loc: logger.Loc, level: Level) void {
+            if (p.options.minify_syntax) {
+                if (level.gte(Level.prefix)) {
+                    p.addSourceMapping(loc);
+                    p.print("(void 0)");
+                } else {
+                    p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(loc);
+                    p.print("void 0");
+                }
+            } else {
+                p.addSourceMapping(loc);
+                p.print("undefined");
+            }
         }
 
         pub fn printBody(p: *Printer, stmt: Stmt) void {
@@ -1904,8 +1914,7 @@ fn NewPrinter(
             switch (expr.data) {
                 .e_missing => {},
                 .e_undefined => {
-                    p.addSourceMapping(expr.loc);
-                    p.printUndefined(level);
+                    p.printUndefined(expr.loc, level);
                 },
                 .e_super => {
                     p.printSpaceBeforeIdentifier();
@@ -2245,10 +2254,12 @@ fn NewPrinter(
                     }
                     p.printExpr(e.test_, .conditional, flags);
                     p.printSpace();
-                    p.print("? ");
+                    p.print("?");
+                    p.printSpace();
                     p.printExpr(e.yes, .yield, ExprFlag.None());
                     p.printSpace();
-                    p.print(": ");
+                    p.print(":");
+                    p.printSpace();
                     flags.insert(.forbid_in);
                     p.printExpr(e.no, .yield, flags);
                     if (wrap) {
@@ -2449,9 +2460,17 @@ fn NewPrinter(
                     }
                 },
                 .e_boolean => |e| {
-                    p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
-                    p.print(if (e.value) "true" else "false");
+                    if (p.options.minify_syntax) {
+                        if (level.gte(Level.prefix)) {
+                            p.print(if (e.value) "(!0)" else "(!1)");
+                        } else {
+                            p.print(if (e.value) "!0" else "!1");
+                        }
+                    } else {
+                        p.printSpaceBeforeIdentifier();
+                        p.print(if (e.value) "true" else "false");
+                    }
                 },
                 .e_string => |e| {
                     e.resovleRopeIfNeeded(p.options.allocator);
@@ -2586,13 +2605,12 @@ fn NewPrinter(
                     const symbol = p.symbols().get(ref).?;
 
                     if (symbol.import_item_status == .missing) {
-                        p.addSourceMapping(expr.loc);
-                        p.printUndefined(level);
+                        p.printUndefined(expr.loc, level);
                         didPrint = true;
                     } else if (symbol.namespace_alias) |namespace| {
                         if (namespace.import_record_index < p.import_records.len) {
                             const import_record = p.importRecord(namespace.import_record_index);
-                            if ((comptime is_inside_bundle) or import_record.is_legacy_bundled or namespace.was_originally_property_access) {
+                            if (import_record.is_legacy_bundled or namespace.was_originally_property_access) {
                                 var wrap = false;
                                 didPrint = true;
 
@@ -2604,6 +2622,7 @@ fn NewPrinter(
                                 if (wrap) {
                                     p.printWhitespacer(ws("(0, "));
                                 }
+                                p.printSpaceBeforeIdentifier();
                                 p.addSourceMapping(expr.loc);
                                 p.printNamespaceAlias(import_record.*, namespace);
 
@@ -2667,6 +2686,7 @@ fn NewPrinter(
                     }
 
                     if (!didPrint) {
+                        p.printSpaceBeforeIdentifier();
                         p.addSourceMapping(expr.loc);
                         p.printSymbol(e.ref);
                     }
@@ -2835,7 +2855,7 @@ fn NewPrinter(
                         p.printSpaceBeforeIdentifier();
                         p.print(entry.text);
                     } else {
-                        p.printSpaceBeforeIdentifier();
+                        p.printSpaceBeforeOperator(e.op);
                         p.print(entry.text);
                         p.prev_op = e.op;
                         p.prev_op_end = p.writer.written;
@@ -3576,20 +3596,10 @@ fn NewPrinter(
                 .s_export_default => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
-
-                    if (!is_inside_bundle) {
-                        p.print("export default");
-                    }
-
-                    p.printSpace();
+                    p.print("export default ");
 
                     switch (s.value) {
                         .expr => |expr| {
-                            // this is still necessary for JSON
-                            if (is_inside_bundle) {
-                                p.printModuleExportSymbol();
-                                p.@"print = "();
-                            }
 
                             // Functions and classes must be wrapped to avoid confusion with their statement forms
                             p.export_default_start = p.writer.written;
@@ -3602,12 +3612,6 @@ fn NewPrinter(
                             switch (s2.data) {
                                 .s_function => |func| {
                                     p.printSpaceBeforeIdentifier();
-                                    if (is_inside_bundle) {
-                                        if (func.func.name == null) {
-                                            p.printModuleExportSymbol();
-                                            p.@"print = "();
-                                        }
-                                    }
 
                                     if (func.func.flags.contains(.is_async)) {
                                         p.print("async ");
@@ -3627,29 +3631,10 @@ fn NewPrinter(
 
                                     p.printFunc(func.func);
 
-                                    if (is_inside_bundle) {
-                                        p.printSemicolonAfterStatement();
-                                    }
-
-                                    if (is_inside_bundle) {
-                                        if (func.func.name) |name| {
-                                            p.printIndent();
-                                            p.printBundledExport("default", p.renamer.nameForSymbol(name.ref.?));
-                                            p.printSemicolonAfterStatement();
-                                        }
-                                    } else {
-                                        p.printNewline();
-                                    }
+                                    p.printNewline();
                                 },
                                 .s_class => |class| {
                                     p.printSpaceBeforeIdentifier();
-
-                                    if (is_inside_bundle) {
-                                        if (class.class.class_name == null) {
-                                            p.printModuleExportSymbol();
-                                            p.@"print = "();
-                                        }
-                                    }
 
                                     if (class.class.class_name) |name| {
                                         p.print("class ");
@@ -3660,19 +3645,7 @@ fn NewPrinter(
 
                                     p.printClass(class.class);
 
-                                    if (is_inside_bundle) {
-                                        p.printSemicolonAfterStatement();
-                                    }
-
-                                    if (is_inside_bundle) {
-                                        if (class.class.class_name) |name| {
-                                            p.printIndent();
-                                            p.printBundledExport("default", p.renamer.nameForSymbol(name.ref.?));
-                                            p.printSemicolonAfterStatement();
-                                        }
-                                    } else {
-                                        p.printNewline();
-                                    }
+                                    p.printNewline();
                                 },
                                 else => {
                                     Global.panic("Internal error: unexpected export default stmt data {any}", .{s});
@@ -3682,30 +3655,6 @@ fn NewPrinter(
                     }
                 },
                 .s_export_star => |s| {
-                    if (is_inside_bundle) {
-                        p.printIndent();
-                        p.printSpaceBeforeIdentifier();
-
-                        // module.exports.react = $react();
-                        if (s.alias) |alias| {
-                            p.printBundledRexport(alias.original_name, s.import_record_index);
-                            p.printSemicolonAfterStatement();
-
-                            return;
-                            // module.exports = $react();
-                        } else {
-                            p.printSymbol(p.options.runtime_imports.__reExport.?.ref);
-                            p.print("(");
-                            p.printModuleExportSymbol();
-                            p.print(",");
-
-                            p.printLoadFromBundle(s.import_record_index);
-
-                            p.print(")");
-                            p.printSemicolonAfterStatement();
-                            return;
-                        }
-                    }
 
                     // Give an extra newline for readaiblity
                     if (!prev_stmt_tag.isExportLike()) {
@@ -3737,11 +3686,7 @@ fn NewPrinter(
 
                             // Object.assign(__export, {prop1, prop2, prop3});
                             else => {
-                                if (comptime is_inside_bundle) {
-                                    p.printSymbol(p.options.runtime_imports.__export.?.ref);
-                                } else {
-                                    p.print("Object.assign");
-                                }
+                                p.print("Object.assign");
 
                                 p.print("(");
                                 p.printModuleExportSymbol();
@@ -3757,7 +3702,7 @@ fn NewPrinter(
 
                                     if (symbol.namespace_alias) |namespace| {
                                         const import_record = p.importRecord(namespace.import_record_index);
-                                        if (import_record.is_legacy_bundled or (comptime is_inside_bundle) or namespace.was_originally_property_access) {
+                                        if (import_record.is_legacy_bundled or namespace.was_originally_property_access) {
                                             p.printIdentifier(name);
                                             p.print(": () => ");
                                             p.printNamespaceAlias(import_record.*, namespace);
@@ -3767,13 +3712,7 @@ fn NewPrinter(
 
                                     if (!did_print) {
                                         p.printClauseAlias(item.alias);
-                                        if (comptime is_inside_bundle) {
-                                            p.print(":");
-                                            p.printSpace();
-                                            p.print("() => ");
-
-                                            p.printIdentifier(name);
-                                        } else if (!strings.eql(name, item.alias)) {
+                                        if (!strings.eql(name, item.alias)) {
                                             p.print(":");
                                             p.printSpaceBeforeIdentifier();
                                             p.printIdentifier(name);
@@ -3828,7 +3767,7 @@ fn NewPrinter(
                                 if (p.symbols().get(item.name.ref.?)) |symbol| {
                                     if (symbol.namespace_alias) |namespace| {
                                         const import_record = p.importRecord(namespace.import_record_index);
-                                        if (import_record.is_legacy_bundled or (comptime is_inside_bundle) or namespace.was_originally_property_access) {
+                                        if (import_record.is_legacy_bundled or namespace.was_originally_property_access) {
                                             p.print("var ");
                                             p.printSymbol(item.name.ref.?);
                                             p.@"print = "();
@@ -3895,49 +3834,6 @@ fn NewPrinter(
                     p.printSemicolonAfterStatement();
                 },
                 .s_export_from => |s| {
-                    if (is_inside_bundle) {
-                        p.printIndent();
-                        // $$lz(export, $React(), {default: "React"});
-                        if (s.items.len == 1) {
-                            const item = s.items[0];
-                            p.printSymbol(p.options.runtime_imports.@"$$lzy".?.ref);
-                            p.print("(");
-                            p.printModuleExportSymbol();
-                            p.print(",");
-                            // Avoid initializing an entire component library because you imported one icon
-                            p.printLoadFromBundleWithoutCall(s.import_record_index);
-                            p.print(",{");
-                            p.printClauseAlias(item.alias);
-                            p.print(":");
-                            const name = p.renamer.nameForSymbol(item.name.ref.?);
-                            p.printQuotedUTF8(name, true);
-                            p.print("})");
-
-                            p.printSemicolonAfterStatement();
-                            // $$lz(export, $React(), {createElement: "React"});
-                        } else {
-                            p.printSymbol(p.options.runtime_imports.@"$$lzy".?.ref);
-                            p.print("(");
-                            p.printModuleExportSymbol();
-                            p.print(",");
-
-                            // Avoid initializing an entire component library because you imported one icon
-                            p.printLoadFromBundleWithoutCall(s.import_record_index);
-                            p.print(",{");
-                            for (s.items, 0..) |item, i| {
-                                p.printClauseAlias(item.alias);
-                                p.print(":");
-                                p.printQuotedUTF8(p.renamer.nameForSymbol(item.name.ref.?), true);
-                                if (i < s.items.len - 1) {
-                                    p.print(",");
-                                }
-                            }
-                            p.print("})");
-                            p.printSemicolonAfterStatement();
-                        }
-
-                        return;
-                    }
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
 
@@ -4037,13 +3933,13 @@ fn NewPrinter(
                 .s_local => |s| {
                     switch (s.kind) {
                         .k_const => {
-                            p.printDeclStmt(s.is_export, "const", s.decls);
+                            p.printDeclStmt(s.is_export, "const", s.decls.slice());
                         },
                         .k_let => {
-                            p.printDeclStmt(s.is_export, "let", s.decls);
+                            p.printDeclStmt(s.is_export, "let", s.decls.slice());
                         },
                         .k_var => {
-                            p.printDeclStmt(s.is_export, "var", s.decls);
+                            p.printDeclStmt(s.is_export, "var", s.decls.slice());
                         },
                     }
                 },
@@ -4353,10 +4249,6 @@ fn NewPrinter(
                         }
                     }
 
-                    if (is_inside_bundle) {
-                        return p.printBundledImport(record.*, s);
-                    }
-
                     if (record.do_commonjs_transform_in_printer or record.path.is_disabled) {
                         const require_ref = p.options.require_ref;
 
@@ -4428,9 +4320,11 @@ fn NewPrinter(
                         }
 
                         if (!record.path.is_disabled and std.mem.indexOfScalar(u32, p.imported_module_ids.items, module_id) == null) {
-                            p.printWhitespacer(ws("import * as "));
+                            p.printWhitespacer(ws("import * as"));
+                            p.print(" ");
                             p.printModuleId(module_id);
-                            p.printWhitespacer(ws(" from "));
+                            p.print(" ");
+                            p.printWhitespacer(ws("from "));
                             p.print("\"");
                             p.print(record.path.text);
                             p.print("\"");
@@ -4612,13 +4506,15 @@ fn NewPrinter(
                         }
                         p.printSpace();
 
-                        p.printWhitespacer(ws("* as "));
+                        p.printWhitespacer(ws("* as"));
+                        p.print(" ");
                         p.printSymbol(s.namespace_ref);
                         item_count += 1;
                     }
 
                     if (item_count > 0) {
-                        p.printWhitespacer(ws(" from "));
+                        p.print(" ");
+                        p.printWhitespacer(ws("from "));
                     }
 
                     p.printImportRecordPath(record);
@@ -4875,13 +4771,7 @@ fn NewPrinter(
                 return;
             }
 
-            // the require symbol may not exist in bundled code
-            // it is included at the top of the file.
-            if (comptime is_inside_bundle) {
-                p.print("__require");
-            } else {
-                p.printSymbol(p.options.runtime_imports.__require.?.ref);
-            }
+            p.printSymbol(p.options.runtime_imports.__require.?.ref);
 
             // d is for default
             p.print(".d(");
@@ -4928,13 +4818,13 @@ fn NewPrinter(
                 .s_local => |s| {
                     switch (s.kind) {
                         .k_var => {
-                            p.printDecls("var", s.decls, ExprFlag.Set.init(.{ .forbid_in = true }));
+                            p.printDecls("var", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
                         },
                         .k_let => {
-                            p.printDecls("let", s.decls, ExprFlag.Set.init(.{ .forbid_in = true }));
+                            p.printDecls("let", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
                         },
                         .k_const => {
-                            p.printDecls("const", s.decls, ExprFlag.Set.init(.{ .forbid_in = true }));
+                            p.printDecls("const", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
                         },
                     }
                 },
@@ -5054,23 +4944,6 @@ fn NewPrinter(
         }
 
         pub fn printDeclStmt(p: *Printer, is_export: bool, comptime keyword: string, decls: []G.Decl) void {
-            if (rewrite_esm_to_cjs and keyword[0] == 'v' and is_export and is_inside_bundle) {
-                // this is a top-level export
-                if (decls.len == 1 and
-                    std.meta.activeTag(decls[0].binding.data) == .b_identifier and
-                    decls[0].binding.data.b_identifier.ref.eql(p.options.bundle_export_ref.?))
-                {
-                    p.print("// ");
-                    p.print(p.options.source_path.?.pretty);
-                    p.print("\nexport var $");
-                    std.fmt.formatInt(p.options.module_hash, 16, .lower, .{}, p) catch unreachable;
-                    p.@"print = "();
-                    p.printExpr(decls[0].value.?, .comma, ExprFlag.None());
-                    p.printSemicolonAfterStatement();
-                    return;
-                }
-            }
-
             p.printIndent();
             p.printSpaceBeforeIdentifier();
 
@@ -5710,7 +5583,84 @@ pub fn printAst(
     opts: Options,
     comptime generate_source_map: bool,
 ) !usize {
-    var renamer = rename.NoOpRenamer.init(symbols, source);
+    var renamer: rename.Renamer = undefined;
+    var no_op_renamer: rename.NoOpRenamer = undefined;
+    var module_scope = tree.module_scope;
+    if (opts.minify_identifiers) {
+        const allocator = opts.allocator;
+        var reserved_names = try rename.computeInitialReservedNames(allocator);
+        for (module_scope.children.slice()) |child| {
+            child.parent = &module_scope;
+        }
+
+        rename.computeReservedNamesForScope(&module_scope, &symbols, &reserved_names, allocator);
+        var minify_renamer = try rename.MinifyRenamer.init(allocator, symbols, tree.nested_scope_slot_counts, reserved_names);
+
+        var top_level_symbols = rename.StableSymbolCount.Array.init(allocator);
+        defer top_level_symbols.deinit();
+
+        const uses_exports_ref = tree.uses_exports_ref;
+        const uses_module_ref = tree.uses_module_ref;
+        const exports_ref = tree.exports_ref;
+        const module_ref = tree.module_ref;
+        const parts = tree.parts;
+
+        const dont_break_the_code = .{
+            tree.module_ref,
+            tree.exports_ref,
+            tree.require_ref,
+        };
+
+        inline for (dont_break_the_code) |ref| {
+            if (symbols.get(ref)) |symbol| {
+                symbol.must_not_be_renamed = true;
+            }
+        }
+
+        for (tree.named_exports.values()) |named_export| {
+            if (symbols.get(named_export.ref)) |symbol| {
+                symbol.must_not_be_renamed = true;
+            }
+        }
+
+        if (uses_exports_ref) {
+            try minify_renamer.accumulateSymbolUseCount(&top_level_symbols, exports_ref, 1, &.{source.index.value});
+        }
+
+        if (uses_module_ref) {
+            try minify_renamer.accumulateSymbolUseCount(&top_level_symbols, module_ref, 1, &.{source.index.value});
+        }
+
+        for (parts.slice()) |part| {
+            try minify_renamer.accumulateSymbolUseCounts(&top_level_symbols, part.symbol_uses, &.{source.index.value});
+
+            for (part.declared_symbols.refs()) |declared_ref| {
+                try minify_renamer.accumulateSymbolUseCount(&top_level_symbols, declared_ref, 1, &.{source.index.value});
+            }
+        }
+
+        std.sort.sort(rename.StableSymbolCount, top_level_symbols.items, {}, rename.StableSymbolCount.lessThan);
+
+        try minify_renamer.allocateTopLevelSymbolSlots(top_level_symbols);
+        var minifier = tree.char_freq.?.compile(allocator);
+        try minify_renamer.assignNamesByFrequency(&minifier);
+
+        renamer = minify_renamer.toRenamer();
+    } else {
+        no_op_renamer = rename.NoOpRenamer.init(symbols, source);
+        renamer = no_op_renamer.toRenamer();
+    }
+
+    defer {
+        if (opts.minify_identifiers) {
+            for (&renamer.MinifyRenamer.slots.values) |*val| {
+                val.deinit();
+            }
+            renamer.MinifyRenamer.reserved_names.deinit(opts.allocator);
+            renamer.MinifyRenamer.top_level_symbol_to_slot.deinit(opts.allocator);
+            opts.allocator.destroy(renamer.MinifyRenamer);
+        }
+    }
 
     const PrinterType = NewPrinter(
         ascii_only,
@@ -5718,7 +5668,6 @@ pub fn printAst(
         false,
         // if it's ascii_only, it is also bun
         ascii_only,
-        false,
         false,
         generate_source_map,
     );
@@ -5728,7 +5677,7 @@ pub fn printAst(
         writer,
         tree.import_records.slice(),
         opts,
-        renamer.toRenamer(),
+        renamer,
         getSourceMapBuilder(generate_source_map, ascii_only, opts, source, &tree),
     );
     defer {
@@ -5736,21 +5685,21 @@ pub fn printAst(
     }
     if (tree.prepend_part) |part| {
         for (part.stmts) |stmt| {
-            printer.printSemicolonIfNeeded();
             try printer.printStmt(stmt);
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }
+            printer.printSemicolonIfNeeded();
         }
     }
 
     for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
-            printer.printSemicolonIfNeeded();
             try printer.printStmt(stmt);
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }
+            printer.printSemicolonIfNeeded();
         }
     }
 
@@ -5771,7 +5720,7 @@ pub fn printJSON(
     expr: Expr,
     source: *const logger.Source,
 ) !usize {
-    const PrinterType = NewPrinter(false, Writer, false, false, false, true, false);
+    const PrinterType = NewPrinter(false, Writer, false, false, true, false);
     var writer = _writer;
     var s_expr = S.SExpr{ .value = expr };
     var stmt = Stmt{ .loc = logger.Loc.Empty, .data = .{
@@ -5862,7 +5811,6 @@ pub fn printWithWriterAndPlatform(
         is_bun_platform,
         false,
         false,
-        false,
     );
     var writer = _writer;
     var printer = PrinterType.init(
@@ -5880,13 +5828,13 @@ pub fn printWithWriterAndPlatform(
 
     for (parts) |part| {
         for (part.stmts) |stmt| {
-            printer.printSemicolonIfNeeded();
             printer.printStmt(stmt) catch |err| {
                 return .{ .err = err };
             };
             if (printer.writer.getError()) {} else |err| {
                 return .{ .err = err };
             }
+            printer.printSemicolonIfNeeded();
         }
     }
 
@@ -5910,7 +5858,7 @@ pub fn printCommonJS(
     opts: Options,
     comptime generate_source_map: bool,
 ) !usize {
-    const PrinterType = NewPrinter(ascii_only, Writer, true, false, false, false, generate_source_map);
+    const PrinterType = NewPrinter(ascii_only, Writer, true, false, false, generate_source_map);
     var writer = _writer;
     var renamer = rename.NoOpRenamer.init(symbols, source);
     var printer = PrinterType.init(
@@ -5926,20 +5874,20 @@ pub fn printCommonJS(
 
     if (tree.prepend_part) |part| {
         for (part.stmts) |stmt| {
-            printer.printSemicolonIfNeeded();
             try printer.printStmt(stmt);
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }
+            printer.printSemicolonIfNeeded();
         }
     }
     for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
-            printer.printSemicolonIfNeeded();
             try printer.printStmt(stmt);
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }
+            printer.printSemicolonIfNeeded();
         }
     }
 
@@ -5989,7 +5937,7 @@ pub fn printCommonJSThreaded(
     comptime getPos: fn (ctx: GetPosType) anyerror!u64,
     end_off_ptr: *u32,
 ) !WriteResult {
-    const PrinterType = NewPrinter(ascii_only, Writer, true, ascii_only, true, false, false);
+    const PrinterType = NewPrinter(ascii_only, Writer, true, ascii_only, false, false);
     var writer = _writer;
     var renamer = rename.NoOpRenamer.init(symbols, source);
     var printer = PrinterType.init(
@@ -6005,21 +5953,21 @@ pub fn printCommonJSThreaded(
     }
     if (tree.prepend_part) |part| {
         for (part.stmts) |stmt| {
-            printer.printSemicolonIfNeeded();
             try printer.printStmt(stmt);
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }
+            printer.printSemicolonIfNeeded();
         }
     }
 
     for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
-            printer.printSemicolonIfNeeded();
             try printer.printStmt(stmt);
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }
+            printer.printSemicolonIfNeeded();
         }
     }
 

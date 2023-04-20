@@ -144,7 +144,6 @@ fn NewLexer_(
         is_legacy_octal_literal: bool = false,
         is_log_disabled: bool = false,
         comments_to_preserve_before: std.ArrayList(js_ast.G.Comment),
-        all_original_comments: ?[]js_ast.G.Comment = null,
         code_point: CodePoint = -1,
         identifier: []const u8 = "",
         jsx_pragma: JSXPragma = .{},
@@ -165,6 +164,8 @@ fn NewLexer_(
         /// Only used for JSON stringification when bundling
         /// This is a zero-bit type unless we're parsing JSON.
         is_ascii_only: JSONBool = JSONBoolDefault,
+        track_comments: bool = false,
+        all_comments: std.ArrayList(logger.Range),
 
         pub fn clone(self: *const LexerType) LexerType {
             return LexerType{
@@ -183,7 +184,6 @@ fn NewLexer_(
                 .is_legacy_octal_literal = self.is_legacy_octal_literal,
                 .is_log_disabled = self.is_log_disabled,
                 .comments_to_preserve_before = self.comments_to_preserve_before,
-                .all_original_comments = self.all_original_comments,
                 .code_point = self.code_point,
                 .identifier = self.identifier,
                 .regex_flags_start = self.regex_flags_start,
@@ -198,6 +198,7 @@ fn NewLexer_(
                 .string_literal = self.string_literal,
                 .string_literal_is_ascii = self.string_literal_is_ascii,
                 .is_ascii_only = self.is_ascii_only,
+                .all_comments = self.all_comments,
             };
         }
 
@@ -276,7 +277,10 @@ fn NewLexer_(
             return @enumToInt(lexer.token) >= @enumToInt(T.t_identifier);
         }
 
-        pub fn deinit(_: *LexerType) void {}
+        pub fn deinit(this: *LexerType) void {
+            this.all_comments.clearAndFree();
+            this.comments_to_preserve_before.clearAndFree();
+        }
 
         fn decodeEscapeSequences(lexer: *LexerType, start: usize, text: string, comptime BufType: type, buf_: *BufType) !void {
             var buf = buf_.*;
@@ -1816,6 +1820,11 @@ fn NewLexer_(
             const has_legal_annotation = text.len > 2 and text[2] == '!';
             const is_multiline_comment = text.len > 1 and text[1] == '*';
 
+            if (lexer.track_comments)
+                // Save the original comment text so we can subtract comments from the
+                // character frequency analysis used by symbol minification
+                lexer.all_comments.append(lexer.range()) catch unreachable;
+
             // Omit the trailing "*/" from the checks below
             const end_comment_text =
                 if (is_multiline_comment)
@@ -1974,6 +1983,7 @@ fn NewLexer_(
                 .string_literal_is_ascii = true,
                 .allocator = allocator,
                 .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
+                .all_comments = std.ArrayList(logger.Range).init(allocator),
             };
             lex.step();
             try lex.next();
@@ -1991,6 +2001,7 @@ fn NewLexer_(
                 .prev_error_loc = logger.Loc.Empty,
                 .allocator = allocator,
                 .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
+                .all_comments = std.ArrayList(logger.Range).init(allocator),
             };
             lex.step();
             try lex.next();
@@ -2008,6 +2019,7 @@ fn NewLexer_(
                 .prev_error_loc = logger.Loc.Empty,
                 .allocator = allocator,
                 .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
+                .all_comments = std.ArrayList(logger.Range).init(allocator),
             };
         }
 

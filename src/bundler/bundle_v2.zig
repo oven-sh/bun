@@ -1,5 +1,4 @@
 const Bundler = bun.Bundler;
-const GenerateNodeModulesBundle = @This();
 const bun = @import("root").bun;
 const from = bun.from;
 const string = bun.string;
@@ -76,6 +75,8 @@ const B = js_ast.B;
 const Binding = js_ast.Binding;
 const AutoBitSet = bun.bit_set.AutoBitSet;
 const renamer = bun.renamer;
+const StableSymbolCount = renamer.StableSymbolCount;
+const MinifyRenamer = renamer.MinifyRenamer;
 const Scope = js_ast.Scope;
 const JSC = bun.JSC;
 const debugTreeShake = Output.scoped(.TreeShake, true);
@@ -414,6 +415,11 @@ pub const BundleV2 = struct {
         generator.linker.resolver = &generator.bundler.resolver;
         generator.linker.graph.code_splitting = bundler.options.code_splitting;
         generator.graph.code_splitting = bundler.options.code_splitting;
+
+        generator.linker.options.minify_syntax = bundler.options.minify_syntax;
+        generator.linker.options.minify_identifiers = bundler.options.minify_identifiers;
+        generator.linker.options.minify_whitespace = bundler.options.minify_whitespace;
+
         var pool = try generator.graph.allocator.create(ThreadPool);
         if (enable_reloading) {
             Watcher.enableHotModuleReloading(generator);
@@ -973,6 +979,7 @@ const ParseTask = struct {
         opts.features.trim_unused_imports = loader.isTypeScript() or (bundler.options.trim_unused_imports orelse false);
         opts.features.inlining = bundler.options.minify_syntax;
         opts.features.minify_syntax = bundler.options.minify_syntax;
+        opts.features.minify_identifiers = bundler.options.minify_identifiers;
         opts.features.should_fold_typescript_constant_expressions = opts.features.inlining or loader.isTypeScript();
 
         opts.tree_shaking = task.tree_shaking;
@@ -2064,6 +2071,7 @@ const LinkerContext = struct {
         tree_shaking: bool = true,
         minify_whitespace: bool = false,
         minify_syntax: bool = false,
+        minify_identifiers: bool = false,
 
         mode: Mode = Mode.bundle,
 
@@ -2639,10 +2647,8 @@ const LinkerContext = struct {
                             S.Local,
                             S.Local{
                                 .is_export = true,
-                                .decls = bun.fromSlice(
-                                    []js_ast.G.Decl,
+                                .decls = js_ast.G.Decl.List.fromSlice(
                                     this.allocator,
-                                    []const js_ast.G.Decl,
                                     &.{
                                         .{
                                             .binding = Binding.alloc(
@@ -3624,7 +3630,7 @@ const LinkerContext = struct {
                 allocator_,
                 js_ast.S.Local,
                 .{
-                    .decls = decls,
+                    .decls = G.Decl.List.init(decls),
                 },
                 loc,
             );
@@ -4290,7 +4296,7 @@ const LinkerContext = struct {
 
                         for (stable_ref_list.items, clause_items.slice()) |stable_ref, *clause_item| {
                             const ref = stable_ref.ref;
-                            const alias = r.nextRenamedName(c.graph.symbols.get(ref).?.original_name);
+                            const alias = if (c.options.minify_identifiers) try r.nextMinifiedName(c.allocator) else r.nextRenamedName(c.graph.symbols.get(ref).?.original_name);
 
                             clause_item.* = .{
                                 .name = .{
@@ -4411,59 +4417,135 @@ const LinkerContext = struct {
         chunk: *Chunk,
         files_in_order: []const u32,
     ) !renamer.Renamer {
-
-        // TODO: minify identifiers
         const all_module_scopes = c.graph.ast.items(.module_scope);
         const all_flags: []const JSMeta.Flags = c.graph.meta.items(.flags);
         const all_parts: []const js_ast.Part.List = c.graph.ast.items(.parts);
         const all_wrapper_refs: []const Ref = c.graph.ast.items(.wrapper_ref);
         const all_import_records: []const ImportRecord.List = c.graph.ast.items(.import_records);
 
+        var reserved_names = try renamer.computeInitialReservedNames(allocator);
+        for (files_in_order) |source_index| {
+            renamer.computeReservedNamesForScope(&all_module_scopes[source_index], &c.graph.symbols, &reserved_names, allocator);
+        }
+
+        var sorted_imports_from_other_chunks: std.ArrayList(StableRef) = brk: {
+            var list = std.ArrayList(StableRef).init(allocator);
+            var count: u32 = 0;
+            var imports_from_other_chunks = chunk.content.javascript.imports_from_other_chunks.values();
+            for (imports_from_other_chunks) |item| {
+                count += item.len;
+            }
+
+            list.ensureTotalCapacityPrecise(count) catch unreachable;
+            list.items.len = count;
+            var remain = list.items;
+            const stable_source_indices = c.graph.stable_source_indices;
+            for (imports_from_other_chunks) |item| {
+                for (item.slice()) |ref| {
+                    remain[0] = StableRef{
+                        .stable_source_index = stable_source_indices[ref.ref.sourceIndex()],
+                        .ref = ref.ref,
+                    };
+                    remain = remain[1..];
+                }
+            }
+
+            std.sort.sort(StableRef, list.items, {}, StableRef.isLessThan);
+            break :brk list;
+        };
+        defer sorted_imports_from_other_chunks.deinit();
+
+        if (c.options.minify_identifiers) {
+            const first_top_level_slots: js_ast.SlotCounts = brk: {
+                var slots = js_ast.SlotCounts{};
+                const nested_scope_slot_counts = c.graph.ast.items(.nested_scope_slot_counts);
+                for (files_in_order) |i| {
+                    slots.unionMax(nested_scope_slot_counts[i]);
+                }
+                break :brk slots;
+            };
+
+            var minify_renamer = try MinifyRenamer.init(allocator, c.graph.symbols, first_top_level_slots, reserved_names);
+
+            var top_level_symbols = renamer.StableSymbolCount.Array.init(allocator);
+            defer top_level_symbols.deinit();
+
+            var top_level_symbols_all = renamer.StableSymbolCount.Array.init(allocator);
+
+            var stable_source_indices = c.graph.stable_source_indices;
+            var freq = js_ast.CharFreq{
+                .freqs = [_]i32{0} ** 64,
+            };
+            var capacity = sorted_imports_from_other_chunks.items.len;
+            {
+                const char_freqs = c.graph.ast.items(.char_freq);
+                for (files_in_order) |source_index| {
+                    if (char_freqs[source_index]) |char_freq| {
+                        freq.include(char_freq);
+                    }
+                }
+            }
+
+            const uses_exports_ref_list = c.graph.ast.items(.uses_exports_ref);
+            const uses_module_ref_list = c.graph.ast.items(.uses_module_ref);
+            const exports_ref_list = c.graph.ast.items(.exports_ref);
+            const module_ref_list = c.graph.ast.items(.module_ref);
+            const parts_list = c.graph.ast.items(.parts);
+
+            for (files_in_order) |source_index| {
+                const uses_exports_ref = uses_exports_ref_list[source_index];
+                const uses_module_ref = uses_module_ref_list[source_index];
+                const exports_ref = exports_ref_list[source_index];
+                const module_ref = module_ref_list[source_index];
+                const parts = parts_list[source_index];
+
+                top_level_symbols.clearRetainingCapacity();
+
+                if (uses_exports_ref) {
+                    try minify_renamer.accumulateSymbolUseCount(&top_level_symbols, exports_ref, 1, stable_source_indices);
+                }
+                if (uses_module_ref) {
+                    try minify_renamer.accumulateSymbolUseCount(&top_level_symbols, module_ref, 1, stable_source_indices);
+                }
+
+                for (parts.slice()) |part| {
+                    if (!part.is_live) {
+                        continue;
+                    }
+
+                    try minify_renamer.accumulateSymbolUseCounts(&top_level_symbols, part.symbol_uses, stable_source_indices);
+
+                    for (part.declared_symbols.refs()) |declared_ref| {
+                        try minify_renamer.accumulateSymbolUseCount(&top_level_symbols, declared_ref, 1, stable_source_indices);
+                    }
+                }
+
+                std.sort.sort(renamer.StableSymbolCount, top_level_symbols.items, {}, StableSymbolCount.lessThan);
+                capacity += top_level_symbols.items.len;
+                top_level_symbols_all.appendSlice(top_level_symbols.items) catch unreachable;
+            }
+
+            top_level_symbols.clearRetainingCapacity();
+            for (sorted_imports_from_other_chunks.items) |stable| {
+                try minify_renamer.accumulateSymbolUseCount(&top_level_symbols, stable.ref, 1, stable_source_indices);
+            }
+            top_level_symbols_all.appendSlice(top_level_symbols.items) catch unreachable;
+            try minify_renamer.allocateTopLevelSymbolSlots(top_level_symbols_all);
+
+            var minifier = freq.compile(allocator);
+            try minify_renamer.assignNamesByFrequency(&minifier);
+
+            return minify_renamer.toRenamer();
+        }
+
         var r = try renamer.NumberRenamer.init(
             allocator,
             allocator,
             c.graph.symbols,
-            brk: {
-                var reserved_names = try renamer.computeInitialReservedNames(allocator);
-
-                for (files_in_order) |source_index| {
-                    renamer.computeReservedNamesForScope(&all_module_scopes[source_index], &c.graph.symbols, &reserved_names, allocator);
-                }
-
-                break :brk reserved_names;
-            },
+            reserved_names,
         );
-        {
-            var sorted_imports_from_other_chunks: std.ArrayList(StableRef) = brk: {
-                var list = std.ArrayList(StableRef).init(allocator);
-                var count: u32 = 0;
-                var imports_from_other_chunks = chunk.content.javascript.imports_from_other_chunks.values();
-                for (imports_from_other_chunks) |item| {
-                    count += item.len;
-                }
-
-                list.ensureTotalCapacityPrecise(count) catch unreachable;
-                list.items.len = count;
-                var remain = list.items;
-                const stable_source_indices = c.graph.stable_source_indices;
-                for (imports_from_other_chunks) |item| {
-                    for (item.slice()) |ref| {
-                        remain[0] = StableRef{
-                            .stable_source_index = stable_source_indices[ref.ref.sourceIndex()],
-                            .ref = ref.ref,
-                        };
-                        remain = remain[1..];
-                    }
-                }
-
-                std.sort.sort(StableRef, list.items, {}, StableRef.isLessThan);
-                break :brk list;
-            };
-            defer sorted_imports_from_other_chunks.deinit();
-
-            for (sorted_imports_from_other_chunks.items) |stable_ref| {
-                r.addTopLevelSymbol(stable_ref.ref);
-            }
+        for (sorted_imports_from_other_chunks.items) |stable_ref| {
+            r.addTopLevelSymbol(stable_ref.ref);
         }
 
         var sorted_ = std.ArrayList(u32).init(r.temp_allocator);
@@ -4677,6 +4759,8 @@ const LinkerContext = struct {
                 .allocator = allocator,
                 .require_ref = runtimeRequireRef,
                 .minify_whitespace = c.options.minify_whitespace,
+                .minify_identifiers = c.options.minify_identifiers,
+                .minify_syntax = c.options.minify_syntax,
                 .const_values = c.graph.const_values,
             };
 
@@ -5135,10 +5219,8 @@ const LinkerContext = struct {
                                         Stmt.alloc(
                                             S.Local,
                                             .{
-                                                .decls = bun.fromSlice(
-                                                    []js_ast.G.Decl,
+                                                .decls = js_ast.G.Decl.List.fromSlice(
                                                     temp_allocator,
-                                                    []const js_ast.G.Decl,
                                                     &.{
                                                         .{
                                                             .binding = Binding.alloc(
@@ -5302,6 +5384,7 @@ const LinkerContext = struct {
             .require_or_import_meta_for_source_callback = js_printer.RequireOrImportMeta.Callback.init(LinkerContext, requireOrImportMetaForSource, c),
 
             .minify_whitespace = c.options.minify_whitespace,
+            .minify_syntax = c.options.minify_syntax,
             .const_values = c.graph.const_values,
         };
 
@@ -5355,6 +5438,46 @@ const LinkerContext = struct {
         }
     };
 
+    fn mergeAdjacentLocalStmts(stmts: *std.ArrayList(Stmt), allocator: std.mem.Allocator) void {
+        if (stmts.items.len == 0)
+            return;
+
+        var did_merge_with_previous_local = false;
+        var end: usize = 1;
+
+        for (stmts.items[1..]) |stmt| {
+            // Try to merge with the previous variable statement
+            if (stmt.data == .s_local) {
+                var after = stmt.data.s_local;
+                if (stmts.items[end - 1].data == .s_local) {
+                    var before = stmts.items[end - 1].data.s_local;
+                    // It must be the same kind of variable statement (i.e. let/var/const)
+                    if (before.kind == after.kind and before.is_export == after.is_export) {
+                        if (did_merge_with_previous_local) {
+                            // Avoid O(n^2) behavior for repeated variable declarations
+                            // Appending to this decls list is safe because did_merge_with_previous_local is true
+                            before.decls.append(allocator, after.decls.slice()) catch unreachable;
+                        } else {
+                            // Append the declarations to the previous variable statement
+                            did_merge_with_previous_local = true;
+
+                            var clone = std.ArrayList(G.Decl).initCapacity(allocator, before.decls.len + after.decls.len) catch unreachable;
+                            clone.appendSliceAssumeCapacity(before.decls.slice());
+                            clone.appendSliceAssumeCapacity(after.decls.slice());
+                            before.decls.update(clone);
+                        }
+                        continue;
+                    }
+                }
+            }
+
+            did_merge_with_previous_local = false;
+            stmts.items[end] = stmt;
+            end += 1;
+        }
+        stmts.items.len = end;
+    }
+
     fn shouldRemoveImportExportStmt(
         c: *LinkerContext,
         stmts: *StmtList,
@@ -5380,10 +5503,8 @@ const LinkerContext = struct {
                 Stmt.alloc(
                     S.Local,
                     S.Local{
-                        .decls = try bun.fromSlice(
-                            []G.Decl,
+                        .decls = G.Decl.List.fromSlice(
                             allocator,
-                            []const G.Decl,
                             &.{
                                 .{
                                     .binding = Binding.alloc(
@@ -5402,7 +5523,7 @@ const LinkerContext = struct {
                                     ),
                                 },
                             },
-                        ),
+                        ) catch unreachable,
                     },
                     record.range.loc,
                 ),
@@ -5425,10 +5546,8 @@ const LinkerContext = struct {
                     Stmt.alloc(
                         S.Local,
                         S.Local{
-                            .decls = try bun.fromSlice(
-                                []G.Decl,
+                            .decls = try G.Decl.List.fromSlice(
                                 allocator,
-                                []const G.Decl,
                                 &.{
                                     .{
                                         .binding = Binding.alloc(
@@ -5902,7 +6021,7 @@ const LinkerContext = struct {
                             stmt.data.s_local.is_export = false;
                         } else if (FeatureFlags.unwrap_commonjs_to_esm and s.was_commonjs_export and wrap == .cjs) {
                             std.debug.assert(stmt.data.s_local.decls.len == 1);
-                            const decl = stmt.data.s_local.decls[0];
+                            const decl = stmt.data.s_local.decls.ptr[0];
                             stmt = Stmt.alloc(
                                 S.SExpr,
                                 S.SExpr{
@@ -5939,10 +6058,8 @@ const LinkerContext = struct {
                                             stmt = Stmt.alloc(
                                                 S.Local,
                                                 S.Local{
-                                                    .decls = try bun.fromSlice(
-                                                        []js_ast.G.Decl,
+                                                    .decls = try G.Decl.List.fromSlice(
                                                         allocator,
-                                                        []const js_ast.G.Decl,
                                                         &.{
                                                             .{
                                                                 .binding = Binding.alloc(
@@ -6004,10 +6121,8 @@ const LinkerContext = struct {
                                     stmt = Stmt.alloc(
                                         S.Local,
                                         S.Local{
-                                            .decls = try bun.fromSlice(
-                                                []js_ast.G.Decl,
+                                            .decls = try G.Decl.List.fromSlice(
                                                 allocator,
-                                                []const js_ast.G.Decl,
                                                 &.{
                                                     .{
                                                         .binding = Binding.alloc(
@@ -6247,6 +6362,10 @@ const LinkerContext = struct {
         stmts.inside_wrapper_prefix.items.len = 0;
         stmts.inside_wrapper_suffix.items.len = 0;
 
+        if (c.options.minify_syntax) {
+            mergeAdjacentLocalStmts(&stmts.all_stmts, temp_allocator);
+        }
+
         // TODO: mergeAdjacentLocalStmts
 
         var out_stmts: []js_ast.Stmt = stmts.all_stmts.items;
@@ -6338,7 +6457,7 @@ const LinkerContext = struct {
                             Stmt.alloc(
                                 S.Local,
                                 S.Local{
-                                    .decls = decls,
+                                    .decls = G.Decl.List.init(decls),
                                 },
                                 Logger.Loc.Empty,
                             ),
@@ -6390,7 +6509,7 @@ const LinkerContext = struct {
                                 .s_local => |local| {
                                     if (local.was_commonjs_export or ast.commonjs_named_exports.count() == 0) {
                                         var value: Expr = Expr.init(E.Missing, E.Missing{}, Logger.Loc.Empty);
-                                        for (local.decls) |*decl| {
+                                        for (local.decls.slice()) |*decl| {
                                             const binding = decl.binding.toExpr(&hoisty);
                                             if (decl.value) |other| {
                                                 value = value.joinWithComma(
@@ -6432,7 +6551,7 @@ const LinkerContext = struct {
                             Stmt.alloc(
                                 S.Local,
                                 S.Local{
-                                    .decls = hoisty.decls.items,
+                                    .decls = G.Decl.List.fromList(hoisty.decls),
                                 },
                                 Logger.Loc.Empty,
                             ),
@@ -6488,7 +6607,7 @@ const LinkerContext = struct {
                             Stmt.alloc(
                                 S.Local,
                                 S.Local{
-                                    .decls = decls,
+                                    .decls = G.Decl.List.init(decls),
                                 },
                                 Logger.Loc.Empty,
                             ),
@@ -6525,6 +6644,8 @@ const LinkerContext = struct {
             .commonjs_named_exports_ref = ast.exports_ref,
             .commonjs_named_exports_deoptimized = flags.wrap == .cjs,
             .const_values = c.graph.const_values,
+            .minify_whitespace = c.options.minify_whitespace,
+            .minify_syntax = c.options.minify_syntax,
 
             .allocator = allocator,
             .to_esm_ref = toESMRef,

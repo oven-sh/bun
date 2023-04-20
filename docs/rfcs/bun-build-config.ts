@@ -51,7 +51,7 @@ export interface BuildConfig extends BundlerConfig {
 }
 
 export interface BundlerConfig {
-  name?: string; // default "default"
+  label?: string; // default "default"
   bundle?: boolean; // default true
   splitting?: boolean;
   plugins?: BunPlugin[];

@@ -165,6 +165,8 @@ fn NewLexer_(
         /// This is a zero-bit type unless we're parsing JSON.
         is_ascii_only: JSONBool = JSONBoolDefault,
 
+        all_comments: std.ArrayList(logger.Range),
+
         pub fn clone(self: *const LexerType) LexerType {
             return LexerType{
                 .log = self.log,
@@ -196,6 +198,7 @@ fn NewLexer_(
                 .string_literal = self.string_literal,
                 .string_literal_is_ascii = self.string_literal_is_ascii,
                 .is_ascii_only = self.is_ascii_only,
+                .all_comments = self.all_comments,
             };
         }
 
@@ -1814,6 +1817,10 @@ fn NewLexer_(
             const has_legal_annotation = text.len > 2 and text[2] == '!';
             const is_multiline_comment = text.len > 1 and text[1] == '*';
 
+            // Save the original comment text so we can subtract comments from the
+            // character frequency analysis used by symbol minification
+            lexer.all_comments.append(lexer.range()) catch unreachable;
+
             // Omit the trailing "*/" from the checks below
             const end_comment_text =
                 if (is_multiline_comment)
@@ -1972,6 +1979,7 @@ fn NewLexer_(
                 .string_literal_is_ascii = true,
                 .allocator = allocator,
                 .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
+                .all_comments = std.ArrayList(logger.Range).init(allocator),
             };
             lex.step();
             try lex.next();
@@ -1989,6 +1997,7 @@ fn NewLexer_(
                 .prev_error_loc = logger.Loc.Empty,
                 .allocator = allocator,
                 .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
+                .all_comments = std.ArrayList(logger.Range).init(allocator),
             };
             lex.step();
             try lex.next();
@@ -2006,6 +2015,7 @@ fn NewLexer_(
                 .prev_error_loc = logger.Loc.Empty,
                 .allocator = allocator,
                 .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
+                .all_comments = std.ArrayList(logger.Range).init(allocator),
             };
         }
 

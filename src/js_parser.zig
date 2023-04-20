@@ -5393,8 +5393,8 @@ fn NewParser_(
             freq.scan(p.source.contents, 1);
 
             // Subtract out all comments
-            for (p.lexer.comments_to_preserve_before.items) |comment| {
-                freq.scan(comment.text, -1);
+            for (p.lexer.all_comments.items) |comment_range| {
+                freq.scan(p.source.textForRange(comment_range), -1);
             }
 
             // Subtract out all import paths

@@ -27,7 +27,6 @@ const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const bundler = bun.bundler;
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
-const GenerateNodeModuleBundle = @import("../bundler/generate_node_modules_bundle.zig");
 const DotEnv = @import("../env_loader.zig");
 
 const fs = @import("../fs.zig");

@@ -1,5 +1,4 @@
 const Bundler = bun.Bundler;
-const GenerateNodeModulesBundle = @This();
 const bun = @import("root").bun;
 const from = bun.from;
 const string = bun.string;

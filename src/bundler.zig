@@ -738,8 +738,6 @@ pub const Bundler = struct {
         Output.flush();
     }
 
-    pub const GenerateNodeModulesBundle = @import("./bundler/generate_node_modules_bundle.zig");
-
     pub const BuildResolveResultPair = struct {
         written: usize,
         input_fd: ?StoredFileDescriptorType,

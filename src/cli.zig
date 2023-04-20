@@ -165,6 +165,10 @@ pub const Arguments = struct {
         clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: jsx, js, json, tsx, ts, css") catch unreachable,
         clap.parseParam("-u, --origin <STR>                Rewrite import URLs to start with --origin. Default: \"\"") catch unreachable,
         clap.parseParam("-p, --port <STR>                  Port to serve bun's dev server on. Default: \"3000\"") catch unreachable,
+        clap.parseParam("--minify                          Minify (experimental)") catch unreachable,
+        clap.parseParam("--minify-syntax                   Minify syntax and inline data (experimental)") catch unreachable,
+        clap.parseParam("--minify-whitespace               Minify whitespace (experimental)") catch unreachable,
+        clap.parseParam("--minify-identifiers              Minify identifiers") catch unreachable,
         clap.parseParam("<POS>...                          ") catch unreachable,
     };
 
@@ -208,10 +212,6 @@ pub const Arguments = struct {
         clap.parseParam("--server-components        Enable React Server Components (experimental)") catch unreachable,
         clap.parseParam("--splitting                      Split up code!") catch unreachable,
         clap.parseParam("--transform                      Do not bundle") catch unreachable,
-        clap.parseParam("--minify                         Minify (experimental)") catch unreachable,
-        clap.parseParam("--minify-syntax                  Minify syntax and inline data (experimental)") catch unreachable,
-        clap.parseParam("--minify-whitespace              Minify whitespace (experimental)") catch unreachable,
-        clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
     };
 
     // TODO: update test completions
@@ -478,12 +478,14 @@ pub const Arguments = struct {
         const production = false;
         var output_file: ?string = null;
 
+        const minify_flag = args.flag("--minify");
+        ctx.bundler_options.minify_syntax = minify_flag or args.flag("--minify-syntax");
+        ctx.bundler_options.minify_whitespace = minify_flag or args.flag("--minify-whitespace");
+        ctx.bundler_options.minify_identifiers = minify_flag or args.flag("--minify-identifiers");
+
         if (cmd == .BuildCommand) {
             ctx.bundler_options.transform_only = args.flag("--transform");
-            const minify_flag = args.flag("--minify");
-            ctx.bundler_options.minify_syntax = minify_flag or args.flag("--minify-syntax");
-            ctx.bundler_options.minify_whitespace = minify_flag or args.flag("--minify-whitespace");
-            ctx.bundler_options.minify_identifiers = minify_flag or args.flag("--minify-identifiers");
+
             if (args.option("--outdir")) |outdir| {
                 if (outdir.len > 0) {
                     ctx.bundler_options.outdir = outdir;

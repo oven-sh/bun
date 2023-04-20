@@ -82,6 +82,13 @@ pub const Run = struct {
         b.options.prefer_latest_install = b.resolver.opts.prefer_latest_install;
         b.resolver.env_loader = b.env;
 
+        b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
+        b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
+        b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
+        b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
+
+        // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
+
         if (ctx.debug.macros) |macros| {
             b.options.macro_remap = macros;
         }

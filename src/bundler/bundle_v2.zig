@@ -5462,8 +5462,8 @@ const LinkerContext = struct {
                             did_merge_with_previous_local = true;
 
                             var clone = std.ArrayList(G.Decl).initCapacity(allocator, before.decls.len + after.decls.len) catch unreachable;
-                            clone.appendSliceAssumeCapacity(before.decls.slice()) catch unreachable;
-                            clone.appendSliceAssumeCapacity(after.decls.slice()) catch unreachable;
+                            clone.appendSliceAssumeCapacity(before.decls.slice());
+                            clone.appendSliceAssumeCapacity(after.decls.slice());
                             before.decls.update(clone);
                         }
                         continue;

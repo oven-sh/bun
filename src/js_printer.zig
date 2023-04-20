@@ -5578,7 +5578,68 @@ pub fn printAst(
     opts: Options,
     comptime generate_source_map: bool,
 ) !usize {
-    var renamer = rename.NoOpRenamer.init(symbols, source);
+    var renamer: rename.Renamer = undefined;
+    var no_op_renamer: rename.NoOpRenamer = undefined;
+    var module_scope = tree.module_scope;
+    if (opts.minify_identifiers) {
+        const allocator = opts.allocator;
+        var reserved_names = try rename.computeInitialReservedNames(allocator);
+        for (module_scope.children.slice()) |child| {
+            child.parent = &module_scope;
+        }
+
+        rename.computeReservedNamesForScope(&module_scope, &symbols, &reserved_names, allocator);
+        var minify_renamer = try rename.MinifyRenamer.init(allocator, symbols, tree.nested_scope_slot_counts, reserved_names);
+
+        var top_level_symbols = rename.StableSymbolCount.Array.init(allocator);
+        defer top_level_symbols.deinit();
+
+        const uses_exports_ref = tree.uses_exports_ref;
+        const uses_module_ref = tree.uses_module_ref;
+        const exports_ref = tree.exports_ref;
+        const module_ref = tree.module_ref;
+        const parts = tree.parts;
+
+        if (uses_exports_ref) {
+            try minify_renamer.accumulateSymbolUseCount(&top_level_symbols, exports_ref, 1, &.{source.index.value});
+        }
+        if (uses_module_ref) {
+            try minify_renamer.accumulateSymbolUseCount(&top_level_symbols, module_ref, 1, &.{source.index.value});
+        }
+        for (parts.slice()) |part| {
+            if (!part.is_live) {
+                continue;
+            }
+
+            try minify_renamer.accumulateSymbolUseCounts(&top_level_symbols, part.symbol_uses, &.{source.index.value});
+
+            for (part.declared_symbols.refs()) |declared_ref| {
+                try minify_renamer.accumulateSymbolUseCount(&top_level_symbols, declared_ref, 1, &.{source.index.value});
+            }
+        }
+
+        std.sort.sort(rename.StableSymbolCount, top_level_symbols.items, {}, rename.StableSymbolCount.lessThan);
+
+        try minify_renamer.allocateTopLevelSymbolSlots(top_level_symbols);
+        var minifier = tree.char_freq.?.compile(allocator);
+        try minify_renamer.assignNamesByFrequency(&minifier);
+
+        renamer = minify_renamer.toRenamer();
+    } else {
+        no_op_renamer = rename.NoOpRenamer.init(symbols, source);
+        renamer = no_op_renamer.toRenamer();
+    }
+
+    defer {
+        if (opts.minify_identifiers) {
+            for (&renamer.MinifyRenamer.slots.values) |*val| {
+                val.deinit();
+            }
+            renamer.MinifyRenamer.reserved_names.deinit(opts.allocator);
+            renamer.MinifyRenamer.top_level_symbol_to_slot.deinit(opts.allocator);
+            opts.allocator.destroy(renamer.MinifyRenamer);
+        }
+    }
 
     const PrinterType = NewPrinter(
         ascii_only,
@@ -5595,7 +5656,7 @@ pub fn printAst(
         writer,
         tree.import_records.slice(),
         opts,
-        renamer.toRenamer(),
+        renamer,
         getSourceMapBuilder(generate_source_map, ascii_only, opts, source, &tree),
     );
     defer {

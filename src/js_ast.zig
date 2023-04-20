@@ -651,7 +651,7 @@ pub const CharFreq = struct {
         left += right;
     }
 
-    pub fn compile(this: *CharFreq, allocator: std.mem.Allocator) NameMinifier {
+    pub fn compile(this: *const CharFreq, allocator: std.mem.Allocator) NameMinifier {
         var array: CharAndCount.Array = brk: {
             var _array: CharAndCount.Array = undefined;
             const freqs = this.freqs;

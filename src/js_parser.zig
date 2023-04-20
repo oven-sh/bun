@@ -2664,6 +2664,8 @@ pub const Parser = struct {
 
         module_type: options.ModuleType = .unknown,
 
+        transform_only: bool = false,
+
         pub fn init(jsx: options.JSX.Pragma, loader: options.Loader) Options {
             var opts = Options{
                 .ts = loader.isTypeScript(),
@@ -3281,7 +3283,7 @@ pub const Parser = struct {
             exports_kind = .esm;
         } else if (uses_exports_ref or uses_module_ref or p.has_top_level_return) {
             exports_kind = .cjs;
-            if (!p.options.bundle) {
+            if (!p.options.bundle and !p.options.transform_only) {
                 if (p.options.legacy_transform_require_to_import or (p.options.features.dynamic_require and !p.options.enable_legacy_bundling)) {
                     var args = p.allocator.alloc(Expr, 2) catch unreachable;
 
@@ -5379,7 +5381,7 @@ fn NewParser_(
         }
 
         fn computeCharacterFrequency(p: *P) ?js_ast.CharFreq {
-            if (!p.options.features.minify_identifiers or p.source.index.isRuntime()) {
+            if (!p.options.features.minify_identifiers or (p.options.bundle and p.source.index.isRuntime())) {
                 return null;
             }
 

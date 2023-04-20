@@ -1375,6 +1375,7 @@ pub const BundleOptions = struct {
     env: Env = Env{},
     transform_options: Api.TransformOptions,
     polyfill_node_globals: bool = true,
+    transform_only: bool = false,
 
     rewrite_jest_for_tests: bool = false,
 

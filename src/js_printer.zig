@@ -5737,8 +5737,8 @@ pub fn printAst(
     }
     if (tree.prepend_part) |part| {
         for (part.stmts) |stmt| {
-            printer.printSemicolonIfNeeded();
             try printer.printStmt(stmt);
+            printer.printSemicolonIfNeeded();
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }
@@ -5747,8 +5747,8 @@ pub fn printAst(
 
     for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
-            printer.printSemicolonIfNeeded();
             try printer.printStmt(stmt);
+            printer.printSemicolonIfNeeded();
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }
@@ -5881,10 +5881,10 @@ pub fn printWithWriterAndPlatform(
 
     for (parts) |part| {
         for (part.stmts) |stmt| {
-            printer.printSemicolonIfNeeded();
             printer.printStmt(stmt) catch |err| {
                 return .{ .err = err };
             };
+            printer.printSemicolonIfNeeded();
             if (printer.writer.getError()) {} else |err| {
                 return .{ .err = err };
             }
@@ -5927,8 +5927,8 @@ pub fn printCommonJS(
 
     if (tree.prepend_part) |part| {
         for (part.stmts) |stmt| {
-            printer.printSemicolonIfNeeded();
             try printer.printStmt(stmt);
+            printer.printSemicolonIfNeeded();
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }
@@ -5936,8 +5936,8 @@ pub fn printCommonJS(
     }
     for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
-            printer.printSemicolonIfNeeded();
             try printer.printStmt(stmt);
+            printer.printSemicolonIfNeeded();
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }
@@ -6006,8 +6006,8 @@ pub fn printCommonJSThreaded(
     }
     if (tree.prepend_part) |part| {
         for (part.stmts) |stmt| {
-            printer.printSemicolonIfNeeded();
             try printer.printStmt(stmt);
+            printer.printSemicolonIfNeeded();
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }
@@ -6016,8 +6016,8 @@ pub fn printCommonJSThreaded(
 
     for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
-            printer.printSemicolonIfNeeded();
             try printer.printStmt(stmt);
+            printer.printSemicolonIfNeeded();
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }

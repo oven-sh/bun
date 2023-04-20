@@ -164,7 +164,7 @@ fn NewLexer_(
         /// Only used for JSON stringification when bundling
         /// This is a zero-bit type unless we're parsing JSON.
         is_ascii_only: JSONBool = JSONBoolDefault,
-
+        track_comments: bool = false,
         all_comments: std.ArrayList(logger.Range),
 
         pub fn clone(self: *const LexerType) LexerType {
@@ -277,7 +277,10 @@ fn NewLexer_(
             return @enumToInt(lexer.token) >= @enumToInt(T.t_identifier);
         }
 
-        pub fn deinit(_: *LexerType) void {}
+        pub fn deinit(this: *LexerType) void {
+            this.all_comments.clearAndFree();
+            this.comments_to_preserve_before.clearAndFree();
+        }
 
         fn decodeEscapeSequences(lexer: *LexerType, start: usize, text: string, comptime BufType: type, buf_: *BufType) !void {
             var buf = buf_.*;
@@ -1817,9 +1820,10 @@ fn NewLexer_(
             const has_legal_annotation = text.len > 2 and text[2] == '!';
             const is_multiline_comment = text.len > 1 and text[1] == '*';
 
-            // Save the original comment text so we can subtract comments from the
-            // character frequency analysis used by symbol minification
-            lexer.all_comments.append(lexer.range()) catch unreachable;
+            if (lexer.track_comments)
+                // Save the original comment text so we can subtract comments from the
+                // character frequency analysis used by symbol minification
+                lexer.all_comments.append(lexer.range()) catch unreachable;
 
             // Omit the trailing "*/" from the checks below
             const end_comment_text =

@@ -2761,6 +2761,7 @@ pub const Parser = struct {
     pub fn toLazyExportAST(this: *Parser, expr: Expr, comptime runtime_api_call: []const u8) !js_ast.Result {
         var p: JavaScriptParser = undefined;
         try JavaScriptParser.init(this.allocator, this.log, this.source, this.define, this.lexer, this.options, &p);
+        p.lexer.track_comments = this.options.features.minify_identifiers;
         p.should_fold_typescript_constant_expressions = this.options.features.should_fold_typescript_constant_expressions;
         defer p.lexer.deinit();
         var result: js_ast.Result = undefined;

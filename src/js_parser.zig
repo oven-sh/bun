@@ -12559,14 +12559,15 @@ fn NewParser_(
                     },
                     .t_question_dot => {
                         try p.lexer.next();
-                        var optional_start = js_ast.OptionalChain.start;
+                        var optional_start: ?js_ast.OptionalChain = js_ast.OptionalChain.start;
 
-                        // TODO: Remove unnecessary optional chains
-                        //                     		if p.options.mangleSyntax {
-                        // 	if isNullOrUndefined, _, ok := toNullOrUndefinedWithSideEffects(left.Data); ok and !isNullOrUndefined {
-                        // 		optionalStart = js_ast.OptionalChainNone
-                        // 	}
-                        // }
+                        // Remove unnecessary optional chains
+                        if (p.options.features.minify_syntax) {
+                            const result = SideEffects.toNullOrUndefined(left.data);
+                            if (result.ok and !result.value) {
+                                optional_start = null;
+                            }
+                        }
 
                         switch (p.lexer.token) {
                             .t_open_bracket => {
@@ -12663,7 +12664,7 @@ fn NewParser_(
                         }
 
                         // Only continue if we have started
-                        if (optional_start == .start) {
+                        if ((optional_start orelse .ccontinue) == .start) {
                             optional_start = .ccontinue;
                         }
                     },

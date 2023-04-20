@@ -289,7 +289,7 @@ pub fn assignNestedScopeSlots(module_scope: *js_ast.Scope, symbols: []js_ast.Sym
 
     for (module_scope.children.items) |child| {
         var slots = js_ast.SlotCounts.Empty;
-        slot_counts.unionMax(assignNestedScopeSlots(child, symbols, &slots));
+        slot_counts.unionMax(assignNestedScopeSlotsHelper(child, symbols, &slots));
     }
 
     for (module_scope.members.items) |member| {

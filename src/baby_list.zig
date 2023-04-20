@@ -92,9 +92,7 @@ pub fn BabyList(comptime Type: type) type {
         pub inline fn init(items: []const Type) ListType {
             @setRuntimeSafety(false);
             return ListType{
-                // Remove the const qualifier from the items
-                .ptr = @intToPtr([*]Type, @ptrToInt(items.ptr)),
-
+                .ptr = @constCast(items.ptr),
                 .len = @truncate(u32, items.len),
                 .cap = @truncate(u32, items.len),
             };

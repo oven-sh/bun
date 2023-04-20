@@ -102,6 +102,8 @@ pub const BuildCommand = struct {
             if (ctx.bundler_options.transform_only) {
                 this_bundler.linker.options.resolve_mode = .lazy;
                 this_bundler.options.import_path_format = .relative;
+                this_bundler.options.allow_runtime = false;
+                this_bundler.resolver.opts.allow_runtime = false;
 
                 // TODO: refactor this .transform function
                 const result = try this_bundler.transform(

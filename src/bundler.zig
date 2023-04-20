@@ -1413,7 +1413,7 @@ pub const Bundler = struct {
                 opts.filepath_hash_for_hmr = file_hash orelse 0;
                 opts.features.auto_import_jsx = bundler.options.auto_import_jsx;
                 opts.warn_about_unbundled_modules = platform.isNotBun();
-                opts.features.jsx_optimization_inline = (bundler.options.jsx_optimization_inline orelse (platform.isBun() and jsx.parse and
+                opts.features.jsx_optimization_inline = opts.features.allow_runtime and (bundler.options.jsx_optimization_inline orelse (platform.isBun() and jsx.parse and
                     !jsx.development)) and
                     (jsx.runtime == .automatic or jsx.runtime == .classic);
 

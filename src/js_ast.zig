@@ -734,6 +734,8 @@ pub const G = struct {
     pub const Decl = struct {
         binding: BindingNodeIndex,
         value: ?ExprNodeIndex = null,
+
+        pub const List = BabyList(Decl);
     };
 
     pub const NamespaceAlias = struct {
@@ -5255,7 +5257,7 @@ pub const S = struct {
 
     pub const Local = struct {
         kind: Kind = Kind.k_var,
-        decls: []G.Decl,
+        decls: G.Decl.List = .{},
         is_export: bool = false,
         // The TypeScript compiler doesn't generate code for "import foo = bar"
         // statements where the import is never used.

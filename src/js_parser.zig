@@ -1126,7 +1126,7 @@ pub const ImportScanner = struct {
                 },
                 .s_local => |st| {
                     if (st.is_export) {
-                        for (st.decls) |decl| {
+                        for (st.decls.slice()) |decl| {
                             p.recordExportedBinding(decl.binding);
                         }
                     }
@@ -1134,7 +1134,7 @@ pub const ImportScanner = struct {
                     // Remove unused import-equals statements, since those likely
                     // correspond to types instead of values
                     if (st.was_ts_import_equals and !st.is_export and st.decls.len > 0) {
-                        var decl = st.decls[0];
+                        var decl = st.decls.ptr[0];
 
                         // Skip to the underlying reference
                         var value = decl.value;
@@ -1234,7 +1234,7 @@ pub const ImportScanner = struct {
                                     decls[0] = G.Decl{ .binding = p.b(B.Identifier{ .ref = st.default_name.ref.? }, stmt.loc), .value = ex };
 
                                     stmt = p.s(S.Local{
-                                        .decls = decls,
+                                        .decls = G.Decl.List.init(decls),
                                         .kind = S.Local.Kind.k_var,
                                         .is_export = false,
                                     }, ex.loc);
@@ -1254,7 +1254,7 @@ pub const ImportScanner = struct {
                                             decls[0] = G.Decl{ .binding = p.b(B.Identifier{ .ref = st.default_name.ref.? }, stmt.loc), .value = p.newExpr(E.Function{ .func = func.func }, stmt.loc) };
 
                                             stmt = p.s(S.Local{
-                                                .decls = decls,
+                                                .decls = Decl.List.init(decls),
                                                 .kind = S.Local.Kind.k_var,
                                                 .is_export = false,
                                             }, stmt.loc);
@@ -1283,7 +1283,7 @@ pub const ImportScanner = struct {
                                             };
 
                                             stmt = p.s(S.Local{
-                                                .decls = decls,
+                                                .decls = Decl.List.init(decls),
                                                 .kind = S.Local.Kind.k_var,
                                                 .is_export = false,
                                             }, stmt.loc);
@@ -1787,18 +1787,18 @@ pub const SideEffects = enum(u1) {
                 // Omit everything except the identifiers
 
                 // common case: single var foo = blah, don't need to allocate
-                if (local.decls.len == 1 and local.decls[0].binding.data == .b_identifier) {
-                    const prev = local.decls[0];
-                    stmt.data.s_local.decls[0] = G.Decl{ .binding = prev.binding };
+                if (local.decls.len == 1 and local.decls.ptr[0].binding.data == .b_identifier) {
+                    const prev = local.decls.ptr[0];
+                    stmt.data.s_local.decls.ptr[0] = G.Decl{ .binding = prev.binding };
                     return true;
                 }
 
                 var decls = std.ArrayList(G.Decl).initCapacity(allocator, local.decls.len) catch unreachable;
-                for (local.decls) |decl| {
+                for (local.decls.slice()) |decl| {
                     findIdentifiers(decl.binding, &decls);
                 }
 
-                local.decls = decls.toOwnedSlice() catch @panic("TODO");
+                local.decls.update(decls);
                 return true;
             },
 
@@ -2925,14 +2925,14 @@ pub const Parser = struct {
                 switch (stmt.data) {
                     .s_local => |local| {
                         if (local.decls.len > 1) {
-                            for (local.decls) |decl| {
+                            for (local.decls.slice()) |decl| {
                                 var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
                                 sliced.items.len = 1;
                                 var _local = local.*;
                                 var list = try ListManaged(G.Decl).initCapacity(p.allocator, 1);
                                 list.items.len = 1;
                                 list.items[0] = decl;
-                                _local.decls = list.items;
+                                _local.decls.update(list);
                                 sliced.items[0] = p.s(_local, stmt.loc);
                                 try p.appendPart(&parts, sliced.items);
                             }
@@ -3051,7 +3051,7 @@ pub const Parser = struct {
             var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
             part_stmts[0] = p.s(S.Local{
                 .kind = .k_var,
-                .decls = decls,
+                .decls = Decl.List.init(decls),
             }, logger.Loc.Empty);
             before.append(js_ast.Part{
                 .stmts = part_stmts,
@@ -3116,7 +3116,7 @@ pub const Parser = struct {
                                     .kind = .k_var,
                                     .is_export = false,
                                     .was_commonjs_export = true,
-                                    .decls = decls,
+                                    .decls = Decl.List.init(decls),
                                 },
                                 export_ref.loc_ref.loc,
                             );
@@ -5240,7 +5240,7 @@ fn NewParser_(
                             switch (stmt.data) {
                                 .s_local => |local| {
                                     if (local.is_export) break :can_remove_part false;
-                                    for (local.decls) |decl| {
+                                    for (local.decls.slice()) |decl| {
                                         if (isBindingUsed(p, decl.binding, default_export_ref))
                                             break :can_remove_part false;
                                     }
@@ -5862,7 +5862,7 @@ fn NewParser_(
                     },
                     .s_local => |local| {
                         if (local.decls.len > 0) {
-                            var first: *Decl = &local.decls[0];
+                            var first: *Decl = &local.decls.ptr[0];
                             if (first.value) |*value| {
                                 if (first.binding.data == .b_identifier) {
                                     break :brk value;
@@ -8968,7 +8968,7 @@ fn NewParser_(
                     try p.lexer.next();
                     const decls = try p.parseAndDeclareDecls(.hoisted, opts);
                     try p.lexer.expectOrInsertSemicolon();
-                    return p.s(S.Local{ .kind = .k_var, .decls = decls, .is_export = opts.is_export }, loc);
+                    return p.s(S.Local{ .kind = .k_var, .decls = Decl.List.fromList(decls), .is_export = opts.is_export }, loc);
                 },
                 .t_const => {
                     if (opts.lexical_decl != .allow_all) {
@@ -8986,12 +8986,12 @@ fn NewParser_(
                     try p.lexer.expectOrInsertSemicolon();
 
                     if (!opts.is_typescript_declare) {
-                        try p.requireInitializers(decls);
+                        try p.requireInitializers(decls.items);
                     }
 
                     // When HMR is enabled, replace all const/let exports with var
                     const kind = if (p.options.features.hot_module_reloading and opts.is_export) S.Local.Kind.k_var else S.Local.Kind.k_const;
-                    return p.s(S.Local{ .kind = kind, .decls = decls, .is_export = opts.is_export }, loc);
+                    return p.s(S.Local{ .kind = kind, .decls = Decl.List.fromList(decls), .is_export = opts.is_export }, loc);
                 },
                 .t_if => {
                     try p.lexer.next();
@@ -9222,7 +9222,7 @@ fn NewParser_(
                         bad_let_range = p.lexer.range();
                     }
 
-                    var decls: []G.Decl = &([_]G.Decl{});
+                    var decls: G.Decl.List = .{};
                     var init_loc = p.lexer.loc();
                     var is_var = false;
                     switch (p.lexer.token) {
@@ -9231,15 +9231,15 @@ fn NewParser_(
                             is_var = true;
                             try p.lexer.next();
                             var stmtOpts = ParseStatementOptions{};
-                            decls = try p.parseAndDeclareDecls(.hoisted, &stmtOpts);
-                            init_ = p.s(S.Local{ .kind = .k_var, .decls = decls }, init_loc);
+                            decls.update(try p.parseAndDeclareDecls(.hoisted, &stmtOpts));
+                            init_ = p.s(S.Local{ .kind = .k_var, .decls = Decl.List.fromList(decls) }, init_loc);
                         },
                         // for (const )
                         .t_const => {
                             try p.lexer.next();
                             var stmtOpts = ParseStatementOptions{};
-                            decls = try p.parseAndDeclareDecls(.cconst, &stmtOpts);
-                            init_ = p.s(S.Local{ .kind = .k_const, .decls = decls }, init_loc);
+                            decls.update(try p.parseAndDeclareDecls(.cconst, &stmtOpts));
+                            init_ = p.s(S.Local{ .kind = .k_const, .decls = Decl.List.fromList(decls) }, init_loc);
                         },
                         // for (;)
                         .t_semicolon => {},
@@ -9280,7 +9280,7 @@ fn NewParser_(
                             }
                         }
 
-                        try p.forbidInitializers(decls, "of", false);
+                        try p.forbidInitializers(decls.slice(), "of", false);
                         try p.lexer.next();
                         const value = try p.parseExpr(.comma);
                         try p.lexer.expect(.t_close_paren);
@@ -9291,7 +9291,7 @@ fn NewParser_(
 
                     // Detect for-in loops
                     if (p.lexer.token == .t_in) {
-                        try p.forbidInitializers(decls, "in", is_var);
+                        try p.forbidInitializers(decls.slice(), "in", is_var);
                         try p.lexer.next();
                         const value = try p.parseExpr(.lowest);
                         try p.lexer.expect(.t_close_paren);
@@ -9305,7 +9305,7 @@ fn NewParser_(
                         switch (init_stmt.data) {
                             .s_local => {
                                 if (init_stmt.data.s_local.kind == .k_const) {
-                                    try p.requireInitializers(decls);
+                                    try p.requireInitializers(decls.slice());
                                 }
                             },
                             else => {},
@@ -9716,14 +9716,14 @@ fn NewParser_(
                                         // of the declared bindings. That "export var" statement will later
                                         // cause identifiers to be transformed into property accesses.
                                         if (opts.is_namespace_scope and opts.is_export) {
-                                            var decls: []G.Decl = &([_]G.Decl{});
+                                            var decls: G.Decl.List = .{};
                                             switch (stmt.data) {
                                                 .s_local => |local| {
                                                     var _decls = try ListManaged(G.Decl).initCapacity(p.allocator, local.decls.len);
-                                                    for (local.decls) |decl| {
+                                                    for (local.decls.slice()) |decl| {
                                                         try extractDeclsForBinding(decl.binding, &_decls);
                                                     }
-                                                    decls = _decls.items;
+                                                    decls.update(_decls);
                                                 },
                                                 else => {},
                                             }
@@ -10008,7 +10008,7 @@ fn NewParser_(
                 .binding = p.b(B.Identifier{ .ref = ref }, default_name_loc),
                 .value = value,
             };
-            return p.s(S.Local{ .kind = kind, .decls = decls, .is_export = opts.is_export, .was_ts_import_equals = true }, loc);
+            return p.s(S.Local{ .kind = kind, .decls = Decl.List.init(decls), .is_export = opts.is_export, .was_ts_import_equals = true }, loc);
         }
 
         fn parseClauseAlias(p: *P, kind: string) !string {
@@ -10234,11 +10234,11 @@ fn NewParser_(
                                 .stmt = p.s(S.Local{
                                     // Replace all "export let" with "export var" when HMR is enabled
                                     .kind = if (opts.is_export and p.options.features.hot_module_reloading) .k_var else .k_let,
-                                    .decls = decls,
+                                    .decls = G.Decl.List.fromList(decls),
                                     .is_export = opts.is_export,
                                 }, let_range.loc),
                             },
-                            .decls = decls,
+                            .decls = decls.items,
                         };
                     }
                 },
@@ -10497,7 +10497,7 @@ fn NewParser_(
             };
         }
 
-        fn parseAndDeclareDecls(p: *P, kind: Symbol.Kind, opts: *ParseStatementOptions) anyerror![]G.Decl {
+        fn parseAndDeclareDecls(p: *P, kind: Symbol.Kind, opts: *ParseStatementOptions) anyerror!ListManaged(G.Decl) {
             var decls = ListManaged(G.Decl).init(p.allocator);
 
             while (true) {
@@ -10541,7 +10541,7 @@ fn NewParser_(
                 try p.lexer.next();
             }
 
-            return decls.items;
+            return decls;
         }
 
         pub fn parseTypescriptEnumStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions) anyerror!Stmt {
@@ -14440,7 +14440,7 @@ fn NewParser_(
                         decls[0] = Decl{
                             .binding = p.b(B.Identifier{ .ref = ref }, local.loc),
                         };
-                        try partStmts.append(p.s(S.Local{ .decls = decls }, local.loc));
+                        try partStmts.append(p.s(S.Local{ .decls = G.Decl.List.init(decls) }, local.loc));
                     }
                 }
                 p.relocated_top_level_vars.clearRetainingCapacity();
@@ -14591,7 +14591,7 @@ fn NewParser_(
                         }
                     },
                     .s_local => |st| {
-                        for (st.decls) |*decl| {
+                        for (st.decls.slice()) |*decl| {
                             if (!p.bindingCanBeRemovedIfUnused(decl.binding)) {
                                 return false;
                             }
@@ -17851,20 +17851,20 @@ fn NewParser_(
                     p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
 
                     const decls_len = if (!(data.is_export and p.options.features.replace_exports.entries.len > 0))
-                        p.visitDecls(data.decls, data.kind == .k_const, false)
+                        p.visitDecls(data.decls.slice(), data.kind == .k_const, false)
                     else
-                        p.visitDecls(data.decls, data.kind == .k_const, true);
+                        p.visitDecls(data.decls.slice(), data.kind == .k_const, true);
 
                     const is_now_dead = data.decls.len > 0 and decls_len == 0;
                     if (is_now_dead) {
                         return;
                     }
 
-                    data.decls.len = decls_len;
+                    data.decls.len = @truncate(u32, decls_len);
 
                     // Handle being exported inside a namespace
                     if (data.is_export and p.enclosing_namespace_arg_ref != null) {
-                        for (data.decls) |*d| {
+                        for (data.decls.slice()) |*d| {
                             if (d.value) |val| {
                                 p.recordUsage((p.enclosing_namespace_arg_ref orelse unreachable));
                                 // TODO: is it necessary to lowerAssign? why does esbuild do it _most_ of the time?
@@ -17881,7 +17881,7 @@ fn NewParser_(
                     // Edgecase:
                     //  `export var` is skipped because it's unnecessary. That *should* be a noop, but it loses the `is_export` flag if we're in HMR.
                     if (data.kind == .k_var and !data.is_export) {
-                        const relocated = p.maybeRelocateVarsToTopLevel(data.decls, .normal);
+                        const relocated = p.maybeRelocateVarsToTopLevel(data.decls.slice(), .normal);
                         if (relocated.ok) {
                             if (relocated.stmt) |new_stmt| {
                                 stmts.append(new_stmt) catch unreachable;
@@ -17946,7 +17946,7 @@ fn NewParser_(
                                                             .kind = .k_var,
                                                             .is_export = false,
                                                             .was_commonjs_export = true,
-                                                            .decls = decls,
+                                                            .decls = G.Decl.List.init(decls),
                                                         },
                                                         stmt.loc,
                                                     ),
@@ -18142,7 +18142,7 @@ fn NewParser_(
                         // must be done inside the scope of the for loop or they won't be relocated.
                         if (data.init) |init_| {
                             if (init_.data == .s_local and init_.data.s_local.kind == .k_var) {
-                                const relocate = p.maybeRelocateVarsToTopLevel(init_.data.s_local.decls, .normal);
+                                const relocate = p.maybeRelocateVarsToTopLevel(init_.data.s_local.decls.slice(), .normal);
                                 if (relocate.stmt) |relocated| {
                                     data.init = relocated;
                                 }
@@ -18165,7 +18165,7 @@ fn NewParser_(
                             // Lower for-in variable initializers in case the output is used in strict mode
                             var local = data.init.data.s_local;
                             if (local.decls.len == 1) {
-                                var decl: *G.Decl = &local.decls[0];
+                                var decl: *G.Decl = &local.decls.ptr[0];
                                 if (decl.binding.data == .b_identifier) {
                                     if (decl.value) |val| {
                                         stmts.append(
@@ -18182,7 +18182,7 @@ fn NewParser_(
                         }
 
                         if (data.init.data == .s_local and data.init.data.s_local.kind == .k_var) {
-                            const relocate = p.maybeRelocateVarsToTopLevel(data.init.data.s_local.decls, RelocateVars.Mode.for_in_or_for_of);
+                            const relocate = p.maybeRelocateVarsToTopLevel(data.init.data.s_local.decls.slice(), RelocateVars.Mode.for_in_or_for_of);
                             if (relocate.stmt) |relocated_stmt| {
                                 data.init = relocated_stmt;
                             }
@@ -18197,7 +18197,7 @@ fn NewParser_(
                     data.body = p.visitLoopBody(data.body);
 
                     if (data.init.data == .s_local and data.init.data.s_local.kind == .k_var) {
-                        const relocate = p.maybeRelocateVarsToTopLevel(data.init.data.s_local.decls, RelocateVars.Mode.for_in_or_for_of);
+                        const relocate = p.maybeRelocateVarsToTopLevel(data.init.data.s_local.decls.slice(), RelocateVars.Mode.for_in_or_for_of);
                         if (relocate.stmt) |relocated_stmt| {
                             data.init = relocated_stmt;
                         }
@@ -18506,7 +18506,7 @@ fn NewParser_(
                         switch (child_stmt.data) {
                             .s_local => |local| {
                                 if (local.is_export) {
-                                    p.markExportedDeclsInsideNamespace(data.arg, local.decls);
+                                    p.markExportedDeclsInsideNamespace(data.arg, local.decls.slice());
                                 }
                             },
                             else => {},
@@ -18653,7 +18653,7 @@ fn NewParser_(
                     var local = p.s(
                         S.Local{
                             .is_export = true,
-                            .decls = decls,
+                            .decls = Decl.List.init(decls),
                         },
                         loc,
                     );
@@ -18674,7 +18674,7 @@ fn NewParser_(
                     var local = p.s(
                         S.Local{
                             .is_export = true,
-                            .decls = decls,
+                            .decls = Decl.List.init(decls),
                         },
                         loc,
                     );
@@ -18886,7 +18886,7 @@ fn NewParser_(
                         p.s(
                             S.Local{
                                 .kind = .k_var,
-                                .decls = decls,
+                                .decls = G.Decl.List.init(decls),
                                 .is_export = is_export,
                             },
                             stmt_loc,
@@ -18898,7 +18898,7 @@ fn NewParser_(
                         p.s(
                             S.Local{
                                 .kind = .k_let,
-                                .decls = decls,
+                                .decls = G.Decl.List.init(decls),
                             },
                             stmt_loc,
                         ),
@@ -19215,7 +19215,7 @@ fn NewParser_(
                     st.value = p.visitExprInOut(st.value, ExprIn{ .assign_target = assign_target });
                 },
                 .s_local => |st| {
-                    for (st.decls) |*dec| {
+                    for (st.decls.slice()) |*dec| {
                         p.visitBinding(dec.binding, null);
                         if (dec.value) |val| {
                             dec.value = p.visitExpr(val);
@@ -19938,7 +19938,7 @@ fn NewParser_(
                         before.appendAssumeCapacity(p.s(
                             S.Local{
                                 .kind = .k_let,
-                                .decls = let_decls.items,
+                                .decls = Decl.List.fromList(let_decls),
                             },
                             let_decls.items[0].value.?.loc,
                         ));
@@ -19954,7 +19954,7 @@ fn NewParser_(
                             before.appendAssumeCapacity(p.s(
                                 S.Local{
                                     .kind = .k_var,
-                                    .decls = var_decls.items,
+                                    .decls = Decl.List.fromList(var_decls),
                                 },
                                 var_decls.items[0].value.?.loc,
                             ));
@@ -20007,7 +20007,7 @@ fn NewParser_(
                 // if this fails it means that scope pushing/popping is not balanced
                 assert(p.current_scope == initial_scope);
 
-            if (!p.options.features.inlining) {
+            if (!p.options.features.minify_syntax) {
                 return;
             }
 
@@ -20025,7 +20025,7 @@ fn NewParser_(
                             .s_empty, .s_comment, .s_directive, .s_debugger, .s_type_script => continue,
                             .s_local => |local| {
                                 if (!local.is_export and local.kind == .k_const and !local.was_commonjs_export) {
-                                    var decls: []Decl = local.decls;
+                                    var decls: []Decl = local.decls.slice();
                                     var end: usize = 0;
                                     for (decls) |decl| {
                                         if (decl.binding.data == .b_identifier) {
@@ -20036,7 +20036,7 @@ fn NewParser_(
                                         decls[end] = decl;
                                         end += 1;
                                     }
-                                    local.decls.len = end;
+                                    local.decls.len = @truncate(u32, end);
                                     if (end == 0) {
                                         stmt.* = stmt.*.toEmpty();
                                     }
@@ -20098,7 +20098,7 @@ fn NewParser_(
                                     break;
                                 }
 
-                                var last: *Decl = &local.decls[local.decls.len - 1];
+                                var last: *Decl = local.decls.last().?;
                                 // The variable must be initialized, since we will be substituting
                                 // the value into the usage.
                                 if (last.value == null)
@@ -20869,7 +20869,7 @@ fn NewParser_(
 
                 toplevel_stmts[toplevel_stmts_i] = p.s(
                     S.Local{
-                        .decls = first_decl,
+                        .decls = G.Decl.List.init(first_decl),
                     },
                     logger.Loc.Empty,
                 );
@@ -20927,7 +20927,7 @@ fn NewParser_(
                     if (named_export_i > 0) {
                         toplevel_stmts[toplevel_stmts_i] = p.s(
                             S.Local{
-                                .decls = exports_decls[0..named_export_i],
+                                .decls = G.Decl.List.init(exports_decls[0..named_export_i]),
                             },
                             logger.Loc.Empty,
                         );

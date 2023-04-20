@@ -3917,13 +3917,13 @@ fn NewPrinter(
                 .s_local => |s| {
                     switch (s.kind) {
                         .k_const => {
-                            p.printDeclStmt(s.is_export, "const", s.decls);
+                            p.printDeclStmt(s.is_export, "const", s.decls.slice());
                         },
                         .k_let => {
-                            p.printDeclStmt(s.is_export, "let", s.decls);
+                            p.printDeclStmt(s.is_export, "let", s.decls.slice());
                         },
                         .k_var => {
-                            p.printDeclStmt(s.is_export, "var", s.decls);
+                            p.printDeclStmt(s.is_export, "var", s.decls.slice());
                         },
                     }
                 },
@@ -4798,13 +4798,13 @@ fn NewPrinter(
                 .s_local => |s| {
                     switch (s.kind) {
                         .k_var => {
-                            p.printDecls("var", s.decls, ExprFlag.Set.init(.{ .forbid_in = true }));
+                            p.printDecls("var", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
                         },
                         .k_let => {
-                            p.printDecls("let", s.decls, ExprFlag.Set.init(.{ .forbid_in = true }));
+                            p.printDecls("let", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
                         },
                         .k_const => {
-                            p.printDecls("const", s.decls, ExprFlag.Set.init(.{ .forbid_in = true }));
+                            p.printDecls("const", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
                         },
                     }
                 },

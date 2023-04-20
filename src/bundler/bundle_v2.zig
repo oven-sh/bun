@@ -2647,10 +2647,8 @@ const LinkerContext = struct {
                             S.Local,
                             S.Local{
                                 .is_export = true,
-                                .decls = bun.fromSlice(
-                                    []js_ast.G.Decl,
+                                .decls = js_ast.G.Decl.List.fromSlice(
                                     this.allocator,
-                                    []const js_ast.G.Decl,
                                     &.{
                                         .{
                                             .binding = Binding.alloc(
@@ -3632,7 +3630,7 @@ const LinkerContext = struct {
                 allocator_,
                 js_ast.S.Local,
                 .{
-                    .decls = decls,
+                    .decls = G.Decl.List.init(decls),
                 },
                 loc,
             );
@@ -5220,10 +5218,8 @@ const LinkerContext = struct {
                                         Stmt.alloc(
                                             S.Local,
                                             .{
-                                                .decls = bun.fromSlice(
-                                                    []js_ast.G.Decl,
+                                                .decls = js_ast.G.Decl.List.fromSlice(
                                                     temp_allocator,
-                                                    []const js_ast.G.Decl,
                                                     &.{
                                                         .{
                                                             .binding = Binding.alloc(
@@ -5465,10 +5461,8 @@ const LinkerContext = struct {
                 Stmt.alloc(
                     S.Local,
                     S.Local{
-                        .decls = try bun.fromSlice(
-                            []G.Decl,
+                        .decls = G.Decl.List.fromSlice(
                             allocator,
-                            []const G.Decl,
                             &.{
                                 .{
                                     .binding = Binding.alloc(
@@ -5487,7 +5481,7 @@ const LinkerContext = struct {
                                     ),
                                 },
                             },
-                        ),
+                        ) catch unreachable,
                     },
                     record.range.loc,
                 ),
@@ -5510,10 +5504,8 @@ const LinkerContext = struct {
                     Stmt.alloc(
                         S.Local,
                         S.Local{
-                            .decls = try bun.fromSlice(
-                                []G.Decl,
+                            .decls = try G.Decl.List.fromSlice(
                                 allocator,
-                                []const G.Decl,
                                 &.{
                                     .{
                                         .binding = Binding.alloc(
@@ -5987,7 +5979,7 @@ const LinkerContext = struct {
                             stmt.data.s_local.is_export = false;
                         } else if (FeatureFlags.unwrap_commonjs_to_esm and s.was_commonjs_export and wrap == .cjs) {
                             std.debug.assert(stmt.data.s_local.decls.len == 1);
-                            const decl = stmt.data.s_local.decls[0];
+                            const decl = stmt.data.s_local.decls.ptr[0];
                             stmt = Stmt.alloc(
                                 S.SExpr,
                                 S.SExpr{
@@ -6024,10 +6016,8 @@ const LinkerContext = struct {
                                             stmt = Stmt.alloc(
                                                 S.Local,
                                                 S.Local{
-                                                    .decls = try bun.fromSlice(
-                                                        []js_ast.G.Decl,
+                                                    .decls = try G.Decl.List.fromSlice(
                                                         allocator,
-                                                        []const js_ast.G.Decl,
                                                         &.{
                                                             .{
                                                                 .binding = Binding.alloc(
@@ -6089,10 +6079,8 @@ const LinkerContext = struct {
                                     stmt = Stmt.alloc(
                                         S.Local,
                                         S.Local{
-                                            .decls = try bun.fromSlice(
-                                                []js_ast.G.Decl,
+                                            .decls = try G.Decl.List.fromSlice(
                                                 allocator,
-                                                []const js_ast.G.Decl,
                                                 &.{
                                                     .{
                                                         .binding = Binding.alloc(
@@ -6423,7 +6411,7 @@ const LinkerContext = struct {
                             Stmt.alloc(
                                 S.Local,
                                 S.Local{
-                                    .decls = decls,
+                                    .decls = G.Decl.List.init(decls),
                                 },
                                 Logger.Loc.Empty,
                             ),
@@ -6475,7 +6463,7 @@ const LinkerContext = struct {
                                 .s_local => |local| {
                                     if (local.was_commonjs_export or ast.commonjs_named_exports.count() == 0) {
                                         var value: Expr = Expr.init(E.Missing, E.Missing{}, Logger.Loc.Empty);
-                                        for (local.decls) |*decl| {
+                                        for (local.decls.slice()) |*decl| {
                                             const binding = decl.binding.toExpr(&hoisty);
                                             if (decl.value) |other| {
                                                 value = value.joinWithComma(
@@ -6517,7 +6505,7 @@ const LinkerContext = struct {
                             Stmt.alloc(
                                 S.Local,
                                 S.Local{
-                                    .decls = hoisty.decls.items,
+                                    .decls = G.Decl.List.fromList(hoisty.decls),
                                 },
                                 Logger.Loc.Empty,
                             ),
@@ -6573,7 +6561,7 @@ const LinkerContext = struct {
                             Stmt.alloc(
                                 S.Local,
                                 S.Local{
-                                    .decls = decls,
+                                    .decls = G.Decl.List.init(decls),
                                 },
                                 Logger.Loc.Empty,
                             ),

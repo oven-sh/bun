@@ -9,6 +9,18 @@ describe("bundler", () => {
       "/entry.js": "",
     },
   });
+  itBundled("edgecase/EmptyCommonJSModule", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as module from './module.cjs';
+        console.log(typeof module)
+      `,
+      "/module.cjs": /* js */ ``,
+    },
+    run: {
+      stdout: "object",
+    },
+  });
   itBundled("edgecase/ImportStarFunction", {
     files: {
       "/entry.js": /* js */ `

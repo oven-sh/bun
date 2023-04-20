@@ -120,6 +120,7 @@ export interface BundlerTestInput {
 
   // pass subprocess.env
   env?: Record<string, any>;
+  nodePaths?: string[];
 
   // assertion options
 
@@ -144,6 +145,13 @@ export interface BundlerTestInput {
    * Checks source code for REMOVE, FAIL, DROP, which will fail the test.
    */
   dce?: boolean;
+  /**
+   * Shorthand for testing CJS->ESM cases.
+   * Checks source code for the commonjs helper.
+   *
+   * Set to true means all cjs files should be converted. You can pass `exclude` to expect them to stay commonjs.
+   */
+  cjs2esm?: boolean | { exclude: string[] };
   /**
    * Override the number of keep markers, which is auto detected by default.
    * Does nothing if dce is false.

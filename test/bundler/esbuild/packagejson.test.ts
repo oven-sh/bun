@@ -1934,23 +1934,23 @@ describe("bundler", () => {
       "/package.json": `{ "type": "module" }`,
     },
   });
-  // itBundled("packagejson/NodePathsESBuildIssue2752", {
-  //   files: {
-  //     "/src/entry.js": /* js */ `
-  //       import "pkg1"
-  //       import "pkg2"
-  //       import "@scope/pkg3/baz"
-  //       import "@scope/pkg4"
-  //     `,
-  //     "/usr/lib/pkg/pkg1/package.json": `{ "main": "./foo.js" }`,
-  //     "/usr/lib/pkg/pkg1/foo.js": `console.log('pkg1')`,
-  //     "/lib/pkg/pkg2/package.json": `{ "exports": { ".": "./bar.js" } }`,
-  //     "/lib/pkg/pkg2/bar.js": `console.log('pkg2')`,
-  //     "/var/lib/pkg/@scope/pkg3/package.json": `{ "browser": { "./baz.js": "./baz-browser.js" } }`,
-  //     "/var/lib/pkg/@scope/pkg3/baz-browser.js": `console.log('pkg3')`,
-  //     "/tmp/pkg/@scope/pkg4/package.json": `{ "exports": { ".": { "import": "./bat.js" } } }`,
-  //     "/tmp/pkg/@scope/pkg4/bat.js": `console.log('pkg4')`,
-  //   },
-  //   nodePaths: ["/usr/lib/pkg", "/lib/pkg", "/var/lib/pkg", "/tmp/pkg"],
-  // });
+  itBundled("packagejson/NodePathsESBuildIssue2752", {
+    files: {
+      "/src/entry.js": /* js */ `
+        import "pkg1"
+        import "pkg2"
+        import "@scope/pkg3/baz"
+        import "@scope/pkg4"
+      `,
+      "/usr/lib/pkg/pkg1/package.json": `{ "main": "./foo.js" }`,
+      "/usr/lib/pkg/pkg1/foo.js": `console.log('pkg1')`,
+      "/lib/pkg/pkg2/package.json": `{ "exports": { ".": "./bar.js" } }`,
+      "/lib/pkg/pkg2/bar.js": `console.log('pkg2')`,
+      "/var/lib/pkg/@scope/pkg3/package.json": `{ "browser": { "./baz.js": "./baz-browser.js" } }`,
+      "/var/lib/pkg/@scope/pkg3/baz-browser.js": `console.log('pkg3')`,
+      "/tmp/pkg/@scope/pkg4/package.json": `{ "exports": { ".": { "import": "./bat.js" } } }`,
+      "/tmp/pkg/@scope/pkg4/bat.js": `console.log('pkg4')`,
+    },
+    nodePaths: ["/usr/lib/pkg", "/lib/pkg", "/var/lib/pkg", "/tmp/pkg"],
+  });
 });

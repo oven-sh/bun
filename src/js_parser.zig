@@ -17978,8 +17978,8 @@ fn NewParser_(
                     // however, old code should still technically transpile
                     // we do not attempt to preserve all the semantics of with
                     data.value = p.visitExpr(data.value);
-                    // This stmt should be a block
-                    if (comptime Environment.allow_assert) assert(data.body.data == .s_block);
+                    // This stmt can be a block or an expression
+                    if (comptime Environment.allow_assert) assert(data.body.data == .s_block or data.body.data == .s_expr);
                     data.body = p.visitSingleStmt(data.body, StmtsKind.none);
                 },
                 .s_while => |data| {

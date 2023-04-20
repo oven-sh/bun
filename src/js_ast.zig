@@ -2325,12 +2325,16 @@ pub const E = struct {
                     } else {
                         var prev_part = &parts.items[parts.items.len - 1];
 
-                        if (part.value.data.e_string.len() > 0) {
-                            prev_part.tail.push(part.value.data.e_string);
-                        }
+                        if (prev_part.tail.isUTF8()) {
+                            if (part.value.data.e_string.len() > 0) {
+                                prev_part.tail.push(part.value.data.e_string);
+                            }
 
-                        if (part.tail.len() > 0) {
-                            prev_part.tail.push(Expr.init(E.String, part.tail, part.tail_loc).data.e_string);
+                            if (part.tail.len() > 0) {
+                                prev_part.tail.push(Expr.init(E.String, part.tail, part.tail_loc).data.e_string);
+                            }
+                        } else {
+                            parts.appendAssumeCapacity(part);
                         }
                     }
                 } else {
@@ -9825,4 +9829,3 @@ pub const UseDirective = enum {
 // Stmt               | 192
 // STry               | 384
 // -- ESBuild bit sizes
-

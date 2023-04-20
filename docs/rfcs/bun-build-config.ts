@@ -111,7 +111,9 @@ export interface BundlerConfig {
   macro?: MacroMap;
 
   sourcemap?:
-    | boolean
+    | "none"
+    | "inline"
+    | "external"
     | {
         root?: string;
         inline?: boolean;

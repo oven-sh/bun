@@ -496,6 +496,7 @@ pub const Options = struct {
     minify_whitespace: bool = false,
     minify_identifiers: bool = false,
     minify_syntax: bool = false,
+    transform_only: bool = false,
 
     require_or_import_meta_for_source_callback: RequireOrImportMeta.Callback = .{},
 
@@ -5600,17 +5601,33 @@ pub fn printAst(
         const module_ref = tree.module_ref;
         const parts = tree.parts;
 
+        const dont_break_the_code = .{
+            tree.module_ref,
+            tree.exports_ref,
+            tree.require_ref,
+        };
+
+        inline for (dont_break_the_code) |ref| {
+            if (symbols.get(ref)) |symbol| {
+                symbol.must_not_be_renamed = true;
+            }
+        }
+
+        for (tree.named_exports.values()) |named_export| {
+            if (symbols.get(named_export.ref)) |symbol| {
+                symbol.must_not_be_renamed = true;
+            }
+        }
+
         if (uses_exports_ref) {
             try minify_renamer.accumulateSymbolUseCount(&top_level_symbols, exports_ref, 1, &.{source.index.value});
         }
+
         if (uses_module_ref) {
             try minify_renamer.accumulateSymbolUseCount(&top_level_symbols, module_ref, 1, &.{source.index.value});
         }
-        for (parts.slice()) |part| {
-            if (!part.is_live) {
-                continue;
-            }
 
+        for (parts.slice()) |part| {
             try minify_renamer.accumulateSymbolUseCounts(&top_level_symbols, part.symbol_uses, &.{source.index.value});
 
             for (part.declared_symbols.refs()) |declared_ref| {

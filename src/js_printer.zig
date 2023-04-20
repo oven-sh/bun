@@ -2606,6 +2606,7 @@ fn NewPrinter(
                                 if (wrap) {
                                     p.printWhitespacer(ws("(0, "));
                                 }
+                                p.printSpaceBeforeIdentifier();
                                 p.addSourceMapping(expr.loc);
                                 p.printNamespaceAlias(import_record.*, namespace);
 
@@ -2669,6 +2670,7 @@ fn NewPrinter(
                     }
 
                     if (!didPrint) {
+                        p.printSpaceBeforeIdentifier();
                         p.addSourceMapping(expr.loc);
                         p.printSymbol(e.ref);
                     }

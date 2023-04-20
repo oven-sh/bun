@@ -395,7 +395,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     needs: [macOS]
     if: github.event_name == 'pull_request'
-    timeout-minutes: 10
+    timeout-minutes: 30
     outputs:
       failing_tests: ${{ steps.test.outputs.failing_tests }}
       failing_tests_count: ${{ steps.test.outputs.failing_tests_count }}

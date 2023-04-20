@@ -5438,6 +5438,46 @@ const LinkerContext = struct {
         }
     };
 
+    fn mergeAdjacentLocalStmts(stmts: *std.ArrayList(Stmt), allocator: std.mem.Allocator) void {
+        if (stmts.items.len == 0)
+            return;
+
+        var did_merge_with_previous_local = false;
+        var end: usize = 1;
+
+        for (stmts.items[1..]) |stmt| {
+            // Try to merge with the previous variable statement
+            if (stmt.data == .s_local) {
+                var after = stmt.data.s_local;
+                if (stmts.items[end - 1].data == .s_local) {
+                    var before = stmts.items[end - 1].data.s_local;
+                    // It must be the same kind of variable statement (i.e. let/var/const)
+                    if (before.kind == after.kind and before.is_export == after.is_export) {
+                        if (did_merge_with_previous_local) {
+                            // Avoid O(n^2) behavior for repeated variable declarations
+                            // Appending to this decls list is safe because did_merge_with_previous_local is true
+                            before.decls.append(allocator, after.decls.slice()) catch unreachable;
+                        } else {
+                            // Append the declarations to the previous variable statement
+                            did_merge_with_previous_local = true;
+
+                            var clone = std.ArrayList(G.Decl).initCapacity(allocator, before.decls.len + after.decls.len) catch unreachable;
+                            clone.appendSliceAssumeCapacity(before.decls.slice()) catch unreachable;
+                            clone.appendSliceAssumeCapacity(after.decls.slice()) catch unreachable;
+                            before.decls.update(clone);
+                        }
+                        continue;
+                    }
+                }
+            }
+
+            did_merge_with_previous_local = false;
+            stmts.items[end] = stmt;
+            end += 1;
+        }
+        stmts.items.len = end;
+    }
+
     fn shouldRemoveImportExportStmt(
         c: *LinkerContext,
         stmts: *StmtList,
@@ -6321,6 +6361,10 @@ const LinkerContext = struct {
         stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_suffix.items);
         stmts.inside_wrapper_prefix.items.len = 0;
         stmts.inside_wrapper_suffix.items.len = 0;
+
+        if (c.options.minify_syntax) {
+            mergeAdjacentLocalStmts(&stmts.all_stmts, temp_allocator);
+        }
 
         // TODO: mergeAdjacentLocalStmts
 

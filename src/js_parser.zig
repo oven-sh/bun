@@ -2194,7 +2194,7 @@ const IdentifierOpts = packed struct {
 };
 
 fn statementCaresAboutScope(stmt: Stmt) bool {
-    switch (stmt.data) {
+    return switch (stmt.data) {
         .s_block,
         .s_empty,
         .s_debugger,
@@ -2213,20 +2213,12 @@ fn statementCaresAboutScope(stmt: Stmt) bool {
         .s_break,
         .s_continue,
         .s_directive,
-        => {
-            return false;
-        },
-        // This is technically incorrect.
-        // var does not care about the scope
-        // However, we are choosing _not_ to relocate vars to the top level
+        .s_label,
+        => false,
 
-        .s_local => |local| {
-            return local.kind != .k_var;
-        },
-        else => {
-            return true;
-        },
-    }
+        .s_local => |local| local.kind != .k_var,
+        else => true,
+    };
 }
 
 const ExprIn = struct {
@@ -19451,7 +19443,7 @@ fn NewParser_(
                 p.popScope();
             }
 
-            return p.stmtsToSingleStmt(stmt.loc, stmts.toOwnedSlice() catch @panic("TODO"));
+            return p.stmtsToSingleStmt(stmt.loc, stmts.items);
         }
 
         // One statement could potentially expand to several statements
@@ -19460,7 +19452,7 @@ fn NewParser_(
                 return Stmt{ .data = Prefill.Data.SEmpty, .loc = loc };
             }
 
-            if (stmts.len == 1 and std.meta.activeTag(stmts[0].data) != .s_local or (std.meta.activeTag(stmts[0].data) == .s_local and stmts[0].data.s_local.kind == S.Local.Kind.k_var)) {
+            if (stmts.len == 1 and !statementCaresAboutScope(stmts[0])) {
                 // "let" and "const" must be put in a block when in a single-statement context
                 return stmts[0];
             }
@@ -20052,6 +20044,8 @@ fn NewParser_(
                 }
             }
 
+            var is_control_flow_dead = false;
+
             // Inline single-use variable declarations where possible:
             //
             //   // Before
@@ -20073,6 +20067,10 @@ fn NewParser_(
                 var output = ListManaged(Stmt).initCapacity(p.allocator, stmts.items.len) catch unreachable;
 
                 for (stmts.items) |stmt| {
+                    if (is_control_flow_dead and !SideEffects.shouldKeepStmtInDeadControlFlow(stmt, p.allocator)) {
+                        // Strip unnecessary statements if the control flow is dead here
+                        continue;
+                    }
 
                     // Keep inlining variables until a failure or until there are none left.
                     // That handles cases like this:
@@ -20143,11 +20141,101 @@ fn NewParser_(
                         break;
                     }
 
-                    if (stmt.data != .s_empty) {
-                        output.appendAssumeCapacity(
-                            stmt,
-                        );
+                    switch (stmt.data) {
+                        .s_empty => continue,
+
+                        // skip directives for now
+                        .s_directive => continue,
+
+                        .s_local => |local| {
+                            // Merge adjacent local statements
+                            if (output.items.len > 0) {
+                                var prev_stmt = &output.items[output.items.len - 1];
+                                if (prev_stmt.data == .s_local and local.kind == prev_stmt.data.s_local.kind and local.is_export == prev_stmt.data.s_local.is_export) {
+                                    prev_stmt.data.s_local.decls.append(p.allocator, local.decls.slice()) catch unreachable;
+                                    continue;
+                                }
+                            }
+                        },
+
+                        .s_expr => |s_expr| {
+                            // Merge adjacent expression statements
+                            if (output.items.len > 0) {
+                                var prev_stmt = &output.items[output.items.len - 1];
+                                if (prev_stmt.data == .s_expr) {
+                                    prev_stmt.data.s_expr.does_not_affect_tree_shaking = prev_stmt.data.s_expr.does_not_affect_tree_shaking and
+                                        s_expr.does_not_affect_tree_shaking;
+                                    prev_stmt.data.s_expr.value = prev_stmt.data.s_expr.value.joinWithComma(
+                                        s_expr.value,
+                                        p.allocator,
+                                    );
+                                    continue;
+                                }
+                            }
+                        },
+                        .s_switch => |s_switch| {
+                            // Absorb a previous expression statement
+                            if (output.items.len > 0) {
+                                var prev_stmt = &output.items[output.items.len - 1];
+                                if (prev_stmt.data == .s_expr) {
+                                    s_switch.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_switch.test_, p.allocator);
+                                    output.items.len -= 1;
+                                }
+                            }
+                        },
+                        .s_if => |s_if| {
+                            // Absorb a previous expression statement
+                            if (output.items.len > 0) {
+                                var prev_stmt = &output.items[output.items.len - 1];
+                                if (prev_stmt.data == .s_expr) {
+                                    s_if.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_if.test_, p.allocator);
+                                    output.items.len -= 1;
+                                }
+                            }
+
+                            // TODO: optimize jump
+                        },
+
+                        .s_return => |ret| {
+                            // Merge return statements with the previous expression statement
+                            if (output.items.len > 0 and ret.value != null) {
+                                var prev_stmt = &output.items[output.items.len - 1];
+                                if (prev_stmt.data == .s_expr) {
+                                    ret.value = prev_stmt.data.s_expr.value.joinWithComma(ret.value.?, p.allocator);
+                                    prev_stmt.* = stmt;
+                                    continue;
+                                }
+                            }
+
+                            is_control_flow_dead = true;
+                        },
+
+                        .s_break, .s_continue => {
+                            is_control_flow_dead = true;
+                        },
+
+                        .s_throw => {
+                            // Merge throw statements with the previous expression statement
+                            if (output.items.len > 0) {
+                                var prev_stmt = &output.items[output.items.len - 1];
+                                if (prev_stmt.data == .s_expr) {
+                                    prev_stmt.* = p.s(S.Throw{
+                                        .value = prev_stmt.data.s_expr.value.joinWithComma(
+                                            stmt.data.s_throw.value,
+                                            p.allocator,
+                                        ),
+                                    }, stmt.loc);
+                                    continue;
+                                }
+                            }
+
+                            is_control_flow_dead = true;
+                        },
+
+                        else => {},
                     }
+
+                    output.append(stmt) catch unreachable;
                 }
                 stmts.deinit();
                 stmts.* = output;

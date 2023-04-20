@@ -2245,10 +2245,12 @@ fn NewPrinter(
                     }
                     p.printExpr(e.test_, .conditional, flags);
                     p.printSpace();
-                    p.print("? ");
+                    p.print("?");
+                    p.printSpace();
                     p.printExpr(e.yes, .yield, ExprFlag.None());
                     p.printSpace();
-                    p.print(": ");
+                    p.print(":");
+                    p.printSpace();
                     flags.insert(.forbid_in);
                     p.printExpr(e.no, .yield, flags);
                     if (wrap) {
@@ -2835,7 +2837,7 @@ fn NewPrinter(
                         p.printSpaceBeforeIdentifier();
                         p.print(entry.text);
                     } else {
-                        p.printSpaceBeforeIdentifier();
+                        p.printSpaceBeforeOperator(e.op);
                         p.print(entry.text);
                         p.prev_op = e.op;
                         p.prev_op_end = p.writer.written;

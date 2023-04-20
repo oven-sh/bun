@@ -142,7 +142,7 @@ console.log(heapStats());
 
 JavaScript is a garbage-collected language, not reference counted. It's normal and correct for objects to not be freed immediately in all cases, though it's not normal for objects to never be freed.
 
-Tp force garbage collection to run manually:
+To force garbage collection to run manually:
 
 ```js
 Bun.gc(true); // synchronous

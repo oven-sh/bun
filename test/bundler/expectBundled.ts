@@ -75,6 +75,8 @@ export interface BundlerTestInput {
   define?: Record<string, string | number>;
   /** Default is "[name].[ext]" */
   entryNames?: string;
+  /** Default is "[name]-[hash].[ext]" */
+  chunkNames?: string;
   extensionOrder?: string[];
   /** Replaces "{{root}}" with the file root */
   external?: string[];
@@ -115,6 +117,9 @@ export interface BundlerTestInput {
   /** if set to true or false, create or edit tsconfig.json to set compilerOptions.useDefineForClassFields */
   useDefineForClassFields?: boolean;
   sourceMap?: boolean | "inline" | "external";
+
+  // pass subprocess.env
+  env?: Record<string, any>;
 
   // assertion options
 
@@ -235,12 +240,14 @@ export function expectBundled(
     bundleErrors,
     bundleWarnings,
     capture,
+    chunkNames,
     dce,
     dceKeepMarkerCount,
     define,
     entryNames,
     entryPoints,
     entryPointsRaw,
+    env,
     external,
     files,
     format,
@@ -263,6 +270,7 @@ export function expectBundled(
     outfile,
     outputPaths,
     platform,
+    publicPath,
     run,
     runtimeFiles,
     skipOnEsbuild,
@@ -335,6 +343,12 @@ export function expectBundled(
   if (!ESBUILD && inject) {
     throw new Error("inject not implemented in bun build");
   }
+  if (!ESBUILD && publicPath) {
+    throw new Error("publicPath not implemented in bun build");
+  }
+  if (!ESBUILD && chunkNames) {
+    throw new Error("chunkNames is not implemented in bun build");
+  }
   if (ESBUILD && skipOnEsbuild) {
     return testRef(id, opts);
   }
@@ -366,6 +380,7 @@ export function expectBundled(
 
   if (outdir) {
     entryNames ??= "[name].[ext]";
+    chunkNames ??= "[name]-[hash].[ext]";
   }
 
   // Option validation
@@ -428,6 +443,7 @@ export function expectBundled(
           // metafile && `--metafile=${metafile}`,
           // sourceMap && `--sourcemap${sourceMap !== true ? `=${sourceMap}` : ""}`,
           entryNames && entryNames !== "[name].[ext]" && [`--entry-names`, entryNames],
+          // chunkNames && chunkNames !== "[name]-[hash].[ext]" && [`--chunk-names`, chunkNames],
           // `--format=${format}`,
           // legalComments && `--legal-comments=${legalComments}`,
           splitting && `--splitting`,
@@ -436,6 +452,7 @@ export function expectBundled(
           // keepNames && `--keep-names`,
           // mainFields && `--main-fields=${mainFields}`,
           // loader && Object.entries(loader).map(([k, v]) => ["--loader", `${k}=${v}`]),
+          // publicPath && `--public-path=${publicPath}`,
           mode === "transform" && "--transform",
         ]
       : [
@@ -456,6 +473,7 @@ export function expectBundled(
           jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
           jsx.development && `--jsx-dev`,
           entryNames && entryNames !== "[name].[ext]" && `--entry-names=${entryNames.replace(/\.\[ext]$/, "")}`,
+          chunkNames && chunkNames !== "[name]-[hash].[ext]" && `--chunk-names=${chunkNames.replace(/\.\[ext]$/, "")}`,
           metafile && `--metafile=${metafile}`,
           sourceMap && `--sourcemap${sourceMap !== true ? `=${sourceMap}` : ""}`,
           banner && `--banner:js=${banner}`,
@@ -466,6 +484,7 @@ export function expectBundled(
           keepNames && `--keep-names`,
           mainFields && `--main-fields=${mainFields.join(",")}`,
           loader && Object.entries(loader).map(([k, v]) => `--loader:${k}=${v}`),
+          publicPath && `--public-path=${publicPath}`,
           [...(unsupportedJSFeatures ?? []), ...(unsupportedCSSFeatures ?? [])].map(x => `--supported:${x}=false`),
           ...entryPaths,
           ...(entryPointsRaw ?? []),
@@ -510,11 +529,19 @@ export function expectBundled(
     );
   }
 
+  const bundlerEnv = { ...bunEnv, ...env };
+  // remove undefined keys instead of passing "undefined"
+  for (const key in bundlerEnv) {
+    if (bundlerEnv[key] === undefined) {
+      delete bundlerEnv[key];
+    }
+  }
+
   const { stdout, stderr, success } = Bun.spawnSync({
     cmd,
     cwd: root,
     stdio: ["ignore", "pipe", "pipe"],
-    env: bunEnv,
+    env: bundlerEnv,
   });
 
   // Check for errors

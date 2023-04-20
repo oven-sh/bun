@@ -2297,6 +2297,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/AutoExternalNode", {
+    skipOnEsbuild: true,
     files: {
       "/entry.js": /* js */ `
         // These URLs should be external automatically
@@ -2305,9 +2306,12 @@ describe("bundler", () => {
   
         // This should be external and should be tree-shaken because it's side-effect free
         import "node:path";
+        import "bun";
+        import "bun:sqlite";
   
         // This should be external too, but shouldn't be tree-shaken because it could be a run-time error
         import "node:what-is-this";
+        import "bun:what-is-this";
       `,
     },
     platform: "node",

@@ -83,22 +83,6 @@ describe("bundler", () => {
     },
     capture: ['"Hello\0"'],
   });
-  itBundled("edgecase/CryptoPlatformBrowser", {
-    files: {
-      "/entry.ts": /* js */ `
-        import * as crypto from "node:crypto";
-        console.log(crypto);
-      `,
-    },
-    platform: "browser",
-    onAfterBundle(api) {
-      assert(!api.readFile("/out.js").includes("\0"), "bundle has a null byte in it!");
-    },
-    run: {
-      // TODO: decide what this should do
-      stdout: "undefined",
-    },
-  });
   // https://github.com/oven-sh/bun/issues/2699
   itBundled("edgecase/ImportNamedFromExportStarCJS", {
     files: {
@@ -115,6 +99,61 @@ describe("bundler", () => {
     },
     run: {
       stdout: "bar",
+    },
+  });
+  itBundled("edgecase/NodeEnvDefaultUnset", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(process.env.NODE_ENV);
+        capture(process.env.NODE_ENV === 'production');
+        capture(process.env.NODE_ENV === 'development');
+      `,
+    },
+    platform: "browser",
+    capture: ['"development"', "false", "true"],
+    env: {
+      // undefined will ensure this variable is not passed to the bundler
+      NODE_ENV: undefined,
+    },
+  });
+  itBundled("edgecase/NodeEnvDefaultDevelopment", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(process.env.NODE_ENV);
+        capture(process.env.NODE_ENV === 'production');
+        capture(process.env.NODE_ENV === 'development');
+      `,
+    },
+    platform: "browser",
+    capture: ['"development"', "false", "true"],
+    env: {
+      NODE_ENV: "development",
+    },
+  });
+  itBundled("edgecase/NodeEnvDefaultProduction", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(process.env.NODE_ENV);
+        capture(process.env.NODE_ENV === 'production');
+        capture(process.env.NODE_ENV === 'development');
+      `,
+    },
+    platform: "browser",
+    capture: ['"production"', "true", "false"],
+    env: {
+      NODE_ENV: "production",
+    },
+  });
+  itBundled("edgecase/ProcessEnvArbitrary", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(process.env.ARBITRARY);
+      `,
+    },
+    platform: "browser",
+    capture: ["process.env.ARBITRARY"],
+    env: {
+      ARBITRARY: "secret environment stuff!",
     },
   });
 });

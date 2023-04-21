@@ -40,7 +40,7 @@ If you're using a canary build of Bun, use the `canary` tag. The canary package 
 $ bun add -d bun-types@canary
 ```
 
-### Quick setup
+<!-- ### Quick setup
 
 {% callout %}
 
@@ -63,13 +63,19 @@ Add the following to your `tsconfig.json`.
 
 That's it! You should be able to use Bun's full feature set without seeing any TypeScript compiler errors.
 
-### Manual setup
+### Manual setup -->
+
+### Recommended `compilerOptions`
 
 These are the recommended `compilerOptions` for a Bun project.
 
 ```jsonc
 {
   "compilerOptions": {
+
+    // add Bun type definitions
+    "types": ["bun-types"]
+    
     // enable latest features
     "lib": ["esnext"],
     "module": "esnext",
@@ -77,22 +83,20 @@ These are the recommended `compilerOptions` for a Bun project.
 
     // if TS 5.x+
     "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
     // if TS 4.x or earlier
     "moduleResolution": "nodenext",
 
-    // support JSX, CommonJS, ES imports
     "jsx": "react-jsx", // support JSX
     "allowJs": true, // allow importing `.js` from `.ts`
     "esModuleInterop": true, // allow default imports for CommonJS modules
-    "allowImportingTsExtensions": true,
 
     // best practices
     "strict": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
 
-    // add Bun type definitions
-    "types": ["bun-types"]
+    
   }
 }
 ```

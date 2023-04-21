@@ -14,7 +14,8 @@
     }
   },
   "devDependencies": {
-    "bun-types": "^0.5.0"
+    "@types/js-yaml": "^4.0.5",
+    "bun-types": "canary"
   },
   "dependencies": {
     "js-yaml": "^4.1.0"

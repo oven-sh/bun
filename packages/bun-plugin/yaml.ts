@@ -1,1 +1,19 @@
-export function YamlPlugin(): BunPlugin {}
+import { BunPlugin } from "bun";
+import { readFileSync } from "fs";
+import { load } from "js-yaml";
+
+export function YamlPlugin(): BunPlugin {
+  return {
+    name: "bun-plugin-yaml",
+    setup(builder) {
+      builder.onLoad({ filter: /\.(yaml|yml)$/ }, args => {
+        const text = readFileSync(args.path, "utf8");
+        const exports = load(text) as Record<string, any>;
+        return {
+          exports,
+          loader: "object",
+        };
+      });
+    },
+  };
+}

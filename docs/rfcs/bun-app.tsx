@@ -181,7 +181,7 @@ interface HandlerContext {
     routers: [
       {
         mode: "handler",
-        handler: "./handler.tsx", // automatically included as entrypoing
+        handler: "./handler.tsx", // automatically included as entrypoint
         prefix: "/api",
         build: "simple-http",
       },

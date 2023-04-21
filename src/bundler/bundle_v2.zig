@@ -534,15 +534,23 @@ pub const BundleV2 = struct {
 
         try this.cloneAST();
 
+        const reachable = try this.findReachableFiles();
+
         var chunks = try this.linker.link(
             this,
             this.graph.entry_points.items,
             this.graph.use_directive_entry_points,
-            try this.findReachableFiles(),
+            reachable,
             unique_key,
         );
 
         return try this.linker.generateChunksInParallel(chunks);
+    }
+
+    fn generateLineOffsetTable(
+        this: *BundleV2,
+    ) void {
+        _ = this;
     }
 
     pub fn onParseTaskComplete(parse_result: *ParseTask.Result, this: *BundleV2) void {
@@ -2042,6 +2050,8 @@ const LinkerGraph = struct {
         /// may be "entryPointUserSpecified" instead of "entryPointDynamicImport".
         entry_point_kind: EntryPoint.Kind = .none,
 
+        line_offset_table: bun.sourcemap.LineOffsetTable.List = .{},
+
         pub fn isEntryPoint(this: *const File) bool {
             return this.entry_point_kind.isEntryPoint();
         }
@@ -2087,6 +2097,8 @@ const LinkerContext = struct {
     /// string buffer containing prefix for each unique keys
     unique_key_prefix: string = "",
 
+    source_maps: SourceMapData = .{},
+
     pub const LinkerOptions = struct {
         output_format: options.OutputFormat = .esm,
         ignore_dce_annotations: bool = false,
@@ -2103,6 +2115,22 @@ const LinkerContext = struct {
             passthrough,
             bundle,
         };
+    };
+
+    pub const SourceMapData = struct {
+        wait_group: sync.WaitGroup = undefined,
+
+        pub fn compute(this: *SourceMapData, source_index: Index.Int) !void {
+            var c: *LinkerContext = @fieldParentPtr(LinkerContext, "source_maps", this);
+            var worker: *ThreadPool.Worker = ThreadPool.Worker.get();
+
+            var line_offset_table: *bun.sourcemap.LineOffsetTable.List = &c.graph.files.items(.line_offset_table)[source_index];
+            var source: *const Logger.Source = &c.parse_graph.input_files.items(.source)[source_index];
+
+            const approximate_line_count = c.graph.ast.items(.approximate_line_count)[source_index];
+
+            line_offset_table.* = bun.sourcemap.LineOffsetTable.generate(worker.allocator, source.contents, approximate_line_count);
+        }
     };
 
     fn isExternalDynamicImport(this: *LinkerContext, record: *const ImportRecord, source_index: u32) bool {
@@ -2165,6 +2193,14 @@ const LinkerContext = struct {
         this.cjs_runtime_ref = runtime_named_exports.get("__commonJS").?.ref;
     }
 
+    pub fn computeDataForSourceMap(
+        this: *LinkerContext,
+        reachable: []const Index.Int,
+    ) void {
+        _ = reachable;
+        _ = this;
+    }
+
     pub noinline fn link(
         this: *LinkerContext,
         bundle: *BundleV2,
@@ -2179,6 +2215,10 @@ const LinkerContext = struct {
             use_directive_entry_points,
             reachable,
         );
+
+        if (bundle.bundler.options.sourcemap != .none) {
+            this.generateLineOffsetTables(reachable);
+        }
 
         try this.scanImportsAndExports();
 

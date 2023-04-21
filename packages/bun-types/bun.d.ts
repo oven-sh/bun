@@ -750,7 +750,12 @@ declare module "bun" {
       paths?: Record<string, string[]>;
       baseUrl?: string;
       /** "preserve" is not supported yet */
-      jsx?: "preserve" | "react" | "react-jsx" | "react-jsxdev" | "react-native";
+      jsx?:
+        | "preserve"
+        | "react"
+        | "react-jsx"
+        | "react-jsxdev"
+        | "react-native";
       jsxFactory?: string;
       jsxFragmentFactory?: string;
       jsxImportSource?: string;
@@ -961,6 +966,44 @@ declare module "bun" {
       | "internal"
       | "entry-point";
   }
+
+  type ModuleFormat = "esm"; // later: "cjs", "iife"
+
+  interface BuildConfig {
+    entrypoints: string[]; // list of file path
+    target?: Target; // default: "browser"
+    // module?: ModuleFormat; // later: "cjs", "iife"
+    outdir?: string; // output directory
+
+    naming?: {
+      chunk?: string;
+      entrypoint?: string;
+    }; // | string;
+    // root?: string; // project root
+    // transform?: boolean; // default: false, transform instead of bundling
+    splitting?: boolean; // default true, enable code splitting
+    plugins?: BunPlugin[];
+    // manifest?: boolean; // whether to return manifest
+    external?: Array<string | RegExp>;
+    // origin?: string; // e.g. http://mydomain.com
+    // assetOrigin?: string; // e.g. http://assets.mydomain.com
+    // loaders?: { [k in string]: Loader };
+    sourcemap?: "none" | "inline" | "external"; // default: "none"
+    minify?:
+      | boolean
+      | {
+          whitespace?: boolean;
+          syntax?: boolean;
+          identifiers?: boolean;
+        };
+    treeShaking?: boolean;
+  }
+
+  type BuildResult<T> = {
+    outputs: Array<{ path: string; result: T }>;
+  };
+
+  function build(config: BuildConfig): BuildResult<Blob>;
 
   /**
    * **0** means the message was **dropped**
@@ -2470,7 +2513,7 @@ declare module "bun" {
    */
   export function gunzipSync(data: Uint8Array): Uint8Array;
 
-  export type PluginTarget =
+  export type Target =
     /**
      * The default environment when using `bun run` or `bun` to load a script
      */
@@ -2483,6 +2526,7 @@ declare module "bun" {
      * The plugin will be applied to browser builds
      */
     | "browser";
+  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml";
 
   interface PluginConstraints {
     /**
@@ -2525,7 +2569,7 @@ declare module "bun" {
      *
      * "css" will be added in a future version of Bun.
      */
-    loader: "js" | "jsx" | "ts" | "tsx" | "json" | "toml";
+    loader: Loader;
   }
 
   interface OnLoadResultObject {
@@ -2637,7 +2681,7 @@ declare module "bun" {
     /**
      * The current target environment
      */
-    target: PluginTarget;
+    target: Target;
   }
 
   interface BunPlugin {
@@ -2658,7 +2702,7 @@ declare module "bun" {
      *
      * If unspecified, it is assumed that the plugin is compatible with the default target.
      */
-    target?: PluginTarget;
+    target?: Target;
     /**
      * A function that will be called when the plugin is loaded.
      *

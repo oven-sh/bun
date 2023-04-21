@@ -22,7 +22,7 @@ Add this to your `tsconfig.json` or `jsconfig.json`:
 ```jsonc-diff
   {
     
-+   "extends": ["bun-types"],
++   "types": ["bun-types"],
     
     // other options...
   }
@@ -30,7 +30,7 @@ Add this to your `tsconfig.json` or `jsconfig.json`:
 
 # Contributing
 
-`bun-types` is generated via [./bundle.ts](./scripts/bundle.ts).
+`bun-types` is generated via [./scripts/bundle.ts](./scripts/bundle.ts).
 
 To add a new file, add it under `packages/bun-types`. Then add a [triple-slash directive](https://www.typescriptlang.org/docs/handbook/triple-slash-directives.html) pointing to it inside [./index.d.ts](./index.d.ts).
 

@@ -5269,6 +5269,11 @@ pub const S = struct {
 
         was_commonjs_export: bool = false,
 
+        pub fn canMergeWith(this: *const Local, other: *const Local) bool {
+            return this.kind == other.kind and this.is_export == other.is_export and
+                this.was_commonjs_export == other.was_commonjs_export;
+        }
+
         pub const Kind = enum(u2) {
             k_var,
             k_let,

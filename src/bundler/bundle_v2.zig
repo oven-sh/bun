@@ -5474,7 +5474,7 @@ const LinkerContext = struct {
                 if (stmts.items[end - 1].data == .s_local) {
                     var before = stmts.items[end - 1].data.s_local;
                     // It must be the same kind of variable statement (i.e. let/var/const)
-                    if (before.kind == after.kind and before.is_export == after.is_export) {
+                    if (before.canMergeWith(after)) {
                         if (did_merge_with_previous_local) {
                             // Avoid O(n^2) behavior for repeated variable declarations
                             // Appending to this decls list is safe because did_merge_with_previous_local is true

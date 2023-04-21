@@ -20154,7 +20154,9 @@ fn NewParser_(
                             // Merge adjacent local statements
                             if (output.items.len > 0) {
                                 var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_local and local.kind == prev_stmt.data.s_local.kind and local.is_export == prev_stmt.data.s_local.is_export) {
+                                if (prev_stmt.data == .s_local and
+                                    local.canMergeWith(prev_stmt.data.s_local))
+                                {
                                     prev_stmt.data.s_local.decls.append(p.allocator, local.decls.slice()) catch unreachable;
                                     continue;
                                 }

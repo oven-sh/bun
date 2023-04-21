@@ -1,0 +1,22 @@
+{
+  "name": "bun-plugin",
+  "version": "0.0.1",
+  "module": "index.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./index.ts",
+      "require": "./index.ts"
+    },
+    "./yaml": {
+      "import": "./yaml.ts",
+      "require": "./yaml.ts"
+    }
+  },
+  "devDependencies": {
+    "bun-types": "^0.5.0"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  }
+}

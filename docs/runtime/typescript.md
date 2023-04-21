@@ -72,10 +72,9 @@ These are the recommended `compilerOptions` for a Bun project.
 ```jsonc
 {
   "compilerOptions": {
-
     // add Bun type definitions
-    "types": ["bun-types"]
-    
+    "types": ["bun-types"],
+
     // enable latest features
     "lib": ["esnext"],
     "module": "esnext",
@@ -84,6 +83,7 @@ These are the recommended `compilerOptions` for a Bun project.
     // if TS 5.x+
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
+    "moduleDetection": "force",
     // if TS 4.x or earlier
     "moduleResolution": "nodenext",
 
@@ -94,9 +94,7 @@ These are the recommended `compilerOptions` for a Bun project.
     // best practices
     "strict": true,
     "forceConsistentCasingInFileNames": true,
-    "skipLibCheck": true,
-
-    
+    "skipLibCheck": true
   }
 }
 ```

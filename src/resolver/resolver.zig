@@ -547,7 +547,7 @@ pub const Resolver = struct {
 
         return ThisResolver{
             .allocator = allocator,
-            .dir_cache = DirInfo.HashMap.init(allocator),
+            .dir_cache = DirInfo.HashMap.init(bun.default_allocator),
             .mutex = &resolver_Mutex,
             .caches = CacheSet.init(allocator),
             .opts = opts,
@@ -2279,7 +2279,7 @@ pub const Resolver = struct {
             ) orelse return null;
         }
 
-        var _pkg = try r.allocator.create(PackageJSON);
+        var _pkg = try bun.default_allocator.create(PackageJSON);
         _pkg.* = pkg;
         return _pkg;
     }

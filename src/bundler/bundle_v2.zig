@@ -85,8 +85,9 @@ const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 pub const ThreadPool = struct {
     pool: *ThreadPoolLib = undefined,
     // Hardcode 512 as max number of threads for now.
-    workers: [512]Worker = undefined,
-    workers_used: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
+    workers_list: bun.HiveArray(Worker, 128) = bun.HiveArray(Worker, 128).init(),
+    workers_assignments: std.AutoHashMap(std.Thread.Id, *Worker) = std.AutoHashMap(std.Thread.Id, *Worker).init(bun.default_allocator),
+    workers_assignments_lock: bun.Lock = bun.Lock.init(),
     cpu_count: u32 = 0,
     started_workers: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
     stopped_workers: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
@@ -108,10 +109,12 @@ pub const ThreadPool = struct {
 
         if (v2.bundler.env.map.get("GOMAXPROCS")) |max_procs| {
             if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count| {
-                this.cpu_count = @max(cpu_count, 2);
+                this.cpu_count = cpu_count;
             } else |_| {}
         }
-        this.cpu_count = @min(this.cpu_count, @truncate(u32, this.workers.len - 1));
+
+        this.cpu_count = @max(@min(this.cpu_count, @truncate(u32, 128 - 1)), 2);
+
         if (existing_thread_pool) |pool| {
             this.pool = pool;
         } else {
@@ -120,21 +123,31 @@ pub const ThreadPool = struct {
                 .max_threads = this.cpu_count,
             });
         }
-        this.pool.on_thread_spawn = Worker.onSpawn;
-        this.pool.threadpool_context = this;
-        var workers_used: u32 = 0;
-        while (workers_used < this.cpu_count) : (workers_used += 1) {
-            try this.workers[workers_used].init(v2);
-        }
+        this.pool.setThreadContext(this);
 
-        if (workers_used > 0)
-            this.pool.forceSpawn();
         debug("allocated {d} workers", .{this.cpu_count});
     }
 
+    pub fn getWorker(this: *ThreadPool, id: std.Thread.Id) *Worker {
+        this.workers_assignments_lock.lock();
+        defer this.workers_assignments_lock.unlock();
+        var entry = this.workers_assignments.getOrPut(id) catch unreachable;
+        if (entry.found_existing) {
+            return entry.value_ptr.*;
+        }
+
+        var worker = this.workers_list.get() orelse @panic("no more workers available");
+        worker.* = .{
+            .ctx = this.v2,
+            .allocator = undefined,
+        };
+        worker.init(this.v2);
+        entry.value_ptr.* = worker;
+
+        return worker;
+    }
+
     pub const Worker = struct {
-        thread_id: std.Thread.Id,
-        thread: std.Thread,
         heap: ThreadlocalArena = ThreadlocalArena{},
         allocator: std.mem.Allocator,
         ctx: *BundleV2,
@@ -143,27 +156,28 @@ pub const ThreadPool = struct {
         quit: bool = false,
 
         ast_memory_allocator: js_ast.ASTMemoryAllocator = undefined,
-        has_notify_started: bool = false,
         has_created: bool = false,
 
         pub fn deinit(this: *Worker) void {
-            this.data.deinit(this.allocator);
-            this.heap.deinit();
+            if (this.has_created) {
+                this.data.deinit(this.allocator);
+                this.heap.deinit();
+            }
         }
 
-        pub fn get() *Worker {
-            var worker = @ptrCast(
-                *ThreadPool.Worker,
-                @alignCast(
-                    @alignOf(*ThreadPool.Worker),
-                    ThreadPoolLib.Thread.current.?.ctx.?,
-                ),
-            );
+        pub fn get(ctx: *BundleV2) *Worker {
+            var worker = ctx.graph.pool.getWorker(std.Thread.getCurrentId());
             if (!worker.has_created) {
-                worker.create();
+                worker.create(ctx);
             }
 
+            worker.ast_memory_allocator.push();
+
             return worker;
+        }
+
+        pub fn unget(this: *Worker) void {
+            this.ast_memory_allocator.pop();
         }
 
         pub const WorkerData = struct {
@@ -177,36 +191,19 @@ pub const ThreadPool = struct {
             }
         };
 
-        pub fn init(worker: *Worker, v2: *BundleV2) !void {
+        pub fn init(worker: *Worker, v2: *BundleV2) void {
             worker.ctx = v2;
         }
 
-        pub fn onSpawn(ctx: ?*anyopaque) ?*anyopaque {
-            var pool = @ptrCast(*ThreadPool, @alignCast(@alignOf(*ThreadPool), ctx.?));
-
-            const id = pool.workers_used.fetchAdd(1, .Monotonic);
-            pool.workers[id].run();
-            return &pool.workers[id];
-        }
-
-        pub fn notifyStarted(this: *Worker) void {
-            if (!this.has_notify_started) {
-                this.has_notify_started = true;
-                _ = this.v2.pool.started_workers.fetchAdd(1, .Release);
-                std.Thread.Futex.wake(&this.v2.pool.started_workers, std.math.maxInt(u32));
-            }
-        }
-
-        fn create(this: *Worker) void {
+        fn create(this: *Worker, ctx: *BundleV2) void {
             this.has_created = true;
             Output.Source.configureThread();
-            this.thread_id = std.Thread.getCurrentId();
             this.heap = ThreadlocalArena.init() catch unreachable;
             this.allocator = this.heap.allocator();
             var allocator = this.allocator;
 
             this.ast_memory_allocator = .{ .allocator = this.allocator };
-            this.ast_memory_allocator.push();
+            this.ast_memory_allocator.reset();
 
             this.data = allocator.create(WorkerData) catch unreachable;
             this.data.* = WorkerData{
@@ -215,7 +212,8 @@ pub const ThreadPool = struct {
                 .macro_context = undefined,
             };
             this.data.log.* = Logger.Log.init(allocator);
-            this.data.bundler = this.ctx.bundler.*;
+            this.ctx = ctx;
+            this.data.bundler = ctx.bundler.*;
             this.data.bundler.setLog(this.data.log);
             this.data.bundler.setAllocator(allocator);
             this.data.bundler.linker.resolver = &this.data.bundler.resolver;
@@ -227,9 +225,9 @@ pub const ThreadPool = struct {
             this.data.bundler.resolver.caches = CacheSet.Set.init(this.allocator);
         }
 
-        pub fn run(this: *Worker) void {
+        pub fn run(this: *Worker, ctx: *BundleV2) void {
             if (!this.has_created) {
-                this.create();
+                this.create(ctx);
             }
 
             // no funny business mr. cache
@@ -374,7 +372,7 @@ pub const BundleV2 = struct {
             .side_effects = resolve.primary_side_effects_data,
         });
         var task = try this.graph.allocator.create(ParseTask);
-        task.* = ParseTask.init(&result, source_index);
+        task.* = ParseTask.init(&result, source_index, this);
         task.loader = loader;
         task.jsx = this.bundler.options.jsx;
         task.task.node.next = null;
@@ -458,7 +456,10 @@ pub const BundleV2 = struct {
             this.graph.path_to_source_index_map.put(this.graph.allocator, bun.hash("bun:wrap"), Index.runtime.get()) catch unreachable;
             var runtime_parse_task = try this.graph.allocator.create(ParseTask);
             runtime_parse_task.* = ParseTask.runtime;
-            runtime_parse_task.task.node.next = null;
+            runtime_parse_task.ctx = this;
+            runtime_parse_task.task = .{
+                .callback = &ParseTask.callback,
+            };
             runtime_parse_task.tree_shaking = true;
             runtime_parse_task.loader = .js;
             this.graph.parse_pending += 1;
@@ -562,7 +563,7 @@ pub const BundleV2 = struct {
             .jsc_event_loop = event_loop,
             .promise = JSC.JSPromise.Strong.init(globalThis),
             .globalThis = globalThis,
-            .ref = JSC.Ref.init(),
+            .ref = JSC.PollRef.init(),
             .env = globalThis.bunVM().bundler.env,
             .log = Logger.Log.init(bun.default_allocator),
             .task = JSBundleCompletionTask.TaskCompletion.init(completion),
@@ -572,8 +573,20 @@ pub const BundleV2 = struct {
         // conditions from creating two
         _ = JSC.WorkPool.get();
 
-        var thread = try std.Thread.spawn(.{}, generateInNewThreadWrap, .{completion});
+        // if (!BundleThread.created) {
+        //     BundleThread.created = true;
+
+        var instance = bun.default_allocator.create(BundleThread) catch unreachable;
+        instance.queue = .{};
+        instance.queue.push(completion);
+        // BundleThread.instance = instance;
+
+        var thread = try std.Thread.spawn(.{}, generateInNewThreadWrap, .{instance});
         thread.detach();
+        // } else {
+        //     BundleThread.instance.queue.push(completion);
+        //     BundleThread.instance.loop.wakeup();
+        // }
 
         completion.ref.ref(globalThis.bunVM());
 
@@ -590,11 +603,13 @@ pub const BundleV2 = struct {
         task: bun.JSC.AnyTask,
         globalThis: *JSC.JSGlobalObject,
         promise: JSC.JSPromise.Strong,
-        ref: JSC.Ref = JSC.Ref.init(),
+        ref: JSC.PollRef = JSC.PollRef.init(),
         env: *bun.DotEnv.Loader,
         log: Logger.Log,
 
         result: Result = .{ .pending = {} },
+
+        next: ?*JSBundleCompletionTask = null,
 
         pub const Result = union(enum) {
             pending: void,
@@ -669,20 +684,45 @@ pub const BundleV2 = struct {
     };
 
     pub fn generateInNewThreadWrap(
-        completion: *JSBundleCompletionTask,
+        instance: *BundleThread,
     ) void {
         Output.Source.configureNamedThread("Bundler");
-        generateInNewThread(completion) catch |err| {
-            completion.result = .{ .err = err };
-            var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch unreachable;
-            concurrent_task.* = JSC.ConcurrentTask{
-                .auto_delete = true,
-                .task = completion.task.task(),
-                .next = null,
+        instance.loop = bun.uws.Loop.get().?;
+        instance.loop.num_polls += 1;
+        js_ast.Expr.Data.Store.create(bun.default_allocator);
+        js_ast.Stmt.Data.Store.create(bun.default_allocator);
+        defer js_ast.Expr.Data.Store.deinit();
+        defer js_ast.Stmt.Data.Store.deinit();
+
+        // while (true) {
+        while (instance.queue.pop()) |completion| {
+            defer {
+                js_ast.Expr.Data.Store.reset();
+                js_ast.Stmt.Data.Store.reset();
+            }
+            generateInNewThread(completion) catch |err| {
+                completion.result = .{ .err = err };
+                var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch unreachable;
+                concurrent_task.* = JSC.ConcurrentTask{
+                    .auto_delete = true,
+                    .task = completion.task.task(),
+                    .next = null,
+                };
+                completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
             };
-            completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
-        };
+        }
+
+        //     instance.loop.tick();
+        // }
     }
+
+    pub const BundleThread = struct {
+        loop: *bun.uws.Loop,
+        waker: bun.AsyncIO.Waker,
+        queue: bun.UnboundedQueue(JSBundleCompletionTask, .next) = .{},
+        pub var created = false;
+        pub var instance: *BundleThread = undefined;
+    };
 
     fn generateInNewThread(
         completion: *JSBundleCompletionTask,
@@ -726,11 +766,14 @@ pub const BundleV2 = struct {
         var event_loop = try allocator.create(JSC.AnyEventLoop);
         defer allocator.destroy(event_loop);
 
-        // Ensure uWS::Loop is initialized
-        _ = bun.uws.Loop.get().?;
-
         var this = try BundleV2.init(bundler, allocator, JSC.AnyEventLoop.init(allocator), false, JSC.WorkPool.get());
-        defer this.deinit();
+        defer {
+            if (this.graph.pool.pool.threadpool_context == @ptrCast(?*anyopaque, this.graph.pool)) {
+                this.graph.pool.pool.threadpool_context = null;
+            }
+
+            this.deinit();
+        }
 
         completion.result = .{
             .value = .{
@@ -748,9 +791,11 @@ pub const BundleV2 = struct {
     }
 
     pub fn deinit(this: *BundleV2) void {
-        for (this.graph.pool.workers[0..this.graph.pool.workers_used.loadUnchecked()]) |*worker| {
-            worker.deinit();
+        var iter = this.graph.pool.workers_list.available.iterator(.{ .kind = .unset });
+        while (iter.next()) |worker_id| {
+            this.graph.pool.workers_list.at(@truncate(u16, worker_id)).deinit();
         }
+
         this.graph.heap.deinit();
     }
 
@@ -786,6 +831,8 @@ pub const BundleV2 = struct {
     }
 
     pub fn onParseTaskComplete(parse_result: *ParseTask.Result, this: *BundleV2) void {
+        defer bun.default_allocator.destroy(parse_result);
+
         var graph = &this.graph;
         var batch = ThreadPoolLib.Batch{};
         var diff: isize = -1;
@@ -878,6 +925,7 @@ pub const BundleV2 = struct {
                         // graph.source_index_map.put(graph.allocator, new_input_file.source.index.get, new_input_file.source) catch unreachable;
                         existing.value_ptr.* = new_input_file.source.index.get();
                         entry.value_ptr.source_index = new_input_file.source.index;
+                        entry.value_ptr.ctx = this;
                         graph.input_files.append(graph.allocator, new_input_file) catch unreachable;
                         graph.ast.append(graph.allocator, js_ast.Ast.empty) catch unreachable;
                         batch.push(ThreadPoolLib.Batch.from(&entry.value_ptr.task));
@@ -958,13 +1006,15 @@ const ParseTask = struct {
     tree_shaking: bool = false,
     known_platform: ?options.Platform = null,
     module_type: options.ModuleType = .unknown,
+    ctx: *BundleV2,
 
     const debug = Output.scoped(.ParseTask, false);
 
     pub const ResolveQueue = std.AutoArrayHashMap(u64, ParseTask);
 
-    pub fn init(resolve_result: *const _resolver.Result, source_index: ?Index) ParseTask {
+    pub fn init(resolve_result: *const _resolver.Result, source_index: ?Index, ctx: *BundleV2) ParseTask {
         return .{
+            .ctx = ctx,
             .path = resolve_result.path_pair.primary,
             .contents_or_fd = .{
                 .fd = .{
@@ -980,6 +1030,7 @@ const ParseTask = struct {
     }
 
     pub const runtime = ParseTask{
+        .ctx = undefined,
         .path = Fs.Path.initWithNamespace("runtime", "bun:runtime"),
         .side_effects = _resolver.SideEffects.no_side_effects__pure_data,
         .jsx = options.JSX.Pragma{
@@ -1205,7 +1256,7 @@ const ParseTask = struct {
 
         const is_empty = entry.contents.len == 0 or (entry.contents.len < 33 and strings.trim(entry.contents, " \n\r").len == 0);
 
-        const use_directive = if (!is_empty and this.ctx.bundler.options.react_server_components)
+        const use_directive = if (!is_empty and bundler.options.react_server_components)
             UseDirective.parse(entry.contents)
         else
             .none;
@@ -1375,7 +1426,7 @@ const ParseTask = struct {
                 import_record.path = path.*;
                 debug("created ParseTask: {s}", .{path.text});
 
-                resolve_entry.value_ptr.* = ParseTask.init(&resolve_result, null);
+                resolve_entry.value_ptr.* = ParseTask.init(&resolve_result, null, this.ctx);
                 resolve_entry.value_ptr.secondary_path_for_commonjs_interop = secondary_path_to_copy;
 
                 if (use_directive != .none) {
@@ -1481,13 +1532,8 @@ const ParseTask = struct {
     }
 
     fn run(this: *ParseTask) void {
-        var worker = @ptrCast(
-            *ThreadPool.Worker,
-            @alignCast(
-                @alignOf(*ThreadPool.Worker),
-                ThreadPoolLib.Thread.current.?.ctx.?,
-            ),
-        );
+        var worker = ThreadPool.Worker.get(this.ctx);
+        defer worker.unget();
         var step: ParseTask.Result.Error.Step = .pending;
         var log = Logger.Log.init(worker.allocator);
         std.debug.assert(this.source_index.isValid()); // forgot to set source_index
@@ -3975,13 +4021,9 @@ const LinkerContext = struct {
         const id = source_index;
         if (id > c.graph.meta.len) return;
 
-        var worker: *ThreadPool.Worker = @ptrCast(
-            *ThreadPool.Worker,
-            @alignCast(
-                @alignOf(*ThreadPool.Worker),
-                ThreadPoolLib.Thread.current.?.ctx.?,
-            ),
-        );
+        var worker: *ThreadPool.Worker = ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", c));
+        defer worker.unget();
+
         // we must use this allocator here
         const allocator_ = worker.allocator;
         if (comptime FeatureFlags.help_catch_memory_issues) {
@@ -4924,7 +4966,8 @@ const LinkerContext = struct {
     fn generateChunkJS_(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) !void {
         _ = chunk_index;
         defer ctx.wg.finish();
-        var worker = ThreadPool.Worker.get();
+        var worker = ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", ctx.c));
+        defer worker.unget();
 
         if (comptime FeatureFlags.help_catch_memory_issues) {
             worker.heap.gc(false);
@@ -4941,9 +4984,6 @@ const LinkerContext = struct {
         const toCommonJSRef = c.graph.symbols.follow(runtime_members.get("__toCommonJS").?.ref);
         const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
         const runtimeRequireRef = c.graph.symbols.follow(runtime_members.get("__require").?.ref);
-
-        js_ast.Expr.Data.Store.create(bun.default_allocator);
-        js_ast.Stmt.Data.Store.create(bun.default_allocator);
 
         var r = try c.renameSymbolsInChunk(allocator, chunk, repr.files_in_chunk_order);
         defer r.deinit();

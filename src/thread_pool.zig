@@ -574,6 +574,17 @@ fn register(noalias self: *ThreadPool, noalias thread: *Thread) void {
     }
 }
 
+pub fn setThreadContext(noalias pool: *ThreadPool, ctx: ?*anyopaque) void {
+    pool.threadpool_context = ctx;
+
+    var thread = pool.threads.load(.Monotonic) orelse return;
+    thread.ctx = pool.threadpool_context;
+    while (thread.next) |next| {
+        next.ctx = pool.threadpool_context;
+        thread = next;
+    }
+}
+
 fn unregister(noalias self: *ThreadPool, noalias maybe_thread: ?*Thread) void {
     // Un-spawn one thread, either due to a failed OS thread spawning or the thread is exiting.
     const one_spawned = @bitCast(u32, Sync{ .spawned = 1 });

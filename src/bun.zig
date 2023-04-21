@@ -1334,3 +1334,6 @@ pub const StringMap = struct {
 
 pub const DotEnv = @import("./env_loader.zig");
 pub const BundleV2 = @import("./bundler/bundle_v2.zig").BundleV2;
+
+pub const Lock = @import("./lock.zig").Lock;
+pub const UnboundedQueue = @import("./bun.js/unbounded_queue.zig").UnboundedQueue;

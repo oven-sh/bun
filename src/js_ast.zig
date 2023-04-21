@@ -9542,12 +9542,12 @@ pub const ASTMemoryAllocator = struct {
     allocator: std.mem.Allocator,
     previous: ?*ASTMemoryAllocator = null,
 
-    pub fn push(this: *ASTMemoryAllocator) void {
-        if (Stmt.Data.Store.memory_allocator == this) {
-            return;
-        }
+    pub fn reset(this: *ASTMemoryAllocator) void {
         this.stack_allocator.fallback_allocator = this.allocator;
         this.bump_allocator = this.stack_allocator.get();
+    }
+
+    pub fn push(this: *ASTMemoryAllocator) void {
         var prev = Stmt.Data.Store.memory_allocator;
         if (this.previous) |other| {
             other.previous = prev;

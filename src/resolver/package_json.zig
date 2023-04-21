@@ -745,13 +745,13 @@ pub const PackageJSON = struct {
             }
 
             if (json.asProperty("exports")) |exports_prop| {
-                if (ExportsMap.parse(r.allocator, &json_source, r.log, exports_prop.expr, exports_prop.loc)) |exports_map| {
+                if (ExportsMap.parse(bun.default_allocator, &json_source, r.log, exports_prop.expr, exports_prop.loc)) |exports_map| {
                     package_json.exports = exports_map;
                 }
             }
 
             if (json.asProperty("imports")) |imports_prop| {
-                if (ExportsMap.parse(r.allocator, &json_source, r.log, imports_prop.expr, imports_prop.loc)) |imports_map| {
+                if (ExportsMap.parse(bun.default_allocator, &json_source, r.log, imports_prop.expr, imports_prop.loc)) |imports_map| {
                     package_json.imports = imports_map;
                 }
             }

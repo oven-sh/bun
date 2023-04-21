@@ -1055,8 +1055,8 @@ pub const ExportsMap = struct {
                 },
                 .e_array => |e_array| {
                     var array = this.allocator.alloc(Entry, e_array.items.len) catch unreachable;
-                    for (e_array.items.slice(), 0..) |item, i| {
-                        array[i] = this.visit(item);
+                    for (e_array.items.slice(), array) |item, *dest| {
+                        dest.* = this.visit(item);
                     }
                     return Entry{
                         .data = .{

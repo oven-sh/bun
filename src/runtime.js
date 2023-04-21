@@ -1,12 +1,14 @@
 var tagSymbol;
 var cjsRequireSymbol;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __create = Object.create;
 var __descs = Object.getOwnPropertyDescriptors;
 var __defProp = Object.defineProperty;
 var __getProtoOf = Object.getPrototypeOf;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+
+// This order is deliberate so that the printer does the {} optimization here
+var __hasOwnProp = Object.prototype.hasOwnProperty;
 
 export var __markAsModule = target => __defProp(target, "__esModule", { value: true, configurable: true });
 

@@ -1,13 +1,8 @@
-<<<<<<< HEAD:docs/runtime/typescript.md
-Bun can directly execute `.ts` and `.tsx` files with no extra configuration. If you import a `.ts` or `.tsx` file, Bun internally transpiles it into JavaScript then executes the file.
-=======
 Bun treats TypeScript as a first-class citizen.
 
 ## Running `.ts` files
 
 Bun can directly execute `.ts` and `.tsx` files just like vanilla JavaScript, with no extra configuration. If you import a `.ts` or `.tsx` file (or an `npm` module that exports these files), Bun internally transpiles it into JavaScript then executes the file.
-
-> > > > > > > bed8865d (Update TS docs for bun-types changes):docs/ecosystem/typescript.md
 
 **Note** — Similar to other build tools, Bun does not typecheck the files. Use [`tsc --noEmit`](https://www.typescriptlang.org/docs/handbook/compiler-options.html) (the official TypeScript CLI) if you're looking to catch static type errors.
 
@@ -27,7 +22,7 @@ Bun supports a number of features that TypeScript doesn't support by default, su
 If you initialized your project with `bun init`, everything is already configured properly.
 {% /callout %}
 
-To get started, install the `bun-types` package. If you initialized your project with `bun init`, everything is already configured properly.
+To get started, install the `bun-types` package.
 
 ```sh
 $ bun add -d bun-types # dev dependency
@@ -36,7 +31,6 @@ $ bun add -d bun-types # dev dependency
 If you're using a canary build of Bun, use the `canary` tag. The canary package is updated on every commit to the `main` branch.
 
 ```sh
-# if you're using a canary build of Bun
 $ bun add -d bun-types@canary
 ```
 

@@ -419,6 +419,7 @@ pub const BundleV2 = struct {
         generator.linker.options.minify_syntax = bundler.options.minify_syntax;
         generator.linker.options.minify_identifiers = bundler.options.minify_identifiers;
         generator.linker.options.minify_whitespace = bundler.options.minify_whitespace;
+        generator.linker.options.source_maps = bundler.options.sourcemap;
 
         var pool = try generator.graph.allocator.create(ThreadPool);
         if (enable_reloading) {
@@ -545,12 +546,6 @@ pub const BundleV2 = struct {
         );
 
         return try this.linker.generateChunksInParallel(chunks);
-    }
-
-    fn generateLineOffsetTable(
-        this: *BundleV2,
-    ) void {
-        _ = this;
     }
 
     pub fn onParseTaskComplete(parse_result: *ParseTask.Result, this: *BundleV2) void {
@@ -2099,6 +2094,10 @@ const LinkerContext = struct {
 
     source_maps: SourceMapData = .{},
 
+    /// This will eventually be used for reference-counting LinkerContext
+    /// to know whether or not we can free it safely.
+    pending_task_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
+
     pub const LinkerOptions = struct {
         output_format: options.OutputFormat = .esm,
         ignore_dce_annotations: bool = false,
@@ -2106,6 +2105,7 @@ const LinkerContext = struct {
         minify_whitespace: bool = false,
         minify_syntax: bool = false,
         minify_identifiers: bool = false,
+        source_maps: options.SourceMapOption = .none,
 
         mode: Mode = Mode.bundle,
 
@@ -2119,17 +2119,37 @@ const LinkerContext = struct {
 
     pub const SourceMapData = struct {
         wait_group: sync.WaitGroup = undefined,
+        tasks: []Task = &.{},
 
-        pub fn compute(this: *SourceMapData, source_index: Index.Int) !void {
-            var c: *LinkerContext = @fieldParentPtr(LinkerContext, "source_maps", this);
-            var worker: *ThreadPool.Worker = ThreadPool.Worker.get();
+        pub const Task = struct {
+            ctx: *LinkerContext,
+            source_index: Index.Int,
+            thread_task: ThreadPoolLib.Task = .{ .callback = &run },
 
-            var line_offset_table: *bun.sourcemap.LineOffsetTable.List = &c.graph.files.items(.line_offset_table)[source_index];
-            var source: *const Logger.Source = &c.parse_graph.input_files.items(.source)[source_index];
+            pub fn run(thread_task: *ThreadPoolLib.Task) void {
+                var task = @fieldParentPtr(Task, "thread_task", thread_task);
+                defer {
+                    task.ctx.markPendingTaskDone();
+                    task.ctx.source_maps.wait_group.finish();
+                }
 
-            const approximate_line_count = c.graph.ast.items(.approximate_line_count)[source_index];
+                SourceMapData.compute(task.ctx, ThreadPool.Worker.get().allocator, task.source_index);
+            }
+        };
 
-            line_offset_table.* = bun.sourcemap.LineOffsetTable.generate(worker.allocator, source.contents, approximate_line_count);
+        pub fn compute(this: *LinkerContext, allocator: std.mem.Allocator, source_index: Index.Int) void {
+            var line_offset_table: *bun.sourcemap.LineOffsetTable.List = &this.graph.files.items(.line_offset_table)[source_index];
+            const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
+
+            const approximate_line_count = this.graph.ast.items(.approximate_newline_count)[source_index];
+
+            line_offset_table.* = bun.sourcemap.LineOffsetTable.generate(
+                allocator,
+                source.contents,
+
+                // We don't support sourcemaps for source files with more than 2^31 lines
+                @intCast(i32, @truncate(u31, approximate_line_count)),
+            );
         }
     };
 
@@ -2197,8 +2217,27 @@ const LinkerContext = struct {
         this: *LinkerContext,
         reachable: []const Index.Int,
     ) void {
-        _ = reachable;
-        _ = this;
+        this.source_maps.wait_group.init();
+        this.source_maps.wait_group.counter = @truncate(u32, reachable.len);
+        this.source_maps.tasks = this.allocator.alloc(SourceMapData.Task, reachable.len) catch unreachable;
+        var batch = ThreadPoolLib.Batch{};
+        for (reachable, this.source_maps.tasks) |source_index, *task| {
+            task.* = .{
+                .ctx = this,
+                .source_index = source_index,
+            };
+            batch.push(ThreadPoolLib.Batch.from(&task.thread_task));
+        }
+        this.scheduleTasks(batch);
+    }
+
+    pub fn scheduleTasks(this: *LinkerContext, batch: ThreadPoolLib.Batch) void {
+        _ = this.pending_task_count.fetchAdd(@truncate(u32, batch.len), .Monotonic);
+        this.parse_graph.pool.pool.schedule(batch);
+    }
+
+    pub fn markPendingTaskDone(this: *LinkerContext) void {
+        _ = this.pending_task_count.fetchSub(1, .Monotonic);
     }
 
     pub noinline fn link(
@@ -2216,8 +2255,8 @@ const LinkerContext = struct {
             reachable,
         );
 
-        if (bundle.bundler.options.sourcemap != .none) {
-            this.generateLineOffsetTables(reachable);
+        if (this.options.source_maps != .none) {
+            this.computeDataForSourceMap(@ptrCast([]Index.Int, reachable));
         }
 
         try this.scanImportsAndExports();
@@ -4471,6 +4510,13 @@ const LinkerContext = struct {
         generateChunkJS_(ctx, chunk, chunk_index) catch |err| Output.panic("TODO: handle error: {s}", .{@errorName(err)});
     }
 
+    // This version generates the renamer for the chunk too
+    // We have both to avoid extra thread switching overhead
+    fn generateChunkJSWithRenamer(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) void {
+        generateJSRenamer(ctx, chunk, chunk_index);
+        generateChunkJS(ctx, chunk, chunk_index);
+    }
+
     // TODO: investigate if we need to parallelize this function
     // esbuild does parallelize it.
     fn renameSymbolsInChunk(
@@ -4721,6 +4767,17 @@ const LinkerContext = struct {
         return r.toRenamer();
     }
 
+    fn generateJSRenamer(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) void {
+        _ = chunk_index;
+        defer ctx.wg.finish();
+        var worker = ThreadPool.Worker.get();
+        chunk.renamer = ctx.c.renameSymbolsInChunk(
+            worker.allocator,
+            chunk,
+            chunk.content.javascript.files_in_chunk_order,
+        ) catch @panic("TODO: handle error");
+    }
+
     fn generateChunkJS_(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) !void {
         _ = chunk_index;
         defer ctx.wg.finish();
@@ -4745,8 +4802,8 @@ const LinkerContext = struct {
         js_ast.Expr.Data.Store.create(bun.default_allocator);
         js_ast.Stmt.Data.Store.create(bun.default_allocator);
 
-        var r = try c.renameSymbolsInChunk(allocator, chunk, repr.files_in_chunk_order);
-        defer r.deinit();
+        var r = chunk.renamer;
+        defer r.deinit(bun.default_allocator);
         const part_ranges = repr.parts_in_chunk_in_order;
         var stmts = StmtList.init(allocator);
         defer stmts.deinit();
@@ -6753,18 +6810,59 @@ const LinkerContext = struct {
     }
 
     pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk) !std.ArrayList(options.OutputFile) {
-        {
-            debug("START Generating {d} chunks in parallel", .{chunks.len});
-            defer debug(" DONE Generating {d} chunks in parallel", .{chunks.len});
-            var wait_group = try c.allocator.create(sync.WaitGroup);
-            wait_group.init();
-            defer {
-                wait_group.deinit();
-                c.allocator.destroy(wait_group);
-            }
-            wait_group.counter = @truncate(u32, chunks.len);
-            var ctx = GenerateChunkCtx{ .wg = wait_group, .c = c, .chunks = chunks };
-            try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, ctx, generateChunkJS, chunks);
+        switch (c.options.source_maps) {
+            .none => {
+                {
+                    debug("START Generating {d} chunks in parallel", .{chunks.len});
+                    defer debug(" DONE Generating {d} chunks in parallel", .{chunks.len});
+                    var wait_group = try c.allocator.create(sync.WaitGroup);
+                    wait_group.init();
+                    defer {
+                        wait_group.deinit();
+                        c.allocator.destroy(wait_group);
+                    }
+                    wait_group.counter = @truncate(u32, chunks.len);
+                    var ctx = GenerateChunkCtx{ .wg = wait_group, .c = c, .chunks = chunks };
+                    try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, ctx, generateChunkJSWithRenamer, chunks);
+                }
+            },
+            else => {
+                {
+                    debug("START Generating {d} renamers in parallel", .{chunks.len});
+                    defer debug(" DONE Generating {d} renamers in parallel", .{chunks.len});
+                    var wait_group = try c.allocator.create(sync.WaitGroup);
+                    wait_group.init();
+                    defer {
+                        wait_group.deinit();
+                        c.allocator.destroy(wait_group);
+                    }
+                    wait_group.counter = @truncate(u32, chunks.len);
+                    var ctx = GenerateChunkCtx{ .wg = wait_group, .c = c, .chunks = chunks };
+                    try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, ctx, generateJSRenamer, chunks);
+                }
+
+                {
+                    debug("START waiting for {d} source maps", .{chunks.len});
+                    defer debug(" START waiting for {d} source maps", .{chunks.len});
+                    c.source_maps.wait_group.wait();
+                    c.allocator.free(c.source_maps.tasks);
+                    c.source_maps.tasks.len = 0;
+                }
+
+                {
+                    debug("START Generating {d} chunks in parallel", .{chunks.len});
+                    defer debug(" DONE Generating {d} chunks in parallel", .{chunks.len});
+                    var wait_group = try c.allocator.create(sync.WaitGroup);
+                    wait_group.init();
+                    defer {
+                        wait_group.deinit();
+                        c.allocator.destroy(wait_group);
+                    }
+                    wait_group.counter = @truncate(u32, chunks.len);
+                    var ctx = GenerateChunkCtx{ .wg = wait_group, .c = c, .chunks = chunks };
+                    try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, ctx, generateChunkJS, chunks);
+                }
+            },
         }
 
         // TODO: enforceNoCyclicChunkImports()
@@ -8243,6 +8341,8 @@ pub const Chunk = struct {
 
     intermediate_output: IntermediateOutput = .{ .empty = {} },
     isolated_hash: u64 = std.math.maxInt(u64),
+
+    renamer: renamer.Renamer = undefined,
 
     pub inline fn isEntryPoint(this: *const Chunk) bool {
         return this.entry_point.is_entry_point;

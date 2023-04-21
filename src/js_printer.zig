@@ -5653,12 +5653,7 @@ pub fn printAst(
 
     defer {
         if (opts.minify_identifiers) {
-            for (&renamer.MinifyRenamer.slots.values) |*val| {
-                val.deinit();
-            }
-            renamer.MinifyRenamer.reserved_names.deinit(opts.allocator);
-            renamer.MinifyRenamer.top_level_symbol_to_slot.deinit(opts.allocator);
-            opts.allocator.destroy(renamer.MinifyRenamer);
+            renamer.deinit(opts.allocator);
         }
     }
 

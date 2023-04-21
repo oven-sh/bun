@@ -215,3 +215,11 @@ Check to see the command installed webkit, and you can manully look for `node_mo
 # this should reveal two directories. if not, something went wrong
 $ echo node_modules/bun-webkit*
 ```
+
+### macOS `library not found for -lSystem`
+
+If you see this error when compiling, run:
+
+```bash
+$ xcode-select --install
+```

@@ -37,7 +37,7 @@ These are the recommended `compilerOptions` for a Bun project.
     "lib": ["esnext"],
     "module": "esnext",
     "target": "esnext",
-    
+
     // requires typescript 5.x+
     // use "nodenext" for earlier versions
     "moduleResolution": "bundler",

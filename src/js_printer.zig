@@ -142,6 +142,10 @@ pub fn bestQuoteCharForString(comptime Type: type, str: []const Type, allow_back
 const Whitespacer = struct {
     normal: []const u8,
     minify: []const u8,
+
+    pub fn append(this: Whitespacer, comptime str: []const u8) Whitespacer {
+        return .{ .normal = this.normal ++ str, .minify = this.minify ++ str };
+    }
 };
 
 fn ws(comptime str: []const u8) Whitespacer {
@@ -1180,6 +1184,8 @@ fn NewPrinter(
             p.printIdentifier(name);
         }
         pub fn printClauseAlias(p: *Printer, alias: string) void {
+            std.debug.assert(alias.len > 0);
+
             if (!strings.containsNonBmpCodePoint(alias)) {
                 p.printSpaceBeforeIdentifier();
                 p.printIdentifier(alias);
@@ -3662,14 +3668,18 @@ fn NewPrinter(
                     }
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
-                    p.printWhitespacer(ws("export * "));
+
+                    if (s.alias != null)
+                        p.printWhitespacer(comptime ws("export *").append(" as "))
+                    else
+                        p.printWhitespacer(comptime ws("export * from "));
+
                     if (s.alias) |alias| {
-                        p.printWhitespacer(ws("as "));
                         p.printClauseAlias(alias.original_name);
                         p.print(" ");
+                        p.printWhitespacer(ws("from "));
                     }
 
-                    p.printWhitespacer(ws("from "));
                     p.printImportRecordPath(p.importRecord(s.import_record_index));
                     p.printSemicolonAfterStatement();
                 },

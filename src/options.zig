@@ -661,6 +661,16 @@ pub const Loader = enum {
     dataurl,
     text,
 
+    pub fn toMimeType(this: Loader) bun.HTTP.MimeType {
+        return switch (this) {
+            .jsx, .js, .ts, .tsx => bun.HTTP.MimeType.javascript,
+            .css => bun.HTTP.MimeType.css,
+            .toml, .json => bun.HTTP.MimeType.json,
+            .wasm => bun.HTTP.MimeType.wasm,
+            else => bun.HTTP.MimeType.other,
+        };
+    }
+
     pub const HashTable = bun.StringArrayHashMap(Loader);
 
     pub fn canHaveSourceMap(this: Loader) bool {
@@ -1948,6 +1958,27 @@ pub const OutputFile = struct {
         close_handle_on_complete: bool = false,
         autowatch: bool = true,
 
+        pub fn toJS(this: FileOperation, globalObject: *JSC.JSGlobalObject, loader: Loader) JSC.JSValue {
+            var file_blob = JSC.WebCore.Blob.Store.initFile(
+                if (this.fd != 0) JSC.Node.PathOrFileDescriptor{
+                    .fd = this.fd,
+                } else JSC.Node.PathOrFileDescriptor{
+                    .path = JSC.Node.PathLike{ .string = bun.PathString.init(globalObject.allocator().dupe(u8, this.pathname) catch unreachable) },
+                },
+                loader.toMimeType(),
+                globalObject.allocator(),
+            ) catch |err| {
+                Output.panic("error: Unable to create file blob: \"{s}\"", .{@errorName(err)});
+            };
+
+            var blob = globalObject.allocator().create(JSC.WebCore.Blob) catch unreachable;
+            blob.* = JSC.WebCore.Blob.initWithStore(file_blob, globalObject);
+            blob.allocator = globalObject.allocator();
+            blob.content_type = loader.toMimeType().value;
+
+            return blob.toJS(globalObject);
+        }
+
         pub fn fromFile(fd: FileDescriptorType, pathname: string) FileOperation {
             return .{
                 .pathname = pathname,
@@ -2034,6 +2065,26 @@ pub const OutputFile = struct {
         }
 
         try bun.copyFile(fd_in, fd_out);
+    }
+
+    pub fn toJS(
+        this: *OutputFile,
+        globalObject: *JSC.JSGlobalObject,
+    ) bun.JSC.JSValue {
+        return switch (this.value) {
+            .pending => @panic("Unexpected pending output file"),
+            .noop => JSC.JSValue.undefined,
+            .move => this.value.move.toJS(globalObject, this.loader),
+            .copy => this.value.copy.toJS(globalObject, this.loader),
+            .buffer => |buffer| brk: {
+                var blob = globalObject.allocator().create(JSC.WebCore.Blob) catch unreachable;
+                blob.* = JSC.WebCore.Blob.init(@constCast(buffer), bun.default_allocator, globalObject);
+                blob.store.?.mime_type = this.loader.toMimeType();
+                blob.content_type = blob.store.?.mime_type.value;
+                blob.allocator = globalObject.allocator();
+                break :brk blob.toJS(globalObject);
+            },
+        };
     }
 };
 

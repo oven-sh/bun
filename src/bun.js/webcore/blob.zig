@@ -2518,6 +2518,14 @@ pub const Blob = struct {
         return blob_.toJS(globalThis);
     }
 
+    pub fn getMimeType(this: *const Blob) ?bun.HTTP.MimeType {
+        if (this.store) |store| {
+            return store.mime_type;
+        }
+
+        return null;
+    }
+
     pub fn getType(
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,

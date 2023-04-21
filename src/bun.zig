@@ -1245,3 +1245,92 @@ pub fn reloadProcess(
 pub var auto_reload_on_crash = false;
 
 pub const options = @import("./options.zig");
+pub const StringSet = struct {
+    map: Map,
+
+    pub const Map = StringArrayHashMap(void);
+
+    pub fn init(allocator: std.mem.Allocator) StringSet {
+        return StringSet{
+            .map = Map.init(allocator),
+        };
+    }
+
+    pub fn keys(self: StringSet) []const string {
+        return self.map.keys();
+    }
+
+    pub fn insert(self: *StringSet, key: []const u8) !void {
+        var entry = try self.map.getOrPut(key);
+        if (!entry.found_existing) {
+            entry.key_ptr.* = try self.map.allocator.dupe(u8, key);
+        }
+    }
+
+    pub fn deinit(self: *StringSet) void {
+        for (self.map.keys()) |key| {
+            self.map.allocator.free(key);
+        }
+
+        self.map.deinit();
+    }
+};
+
+pub const Schema = @import("./api/schema.zig");
+
+pub const StringMap = struct {
+    map: Map,
+
+    pub const Map = StringArrayHashMap(string);
+
+    pub fn init(allocator: std.mem.Allocator) StringMap {
+        return StringMap{
+            .map = Map.init(allocator),
+        };
+    }
+
+    pub fn keys(self: StringMap) []const string {
+        return self.map.keys();
+    }
+
+    pub fn values(self: StringMap) []const string {
+        return self.map.values();
+    }
+
+    pub fn count(self: StringMap) usize {
+        return self.map.count();
+    }
+
+    pub fn toAPI(self: StringMap) Schema.Api.StringMap {
+        return Schema.Api.StringMap{
+            .keys = self.keys(),
+            .values = self.values(),
+        };
+    }
+
+    pub fn insert(self: *StringMap, key: []const u8, value: []const u8) !void {
+        var entry = try self.map.getOrPut(key);
+        if (!entry.found_existing) {
+            entry.key_ptr.* = try self.map.allocator.dupe(u8, key);
+        } else {
+            self.map.allocator.free(entry.value_ptr.*);
+        }
+
+        entry.value_ptr.* = try self.map.allocator.dupe(u8, value);
+    }
+
+    pub fn deinit(self: *StringMap) void {
+        for (self.map.values()) |value| {
+            self.map.allocator.free(value);
+        }
+
+        for (self.map.keys()) |key| {
+            self.map.allocator.free(key);
+        }
+
+        self.map.deinit();
+    }
+};
+
+pub const DotEnv = @import("./env_loader.zig");
+pub const BundleV2 = @import("./bundler/bundle_v2.zig").BundleV2;

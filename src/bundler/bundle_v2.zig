@@ -146,6 +146,11 @@ pub const ThreadPool = struct {
         has_notify_started: bool = false,
         has_created: bool = false,
 
+        pub fn deinit(this: *Worker) void {
+            this.data.deinit(this.allocator);
+            this.heap.deinit();
+        }
+
         pub fn get() *Worker {
             var worker = @ptrCast(
                 *ThreadPool.Worker,
@@ -541,6 +546,241 @@ pub const BundleV2 = struct {
             try this.findReachableFiles(),
             unique_key,
         );
+
+        return try this.linker.generateChunksInParallel(chunks);
+    }
+
+    pub fn generateFromJavaScript(
+        config: bun.JSC.API.JSBundler.Config,
+        globalThis: *JSC.JSGlobalObject,
+        event_loop: *bun.JSC.EventLoop,
+        allocator: std.mem.Allocator,
+    ) !bun.JSC.JSValue {
+        var completion = try allocator.create(JSBundleCompletionTask);
+        completion.* = JSBundleCompletionTask{
+            .config = config,
+            .jsc_event_loop = event_loop,
+            .promise = JSC.JSPromise.Strong.init(globalThis),
+            .globalThis = globalThis,
+            .ref = JSC.Ref.init(),
+            .env = globalThis.bunVM().bundler.env,
+            .log = Logger.Log.init(bun.default_allocator),
+            .task = JSBundleCompletionTask.TaskCompletion.init(completion),
+        };
+
+        // Ensure this exists before we spawn the thread to prevent any race
+        // conditions from creating two
+        _ = JSC.WorkPool.get();
+
+        var thread = try std.Thread.spawn(.{}, generateInNewThreadWrap, .{completion});
+        thread.detach();
+
+        completion.ref.ref(globalThis.bunVM());
+
+        return completion.promise.value();
+    }
+
+    pub const BuildResult = struct {
+        output_files: std.ArrayList(options.OutputFile),
+    };
+
+    pub const JSBundleCompletionTask = struct {
+        config: bun.JSC.API.JSBundler.Config,
+        jsc_event_loop: *bun.JSC.EventLoop,
+        task: bun.JSC.AnyTask,
+        globalThis: *JSC.JSGlobalObject,
+        promise: JSC.JSPromise.Strong,
+        ref: JSC.Ref = JSC.Ref.init(),
+        env: *bun.DotEnv.Loader,
+        log: Logger.Log,
+
+        result: Result = .{ .pending = {} },
+
+        pub const Result = union(enum) {
+            pending: void,
+            err: anyerror,
+            value: BuildResult,
+        };
+
+        pub const TaskCompletion = bun.JSC.AnyTask.New(JSBundleCompletionTask, onComplete);
+
+        pub fn onComplete(this: *JSBundleCompletionTask) void {
+            var globalThis = this.globalThis;
+
+            defer {
+                this.config.deinit(bun.default_allocator);
+            }
+
+            this.ref.unref(globalThis.bunVM());
+            const promise = this.promise.swap();
+            const root_obj = JSC.JSValue.createEmptyObject(globalThis, 2);
+
+            switch (this.result) {
+                .pending => unreachable,
+                .err => {
+                    root_obj.put(
+                        globalThis,
+                        JSC.ZigString.static("outputs"),
+                        JSC.JSValue.createEmptyArray(globalThis, 0),
+                    );
+
+                    root_obj.put(
+                        globalThis,
+                        JSC.ZigString.static("logs"),
+                        this.log.toJS(globalThis, bun.default_allocator, "Errors while building"),
+                    );
+                },
+                .value => |*build| {
+                    var output_files: []options.OutputFile = build.output_files.items;
+                    const output_files_js = JSC.JSValue.createEmptyArray(globalThis, output_files.len);
+                    defer build.output_files.deinit();
+                    for (output_files, 0..) |*output_file, i| {
+                        var obj = JSC.JSValue.createEmptyObject(globalThis, 2);
+                        obj.put(
+                            globalThis,
+                            JSC.ZigString.static("path"),
+                            JSC.ZigString.fromUTF8(output_file.input.text).toValueGC(globalThis),
+                        );
+
+                        obj.put(
+                            globalThis,
+                            JSC.ZigString.static("result"),
+                            output_file.toJS(globalThis),
+                        );
+                        output_files_js.putIndex(globalThis, @intCast(u32, i), obj);
+                    }
+
+                    root_obj.put(
+                        globalThis,
+                        JSC.ZigString.static("outputs"),
+                        output_files_js,
+                    );
+
+                    root_obj.put(
+                        globalThis,
+                        JSC.ZigString.static("logs"),
+                        this.log.toJS(globalThis, bun.default_allocator, "Errors while building"),
+                    );
+                },
+            }
+
+            promise.resolve(globalThis, root_obj);
+        }
+    };
+
+    pub fn generateInNewThreadWrap(
+        completion: *JSBundleCompletionTask,
+    ) void {
+        Output.Source.configureNamedThread("Bundler");
+        generateInNewThread(completion) catch |err| {
+            completion.result = .{ .err = err };
+            var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch unreachable;
+            concurrent_task.* = JSC.ConcurrentTask{
+                .auto_delete = true,
+                .task = completion.task.task(),
+                .next = null,
+            };
+            completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
+        };
+    }
+
+    fn generateInNewThread(
+        completion: *JSBundleCompletionTask,
+    ) !void {
+        const allocator = bun.default_allocator;
+
+        const config = &completion.config;
+        var bundler = try allocator.create(bun.Bundler);
+        errdefer allocator.destroy(bundler);
+
+        bundler.* = try bun.Bundler.init(
+            allocator,
+            &completion.log,
+            Api.TransformOptions{
+                .define = if (config.define.count() > 0) config.define.toAPI() else null,
+                .entry_points = config.entry_points.keys(),
+                .platform = config.target.toAPI(),
+                .absolute_working_dir = if (config.dir.list.items.len > 0) config.dir.toOwnedSliceLeaky() else null,
+                .inject = &.{},
+                .external = config.external.keys(),
+                .main_fields = &.{},
+                .extension_order = &.{},
+            },
+            null,
+            completion.env,
+        );
+        bundler.options.jsx = config.jsx;
+        bundler.options.entry_names = config.names.entry_point.data;
+        bundler.options.output_dir = config.outdir.toOwnedSliceLeaky();
+        bundler.options.minify_syntax = config.minify.syntax;
+        bundler.options.minify_whitespace = config.minify.whitespace;
+        bundler.options.minify_identifiers = config.minify.identifiers;
+        bundler.options.inlining = config.minify.syntax;
+        bundler.options.sourcemap = config.sourcemap;
+
+        try bundler.configureDefines();
+        bundler.configureLinker();
+
+        bundler.resolver.opts = bundler.options;
+
+        var event_loop = try allocator.create(JSC.AnyEventLoop);
+        defer allocator.destroy(event_loop);
+
+        // Ensure uWS::Loop is initialized
+        _ = bun.uws.Loop.get().?;
+
+        var this = try BundleV2.init(bundler, allocator, JSC.AnyEventLoop.init(allocator), false, JSC.WorkPool.get());
+        defer this.deinit();
+
+        completion.result = .{
+            .value = .{
+                .output_files = try this.runFromJSInNewThread(config),
+            },
+        };
+
+        var concurrent_task = try bun.default_allocator.create(JSC.ConcurrentTask);
+        concurrent_task.* = JSC.ConcurrentTask{
+            .auto_delete = true,
+            .task = completion.task.task(),
+            .next = null,
+        };
+        completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
+    }
+
+    pub fn deinit(this: *BundleV2) void {
+        for (this.graph.pool.workers[0..this.graph.pool.workers_used.loadUnchecked()]) |*worker| {
+            worker.deinit();
+        }
+        this.graph.heap.deinit();
+    }
+
+    pub fn runFromJSInNewThread(this: *BundleV2, config: *const bun.JSC.API.JSBundler.Config) !std.ArrayList(options.OutputFile) {
+        if (this.bundler.log.errors > 0) {
+            return error.BuildFailed;
+        }
+
+        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(config.entry_points.keys()));
+
+        // We must wait for all the parse tasks to complete, even if there are errors.
+        this.waitForParse();
+
+        if (this.bundler.log.errors > 0) {
+            return error.BuildFailed;
+        }
+
+        try this.cloneAST();
+
+        var chunks = try this.linker.link(
+            this,
+            this.graph.entry_points.items,
+            this.graph.use_directive_entry_points,
+            try this.findReachableFiles(),
+            std.crypto.random.int(u64),
+        );
+
+        if (this.bundler.log.errors > 0) {
+            return error.BuildFailed;
+        }
 
         return try this.linker.generateChunksInParallel(chunks);
     }

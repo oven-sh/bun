@@ -52,9 +52,9 @@ pub const JSBundler = struct {
 
     pub const Config = struct {
         target: options.Platform = options.Platform.browser,
-        entry_points: std.BufSet = std.BufSet.init(bun.default_allocator),
+        entry_points: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         hot: bool = false,
-        define: std.BufMap = std.BufMap.init(bun.default_allocator),
+        define: bun.StringMap = bun.StringMap.init(bun.default_allocator),
         dir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         outdir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         serve: Serve = .{},
@@ -66,6 +66,8 @@ pub const JSBundler = struct {
 
         names: Names = .{},
         label: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        external: bun.StringSet = bun.StringSet.init(bun.default_allocator),
+        sourcemap: options.SourceMapOption = .none,
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
@@ -85,8 +87,9 @@ pub const JSBundler = struct {
 
         pub fn fromJS(globalThis: *JSC.JSGlobalObject, config: JSC.JSValue, allocator: std.mem.Allocator) !Config {
             var this = Config{
-                .entry_points = std.BufSet.init(allocator),
-                .define = std.BufMap.init(allocator),
+                .entry_points = bun.StringSet.init(allocator),
+                .external = bun.StringSet.init(allocator),
+                .define = bun.StringMap.init(allocator),
                 .dir = OwnedString.initEmpty(allocator),
                 .label = OwnedString.initEmpty(allocator),
                 .outdir = OwnedString.initEmpty(allocator),
@@ -118,12 +121,16 @@ pub const JSBundler = struct {
                 if (hot.isBoolean()) {
                     this.minify.whitespace = hot.coerce(bool, globalThis);
                     this.minify.syntax = this.minify.whitespace;
+                    this.minify.identifiers = this.minify.identifiers;
                 } else if (hot.isObject()) {
                     if (try hot.getOptional(globalThis, "whitespace", bool)) |whitespace| {
                         this.minify.whitespace = whitespace;
                     }
                     if (try hot.getOptional(globalThis, "syntax", bool)) |syntax| {
                         this.minify.syntax = syntax;
+                    }
+                    if (try hot.getOptional(globalThis, "identifiers", bool)) |syntax| {
+                        this.minify.identifiers = syntax;
                     }
                 } else {
                     globalThis.throwInvalidArguments("Expected minify to be a boolean or an object", .{});
@@ -144,6 +151,18 @@ pub const JSBundler = struct {
             } else {
                 globalThis.throwInvalidArguments("Expected entrypoints to be an array of strings", .{});
                 return error.JSException;
+            }
+
+            if (try config.getArray(globalThis, "external")) |externals| {
+                var iter = externals.arrayIterator(globalThis);
+                while (iter.next()) |entry_point| {
+                    var slice = entry_point.toSliceOrNull(globalThis) orelse {
+                        globalThis.throwInvalidArguments("Expected external to be an array of strings", .{});
+                        return error.JSException;
+                    };
+                    defer slice.deinit();
+                    try this.external.insert(slice.slice());
+                }
             }
 
             if (try config.getOptional(globalThis, "label", ZigString.Slice)) |slice| {
@@ -272,6 +291,7 @@ pub const JSBundler = struct {
 
         pub const Minify = struct {
             whitespace: bool = false,
+            identifiers: bool = false,
             syntax: bool = false,
         };
 
@@ -288,6 +308,7 @@ pub const JSBundler = struct {
 
         pub fn deinit(self: *Config, allocator: std.mem.Allocator) void {
             self.entry_points.deinit();
+            self.external.deinit();
             self.define.deinit();
             self.dir.deinit();
             self.serve.deinit(allocator);
@@ -303,11 +324,18 @@ pub const JSBundler = struct {
         globalThis: *JSC.JSGlobalObject,
         arguments: []const JSC.JSValue,
     ) JSC.JSValue {
-        _ = Config.fromJS(globalThis, arguments[0], globalThis.allocator()) catch {
+        const config = Config.fromJS(globalThis, arguments[0], globalThis.allocator()) catch {
             return JSC.JSValue.jsUndefined();
         };
-        globalThis.throw("Not implemented", .{});
-        return JSC.JSValue.jsUndefined();
+
+        return bun.BundleV2.generateFromJavaScript(
+            config,
+            globalThis,
+            globalThis.bunVM().eventLoop(),
+            bun.default_allocator,
+        ) catch {
+            return JSC.JSValue.jsUndefined();
+        };
     }
 
     pub fn buildFn(

@@ -152,6 +152,10 @@ pub const AnyTask = struct {
     ctx: ?*anyopaque,
     callback: *const (fn (*anyopaque) void),
 
+    pub fn task(this: *AnyTask) Task {
+        return Task.init(this);
+    }
+
     pub fn run(this: *AnyTask) void {
         @setRuntimeSafety(false);
         var callback = this.callback;
@@ -826,18 +830,6 @@ pub const AnyEventLoop = union(enum) {
     ) AnyEventLoop {
         return .{ .mini = MiniEventLoop.init(allocator) };
     }
-
-    // pub fn enqueueTask(
-    //     this: *AnyEventLoop,
-    //     comptime Context: type,
-    //     ctx: *Context,
-    //     comptime Callback: fn (*Context) void,
-    //     comptime field: std.meta.FieldEnum(Context),
-    // ) void {
-    //     const TaskType = MiniEventLoop.Task.New(Context, Callback);
-    //     @field(ctx, field) = TaskType.init(ctx);
-    //     this.enqueueTaskConcurrent(&@field(ctx, field));
-    // }
 
     pub fn tick(
         this: *AnyEventLoop,

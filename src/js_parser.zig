@@ -2904,6 +2904,10 @@ pub const Parser = struct {
         var before = ListManaged(js_ast.Part).init(p.allocator);
         var after = ListManaged(js_ast.Part).init(p.allocator);
         var parts = ListManaged(js_ast.Part).init(p.allocator);
+        defer {
+            after.deinit();
+            before.deinit();
+        }
 
         if (p.options.bundle) {
             // allocate an empty part for the bundle
@@ -4156,8 +4160,6 @@ pub const Parser = struct {
 
             parts_slice = _parts;
         } else {
-            after.deinit();
-            before.deinit();
             parts_slice = parts.items;
         }
 

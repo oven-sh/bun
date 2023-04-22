@@ -402,7 +402,7 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
 
         /// Returns true if the bit at the specified index
         /// is present in the set, false otherwise.
-        pub fn isSet(self: *const Self, index: usize) bool {
+        pub inline fn isSet(self: *const Self, index: usize) bool {
             if (comptime Environment.allow_assert) std.debug.assert(index < bit_length);
             if (num_masks == 0) return false; // doesn't compile in this case
             return (self.masks[maskIndex(index)] & maskBit(index)) != 0;
@@ -646,13 +646,13 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
             return BitSetIterator(MaskInt, options);
         }
 
-        fn maskBit(index: usize) MaskInt {
+        inline fn maskBit(index: usize) MaskInt {
             return @as(MaskInt, 1) << @truncate(ShiftInt, index);
         }
-        fn maskIndex(index: usize) usize {
+        inline fn maskIndex(index: usize) usize {
             return index >> @bitSizeOf(ShiftInt);
         }
-        fn boolMaskBit(index: usize, value: bool) MaskInt {
+        inline fn boolMaskBit(index: usize, value: bool) MaskInt {
             return @as(MaskInt, @boolToInt(value)) << @intCast(ShiftInt, index);
         }
     };

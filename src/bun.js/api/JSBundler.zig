@@ -121,7 +121,7 @@ pub const JSBundler = struct {
                 if (hot.isBoolean()) {
                     this.minify.whitespace = hot.coerce(bool, globalThis);
                     this.minify.syntax = this.minify.whitespace;
-                    this.minify.identifiers = this.minify.identifiers;
+                    this.minify.identifiers = this.minify.whitespace;
                 } else if (hot.isObject()) {
                     if (try hot.getOptional(globalThis, "whitespace", bool)) |whitespace| {
                         this.minify.whitespace = whitespace;

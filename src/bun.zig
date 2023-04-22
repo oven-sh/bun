@@ -1284,12 +1284,14 @@ pub const Schema = @import("./api/schema.zig");
 
 pub const StringMap = struct {
     map: Map,
+    dupe_keys: bool = false,
 
     pub const Map = StringArrayHashMap(string);
 
-    pub fn init(allocator: std.mem.Allocator) StringMap {
+    pub fn init(allocator: std.mem.Allocator, dupe_keys: bool) StringMap {
         return StringMap{
             .map = Map.init(allocator),
+            .dupe_keys = dupe_keys,
         };
     }
 
@@ -1315,7 +1317,8 @@ pub const StringMap = struct {
     pub fn insert(self: *StringMap, key: []const u8, value: []const u8) !void {
         var entry = try self.map.getOrPut(key);
         if (!entry.found_existing) {
-            entry.key_ptr.* = try self.map.allocator.dupe(u8, key);
+            if (self.dupe_keys)
+                entry.key_ptr.* = try self.map.allocator.dupe(u8, key);
         } else {
             self.map.allocator.free(entry.value_ptr.*);
         }
@@ -1323,13 +1326,20 @@ pub const StringMap = struct {
         entry.value_ptr.* = try self.map.allocator.dupe(u8, value);
     }
 
+    pub const put = insert;
+    pub fn get(self: *const StringMap, key: []const u8) ?[]const u8 {
+        return self.map.get(key);
+    }
+
     pub fn deinit(self: *StringMap) void {
         for (self.map.values()) |value| {
             self.map.allocator.free(value);
         }
 
-        for (self.map.keys()) |key| {
-            self.map.allocator.free(key);
+        if (self.dupe_keys) {
+            for (self.map.keys()) |key| {
+                self.map.allocator.free(key);
+            }
         }
 
         self.map.deinit();

@@ -3347,15 +3347,8 @@ const LinkerContext = struct {
                 const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
 
                 const exports_ref = exports_refs[id];
-                var exports_symbol: ?*js_ast.Symbol = if (exports_ref.isValid())
-                    this.graph.symbols.get(exports_ref)
-                else
-                    null;
+
                 const module_ref = module_refs[id];
-                var module_symbol: ?*js_ast.Symbol = if (module_ref.isValid())
-                    this.graph.symbols.get(module_ref)
-                else
-                    null;
 
                 // TODO: see if counting and batching into a single large allocation instead of per-file improves perf
                 const string_buffer_len: usize = brk: {
@@ -3384,9 +3377,13 @@ const LinkerContext = struct {
                 };
 
                 var string_buffer = this.allocator.alloc(u8, string_buffer_len) catch unreachable;
-                var buf = string_buffer;
+                var builder = bun.StringBuilder{
+                    .len = 0,
+                    .cap = string_buffer.len,
+                    .ptr = string_buffer.ptr,
+                };
 
-                defer std.debug.assert(buf.len == 0); // ensure we used all of it
+                defer std.debug.assert(builder.len == builder.cap); // ensure we used all of it
 
                 // Pre-generate symbols for re-exports CommonJS symbols in case they
                 // are necessary later. This is done now because the symbols map cannot be
@@ -3395,8 +3392,7 @@ const LinkerContext = struct {
                     var copies = this.allocator.alloc(Ref, aliases.len) catch unreachable;
 
                     for (aliases, copies) |alias, *copy| {
-                        const original_name = bufPrint(buf, "export_{}", .{strings.fmtIdentifier(alias)}) catch unreachable;
-                        buf = buf[original_name.len..];
+                        const original_name = builder.fmt("export_{}", .{strings.fmtIdentifier(alias)});
                         copy.* = this.graph.generateNewSymbol(source_index, .other, original_name);
                     }
                     this.graph.meta.items(.cjs_export_copies)[id] = copies;
@@ -3404,15 +3400,13 @@ const LinkerContext = struct {
 
                 // Use "init_*" for ESM wrappers instead of "require_*"
                 if (wrap == .esm) {
-                    const original_name = bufPrint(
-                        buf,
+                    const original_name = builder.fmt(
                         "init_{}",
                         .{
                             source.fmtIdentifier(),
                         },
-                    ) catch unreachable;
+                    );
 
-                    buf = buf[original_name.len..];
                     this.graph.symbols.get(wrapper_refs[id]).?.original_name = original_name;
                 }
 
@@ -3422,10 +3416,20 @@ const LinkerContext = struct {
                 // aesthetics and is not about correctness. This is done here because by
                 // this point, we know the CommonJS status will not change further.
                 if (wrap != .cjs and export_kind != .cjs) {
-                    const exports_name = bufPrint(buf, "exports_{any}", .{source.fmtIdentifier()}) catch unreachable;
-                    buf = buf[exports_name.len..];
-                    const module_name = bufPrint(buf, "module_{any}", .{source.fmtIdentifier()}) catch unreachable;
-                    buf = buf[module_name.len..];
+                    const exports_name = builder.fmt("exports_{}", .{source.fmtIdentifier()});
+                    const module_name = builder.fmt("module_{}", .{source.fmtIdentifier()});
+
+                    // Note: it's possible for the symbols table to be resized
+                    // so we cannot call .get() above this scope.
+                    var exports_symbol: ?*js_ast.Symbol = if (exports_ref.isValid())
+                        this.graph.symbols.get(exports_ref)
+                    else
+                        null;
+                    var module_symbol: ?*js_ast.Symbol = if (module_ref.isValid())
+                        this.graph.symbols.get(module_ref)
+                    else
+                        null;
+
                     if (exports_symbol != null)
                         exports_symbol.?.original_name = exports_name;
                     if (module_symbol != null)

@@ -506,9 +506,9 @@ pub const BundleV2 = struct {
         this.linker.graph.allocator = this.bundler.allocator;
         this.linker.graph.ast = try this.graph.ast.clone(this.linker.allocator);
         var ast = this.linker.graph.ast.slice();
-        for (ast.items(.module_scope)) |*new_module_scope| {
-            for (new_module_scope.children.slice()) |new_child| {
-                new_child.parent = new_module_scope;
+        for (ast.items(.module_scope)) |*module_scope| {
+            for (module_scope.children.slice()) |child| {
+                child.parent = module_scope;
             }
         }
     }

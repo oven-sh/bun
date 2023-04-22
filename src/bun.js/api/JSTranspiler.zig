@@ -74,6 +74,7 @@ const TranspilerOptions = struct {
 
     minify_whitespace: bool = false,
     minify_identifiers: bool = false,
+    minify_syntax: bool = false,
 };
 
 // Mimalloc gets unstable if we try to move this to a different thread
@@ -534,6 +535,27 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         transpiler.minify_whitespace = flag.toBoolean();
     }
 
+    if (object.getTruthy(globalThis, "minify")) |hot| {
+        if (hot.isBoolean()) {
+            transpiler.minify_whitespace = hot.coerce(bool, globalThis);
+            transpiler.minify_syntax = transpiler.minify_whitespace;
+            transpiler.minify_identifiers = transpiler.minify_syntax;
+        } else if (hot.isObject()) {
+            if (try hot.getOptional(globalThis, "whitespace", bool)) |whitespace| {
+                transpiler.minify_whitespace = whitespace;
+            }
+            if (try hot.getOptional(globalThis, "syntax", bool)) |syntax| {
+                transpiler.minify_syntax = syntax;
+            }
+            if (try hot.getOptional(globalThis, "identifiers", bool)) |syntax| {
+                transpiler.minify_identifiers = syntax;
+            }
+        } else {
+            JSC.throwInvalidArguments("Expected minify to be a boolean or an object", .{}, globalObject, exception);
+            return transpiler;
+        }
+    }
+
     if (object.get(globalThis, "sourcemap")) |flag| {
         if (flag.isBoolean() or flag.isUndefinedOrNull()) {
             if (flag.toBoolean()) {
@@ -774,6 +796,14 @@ pub fn constructor(
     }
 
     bundler.options.minify_whitespace = transpiler_options.minify_whitespace;
+
+    // Keep defaults for these
+    if (transpiler_options.minify_syntax)
+        bundler.options.minify_syntax = true;
+
+    if (transpiler_options.minify_identifiers)
+        bundler.options.minify_identifiers = true;
+
     bundler.options.tree_shaking = transpiler_options.tree_shaking;
     bundler.options.trim_unused_imports = transpiler_options.trim_unused_imports;
     bundler.options.allow_runtime = transpiler_options.runtime.allow_runtime;

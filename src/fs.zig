@@ -934,6 +934,28 @@ pub const FileSystem = struct {
             shared_buffer: *MutableString,
             comptime stream: bool,
         ) !File {
+            return readFileWithHandleAndAllocator(
+                fs,
+                fs.allocator,
+                path,
+                _size,
+                file,
+                use_shared_buffer,
+                shared_buffer,
+                stream,
+            );
+        }
+
+        pub fn readFileWithHandleAndAllocator(
+            fs: *RealFS,
+            allocator: std.mem.Allocator,
+            path: string,
+            _size: ?usize,
+            file: std.fs.File,
+            comptime use_shared_buffer: bool,
+            shared_buffer: *MutableString,
+            comptime stream: bool,
+        ) !File {
             FileSystem.setMaxFd(file.handle);
 
             // Skip the extra file.stat() call when possible
@@ -1004,7 +1026,7 @@ pub const FileSystem = struct {
                 }
             } else {
                 // We use pread to ensure if the file handle was open, it doesn't seek from the last position
-                var buf = try fs.allocator.alloc(u8, size);
+                var buf = try allocator.alloc(u8, size);
                 const read_count = file.preadAll(buf, 0) catch |err| {
                     fs.readFileError(path, err);
                     return err;

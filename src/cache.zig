@@ -143,6 +143,18 @@ pub const Fs = struct {
         comptime use_shared_buffer: bool,
         _file_handle: ?StoredFileDescriptorType,
     ) !Entry {
+        return c.readFileWithAllocator(_fs.allocator, _fs, path, dirname_fd, use_shared_buffer, _file_handle);
+    }
+
+    pub fn readFileWithAllocator(
+        c: *Fs,
+        allocator: std.mem.Allocator,
+        _fs: *fs.FileSystem,
+        path: string,
+        dirname_fd: StoredFileDescriptorType,
+        comptime use_shared_buffer: bool,
+        _file_handle: ?StoredFileDescriptorType,
+    ) !Entry {
         var rfs = _fs.fs;
 
         var file_handle: std.fs.File = if (_file_handle) |__file| std.fs.File{ .handle = __file } else undefined;
@@ -174,14 +186,14 @@ pub const Fs = struct {
         }
 
         const file = if (c.stream)
-            rfs.readFileWithHandle(path, null, file_handle, use_shared_buffer, c.sharedBuffer(), true) catch |err| {
+            rfs.readFileWithHandleAndAllocator(allocator, path, null, file_handle, use_shared_buffer, c.sharedBuffer(), true) catch |err| {
                 if (Environment.isDebug) {
                     Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
                 }
                 return err;
             }
         else
-            rfs.readFileWithHandle(path, null, file_handle, use_shared_buffer, c.sharedBuffer(), false) catch |err| {
+            rfs.readFileWithHandleAndAllocator(allocator, path, null, file_handle, use_shared_buffer, c.sharedBuffer(), false) catch |err| {
                 if (Environment.isDebug) {
                     Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
                 }

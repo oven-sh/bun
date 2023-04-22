@@ -941,7 +941,7 @@ pub const Test = struct {
         const JSAst = bun.JSAst;
         JSAst.Expr.Data.Store.create(default_allocator);
         JSAst.Stmt.Data.Store.create(default_allocator);
-        var fs = try FileSystem.init1(default_allocator, null);
+        var fs = try FileSystem.init(null);
         var top_level_dir = fs.top_level_dir;
 
         var pages_parts = [_]string{ top_level_dir, "pages" };
@@ -998,7 +998,7 @@ pub const Test = struct {
         const JSAst = bun.JSAst;
         JSAst.Expr.Data.Store.create(default_allocator);
         JSAst.Stmt.Data.Store.create(default_allocator);
-        var fs = try FileSystem.init1WithForce(default_allocator, null, true);
+        var fs = try FileSystem.initWithForce(null, true);
         var top_level_dir = fs.top_level_dir;
 
         var pages_parts = [_]string{ top_level_dir, "pages" };

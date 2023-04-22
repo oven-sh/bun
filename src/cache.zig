@@ -143,7 +143,7 @@ pub const Fs = struct {
         comptime use_shared_buffer: bool,
         _file_handle: ?StoredFileDescriptorType,
     ) !Entry {
-        return c.readFileWithAllocator(_fs.allocator, _fs, path, dirname_fd, use_shared_buffer, _file_handle);
+        return c.readFileWithAllocator(bun.fs_allocator, _fs, path, dirname_fd, use_shared_buffer, _file_handle);
     }
 
     pub fn readFileWithAllocator(
@@ -179,6 +179,7 @@ pub const Fs = struct {
             }
         }
 
+        const will_close = rfs.needToCloseFiles() and _file_handle == null;
         defer {
             if (rfs.needToCloseFiles() and _file_handle == null) {
                 file_handle.close();

@@ -4976,7 +4976,7 @@ pub const PackageManager = struct {
             try global_dir.dir.setAsCwd();
         }
 
-        var fs = try Fs.FileSystem.init1(ctx.allocator, null);
+        var fs = try Fs.FileSystem.init(null);
         var original_cwd = std.mem.trimRight(u8, fs.top_level_dir, "/");
 
         bun.copy(u8, &cwd_buf, original_cwd);

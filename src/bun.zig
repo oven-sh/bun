@@ -20,6 +20,10 @@ else
 
 pub const huge_allocator_threshold: comptime_int = @import("./memory_allocator.zig").huge_threshold;
 
+/// We cannot use a threadlocal memory allocator for FileSystem-related things
+/// FileSystem is a singleton.
+pub const fs_allocator = default_allocator;
+
 pub const C = @import("c.zig");
 
 pub const FeatureFlags = @import("feature_flags.zig");
@@ -1337,3 +1341,11 @@ pub const BundleV2 = @import("./bundler/bundle_v2.zig").BundleV2;
 
 pub const Lock = @import("./lock.zig").Lock;
 pub const UnboundedQueue = @import("./bun.js/unbounded_queue.zig").UnboundedQueue;
+
+pub fn threadlocalAllocator() std.mem.Allocator {
+    if (comptime use_mimalloc) {
+        return MimallocArena.getThreadlocalDefault();
+    }
+
+    return default_allocator;
+}

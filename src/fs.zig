@@ -78,7 +78,6 @@ pub const BytecodeCacheFetcher = struct {
 };
 
 pub const FileSystem = struct {
-    allocator: std.mem.Allocator,
     top_level_dir: string = "/",
 
     // used on subsequent updates
@@ -144,18 +143,17 @@ pub const FileSystem = struct {
         ENOTDIR,
     };
 
-    pub fn init1(
-        allocator: std.mem.Allocator,
+    pub fn init(
         top_level_dir: ?string,
     ) !*FileSystem {
-        return init1WithForce(allocator, top_level_dir, false);
+        return initWithForce(top_level_dir, false);
     }
 
-    pub fn init1WithForce(
-        allocator: std.mem.Allocator,
+    pub fn initWithForce(
         top_level_dir: ?string,
         comptime force: bool,
     ) !*FileSystem {
+        const allocator = bun.fs_allocator;
         var _top_level_dir = top_level_dir orelse (if (Environment.isBrowser) "/project/" else try std.process.getCwdAlloc(allocator));
 
         // Ensure there's a trailing separator in the top level directory
@@ -172,10 +170,8 @@ pub const FileSystem = struct {
 
         if (!instance_loaded or force) {
             instance = FileSystem{
-                .allocator = allocator,
                 .top_level_dir = _top_level_dir,
                 .fs = Implementation.init(
-                    allocator,
                     _top_level_dir,
                 ),
                 // must always use default_allocator since the other allocators may not be threadsafe when an element resizes
@@ -936,7 +932,7 @@ pub const FileSystem = struct {
         ) !File {
             return readFileWithHandleAndAllocator(
                 fs,
-                fs.allocator,
+                bun.fs_allocator,
                 path,
                 _size,
                 file,

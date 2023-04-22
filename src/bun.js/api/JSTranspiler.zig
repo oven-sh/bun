@@ -804,6 +804,8 @@ pub fn constructor(
     if (transpiler_options.minify_identifiers)
         bundler.options.minify_identifiers = true;
 
+    bundler.options.transform_only = !bundler.options.allow_runtime;
+
     bundler.options.tree_shaking = transpiler_options.tree_shaking;
     bundler.options.trim_unused_imports = transpiler_options.trim_unused_imports;
     bundler.options.allow_runtime = transpiler_options.runtime.allow_runtime;

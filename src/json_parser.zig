@@ -141,8 +141,13 @@ fn JSONLikeParser_(
         lexer: Lexer,
         log: *logger.Log,
         allocator: std.mem.Allocator,
+        list_allocator: std.mem.Allocator,
 
         pub fn init(allocator: std.mem.Allocator, source_: logger.Source, log: *logger.Log) !Parser {
+            return initWithListAllocator(allocator, allocator, source_, log);
+        }
+
+        pub fn initWithListAllocator(allocator: std.mem.Allocator, list_allocator: std.mem.Allocator, source_: logger.Source, log: *logger.Log) !Parser {
             Expr.Data.Store.assert();
             Stmt.Data.Store.assert();
 
@@ -150,6 +155,7 @@ fn JSONLikeParser_(
                 .lexer = try Lexer.init(log, source_, allocator),
                 .allocator = allocator,
                 .log = log,
+                .list_allocator = list_allocator,
             };
         }
 
@@ -202,7 +208,7 @@ fn JSONLikeParser_(
                 .t_open_bracket => {
                     try p.lexer.next();
                     var is_single_line = !p.lexer.has_newline_before;
-                    var exprs = std.ArrayList(Expr).init(p.allocator);
+                    var exprs = std.ArrayList(Expr).init(p.list_allocator);
 
                     while (p.lexer.token != .t_close_bracket) {
                         if (exprs.items.len > 0) {
@@ -235,7 +241,7 @@ fn JSONLikeParser_(
                 .t_open_brace => {
                     try p.lexer.next();
                     var is_single_line = !p.lexer.has_newline_before;
-                    var properties = std.ArrayList(G.Property).init(p.allocator);
+                    var properties = std.ArrayList(G.Property).init(p.list_allocator);
 
                     const DuplicateNodeType = comptime if (opts.json_warn_duplicate_keys) *HashMapPool.LinkedList.Node else void;
                     const HashMapType = comptime if (opts.json_warn_duplicate_keys) HashMapPool.HashMap else void;

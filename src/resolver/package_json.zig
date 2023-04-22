@@ -22,8 +22,8 @@ const js_lexer = bun.js_lexer;
 const resolve_path = @import("./resolve_path.zig");
 // Assume they're not going to have hundreds of main fields or browser map
 // so use an array-backed hash table instead of bucketed
-const MainFieldMap = bun.StringArrayHashMap(string);
-pub const BrowserMap = bun.StringArrayHashMap(string);
+const MainFieldMap = bun.StringMap;
+pub const BrowserMap = bun.StringMap;
 pub const MacroImportReplacementMap = bun.StringArrayHashMap(string);
 pub const MacroMap = bun.StringArrayHashMapUnmanaged(MacroImportReplacementMap);
 
@@ -588,7 +588,12 @@ pub const PackageJSON = struct {
         const package_json_path_ = r.fs.abs(&parts);
         const package_json_path = r.fs.dirname_store.append(@TypeOf(package_json_path_), package_json_path_) catch unreachable;
 
-        const entry = r.caches.fs.readFile(
+        // DirInfo cache is reused globally
+        // So we cannot free these
+        const allocator = bun.fs_allocator;
+
+        const entry = r.caches.fs.readFileWithAllocator(
+            allocator,
             r.fs,
             package_json_path,
             dirname_fd,
@@ -596,11 +601,17 @@ pub const PackageJSON = struct {
             null,
         ) catch |err| {
             if (err != error.IsDir) {
-                r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot read file \"{s}\": {s}", .{ r.prettyPath(fs.Path.init(input_path)), @errorName(err) }) catch unreachable;
+                r.log.addErrorFmt(null, logger.Loc.Empty, allocator, "Cannot read file \"{s}\": {s}", .{ r.prettyPath(fs.Path.init(input_path)), @errorName(err) }) catch unreachable;
             }
 
             return null;
         };
+
+        defer {
+            if (entry.fd != 0) {
+                _ = bun.JSC.Node.Syscall.close(entry.fd);
+            }
+        }
 
         if (r.debug_logs) |*debug| {
             debug.addNoteFmt("The file \"{s}\" exists", .{package_json_path});
@@ -611,12 +622,19 @@ pub const PackageJSON = struct {
         var json_source = logger.Source.initPathString(key_path.text, entry.contents);
         json_source.path.pretty = r.prettyPath(json_source.path);
 
-        const json: js_ast.Expr = (r.caches.json.parseJSON(r.log, json_source, r.allocator) catch |err| {
+        const json: js_ast.Expr = (r.caches.json.parseJSON(r.log, json_source, allocator) catch |err| {
             if (Environment.isDebug) {
                 Output.printError("{s}: JSON parse error: {s}", .{ package_json_path, @errorName(err) });
             }
             return null;
         } orelse return null);
+
+        if (json.data != .e_object) {
+            // Invalid package.json in node_modules is noisy.
+            // Let's just ignore it.
+            allocator.free(entry.contents);
+            return null;
+        }
 
         var package_json = PackageJSON{
             .name = "",
@@ -624,8 +642,8 @@ pub const PackageJSON = struct {
             .hash = 0xDEADBEEF,
             .source = json_source,
             .module_type = .unknown,
-            .browser_map = BrowserMap.init(r.allocator),
-            .main_fields = MainFieldMap.init(r.allocator),
+            .browser_map = BrowserMap.init(allocator, false),
+            .main_fields = MainFieldMap.init(allocator, false),
         };
 
         // Note: we tried rewriting this to be fewer loops over all the properties (asProperty loops over each)
@@ -634,17 +652,17 @@ pub const PackageJSON = struct {
         // Feels like a codegen issue.
         // or that looping over every property doesn't really matter because most package.jsons are < 20 properties
         if (json.asProperty("version")) |version_json| {
-            if (version_json.expr.asString(r.allocator)) |version_str| {
+            if (version_json.expr.asString(allocator)) |version_str| {
                 if (version_str.len > 0) {
-                    package_json.version = r.allocator.dupe(u8, version_str) catch unreachable;
+                    package_json.version = allocator.dupe(u8, version_str) catch unreachable;
                 }
             }
         }
 
         if (json.asProperty("name")) |version_json| {
-            if (version_json.expr.asString(r.allocator)) |version_str| {
+            if (version_json.expr.asString(allocator)) |version_str| {
                 if (version_str.len > 0) {
-                    package_json.name = r.allocator.dupe(u8, version_str) catch unreachable;
+                    package_json.name = allocator.dupe(u8, version_str) catch unreachable;
                 }
             }
         }
@@ -653,7 +671,7 @@ pub const PackageJSON = struct {
         // We do not need to parse all this stuff.
         if (comptime !include_scripts) {
             if (json.asProperty("type")) |type_json| {
-                if (type_json.expr.asString(r.allocator)) |type_str| {
+                if (type_json.expr.asString(allocator)) |type_str| {
                     switch (options.ModuleType.List.get(type_str) orelse options.ModuleType.unknown) {
                         .cjs => {
                             package_json.module_type = .cjs;
@@ -665,7 +683,7 @@ pub const PackageJSON = struct {
                             r.log.addRangeWarningFmt(
                                 &json_source,
                                 json_source.rangeOfString(type_json.loc),
-                                r.allocator,
+                                allocator,
                                 "\"{s}\" is not a valid value for \"type\" field (must be either \"commonjs\" or \"module\")",
                                 .{type_str},
                             ) catch unreachable;
@@ -681,9 +699,9 @@ pub const PackageJSON = struct {
                 if (json.asProperty(main)) |main_json| {
                     const expr: js_ast.Expr = main_json.expr;
 
-                    if ((expr.asString(r.allocator))) |str| {
+                    if ((expr.asString(allocator))) |str| {
                         if (str.len > 0) {
-                            package_json.main_fields.put(main, r.allocator.dupe(u8, str) catch unreachable) catch unreachable;
+                            package_json.main_fields.put(main, str) catch unreachable;
                         }
                     }
                 }
@@ -709,7 +727,7 @@ pub const PackageJSON = struct {
 
                             // Remap all files in the browser field
                             for (obj.properties.slice()) |*prop| {
-                                var _key_str = (prop.key orelse continue).asString(r.allocator) orelse continue;
+                                var _key_str = (prop.key orelse continue).asString(allocator) orelse continue;
                                 const value: js_ast.Expr = prop.value orelse continue;
 
                                 // Normalize the path so we can compare against it without getting
@@ -721,12 +739,12 @@ pub const PackageJSON = struct {
                                 // import of "foo", but that's actually not a bug. Or arguably it's a
                                 // bug in Browserify but we have to replicate this bug because packages
                                 // do this in the wild.
-                                const key = r.allocator.dupe(u8, r.fs.normalize(_key_str)) catch unreachable;
+                                const key = allocator.dupe(u8, r.fs.normalize(_key_str)) catch unreachable;
 
                                 switch (value.data) {
                                     .e_string => |str| {
                                         // If this is a string, it's a replacement package
-                                        package_json.browser_map.put(key, str.string(r.allocator) catch unreachable) catch unreachable;
+                                        package_json.browser_map.put(key, str.string(allocator) catch unreachable) catch unreachable;
                                     },
                                     .e_boolean => |boolean| {
                                         if (!boolean.value) {
@@ -764,9 +782,9 @@ pub const PackageJSON = struct {
                     var array = array_;
                     // TODO: switch to only storing hashes
                     var map = SideEffectsMap{};
-                    map.ensureTotalCapacity(r.allocator, array.array.items.len) catch unreachable;
+                    map.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
                     while (array.next()) |item| {
-                        if (item.asString(r.allocator)) |name| {
+                        if (item.asString(allocator)) |name| {
                             // TODO: support RegExp using JavaScriptCore <> C++ bindings
                             if (strings.containsChar(name, '*')) {
                                 // https://sourcegraph.com/search?q=context:global+file:package.json+sideEffects%22:+%5B&patternType=standard&sm=1&groupBy=repo
@@ -780,7 +798,7 @@ pub const PackageJSON = struct {
                                     item.loc,
                                     "wildcard sideEffects are not supported yet, which means this package will be deoptimized",
                                 ) catch unreachable;
-                                map.deinit(r.allocator);
+                                map.deinit(allocator);
 
                                 package_json.side_effects = .{ .unspecified = {} };
                                 break :outer;
@@ -815,7 +833,7 @@ pub const PackageJSON = struct {
 
                         if (tag == .npm) {
                             const sliced = Semver.SlicedString.init(package_json.version, package_json.version);
-                            if (Dependency.parseWithTag(r.allocator, String.init(package_json.name, package_json.name), package_json.version, .npm, &sliced, r.log)) |dependency_version| {
+                            if (Dependency.parseWithTag(allocator, String.init(package_json.name, package_json.name), package_json.version, .npm, &sliced, r.log)) |dependency_version| {
                                 if (dependency_version.value.npm.version.isExact()) {
                                     if (pm.lockfile.resolve(package_json.name, dependency_version)) |resolved| {
                                         package_json.package_manager_package_id = resolved;
@@ -915,7 +933,7 @@ pub const PackageJSON = struct {
                         .b_buf = json_source.contents,
                     };
                     package_json.dependencies.map.ensureTotalCapacityContext(
-                        r.allocator,
+                        allocator,
                         total_dependency_count,
                         ctx,
                     ) catch unreachable;
@@ -926,14 +944,14 @@ pub const PackageJSON = struct {
                                 var group_obj = group_json.data.e_object;
                                 for (group_obj.properties.slice()) |*prop| {
                                     const name_prop = prop.key orelse continue;
-                                    const name_str = name_prop.asString(r.allocator) orelse continue;
+                                    const name_str = name_prop.asString(allocator) orelse continue;
                                     const name = String.init(name_str, name_str);
                                     const version_value = prop.value orelse continue;
-                                    const version_str = version_value.asString(r.allocator) orelse continue;
+                                    const version_str = version_value.asString(allocator) orelse continue;
                                     const sliced_str = Semver.SlicedString.init(version_str, version_str);
 
                                     if (Dependency.parse(
-                                        r.allocator,
+                                        allocator,
                                         name,
                                         version_str,
                                         &sliced_str,
@@ -968,26 +986,26 @@ pub const PackageJSON = struct {
 
                         var count: usize = 0;
                         for (scripts_obj.properties.slice()) |prop| {
-                            const key = prop.key.?.asString(r.allocator) orelse continue;
-                            const value = prop.value.?.asString(r.allocator) orelse continue;
+                            const key = prop.key.?.asString(allocator) orelse continue;
+                            const value = prop.value.?.asString(allocator) orelse continue;
 
                             count += @as(usize, @boolToInt(key.len > 0 and value.len > 0));
                         }
 
                         if (count == 0) break :read_scripts;
-                        var scripts = ScriptsMap.init(r.allocator);
+                        var scripts = ScriptsMap.init(allocator);
                         scripts.ensureUnusedCapacity(count) catch break :read_scripts;
 
                         for (scripts_obj.properties.slice()) |prop| {
-                            const key = prop.key.?.asString(r.allocator) orelse continue;
-                            const value = prop.value.?.asString(r.allocator) orelse continue;
+                            const key = prop.key.?.asString(allocator) orelse continue;
+                            const value = prop.value.?.asString(allocator) orelse continue;
 
                             if (!(key.len > 0 and value.len > 0)) continue;
 
                             scripts.putAssumeCapacity(key, value);
                         }
 
-                        package_json.scripts = r.allocator.create(ScriptsMap) catch unreachable;
+                        package_json.scripts = allocator.create(ScriptsMap) catch unreachable;
                         package_json.scripts.?.* = scripts;
                     }
                 }
@@ -1048,7 +1066,7 @@ pub const ExportsMap = struct {
                 .e_string => |str| {
                     return Entry{
                         .data = .{
-                            .string = str.string(this.allocator) catch unreachable,
+                            .string = str.cloneSliceIfNecessary(this.allocator) catch unreachable,
                         },
                         .first_token = this.source.rangeOfString(expr.loc),
                     };
@@ -1079,7 +1097,7 @@ pub const ExportsMap = struct {
                     first_token.loc = expr.loc;
                     first_token.len = 1;
                     for (e_obj.properties.slice(), 0..) |prop, i| {
-                        const key: string = prop.key.?.data.e_string.string(this.allocator) catch unreachable;
+                        const key: string = prop.key.?.data.e_string.cloneSliceIfNecessary(this.allocator) catch unreachable;
                         const key_range: logger.Range = this.source.rangeOfString(prop.key.?.loc);
 
                         // If exports is an Object with both a key starting with "." and a key

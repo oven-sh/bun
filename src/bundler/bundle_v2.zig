@@ -85,8 +85,7 @@ const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 pub const ThreadPool = struct {
     pool: *ThreadPoolLib = undefined,
     // Hardcode 512 as max number of threads for now.
-    workers_list: bun.HiveArray(Worker, 128) = bun.HiveArray(Worker, 128).init(),
-    workers_assignments: std.AutoHashMap(std.Thread.Id, *Worker) = std.AutoHashMap(std.Thread.Id, *Worker).init(bun.default_allocator),
+    workers_assignments: std.AutoArrayHashMap(std.Thread.Id, *Worker) = std.AutoArrayHashMap(std.Thread.Id, *Worker).init(bun.default_allocator),
     workers_assignments_lock: bun.Lock = bun.Lock.init(),
     cpu_count: u32 = 0,
     started_workers: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
@@ -129,20 +128,25 @@ pub const ThreadPool = struct {
     }
 
     pub fn getWorker(this: *ThreadPool, id: std.Thread.Id) *Worker {
-        this.workers_assignments_lock.lock();
-        defer this.workers_assignments_lock.unlock();
-        var entry = this.workers_assignments.getOrPut(id) catch unreachable;
-        if (entry.found_existing) {
-            return entry.value_ptr.*;
+        var worker: *Worker = undefined;
+        {
+            this.workers_assignments_lock.lock();
+            defer this.workers_assignments_lock.unlock();
+            var entry = this.workers_assignments.getOrPut(id) catch unreachable;
+            if (entry.found_existing) {
+                return entry.value_ptr.*;
+            }
+
+            worker = bun.default_allocator.create(Worker) catch unreachable;
+            entry.value_ptr.* = worker;
         }
 
-        var worker = this.workers_list.get() orelse @panic("no more workers available");
         worker.* = .{
             .ctx = this.v2,
             .allocator = undefined,
+            .thread = ThreadPoolLib.Thread.current,
         };
         worker.init(this.v2);
-        entry.value_ptr.* = worker;
 
         return worker;
     }
@@ -152,17 +156,32 @@ pub const ThreadPool = struct {
         allocator: std.mem.Allocator,
         ctx: *BundleV2,
 
-        data: *WorkerData = undefined,
+        data: WorkerData = undefined,
         quit: bool = false,
 
         ast_memory_allocator: js_ast.ASTMemoryAllocator = undefined,
         has_created: bool = false,
+        thread: ?*ThreadPoolLib.Thread = null,
+
+        deinit_task: ThreadPoolLib.Task = .{ .callback = deinitCallback },
+
+        pub fn deinitCallback(task: *ThreadPoolLib.Task) void {
+            var this = @fieldParentPtr(Worker, "deinit_task", task);
+            this.deinit();
+        }
+
+        pub fn deinitSoon(this: *Worker) void {
+            if (this.thread) |thread| {
+                thread.pushIdleTask(&this.deinit_task);
+            }
+        }
 
         pub fn deinit(this: *Worker) void {
             if (this.has_created) {
-                this.data.deinit(this.allocator);
                 this.heap.deinit();
             }
+
+            bun.default_allocator.destroy(this);
         }
 
         pub fn get(ctx: *BundleV2) *Worker {
@@ -173,10 +192,18 @@ pub const ThreadPool = struct {
 
             worker.ast_memory_allocator.push();
 
+            if (comptime FeatureFlags.help_catch_memory_issues) {
+                worker.heap.gc(true);
+            }
+
             return worker;
         }
 
         pub fn unget(this: *Worker) void {
+            if (comptime FeatureFlags.help_catch_memory_issues) {
+                this.heap.gc(true);
+            }
+
             this.ast_memory_allocator.pop();
         }
 
@@ -185,10 +212,6 @@ pub const ThreadPool = struct {
             estimated_input_lines_of_code: usize = 0,
             macro_context: js_ast.Macro.MacroContext,
             bundler: Bundler = undefined,
-
-            pub fn deinit(this: *WorkerData, allocator: std.mem.Allocator) void {
-                allocator.destroy(this);
-            }
         };
 
         pub fn init(worker: *Worker, v2: *BundleV2) void {
@@ -205,8 +228,7 @@ pub const ThreadPool = struct {
             this.ast_memory_allocator = .{ .allocator = this.allocator };
             this.ast_memory_allocator.reset();
 
-            this.data = allocator.create(WorkerData) catch unreachable;
-            this.data.* = WorkerData{
+            this.data = WorkerData{
                 .log = allocator.create(Logger.Log) catch unreachable,
                 .estimated_input_lines_of_code = 0,
                 .macro_context = undefined,
@@ -387,6 +409,7 @@ pub const BundleV2 = struct {
         event_loop: EventLoop,
         enable_reloading: bool,
         thread_pool: ?*ThreadPoolLib,
+        heap: ?ThreadlocalArena,
     ) !*BundleV2 {
         var generator = try allocator.create(BundleV2);
         bundler.options.mark_builtins_as_external = bundler.options.platform.isBun() or bundler.options.platform == .node;
@@ -399,7 +422,7 @@ pub const BundleV2 = struct {
             .server_bundler = bundler,
             .graph = .{
                 .pool = undefined,
-                .heap = try ThreadlocalArena.init(),
+                .heap = heap orelse try ThreadlocalArena.init(),
                 .allocator = undefined,
             },
             .linker = .{
@@ -489,7 +512,6 @@ pub const BundleV2 = struct {
             try this.graph.input_files.ensureUnusedCapacity(this.graph.allocator, user_entry_points.len);
             try this.graph.path_to_source_index_map.ensureUnusedCapacity(this.graph.allocator, @truncate(u32, user_entry_points.len));
 
-            defer this.bundler.resetStore();
             for (user_entry_points) |entry_point| {
                 const resolved = this.bundler.resolveEntryPoint(entry_point) catch continue;
                 if (try this.enqueueItem(null, &batch, resolved)) |source_index| {
@@ -510,6 +532,8 @@ pub const BundleV2 = struct {
             for (module_scope.children.slice()) |child| {
                 child.parent = module_scope;
             }
+
+            module_scope.generated = try module_scope.generated.clone(this.linker.allocator);
         }
     }
 
@@ -520,7 +544,7 @@ pub const BundleV2 = struct {
         unique_key: u64,
         enable_reloading: bool,
     ) !std.ArrayList(options.OutputFile) {
-        var this = try BundleV2.init(bundler, allocator, event_loop, enable_reloading, null);
+        var this = try BundleV2.init(bundler, allocator, event_loop, enable_reloading, null, null);
 
         if (this.bundler.log.msgs.items.len > 0) {
             return error.BuildFailed;
@@ -689,17 +713,9 @@ pub const BundleV2 = struct {
         Output.Source.configureNamedThread("Bundler");
         instance.loop = bun.uws.Loop.get().?;
         instance.loop.num_polls += 1;
-        js_ast.Expr.Data.Store.create(bun.default_allocator);
-        js_ast.Stmt.Data.Store.create(bun.default_allocator);
-        defer js_ast.Expr.Data.Store.deinit();
-        defer js_ast.Stmt.Data.Store.deinit();
 
         // while (true) {
         while (instance.queue.pop()) |completion| {
-            defer {
-                js_ast.Expr.Data.Store.reset();
-                js_ast.Stmt.Data.Store.reset();
-            }
             generateInNewThread(completion) catch |err| {
                 completion.result = .{ .err = err };
                 var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch unreachable;
@@ -727,11 +743,19 @@ pub const BundleV2 = struct {
     fn generateInNewThread(
         completion: *JSBundleCompletionTask,
     ) !void {
-        const allocator = bun.default_allocator;
+        var heap = try ThreadlocalArena.init();
+        defer heap.deinit();
+
+        const allocator = heap.allocator();
+        var ast_memory_allocator = try allocator.create(js_ast.ASTMemoryAllocator);
+        ast_memory_allocator.* = .{
+            .allocator = allocator,
+        };
+        ast_memory_allocator.reset();
+        ast_memory_allocator.push();
 
         const config = &completion.config;
         var bundler = try allocator.create(bun.Bundler);
-        errdefer allocator.destroy(bundler);
 
         bundler.* = try bun.Bundler.init(
             allocator,
@@ -763,15 +787,14 @@ pub const BundleV2 = struct {
 
         bundler.resolver.opts = bundler.options;
 
-        var event_loop = try allocator.create(JSC.AnyEventLoop);
-        defer allocator.destroy(event_loop);
+        var this = try BundleV2.init(bundler, allocator, JSC.AnyEventLoop.init(allocator), false, JSC.WorkPool.get(), heap);
 
-        var this = try BundleV2.init(bundler, allocator, JSC.AnyEventLoop.init(allocator), false, JSC.WorkPool.get());
         defer {
             if (this.graph.pool.pool.threadpool_context == @ptrCast(?*anyopaque, this.graph.pool)) {
                 this.graph.pool.pool.threadpool_context = null;
             }
 
+            ast_memory_allocator.pop();
             this.deinit();
         }
 
@@ -791,12 +814,17 @@ pub const BundleV2 = struct {
     }
 
     pub fn deinit(this: *BundleV2) void {
-        var iter = this.graph.pool.workers_list.available.iterator(.{ .kind = .unset });
-        while (iter.next()) |worker_id| {
-            this.graph.pool.workers_list.at(@truncate(u16, worker_id)).deinit();
-        }
+        if (this.graph.pool.workers_assignments.count() > 0) {
+            {
+                this.graph.pool.workers_assignments_lock.lock();
+                defer this.graph.pool.workers_assignments_lock.unlock();
+                for (this.graph.pool.workers_assignments.values()) |worker| {
+                    worker.deinitSoon();
+                }
+            }
 
-        this.graph.heap.deinit();
+            this.graph.pool.pool.wakeForIdleEvents();
+        }
     }
 
     pub fn runFromJSInNewThread(this: *BundleV2, config: *const bun.JSC.API.JSBundler.Config) !std.ArrayList(options.OutputFile) {
@@ -804,16 +832,31 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
+        if (comptime FeatureFlags.help_catch_memory_issues) {
+            this.graph.heap.gc(true);
+            bun.Mimalloc.mi_collect(true);
+        }
+
         this.graph.pool.pool.schedule(try this.enqueueEntryPoints(config.entry_points.keys()));
 
         // We must wait for all the parse tasks to complete, even if there are errors.
         this.waitForParse();
+
+        if (comptime FeatureFlags.help_catch_memory_issues) {
+            this.graph.heap.gc(true);
+            bun.Mimalloc.mi_collect(true);
+        }
 
         if (this.bundler.log.errors > 0) {
             return error.BuildFailed;
         }
 
         try this.cloneAST();
+
+        if (comptime FeatureFlags.help_catch_memory_issues) {
+            this.graph.heap.gc(true);
+            bun.Mimalloc.mi_collect(true);
+        }
 
         var chunks = try this.linker.link(
             this,
@@ -1205,7 +1248,8 @@ const ParseTask = struct {
                         .contents = NodeFallbackModules.contentsFromPath(file_path.text) orelse "",
                     };
 
-                break :brk resolver.caches.fs.readFile(
+                break :brk resolver.caches.fs.readFileWithAllocator(
+                    this.allocator,
                     bundler.fs,
                     file_path.text,
                     task.contents_or_fd.fd.dir,
@@ -1537,11 +1581,7 @@ const ParseTask = struct {
         var step: ParseTask.Result.Error.Step = .pending;
         var log = Logger.Log.init(worker.allocator);
         std.debug.assert(this.source_index.isValid()); // forgot to set source_index
-        defer {
-            if (comptime FeatureFlags.help_catch_memory_issues) {
-                worker.heap.gc(false);
-            }
-        }
+
         var result = bun.default_allocator.create(Result) catch unreachable;
         result.* = .{
             .value = brk: {
@@ -2038,12 +2078,23 @@ const LinkerGraph = struct {
         var parts_list = g.ast.items(.parts)[source_index].slice();
         var part: *js_ast.Part = &parts_list[part_index];
         var uses = part.symbol_uses;
+        var needs_reindex = false;
+        if (uses.capacity() < uses.count() + 1 and !uses.contains(ref)) {
+            var symbol_uses = js_ast.Part.SymbolUseMap{};
+            try symbol_uses.ensureTotalCapacity(g.allocator, uses.count() + 1);
+            symbol_uses.entries.len = uses.keys().len;
+            bun.copy(std.meta.Child(@TypeOf(symbol_uses.keys())), symbol_uses.keys(), uses.keys());
+            bun.copy(std.meta.Child(@TypeOf(symbol_uses.values())), symbol_uses.values(), uses.values());
+            needs_reindex = true;
+            uses = symbol_uses;
+        }
         var entry = uses.getOrPut(g.allocator, ref) catch unreachable;
         if (entry.found_existing) {
             entry.value_ptr.count_estimate += use_count;
         } else {
             entry.value_ptr.* = .{ .count_estimate = use_count };
         }
+        if (needs_reindex) uses.reIndex(g.allocator) catch unreachable;
         part.symbol_uses = uses;
 
         const exports_ref = g.ast.items(.exports_ref)[source_index];
@@ -2466,6 +2517,10 @@ const LinkerContext = struct {
             reachable,
         );
 
+        if (comptime FeatureFlags.help_catch_memory_issues) {
+            this.checkForMemoryCorruption();
+        }
+
         try this.scanImportsAndExports();
 
         // Stop now if there were errors
@@ -2473,15 +2528,37 @@ const LinkerContext = struct {
             return &[_]Chunk{};
         }
 
+        if (comptime FeatureFlags.help_catch_memory_issues) {
+            this.checkForMemoryCorruption();
+        }
+
         try this.treeShakingAndCodeSplitting();
+
+        if (comptime FeatureFlags.help_catch_memory_issues) {
+            this.checkForMemoryCorruption();
+        }
 
         const chunks = try this.computeChunks(unique_key);
 
+        if (comptime FeatureFlags.help_catch_memory_issues) {
+            this.checkForMemoryCorruption();
+        }
+
         try this.computeCrossChunkDependencies(chunks);
+
+        if (comptime FeatureFlags.help_catch_memory_issues) {
+            this.checkForMemoryCorruption();
+        }
 
         this.graph.symbols.followAll();
 
         return chunks;
+    }
+
+    fn checkForMemoryCorruption(this: *LinkerContext) void {
+        // For this to work, you need mimalloc's debug build enabled.
+        //    make mimalloc-debug
+        this.parse_graph.heap.gc(true);
     }
 
     pub noinline fn computeChunks(
@@ -3242,6 +3319,10 @@ const LinkerContext = struct {
                 }
             }
 
+            if (comptime FeatureFlags.help_catch_memory_issues) {
+                this.checkForMemoryCorruption();
+            }
+
             // Step 4: Match imports with exports. This must be done after we process all
             // export stars because imports can bind to export star re-exports.
             {
@@ -3317,11 +3398,17 @@ const LinkerContext = struct {
             // Note: `do` will wait for all to finish before moving forward
             try this.parse_graph.pool.pool.do(this.allocator, &this.wait_group, this, doStep5, this.graph.reachable_files);
         }
+
+        if (comptime FeatureFlags.help_catch_memory_issues) {
+            this.checkForMemoryCorruption();
+        }
+
         // Step 6: Bind imports to exports. This adds non-local dependencies on the
         // parts that declare the export to all parts that use the import. Also
         // generate wrapper parts for wrapped files.
         {
             const bufPrint = std.fmt.bufPrint;
+            _ = bufPrint;
             var parts_list: []js_ast.Part.List = this.graph.ast.items(.parts);
             var wrapper_refs = this.graph.ast.items(.wrapper_ref);
             // const needs_export_symbol_from_runtime: []const bool = this.graph.meta.items(.needs_export_symbol_from_runtime);
@@ -3469,10 +3556,13 @@ const LinkerContext = struct {
                             var part: *js_ast.Part = &parts[part_index];
                             const parts_declaring_symbol: []u32 = this.graph.topLevelSymbolToParts(import_id, import.data.import_ref);
 
-                            part.dependencies.ensureUnusedCapacity(
-                                this.allocator,
-                                parts_declaring_symbol.len + @as(usize, import.re_exports.len),
-                            ) catch unreachable;
+                            const total_len = parts_declaring_symbol.len + @as(usize, import.re_exports.len) + @as(usize, part.dependencies.len);
+                            if (part.dependencies.cap < total_len) {
+                                var list = std.ArrayList(Dependency).init(this.allocator);
+                                list.ensureUnusedCapacity(total_len) catch unreachable;
+                                list.appendSliceAssumeCapacity(part.dependencies.slice());
+                                part.dependencies.update(list);
+                            }
 
                             // Depend on the file containing the imported symbol
                             for (parts_declaring_symbol) |resolved_part_index| {
@@ -4030,14 +4120,6 @@ const LinkerContext = struct {
 
         // we must use this allocator here
         const allocator_ = worker.allocator;
-        if (comptime FeatureFlags.help_catch_memory_issues) {
-            worker.heap.gc(false);
-        }
-        defer {
-            if (comptime FeatureFlags.help_catch_memory_issues) {
-                worker.heap.gc(false);
-            }
-        }
 
         var resolved_exports: *ResolvedExports = &c.graph.meta.items(.resolved_exports)[id];
 
@@ -4973,10 +5055,6 @@ const LinkerContext = struct {
         var worker = ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", ctx.c));
         defer worker.unget();
 
-        if (comptime FeatureFlags.help_catch_memory_issues) {
-            worker.heap.gc(false);
-        }
-
         const allocator = worker.allocator;
         const c = ctx.c;
         std.debug.assert(chunk.content == .javascript);
@@ -5023,7 +5101,7 @@ const LinkerContext = struct {
                         // we reuse the memory buffer up until the final chunk to minimize reallocations
                         .{
                             .javascript = .{
-                                .result = result.clone(allocator) catch unreachable,
+                                .result = result.clone(bun.default_allocator) catch unreachable,
                                 .source_index = part_range.source_index.get(),
                             },
                         },
@@ -5042,7 +5120,7 @@ const LinkerContext = struct {
                     // the final chunk owns the memory buffer
                     compile_results.appendAssumeCapacity(.{
                         .javascript = .{
-                            .result = result,
+                            .result = result.clone(bun.default_allocator) catch unreachable,
                             .source_index = part_range.source_index.get(),
                         },
                     });
@@ -5083,7 +5161,7 @@ const LinkerContext = struct {
             }
 
             cross_chunk_prefix = js_printer.print(
-                allocator,
+                bun.default_allocator,
                 c.resolver.opts.platform,
                 print_options,
                 cross_chunk_import_records.slice(),
@@ -5093,7 +5171,7 @@ const LinkerContext = struct {
                 r,
             ).result.code;
             cross_chunk_suffix = js_printer.print(
-                allocator,
+                bun.default_allocator,
                 c.resolver.opts.platform,
                 print_options,
                 &.{},
@@ -5122,7 +5200,7 @@ const LinkerContext = struct {
 
         var j = bun.Joiner{
             .use_pool = false,
-            .node_allocator = allocator,
+            .node_allocator = bun.default_allocator,
             .watcher = .{
                 .input = chunk.unique_key,
             },
@@ -5274,7 +5352,6 @@ const LinkerContext = struct {
         // TODO: footer
 
         chunk.intermediate_output = c.breakOutputIntoPieces(
-            allocator,
             &j,
             cross_chunk_prefix.len > 0 or
                 cross_chunk_suffix.len > 0,
@@ -5697,7 +5774,7 @@ const LinkerContext = struct {
         return .{
             .javascript = .{
                 .result = js_printer.print(
-                    allocator,
+                    bun.default_allocator,
                     c.resolver.opts.platform,
                     print_options,
                     ast.import_records.slice(),
@@ -6488,9 +6565,6 @@ const LinkerContext = struct {
         // referencing everything by array makes the code a lot more annoying :(
         const ast: js_ast.Ast = c.graph.ast.get(part_range.source_index.get());
 
-        js_ast.Expr.Data.Store.reset();
-        js_ast.Stmt.Data.Store.reset();
-
         var needs_wrapper = false;
 
         const namespace_export_part_index = js_ast.namespace_export_part_index;
@@ -7148,7 +7222,7 @@ const LinkerContext = struct {
                 .export_names = export_names.items,
                 .contents = bytes.items,
             };
-            var byte_buffer = std.ArrayList(u8).initCapacity(c.allocator, bytes.items.len) catch unreachable;
+            var byte_buffer = std.ArrayList(u8).initCapacity(bun.default_allocator, bytes.items.len) catch unreachable;
             var byte_buffer_writer = byte_buffer.writer();
             const SchemaWriter = schema.Writer(@TypeOf(&byte_buffer_writer));
             var writer = SchemaWriter.init(&byte_buffer_writer);
@@ -7157,14 +7231,14 @@ const LinkerContext = struct {
         } else &.{};
 
         // Generate the final output files by joining file pieces together
-        var output_files = std.ArrayList(options.OutputFile).initCapacity(c.allocator, chunks.len + @as(
+        var output_files = std.ArrayList(options.OutputFile).initCapacity(bun.default_allocator, chunks.len + @as(
             usize,
             @boolToInt(react_client_components_manifest.len > 0),
         )) catch unreachable;
         output_files.items.len = chunks.len;
         for (chunks, output_files.items) |*chunk, *output_file| {
             output_file.* = options.OutputFile.initBuf(
-                chunk.intermediate_output.code(c.allocator, chunk, chunks) catch @panic("Failed to allocate memory for output file"),
+                chunk.intermediate_output.code(bun.default_allocator, chunk, chunks) catch @panic("Failed to allocate memory for output file"),
                 chunk.final_rel_path,
                 // TODO: remove this field
                 .js,
@@ -8223,7 +8297,6 @@ const LinkerContext = struct {
 
     pub fn breakOutputIntoPieces(
         c: *LinkerContext,
-        allocator: std.mem.Allocator,
         j: *bun.Joiner,
         has_any_cross_chunk_code: bool,
         count: u32,
@@ -8237,8 +8310,8 @@ const LinkerContext = struct {
             };
         }
 
-        var pieces = try std.ArrayList(Chunk.OutputPiece).initCapacity(allocator, count);
-        const complete_output = try j.done(allocator);
+        var pieces = try std.ArrayList(Chunk.OutputPiece).initCapacity(bun.default_allocator, count);
+        const complete_output = try j.done(bun.default_allocator);
         var output = complete_output;
 
         const prefix = c.unique_key_prefix;

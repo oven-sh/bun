@@ -1921,21 +1921,24 @@ pub const Resolver = struct {
         }
 
         if (needs_iter) {
-            const allocator = r.fs.allocator;
-            dir_entries_option = rfs.entries.put(&cached_dir_entry_result, .{
-                .entries = Fs.FileSystem.DirEntry.init(
-                    Fs.FileSystem.DirnameStore.instance.append(string, dir_path) catch unreachable,
-                ),
-            }) catch unreachable;
+            const allocator = bun.fs_allocator;
+            var dir_entries_ptr = allocator.create(Fs.FileSystem.DirEntry) catch unreachable;
+            dir_entries_ptr.* = Fs.FileSystem.DirEntry.init(
+                Fs.FileSystem.DirnameStore.instance.append(string, dir_path) catch unreachable,
+            );
 
             if (FeatureFlags.store_file_descriptors) {
                 Fs.FileSystem.setMaxFd(open_dir.dir.fd);
-                dir_entries_option.entries.fd = open_dir.dir.fd;
+                dir_entries_ptr.fd = open_dir.dir.fd;
             }
             var dir_iterator = open_dir.iterate();
             while (dir_iterator.next() catch null) |_value| {
-                dir_entries_option.entries.addEntry(_value, allocator, void, {}) catch unreachable;
+                dir_entries_ptr.addEntry(_value, allocator, void, {}) catch unreachable;
             }
+
+            dir_entries_option = rfs.entries.put(&cached_dir_entry_result, .{
+                .entries = dir_entries_ptr,
+            }) catch unreachable;
         }
 
         // We must initialize it as empty so that the result index is correct.
@@ -2541,19 +2544,21 @@ pub const Resolver = struct {
             }
 
             if (needs_iter) {
-                const allocator = r.fs.allocator;
-                dir_entries_option = try rfs.entries.put(&cached_dir_entry_result, .{
-                    .entries = Fs.FileSystem.DirEntry.init(dir_path),
-                });
-
+                const allocator = bun.fs_allocator;
+                var entries_ptr = allocator.create(Fs.FileSystem.DirEntry) catch unreachable;
+                entries_ptr.* = Fs.FileSystem.DirEntry.init(dir_path);
                 if (FeatureFlags.store_file_descriptors) {
                     Fs.FileSystem.setMaxFd(open_dir.dir.fd);
-                    dir_entries_option.entries.fd = open_dir.dir.fd;
+                    entries_ptr.fd = open_dir.dir.fd;
                 }
                 var dir_iterator = open_dir.iterate();
                 while (try dir_iterator.next()) |_value| {
-                    dir_entries_option.entries.addEntry(_value, allocator, void, {}) catch unreachable;
+                    entries_ptr.addEntry(_value, allocator, void, {}) catch unreachable;
                 }
+
+                dir_entries_option = try rfs.entries.put(&cached_dir_entry_result, .{
+                    .entries = entries_ptr,
+                });
             }
 
             // We must initialize it as empty so that the result index is correct.

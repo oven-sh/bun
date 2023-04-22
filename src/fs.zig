@@ -278,7 +278,7 @@ pub const FileSystem = struct {
             const query = strings.copyLowercaseIfNeeded(_query, &scratch_lookup_buffer);
             const result = entry.data.get(query) orelse return null;
             const basename = result.base();
-            if (!strings.eql(basename, _query)) {
+            if (!strings.eqlLong(basename, _query, true)) {
                 return Entry.Lookup{ .entry = result, .diff_case = Entry.Lookup.DifferentCase{
                     .dir = entry.dir,
                     .query = _query,
@@ -363,11 +363,11 @@ pub const FileSystem = struct {
 
         abs_path: PathString = PathString.empty,
 
-        pub inline fn base(this: *const Entry) string {
+        pub inline fn base(this: *Entry) string {
             return this.base_.slice();
         }
 
-        pub inline fn base_lowercase(this: *const Entry) string {
+        pub inline fn base_lowercase(this: *Entry) string {
             return this.base_lowercase_.slice();
         }
 
@@ -534,7 +534,6 @@ pub const FileSystem = struct {
     pub const RealFS = struct {
         entries_mutex: Mutex = Mutex.init(),
         entries: *EntriesOption.Map,
-        allocator: std.mem.Allocator,
         cwd: string,
         parent_fs: *FileSystem = undefined,
         file_limit: usize = 32,
@@ -684,19 +683,17 @@ pub const FileSystem = struct {
         var _entries_option_map: *EntriesOption.Map = undefined;
         var _entries_option_map_loaded: bool = false;
         pub fn init(
-            allocator: std.mem.Allocator,
             cwd: string,
         ) RealFS {
             const file_limit = adjustUlimit() catch unreachable;
 
             if (!_entries_option_map_loaded) {
-                _entries_option_map = EntriesOption.Map.init(allocator);
+                _entries_option_map = EntriesOption.Map.init(bun.fs_allocator);
                 _entries_option_map_loaded = true;
             }
 
             return RealFS{
                 .entries = _entries_option_map,
-                .allocator = allocator,
                 .cwd = cwd,
                 .file_limit = file_limit,
                 .file_quota = file_limit,
@@ -792,7 +789,7 @@ pub const FileSystem = struct {
         }
 
         pub const EntriesOption = union(Tag) {
-            entries: DirEntry,
+            entries: *DirEntry,
             err: DirEntry.Err,
 
             pub const Tag = enum {
@@ -820,9 +817,10 @@ pub const FileSystem = struct {
             comptime Iterator: type,
             iterator: Iterator,
         ) !DirEntry {
+            _ = fs;
             var iter = (std.fs.IterableDir{ .dir = handle }).iterate();
             var dir = DirEntry.init(_dir);
-            const allocator = fs.allocator;
+            const allocator = bun.fs_allocator;
             errdefer dir.deinit(allocator);
 
             if (FeatureFlags.store_file_descriptors) {
@@ -905,8 +903,10 @@ pub const FileSystem = struct {
             };
 
             if (comptime FeatureFlags.enable_entry_cache) {
+                var entries_ptr = bun.fs_allocator.create(DirEntry) catch unreachable;
+                entries_ptr.* = entries;
                 const result = EntriesOption{
-                    .entries = entries,
+                    .entries = entries_ptr,
                 };
 
                 var out = try fs.entries.put(&cache_result.?, result);

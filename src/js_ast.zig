@@ -2130,6 +2130,20 @@ pub const E = struct {
             };
         }
 
+        pub fn cloneSliceIfNecessary(str: *const String, allocator: std.mem.Allocator) !bun.string {
+            if (Expr.Data.Store.memory_allocator) |mem| {
+                if (mem == GlobalStoreHandle.global_store_ast) {
+                    return str.string(allocator);
+                }
+            }
+
+            if (str.isUTF8()) {
+                return allocator.dupe(u8, str.string(allocator) catch unreachable);
+            }
+
+            return str.string(allocator);
+        }
+
         pub fn javascriptLength(s: *const String) u32 {
             if (s.rope_len > 0) {
                 // We only support ascii ropes for now
@@ -2221,6 +2235,14 @@ pub const E = struct {
         pub fn string(s: *const String, allocator: std.mem.Allocator) !bun.string {
             if (s.isUTF8()) {
                 return s.data;
+            } else {
+                return strings.toUTF8Alloc(allocator, s.slice16());
+            }
+        }
+
+        pub fn stringCloned(s: *const String, allocator: std.mem.Allocator) !bun.string {
+            if (s.isUTF8()) {
+                return try allocator.dupe(u8, s.data);
             } else {
                 return strings.toUTF8Alloc(allocator, s.slice16());
             }
@@ -9542,18 +9564,12 @@ pub const ASTMemoryAllocator = struct {
     allocator: std.mem.Allocator,
     previous: ?*ASTMemoryAllocator = null,
 
-    pub fn push(this: *ASTMemoryAllocator) void {
-        if (Stmt.Data.Store.memory_allocator == this) {
-            return;
-        }
+    pub fn reset(this: *ASTMemoryAllocator) void {
         this.stack_allocator.fallback_allocator = this.allocator;
         this.bump_allocator = this.stack_allocator.get();
-        var prev = Stmt.Data.Store.memory_allocator;
-        if (this.previous) |other| {
-            other.previous = prev;
-        } else {
-            this.previous = prev;
-        }
+    }
+
+    pub fn push(this: *ASTMemoryAllocator) void {
         Stmt.Data.Store.memory_allocator = this;
         Expr.Data.Store.memory_allocator = this;
     }
@@ -9643,6 +9659,32 @@ pub const UseDirective = enum {
             .@"use client" => .browser,
             .@"use server" => .bun,
         };
+    }
+};
+
+pub const GlobalStoreHandle = struct {
+    prev_memory_allocator: ?*ASTMemoryAllocator = null,
+
+    var global_store_ast: ?*ASTMemoryAllocator = null;
+    var global_store_threadsafe: std.heap.ThreadSafeAllocator = undefined;
+
+    pub fn get() ?*ASTMemoryAllocator {
+        if (global_store_ast == null) {
+            var global = bun.default_allocator.create(ASTMemoryAllocator) catch unreachable;
+            global.allocator = bun.default_allocator;
+            global.bump_allocator = bun.default_allocator;
+            global_store_ast = global;
+        }
+
+        var prev = Stmt.Data.Store.memory_allocator;
+        Stmt.Data.Store.memory_allocator = global_store_ast;
+        Expr.Data.Store.memory_allocator = global_store_ast;
+        return prev;
+    }
+
+    pub fn unget(handle: ?*ASTMemoryAllocator) void {
+        Stmt.Data.Store.memory_allocator = handle;
+        Expr.Data.Store.memory_allocator = handle;
     }
 };
 
@@ -9834,3 +9876,4 @@ pub const UseDirective = enum {
 // Stmt               | 192
 // STry               | 384
 // -- ESBuild bit sizes
+

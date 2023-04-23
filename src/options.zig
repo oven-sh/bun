@@ -1974,6 +1974,7 @@ pub const OutputFile = struct {
             var blob = globalObject.allocator().create(JSC.WebCore.Blob) catch unreachable;
             blob.* = JSC.WebCore.Blob.initWithStore(file_blob, globalObject);
             blob.allocator = globalObject.allocator();
+            blob.globalThis = globalObject;
             blob.content_type = loader.toMimeType().value;
 
             return blob.toJS(globalObject);
@@ -1996,7 +1997,11 @@ pub const OutputFile = struct {
     };
 
     pub const Value = union(Kind) {
-        buffer: []const u8,
+        buffer: struct {
+            allocator: std.mem.Allocator,
+            bytes: []const u8,
+        },
+
         move: FileOperation,
         copy: FileOperation,
         noop: u0,
@@ -2029,12 +2034,17 @@ pub const OutputFile = struct {
         return res;
     }
 
-    pub fn initBuf(buf: []const u8, pathname: string, loader: Loader) OutputFile {
+    pub fn initBuf(buf: []const u8, allocator: std.mem.Allocator, pathname: string, loader: Loader) OutputFile {
         return .{
             .loader = loader,
             .input = Fs.Path.init(pathname),
             .size = buf.len,
-            .value = .{ .buffer = buf },
+            .value = .{
+                .buffer = .{
+                    .bytes = buf,
+                    .allocator = allocator,
+                },
+            },
         };
     }
 
@@ -2077,12 +2087,14 @@ pub const OutputFile = struct {
             .move => this.value.move.toJS(globalObject, this.loader),
             .copy => this.value.copy.toJS(globalObject, this.loader),
             .buffer => |buffer| brk: {
-                var blob = globalObject.allocator().create(JSC.WebCore.Blob) catch unreachable;
-                blob.* = JSC.WebCore.Blob.init(@constCast(buffer), bun.default_allocator, globalObject);
+                var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
+                blob.* = JSC.WebCore.Blob.init(@constCast(buffer.bytes), buffer.allocator, globalObject);
                 blob.store.?.mime_type = this.loader.toMimeType();
                 blob.content_type = blob.store.?.mime_type.value;
-                blob.allocator = globalObject.allocator();
-                break :brk blob.toJS(globalObject);
+                blob.allocator = bun.default_allocator;
+                const blob_jsvalue = blob.toJS(globalObject);
+                blob_jsvalue.ensureStillAlive();
+                break :brk blob_jsvalue;
             },
         };
     }

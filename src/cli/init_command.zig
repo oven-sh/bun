@@ -99,7 +99,7 @@ pub const InitCommand = struct {
     };
 
     pub fn exec(alloc: std.mem.Allocator, argv: [][*:0]u8) !void {
-        var fs = try Fs.FileSystem.init1(alloc, null);
+        var fs = try Fs.FileSystem.init(null);
         const pathname = Fs.PathName.init(fs.topLevelDirWithoutTrailingSlash());
         const destination_dir = std.fs.cwd();
 

@@ -854,7 +854,7 @@ pub const Printer = struct {
         if (lockfile_path.len > 0 and lockfile_path[0] == std.fs.path.sep)
             std.os.chdir(std.fs.path.dirname(lockfile_path) orelse "/") catch {};
 
-        _ = try FileSystem.init1(allocator, null);
+        _ = try FileSystem.init(null);
 
         var lockfile = try allocator.create(Lockfile);
 
@@ -918,7 +918,7 @@ pub const Printer = struct {
         };
 
         env_loader.loadProcess();
-        try env_loader.load(&fs.fs, &entries_option.entries, false);
+        try env_loader.load(&fs.fs, entries_option.entries, false);
         var log = logger.Log.init(allocator);
         try options.load(
             allocator,

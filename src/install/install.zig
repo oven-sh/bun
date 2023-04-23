@@ -4976,7 +4976,7 @@ pub const PackageManager = struct {
             try global_dir.dir.setAsCwd();
         }
 
-        var fs = try Fs.FileSystem.init1(ctx.allocator, null);
+        var fs = try Fs.FileSystem.init(null);
         var original_cwd = std.mem.trimRight(u8, fs.top_level_dir, "/");
 
         bun.copy(u8, &cwd_buf, original_cwd);
@@ -5041,7 +5041,7 @@ pub const PackageManager = struct {
         };
 
         env.loadProcess();
-        try env.load(&fs.fs, &entries_option.entries, false);
+        try env.load(&fs.fs, entries_option.entries, false);
 
         if (env.map.get("BUN_INSTALL_VERBOSE") != null) {
             PackageManager.verbose_install = true;
@@ -5068,7 +5068,7 @@ pub const PackageManager = struct {
             .network_task_fifo = NetworkQueue.init(),
             .allocator = ctx.allocator,
             .log = ctx.log,
-            .root_dir = &entries_option.entries,
+            .root_dir = entries_option.entries,
             .env = env,
             .cpu_count = cpu_count,
             .thread_pool = ThreadPool.init(.{
@@ -5143,7 +5143,7 @@ pub const PackageManager = struct {
             .network_task_fifo = NetworkQueue.init(),
             .allocator = allocator,
             .log = log,
-            .root_dir = &root_dir.entries,
+            .root_dir = root_dir.entries,
             .env = env,
             .cpu_count = cpu_count,
             .thread_pool = ThreadPool.init(.{

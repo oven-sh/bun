@@ -382,7 +382,7 @@ pub const UpgradeCommand = struct {
     fn _exec(ctx: Command.Context) !void {
         try HTTP.HTTPThread.init();
 
-        var filesystem = try fs.FileSystem.init1(ctx.allocator, null);
+        var filesystem = try fs.FileSystem.init(null);
         var env_loader: DotEnv.Loader = brk: {
             var map = try ctx.allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(ctx.allocator);

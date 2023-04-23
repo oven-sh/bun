@@ -158,7 +158,7 @@ pub const BuildCommand = struct {
                     if (output_dir.len == 0 and ctx.bundler_options.outfile.len == 0) {
                         // if --transform is passed, it won't have an output dir
                         if (output_files[0].value == .buffer)
-                            try writer.writeAll(output_files[0].value.buffer);
+                            try writer.writeAll(output_files[0].value.buffer.bytes);
                         break :dump;
                     }
 
@@ -202,7 +202,7 @@ pub const BuildCommand = struct {
                                         }
                                     }
                                 }
-                                try root_dir.dir.writeFile(rel_path, value);
+                                try root_dir.dir.writeFile(rel_path, value.bytes);
                             },
                             .move => |value| {
                                 const primary = f.input.text[from_path.len..];

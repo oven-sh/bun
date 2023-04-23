@@ -597,20 +597,20 @@ pub const BundleV2 = struct {
         // conditions from creating two
         _ = JSC.WorkPool.get();
 
-        // if (!BundleThread.created) {
-        //     BundleThread.created = true;
+        if (!BundleThread.created) {
+            BundleThread.created = true;
 
         var instance = bun.default_allocator.create(BundleThread) catch unreachable;
         instance.queue = .{};
         instance.queue.push(completion);
-        // BundleThread.instance = instance;
+        BundleThread.instance = instance;
 
         var thread = try std.Thread.spawn(.{}, generateInNewThreadWrap, .{instance});
         thread.detach();
-        // } else {
-        //     BundleThread.instance.queue.push(completion);
-        //     BundleThread.instance.loop.wakeup();
-        // }
+        } else {
+            BundleThread.instance.queue.push(completion);
+            BundleThread.instance.loop.wakeup();
+        }
 
         completion.ref.ref(globalThis.bunVM());
 
@@ -680,6 +680,7 @@ pub const BundleV2 = struct {
                             JSC.ZigString.static("path"),
                             JSC.ZigString.fromUTF8(output_file.input.text).toValueGC(globalThis),
                         );
+                        defer bun.default_allocator.free(output_file.input.text);
 
                         obj.put(
                             globalThis,
@@ -713,23 +714,28 @@ pub const BundleV2 = struct {
         Output.Source.configureNamedThread("Bundler");
         instance.loop = bun.uws.Loop.get().?;
         instance.loop.num_polls += 1;
+        var any = false;
 
-        // while (true) {
-        while (instance.queue.pop()) |completion| {
-            generateInNewThread(completion) catch |err| {
-                completion.result = .{ .err = err };
-                var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch unreachable;
-                concurrent_task.* = JSC.ConcurrentTask{
-                    .auto_delete = true,
-                    .task = completion.task.task(),
-                    .next = null,
+        while (true) {
+            while (instance.queue.pop()) |completion| {
+                generateInNewThread(completion) catch |err| {
+                    completion.result = .{ .err = err };
+                    var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch unreachable;
+                    concurrent_task.* = JSC.ConcurrentTask{
+                        .auto_delete = true,
+                        .task = completion.task.task(),
+                        .next = null,
+                    };
+                    completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
                 };
-                completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
-            };
-        }
+                any = true;
+            }
 
-        //     instance.loop.tick();
-        // }
+            if (any) {
+                bun.Mimalloc.mi_collect(false);
+            }
+            instance.loop.tick();
+        }
     }
 
     pub const BundleThread = struct {
@@ -821,6 +827,7 @@ pub const BundleV2 = struct {
                 for (this.graph.pool.workers_assignments.values()) |worker| {
                     worker.deinitSoon();
                 }
+                this.graph.pool.workers_assignments.deinit();
             }
 
             this.graph.pool.pool.wakeForIdleEvents();
@@ -940,6 +947,7 @@ pub const BundleV2 = struct {
                 }
 
                 var iter = result.resolve_queue.iterator();
+                defer result.resolve_queue.deinit();
 
                 while (iter.next()) |entry| {
                     const hash = entry.key_ptr.*;
@@ -958,22 +966,25 @@ pub const BundleV2 = struct {
                     }
 
                     if (!existing.found_existing) {
+                        var new_task = value;
                         var new_input_file = Graph.InputFile{
-                            .source = Logger.Source.initEmptyFile(entry.value_ptr.path.text),
+                            .source = Logger.Source.initEmptyFile(new_task.path.text),
                             .side_effects = value.side_effects,
                         };
                         new_input_file.source.index = Index.source(graph.input_files.len);
-                        new_input_file.source.path = entry.value_ptr.path;
+                        new_input_file.source.path = new_task.path;
                         new_input_file.source.key_path = new_input_file.source.path;
                         // graph.source_index_map.put(graph.allocator, new_input_file.source.index.get, new_input_file.source) catch unreachable;
                         existing.value_ptr.* = new_input_file.source.index.get();
-                        entry.value_ptr.source_index = new_input_file.source.index;
-                        entry.value_ptr.ctx = this;
+                        new_task.source_index = new_input_file.source.index;
+                        new_task.ctx = this;
                         graph.input_files.append(graph.allocator, new_input_file) catch unreachable;
                         graph.ast.append(graph.allocator, js_ast.Ast.empty) catch unreachable;
-                        batch.push(ThreadPoolLib.Batch.from(&entry.value_ptr.task));
+                        batch.push(ThreadPoolLib.Batch.from(&new_task.task));
 
                         diff += 1;
+                    } else {
+                        bun.default_allocator.destroy(value);
                     }
                 }
 
@@ -1053,7 +1064,7 @@ const ParseTask = struct {
 
     const debug = Output.scoped(.ParseTask, false);
 
-    pub const ResolveQueue = std.AutoArrayHashMap(u64, ParseTask);
+    pub const ResolveQueue = std.AutoArrayHashMap(u64, *ParseTask);
 
     pub fn init(resolve_result: *const _resolver.Result, source_index: ?Index, ctx: *BundleV2) ParseTask {
         return .{
@@ -1202,7 +1213,7 @@ const ParseTask = struct {
         step: *ParseTask.Result.Error.Step,
         log: *Logger.Log,
     ) anyerror!?Result.Success {
-        var allocator = this.allocator;
+        const allocator = this.allocator;
 
         var data = this.data;
         var bundler = &data.bundler;
@@ -1232,7 +1243,8 @@ const ParseTask = struct {
                             override_file_path_buf[override_path.len] = 0;
                             var override_pathZ = override_file_path_buf[0..override_path.len :0];
                             debug("{s} -> {s}", .{ file_path.text, override_path });
-                            break :brk try resolver.caches.fs.readFile(
+                            break :brk try resolver.caches.fs.readFileWithAllocator(
+                                allocator,
                                 bundler.fs,
                                 override_pathZ,
                                 0,
@@ -1249,7 +1261,7 @@ const ParseTask = struct {
                     };
 
                 break :brk resolver.caches.fs.readFileWithAllocator(
-                    this.allocator,
+                    allocator,
                     bundler.fs,
                     file_path.text,
                     task.contents_or_fd.fd.dir,
@@ -1443,7 +1455,7 @@ const ParseTask = struct {
 
                 var resolve_entry = try resolve_queue.getOrPut(wyhash(0, path.text));
                 if (resolve_entry.found_existing) {
-                    import_record.path = resolve_entry.value_ptr.path;
+                    import_record.path = resolve_entry.value_ptr.*.path;
 
                     continue;
                 }
@@ -1470,21 +1482,25 @@ const ParseTask = struct {
                 import_record.path = path.*;
                 debug("created ParseTask: {s}", .{path.text});
 
-                resolve_entry.value_ptr.* = ParseTask.init(&resolve_result, null, this.ctx);
-                resolve_entry.value_ptr.secondary_path_for_commonjs_interop = secondary_path_to_copy;
+                var resolve_task = bun.default_allocator.create(ParseTask) catch @panic("Ran out of memory");
+                resolve_task.* = ParseTask.init(&resolve_result, null, this.ctx);
+
+                resolve_task.secondary_path_for_commonjs_interop = secondary_path_to_copy;
 
                 if (use_directive != .none) {
-                    resolve_entry.value_ptr.known_platform = platform;
+                    resolve_task.known_platform = platform;
                 } else if (task.known_platform) |known_platform| {
-                    resolve_entry.value_ptr.known_platform = known_platform;
+                    resolve_task.known_platform = known_platform;
                 }
 
-                resolve_entry.value_ptr.jsx.development = task.jsx.development;
+                resolve_task.jsx.development = task.jsx.development;
 
-                if (resolve_entry.value_ptr.loader == null) {
-                    resolve_entry.value_ptr.loader = path.loader(&bundler.options.loaders);
-                    resolve_entry.value_ptr.tree_shaking = task.tree_shaking;
+                if (resolve_task.loader == null) {
+                    resolve_task.loader = path.loader(&bundler.options.loaders);
+                    resolve_task.tree_shaking = task.tree_shaking;
                 }
+
+                resolve_entry.value_ptr.* = resolve_task;
             } else |err| {
                 // Disable failing packages from being printed.
                 // This may cause broken code to write.
@@ -1548,9 +1564,6 @@ const ParseTask = struct {
             return err;
         }
 
-        // Allow the AST to outlive this call
-        _ = js_ast.Expr.Data.Store.toOwnedSlice();
-        _ = js_ast.Stmt.Data.Store.toOwnedSlice();
 
         // never a react client component if RSC is not enabled.
         std.debug.assert(use_directive == .none or bundler.options.react_server_components);
@@ -5101,7 +5114,7 @@ const LinkerContext = struct {
                         // we reuse the memory buffer up until the final chunk to minimize reallocations
                         .{
                             .javascript = .{
-                                .result = result.clone(bun.default_allocator) catch unreachable,
+                                .result = result.clone(allocator) catch unreachable,
                                 .source_index = part_range.source_index.get(),
                             },
                         },
@@ -5120,7 +5133,7 @@ const LinkerContext = struct {
                     // the final chunk owns the memory buffer
                     compile_results.appendAssumeCapacity(.{
                         .javascript = .{
-                            .result = result.clone(bun.default_allocator) catch unreachable,
+                            .result = result.clone(allocator) catch unreachable,
                             .source_index = part_range.source_index.get(),
                         },
                     });
@@ -5161,7 +5174,7 @@ const LinkerContext = struct {
             }
 
             cross_chunk_prefix = js_printer.print(
-                bun.default_allocator,
+                allocator,
                 c.resolver.opts.platform,
                 print_options,
                 cross_chunk_import_records.slice(),
@@ -5171,7 +5184,7 @@ const LinkerContext = struct {
                 r,
             ).result.code;
             cross_chunk_suffix = js_printer.print(
-                bun.default_allocator,
+                allocator,
                 c.resolver.opts.platform,
                 print_options,
                 &.{},
@@ -5200,7 +5213,7 @@ const LinkerContext = struct {
 
         var j = bun.Joiner{
             .use_pool = false,
-            .node_allocator = bun.default_allocator,
+            .node_allocator = allocator,
             .watcher = .{
                 .input = chunk.unique_key,
             },
@@ -5238,7 +5251,7 @@ const LinkerContext = struct {
         if (cross_chunk_prefix.len > 0) {
             newline_before_comment = true;
             line_offset.advance(cross_chunk_prefix);
-            j.push(cross_chunk_prefix);
+            j.append(cross_chunk_prefix, 0, bun.default_allocator);
         }
 
         // Concatenate the generated JavaScript chunks together
@@ -5305,10 +5318,10 @@ const LinkerContext = struct {
 
             if (is_runtime) {
                 line_offset.advance(compile_result.code());
-                j.append(compile_result.code(), 0, allocator);
+                j.append(compile_result.code(), 0, bun.default_allocator);
             } else {
                 line_offset.advance(compile_result.code());
-                j.append(compile_result.code(), 0, allocator);
+                j.append(compile_result.code(), 0, bun.default_allocator);
 
                 // TODO: sourcemap
             }
@@ -5322,7 +5335,7 @@ const LinkerContext = struct {
             // Stick the entry point tail at the end of the file. Deliberately don't
             // include any source mapping information for this because it's automatically
             // generated and doesn't correspond to a location in the input file.
-            j.push(tail_code);
+            j.append(tail_code, 0, bun.default_allocator);
         }
 
         // Put the cross-chunk suffix inside the IIFE
@@ -5332,7 +5345,7 @@ const LinkerContext = struct {
                 line_offset.advance("\n");
             }
 
-            j.push(cross_chunk_suffix);
+            j.append(cross_chunk_suffix, 0, bun.default_allocator);
         }
 
         if (c.options.output_format == .iife) {
@@ -5352,7 +5365,9 @@ const LinkerContext = struct {
         // TODO: footer
 
         chunk.intermediate_output = c.breakOutputIntoPieces(
+            allocator,
             &j,
+            
             cross_chunk_prefix.len > 0 or
                 cross_chunk_suffix.len > 0,
             @truncate(u32, ctx.chunks.len),
@@ -5774,7 +5789,7 @@ const LinkerContext = struct {
         return .{
             .javascript = .{
                 .result = js_printer.print(
-                    bun.default_allocator,
+                    allocator,
                     c.resolver.opts.platform,
                     print_options,
                     ast.import_records.slice(),
@@ -6746,7 +6761,6 @@ const LinkerContext = struct {
             mergeAdjacentLocalStmts(&stmts.all_stmts, temp_allocator);
         }
 
-        // TODO: mergeAdjacentLocalStmts
 
         var out_stmts: []js_ast.Stmt = stmts.all_stmts.items;
 
@@ -7237,9 +7251,12 @@ const LinkerContext = struct {
         )) catch unreachable;
         output_files.items.len = chunks.len;
         for (chunks, output_files.items) |*chunk, *output_file| {
+            const buffer = chunk.intermediate_output.code(chunk, chunks) catch @panic("Failed to allocate memory for output file");
             output_file.* = options.OutputFile.initBuf(
-                chunk.intermediate_output.code(bun.default_allocator, chunk, chunks) catch @panic("Failed to allocate memory for output file"),
-                chunk.final_rel_path,
+                buffer,
+                Chunk.IntermediateOutput.allocatorForSize(buffer.len),
+                // clone for main thread
+                bun.default_allocator.dupe(u8, chunk.final_rel_path) catch unreachable,
                 // TODO: remove this field
                 .js,
             );
@@ -7248,6 +7265,7 @@ const LinkerContext = struct {
         if (react_client_components_manifest.len > 0) {
             output_files.appendAssumeCapacity(options.OutputFile.initBuf(
                 react_client_components_manifest,
+                bun.default_allocator,
                 "./components-manifest.blob",
                 .file,
             ));
@@ -8297,6 +8315,7 @@ const LinkerContext = struct {
 
     pub fn breakOutputIntoPieces(
         c: *LinkerContext,
+        allocator: std.mem.Allocator,
         j: *bun.Joiner,
         has_any_cross_chunk_code: bool,
         count: u32,
@@ -8310,8 +8329,8 @@ const LinkerContext = struct {
             };
         }
 
-        var pieces = try std.ArrayList(Chunk.OutputPiece).initCapacity(bun.default_allocator, count);
-        const complete_output = try j.done(bun.default_allocator);
+        var pieces = try std.ArrayList(Chunk.OutputPiece).initCapacity(allocator, count);
+        const complete_output = try j.done(allocator);
         var output = complete_output;
 
         const prefix = c.unique_key_prefix;
@@ -8604,7 +8623,14 @@ pub const Chunk = struct {
 
         empty: void,
 
-        pub fn code(this: IntermediateOutput, allocator: std.mem.Allocator, chunk: *Chunk, chunks: []Chunk) ![]const u8 {
+        pub fn allocatorForSize(size: usize) std.mem.Allocator {
+            if (size >= 512 * 1024)
+                return std.heap.page_allocator
+            else
+                return bun.default_allocator;
+        }
+
+        pub fn code(this: IntermediateOutput, chunk: *Chunk, chunks: []Chunk) ![]const u8 {
             switch (this) {
                 .pieces => |*pieces| {
                     var count: usize = 0;
@@ -8622,7 +8648,7 @@ pub const Chunk = struct {
                         }
                     }
 
-                    var total_buf = try allocator.alloc(u8, count);
+                    var total_buf = try allocatorForSize(count).alloc(u8, count);
                     var remain = total_buf;
 
                     for (pieces.slice()) |piece| {
@@ -8656,7 +8682,7 @@ pub const Chunk = struct {
                 .joiner => |joiner_| {
                     // TODO: make this safe
                     var joiny = joiner_;
-                    return joiny.done(allocator);
+                    return joiny.done(allocatorForSize(joiny.len));
                 },
                 .empty => return "",
             }

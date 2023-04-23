@@ -681,7 +681,10 @@ pub const Thread = struct {
                 const task = @fieldParentPtr(Task, "node", result.node);
                 (task.callback)(task);
             }
+
             Output.flush();
+
+            self.drainIdleEvents();
         }
     }
 

@@ -600,14 +600,14 @@ pub const BundleV2 = struct {
         if (!BundleThread.created) {
             BundleThread.created = true;
 
-        var instance = bun.default_allocator.create(BundleThread) catch unreachable;
-        instance.queue = .{};
-        instance.waker = bun.AsyncIO.Waker.init(bun.default_allocator) catch @panic("Failed to create waker");
-        instance.queue.push(completion);
-        BundleThread.instance = instance;
+            var instance = bun.default_allocator.create(BundleThread) catch unreachable;
+            instance.queue = .{};
+            instance.waker = bun.AsyncIO.Waker.init(bun.default_allocator) catch @panic("Failed to create waker");
+            instance.queue.push(completion);
+            BundleThread.instance = instance;
 
-        var thread = try std.Thread.spawn(.{}, generateInNewThreadWrap, .{instance});
-        thread.detach();
+            var thread = try std.Thread.spawn(.{}, generateInNewThreadWrap, .{instance});
+            thread.detach();
         } else {
             BundleThread.instance.queue.push(completion);
             BundleThread.instance.waker.wake() catch {};
@@ -1562,7 +1562,6 @@ const ParseTask = struct {
             debug("failed with error: {s}", .{@errorName(err)});
             return err;
         }
-
 
         // never a react client component if RSC is not enabled.
         std.debug.assert(use_directive == .none or bundler.options.react_server_components);
@@ -5366,7 +5365,7 @@ const LinkerContext = struct {
         chunk.intermediate_output = c.breakOutputIntoPieces(
             allocator,
             &j,
-            
+
             cross_chunk_prefix.len > 0 or
                 cross_chunk_suffix.len > 0,
             @truncate(u32, ctx.chunks.len),
@@ -6759,7 +6758,6 @@ const LinkerContext = struct {
         if (c.options.minify_syntax) {
             mergeAdjacentLocalStmts(&stmts.all_stmts, temp_allocator);
         }
-
 
         var out_stmts: []js_ast.Stmt = stmts.all_stmts.items;
 

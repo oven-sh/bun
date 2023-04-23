@@ -43,11 +43,6 @@ const JSLexer = bun.js_lexer;
 const Expr = JSAst.Expr;
 
 pub const JSBundler = struct {
-    heap: Mimalloc.Arena,
-    allocator: std.mem.Allocator,
-    configs: Config.List = .{},
-    has_pending_activity: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(true),
-
     const OwnedString = bun.MutableString;
 
     pub const Config = struct {
@@ -350,5 +345,92 @@ pub const JSBundler = struct {
         _: js.ExceptionRef,
     ) js.JSValueRef {
         return build(globalThis, @ptrCast([]const JSC.JSValue, arguments_)).asObjectRef();
+    }
+};
+
+pub const JSBundlerPlugin = opaque {
+    extern fn JSBundlerPlugin__create(*JSC.JSGlobalObject, JSC.JSGlobalObject.BunPluginTarget) *JSBundlerPlugin;
+    pub fn create(globalObject: *JSC.JSGlobalObject, target: JSC.JSGlobalObject.BunPluginTarget) *JSBundlerPlugin {
+        return JSBundlerPlugin__create(globalObject, target);
+    }
+
+    extern fn JSBundlerPlugin__tombestone(*JSBundlerPlugin) void;
+
+    extern fn JSBundlerPlugin__anyMatches(
+        *JSBundlerPlugin,
+        namespaceString: *const ZigString,
+        path: *const ZigString,
+        context: *anyopaque,
+    ) bool;
+
+    extern fn JSBundlerPlugin__matchOnLoad(
+        *JSC.JSGlobalObject,
+        *JSBundlerPlugin,
+        namespaceString: *const ZigString,
+        path: *const ZigString,
+        context: *anyopaque,
+    ) JSValue;
+
+    extern fn JSBundlerPlugin__matchOnResolve(
+        *JSC.JSGlobalObject,
+        *JSBundlerPlugin,
+        namespaceString: *const ZigString,
+        path: *const ZigString,
+        context: *anyopaque,
+    ) JSValue;
+
+    pub fn hasAnyMatches(
+        this: *JSBundlerPlugin,
+        path: *const Fs.Path,
+        is_onLoad: bool,
+    ) bool {
+        const namespace_string = ZigString.fromUTF8(path.namespace);
+        const path_string = ZigString.fromUTF8(path.path);
+        return JSBundlerPlugin__anyMatches(this, &namespace_string, &path_string, is_onLoad);
+    }
+
+    pub fn matchOnLoad(
+        globalThis: *JSC.JSGlobalObject,
+        this: *JSBundlerPlugin,
+        path: *const Fs.Path,
+        context: *anyopaque,
+    ) JSC.JSValue {
+        const namespace_string = ZigString.fromUTF8(path.namespace);
+        const path_string = ZigString.fromUTF8(path.path);
+        return JSBundlerPlugin__matchOnLoad(globalThis, this, &namespace_string, &path_string, context);
+    }
+
+    pub fn matchOnResolve(
+        globalThis: *JSC.JSGlobalObject,
+        this: *JSBundlerPlugin,
+        path: *const Fs.Path,
+        context: *anyopaque,
+    ) JSC.JSValue {
+        const namespace_string = ZigString.fromUTF8(path.namespace);
+        const path_string = ZigString.fromUTF8(path.path);
+        return JSBundlerPlugin__matchOnResolve(globalThis, this, &namespace_string, &path_string, context);
+    }
+
+    pub fn addPlugin(
+        this: *JSBundlerPlugin,
+        globalObject: *JSC.JSGlobalObject,
+        object: JSC.JSValue,
+    ) JSValue {
+        return setupJSBundlerPlugin(this, globalObject, object);
+    }
+
+    extern fn setupJSBundlerPlugin(
+        *JSBundlerPlugin,
+        *JSC.JSGlobalObject,
+        JSC.JSValue,
+    ) JSValue;
+
+    pub export fn JSBundlerPlugin__getDefaultLoader(context: *anyopaque) u8 {
+        _ = context;
+        return @enumToInt(options.Loader.js);
+    }
+
+    comptime {
+        _ = JSBundlerPlugin__getDefaultLoader;
     }
 };

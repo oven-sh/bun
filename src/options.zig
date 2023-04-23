@@ -646,7 +646,7 @@ pub const Platform = enum {
     };
 };
 
-pub const Loader = enum {
+pub const Loader = enum(u8) {
     jsx,
     js,
     ts,

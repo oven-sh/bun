@@ -41,6 +41,54 @@ using namespace Zig;
 using namespace WebCore;
 
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, ZigString* specifier);
+extern "C" BunLoaderType JSBundlerPlugin__getDefaultLoader(void* context);
+extern "C" void JSBundlerPlugin__OnLoadAsync(void* ctx, EncodedJSValue errorValue, ZigString* sourceCode, BunLoaderType loader);
+OnLoadResult handleOnLoadResult(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, ZigString* specifier);
+
+JSValue handleVirtualModuleResultForJSBundlerPlugin(
+    Zig::GlobalObject* globalObject,
+    JSValue virtualModuleResult,
+    ZigString* specifier,
+    ZigString* referrer,
+    void* bundlerPluginContext)
+{
+    auto onLoadResult = handleOnLoadResult(globalObject, virtualModuleResult, specifier, bundlerPluginContext);
+    JSC::VM& vm = globalObject->vm();
+
+    switch (onLoadResult.type) {
+    case OnLoadResultTypeCode: {
+        JSBundlerPlugin__OnLoadAsync(bundlerPluginContext, JSValue::encode({}), &onLoadResult.value.sourceText.string, onLoadResult.value.sourceText.loader);
+        return jsUndefined();
+    }
+    case OnLoadResultTypeError: {
+        JSBundlerPlugin__OnLoadAsync(bundlerPluginContext, JSValue::encode(onLoadResult.value.error), nullptr, BunLoaderTypeNone);
+        return jsUndefined();
+    }
+
+    case OnLoadResultTypePromise: {
+        JSFunction* performPromiseThenFunction = globalObject->performPromiseThenFunction();
+        auto callData = JSC::getCallData(performPromiseThenFunction);
+        ASSERT(callData.type != CallData::Type::None);
+        auto specifierString = Zig::toString(*specifier);
+        auto referrerString = Zig::toString(*referrer);
+        PendingVirtualModuleResult* pendingModule = PendingVirtualModuleResult::create(globalObject, specifierString, referrerString, bundlerPluginContext);
+        JSC::JSPromise* promise = pendingModule->promise();
+
+        MarkedArgumentBuffer arguments;
+        arguments.append(promise);
+        arguments.append(globalObject->thenable(jsFunctionOnLoadObjectResultResolveForJSBundlerPlugin));
+        arguments.append(globalObject->thenable(jsFunctionOnLoadObjectResultRejectForJSBundlerPlugin));
+        arguments.append(jsUndefined());
+        arguments.append(pendingModule);
+        ASSERT(!arguments.hasOverflowed());
+        JSC::call(globalObject, performPromiseThenFunction, callData, jsUndefined(), arguments);
+        return promise;
+    }
+    default: {
+        __builtin_unreachable();
+    }
+    }
+}
 
 static JSC::JSInternalPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
@@ -88,11 +136,16 @@ JSC::JSInternalPromise* PendingVirtualModuleResult::internalPromise()
     return jsCast<JSC::JSInternalPromise*>(internalField(2).get());
 }
 
+JSC::JSPromise* PendingVirtualModuleResult::promise()
+{
+    return jsCast<JSC::JSPromise*>(internalField(2).get());
+}
+
 const ClassInfo PendingVirtualModuleResult::s_info = { "PendingVirtualModule"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(PendingVirtualModuleResult) };
 
-PendingVirtualModuleResult* PendingVirtualModuleResult::create(VM& vm, Structure* structure)
+PendingVirtualModuleResult* PendingVirtualModuleResult::create(VM& vm, Structure* structure, void* bundlerPluginContext)
 {
-    PendingVirtualModuleResult* mod = new (NotNull, allocateCell<PendingVirtualModuleResult>(vm)) PendingVirtualModuleResult(vm, structure);
+    PendingVirtualModuleResult* mod = new (NotNull, allocateCell<PendingVirtualModuleResult>(vm)) PendingVirtualModuleResult(vm, structure, bundlerPluginContext);
     return mod;
 }
 Structure* PendingVirtualModuleResult::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
@@ -100,8 +153,9 @@ Structure* PendingVirtualModuleResult::createStructure(VM& vm, JSGlobalObject* g
     return Structure::create(vm, globalObject, prototype, TypeInfo(CellType, StructureFlags), info());
 }
 
-PendingVirtualModuleResult::PendingVirtualModuleResult(VM& vm, Structure* structure)
+PendingVirtualModuleResult::PendingVirtualModuleResult(VM& vm, Structure* structure, void* bundlerPluginContext)
     : Base(vm, structure)
+    , m_bundlerPluginContext(bundlerPluginContext)
 {
 }
 
@@ -110,7 +164,11 @@ void PendingVirtualModuleResult::finishCreation(VM& vm, const WTF::String& speci
     Base::finishCreation(vm);
     Base::internalField(0).set(vm, this, JSC::jsString(vm, specifier));
     Base::internalField(1).set(vm, this, JSC::jsString(vm, referrer));
-    Base::internalField(2).set(vm, this, JSC::JSInternalPromise::create(vm, globalObject()->internalPromiseStructure()));
+    if (!this->m_bundlerPluginContext) {
+        Base::internalField(2).set(vm, this, JSC::JSInternalPromise::create(vm, globalObject()->internalPromiseStructure()));
+    } else {
+        Base::internalField(2).set(vm, this, JSC::JSPromise::create(vm, globalObject()->promiseStructure()));
+    }
 }
 
 template<typename Visitor>
@@ -123,21 +181,22 @@ void PendingVirtualModuleResult::visitChildrenImpl(JSCell* cell, Visitor& visito
 
 DEFINE_VISIT_CHILDREN(PendingVirtualModuleResult);
 
-PendingVirtualModuleResult* PendingVirtualModuleResult::create(JSC::JSGlobalObject* globalObject, const WTF::String& specifier, const WTF::String& referrer)
+PendingVirtualModuleResult* PendingVirtualModuleResult::create(JSC::JSGlobalObject* globalObject, const WTF::String& specifier, const WTF::String& referrer, void* bundlerPluginContext)
 {
-    auto* virtualModule = create(globalObject->vm(), reinterpret_cast<Zig::GlobalObject*>(globalObject)->pendingVirtualModuleResultStructure());
+    auto* virtualModule = create(globalObject->vm(), reinterpret_cast<Zig::GlobalObject*>(globalObject)->pendingVirtualModuleResultStructure(), bundlerPluginContext);
     virtualModule->finishCreation(globalObject->vm(), specifier, referrer);
     return virtualModule;
 }
 
-OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, ZigString* specifier)
+OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, ZigString* specifier, void* bunPluginContext)
 {
     OnLoadResult result = {};
     result.type = OnLoadResultTypeError;
+    result.bundlerPluginContext = bunPluginContext;
     JSC::VM& vm = globalObject->vm();
     result.value.error = JSC::jsUndefined();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    BunLoaderType loader = Bun__getDefaultLoader(globalObject, specifier);
+    BunLoaderType loader = bunPluginContext ? JSBundlerPlugin__getDefaultLoader(bunPluginContext) : Bun__getDefaultLoader(globalObject, specifier);
 
     if (JSC::Exception* exception = JSC::jsDynamicCast<JSC::Exception*>(objectValue)) {
         result.value.error = exception->value();
@@ -163,6 +222,12 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
                 if (loaderString == "js"_s) {
                     loader = BunLoaderTypeJS;
                 } else if (loaderString == "object"_s) {
+                    if (bunPluginContext != nullptr) {
+                        throwException(globalObject, scope, createError(globalObject, "Expected loader to be one of \"js\", \"jsx\", \"ts\", \"tsx\", \"toml\", or \"json\""_s));
+                        result.value.error = scope.exception();
+                        result.type = OnLoadResultTypeError;
+                        return result;
+                    }
                     return handleOnLoadObjectResult(globalObject, object);
                 } else if (loaderString == "jsx"_s) {
                     loader = BunLoaderTypeJSX;
@@ -211,16 +276,17 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     return result;
 }
 
-static OnLoadResult handleOnLoadResult(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, ZigString* specifier)
+OnLoadResult handleOnLoadResult(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, ZigString* specifier, void* context)
 {
     if (JSC::JSPromise* promise = JSC::jsDynamicCast<JSC::JSPromise*>(objectValue)) {
         OnLoadResult result = {};
         result.type = OnLoadResultTypePromise;
         result.value.promise = objectValue;
+        result.bundlerPluginContext = context;
         return result;
     }
 
-    return handleOnLoadResultNotPromise(globalObject, objectValue, specifier);
+    return handleOnLoadResultNotPromise(globalObject, objectValue, specifier, context);
 }
 
 template<bool allowPromise>
@@ -231,7 +297,7 @@ static JSValue handleVirtualModuleResult(
     ZigString* specifier,
     ZigString* referrer)
 {
-    auto onLoadResult = handleOnLoadResult(globalObject, virtualModuleResult, specifier);
+    auto onLoadResult = handleOnLoadResult(globalObject, virtualModuleResult, specifier, nullptr);
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -484,6 +550,46 @@ static JSValue fetchSourceCode(
 
     auto provider = Zig::SourceProvider::create(res->result.value);
     return rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(WTFMove(provider))));
+}
+
+extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultResolveForJSBundlerPlugin(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+{
+    JSC::VM& vm = globalObject->vm();
+    ErrorableResolvedSource res = {};
+    res.success = false;
+    JSC::JSValue objectResult = callFrame->argument(0);
+    PendingVirtualModuleResult* pendingModule = JSC::jsCast<PendingVirtualModuleResult*>(callFrame->argument(1));
+    JSC::JSValue specifierString = pendingModule->internalField(0).get();
+    JSC::JSValue referrerString = pendingModule->internalField(1).get();
+    pendingModule->internalField(0).set(vm, pendingModule, JSC::jsUndefined());
+    pendingModule->internalField(1).set(vm, pendingModule, JSC::jsUndefined());
+    void* bunPluginContext = pendingModule->m_bundlerPluginContext;
+    JSC::JSPromise* promise = pendingModule->promise();
+
+    ZigString specifier = Zig::toZigString(specifierString, globalObject);
+    ZigString referrer = Zig::toZigString(referrerString, globalObject);
+    return JSC::JSValue::encode(
+        handleVirtualModuleResultForJSBundlerPlugin(reinterpret_cast<Zig::GlobalObject*>(globalObject), objectResult, &specifier, &referrer, bunPluginContext));
+}
+
+extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultRejectForJSBundlerPlugin(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+{
+    JSC::VM& vm = globalObject->vm();
+    ErrorableResolvedSource res = {};
+    JSC::JSValue reason = callFrame->argument(0);
+    PendingVirtualModuleResult* pendingModule = JSC::jsCast<PendingVirtualModuleResult*>(callFrame->argument(1));
+    JSC::JSValue specifierString = pendingModule->internalField(0).get();
+    JSC::JSValue referrerString = pendingModule->internalField(1).get();
+    pendingModule->internalField(0).set(vm, pendingModule, JSC::jsUndefined());
+    pendingModule->internalField(1).set(vm, pendingModule, JSC::jsUndefined());
+
+    ZigString specifier = Zig::toZigString(specifierString, globalObject);
+    ZigString referrer = Zig::toZigString(referrerString, globalObject);
+    pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
+
+    JSBundlerPlugin__OnLoadAsync(pendingModule->m_bundlerPluginContext, JSValue::encode(reason), nullptr, BunLoaderTypeNone);
+
+    return JSValue::encode(reason);
 }
 
 extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)

@@ -602,6 +602,7 @@ pub const BundleV2 = struct {
 
         var instance = bun.default_allocator.create(BundleThread) catch unreachable;
         instance.queue = .{};
+        instance.waker = bun.AsyncIO.Waker.init(bun.default_allocator) catch @panic("Failed to create waker");
         instance.queue.push(completion);
         BundleThread.instance = instance;
 
@@ -609,7 +610,7 @@ pub const BundleV2 = struct {
         thread.detach();
         } else {
             BundleThread.instance.queue.push(completion);
-            BundleThread.instance.loop.wakeup();
+            BundleThread.instance.waker.wake() catch {};
         }
 
         completion.ref.ref(globalThis.bunVM());
@@ -648,6 +649,7 @@ pub const BundleV2 = struct {
 
             defer {
                 this.config.deinit(bun.default_allocator);
+                bun.default_allocator.destroy(this);
             }
 
             this.ref.unref(globalThis.bunVM());
@@ -712,8 +714,6 @@ pub const BundleV2 = struct {
         instance: *BundleThread,
     ) void {
         Output.Source.configureNamedThread("Bundler");
-        instance.loop = bun.uws.Loop.get().?;
-        instance.loop.num_polls += 1;
         var any = false;
 
         while (true) {
@@ -734,12 +734,11 @@ pub const BundleV2 = struct {
             if (any) {
                 bun.Mimalloc.mi_collect(false);
             }
-            instance.loop.tick();
+            _ = instance.waker.wait() catch 0;
         }
     }
 
     pub const BundleThread = struct {
-        loop: *bun.uws.Loop,
         waker: bun.AsyncIO.Waker,
         queue: bun.UnboundedQueue(JSBundleCompletionTask, .next) = .{},
         pub var created = false;

@@ -1066,7 +1066,7 @@ pub const ExportsMap = struct {
                 .e_string => |str| {
                     return Entry{
                         .data = .{
-                            .string = str.slice(this.allocator) catch unreachable,
+                            .string = str.slice(this.allocator),
                         },
                         .first_token = this.source.rangeOfString(expr.loc),
                     };

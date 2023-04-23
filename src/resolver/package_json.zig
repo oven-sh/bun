@@ -1097,7 +1097,7 @@ pub const ExportsMap = struct {
                     first_token.loc = expr.loc;
                     first_token.len = 1;
                     for (e_obj.properties.slice(), 0..) |prop, i| {
-                        const key: string = prop.key.?.data.e_string.slice(this.allocator) catch unreachable;
+                        const key: string = prop.key.?.data.e_string.slice(this.allocator);
                         const key_range: logger.Range = this.source.rangeOfString(prop.key.?.loc);
 
                         // If exports is an Object with both a key starting with "." and a key

@@ -40,16 +40,16 @@ namespace Bun {
 using namespace Zig;
 using namespace WebCore;
 
-extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, ZigString* specifier);
+extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const ZigString* specifier);
 extern "C" BunLoaderType JSBundlerPlugin__getDefaultLoader(void* context);
 extern "C" void JSBundlerPlugin__OnLoadAsync(void* ctx, EncodedJSValue errorValue, ZigString* sourceCode, BunLoaderType loader);
-OnLoadResult handleOnLoadResult(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, ZigString* specifier);
+OnLoadResult handleOnLoadResult(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, const ZigString* specifier, void* context);
 
 JSValue handleVirtualModuleResultForJSBundlerPlugin(
     Zig::GlobalObject* globalObject,
     JSValue virtualModuleResult,
-    ZigString* specifier,
-    ZigString* referrer,
+    const ZigString* specifier,
+    const ZigString* referrer,
     void* bundlerPluginContext)
 {
     auto onLoadResult = handleOnLoadResult(globalObject, virtualModuleResult, specifier, bundlerPluginContext);
@@ -70,8 +70,9 @@ JSValue handleVirtualModuleResultForJSBundlerPlugin(
         auto callData = JSC::getCallData(performPromiseThenFunction);
         ASSERT(callData.type != CallData::Type::None);
         auto specifierString = Zig::toString(*specifier);
-        auto referrerString = Zig::toString(*referrer);
+        auto referrerString = referrer ? Zig::toString(*referrer) : String();
         PendingVirtualModuleResult* pendingModule = PendingVirtualModuleResult::create(globalObject, specifierString, referrerString, bundlerPluginContext);
+        pendingModule->internalField(2).set(vm, pendingModule, virtualModuleResult);
         JSC::JSPromise* promise = pendingModule->promise();
 
         MarkedArgumentBuffer arguments;
@@ -166,8 +167,6 @@ void PendingVirtualModuleResult::finishCreation(VM& vm, const WTF::String& speci
     Base::internalField(1).set(vm, this, JSC::jsString(vm, referrer));
     if (!this->m_bundlerPluginContext) {
         Base::internalField(2).set(vm, this, JSC::JSInternalPromise::create(vm, globalObject()->internalPromiseStructure()));
-    } else {
-        Base::internalField(2).set(vm, this, JSC::JSPromise::create(vm, globalObject()->promiseStructure()));
     }
 }
 
@@ -188,7 +187,7 @@ PendingVirtualModuleResult* PendingVirtualModuleResult::create(JSC::JSGlobalObje
     return virtualModule;
 }
 
-OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, ZigString* specifier, void* bunPluginContext)
+OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, const ZigString* specifier, void* bunPluginContext)
 {
     OnLoadResult result = {};
     result.type = OnLoadResultTypeError;
@@ -270,7 +269,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     return result;
 }
 
-OnLoadResult handleOnLoadResult(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, ZigString* specifier, void* context)
+OnLoadResult handleOnLoadResult(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, const ZigString* specifier, void* context)
 {
     if (JSC::JSPromise* promise = JSC::jsDynamicCast<JSC::JSPromise*>(objectValue)) {
         OnLoadResult result = {};
@@ -288,8 +287,8 @@ static JSValue handleVirtualModuleResult(
     Zig::GlobalObject* globalObject,
     JSValue virtualModuleResult,
     ErrorableResolvedSource* res,
-    ZigString* specifier,
-    ZigString* referrer)
+    const ZigString* specifier,
+    const ZigString* referrer)
 {
     auto onLoadResult = handleOnLoadResult(globalObject, virtualModuleResult, specifier, nullptr);
     JSC::VM& vm = globalObject->vm();
@@ -413,8 +412,8 @@ template<bool allowPromise>
 static JSValue fetchSourceCode(
     Zig::GlobalObject* globalObject,
     ErrorableResolvedSource* res,
-    ZigString* specifier,
-    ZigString* referrer)
+    const ZigString* specifier,
+    const ZigString* referrer)
 {
     void* bunVM = globalObject->bunVM();
     auto& vm = globalObject->vm();
@@ -644,8 +643,8 @@ extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultReject(JSC::JSGlobalO
 JSValue fetchSourceCodeSync(
     Zig::GlobalObject* globalObject,
     ErrorableResolvedSource* res,
-    ZigString* specifier,
-    ZigString* referrer)
+    const ZigString* specifier,
+    const ZigString* referrer)
 {
     return fetchSourceCode<false>(globalObject, res, specifier, referrer);
 }
@@ -653,8 +652,8 @@ JSValue fetchSourceCodeSync(
 JSValue fetchSourceCodeAsync(
     Zig::GlobalObject* globalObject,
     ErrorableResolvedSource* res,
-    ZigString* specifier,
-    ZigString* referrer)
+    const ZigString* specifier,
+    const ZigString* referrer)
 {
     return fetchSourceCode<true>(globalObject, res, specifier, referrer);
 }

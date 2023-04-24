@@ -546,12 +546,19 @@ pub const JSBundler = struct {
                 return;
             };
 
-            _ = completion.plugins.?.matchOnLoad(
+            const err = completion.plugins.?.matchOnLoad(
                 completion.globalThis,
                 this.path,
                 this.namespace,
                 this,
             );
+
+            if (this.value == .pending) {
+                if (!err.isEmptyOrUndefinedOrNull()) {
+                    var code = ZigString.Empty;
+                    JSBundlerPlugin__OnLoadAsync(this, err, &code, .js);
+                }
+            }
         }
 
         pub fn dispatch(this: *Load) void {
@@ -590,6 +597,9 @@ pub const JSBundler = struct {
                     this.value = .{
                         .err = logger.Msg.fromJS(bun.default_allocator, completion.globalThis, this.path, err) catch unreachable,
                     };
+                } else if (!error_value.isEmptyOrUndefinedOrNull() and error_value.isCell() and error_value.jsType() == .JSPromise) {
+                    this.value.pending.strong.set(completion.globalThis, error_value);
+                    return;
                 } else {
                     if (this.value == .pending) this.value.pending.strong.deinit();
                     this.value = .{

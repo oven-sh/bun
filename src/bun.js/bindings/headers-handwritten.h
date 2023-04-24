@@ -220,21 +220,21 @@ extern "C" void Microtask__run_default(void* ptr, void* global);
 
 extern "C" bool Bun__transpileVirtualModule(
     JSC::JSGlobalObject* global,
-    ZigString* specifier,
-    ZigString* referrer,
+    const ZigString* specifier,
+    const ZigString* referrer,
     ZigString* sourceCode,
     BunLoaderType loader,
     ErrorableResolvedSource* result);
 
 extern "C" JSC::EncodedJSValue Bun__runVirtualModule(
     JSC::JSGlobalObject* global,
-    ZigString* specifier);
+    const ZigString* specifier);
 
 extern "C" void* Bun__transpileFile(
     void* bunVM,
     JSC::JSGlobalObject* global,
-    ZigString* specifier,
-    ZigString* referrer,
+    const ZigString* specifier,
+    const ZigString* referrer,
     ErrorableResolvedSource* result, bool allowPromise);
 
 extern "C" JSC::EncodedJSValue CallbackJob__onResolve(JSC::JSGlobalObject*, JSC::CallFrame*);
@@ -243,8 +243,8 @@ extern "C" JSC::EncodedJSValue CallbackJob__onReject(JSC::JSGlobalObject*, JSC::
 extern "C" bool Bun__fetchBuiltinModule(
     void* bunVM,
     JSC::JSGlobalObject* global,
-    ZigString* specifier,
-    ZigString* referrer,
+    const ZigString* specifier,
+    const ZigString* referrer,
     ErrorableResolvedSource* result);
 
 // Used in process.version

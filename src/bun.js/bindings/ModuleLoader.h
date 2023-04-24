@@ -88,20 +88,20 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
 JSValue handleVirtualModuleResultForJSBundlerPlugin(
     Zig::GlobalObject* globalObject,
     JSValue virtualModuleResult,
-    ZigString* specifier,
-    ZigString* referrer,
+    const ZigString* specifier,
+    const ZigString* referrer,
     void* bundlerPluginContext);
 
 JSValue fetchSourceCodeSync(
     Zig::GlobalObject* globalObject,
     ErrorableResolvedSource* res,
-    ZigString* specifier,
-    ZigString* referrer);
+    const ZigString* specifier,
+    const ZigString* referrer);
 
 JSValue fetchSourceCodeAsync(
     Zig::GlobalObject* globalObject,
     ErrorableResolvedSource* res,
-    ZigString* specifier,
-    ZigString* referrer);
+    const ZigString* specifier,
+    const ZigString* referrer);
 
 } // namespace Bun

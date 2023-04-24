@@ -387,7 +387,7 @@ EncodedJSValue JSBundlerPlugin::OnLoad::run(const ZigString* namespaceString, co
 
         auto result = call(globalObject, function, callData, JSC::jsUndefined(), arguments);
 
-        if (result && !result.isCell()) {
+        if (UNLIKELY(!scope.exception() && result && !result.isUndefinedOrNull() && !result.isCell())) {
             throwTypeError(globalObject, throwScope, "onLoad() expects an object returned"_s);
         }
 
@@ -400,9 +400,15 @@ EncodedJSValue JSBundlerPlugin::OnLoad::run(const ZigString* namespaceString, co
         result = Bun::handleVirtualModuleResultForJSBundlerPlugin(
             reinterpret_cast<Zig::GlobalObject*>(globalObject),
             result,
-            nullptr,
+            path,
             nullptr,
             context);
+
+        if (UNLIKELY(scope.exception())) {
+            JSC::Exception* exception = scope.exception();
+            scope.clearException();
+            return JSValue::encode(exception);
+        }
 
         if (!result || result.isUndefined()) {
             RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));

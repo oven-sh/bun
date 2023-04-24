@@ -787,6 +787,9 @@ pub const BundleV2 = struct {
                 this.bundler.log.msgs.append(err) catch unreachable;
                 this.bundler.log.errors += @as(usize, @boolToInt(err.kind == .err));
                 this.bundler.log.warnings += @as(usize, @boolToInt(err.kind == .warn));
+
+                // An error ocurred, prevent spinning the event loop forever
+                this.graph.parse_pending -= 1;
             },
             .pending, .consumed => unreachable,
         }

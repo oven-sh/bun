@@ -328,7 +328,7 @@ pub const MinifyRenamer = struct {
                         }
                     },
                     .label => {
-                        while (JSLexer.Keywords.get(name_buf.items)) |_| {
+                        while (JSLexer.Keywords.has(name_buf.items)) {
                             try name_minifier.numberToMinifiedName(&name_buf, next_name);
                             next_name += 1;
                         }

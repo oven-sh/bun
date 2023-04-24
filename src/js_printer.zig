@@ -5545,7 +5545,7 @@ pub const Format = enum {
     cjs_ascii,
 };
 
-fn getSourceMapBuilder(
+pub fn getSourceMapBuilder(
     comptime generate_source_map: bool,
     comptime is_bun_platform: bool,
     opts: Options,
@@ -5752,6 +5752,7 @@ pub fn print(
     import_records: []const ImportRecord,
     parts: []const js_ast.Part,
     renamer: bun.renamer.Renamer,
+    generate_source_maps: bool,
 ) PrintResult {
     var buffer_writer = BufferWriter.init(allocator) catch |err| return .{ .err = err };
     var buffer_printer = BufferPrinter.init(buffer_writer);
@@ -5764,6 +5765,7 @@ pub fn print(
         import_records,
         parts,
         renamer,
+        generate_source_maps,
     );
 }
 
@@ -5775,6 +5777,7 @@ pub fn printWithWriter(
     import_records: []const ImportRecord,
     parts: []const js_ast.Part,
     renamer: bun.renamer.Renamer,
+    generate_source_maps: bool,
 ) PrintResult {
     return switch (platform.isBun()) {
         inline else => |is_bun_platform| printWithWriterAndPlatform(
@@ -5785,6 +5788,7 @@ pub fn printWithWriter(
             import_records,
             parts,
             renamer,
+            generate_source_maps,
         ),
     };
 }
@@ -5798,6 +5802,7 @@ pub fn printWithWriterAndPlatform(
     import_records: []const ImportRecord,
     parts: []const js_ast.Part,
     renamer: bun.renamer.Renamer,
+    generate_source_maps: bool,
 ) PrintResult {
     const PrinterType = NewPrinter(
         false,
@@ -5839,6 +5844,7 @@ pub fn printWithWriterAndPlatform(
     return .{
         .result = .{
             .code = writer.ctx.getWritten(),
+            .source_map = if (generate_source_maps) printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()) else null,
         },
     };
 }

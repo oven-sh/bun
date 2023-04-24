@@ -53,6 +53,9 @@ pub const BuildCommand = struct {
         this_bundler.options.code_splitting = ctx.bundler_options.code_splitting;
         this_bundler.resolver.opts.code_splitting = ctx.bundler_options.code_splitting;
 
+        this_bundler.options.source_map = options.SourceMapOption.fromApi(ctx.args.source_map);
+        this_bundler.resolver.opts.source_map = options.SourceMapOption.fromApi(ctx.args.source_map);
+
         this_bundler.options.minify_syntax = ctx.bundler_options.minify_syntax;
         this_bundler.resolver.opts.minify_syntax = ctx.bundler_options.minify_syntax;
 
@@ -61,6 +64,20 @@ pub const BuildCommand = struct {
 
         this_bundler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         this_bundler.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
+
+        if (this_bundler.options.source_map == .external and this_bundler.options.output_dir.len == 0) {
+            try Output.errorWriter().print("error: cannot use an external source map without an output path\n", .{});
+            Output.flush();
+            Global.exit(1);
+            return;
+        }
+
+        if (this_bundler.options.entry_points.len > 1 and this_bundler.options.output_dir.len == 0) {
+            try Output.errorWriter().print("error: cannot bundle multiple entry points without an output path\n", .{});
+            Output.flush();
+            Global.exit(1);
+            return;
+        }
 
         this_bundler.configureLinker();
 
@@ -162,7 +179,8 @@ pub const BuildCommand = struct {
                         break :dump;
                     }
 
-                    const root_path = output_dir;
+                    var root_path = output_dir;
+                    if (root_path.len == 0 and ctx.args.entry_points.len == 1) root_path = std.fs.path.dirname(ctx.args.entry_points[0]) orelse ".";
                     const root_dir = try std.fs.cwd().makeOpenPathIterable(root_path, .{});
                     var all_paths = try ctx.allocator.alloc([]const u8, output_files.len);
                     var max_path_len: usize = 0;

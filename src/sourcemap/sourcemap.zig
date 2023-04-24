@@ -370,6 +370,10 @@ pub const LineColumnOffset = packed struct {
         columns += @intCast(i32, input.len - offset);
     }
 
+    pub fn comesBefore(a: LineColumnOffset, b: LineColumnOffset) bool {
+        return a.lines < b.lines or (a.lines == b.lines and a.columns < b.columns);
+    }
+
     pub fn cmp(_: void, a: LineColumnOffset, b: LineColumnOffset) std.math.Order {
         if (a.lines != b.lines) {
             return std.math.order(a.lines, b.lines);
@@ -392,10 +396,102 @@ pub fn find(
     return Mapping.find(this.mapping, line, column);
 }
 
+pub const SourceMapShifts = struct {
+    before: LineColumnOffset,
+    after: LineColumnOffset,
+};
+
 pub const SourceMapPieces = struct {
     prefix: std.ArrayList(u8),
     mappings: std.ArrayList(u8),
     suffix: std.ArrayList(u8),
+
+    pub fn init(allocator: std.mem.Allocator) SourceMapPieces {
+        return .{
+            .prefix = std.ArrayList(u8).init(allocator),
+            .mappings = std.ArrayList(u8).init(allocator),
+            .suffix = std.ArrayList(u8).init(allocator),
+        };
+    }
+
+    pub fn hasContent(this: *SourceMapPieces) bool {
+        return (this.prefix.items.len + this.mappings.items.len + this.suffix.items.len) > 0;
+    }
+
+    pub fn finalize(this: *SourceMapPieces, allocator: std.mem.Allocator, _shifts: []SourceMapShifts) ![]const u8 {
+        var shifts = _shifts;
+        var start_of_run: usize = 0;
+        var current: usize = 0;
+        var generated = LineColumnOffset{};
+        var prev_shift_column_delta: i32 = 0;
+        var j = Joiner{};
+
+        j.push(this.prefix.items);
+
+        while (current < this.mappings.items.len) {
+            if (this.mappings.items[current] == ';') {
+                generated.lines += 1;
+                generated.columns = 0;
+                prev_shift_column_delta = 0;
+                current += 1;
+                continue;
+            }
+
+            var potential_end_of_run = current;
+
+            var decode_result = decodeVLQ(this.mappings.items, current);
+            generated.columns += decode_result.value;
+            current = decode_result.start;
+
+            var potential_start_of_run = current;
+
+            current = decodeVLQ(this.mappings.items, current).start;
+            current = decodeVLQ(this.mappings.items, current).start;
+            current = decodeVLQ(this.mappings.items, current).start;
+
+            if (current < this.mappings.items.len) {
+                var c = this.mappings.items[current];
+                if (c != ',' and c != ';') {
+                    current = decodeVLQ(this.mappings.items, current).start;
+                }
+            }
+
+            if (current < this.mappings.items.len and this.mappings.items[current] == ',') {
+                current += 1;
+            }
+
+            var did_cross_boundary = false;
+            if (shifts.len > 1 and shifts[1].before.comesBefore(generated)) {
+                shifts = shifts[1..];
+                did_cross_boundary = true;
+            }
+
+            if (!did_cross_boundary) {
+                continue;
+            }
+
+            var shift = shifts[0];
+            if (shift.after.lines != generated.lines) {
+                continue;
+            }
+
+            j.push(this.mappings.items[start_of_run..potential_end_of_run]);
+
+            std.debug.assert(shift.before.lines == shift.after.lines);
+
+            var shift_column_delta = shift.after.columns - shift.before.columns;
+            const encode = encodeVLQ(decode_result.value + shift_column_delta - prev_shift_column_delta);
+            j.push(encode.bytes[0..encode.len]);
+            prev_shift_column_delta = shift_column_delta;
+
+            start_of_run = potential_start_of_run;
+        }
+
+        j.push(this.mappings.items[start_of_run..]);
+        j.push(this.suffix.items);
+
+        return try j.done(allocator);
+    }
 };
 
 // -- comment from esbuild --

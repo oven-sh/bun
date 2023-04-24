@@ -457,11 +457,10 @@ bool JSBundlerPlugin::anyMatchesCrossThread(const ZigString* namespaceStr, const
 
         auto& filters = group->filters;
 
-        for (size_t i = 0; i < filters.size(); i++) {
-            if (!filters[i].match(pathString)) {
-                continue;
+        for (auto& filter : filters) {
+            if (filter.match(pathString) > -1) {
+                return true;
             }
-            return true;
         }
 
     } else {
@@ -472,11 +471,10 @@ bool JSBundlerPlugin::anyMatchesCrossThread(const ZigString* namespaceStr, const
 
         auto& filters = group->filters;
 
-        for (size_t i = 0; i < filters.size(); i++) {
-            if (!filters[i].match(pathString)) {
-                continue;
+        for (auto& filter : filters) {
+            if (filter.match(pathString) > -1) {
+                return true;
             }
-            return true;
         }
     }
 

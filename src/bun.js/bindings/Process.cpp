@@ -1,6 +1,7 @@
 #include "Process.h"
 #include "JavaScriptCore/JSMicrotask.h"
 #include "JavaScriptCore/ObjectConstructor.h"
+#include "JavaScriptCore/NumberPrototype.h"
 #include "node_api.h"
 #include <dlfcn.h>
 #include "ZigGlobalObject.h"
@@ -8,13 +9,14 @@
 #include "JSEnvironmentVariableMap.h"
 #include "ImportMetaObject.h"
 #include <sys/stat.h>
+#include "ZigConsoleClient.h"
 #pragma mark - Node.js Process
 
 namespace Zig {
 
 using namespace JSC;
 
-#define REPORTED_NODE_VERSION "18.13.0"
+#define REPORTED_NODE_VERSION "18.15.0"
 
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
@@ -284,16 +286,38 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
 JSC_DEFINE_HOST_FUNCTION(Process_functionUmask,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    if (callFrame->argumentCount() == 0) {
-        return JSC::JSValue::encode(JSC::jsNumber(umask(0)));
+    if (callFrame->argumentCount() == 0 || callFrame->argument(0).isUndefined()) {
+        mode_t currentMask = umask(0);
+        umask(currentMask);
+        return JSC::JSValue::encode(JSC::jsNumber(currentMask));
     }
 
     auto& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    int umaskValue = callFrame->argument(0).toInt32(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
+    JSValue numberValue = callFrame->argument(0);
 
-    return JSC::JSValue::encode(JSC::jsNumber(umask(umaskValue)));
+    if (!numberValue.isNumber()) {
+        throwTypeError(globalObject, throwScope, "The \"mask\" argument must be a number"_s);
+        return JSValue::encode({});
+    }
+
+    if (!numberValue.isAnyInt()) {
+        throwRangeError(globalObject, throwScope, "The \"mask\" argument must be an integer"_s);
+        return JSValue::encode({});
+    }
+
+    double number = numberValue.toNumber(globalObject);
+    int64_t newUmask = isInt52(number) ? tryConvertToInt52(number) : numberValue.toInt32(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
+    if (newUmask < 0 || newUmask > 4294967295) {
+        StringBuilder messageBuilder;
+        messageBuilder.append("The \"mask\" value must be in range [0, 4294967295]. Received value: "_s);
+        messageBuilder.append(int52ToString(vm, newUmask, 10)->getString(globalObject));
+        throwRangeError(globalObject, throwScope, messageBuilder.toString());
+        return JSValue::encode({});
+    }
+
+    return JSC::JSValue::encode(JSC::jsNumber(umask(newUmask)));
 }
 
 extern "C" uint64_t Bun__readOriginTimer(void*);
@@ -306,15 +330,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUptime,
     double now = static_cast<double>(Bun__readOriginTimer(globalObject_->bunVM()));
     double result = (now / 1000000.0) / 1000.0;
     return JSC::JSValue::encode(JSC::jsNumber(result));
-}
-
-JSC_DEFINE_HOST_FUNCTION(Process_functionBinding,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    auto& vm = globalObject->vm();
-    throwTypeError(globalObject, scope, "process.binding is not supported in Bun. If this breaks a library you're using, please file an issue at https://bun.sh/issues and include a reproducible code sample."_s);
-    return JSC::JSValue::encode(JSC::JSValue {});
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
@@ -733,8 +748,9 @@ void Process::finishCreation(JSC::VM& vm)
     this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(this->vm(), "umask"_s),
         1, Process_functionUmask, ImplementationVisibility::Public, NoIntrinsic, 0);
 
-    this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(this->vm(), "binding"_s),
-        1, Process_functionBinding, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontEnum | 0);
+    this->putDirectBuiltinFunction(vm, globalObject, JSC::Identifier::fromString(this->vm(), "binding"_s),
+        processObjectInternalsBindingCodeGenerator(vm),
+        0);
 
     this->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
 

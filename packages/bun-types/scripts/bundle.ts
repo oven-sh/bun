@@ -50,7 +50,7 @@ const packageJSON = {
   description:
     "Type definitions for Bun, an incredibly fast JavaScript runtime",
   types: "types.d.ts",
-  files: ["types.d.ts", "README.md"],
+  files: ["types.d.ts", "README.md", "tsconfig.json"],
   private: false,
   keywords: ["bun", "bun.js", "types"],
   repository: "https://github.com/oven-sh/bun",
@@ -60,6 +60,31 @@ const packageJSON = {
 await write(
   resolve(folder, "package.json"),
   JSON.stringify(packageJSON, null, 2) + "\n",
+);
+
+const tsConfig = {
+  compilerOptions: {
+    lib: ["ESNext"],
+    target: "ESNext",
+    module: "ESNext",
+    moduleResolution: "bundler",
+    moduleDetection: "force",
+    resolveJsonModule: true,
+    strict: true,
+    downlevelIteration: true,
+    skipLibCheck: true,
+    jsx: "react-jsx",
+    allowImportingTsExtensions: true,
+    allowSyntheticDefaultImports: true,
+    forceConsistentCasingInFileNames: true,
+    allowJs: true,
+    types: ["bun-types"],
+  },
+};
+
+await write(
+  resolve(folder, "tsconfig.json"),
+  JSON.stringify(tsConfig, null, 2) + "\n",
 );
 
 await write(

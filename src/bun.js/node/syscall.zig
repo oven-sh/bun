@@ -5,14 +5,14 @@ const os = std.os;
 const builtin = @import("builtin");
 
 const Syscall = @This();
-const Environment = @import("bun").Environment;
-const default_allocator = @import("bun").default_allocator;
-const JSC = @import("bun").JSC;
+const Environment = @import("root").bun.Environment;
+const default_allocator = @import("root").bun.default_allocator;
+const JSC = @import("root").bun.JSC;
 const SystemError = JSC.SystemError;
-const bun = @import("bun");
+const bun = @import("root").bun;
 const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
 const fd_t = bun.FileDescriptor;
-const C = @import("bun").C;
+const C = @import("root").bun.C;
 const linux = os.linux;
 const Maybe = JSC.Maybe;
 
@@ -21,7 +21,7 @@ pub const syslog = log;
 
 // On Linux AARCh64, zig is missing stat & lstat syscalls
 const use_libc = (Environment.isLinux and Environment.isAarch64) or Environment.isMac;
-pub const system = if (Environment.isLinux) linux else @import("bun").AsyncIO.darwin;
+pub const system = if (Environment.isLinux) linux else @import("root").bun.AsyncIO.darwin;
 pub const S = struct {
     pub usingnamespace if (Environment.isLinux) linux.S else std.os.S;
 };
@@ -108,7 +108,7 @@ pub const Tag = enum(u8) {
     getaddrinfo,
     pub var strings = std.EnumMap(Tag, JSC.C.JSStringRef).initFull(null);
 };
-const PathString = @import("bun").PathString;
+const PathString = @import("root").bun.PathString;
 
 const mode_t = os.mode_t;
 

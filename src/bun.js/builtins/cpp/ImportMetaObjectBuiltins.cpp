@@ -37,13 +37,10 @@
 #include "ImportMetaObjectBuiltins.h"
 
 #include "WebCoreJSClientData.h"
-#include <JavaScriptCore/HeapInlines.h>
 #include <JavaScriptCore/IdentifierInlines.h>
 #include <JavaScriptCore/ImplementationVisibility.h>
 #include <JavaScriptCore/Intrinsic.h>
-#include <JavaScriptCore/JSCJSValueInlines.h>
-#include <JavaScriptCore/JSCellInlines.h>
-#include <JavaScriptCore/StructureInlines.h>
+#include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/VM.h>
 
 namespace WebCore {
@@ -252,6 +249,17 @@ const char* const s_importMetaObjectRequireCode =
     "  }\n" \
     "\n" \
     "  return @internalRequire(@resolveSync(name, from));\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_importMetaObjectMainCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_importMetaObjectMainCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_importMetaObjectMainCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_importMetaObjectMainCodeLength = 52;
+static const JSC::Intrinsic s_importMetaObjectMainCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_importMetaObjectMainCode =
+    "(function () {\n" \
+    "  return this.path === @Bun.main;\n" \
     "})\n" \
 ;
 

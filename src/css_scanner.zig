@@ -1,6 +1,6 @@
 const Fs = @import("fs.zig");
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -15,7 +15,7 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const options = @import("./options.zig");
 const import_record = @import("import_record.zig");
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const Options = options;
 const resolver = @import("./resolver/resolver.zig");
 const _linker = @import("./linker.zig");

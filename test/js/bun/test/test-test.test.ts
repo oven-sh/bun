@@ -187,6 +187,183 @@ test("deepEquals regex", () => {
   expect(new RegExp("s", "g")).not.toEqual(new RegExp("s", "i"));
 });
 
+test("deepEquals works with accessors", () => {
+  {
+    let l1 = [1, undefined, 2];
+    let l2 = [1, undefined, 2];
+    Object.defineProperty(l1, 6, { get: () => 1 });
+    Object.defineProperty(l2, 6, { get: () => 1 });
+    expect(l1).toEqual(l2);
+    expect(l1).toStrictEqual(l2);
+  }
+  {
+    let l1 = [1, , 2];
+    let l2 = [1, undefined, 2];
+    Object.defineProperty(l1, 6, { get: () => 1 });
+    Object.defineProperty(l2, 6, { get: () => 2 });
+    expect(l1).toEqual(l2);
+    expect(l1).not.toStrictEqual(l2);
+  }
+  {
+    let l1 = [1, , 2];
+    let l2 = [1, , 2];
+    Object.defineProperty(l1, "hi", { get: () => 4 });
+    Object.defineProperty(l2, "hi", { get: () => 5 });
+    expect(l1).toEqual(l2);
+    expect(l1).toStrictEqual(l2);
+  }
+
+  {
+    let l1 = [1, , 2];
+    let l2 = [1, , 2];
+    Object.defineProperty(l1, "hi", { set: () => 4 });
+    Object.defineProperty(l2, "hi", { set: () => 5 });
+    expect(l1).toEqual(l2);
+    expect(l1).toStrictEqual(l2);
+  }
+
+  {
+    let o1 = { a: 1, c: undefined, b: 2 };
+    let o2 = { a: 1, c: undefined, b: 2 };
+    Object.defineProperty(o1, 6, { get: () => 1 });
+    Object.defineProperty(o2, 6, { get: () => 1 });
+    expect(o1).toEqual(o2);
+    expect(o1).toStrictEqual(o2);
+  }
+  {
+    let o1 = { a: 1, c: undefined, b: 2 };
+    let o2 = { a: 1, c: undefined, b: 2 };
+    Object.defineProperty(o1, 6, { get: () => 1 });
+    Object.defineProperty(o2, 6, { get: () => 2 });
+    expect(o1).toEqual(o2);
+    expect(o1).toStrictEqual(o2);
+  }
+  {
+    let o1 = { a: 1, c: undefined, b: 2 };
+    let o2 = { a: 1, c: undefined, b: 2 };
+    Object.defineProperty(o1, "hi", { get: () => 4 });
+    Object.defineProperty(o2, "hi", { get: () => 5 });
+    expect(o1).toEqual(o2);
+    expect(o1).toStrictEqual(o2);
+  }
+
+  {
+    let o1 = { a: 1, c: undefined, b: 2 };
+    let o2 = { a: 1, c: undefined, b: 2 };
+    Object.defineProperty(o1, "hi", { set: () => 4 });
+    Object.defineProperty(o2, "hi", { set: () => 5 });
+    expect(o1).toEqual(o2);
+    expect(o1).toStrictEqual(o2);
+  }
+});
+
+test("deepEquals works with proxies", () => {
+  {
+    let p1 = new Proxy({ a: 1, b: 2 }, {});
+    let p2 = new Proxy({ a: 1, b: 2 }, {});
+    expect(p1).toEqual(p2);
+    expect(p1).toStrictEqual(p2);
+    let p3 = new Proxy({ a: 1, b: 2 }, {});
+    let p4 = new Proxy({ a: 1, b: 3 }, {});
+    expect(p3).not.toEqual(p4);
+    expect(p3).not.toStrictEqual(p4);
+  }
+  {
+    let t1 = { a: 1, b: 2 };
+    let h1 = { get: (t, k) => t[k] };
+    let p1 = new Proxy(t1, h1);
+    let t2 = { a: 1, b: 2 };
+    let h2 = { get: (t, k) => 0 };
+    let p2 = new Proxy(t2, h2);
+    expect(p1).not.toEqual(p2);
+    expect(p1).not.toStrictEqual(p2);
+  }
+  {
+    let t1 = { a: 1, b: 2 };
+    let h1 = { get: (t, k) => t[k] + 2 };
+    let p1 = new Proxy(t1, h1);
+    let t2 = { a: 1, b: 2 };
+    let h2 = { get: (t, k) => t[k] + 2 };
+    let p2 = new Proxy(t2, h2);
+    expect(p1).toEqual(p2);
+    expect(p1).toStrictEqual(p2);
+  }
+  {
+    let t1 = { a: 1, b: 2 };
+    let h1 = { get: (t, k) => t[k] + 2 };
+    let p1 = new Proxy(t1, h1);
+    let t2 = { a: 1, b: 2 };
+    let h2 = { get: (t, k) => t[k] + 3 };
+    let p2 = new Proxy(t2, h2);
+    expect(p1).not.toEqual(p2);
+    expect(p1).not.toStrictEqual(p2);
+  }
+  {
+    // same handlers, different targets
+    let t1 = { a: 1, b: 2 };
+    let t2 = { a: 1, b: 2 };
+    let h1 = { get: (t, k) => t[k] + 2 };
+    let p1 = new Proxy(t1, h1);
+    let p2 = new Proxy(t2, h1);
+    expect(p1).toEqual(p2);
+    expect(p1).toStrictEqual(p2);
+  }
+  {
+    // same targets, different handlers
+    let t1 = { a: 1, b: 2 };
+    let h1 = { get: (t, k) => t[k] + 2 };
+    let h2 = { get: (t, k) => t[k] + 3 };
+    let p1 = new Proxy(t1, h1);
+    let p2 = new Proxy(t1, h2);
+    expect(p1).not.toEqual(p2);
+    expect(p1).not.toStrictEqual(p2);
+  }
+  {
+    // property with object
+    let t1 = { a: { b: 3 } };
+    let h1 = { get: (t, k) => t[k] };
+    let p1 = new Proxy(t1, h1);
+
+    let t2 = { a: { b: 3 } };
+    let h2 = { get: (t, k) => t[k] };
+    let p2 = new Proxy(t2, h2);
+
+    expect(p1).toEqual(p2);
+    expect(p1).toStrictEqual(p2);
+
+    let t3 = { a: { b: 3 } };
+    let h3 = { get: (t, k) => t[k] };
+    let p3 = new Proxy(t3, h3);
+
+    let t4 = { a: { b: 4 } };
+    let h4 = { get: (t, k) => t[k] };
+    let p4 = new Proxy(t4, h4);
+
+    expect(p3).not.toEqual(p4);
+    expect(p3).not.toStrictEqual(p4);
+  }
+  {
+    // proxy object equals itself
+    let t1 = { a: 1, b: 2 };
+    let h1 = { get: (t, k) => t[k] + 2 };
+    let p1 = new Proxy(t1, h1);
+    expect(p1).toEqual(p1);
+    expect(p1).toStrictEqual(p1);
+  }
+  {
+    let t1 = { a: 1, b: 2 };
+    let h1 = { get: (t, k) => k };
+    let p1 = new Proxy(t1, h1);
+
+    let t2 = { a: 1, b: 2 };
+    let h2 = { get: (t, k) => k };
+    let p2 = new Proxy(t2, h2);
+
+    expect(p1).toEqual(p2);
+    expect(p1).toStrictEqual(p2);
+  }
+});
+
 test("toThrow", () => {
   expect(() => {
     throw new Error("hello");
@@ -600,7 +777,108 @@ test("deepEquals - symbols", () => {
   expect(o).toEqual(k);
 });
 
+test("deepEquals should not segfault", () => {
+  const obj = { ...Object.fromEntries(Object.entries([1, 2, 3, 4])), length: 4 };
+  expect(() => {
+    expect(obj).toEqual([1, 2, 3, 4]);
+  }).toThrow();
+  expect(() => {
+    expect([1, 2, 3, 4]).toEqual(obj);
+  }).toThrow();
+});
+
 test("toEqual objects and arrays", () => {
+  {
+    let obj = { 0: 4, 1: 3, length: 2 };
+    expect(Array.from(obj)).toEqual([4, 3]);
+    expect(Array.from(obj)).toStrictEqual([4, 3]);
+  }
+  {
+    let obj = { 0: 4, 1: 3, length: 4 };
+    expect(Array.from(obj)).toEqual([4, 3]);
+    expect(Array.from(obj)).not.toStrictEqual([4, 3]);
+    expect(Array.from(obj)).toEqual([4, 3, undefined, undefined]);
+    expect(Array.from(obj)).toStrictEqual([4, 3, undefined, undefined]);
+    expect(Array.from(obj)).toEqual([4, 3, , ,]);
+    expect(Array.from(obj)).not.toStrictEqual([4, 3, , ,]);
+  }
+  {
+    let a1 = [1, undefined, 3, , 4, null];
+    let a2 = [1, undefined, 3, , 4, null, , ,];
+    expect(a1).toEqual(a2);
+    expect(a1).not.toStrictEqual(a2);
+    expect(a2).toEqual(a1);
+    expect(a2).not.toStrictEqual(a1);
+  }
+  {
+    let a1 = [, , , , , , , , , , , ,];
+    let a2 = [undefined];
+    expect(a1).toEqual(a2);
+    expect(a1).not.toStrictEqual(a2);
+    expect(a2).toEqual(a1);
+    expect(a2).not.toStrictEqual(a1);
+  }
+  {
+    const a = [1];
+    const b = [1];
+    expect(a).toEqual(b);
+    Object.preventExtensions(b);
+    expect(a).toEqual(b);
+    Object.preventExtensions(a);
+    expect(a).toEqual(b);
+  }
+  {
+    let o1 = { 1: 4, 6: 3 };
+    let o2 = { 1: 4, 6: 3 };
+    expect(o1).toEqual(o2);
+    expect(o1).toStrictEqual(o2);
+  }
+  {
+    let o1 = { 1: 4, 6: 2 };
+    let o2 = { 1: 4, 6: 3 };
+    expect(o1).not.toEqual(o2);
+    expect(o1).not.toStrictEqual(o2);
+  }
+
+  {
+    let o1 = { a: 1, 3: 0 };
+    let o2 = { a: 1, 3: 0 };
+    expect(o1).toEqual(o2);
+    expect(o1).toStrictEqual(o2);
+  }
+  {
+    let o1 = { a: 1, 3: 0 };
+    let o2 = { a: 1, 3: 1 };
+    expect(o1).not.toEqual(o2);
+    expect(o1).not.toStrictEqual(o2);
+  }
+  {
+    let o1 = { a: {}, 4: { b: 3, c: { 9: 2 } } };
+    let o2 = { a: {}, 4: { b: 3, c: { 9: 2 } } };
+    expect(o1).toEqual(o2);
+    expect(o1).toStrictEqual(o2);
+  }
+  {
+    let o1 = { a: {}, 4: { b: 3, c: { 9: 2 } } };
+    let o2 = { a: {}, 4: { b: 3, c: { 9: 3 } } };
+    expect(o1).not.toEqual(o2);
+    expect(o1).not.toStrictEqual(o2);
+  }
+
+  {
+    let o1 = { a: 1, b: 2, c: 3 };
+    let o2 = { a: 1, b: 2, c: 3, 0: 1 };
+    expect(o1).not.toEqual(o2);
+    expect(o1).not.toStrictEqual(o2);
+  }
+
+  {
+    let o1 = { a: 1, b: 2, c: 3, 0: 1 };
+    let o2 = { a: 1, b: 2, c: 3 };
+    expect(o1).not.toEqual(o2);
+    expect(o1).not.toStrictEqual(o2);
+  }
+
   expect("hello").toEqual("hello");
   const s1 = Symbol("test1");
   const s2 = Symbol("test2");

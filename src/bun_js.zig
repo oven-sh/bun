@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -11,7 +11,7 @@ const C = bun.C;
 const std = @import("std");
 
 const lex = bun.js_lexer;
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const options = @import("options.zig");
 const js_parser = bun.js_parser;
 const json_parser = bun.JSON;
@@ -28,8 +28,8 @@ const bundler = bun.bundler;
 const NodeModuleBundle = @import("node_module_bundle.zig").NodeModuleBundle;
 const DotEnv = @import("env_loader.zig");
 const which = @import("which.zig").which;
-const JSC = @import("bun").JSC;
-const AsyncHTTP = @import("bun").HTTP.AsyncHTTP;
+const JSC = @import("root").bun.JSC;
+const AsyncHTTP = @import("root").bun.HTTP.AsyncHTTP;
 const Arena = @import("./mimalloc_arena.zig").Arena;
 
 const OpaqueWrap = JSC.OpaqueWrap;
@@ -82,6 +82,13 @@ pub const Run = struct {
         b.options.prefer_latest_install = b.resolver.opts.prefer_latest_install;
         b.resolver.env_loader = b.env;
 
+        b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
+        b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
+        b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
+        b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
+
+        // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
+
         if (ctx.debug.macros) |macros| {
             b.options.macro_remap = macros;
         }
@@ -104,33 +111,8 @@ pub const Run = struct {
             Output.prettyErrorln("\n", .{});
             Global.exit(1);
         };
-        AsyncHTTP.max_simultaneous_requests = 255;
 
-        if (b.env.map.get("BUN_CONFIG_MAX_HTTP_REQUESTS")) |max_http_requests| {
-            load: {
-                AsyncHTTP.max_simultaneous_requests = std.fmt.parseInt(u16, max_http_requests, 10) catch {
-                    vm.log.addErrorFmt(
-                        null,
-                        logger.Loc.Empty,
-                        vm.allocator,
-                        "BUN_CONFIG_MAX_HTTP_REQUESTS value \"{s}\" is not a valid integer between 1 and 65535",
-                        .{max_http_requests},
-                    ) catch unreachable;
-                    break :load;
-                };
-
-                if (AsyncHTTP.max_simultaneous_requests == 0) {
-                    vm.log.addWarningFmt(
-                        null,
-                        logger.Loc.Empty,
-                        vm.allocator,
-                        "BUN_CONFIG_MAX_HTTP_REQUESTS value must be a number between 1 and 65535",
-                        .{},
-                    ) catch unreachable;
-                    AsyncHTTP.max_simultaneous_requests = 255;
-                }
-            }
-        }
+        AsyncHTTP.loadEnv(vm.allocator, vm.log, b.env);
 
         vm.loadExtraEnv();
         vm.is_main_thread = true;

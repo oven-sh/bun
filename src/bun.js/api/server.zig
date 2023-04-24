@@ -1,13 +1,13 @@
 const Bun = @This();
-const default_allocator = @import("bun").default_allocator;
-const bun = @import("bun");
+const default_allocator = @import("root").bun.default_allocator;
+const bun = @import("root").bun;
 const Environment = bun.Environment;
-const NetworkThread = @import("bun").HTTP.NetworkThread;
+const NetworkThread = @import("root").bun.HTTP.NetworkThread;
 const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
-const Output = @import("bun").Output;
-const MutableString = @import("bun").MutableString;
+const Output = @import("root").bun.Output;
+const MutableString = @import("root").bun.MutableString;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const IdentityContext = @import("../../identity_context.zig").IdentityContext;
@@ -16,7 +16,7 @@ const Resolver = @import("../../resolver/resolver.zig");
 const ast = @import("../../import_record.zig");
 const NodeModuleBundle = @import("../../node_module_bundle.zig").NodeModuleBundle;
 const MacroEntryPoint = bun.bundler.MacroEntryPoint;
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const Api = @import("../../api/schema.zig").Api;
 const options = @import("../../options.zig");
 const Bundler = bun.Bundler;
@@ -28,57 +28,56 @@ const http = @import("../../http.zig");
 const NodeFallbackModules = @import("../../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../../analytics/analytics_thread.zig");
-const ZigString = @import("bun").JSC.ZigString;
+const ZigString = @import("root").bun.JSC.ZigString;
 const Runtime = @import("../../runtime.zig");
 const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../../env_loader.zig");
 const ParseResult = bun.bundler.ParseResult;
 const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../../resolver/package_json.zig").MacroMap;
-const WebCore = @import("bun").JSC.WebCore;
+const WebCore = @import("root").bun.JSC.WebCore;
 const Request = WebCore.Request;
 const Response = WebCore.Response;
 const Headers = WebCore.Headers;
 const Fetch = WebCore.Fetch;
-const HTTP = @import("bun").HTTP;
+const HTTP = @import("root").bun.HTTP;
 const FetchEvent = WebCore.FetchEvent;
-const js = @import("bun").JSC.C;
-const JSC = @import("bun").JSC;
+const js = @import("root").bun.JSC.C;
+const JSC = @import("root").bun.JSC;
 const JSError = @import("../base.zig").JSError;
 const MarkedArrayBuffer = @import("../base.zig").MarkedArrayBuffer;
 const getAllocator = @import("../base.zig").getAllocator;
-const JSValue = @import("bun").JSC.JSValue;
+const JSValue = @import("root").bun.JSC.JSValue;
 const NewClass = @import("../base.zig").NewClass;
-const Microtask = @import("bun").JSC.Microtask;
-const JSGlobalObject = @import("bun").JSC.JSGlobalObject;
-const ExceptionValueRef = @import("bun").JSC.ExceptionValueRef;
-const JSPrivateDataPtr = @import("bun").JSC.JSPrivateDataPtr;
-const ZigConsoleClient = @import("bun").JSC.ZigConsoleClient;
-const Node = @import("bun").JSC.Node;
-const ZigException = @import("bun").JSC.ZigException;
-const ZigStackTrace = @import("bun").JSC.ZigStackTrace;
-const ErrorableResolvedSource = @import("bun").JSC.ErrorableResolvedSource;
-const ResolvedSource = @import("bun").JSC.ResolvedSource;
-const JSPromise = @import("bun").JSC.JSPromise;
-const JSInternalPromise = @import("bun").JSC.JSInternalPromise;
-const JSModuleLoader = @import("bun").JSC.JSModuleLoader;
-const JSPromiseRejectionOperation = @import("bun").JSC.JSPromiseRejectionOperation;
-const Exception = @import("bun").JSC.Exception;
-const ErrorableZigString = @import("bun").JSC.ErrorableZigString;
-const ZigGlobalObject = @import("bun").JSC.ZigGlobalObject;
-const VM = @import("bun").JSC.VM;
-const JSFunction = @import("bun").JSC.JSFunction;
+const Microtask = @import("root").bun.JSC.Microtask;
+const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
+const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
+const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
+const ZigConsoleClient = @import("root").bun.JSC.ZigConsoleClient;
+const Node = @import("root").bun.JSC.Node;
+const ZigException = @import("root").bun.JSC.ZigException;
+const ZigStackTrace = @import("root").bun.JSC.ZigStackTrace;
+const ErrorableResolvedSource = @import("root").bun.JSC.ErrorableResolvedSource;
+const ResolvedSource = @import("root").bun.JSC.ResolvedSource;
+const JSPromise = @import("root").bun.JSC.JSPromise;
+const JSInternalPromise = @import("root").bun.JSC.JSInternalPromise;
+const JSModuleLoader = @import("root").bun.JSC.JSModuleLoader;
+const JSPromiseRejectionOperation = @import("root").bun.JSC.JSPromiseRejectionOperation;
+const Exception = @import("root").bun.JSC.Exception;
+const ErrorableZigString = @import("root").bun.JSC.ErrorableZigString;
+const ZigGlobalObject = @import("root").bun.JSC.ZigGlobalObject;
+const VM = @import("root").bun.JSC.VM;
+const JSFunction = @import("root").bun.JSC.JSFunction;
 const Config = @import("../config.zig");
 const URL = @import("../../url.zig").URL;
-const Transpiler = @import("./transpiler.zig");
 const VirtualMachine = JSC.VirtualMachine;
 const IOTask = JSC.IOTask;
 const is_bindgen = JSC.is_bindgen;
-const uws = @import("bun").uws;
+const uws = @import("root").bun.uws;
 const Fallback = Runtime.Fallback;
 const MimeType = HTTP.MimeType;
 const Blob = JSC.WebCore.Blob;
-const BoringSSL = @import("bun").BoringSSL;
+const BoringSSL = @import("root").bun.BoringSSL;
 const Arena = @import("../../mimalloc_arena.zig").Arena;
 const SendfileContext = struct {
     fd: i32,
@@ -121,9 +120,25 @@ pub const ServerConfig = struct {
         passphrase: [*c]const u8 = null,
         low_memory_mode: bool = false,
 
-        pub fn asUSockets(this_: ?SSLConfig) uws.us_socket_context_options_t {
-            var ctx_opts: uws.us_socket_context_options_t = undefined;
-            @memset(@ptrCast([*]u8, &ctx_opts), 0, @sizeOf(uws.us_socket_context_options_t));
+        key: ?[][*c]const u8 = null,
+        key_count: u32 = 0,
+
+        cert: ?[][*c]const u8 = null,
+        cert_count: u32 = 0,
+
+        ca: ?[][*c]const u8 = null,
+        ca_count: u32 = 0,
+
+        secure_options: u32 = 0,
+        request_cert: i32 = 0,
+        reject_unauthorized: i32 = 0,
+        ssl_ciphers: [*c]const u8 = null,
+
+        const log = Output.scoped(.SSLConfig, false);
+
+        pub fn asUSockets(this_: ?SSLConfig) uws.us_bun_socket_context_options_t {
+            var ctx_opts: uws.us_bun_socket_context_options_t = undefined;
+            @memset(@ptrCast([*]u8, &ctx_opts), 0, @sizeOf(uws.us_bun_socket_context_options_t));
 
             if (this_) |ssl_config| {
                 if (ssl_config.key_file_name != null)
@@ -137,6 +152,25 @@ pub const ServerConfig = struct {
                 if (ssl_config.passphrase != null)
                     ctx_opts.passphrase = ssl_config.passphrase;
                 ctx_opts.ssl_prefer_low_memory_usage = @boolToInt(ssl_config.low_memory_mode);
+
+                if (ssl_config.key) |key| {
+                    ctx_opts.key = key.ptr;
+                    ctx_opts.key_count = ssl_config.key_count;
+                }
+                if (ssl_config.cert) |cert| {
+                    ctx_opts.cert = cert.ptr;
+                    ctx_opts.cert_count = ssl_config.cert_count;
+                }
+                if (ssl_config.ca) |ca| {
+                    ctx_opts.ca = ca.ptr;
+                    ctx_opts.ca_count = ssl_config.ca_count;
+                }
+
+                if (ssl_config.ssl_ciphers != null) {
+                    ctx_opts.ssl_ciphers = ssl_config.ssl_ciphers;
+                }
+                ctx_opts.request_cert = ssl_config.request_cert;
+                ctx_opts.reject_unauthorized = ssl_config.reject_unauthorized;
             }
 
             return ctx_opts;
@@ -150,6 +184,7 @@ pub const ServerConfig = struct {
                 "ca_file_name",
                 "dh_params_file_name",
                 "passphrase",
+                "ssl_ciphers",
             };
 
             inline for (fields) |field| {
@@ -159,6 +194,45 @@ pub const ServerConfig = struct {
                         bun.default_allocator.free(slice);
                     }
                 }
+            }
+
+            if (this.cert) |cert| {
+                var i: u32 = 0;
+                while (i < this.cert_count) : (i += 1) {
+                    const slice = std.mem.span(cert[i]);
+                    if (slice.len > 0) {
+                        bun.default_allocator.free(slice);
+                    }
+                }
+
+                bun.default_allocator.free(cert);
+                this.cert = null;
+            }
+
+            if (this.key) |key| {
+                var i: u32 = 0;
+                while (i < this.key_count) : (i += 1) {
+                    const slice = std.mem.span(key[i]);
+                    if (slice.len > 0) {
+                        bun.default_allocator.free(slice);
+                    }
+                }
+
+                bun.default_allocator.free(key);
+                this.key = null;
+            }
+
+            if (this.ca) |ca| {
+                var i: u32 = 0;
+                while (i < this.ca_count) : (i += 1) {
+                    const slice = std.mem.span(ca[i]);
+                    if (slice.len > 0) {
+                        bun.default_allocator.free(slice);
+                    }
+                }
+
+                bun.default_allocator.free(ca);
+                this.ca = null;
             }
         }
 
@@ -183,6 +257,52 @@ pub const ServerConfig = struct {
                     any = true;
                 }
             }
+
+            if (obj.getTruthy(global, "key")) |js_obj| {
+                if (js_obj.jsType().isArray()) {
+                    const count = js_obj.getLengthOfArray(global);
+                    if (count > 0) {
+                        const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
+
+                        var i: u32 = 0;
+                        var valid_count: u32 = 0;
+                        var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator);
+                        while (i < count) : (i += 1) {
+                            const item = js_obj.getIndex(global, i);
+                            if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item, exception)) |sb| {
+                                const sliced = sb.slice();
+                                if (sliced.len > 0) {
+                                    native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                                    valid_count += 1;
+                                    any = true;
+                                }
+                            } else {
+                                global.throwInvalidArguments("key argument must be an array containing string, Buffer or TypedArray", .{});
+                                arena.deinit();
+                                // mark and free all keys
+                                result.key = native_array;
+                                result.deinit();
+                                return null;
+                            }
+                        }
+
+                        arena.deinit();
+
+                        if (valid_count == 0) {
+                            bun.default_allocator.free(native_array);
+                        } else {
+                            result.key = native_array;
+                        }
+
+                        result.key_count = valid_count;
+                    }
+                } else {
+                    global.throwInvalidArguments("key argument must be an array containing string, Buffer or TypedArray", .{});
+                    result.deinit();
+                    return null;
+                }
+            }
+
             if (obj.getTruthy(global, "certFile")) |cert_file_name| {
                 var sliced = cert_file_name.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
@@ -197,13 +317,128 @@ pub const ServerConfig = struct {
                 }
             }
 
+            if (obj.getTruthy(global, "cert")) |js_obj| {
+                if (js_obj.jsType().isArray()) {
+                    const count = js_obj.getLengthOfArray(global);
+                    if (count > 0) {
+                        const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
+
+                        var i: u32 = 0;
+                        var valid_count: u32 = 0;
+
+                        var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator);
+                        while (i < count) : (i += 1) {
+                            const item = js_obj.getIndex(global, i);
+                            if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item, exception)) |sb| {
+                                const sliced = sb.slice();
+                                if (sliced.len > 0) {
+                                    native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                                    valid_count += 1;
+                                    any = true;
+                                }
+                            } else {
+                                global.throwInvalidArguments("cert argument must be an array containing string, Buffer or TypedArray", .{});
+                                arena.deinit();
+                                // mark and free all certs
+                                result.cert = native_array;
+                                result.deinit();
+                                return null;
+                            }
+                        }
+
+                        arena.deinit();
+
+                        if (valid_count == 0) {
+                            bun.default_allocator.free(native_array);
+                        } else {
+                            result.cert = native_array;
+                        }
+
+                        result.cert_count = valid_count;
+                    }
+                } else {
+                    global.throwInvalidArguments("cert argument must be an array containing string, Buffer or TypedArray", .{});
+                    result.deinit();
+                    return null;
+                }
+            }
+
+            if (obj.getTruthy(global, "requestCert")) |request_cert| {
+                result.request_cert = if (request_cert.asBoolean()) 1 else 0;
+            }
+
+            if (obj.getTruthy(global, "rejectUnauthorized")) |reject_unauthorized| {
+                result.reject_unauthorized = if (reject_unauthorized.asBoolean()) 1 else 0;
+            }
+
+            if (obj.getTruthy(global, "ciphers")) |ssl_ciphers| {
+                var sliced = ssl_ciphers.toSlice(global, bun.default_allocator);
+                defer sliced.deinit();
+                if (sliced.len > 0) {
+                    result.ssl_ciphers = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    any = true;
+                }
+            }
+
             // Optional
             if (any) {
+                if (obj.getTruthy(global, "secureOptions")) |secure_options| {
+                    if (secure_options.isNumber()) {
+                        result.secure_options = secure_options.toU32();
+                    }
+                }
+
                 if (obj.getTruthy(global, "serverName")) |key_file_name| {
                     var sliced = key_file_name.toSlice(global, bun.default_allocator);
                     defer sliced.deinit();
                     if (sliced.len > 0) {
                         result.server_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    }
+                }
+
+                if (obj.getTruthy(global, "ca")) |js_obj| {
+                    if (js_obj.jsType().isArray()) {
+                        const count = js_obj.getLengthOfArray(global);
+                        if (count > 0) {
+                            const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
+
+                            var i: u32 = 0;
+                            var valid_count: u32 = 0;
+
+                            var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator);
+                            while (i < count) : (i += 1) {
+                                const item = js_obj.getIndex(global, i);
+                                if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item, exception)) |sb| {
+                                    const sliced = sb.slice();
+                                    if (sliced.len > 0) {
+                                        native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                                        valid_count += 1;
+                                        any = true;
+                                    }
+                                } else {
+                                    global.throwInvalidArguments("ca argument must be an array containing string, Buffer or TypedArray", .{});
+                                    arena.deinit();
+                                    // mark and free all CA's
+                                    result.cert = native_array;
+                                    result.deinit();
+                                    return null;
+                                }
+                            }
+
+                            arena.deinit();
+
+                            if (valid_count == 0) {
+                                bun.default_allocator.free(native_array);
+                            } else {
+                                result.ca = native_array;
+                            }
+
+                            result.ca_count = valid_count;
+                        }
+                    } else {
+                        global.throwInvalidArguments("cert argument must be an array containing string, Buffer or TypedArray", .{});
+                        result.deinit();
+                        return null;
                     }
                 }
 
@@ -219,6 +454,7 @@ pub const ServerConfig = struct {
                         }
                     }
                 }
+
                 if (obj.getTruthy(global, "dhParamsFile")) |dh_params_file_name| {
                     var sliced = dh_params_file_name.toSlice(global, bun.default_allocator);
                     defer sliced.deinit();
@@ -708,6 +944,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         request_js_object: JSC.C.JSObjectRef = null,
         request_body_buf: std.ArrayListUnmanaged(u8) = .{},
         request_body_content_len: usize = 0,
+
+        /// Used to avoid looking at the uws.Request struct after it's been freed
+        is_transfer_encoding: bool = false,
+
+        /// Used in renderMissing in debug mode to show the user an HTML page
+        /// Used to avoid looking at the uws.Request struct after it's been freed
+        is_web_browser_navigation: if (debug_mode) bool else void = if (debug_mode) false else {},
+
         sink: ?*ResponseStream.JSSink = null,
         byte_stream: ?*JSC.WebCore.ByteStream = null,
 
@@ -855,16 +1099,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 ctx.has_written_status = true;
                 ctx.resp.end("", ctx.shouldCloseConnection());
             } else {
-                const is_web_browser_navigation = brk: {
-                    if (ctx.req.header("sec-fetch-dest")) |fetch_dest| {
-                        if (strings.eqlComptime(fetch_dest, "document")) {
-                            break :brk true;
-                        }
-                    }
-
-                    break :brk false;
-                };
-                if (is_web_browser_navigation) {
+                if (ctx.is_web_browser_navigation) {
                     ctx.resp.writeStatus("200 OK");
                     ctx.has_written_status = true;
 
@@ -2315,6 +2550,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     content
                 else if (this.blob.wasString())
                     MimeType.text
+                    // TODO: should we get the mime type off of the Blob.Store if it exists?
+                    // A little wary of doing this right now due to causing some breaking change
                 else
                     MimeType.other;
             };
@@ -2419,6 +2656,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn onBufferedBodyChunk(this: *RequestContext, resp: *App.Response, chunk: []const u8, last: bool) void {
+            ctxLog("onBufferedBodyChunk {} {}", .{ chunk.len, last });
             std.debug.assert(this.resp == resp);
 
             if (this.aborted) return;
@@ -2490,8 +2728,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     // }
                 }
 
-                if (old == .Locked)
+                if (old == .Locked) {
                     old.resolve(&req.body, this.server.globalThis);
+                }
                 request.unprotect();
                 return;
             }
@@ -2499,14 +2738,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (this.request_body_buf.capacity == 0) {
                 this.request_body_buf.ensureTotalCapacityPrecise(this.allocator, @min(this.request_body_content_len, max_request_body_preallocate_length)) catch @panic("Out of memory while allocating request body buffer");
             }
-
             this.request_body_buf.appendSlice(this.allocator, chunk) catch @panic("Out of memory while allocating request body");
         }
 
         pub fn onStartStreamingRequestBody(this: *RequestContext) JSC.WebCore.DrainResult {
+            ctxLog("onStartStreamingRequestBody", .{});
             if (this.aborted) {
                 return JSC.WebCore.DrainResult{
-                    .aborted = void{},
+                    .aborted = {},
                 };
             }
 
@@ -2525,61 +2764,31 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 };
             }
 
-            this.resp.onData(*RequestContext, onBufferedBodyChunk, this);
-
             return .{
                 .estimated_size = this.request_body_content_len,
             };
         }
         const max_request_body_preallocate_length = 1024 * 256;
         pub fn onStartBuffering(this: *RequestContext) void {
+            ctxLog("onStartBuffering", .{});
             const request = JSC.JSValue.c(this.request_js_object);
             request.ensureStillAlive();
-
-            if (this.req.header("content-length")) |content_length| {
-                const len = std.fmt.parseInt(usize, content_length, 10) catch 0;
-                this.request_body_content_len = len;
-                if (len == 0) {
-                    if (request.as(Request)) |req| {
-                        var old = req.body;
-                        old.Locked.onReceiveValue = null;
-                        req.body = .{ .Null = {} };
-                        old.resolve(&req.body, this.server.globalThis);
-                        return;
-                    }
-                    request.ensureStillAlive();
-                }
-
-                if (len >= this.server.config.max_request_body_size) {
-                    if (request.as(Request)) |req| {
-                        var old = req.body;
-                        old.Locked.onReceiveValue = null;
-                        req.body = .{ .Null = {} };
-                        old.toError(error.RequestBodyTooLarge, this.server.globalThis);
-                        return;
-                    }
-                    request.ensureStillAlive();
-
-                    this.resp.writeStatus("413 Request Entity Too Large");
-                    this.resp.endWithoutBody(true);
-                    this.finalize();
-                    return;
-                }
-            } else if (this.req.header("transfer-encoding") == null) {
-                // no content-length
+            // TODO: check if is someone calling onStartBuffering other than onStartBufferingCallback
+            // if is not, this should be removed and only keep protect + setAbortHandler
+            if (this.is_transfer_encoding == false and this.request_body_content_len == 0) {
+                // no content-length or 0 content-length
                 // no transfer-encoding
                 if (request.as(Request)) |req| {
                     var old = req.body;
                     old.Locked.onReceiveValue = null;
                     req.body = .{ .Null = {} };
                     old.resolve(&req.body, this.server.globalThis);
-                    return;
                 }
+            } else {
+                // we need to buffer the request body
+                request.protect();
+                this.setAbortHandler();
             }
-
-            request.protect();
-            this.setAbortHandler();
-            this.resp.onData(*RequestContext, onBufferedBodyChunk, this);
         }
 
         pub fn onStartBufferingCallback(this: *anyopaque) void {
@@ -4750,6 +4959,18 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 },
             };
 
+            if (comptime debug_mode) {
+                ctx.is_web_browser_navigation = brk: {
+                    if (ctx.req.header("sec-fetch-dest")) |fetch_dest| {
+                        if (strings.eqlComptime(fetch_dest, "document")) {
+                            break :brk true;
+                        }
+                    }
+
+                    break :brk false;
+                };
+            }
+
             // we need to do this very early unfortunately
             // it seems to work fine for synchronous requests but anything async will take too long to register the handler
             // we do this only for HTTP methods that support request bodies, so not GET, HEAD, OPTIONS, or CONNECT.
@@ -4770,8 +4991,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 }
 
                 ctx.request_body_content_len = req_len;
-
-                if (req_len > 0) {
+                ctx.is_transfer_encoding = req.header("transfer-encoding") != null;
+                if (req_len > 0 or ctx.is_transfer_encoding) {
                     // we defer pre-allocating the body until we receive the first chunk
                     // that way if the client is lying about how big the body is or the client aborts
                     // we don't waste memory
@@ -4784,6 +5005,14 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                         },
                     };
                     resp.onData(*RequestContext, RequestContext.onBufferedBodyChunk, ctx);
+                } else if (request_object.body == .Locked) {
+                    // This branch should never be taken, but we are handling it anyway.
+                    var old = request_object.body;
+                    old.Locked.onReceiveValue = null;
+                    request_object.body = .{ .Null = {} };
+                    old.resolve(&request_object.body, this.globalThis);
+                } else {
+                    request_object.body = .{ .Null = {} };
                 }
             }
 
@@ -4935,5 +5164,12 @@ pub const Server = NewServer(false, false);
 pub const SSLServer = NewServer(true, false);
 pub const DebugServer = NewServer(false, true);
 pub const DebugSSLServer = NewServer(true, true);
+
+pub const AnyServer = union(enum) {
+    Server: *Server,
+    SSLServer: *SSLServer,
+    DebugServer: *DebugServer,
+    DebugSSLServer: *DebugSSLServer,
+};
 
 const welcome_page_html_gz = @embedFile("welcome-page.html.gz");

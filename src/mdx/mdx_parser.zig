@@ -1,5 +1,5 @@
 const std = @import("std");
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const mdx_lexer = @import("./mdx_lexer.zig");
 const Lexer = mdx_lexer.Lexer;
 const importRecord = @import("../import_record.zig");
@@ -10,7 +10,7 @@ const ParseStatementOptions = @import("../js_parser/js_parser.zig").ParseStateme
 const options = @import("../options.zig");
 
 const fs = @import("../fs.zig");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -1368,7 +1368,7 @@ pub const MDParser = struct {
                 .head_row_count = 1,
                 .body_row_count = block.line_count -| 2,
             },
-            else => void{},
+            else => {},
         };
 
         if (!is_in_tight_list or comptime tag != .p) {
@@ -1430,7 +1430,7 @@ pub const MDParser = struct {
                     .li => try this.mdx.onLeaveBlock(tag, Block.LI, detail.li),
                     .ul => try this.mdx.onLeaveBlock(tag, Block.UL, detail.ul),
                     .ol => try this.mdx.onLeaveBlock(tag, Block.OL, detail.ol),
-                    else => try this.mdx.onLeaveBlock(block.tag, void, void{}),
+                    else => try this.mdx.onLeaveBlock(block.tag, void, {}),
                 }
                 this.containers.len -|= switch (block.tag) {
                     .ul, .ol, .blockquote => 1,
@@ -1443,7 +1443,7 @@ pub const MDParser = struct {
                     .li => try this.mdx.onEnterBlock(tag, Block.LI, detail.li),
                     .ul => try this.mdx.onEnterBlock(tag, Block.UL, detail.ul),
                     .ol => try this.mdx.onEnterBlock(tag, Block.OL, detail.ol),
-                    else => try this.mdx.onEnterBlock(block.tag, void, void{}),
+                    else => try this.mdx.onEnterBlock(block.tag, void, {}),
                 }
 
                 switch (comptime tag) {
@@ -1677,7 +1677,7 @@ pub const MDParser = struct {
         var line = &line_buf[0];
         var offset: u32 = 0;
 
-        try this.mdx.onEnterBlock(.doc, void, void{});
+        try this.mdx.onEnterBlock(.doc, void, {});
 
         const len: u32 = this.size;
         while (offset < len) {
@@ -1695,7 +1695,7 @@ pub const MDParser = struct {
 
         this.leaveChildContainers(0);
         this.processAllBlocks();
-        try this.mdx.onLeaveBlock(.doc, void, void{});
+        try this.mdx.onLeaveBlock(.doc, void, {});
     }
 };
 

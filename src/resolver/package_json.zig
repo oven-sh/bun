@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -13,7 +13,7 @@ const Api = @import("../api/schema.zig").Api;
 const std = @import("std");
 const options = @import("../options.zig");
 const cache = @import("../cache.zig");
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const js_ast = bun.JSAst;
 
 const fs = @import("../fs.zig");
@@ -22,8 +22,8 @@ const js_lexer = bun.js_lexer;
 const resolve_path = @import("./resolve_path.zig");
 // Assume they're not going to have hundreds of main fields or browser map
 // so use an array-backed hash table instead of bucketed
-const MainFieldMap = bun.StringArrayHashMap(string);
-pub const BrowserMap = bun.StringArrayHashMap(string);
+const MainFieldMap = bun.StringMap;
+pub const BrowserMap = bun.StringMap;
 pub const MacroImportReplacementMap = bun.StringArrayHashMap(string);
 pub const MacroMap = bun.StringArrayHashMapUnmanaged(MacroImportReplacementMap);
 
@@ -37,6 +37,7 @@ const FolderResolver = @import("../install/resolvers/folder_resolver.zig");
 
 const Architecture = @import("../install/npm.zig").Architecture;
 const OperatingSystem = @import("../install/npm.zig").OperatingSystem;
+pub const SideEffectsMap = std.HashMapUnmanaged(bun.StringHashMapUnowned.Key, void, bun.StringHashMapUnowned.Adapter, 80);
 pub const DependencyMap = struct {
     map: HashMap = .{},
     source_buf: []const u8 = "",
@@ -72,6 +73,7 @@ pub const PackageJSON = struct {
     }
 
     const node_modules_path = std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str;
+
     pub fn nameForImport(this: *const PackageJSON, allocator: std.mem.Allocator) !string {
         if (strings.indexOf(this.source.path.text, node_modules_path)) |_| {
             return this.name;
@@ -109,6 +111,12 @@ pub const PackageJSON = struct {
 
     package_manager_package_id: Install.PackageID = Install.invalid_package_id,
     dependencies: DependencyMap = .{},
+
+    side_effects: union(enum) {
+        unspecified: void,
+        false: void,
+        map: SideEffectsMap,
+    } = .{ .unspecified = {} },
 
     // Present if the "browser" field is present. This field is intended to be
     // used by bundlers and lets you redirect the paths of certain 3rd-party
@@ -580,7 +588,12 @@ pub const PackageJSON = struct {
         const package_json_path_ = r.fs.abs(&parts);
         const package_json_path = r.fs.dirname_store.append(@TypeOf(package_json_path_), package_json_path_) catch unreachable;
 
-        const entry = r.caches.fs.readFile(
+        // DirInfo cache is reused globally
+        // So we cannot free these
+        const allocator = bun.fs_allocator;
+
+        const entry = r.caches.fs.readFileWithAllocator(
+            allocator,
             r.fs,
             package_json_path,
             dirname_fd,
@@ -588,11 +601,17 @@ pub const PackageJSON = struct {
             null,
         ) catch |err| {
             if (err != error.IsDir) {
-                r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot read file \"{s}\": {s}", .{ r.prettyPath(fs.Path.init(input_path)), @errorName(err) }) catch unreachable;
+                r.log.addErrorFmt(null, logger.Loc.Empty, allocator, "Cannot read file \"{s}\": {s}", .{ r.prettyPath(fs.Path.init(input_path)), @errorName(err) }) catch unreachable;
             }
 
             return null;
         };
+
+        defer {
+            if (entry.fd != 0) {
+                _ = bun.JSC.Node.Syscall.close(entry.fd);
+            }
+        }
 
         if (r.debug_logs) |*debug| {
             debug.addNoteFmt("The file \"{s}\" exists", .{package_json_path});
@@ -603,12 +622,19 @@ pub const PackageJSON = struct {
         var json_source = logger.Source.initPathString(key_path.text, entry.contents);
         json_source.path.pretty = r.prettyPath(json_source.path);
 
-        const json: js_ast.Expr = (r.caches.json.parseJSON(r.log, json_source, r.allocator) catch |err| {
+        const json: js_ast.Expr = (r.caches.json.parseJSON(r.log, json_source, allocator) catch |err| {
             if (Environment.isDebug) {
                 Output.printError("{s}: JSON parse error: {s}", .{ package_json_path, @errorName(err) });
             }
             return null;
         } orelse return null);
+
+        if (json.data != .e_object) {
+            // Invalid package.json in node_modules is noisy.
+            // Let's just ignore it.
+            allocator.free(entry.contents);
+            return null;
+        }
 
         var package_json = PackageJSON{
             .name = "",
@@ -616,8 +642,8 @@ pub const PackageJSON = struct {
             .hash = 0xDEADBEEF,
             .source = json_source,
             .module_type = .unknown,
-            .browser_map = BrowserMap.init(r.allocator),
-            .main_fields = MainFieldMap.init(r.allocator),
+            .browser_map = BrowserMap.init(allocator, false),
+            .main_fields = MainFieldMap.init(allocator, false),
         };
 
         // Note: we tried rewriting this to be fewer loops over all the properties (asProperty loops over each)
@@ -626,122 +652,170 @@ pub const PackageJSON = struct {
         // Feels like a codegen issue.
         // or that looping over every property doesn't really matter because most package.jsons are < 20 properties
         if (json.asProperty("version")) |version_json| {
-            if (version_json.expr.asString(r.allocator)) |version_str| {
+            if (version_json.expr.asString(allocator)) |version_str| {
                 if (version_str.len > 0) {
-                    package_json.version = r.allocator.dupe(u8, version_str) catch unreachable;
+                    package_json.version = allocator.dupe(u8, version_str) catch unreachable;
                 }
             }
         }
 
         if (json.asProperty("name")) |version_json| {
-            if (version_json.expr.asString(r.allocator)) |version_str| {
+            if (version_json.expr.asString(allocator)) |version_str| {
                 if (version_str.len > 0) {
-                    package_json.name = r.allocator.dupe(u8, version_str) catch unreachable;
+                    package_json.name = allocator.dupe(u8, version_str) catch unreachable;
                 }
             }
         }
 
-        if (json.asProperty("type")) |type_json| {
-            if (type_json.expr.asString(r.allocator)) |type_str| {
-                switch (options.ModuleType.List.get(type_str) orelse options.ModuleType.unknown) {
-                    .cjs => {
-                        package_json.module_type = .cjs;
-                    },
-                    .esm => {
-                        package_json.module_type = .esm;
-                    },
-                    .unknown => {
-                        r.log.addRangeWarningFmt(
-                            &json_source,
-                            json_source.rangeOfString(type_json.loc),
-                            r.allocator,
-                            "\"{s}\" is not a valid value for \"type\" field (must be either \"commonjs\" or \"module\")",
-                            .{type_str},
-                        ) catch unreachable;
-                    },
+        // If we're coming from `bun run`
+        // We do not need to parse all this stuff.
+        if (comptime !include_scripts) {
+            if (json.asProperty("type")) |type_json| {
+                if (type_json.expr.asString(allocator)) |type_str| {
+                    switch (options.ModuleType.List.get(type_str) orelse options.ModuleType.unknown) {
+                        .cjs => {
+                            package_json.module_type = .cjs;
+                        },
+                        .esm => {
+                            package_json.module_type = .esm;
+                        },
+                        .unknown => {
+                            r.log.addRangeWarningFmt(
+                                &json_source,
+                                json_source.rangeOfString(type_json.loc),
+                                allocator,
+                                "\"{s}\" is not a valid value for \"type\" field (must be either \"commonjs\" or \"module\")",
+                                .{type_str},
+                            ) catch unreachable;
+                        },
+                    }
+                } else {
+                    r.log.addWarning(&json_source, type_json.loc, "The value for \"type\" must be a string") catch unreachable;
                 }
-            } else {
-                r.log.addWarning(&json_source, type_json.loc, "The value for \"type\" must be a string") catch unreachable;
             }
-        }
 
-        // Read the "main" fields
-        for (r.opts.main_fields) |main| {
-            if (json.asProperty(main)) |main_json| {
-                const expr: js_ast.Expr = main_json.expr;
+            // Read the "main" fields
+            for (r.opts.main_fields) |main| {
+                if (json.asProperty(main)) |main_json| {
+                    const expr: js_ast.Expr = main_json.expr;
 
-                if ((expr.asString(r.allocator))) |str| {
-                    if (str.len > 0) {
-                        package_json.main_fields.put(main, r.allocator.dupe(u8, str) catch unreachable) catch unreachable;
+                    if ((expr.asString(allocator))) |str| {
+                        if (str.len > 0) {
+                            package_json.main_fields.put(main, str) catch unreachable;
+                        }
                     }
                 }
             }
-        }
 
-        // Read the "browser" property, but only when targeting the browser
-        if (r.opts.platform.supportsBrowserField()) {
-            // We both want the ability to have the option of CJS vs. ESM and the
-            // option of having node vs. browser. The way to do this is to use the
-            // object literal form of the "browser" field like this:
-            //
-            //   "main": "dist/index.node.cjs.js",
-            //   "module": "dist/index.node.esm.js",
-            //   "browser": {
-            //     "./dist/index.node.cjs.js": "./dist/index.browser.cjs.js",
-            //     "./dist/index.node.esm.js": "./dist/index.browser.esm.js"
-            //   },
-            //
-            if (json.asProperty("browser")) |browser_prop| {
-                switch (browser_prop.expr.data) {
-                    .e_object => |obj| {
-                        // The value is an object
+            // Read the "browser" property, but only when targeting the browser
+            if (r.opts.platform.supportsBrowserField()) {
+                // We both want the ability to have the option of CJS vs. ESM and the
+                // option of having node vs. browser. The way to do this is to use the
+                // object literal form of the "browser" field like this:
+                //
+                //   "main": "dist/index.node.cjs.js",
+                //   "module": "dist/index.node.esm.js",
+                //   "browser": {
+                //     "./dist/index.node.cjs.js": "./dist/index.browser.cjs.js",
+                //     "./dist/index.node.esm.js": "./dist/index.browser.esm.js"
+                //   },
+                //
+                if (json.asProperty("browser")) |browser_prop| {
+                    switch (browser_prop.expr.data) {
+                        .e_object => |obj| {
+                            // The value is an object
 
-                        // Remap all files in the browser field
-                        for (obj.properties.slice()) |*prop| {
-                            var _key_str = (prop.key orelse continue).asString(r.allocator) orelse continue;
-                            const value: js_ast.Expr = prop.value orelse continue;
+                            // Remap all files in the browser field
+                            for (obj.properties.slice()) |*prop| {
+                                var _key_str = (prop.key orelse continue).asString(allocator) orelse continue;
+                                const value: js_ast.Expr = prop.value orelse continue;
 
-                            // Normalize the path so we can compare against it without getting
-                            // confused by "./". There is no distinction between package paths and
-                            // relative paths for these values because some tools (i.e. Browserify)
-                            // don't make such a distinction.
-                            //
-                            // This leads to weird things like a mapping for "./foo" matching an
-                            // import of "foo", but that's actually not a bug. Or arguably it's a
-                            // bug in Browserify but we have to replicate this bug because packages
-                            // do this in the wild.
-                            const key = r.allocator.dupe(u8, r.fs.normalize(_key_str)) catch unreachable;
+                                // Normalize the path so we can compare against it without getting
+                                // confused by "./". There is no distinction between package paths and
+                                // relative paths for these values because some tools (i.e. Browserify)
+                                // don't make such a distinction.
+                                //
+                                // This leads to weird things like a mapping for "./foo" matching an
+                                // import of "foo", but that's actually not a bug. Or arguably it's a
+                                // bug in Browserify but we have to replicate this bug because packages
+                                // do this in the wild.
+                                const key = allocator.dupe(u8, r.fs.normalize(_key_str)) catch unreachable;
 
-                            switch (value.data) {
-                                .e_string => |str| {
-                                    // If this is a string, it's a replacement package
-                                    package_json.browser_map.put(key, str.string(r.allocator) catch unreachable) catch unreachable;
-                                },
-                                .e_boolean => |boolean| {
-                                    if (!boolean.value) {
-                                        package_json.browser_map.put(key, "") catch unreachable;
-                                    }
-                                },
-                                else => {
-                                    r.log.addWarning(&json_source, value.loc, "Each \"browser\" mapping must be a string or boolean") catch unreachable;
-                                },
+                                switch (value.data) {
+                                    .e_string => |str| {
+                                        // If this is a string, it's a replacement package
+                                        package_json.browser_map.put(key, str.string(allocator) catch unreachable) catch unreachable;
+                                    },
+                                    .e_boolean => |boolean| {
+                                        if (!boolean.value) {
+                                            package_json.browser_map.put(key, "") catch unreachable;
+                                        }
+                                    },
+                                    else => {
+                                        r.log.addWarning(&json_source, value.loc, "Each \"browser\" mapping must be a string or boolean") catch unreachable;
+                                    },
+                                }
                             }
-                        }
-                    },
-                    else => {},
+                        },
+                        else => {},
+                    }
                 }
             }
-        }
 
-        if (json.asProperty("exports")) |exports_prop| {
-            if (ExportsMap.parse(r.allocator, &json_source, r.log, exports_prop.expr, exports_prop.loc)) |exports_map| {
-                package_json.exports = exports_map;
+            if (json.asProperty("exports")) |exports_prop| {
+                if (ExportsMap.parse(bun.default_allocator, &json_source, r.log, exports_prop.expr, exports_prop.loc)) |exports_map| {
+                    package_json.exports = exports_map;
+                }
             }
-        }
 
-        if (json.asProperty("imports")) |imports_prop| {
-            if (ExportsMap.parse(r.allocator, &json_source, r.log, imports_prop.expr, imports_prop.loc)) |imports_map| {
-                package_json.imports = imports_map;
+            if (json.asProperty("imports")) |imports_prop| {
+                if (ExportsMap.parse(bun.default_allocator, &json_source, r.log, imports_prop.expr, imports_prop.loc)) |imports_map| {
+                    package_json.imports = imports_map;
+                }
+            }
+
+            if (json.get("sideEffects")) |side_effects_field| outer: {
+                if (side_effects_field.asBool()) |boolean| {
+                    if (!boolean)
+                        package_json.side_effects = .{ .false = {} };
+                } else if (side_effects_field.asArray()) |array_| {
+                    var array = array_;
+                    // TODO: switch to only storing hashes
+                    var map = SideEffectsMap{};
+                    map.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
+                    while (array.next()) |item| {
+                        if (item.asString(allocator)) |name| {
+                            // TODO: support RegExp using JavaScriptCore <> C++ bindings
+                            if (strings.containsChar(name, '*')) {
+                                // https://sourcegraph.com/search?q=context:global+file:package.json+sideEffects%22:+%5B&patternType=standard&sm=1&groupBy=repo
+                                // a lot of these seem to be css files which we don't care about for now anyway
+                                // so we can just skip them in here
+                                if (strings.eqlComptime(std.fs.path.extension(name), ".css"))
+                                    continue;
+
+                                r.log.addWarning(
+                                    &json_source,
+                                    item.loc,
+                                    "wildcard sideEffects are not supported yet, which means this package will be deoptimized",
+                                ) catch unreachable;
+                                map.deinit(allocator);
+
+                                package_json.side_effects = .{ .unspecified = {} };
+                                break :outer;
+                            }
+
+                            var joined = [_]string{
+                                json_source.path.name.dirWithTrailingSlash(),
+                                name,
+                            };
+
+                            _ = map.getOrPutAssumeCapacity(
+                                bun.StringHashMapUnowned.Key.init(r.fs.join(&joined)),
+                            );
+                        }
+                    }
+                    package_json.side_effects = .{ .map = map };
+                }
             }
         }
 
@@ -759,7 +833,7 @@ pub const PackageJSON = struct {
 
                         if (tag == .npm) {
                             const sliced = Semver.SlicedString.init(package_json.version, package_json.version);
-                            if (Dependency.parseWithTag(r.allocator, String.init(package_json.name, package_json.name), package_json.version, .npm, &sliced, r.log)) |dependency_version| {
+                            if (Dependency.parseWithTag(allocator, String.init(package_json.name, package_json.name), package_json.version, .npm, &sliced, r.log)) |dependency_version| {
                                 if (dependency_version.value.npm.version.isExact()) {
                                     if (pm.lockfile.resolve(package_json.name, dependency_version)) |resolved| {
                                         package_json.package_manager_package_id = resolved;
@@ -859,7 +933,7 @@ pub const PackageJSON = struct {
                         .b_buf = json_source.contents,
                     };
                     package_json.dependencies.map.ensureTotalCapacityContext(
-                        r.allocator,
+                        allocator,
                         total_dependency_count,
                         ctx,
                     ) catch unreachable;
@@ -870,14 +944,14 @@ pub const PackageJSON = struct {
                                 var group_obj = group_json.data.e_object;
                                 for (group_obj.properties.slice()) |*prop| {
                                     const name_prop = prop.key orelse continue;
-                                    const name_str = name_prop.asString(r.allocator) orelse continue;
+                                    const name_str = name_prop.asString(allocator) orelse continue;
                                     const name = String.init(name_str, name_str);
                                     const version_value = prop.value orelse continue;
-                                    const version_str = version_value.asString(r.allocator) orelse continue;
+                                    const version_str = version_value.asString(allocator) orelse continue;
                                     const sliced_str = Semver.SlicedString.init(version_str, version_str);
 
                                     if (Dependency.parse(
-                                        r.allocator,
+                                        allocator,
                                         name,
                                         version_str,
                                         &sliced_str,
@@ -912,33 +986,31 @@ pub const PackageJSON = struct {
 
                         var count: usize = 0;
                         for (scripts_obj.properties.slice()) |prop| {
-                            const key = prop.key.?.asString(r.allocator) orelse continue;
-                            const value = prop.value.?.asString(r.allocator) orelse continue;
+                            const key = prop.key.?.asString(allocator) orelse continue;
+                            const value = prop.value.?.asString(allocator) orelse continue;
 
                             count += @as(usize, @boolToInt(key.len > 0 and value.len > 0));
                         }
 
                         if (count == 0) break :read_scripts;
-                        var scripts = ScriptsMap.init(r.allocator);
+                        var scripts = ScriptsMap.init(allocator);
                         scripts.ensureUnusedCapacity(count) catch break :read_scripts;
 
                         for (scripts_obj.properties.slice()) |prop| {
-                            const key = prop.key.?.asString(r.allocator) orelse continue;
-                            const value = prop.value.?.asString(r.allocator) orelse continue;
+                            const key = prop.key.?.asString(allocator) orelse continue;
+                            const value = prop.value.?.asString(allocator) orelse continue;
 
                             if (!(key.len > 0 and value.len > 0)) continue;
 
                             scripts.putAssumeCapacity(key, value);
                         }
 
-                        package_json.scripts = r.allocator.create(ScriptsMap) catch unreachable;
+                        package_json.scripts = allocator.create(ScriptsMap) catch unreachable;
                         package_json.scripts.?.* = scripts;
                     }
                 }
             }
         }
-
-        // TODO: side effects
 
         if (generate_hash) {
             if (package_json.name.len > 0 and package_json.version.len > 0) {
@@ -989,20 +1061,20 @@ pub const ExportsMap = struct {
 
             switch (expr.data) {
                 .e_null => {
-                    return Entry{ .first_token = js_lexer.rangeOfIdentifier(this.source, expr.loc), .data = .{ .null = void{} } };
+                    return Entry{ .first_token = js_lexer.rangeOfIdentifier(this.source, expr.loc), .data = .{ .null = {} } };
                 },
                 .e_string => |str| {
                     return Entry{
                         .data = .{
-                            .string = str.string(this.allocator) catch unreachable,
+                            .string = str.slice(this.allocator),
                         },
                         .first_token = this.source.rangeOfString(expr.loc),
                     };
                 },
                 .e_array => |e_array| {
                     var array = this.allocator.alloc(Entry, e_array.items.len) catch unreachable;
-                    for (e_array.items.slice(), 0..) |item, i| {
-                        array[i] = this.visit(item);
+                    for (e_array.items.slice(), array) |item, *dest| {
+                        dest.* = this.visit(item);
                     }
                     return Entry{
                         .data = .{
@@ -1014,7 +1086,7 @@ pub const ExportsMap = struct {
                 .e_object => |e_obj| {
                     var map_data = Entry.Data.Map.List{};
                     map_data.ensureTotalCapacity(this.allocator, e_obj.*.properties.len) catch unreachable;
-                    map_data.len = map_data.capacity;
+                    map_data.len = e_obj.*.properties.len;
                     var expansion_keys = this.allocator.alloc(Entry.Data.Map.MapEntry, e_obj.*.properties.len) catch unreachable;
                     var expansion_key_i: usize = 0;
                     var map_data_slices = map_data.slice();
@@ -1025,7 +1097,7 @@ pub const ExportsMap = struct {
                     first_token.loc = expr.loc;
                     first_token.len = 1;
                     for (e_obj.properties.slice(), 0..) |prop, i| {
-                        const key: string = prop.key.?.data.e_string.string(this.allocator) catch unreachable;
+                        const key: string = prop.key.?.data.e_string.slice(this.allocator);
                         const key_range: logger.Range = this.source.rangeOfString(prop.key.?.loc);
 
                         // If exports is an Object with both a key starting with "." and a key
@@ -1049,7 +1121,7 @@ pub const ExportsMap = struct {
                             map_data.deinit(this.allocator);
                             this.allocator.free(expansion_keys);
                             return Entry{
-                                .data = .{ .invalid = void{} },
+                                .data = .{ .invalid = {} },
                                 .first_token = first_token,
                             };
                         }
@@ -1103,7 +1175,7 @@ pub const ExportsMap = struct {
 
             this.log.addRangeWarning(this.source, first_token, "This value must be a string, an object, an array, or null") catch unreachable;
             return Entry{
-                .data = .{ .invalid = void{} },
+                .data = .{ .invalid = {} },
                 .first_token = first_token,
             };
         }
@@ -1455,7 +1527,7 @@ pub const ESModule = struct {
         }
 
         if (strings.eqlComptime(subpath, ".")) {
-            var main_export = ExportsMap.Entry{ .data = .{ .null = void{} }, .first_token = logger.Range.None };
+            var main_export = ExportsMap.Entry{ .data = .{ .null = {} }, .first_token = logger.Range.None };
             if (switch (exports.data) {
                 .string,
                 .array,

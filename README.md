@@ -40,7 +40,7 @@ bun run index.tsx             # TS and JSX supported out of the box
 bun test                      # run tests
 bun run start                 # run the `start` script in `package.json`
 bun install <pkg>​             # install a package
-bunx cowsay "Hello, world!"   # execute a package
+bunx cowsay 'Hello, world!'   # execute a package
 ```
 
 ## Install
@@ -130,7 +130,7 @@ bun upgrade --canary
 
 ## Contributing
 
-Refer to the [Project > Contributing](https://bun.sh/docs/project/developing) guide to start contributing to Bun.
+Refer to the [Project > Development](https://bun.sh/docs/project/development) guide to start contributing to Bun.
 
 ## License
 

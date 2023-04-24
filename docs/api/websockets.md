@@ -12,7 +12,7 @@
 Internally Bun's WebSocket implementation is built on [uWebSockets](https://github.com/uNetworking/uWebSockets).
 {% /callout %}
 
-## Create a client
+## Connect to a WebSocket server
 
 To connect to an external socket server, create an instance of `WebSocket` with the constructor.
 
@@ -46,7 +46,7 @@ socket.addEventListener("close", event => {});
 socket.addEventListener("error", event => {});
 ```
 
-## Create a server
+## Create a WebSocket server
 
 Below is a simple WebSocket server built with `Bun.serve`, in which all incoming requests are [upgraded](https://developer.mozilla.org/en-US/docs/Web/HTTP/Protocol_upgrade_mechanism) to WebSocket connections in the `fetch` handler. The socket handlers are declared in the `websocket` parameter.
 

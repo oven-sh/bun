@@ -1,7 +1,7 @@
 const std = @import("std");
 const Api = @import("./api/schema.zig").Api;
 const resolve_path = @import("./resolver/resolve_path.zig");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -870,7 +870,7 @@ pub const FormData = struct {
 
         pub fn get(content_type: []const u8) ?Encoding {
             if (strings.indexOf(content_type, "application/x-www-form-urlencoded") != null)
-                return Encoding{ .URLEncoded = void{} };
+                return Encoding{ .URLEncoded = {} };
 
             if (strings.indexOf(content_type, "multipart/form-data") == null) return null;
 

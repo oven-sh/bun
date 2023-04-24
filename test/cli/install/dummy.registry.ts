@@ -4,12 +4,17 @@
  *  PACKAGE_DIR_TO_USE=(realpath .) bun test/cli/install/dummy.registry.ts
  */
 import { file, Server } from "bun";
+import { mkdtempSync, realpathSync } from "fs";
 
 let expect: typeof import("bun:test")["expect"];
 
 import { mkdtemp, readdir, realpath, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { basename, join } from "path";
+
+export function tmpdirSync(pattern: string) {
+  return mkdtempSync(join(realpathSync(tmpdir()), pattern));
+}
 
 type Handler = (req: Request) => Response | Promise<Response>;
 type Pkg = {
@@ -94,14 +99,13 @@ export function dummyAfterAll() {
   server.stop();
 }
 
-let packageDirGetter: () => Promise<string> = async () => {
-  return await mkdtemp(join(await realpath(tmpdir()), "bun-install-test-" + testCounter++ + "--"));
+let packageDirGetter: () => string = () => {
+  return tmpdirSync("bun-install-test-" + testCounter++ + "--");
 };
 export async function dummyBeforeEach() {
   resetHandler();
   requested = 0;
-  package_dir = await packageDirGetter();
-
+  package_dir = packageDirGetter();
   await writeFile(
     join(package_dir, "bunfig.toml"),
     `
@@ -129,7 +133,7 @@ if (Bun.main === import.meta.path) {
     };
   };
   if (process.env.PACKAGE_DIR_TO_USE) {
-    packageDirGetter = () => Promise.resolve(process.env.PACKAGE_DIR_TO_USE!);
+    packageDirGetter = () => process.env.PACKAGE_DIR_TO_USE!;
   }
 
   await dummyBeforeAll();

@@ -1,4 +1,5 @@
 import { expect, it, describe } from "bun:test";
+import { hideFromStackTrace } from "harness";
 
 describe("Bun.Transpiler", () => {
   const transpiler = new Bun.Transpiler({
@@ -64,14 +65,629 @@ describe("Bun.Transpiler", () => {
       throw new Error("Expected parse error for code\n\t" + code);
     },
   };
+  hideFromStackTrace(ts.expectPrinted_);
+  hideFromStackTrace(ts.expectPrinted);
+  hideFromStackTrace(ts.expectParseError);
 
   it("normalizes \\r\\n", () => {
     ts.expectPrinted_("console.log(`\r\n\r\n\r\n`)", "console.log(`\n\n\n`);\n");
   });
 
+  describe("property access inlining", () => {
+    it("bails out with spread", () => {
+      ts.expectPrinted_("const a = [...b][0];", "const a = [...b][0]");
+      ts.expectPrinted_("const a = {...b}[0];", "const a = { ...b }[0]");
+    });
+    it("bails out with multiple items", () => {
+      ts.expectPrinted_("const a = [b, c][0];", "const a = [b, c][0]");
+    });
+    it("works", () => {
+      ts.expectPrinted_('const a = ["hey"][0];', 'const a = "hey"');
+    });
+    it("works nested", () => {
+      ts.expectPrinted_('const a = ["hey"][0][0];', 'const a = "h"');
+    });
+  });
+
   describe("TypeScript", () => {
     it("import Foo = Baz.Bar", () => {
       ts.expectPrinted_("import Foo = Baz.Bar;\nexport default Foo;", "const Foo = Baz.Bar;\nexport default Foo");
+    });
+
+    it("instantiation expressions", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      // TODO: fix Unexpected end of file in these cases
+      // exp("f<number>", "f;\n");
+      // exp("f<number, boolean>", "f;\n");
+      // exp("f.g<number>", "f.g;\n");
+      exp("f<number>.g", "f.g;\n");
+      // exp("f<number>.g<number>", "f.g;\n");
+      // exp("f['g']<number>", 'f["g"];\n');
+      // exp("(f<number>)<number>", "f;\n");
+
+      // Function call
+      exp("const x1 = f<true>\n(true);", "const x1 = f(true);\n");
+      // Relational expression
+      // exp("const x1 = f<true>\ntrue;", "const x1 = f;\ntrue;\n");
+      // Instantiation expression
+      // exp("const x1 = f<true>;\n(true);", "const x1 = f;\ntrue;\n");
+
+      // Trailing commas are not allowed
+      exp("const x = Array<number>\n(0);", "const x = Array(0);\n");
+      // TODO: make these errors
+      // exp("const x = Array<number>;\n(0);", "const x = Array;\n0;\n");
+      // err("const x = Array<number,>\n(0);", 'Expected identifier but found ">"');
+      // err("const x = Array<number,>;\n(0);", 'Expected identifier but found ">"');
+
+      exp("f<number>?.();", "f?.();\n");
+      exp("f?.<number>();", "f?.();\n");
+      exp("f<<T>() => T>?.();", "f?.();\n");
+      exp("f?.<<T>() => T>();", "f?.();\n");
+
+      exp("f<number>['g'];", 'f < number > ["g"];\n');
+
+      exp("type T21 = typeof Array<string>; f();", "f();\n");
+      exp("type T22 = typeof Array<string, number>; f();", "f();\n");
+
+      exp("f<x>, g<y>;", "f, g;\n");
+      exp("f<<T>() => T>;", "f;\n");
+      exp("f.x<<T>() => T>;", "f.x;\n");
+      exp("f['x']<<T>() => T>;", 'f["x"];\n');
+      exp("f<x>g<y>;", "f < x > g;\n");
+      exp("f<x>=g<y>;", "f = g;\n");
+      exp("f<x>>g<y>;", "f < x >> g;\n");
+      exp("f<x>>>g<y>;", "f < x >>> g;\n");
+      err("f<x>>=g<y>;", "Invalid assignment target");
+      err("f<x>>>=g<y>;", "Invalid assignment target");
+      exp("f<x> = g<y>;", "f = g;\n");
+      err("f<x> > g<y>;", "Unexpected >");
+      err("f<x> >> g<y>;", "Unexpected >>");
+      err("f<x> >>> g<y>;", "Unexpected >>>");
+      err("f<x> >= g<y>;", "Unexpected >=");
+      err("f<x> >>= g<y>;", "Unexpected >>=");
+      err("f<x> >>>= g<y>;", "Unexpected >>>=");
+      exp("a([f<x>]);", "a([f]);\n");
+      exp("f<x> ? g<y> : h<z>;", "f ? g : h;\n");
+      exp("{ f<x> }", "f");
+      exp("f<x> + g<y>;", "f < x > +g;\n");
+      exp("f<x> - g<y>;", "f < x > -g;\n");
+      exp("f<x> * g<y>;", "f * g;\n");
+      exp("f<x> *= g<y>;", "f *= g;\n");
+      exp("f<x> == g<y>;", "f == g;\n");
+      exp("f<x> ?? g<y>;", "f ?? g;\n");
+      exp("f<x> in g<y>;", "f in g;\n");
+      exp("f<x> instanceof g<y>;", "f instanceof g;\n");
+      exp("f<x> as g<y>;", "f;\n");
+      exp("f<x> satisfies g<y>;", "f;\n");
+
+      err("const a8 = f<number><number>;", "Unexpected ;");
+      err("const b1 = f?.<number>;", "Parse error");
+      // err("const b1 = f?.<number>;", 'Expected "(" but found ";"');
+
+      // TODO: why are the JSX tests failing but only in Bun.Transpiler? They
+      // work when run manually
+
+      // See: https://github.com/microsoft/TypeScript/issues/48711
+      // exp("type x = y\n<number>\nz", "z;\n");
+      // exp("type x = y\n<number>\nz\n</number>", '/* @__PURE__ */ React.createElement("number", null, "z");\n');
+      exp("type x = typeof y\n<number>\nz", "z;\n");
+      // exp("type x = typeof y\n<number>\nz\n</number>", '/* @__PURE__ */ React.createElement("number", null, "z");\n');
+      exp("interface Foo { \n (a: number): a \n <T>(): void \n }", "");
+      exp("interface Foo { \n (a: number): a \n <T>(): void \n }", "");
+      exp("interface Foo { \n (a: number): typeof a \n <T>(): void \n }", "");
+      exp("interface Foo { \n (a: number): typeof a \n <T>(): void \n }", "");
+      // err("type x = y\n<number>\nz\n</number>", "Unterminated regular expression");
+      // errX(
+      //   "type x = y\n<number>\nz",
+      //   'Unexpected end of file before a closing "number" tag\n<stdin>: NOTE: The opening "number" tag is here:',
+      // );
+      err("type x = typeof y\n<number>\nz\n</number>", "Syntax Error!!");
+      // errX(
+      //   "type x = typeof y\n<number>\nz",
+      //   'Unexpected end of file before a closing "number" tag\n<stdin>: NOTE: The opening "number" tag is here:',
+      // );
+
+      // See: https://github.com/microsoft/TypeScript/issues/48654
+      exp("x<true> y", "x < true > y;\n");
+      exp("x<true>\ny", "x;\ny;\n");
+      exp("x<true>\nif (y) {}", "x;\nif (y)");
+      exp("x<true>\nimport 'y'", 'x;\nimport"y";\n');
+      exp("x<true>\nimport('y')", 'x;\nimport("y");\n');
+      exp("x<true>\na(import.meta)", "x;\na(import.meta);\n");
+      exp("x<true> import('y')", 'x < true > import("y");\n');
+      exp("x<true> import.meta", "x < true > import.meta;\n");
+      exp("new x<number> y", "new x < number > y");
+      exp("new x<number>\ny", "new x;\ny");
+      exp("new x<number>\nif (y) {}", "new x;\nif (y)");
+      exp("new x<true>\nimport 'y'", 'new x;\nimport"y"');
+      exp("new x<true>\nimport('y')", 'new x;\nimport("y")');
+      exp("new x<true>\na(import.meta)", "new x;\na(import.meta)");
+      exp("new x<true> import('y')", 'new x < true > import("y")');
+      exp("new x<true> import.meta", "new x < true > import.meta");
+
+      // See: https://github.com/microsoft/TypeScript/issues/48759
+      err("x<true>\nimport<T>('y')", "Unexpected <");
+      err("new x<true>\nimport<T>('y')", "Unexpected <");
+
+      // See: https://github.com/evanw/esbuild/issues/2201
+      // err("return Array < ;", "Unexpected ;");
+      // err("return Array < > ;", "Unexpected >");
+      // err("return Array < , > ;", "Unexpected ,");
+      exp("return Array < number > ;", "return Array;\n");
+      exp("return Array < number > 1;", "return Array < number > 1;\n");
+      exp("return Array < number > +1;", "return Array < number > 1;\n");
+      exp("return Array < number > (1);", "return Array(1);\n");
+      exp("return Array < number >> 1;", "return Array < number >> 1;\n");
+      exp("return Array < number >>> 1;", "return Array < number >>> 1;\n");
+      exp("return Array < Array < number >> ;", "return Array;\n");
+      exp("return Array < Array < number > > ;", "return Array;\n");
+      err("return Array < Array < number > > 1;", "Unexpected >");
+      exp("return Array < Array < number >> 1;", "return Array < Array < number >> 1;\n");
+      err("return Array < Array < number > > +1;", "Unexpected >");
+      exp("return Array < Array < number >> +1;", "return Array < Array < number >> 1;\n");
+      exp("return Array < Array < number >> (1);", "return Array(1);\n");
+      exp("return Array < Array < number > > (1);", "return Array(1);\n");
+      exp("return Array < number > in x;", "return Array in x;\n");
+      exp("return Array < Array < number >> in x;", "return Array in x;\n");
+      exp("return Array < Array < number > > in x;", "return Array in x;\n");
+      exp("for (var x = Array < number > in y) ;", "x = Array;\nfor (x in y)\n  ;\nvar x;\n");
+      // exp("for (var x = Array < Array < number >> in y) ;", "x = Array;\nfor (var x in y)\n  ;\n");
+      exp("for (var x = Array < Array < number >> in y) ;", "x = Array;\nfor (x in y)\n  ;\nvar x;\n");
+      // exp("for (var x = Array < Array < number > > in y) ;", "x = Array;\nfor (var x in y)\n  ;\n");
+      exp("for (var x = Array < Array < number > > in y) ;", "x = Array;\nfor (x in y)\n  ;\nvar x;\n");
+
+      // See: https://github.com/microsoft/TypeScript/pull/49353
+      exp("F<{}> 0", "F < {} > 0;\n");
+      exp("F<{}> class F<T> {}", "F < {} > class F {\n};\n");
+      exp("f<{}> function f<T>() {}", "f < {} > function f() {\n};\n");
+      exp("F<{}>\nabc()", "F;\nabc();\n");
+
+      // TODO: why are there two newlines here?
+      exp("F<{}>()\nclass F<T> {}", "F();\n\nclass F {\n}");
+
+      exp("f<{}>()\nfunction f<T>() {}", "f();\nfunction f() {\n}");
+    });
+
+    // TODO: fix all the cases that report generic "Parse error"
+    it("types", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      exp("let x: T extends number\n ? T\n : number", "let x;\n");
+      exp("let x: {y: T extends number ? T : number}", "let x;\n");
+      exp("let x: {y: T \n extends: number}", "let x;\n");
+      exp("let x: {y: T \n extends?: number}", "let x;\n");
+      exp("let x: (number | string)[]", "let x;\n");
+      exp("let x: [string[]?]", "let x;\n");
+      exp("let x: [number?, string?]", "let x;\n");
+      exp("let x: [a: number, b?: string, ...c: number[]]", "let x;\n");
+      exp("type x =\n A\n | B\n C", "C;\n");
+      exp("type x =\n | A\n | B\n C", "C;\n");
+      exp("type x =\n A\n & B\n C", "C;\n");
+      exp("type x =\n & A\n & B\n C", "C;\n");
+      exp("type x = [-1, 0, 1]\na([])", "a([]);\n");
+      exp("type x = [-1n, 0n, 1n]\na([])", "a([]);\n");
+      exp("type x = {0: number, readonly 1: boolean}\na([])", "a([]);\n");
+      exp("type x = {'a': number, readonly 'b': boolean}\na([])", "a([]);\n");
+      exp("type\nFoo = {}", "type;\nFoo = {};\n");
+      err("export type\nFoo = {}", 'Unexpected newline after "type"');
+      exp("let x: {x: 'a', y: false, z: null}", "let x;\n");
+      exp("let x: {foo(): void}", "let x;\n");
+      exp("let x: {['x']: number}", "let x;\n");
+      exp("let x: {['x'](): void}", "let x;\n");
+      exp("let x: {[key: string]: number}", "let x;\n");
+      exp("let x: {[keyof: string]: number}", "let x;\n");
+      exp("let x: {[readonly: string]: number}", "let x;\n");
+      exp("let x: {[infer: string]: number}", "let x;\n");
+      exp("let x: [keyof: string]", "let x;\n");
+      exp("let x: [readonly: string]", "let x;\n");
+      exp("let x: [infer: string]", "let x;\n");
+      err("let x: A extends B ? keyof : string", "Unexpected :");
+      err("let x: A extends B ? readonly : string", "Unexpected :");
+      // err("let x: A extends B ? infer : string", 'Expected identifier but found ":"\n');
+      err("let x: A extends B ? infer : string", "Parse error");
+      // err("let x: {[new: string]: number}", 'Expected "(" but found ":"\n');
+      err("let x: {[new: string]: number}", "Parse error");
+      // err("let x: {[import: string]: number}", 'Expected "(" but found ":"\n');
+      err("let x: {[import: string]: number}", "Parse error");
+      // err("let x: {[typeof: string]: number}", 'Expected identifier but found ":"\n');
+      err("let x: {[typeof: string]: number}", "Parse error");
+      exp("let x: () => void = Foo", "let x = Foo;\n");
+      exp("let x: new () => void = Foo", "let x = Foo;\n");
+      exp("let x = 'x' as keyof T", 'let x = "x";\n');
+      exp("let x = [1] as readonly [number]", "let x = [1];\n");
+      exp("let x = 'x' as keyof typeof Foo", 'let x = "x";\n');
+      exp("let fs: typeof import('fs') = require('fs')", 'let fs = require("fs");\n');
+      exp("let fs: typeof import('fs').exists = require('fs').exists", 'let fs = require("fs").exists;\n');
+      exp("let fs: typeof import('fs', { assert: { type: 'json' } }) = require('fs')", 'let fs = require("fs");\n');
+      exp(
+        "let fs: typeof import('fs', { assert: { 'resolution-mode': 'import' } }) = require('fs')",
+        'let fs = require("fs");\n',
+      );
+      exp("let x: <T>() => Foo<T>", "let x;\n");
+      exp("let x: new <T>() => Foo<T>", "let x;\n");
+      exp("let x: <T extends object>() => Foo<T>", "let x;\n");
+      exp("let x: new <T extends object>() => Foo<T>", "let x;\n");
+      exp("type Foo<T> = {[P in keyof T]?: T[P]}", "");
+      exp("type Foo<T> = {[P in keyof T]+?: T[P]}", "");
+      exp("type Foo<T> = {[P in keyof T]-?: T[P]}", "");
+      exp("type Foo<T> = {readonly [P in keyof T]: T[P]}", "");
+      exp("type Foo<T> = {-readonly [P in keyof T]: T[P]}", "");
+      exp("type Foo<T> = {+readonly [P in keyof T]: T[P]}", "");
+      exp("type Foo<T> = {[infer in T]?: Foo}", "");
+      exp("type Foo<T> = {[keyof in T]?: Foo}", "");
+      exp("type Foo<T> = {[asserts in T]?: Foo}", "");
+      exp("type Foo<T> = {[abstract in T]?: Foo}", "");
+      exp("type Foo<T> = {[readonly in T]?: Foo}", "");
+      exp("type Foo<T> = {[satisfies in T]?: Foo}", "");
+      exp("let x: number! = y", "let x = y;\n");
+      // TODO: dead code elimination causes this to become "y;\n" because !
+      // operator is side effect free on an identifier
+      // exp("let x: number \n !y", "let x;\n!y;\n");
+      exp("const x: unique = y", "const x = y;\n");
+      exp("const x: unique<T> = y", "const x = y;\n");
+      exp("const x: unique\nsymbol = y", "const x = y;\n");
+      exp("let x: typeof a = y", "let x = y;\n");
+      exp("let x: typeof a.b = y", "let x = y;\n");
+      exp("let x: typeof a.if = y", "let x = y;\n");
+      exp("let x: typeof if.a = y", "let x = y;\n");
+      exp("let x: typeof readonly = y", "let x = y;\n");
+      err("let x: typeof readonly Array", 'Expected ";" but found "Array"');
+      exp("let x: `y`", "let x;\n");
+      err("let x: tag`y`", 'Expected ";" but found "`y`"');
+      exp("let x: { <A extends B>(): c.d \n <E extends F>(): g.h }", "let x;\n");
+      // exp("type x = a.b \n <c></c>", '/* @__PURE__ */ React.createElement("c", null);\n');
+      exp("type Foo = a.b \n | c.d", "");
+      exp("type Foo = a.b \n & c.d", "");
+      exp("type Foo = \n | a.b \n | c.d", "");
+      exp("type Foo = \n & a.b \n & c.d", "");
+      exp("type Foo = Bar extends [infer T] ? T : null", "");
+      exp("type Foo = Bar extends [infer T extends string] ? T : null", "");
+      exp("type Foo = {} extends infer T extends {} ? A<T> : never", "");
+      exp("type Foo = {} extends (infer T extends {}) ? A<T> : never", "");
+      exp("let x: A extends B<infer C extends D> ? D : never", "let x;\n");
+      exp("let x: A extends B<infer C extends D ? infer C : never> ? D : never", "let x;\n");
+      exp("let x: ([e1, e2, ...es]: any) => any", "let x;\n");
+      exp("let x: (...[e1, e2, es]: any) => any", "let x;\n");
+      exp("let x: (...[e1, e2, ...es]: any) => any", "let x;\n");
+      exp("let x: (y, [e1, e2, ...es]: any) => any", "let x;\n");
+      exp("let x: (y, ...[e1, e2, es]: any) => any", "let x;\n");
+      exp("let x: (y, ...[e1, e2, ...es]: any) => any", "let x;\n");
+
+      exp("let x: A.B<X.Y>", "let x;\n");
+      exp("let x: A.B<X.Y>=2", "let x = 2;\n");
+      exp("let x: A.B<X.Y<Z>>", "let x;\n");
+      exp("let x: A.B<X.Y<Z>>=2", "let x = 2;\n");
+      exp("let x: A.B<X.Y<Z<T>>>", "let x;\n");
+      exp("let x: A.B<X.Y<Z<T>>>=2", "let x = 2;\n");
+
+      exp("a((): A<T>=> 0)", "a(() => 0);\n");
+      exp("a((): A<B<T>>=> 0)", "a(() => 0);\n");
+      exp("a((): A<B<C<T>>>=> 0)", "a(() => 0);\n");
+
+      exp("let foo: any\n<x>y", "let foo;\ny;\n");
+      // expectPrintedTSX(t, "let foo: any\n<x>y</x>", 'let foo;\n/* @__PURE__ */ React.createElement("x", null, "y");\n');
+      err("let foo: (any\n<x>y)", 'Expected ")" but found "<"');
+
+      exp("let foo = bar as (null)", "let foo = bar;\n");
+      exp("let foo = bar\nas (null)", "let foo = bar;\nas(null);\n");
+      // err("let foo = (bar\nas (null))", 'Expected ")" but found "as"');
+      err("let foo = (bar\nas (null))", "Parse error");
+
+      exp("a as any ? b : c;", "a ? b : c;\n");
+      // exp("a as any ? async () => b : c;", "a ? async () => b : c;\n");
+      exp("a as any ? async () => b : c;", "a || c;\n");
+
+      exp("foo as number extends Object ? any : any;", "foo;\n");
+      exp("foo as number extends Object ? () => void : any;", "foo;\n");
+      exp(
+        "let a = b ? c : d as T extends T ? T extends T ? T : never : never ? e : f;",
+        "let a = b ? c : d ? e : f;\n",
+      );
+      err("type a = b extends c", 'Expected "?" but found end of file');
+      err("type a = b extends c extends d", "Parse error");
+      // err("type a = b extends c extends d", 'Expected "?" but found "extends"');
+      err("type a = b ? c : d", 'Expected ";" but found "?"');
+
+      exp("let foo: keyof Object = 'toString'", 'let foo = "toString";\n');
+      exp("let foo: keyof\nObject = 'toString'", 'let foo = "toString";\n');
+      exp("let foo: (keyof\nObject) = 'toString'", 'let foo = "toString";\n');
+
+      exp("type Foo = Array<<T>(x: T) => T>\n x", "x;\n");
+      // expectPrintedTSX(t, "<Foo<<T>(x: T) => T>/>", "/* @__PURE__ */ React.createElement(Foo, null);\n");
+
+      // Certain built-in types do not accept type parameters
+      exp("x as 1 < 1", "x < 1;\n");
+      exp("x as 1n < 1", "x < 1;\n");
+      exp("x as -1 < 1", "x < 1;\n");
+      exp("x as -1n < 1", "x < 1;\n");
+      exp("x as '' < 1", "x < 1;\n");
+      exp("x as `` < 1", "x < 1;\n");
+      exp("x as any < 1", "x < 1;\n");
+      exp("x as bigint < 1", "x < 1;\n");
+      exp("x as false < 1", "x < 1;\n");
+      exp("x as never < 1", "x < 1;\n");
+      exp("x as null < 1", "x < 1;\n");
+      exp("x as number < 1", "x < 1;\n");
+      exp("x as object < 1", "x < 1;\n");
+      exp("x as string < 1", "x < 1;\n");
+      exp("x as symbol < 1", "x < 1;\n");
+      exp("x as this < 1", "x < 1;\n");
+      exp("x as true < 1", "x < 1;\n");
+      exp("x as undefined < 1", "x < 1;\n");
+      exp("x as unique symbol < 1", "x < 1;\n");
+      exp("x as unknown < 1", "x < 1;\n");
+      exp("x as void < 1", "x < 1;\n");
+      err("x as Foo < 1", 'Expected ">" but found end of file');
+
+      // These keywords are valid tuple labels
+      exp("type _false = [false: string]", "");
+      exp("type _function = [function: string]", "");
+      exp("type _import = [import: string]", "");
+      exp("type _new = [new: string]", "");
+      exp("type _null = [null: string]", "");
+      exp("type _this = [this: string]", "");
+      exp("type _true = [true: string]", "");
+      exp("type _typeof = [typeof: string]", "");
+      exp("type _void = [void: string]", "");
+
+      // These keywords are invalid tuple labels
+      err("type _break = [break: string]", "Unexpected break");
+      err("type _case = [case: string]", "Unexpected case");
+      err("type _catch = [catch: string]", "Unexpected catch");
+      err("type _class = [class: string]", "Unexpected class");
+      err("type _const = [const: string]", 'Unexpected "const"');
+      err("type _continue = [continue: string]", "Unexpected continue");
+      err("type _debugger = [debugger: string]", "Unexpected debugger");
+      err("type _default = [default: string]", "Unexpected default");
+      err("type _delete = [delete: string]", "Unexpected delete");
+      err("type _do = [do: string]", "Unexpected do");
+      err("type _else = [else: string]", "Unexpected else");
+      err("type _enum = [enum: string]", "Unexpected enum");
+      err("type _export = [export: string]", "Unexpected export");
+      err("type _extends = [extends: string]", "Unexpected extends");
+      err("type _finally = [finally: string]", "Unexpected finally");
+      err("type _for = [for: string]", "Unexpected for");
+      err("type _if = [if: string]", "Unexpected if");
+      err("type _in = [in: string]", "Unexpected in");
+      err("type _instanceof = [instanceof: string]", "Unexpected instanceof");
+      err("type _return = [return: string]", "Unexpected return");
+      err("type _super = [super: string]", "Unexpected super");
+      err("type _switch = [switch: string]", "Unexpected switch");
+      err("type _throw = [throw: string]", "Unexpected throw");
+      err("type _try = [try: string]", "Unexpected try");
+      err("type _var = [var: string]", "Unexpected var");
+      err("type _while = [while: string]", "Unexpected while");
+      err("type _with = [with: string]", "Unexpected with");
+
+      // TypeScript 4.1
+      exp("let foo: `${'a' | 'b'}-${'c' | 'd'}` = 'a-c'", 'let foo = "a-c";\n');
+
+      // TypeScript 4.2
+      exp("let x: abstract new () => void = Foo", "let x = Foo;\n");
+      exp("let x: abstract new <T>() => Foo<T>", "let x;\n");
+      exp("let x: abstract new <T extends object>() => Foo<T>", "let x;\n");
+      // err("let x: abstract () => void = Foo", 'Expected ";" but found "("');
+      err("let x: abstract () => void = Foo", "Parse error");
+      // err("let x: abstract <T>() => Foo<T>", 'Expected ";" but found "("');
+      err("let x: abstract <T>() => Foo<T>", "Parse error");
+      // err("let x: abstract <T extends object>() => Foo<T>", 'Expected "?" but found ">"');
+      err("let x: abstract <T extends object>() => Foo<T>", "Parse error");
+
+      // TypeScript 4.7
+      // jsxErrorArrow := "The character \">\" is not valid inside a JSX element\n" +
+      //   "NOTE: Did you mean to escape it as \"{'>'}\" instead?\n"
+      exp("type Foo<in T> = T", "");
+      exp("type Foo<out T> = T", "");
+      exp("type Foo<in out> = T", "");
+      exp("type Foo<out out> = T", "");
+      exp("type Foo<in out out> = T", "");
+      exp("type Foo<in X, out Y> = [X, Y]", "");
+      exp("type Foo<out X, in Y> = [X, Y]", "");
+      exp("type Foo<out X, out Y extends keyof X> = [X, Y]", "");
+      // err( "type Foo<i\\u006E T> = T", "Expected identifier but found \"i\\\\u006E\"\n")
+      err("type Foo<i\\u006E T> = T", "Parse error");
+      // err( "type Foo<ou\\u0074 T> = T", "Expected \">\" but found \"T\"\n")
+      err("type Foo<ou\\u0074 T> = T", "Parse error");
+      // err( "type Foo<in in> = T", "The modifier \"in\" is not valid here:\nExpected identifier but found \">\"\n")
+      err("type Foo<in in> = T", "Parse error");
+      // err( "type Foo<out in> = T", "The modifier \"in\" is not valid here:\nExpected identifier but found \">\"\n")
+      err("type Foo<out in> = T", "Parse error");
+      err("type Foo<out in T> = T", 'The modifier "in" is not valid here');
+      // err( "type Foo<public T> = T", "Expected \">\" but found \"T\"\n")
+      err("type Foo<public T> = T", "Parse error");
+      err("type Foo<in out in T> = T", 'The modifier "in" is not valid here');
+      err("type Foo<in out out T> = T", 'The modifier "out" is not valid here');
+      exp("class Foo<in T> {}", "class Foo {\n}");
+      exp("class Foo<out T> {}", "class Foo {\n}");
+      exp("export default class Foo<in T> {}", "export default class Foo {\n}");
+      exp("export default class Foo<out T> {}", "export default class Foo {\n}");
+      exp("export default class <in T> {}", "export default class {\n}");
+      exp("export default class <out T> {}", "export default class {\n}");
+      exp("interface Foo<in T> {}", "");
+      exp("interface Foo<out T> {}", "");
+      exp("declare class Foo<in T> {}", "");
+      exp("declare class Foo<out T> {}", "");
+      exp("declare interface Foo<in T> {}", "");
+      exp("declare interface Foo<out T> {}", "");
+      err("function foo<in T>() {}", 'The modifier "in" is not valid here');
+      err("function foo<out T>() {}", 'The modifier "out" is not valid here');
+      err("export default function foo<in T>() {}", 'The modifier "in" is not valid here');
+      err("export default function foo<out T>() {}", 'The modifier "out" is not valid here');
+      err("export default function <in T>() {}", 'The modifier "in" is not valid here');
+      err("export default function <out T>() {}", 'The modifier "out" is not valid here');
+      // err("let foo: Foo<in T>", 'Unexpected "in"');
+      err("let foo: Foo<in T>", "Parse error");
+      // err("let foo: Foo<out T>", 'Expected ">" but found "T"');
+      err("let foo: Foo<out T>", "Parse error");
+      err("declare function foo<in T>()", 'The modifier "in" is not valid here');
+      err("declare function foo<out T>()", 'The modifier "out" is not valid here');
+      // err("declare let foo: Foo<in T>", 'Unexpected "in"');
+      err("declare let foo: Foo<in T>", "Parse error");
+      // err("declare let foo: Foo<out T>", 'Expected ">" but found "T"');
+      err("declare let foo: Foo<out T>", "Parse error");
+      exp("Foo = class <in T> {}", "Foo = class {\n}");
+      exp("Foo = class <out T> {}", "Foo = class {\n}");
+      exp("Foo = class Bar<in T> {}", "Foo = class Bar {\n}");
+      exp("Foo = class Bar<out T> {}", "Foo = class Bar {\n}");
+      err("foo = function <in T>() {}", 'The modifier "in" is not valid here');
+      err("foo = function <out T>() {}", 'The modifier "out" is not valid here');
+      err("class Foo { foo<in T>(): T {} }", 'The modifier "in" is not valid here');
+      err("class Foo { foo<out T>(): T {} }", 'The modifier "out" is not valid here');
+      err("foo = { foo<in T>(): T {} }", 'The modifier "in" is not valid here');
+      err("foo = { foo<out T>(): T {} }", 'The modifier "out" is not valid here');
+      err("<in T>() => {}", 'The modifier "in" is not valid here');
+      err("<out T>() => {}", 'The modifier "out" is not valid here');
+      err("<in T, out T>() => {}", "Parse error");
+      // err("<in T, out T>() => {}", 'The modifier "in" is not valid here:\nThe modifier "out" is not valid here');
+      err("let x: <in T>() => {}", 'The modifier "in" is not valid here');
+      err("let x: <out T>() => {}", 'The modifier "out" is not valid here');
+      err("let x: <in T, out T>() => {}", "Parse error");
+      // err("let x: <in T, out T>() => {}", 'The modifier "in" is not valid here:\nThe modifier "out" is not valid here');
+      err("let x: new <in T>() => {}", 'The modifier "in" is not valid here');
+      err("let x: new <out T>() => {}", 'The modifier "out" is not valid here');
+      err("let x: new <in T, out T>() => {}", "Parse error");
+
+      // err(
+      //   "let x: new <in T, out T>() => {}",
+      //   'The modifier "in" is not valid here:\nThe modifier "out" is not valid here',
+      // );
+      err("let x: { y<in T>(): any }", 'The modifier "in" is not valid here');
+      err("let x: { y<out T>(): any }", 'The modifier "out" is not valid here');
+      // err(
+      //   "let x: { y<in T, out T>(): any }",
+      //   'The modifier "in" is not valid here:\nThe modifier "out" is not valid here',
+      // );
+      err("let x: new <in T, out T>() => {}", "Parse error");
+
+      // expectPrintedTSX(t, "<in T></in>", "/* @__PURE__ */ React.createElement(\"in\", { T: true });\n")
+      // expectPrintedTSX(t, "<out T></out>", "/* @__PURE__ */ React.createElement(\"out\", { T: true });\n")
+      // expectPrintedTSX(t, "<in out T></in>", "/* @__PURE__ */ React.createElement(\"in\", { out: true, T: true });\n")
+      // expectPrintedTSX(t, "<out in T></out>", "/* @__PURE__ */ React.createElement(\"out\", { in: true, T: true });\n")
+      // expectPrintedTSX(t, "<in T extends={true}></in>", "/* @__PURE__ */ React.createElement(\"in\", { T: true, extends: true });\n")
+      // expectPrintedTSX(t, "<out T extends={true}></out>", "/* @__PURE__ */ React.createElement(\"out\", { T: true, extends: true });\n")
+      // expectPrintedTSX(t, "<in out T extends={true}></in>", "/* @__PURE__ */ React.createElement(\"in\", { out: true, T: true, extends: true });\n")
+      // errX(t, "<in T,>() => {}", "Expected \">\" but found \",\"\n")
+      // errX(t, "<out T,>() => {}", "Expected \">\" but found \",\"\n")
+      // errX(t, "<in out T,>() => {}", "Expected \">\" but found \",\"\n")
+      // errX(t, "<in T extends any>() => {}", jsxErrorArrow+"Unexpected end of file before a closing \"in\" tag\n<stdin>: NOTE: The opening \"in\" tag is here:\n")
+      // errX(t, "<out T extends any>() => {}", jsxErrorArrow+"Unexpected end of file before a closing \"out\" tag\n<stdin>: NOTE: The opening \"out\" tag is here:\n")
+      // errX(t, "<in out T extends any>() => {}", jsxErrorArrow+"Unexpected end of file before a closing \"in\" tag\n<stdin>: NOTE: The opening \"in\" tag is here:\n")
+      exp("class Container { get data(): typeof this.#data {} }", "class Container {\n  get data() {\n  }\n}");
+      exp("const a: typeof this.#a = 1;", "const a = 1;\n");
+      err("const a: typeof #a = 1;", 'Expected identifier but found "#a"');
+
+      // TypeScript 5.0
+      exp("class Foo<const T> {}", "class Foo {\n}");
+      exp("class Foo<const T extends X> {}", "class Foo {\n}");
+      exp("Foo = class <const T> {}", "Foo = class {\n}");
+      exp("Foo = class Bar<const T> {}", "Foo = class Bar {\n}");
+      exp("function foo<const T>() {}", "function foo() {\n}");
+      exp("foo = function <const T>() {}", "foo = function() {\n}");
+      exp("foo = function bar<const T>() {}", "foo = function bar() {\n}");
+      exp("class Foo { bar<const T>() {} }", "class Foo {\n  bar() {\n  }\n}");
+      exp("interface Foo { bar<const T>(): T }", "");
+      exp("interface Foo { new bar<const T>(): T }", "");
+      exp("let x: { bar<const T>(): T }", "let x;\n");
+      exp("let x: { new bar<const T>(): T }", "let x;\n");
+      exp("foo = { bar<const T>() {} }", "foo = { bar() {\n} }");
+      exp("x = <const>(y)", "x = y;\n");
+      exp("export let f = <const T>() => {}", "export let f = () => {\n};\n");
+      exp("export let f = <const const T>() => {}", "export let f = () => {\n};\n");
+      exp("export let f = async <const T>() => {}", "export let f = async () => {\n};\n");
+      exp("export let f = async <const const T>() => {}", "export let f = async () => {\n};\n");
+      exp("let x: <const T>() => T = y", "let x = y;\n");
+      exp("let x: <const const T>() => T = y", "let x = y;\n");
+      exp("let x: new <const T>() => T = y", "let x = y;\n");
+      exp("let x: new <const const T>() => T = y", "let x = y;\n");
+      err("type Foo<const T> = T", 'The modifier "const" is not valid here');
+      err("interface Foo<const T> {}", 'The modifier "const" is not valid here');
+      err("let x: <const>() => {}", "Parse error");
+      // err("let x: <const>() => {}", 'Expected identifier but found ">"');
+      err("let x: new <const>() => {}", "Parse error");
+      // err("let x: new <const>() => {}", 'Expected identifier but found ">"');
+      // err("let x: Foo<const T>", 'Expected ">" but found "T"');
+      err("let x: Foo<const T>", "Parse error");
+      err("x = <T,>(y)", 'Expected "=>" but found end of file');
+      err("x = <const T>(y)", 'Expected "=>" but found end of file');
+      err("x = <T extends X>(y)", 'Expected "=>" but found end of file');
+      err("x = async <T,>(y)", 'Expected "=>" but found end of file');
+      err("x = async <const T>(y)", 'Expected "=>" but found end of file');
+      err("x = async <T extends X>(y)", 'Expected "=>" but found end of file');
+      err("x = <const const>() => {}", 'Expected ">" but found "const"');
+      exp("class Foo<const const const T> {}", "class Foo {\n}");
+      exp("class Foo<const in out T> {}", "class Foo {\n}");
+      exp("class Foo<in const out T> {}", "class Foo {\n}");
+      exp("class Foo<in out const T> {}", "class Foo {\n}");
+      exp("class Foo<const in const out const T> {}", "class Foo {\n}");
+      // err("class Foo<in const> {}", 'Expected identifier but found ">"');
+      err("class Foo<in const> {}", "Parse error");
+      // err("class Foo<out const> {}", 'Expected identifier but found ">"');
+      err("class Foo<out const> {}", "Parse error");
+      // err("class Foo<in out const> {}", 'Expected identifier but found ">"');
+      err("class Foo<in out const> {}", "Parse error");
+      // expectPrintedTSX(t, "<const>(x)</const>", '/* @__PURE__ */ React.createElement("const", null, "(x)");\n');
+      // expectPrintedTSX(t, "<const const/>", '/* @__PURE__ */ React.createElement("const", { const: true });\n');
+      // expectPrintedTSX(t, "<const const></const>", '/* @__PURE__ */ React.createElement("const", { const: true });\n');
+      // expectPrintedTSX(t, "<const T/>", '/* @__PURE__ */ React.createElement("const", { T: true });\n');
+      // expectPrintedTSX(t, "<const T></const>", '/* @__PURE__ */ React.createElement("const", { T: true });\n');
+      // expectPrintedTSX(
+      //   t,
+      //   "<const T>(y) = {}</const>",
+      //   '/* @__PURE__ */ React.createElement("const", { T: true }, "(y) = ");\n',
+      // );
+      // expectPrintedTSX(
+      //   t,
+      //   "<const T extends/>",
+      //   '/* @__PURE__ */ React.createElement("const", { T: true, extends: true });\n',
+      // );
+      // expectPrintedTSX(
+      //   t,
+      //   "<const T extends></const>",
+      //   '/* @__PURE__ */ React.createElement("const", { T: true, extends: true });\n',
+      // );
+      // expectPrintedTSX(
+      //   t,
+      //   "<const T extends>(y) = {}</const>",
+      //   '/* @__PURE__ */ React.createElement("const", { T: true, extends: true }, "(y) = ");\n',
+      // );
+      // expectPrintedTSX(t, "<const T,>() => {}", "() => {\n};\n");
+      // expectPrintedTSX(t, "<const T, X>() => {}", "() => {\n};\n");
+      // expectPrintedTSX(t, "<const T, const X>() => {}", "() => {\n};\n");
+      // expectPrintedTSX(t, "<const T, const const X>() => {}", "() => {\n};\n");
+      // expectPrintedTSX(t, "<const T extends X>() => {}", "() => {\n};\n");
+      // expectPrintedTSX(t, "async <const T,>() => {}", "async () => {\n};\n");
+      // expectPrintedTSX(t, "async <const T, X>() => {}", "async () => {\n};\n");
+      // expectPrintedTSX(t, "async <const T, const X>() => {}", "async () => {\n};\n");
+      // expectPrintedTSX(t, "async <const T, const const X>() => {}", "async () => {\n};\n");
+      // expectPrintedTSX(t, "async <const T extends X>() => {}", "async () => {\n};\n");
+      // errX(
+      //   t,
+      //   "<const T>() => {}",
+      //   jsxErrorArrow +
+      //     'Unexpected end of file before a closing "const" tag\n<stdin>: NOTE: The opening "const" tag is here:\n',
+      // );
+      // errX(
+      //   t,
+      //   "<const const>() => {}",
+      //   jsxErrorArrow +
+      //     'Unexpected end of file before a closing "const" tag\n<stdin>: NOTE: The opening "const" tag is here:\n',
+      // );
+      // errX(t, "<const const T,>() => {}", 'Expected ">" but found ","');
+      // errX(
+      //   t,
+      //   "<const const T extends X>() => {}",
+      //   jsxErrorArrow +
+      //     'Unexpected end of file before a closing "const" tag\n<stdin>: NOTE: The opening "const" tag is here:\n',
+      // );
+      err("async <const T>() => {}", "Unexpected const");
+      err("async <const const>() => {}", "Unexpected const");
+
+      // TODO: why doesn't this one fail?
+      // err("async <const const T,>() => {}", "Unexpected const");
+      // err("async <const const T extends X>() => {}", "Unexpected const");
     });
 
     it("modifiers", () => {
@@ -108,7 +724,7 @@ describe("Bun.Transpiler", () => {
       exp("let x: abstract new <T>() => Foo<T>", "let x");
     });
 
-    it("types", () => {
+    it("as", () => {
       const exp = ts.expectPrinted_;
       exp("x as 1 < 1", "x < 1");
       exp("x as 1n < 1", "x < 1");
@@ -522,12 +1138,12 @@ export default class {
 export default <div>hi</div>
     `);
 
-    expect(element.includes("var jsxEl = foo.factory;")).toBe(true);
+    expect(element.includes("var $jsxEl = foo.factory;")).toBe(true);
 
     const fragment = bun.transformSync(`
 export default <>hi</>
     `);
-    expect(fragment.includes("var JSXFrag = foo.frag,")).toBe(true);
+    expect(fragment.includes("var $JSXFrag = foo.frag,")).toBe(true);
   });
 
   it("jsxFactory (one level)", () => {
@@ -562,65 +1178,65 @@ export default <>hi</>
       },
     });
     expect(bun.transformSync("export var foo = <div foo />")).toBe(
-      `export var foo = $jsx("div", {
+      `export var foo = jsxDEV("div", {
   foo: true
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var foo = <div foo={foo} />")).toBe(
-      `export var foo = $jsx("div", {
+      `export var foo = jsxDEV("div", {
   foo
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var foo = <div {...foo} />")).toBe(
-      `export var foo = $jsx("div", {
+      `export var foo = jsxDEV("div", {
   ...foo
 }, undefined, false, undefined, this);
 `,
     );
 
     expect(bun.transformSync("export var hi = <div {foo} />")).toBe(
-      `export var hi = $jsx("div", {
+      `export var hi = jsxDEV("div", {
   foo
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var hi = <div {foo.bar.baz} />")).toBe(
-      `export var hi = $jsx("div", {
+      `export var hi = jsxDEV("div", {
   baz: foo.bar.baz
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var hi = <div {foo?.bar?.baz} />")).toBe(
-      `export var hi = $jsx("div", {
+      `export var hi = jsxDEV("div", {
   baz: foo?.bar?.baz
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var hi = <div {foo['baz'].bar?.baz} />")).toBe(
-      `export var hi = $jsx("div", {
+      `export var hi = jsxDEV("div", {
   baz: foo["baz"].bar?.baz
 }, undefined, false, undefined, this);
 `,
     );
 
     // cursed
-    expect(bun.transformSync("export var hi = <div {foo[{name: () => true}.name].hi} />")).toBe(
-      `export var hi = $jsx("div", {
-  hi: foo[{ name: () => true }.name].hi
+    expect(bun.transformSync("export var hi = <div {foo[() => true].hi} />")).toBe(
+      `export var hi = jsxDEV("div", {
+  hi: foo[() => true].hi
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var hi = <Foo {process.env.NODE_ENV} />")).toBe(
-      `export var hi = $jsx(Foo, {
-  NODE_ENV: "development"
-}, undefined, false, undefined, this);
-`,
+      `export var hi = jsxDEV(Foo, {
+      NODE_ENV: "development"
+    }, undefined, false, undefined, this);
+    `,
     );
 
     expect(bun.transformSync("export var hi = <div {foo['baz'].bar?.baz} />")).toBe(
-      `export var hi = $jsx("div", {
+      `export var hi = jsxDEV("div", {
   baz: foo["baz"].bar?.baz
 }, undefined, false, undefined, this);
 `,
@@ -633,22 +1249,22 @@ export default <>hi</>
     }
 
     expect(bun.transformSync("export var hi = <div {Foo}><Foo></Foo></div>")).toBe(
-      `export var hi = $jsx("div", {
+      `export var hi = jsxDEV("div", {
   Foo,
-  children: $jsx(Foo, {}, undefined, false, undefined, this)
+  children: jsxDEV(Foo, {}, undefined, false, undefined, this)
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var hi = <div {Foo}><Foo></Foo></div>")).toBe(
-      `export var hi = $jsx("div", {
+      `export var hi = jsxDEV("div", {
   Foo,
-  children: $jsx(Foo, {}, undefined, false, undefined, this)
+  children: jsxDEV(Foo, {}, undefined, false, undefined, this)
 }, undefined, false, undefined, this);
 `,
     );
 
     expect(bun.transformSync("export var hi = <div>{123}}</div>").trim()).toBe(
-      `export var hi = $jsx("div", {
+      `export var hi = jsxDEV("div", {
   children: [
     123,
     "}"
@@ -1536,7 +2152,7 @@ class Foo {
 
   describe("simplification", () => {
     it("unary operator", () => {
-      expectPrinted("a = !(b, c)", "a = (b , !c)");
+      expectPrinted("a = !(b, c)", "a = (b, !c)");
     });
 
     it("const inlining", () => {
@@ -2326,6 +2942,19 @@ console.log(foo, array);
       expect(exports[2]).toBe("loader");
       expect(exports[1]).toBe("default");
       expect(exports).toHaveLength(3);
+    });
+  });
+
+  describe("edge cases", () => {
+    it("import statement with quoted specifier", () => {
+      expectPrinted_(`import { "x.y" as xy } from "bar";`, `import {"x.y" as xy} from "bar"`);
+    });
+
+    it('`str` + "``"', () => {
+      expectPrinted_('const x = `str` + "``";', "const x = `str\\`\\``");
+      expectPrinted_('const x = `` + "`";', "const x = `\\``");
+      expectPrinted_('const x = `` + "``";', "const x = `\\`\\``");
+      expectPrinted_('const x = "``" + ``;', 'const x = "``"');
     });
   });
 });

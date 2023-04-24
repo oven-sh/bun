@@ -1,9 +1,9 @@
 const std = @import("std");
 const expectString = std.testing.expectEqualStrings;
 const expect = std.testing.expect;
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const unicode = std.unicode;
-const default_allocator = @import("bun").default_allocator;
+const default_allocator = @import("root").bun.default_allocator;
 const string = @import("string_types.zig").string;
 const CodePoint = @import("string_types.zig").CodePoint;
 const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
@@ -193,15 +193,15 @@ pub const Keywords = ComptimeStringMap(T, .{
 });
 
 pub const StrictModeReservedWords = ComptimeStringMap(void, .{
-    .{ "implements", void{} },
-    .{ "interface", void{} },
-    .{ "let", void{} },
-    .{ "package", void{} },
-    .{ "private", void{} },
-    .{ "protected", void{} },
-    .{ "public", void{} },
-    .{ "static", void{} },
-    .{ "yield", void{} },
+    .{ "implements", {} },
+    .{ "interface", {} },
+    .{ "let", {} },
+    .{ "package", {} },
+    .{ "private", {} },
+    .{ "protected", {} },
+    .{ "public", {} },
+    .{ "static", {} },
+    .{ "yield", {} },
 });
 
 pub const StrictModeReservedWordsRemap = ComptimeStringMap(string, .{

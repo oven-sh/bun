@@ -94,9 +94,7 @@ test("peek", () => {
   // If we peek a rejected promise, it:
   // - returns the error
   // - does not mark the promise as handled
-  const rejected = Promise.reject(
-    new Error("Successfully tested promise rejection"),
-  );
+  const rejected = Promise.reject(new Error("Successfully tested promise rejection"));
   expect(peek(rejected).message).toBe("Successfully tested promise rejection");
 });
 ```
@@ -128,7 +126,7 @@ const currentFile = import.meta.url;
 Bun.openInEditor(currentFile);
 ```
 
-You can override this via the `debug.editor` setting in your [`bunfig.toml`](/docs/project/configuration)
+You can override this via the `debug.editor` setting in your [`bunfig.toml`](/docs/runtime/configuration)
 
 ```toml-diff#bunfig.toml
 + [debug]
@@ -142,5 +140,5 @@ Bun.openInEditor(import.meta.url, {
   editor: "vscode", // or "subl"
   line: 10,
   column: 5,
-})
+});
 ```

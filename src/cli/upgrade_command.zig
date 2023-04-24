@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -11,7 +11,7 @@ const C = bun.C;
 const std = @import("std");
 
 const lex = bun.js_lexer;
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 
 const options = @import("../options.zig");
 const js_parser = bun.js_parser;
@@ -28,16 +28,16 @@ const bundler = bun.bundler;
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
-const HTTP = @import("bun").HTTP;
+const HTTP = @import("root").bun.HTTP;
 const ParseJSON = @import("../json_parser.zig").ParseJSONUTF8;
 const Archive = @import("../libarchive/libarchive.zig").Archive;
 const Zlib = @import("../zlib.zig");
 const JSPrinter = bun.js_printer;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
-const clap = @import("bun").clap;
+const clap = @import("root").bun.clap;
 const Lock = @import("../lock.zig").Lock;
-const Headers = @import("bun").HTTP.Headers;
+const Headers = @import("root").bun.HTTP.Headers;
 const CopyFile = @import("../copy_file.zig");
 const NetworkThread = HTTP.NetworkThread;
 
@@ -223,7 +223,7 @@ pub const UpgradeCommand = struct {
 
         // ensure very stable memory address
         var async_http: *HTTP.AsyncHTTP = allocator.create(HTTP.AsyncHTTP) catch unreachable;
-        async_http.* = HTTP.AsyncHTTP.initSync(allocator, .GET, api_url, header_entries, headers_buf, &metadata_body, "", 60 * std.time.ns_per_min, http_proxy);
+        async_http.* = HTTP.AsyncHTTP.initSync(allocator, .GET, api_url, header_entries, headers_buf, &metadata_body, "", 60 * std.time.ns_per_min, http_proxy, null);
         if (!silent) async_http.client.progress_node = progress;
         const response = try async_http.sendSync(true);
 
@@ -382,7 +382,7 @@ pub const UpgradeCommand = struct {
     fn _exec(ctx: Command.Context) !void {
         try HTTP.HTTPThread.init();
 
-        var filesystem = try fs.FileSystem.init1(ctx.allocator, null);
+        var filesystem = try fs.FileSystem.init(null);
         var env_loader: DotEnv.Loader = brk: {
             var map = try ctx.allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(ctx.allocator);
@@ -454,7 +454,7 @@ pub const UpgradeCommand = struct {
             var zip_file_buffer = try ctx.allocator.create(MutableString);
             zip_file_buffer.* = try MutableString.init(ctx.allocator, @max(version.size, 1024));
 
-            async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, zip_url, .{}, "", zip_file_buffer, "", timeout, http_proxy);
+            async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, zip_url, .{}, "", zip_file_buffer, "", timeout, http_proxy, null);
             async_http.client.timeout = timeout;
             async_http.client.progress_node = progress;
             const response = try async_http.sendSync(true);

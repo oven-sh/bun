@@ -4,7 +4,7 @@ const Environment = @import("./env.zig");
 const string = bun.string;
 const stringZ = bun.stringZ;
 const CodePoint = bun.CodePoint;
-const bun = @import("bun");
+const bun = @import("root").bun;
 pub const joiner = @import("./string_joiner.zig");
 const log = bun.Output.scoped(.STR, true);
 
@@ -20,11 +20,11 @@ pub inline fn containsChar(self: string, char: u8) bool {
 }
 
 pub inline fn contains(self: string, str: string) bool {
-    return std.mem.indexOf(u8, self, str) != null;
+    return indexOf(self, str) != null;
 }
 
 pub fn toUTF16Literal(comptime str: []const u8) []const u16 {
-    comptime {
+    return comptime brk: {
         comptime var output: [str.len]u16 = undefined;
 
         for (str, 0..) |c, i| {
@@ -34,18 +34,15 @@ pub fn toUTF16Literal(comptime str: []const u8) []const u16 {
         const Static = struct {
             pub const literal: []const u16 = output[0..];
         };
-
-        return Static.literal;
-    }
+        break :brk Static.literal;
+    };
 }
 
 const OptionalUsize = std.meta.Int(.unsigned, @bitSizeOf(usize) - 1);
 pub fn indexOfAny(self: string, comptime str: anytype) ?OptionalUsize {
-    for (self, 0..) |c, i| {
-        inline for (str) |a| {
-            if (c == a) {
-                return @intCast(OptionalUsize, i);
-            }
+    inline for (str) |a| {
+        if (indexOfChar(self, a)) |i| {
+            return @intCast(OptionalUsize, i);
         }
     }
 
@@ -153,6 +150,79 @@ pub fn indexOfCharNeg(self: string, char: u8) i32 {
     return -1;
 }
 
+/// Format a string to an ECMAScript identifier.
+/// Unlike the string_mutable.zig version, this always allocate/copy
+pub fn fmtIdentifier(name: string) FormatValidIdentifier {
+    return FormatValidIdentifier{ .name = name };
+}
+
+/// Format a string to an ECMAScript identifier.
+/// Different implementation than string_mutable because string_mutable may avoid allocating
+/// This will always allocate
+pub const FormatValidIdentifier = struct {
+    name: string,
+    const js_lexer = @import("./js_lexer.zig");
+    pub fn format(self: FormatValidIdentifier, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        var iterator = strings.CodepointIterator.init(self.name);
+        var cursor = strings.CodepointIterator.Cursor{};
+
+        var has_needed_gap = false;
+        var needs_gap = false;
+        var start_i: usize = 0;
+
+        if (!iterator.next(&cursor)) {
+            try writer.writeAll("_");
+            return;
+        }
+
+        // Common case: no gap necessary. No allocation necessary.
+        needs_gap = !js_lexer.isIdentifierStart(cursor.c);
+        if (!needs_gap) {
+            // Are there any non-alphanumeric chars at all?
+            while (iterator.next(&cursor)) {
+                if (!js_lexer.isIdentifierContinue(cursor.c) or cursor.width > 1) {
+                    needs_gap = true;
+                    start_i = cursor.i;
+                    break;
+                }
+            }
+        }
+
+        if (needs_gap) {
+            needs_gap = false;
+            if (start_i > 0) try writer.writeAll(self.name[0..start_i]);
+            var slice = self.name[start_i..];
+            iterator = strings.CodepointIterator.init(slice);
+            cursor = strings.CodepointIterator.Cursor{};
+
+            while (iterator.next(&cursor)) {
+                if (js_lexer.isIdentifierContinue(cursor.c) and cursor.width == 1) {
+                    if (needs_gap) {
+                        try writer.writeAll("_");
+                        needs_gap = false;
+                        has_needed_gap = true;
+                    }
+                    try writer.writeAll(slice[cursor.i .. cursor.i + @as(u32, cursor.width)]);
+                } else if (!needs_gap) {
+                    needs_gap = true;
+                    // skip the code point, replace it with a single _
+                }
+            }
+
+            // If it ends with an emoji
+            if (needs_gap) {
+                try writer.writeAll("_");
+                needs_gap = false;
+                has_needed_gap = true;
+            }
+
+            return;
+        }
+
+        try writer.writeAll(self.name);
+    }
+};
+
 pub fn indexOfSigned(self: string, str: string) i32 {
     const i = std.mem.indexOf(u8, self, str) orelse return -1;
     return @intCast(i32, i);
@@ -182,7 +252,9 @@ pub inline fn indexOf(self: string, str: string) ?usize {
 
     const start = bun.C.memmem(self_ptr, self_len, str_ptr, str_len) orelse return null;
 
-    return @ptrToInt(start) - @ptrToInt(self_ptr);
+    const i = @ptrToInt(start) - @ptrToInt(self_ptr);
+    std.debug.assert(i < self_len);
+    return @intCast(usize, i);
 }
 
 /// Writer that checks each string of bytes as they are written to it.
@@ -671,6 +743,25 @@ pub fn endsWithAny(self: string, str: string) bool {
 
     return false;
 }
+
+pub fn quotedWriter(writer: anytype, self: string) !void {
+    var remain = self;
+    if (strings.containsNewlineOrNonASCIIOrQuote(remain)) {
+        try bun.js_printer.writeJSONString(self, @TypeOf(writer), writer, strings.Encoding.utf8);
+    } else {
+        try writer.writeAll("\"");
+        try writer.writeAll(self);
+        try writer.writeAll("\"");
+    }
+}
+
+pub const QuotedFormatter = struct {
+    text: []const u8,
+
+    pub fn format(this: QuotedFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try strings.quotedWriter(writer, this.text);
+    }
+};
 
 pub fn quotedAlloc(allocator: std.mem.Allocator, self: string) !string {
     var count: usize = 0;
@@ -1867,7 +1958,7 @@ pub fn elementLengthLatin1IntoUTF8(comptime Type: type, latin1_: Type) usize {
     return latin1_.len + total_non_ascii_count;
 }
 
-const JSC = @import("bun").JSC;
+const JSC = @import("root").bun.JSC;
 
 pub fn copyLatin1IntoUTF16(comptime Buffer: type, buf_: Buffer, comptime Type: type, latin1_: Type) EncodeIntoResult {
     var buf = buf_;
@@ -1981,7 +2072,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
             }
 
             if (total == len) {
-                return .{ .original = void{} };
+                return .{ .original = {} };
             }
 
             var output = allo.alloc(u8, total) catch unreachable;
@@ -2002,7 +2093,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
             '\'' => Escaped(u8){ .static = "&#x27;" },
             '<' => Escaped(u8){ .static = "&lt;" },
             '>' => Escaped(u8){ .static = "&gt;" },
-            else => Escaped(u8){ .original = void{} },
+            else => Escaped(u8){ .original = {} },
         },
         2 => {
             const first: []const u8 = switch (latin1[0]) {
@@ -2243,7 +2334,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
 
             if (!any_needs_escape) {
                 if (comptime Environment.allow_assert) std.debug.assert(buf.capacity == 0);
-                return Escaped(u8){ .original = void{} };
+                return Escaped(u8){ .original = {} };
             }
 
             return Escaped(u8){ .allocated = try buf.toOwnedSlice() };
@@ -2961,12 +3052,12 @@ pub const max_16_ascii = @splat(ascii_vector_size, @as(u8, 127));
 pub const min_16_ascii = @splat(ascii_vector_size, @as(u8, 0x20));
 pub const max_u16_ascii = @splat(ascii_u16_vector_size, @as(u16, 127));
 pub const min_u16_ascii = @splat(ascii_u16_vector_size, @as(u16, 0x20));
-pub const AsciiVector = std.meta.Vector(ascii_vector_size, u8);
-pub const AsciiVectorSmall = std.meta.Vector(8, u8);
-pub const AsciiVectorU1 = std.meta.Vector(ascii_vector_size, u1);
-pub const AsciiVectorU1Small = std.meta.Vector(8, u1);
-pub const AsciiVectorU16U1 = std.meta.Vector(ascii_u16_vector_size, u1);
-pub const AsciiU16Vector = std.meta.Vector(ascii_u16_vector_size, u16);
+pub const AsciiVector = @Vector(ascii_vector_size, u8);
+pub const AsciiVectorSmall = @Vector(8, u8);
+pub const AsciiVectorU1 = @Vector(ascii_vector_size, u1);
+pub const AsciiVectorU1Small = @Vector(8, u1);
+pub const AsciiVectorU16U1 = @Vector(ascii_u16_vector_size, u1);
+pub const AsciiU16Vector = @Vector(ascii_u16_vector_size, u16);
 pub const max_4_ascii = @splat(4, @as(u8, 127));
 pub fn isAllASCII(slice: []const u8) bool {
     if (bun.FeatureFlags.use_simdutf)
@@ -3204,6 +3295,41 @@ pub fn indexOfNewlineOrNonASCIICheckStart(slice_: []const u8, offset: u32, compt
     return null;
 }
 
+pub fn containsNewlineOrNonASCIIOrQuote(slice_: []const u8) bool {
+    const slice = slice_;
+    var remaining = slice;
+
+    if (remaining.len == 0)
+        return false;
+
+    if (comptime Environment.enableSIMD) {
+        while (remaining.len >= ascii_vector_size) {
+            const vec: AsciiVector = remaining[0..ascii_vector_size].*;
+            const cmp = @bitCast(AsciiVectorU1, (vec > max_16_ascii)) | @bitCast(AsciiVectorU1, (vec < min_16_ascii)) |
+                @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '\r'))) |
+                @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '\n'))) |
+                @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '"')));
+
+            if (@reduce(.Max, cmp) > 0) {
+                return true;
+            }
+
+            remaining = remaining[ascii_vector_size..];
+        }
+
+        if (comptime Environment.allow_assert) std.debug.assert(remaining.len < ascii_vector_size);
+    }
+
+    for (remaining) |*char_| {
+        const char = char_.*;
+        if (char > 127 or char < 0x20 or char == '\n' or char == '\r' or char == '"') {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 pub fn indexOfNeedsEscape(slice: []const u8) ?u32 {
     var remaining = slice;
     if (remaining.len == 0)
@@ -3262,34 +3388,15 @@ pub fn indexOfCharZ(sliceZ: [:0]const u8, char: u8) ?u63 {
 }
 
 pub fn indexOfChar(slice: []const u8, char: u8) ?u32 {
-    var remaining = slice;
-    if (remaining.len == 0)
+    if (slice.len == 0)
         return null;
 
-    if (remaining[0] == char)
-        return 0;
+    const ptr = bun.C.memchr(slice.ptr, char, slice.len) orelse return null;
+    const i = @ptrToInt(ptr) - @ptrToInt(slice.ptr);
+    std.debug.assert(i < slice.len);
+    std.debug.assert(slice[i] == char);
 
-    if (comptime Environment.enableSIMD) {
-        while (remaining.len >= ascii_vector_size) {
-            const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-            const cmp = vec == @splat(ascii_vector_size, char);
-
-            if (@reduce(.Max, @bitCast(AsciiVectorU1, cmp)) > 0) {
-                const bitmask = @bitCast(AsciiVectorInt, cmp);
-                const first = @ctz(bitmask);
-                return @intCast(u32, @as(u32, first) + @intCast(u32, slice.len - remaining.len));
-            }
-            remaining = remaining[ascii_vector_size..];
-        }
-    }
-
-    for (remaining, 0..) |c, i| {
-        if (c == char) {
-            return @truncate(u32, i + (slice.len - remaining.len));
-        }
-    }
-
-    return null;
+    return @truncate(u32, i);
 }
 
 test "indexOfChar" {
@@ -3891,24 +3998,50 @@ pub fn join(slices: []const string, delimiter: string, allocator: std.mem.Alloca
     return try std.mem.join(allocator, delimiter, slices);
 }
 
+pub fn order(a: []const u8, b: []const u8) std.math.Order {
+    const len = @min(a.len, b.len);
+    const cmp = bun.C.memcmp(a.ptr, b.ptr, len);
+    return switch (std.math.sign(cmp)) {
+        0 => std.math.order(a.len, b.len),
+        1 => .gt,
+        -1 => .lt,
+        else => unreachable,
+    };
+}
+
 pub fn cmpStringsAsc(_: void, a: string, b: string) bool {
-    return std.mem.order(u8, a, b) == .lt;
+    return order(a, b) == .lt;
 }
 
 pub fn cmpStringsDesc(_: void, a: string, b: string) bool {
-    return std.mem.order(u8, a, b) == .gt;
+    return order(a, b) == .gt;
 }
 
 const sort_asc = std.sort.asc(u8);
 const sort_desc = std.sort.desc(u8);
 
 pub fn sortAsc(in: []string) void {
+    // TODO: experiment with simd to see if it's faster
     std.sort.sort([]const u8, in, {}, cmpStringsAsc);
 }
 
 pub fn sortDesc(in: []string) void {
+    // TODO: experiment with simd to see if it's faster
     std.sort.sort([]const u8, in, {}, cmpStringsDesc);
 }
+
+pub const StringArrayByIndexSorter = struct {
+    keys: []const []const u8,
+    pub fn lessThan(sorter: *const @This(), a: usize, b: usize) bool {
+        return strings.order(sorter.keys[a], sorter.keys[b]) == .lt;
+    }
+
+    pub fn init(keys: []const []const u8) @This() {
+        return .{
+            .keys = keys,
+        };
+    }
+};
 
 pub fn isASCIIHexDigit(c: u8) bool {
     return std.ascii.isHex(c);
@@ -4299,4 +4432,111 @@ pub fn leftHasAnyInRight(to_check: []const string, against: []const string) bool
         }
     }
     return false;
+}
+
+pub fn hasPrefixWithWordBoundary(input: []const u8, comptime prefix: []const u8) bool {
+    if (hasPrefixComptime(input, prefix)) {
+        if (input.len == prefix.len) return true;
+
+        const next = input[prefix.len..];
+        var bytes: [4]u8 = .{
+            next[0],
+            if (next.len > 1) next[1] else 0,
+            if (next.len > 2) next[2] else 0,
+            if (next.len > 3) next[3] else 0,
+        };
+
+        if (!bun.js_lexer.isIdentifierContinue(decodeWTF8RuneT(&bytes, wtf8ByteSequenceLength(next[0]), i32, -1))) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+pub fn concatWithLength(
+    allocator: std.mem.Allocator,
+    args: []const string,
+    length: usize,
+) !string {
+    var out = try allocator.alloc(u8, length);
+    var remain = out;
+    for (args) |arg| {
+        @memcpy(remain.ptr, arg.ptr, arg.len);
+        remain = remain[arg.len..];
+    }
+    std.debug.assert(remain.len == 0); // all bytes should be used
+    return out;
+}
+
+pub fn concat(
+    allocator: std.mem.Allocator,
+    args: []const string,
+) !string {
+    var length: usize = 0;
+    for (args) |arg| {
+        length += arg.len;
+    }
+    return concatWithLength(allocator, args, length);
+}
+
+pub fn concatIfNeeded(
+    allocator: std.mem.Allocator,
+    dest: *[]const u8,
+    args: []const string,
+    interned_strings_to_check: []const string,
+) !void {
+    const total_length: usize = brk: {
+        var length: usize = 0;
+        for (args) |arg| {
+            length += arg.len;
+        }
+        break :brk length;
+    };
+
+    if (total_length == 0) {
+        dest.* = "";
+        return;
+    }
+
+    if (total_length < 1024) {
+        var stack = std.heap.stackFallback(1024, allocator);
+        const stack_copy = concatWithLength(stack.get(), args, total_length) catch unreachable;
+        for (interned_strings_to_check) |interned| {
+            if (eqlLong(stack_copy, interned, true)) {
+                dest.* = interned;
+                return;
+            }
+        }
+    }
+
+    const is_needed = brk: {
+        var out = dest.*;
+        var remain = out;
+
+        for (args) |arg| {
+            if (args.len > remain.len) {
+                break :brk true;
+            }
+
+            if (eqlLong(remain[0..args.len], arg, true)) {
+                remain = remain[args.len..];
+            } else {
+                break :brk true;
+            }
+        }
+
+        break :brk false;
+    };
+
+    if (!is_needed) return;
+
+    var buf = try allocator.alloc(u8, total_length);
+    dest.* = buf;
+    var remain = buf[0..];
+    for (args) |arg| {
+        @memcpy(remain.ptr, arg.ptr, arg.len);
+        remain = remain[arg.len..];
+    }
+    std.debug.assert(remain.len == 0);
 }

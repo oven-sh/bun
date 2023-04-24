@@ -1,7 +1,7 @@
 const std = @import("std");
 const os = std.os;
 const math = std.math;
-const bun = @import("bun");
+const bun = @import("root").bun;
 
 pub const CopyFileRangeError = error{
     FileTooBig,
@@ -64,7 +64,7 @@ pub fn copyFile(fd_in: os.fd_t, fd_out: os.fd_t) CopyFileError!void {
     }
 }
 
-const Platform = @import("bun").analytics.GenerateHeader.GeneratePlatform;
+const Platform = @import("root").bun.analytics.GenerateHeader.GeneratePlatform;
 
 var can_use_copy_file_range = std.atomic.Atomic(i32).init(0);
 fn canUseCopyFileRangeSyscall() bool {

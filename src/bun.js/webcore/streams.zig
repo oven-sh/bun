@@ -1,25 +1,25 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
-const bun = @import("bun");
+const bun = @import("root").bun;
 const RequestContext = @import("../../http.zig").RequestContext;
 const MimeType = @import("../../http.zig").MimeType;
 const ZigURL = @import("../../url.zig").URL;
-const HTTPClient = @import("bun").HTTP;
+const HTTPClient = @import("root").bun.HTTP;
 const NetworkThread = HTTPClient.NetworkThread;
 const AsyncIO = NetworkThread.AsyncIO;
-const JSC = @import("bun").JSC;
+const JSC = @import("root").bun.JSC;
 const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
 const FetchHeaders = JSC.FetchHeaders;
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const SystemError = JSC.SystemError;
-const Output = @import("bun").Output;
-const MutableString = @import("bun").MutableString;
-const strings = @import("bun").strings;
-const string = @import("bun").string;
-const default_allocator = @import("bun").default_allocator;
-const FeatureFlags = @import("bun").FeatureFlags;
+const Output = @import("root").bun.Output;
+const MutableString = @import("root").bun.MutableString;
+const strings = @import("root").bun.strings;
+const string = @import("root").bun.string;
+const default_allocator = @import("root").bun.default_allocator;
+const FeatureFlags = @import("root").bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
 const NewClass = @import("../base.zig").NewClass;
@@ -40,9 +40,9 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const VirtualMachine = JSC.VirtualMachine;
 const Task = JSC.Task;
 const JSPrinter = bun.js_printer;
-const picohttp = @import("bun").picohttp;
+const picohttp = @import("root").bun.picohttp;
 const StringJoiner = @import("../../string_joiner.zig");
-const uws = @import("bun").uws;
+const uws = @import("root").bun.uws;
 const Blob = JSC.WebCore.Blob;
 const Response = JSC.WebCore.Response;
 const Request = JSC.WebCore.Request;
@@ -1664,7 +1664,7 @@ pub const FileSink = struct {
         }
 
         if (this.requested_end or this.done)
-            return .{ .result = void{} };
+            return .{ .result = {} };
 
         this.requested_end = true;
 
@@ -2155,7 +2155,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             }
 
             defer {
-                if (comptime @hasField(SinkType, "done") and this.sink.done) {
+                if ((comptime @hasField(SinkType, "done")) and this.sink.done) {
                     callframe.this().unprotect();
                 }
             }
@@ -2216,8 +2216,10 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             }
 
             defer {
-                if (comptime @hasField(SinkType, "done") and this.sink.done) {
-                    callframe.this().unprotect();
+                if (comptime @hasField(SinkType, "done")) {
+                    if (this.sink.done) {
+                        callframe.this().unprotect();
+                    }
                 }
             }
 
@@ -3226,7 +3228,7 @@ pub const ByteStream = struct {
 
     pub fn onStart(this: *@This()) StreamStart {
         if (this.has_received_last_chunk and this.buffer.items.len == 0) {
-            return .{ .empty = void{} };
+            return .{ .empty = {} };
         }
 
         if (this.has_received_last_chunk) {
@@ -3234,7 +3236,7 @@ pub const ByteStream = struct {
         }
 
         if (this.highWaterMark == 0) {
-            return .{ .ready = void{} };
+            return .{ .ready = {} };
         }
 
         return .{ .chunk_size = @max(this.highWaterMark, std.mem.page_size) };
@@ -3412,7 +3414,7 @@ pub const ByteStream = struct {
 
         if (this.has_received_last_chunk) {
             return .{
-                .done = void{},
+                .done = {},
             };
         }
 

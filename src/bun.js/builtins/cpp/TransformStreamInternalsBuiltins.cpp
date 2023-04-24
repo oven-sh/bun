@@ -37,13 +37,10 @@
 #include "TransformStreamInternalsBuiltins.h"
 
 #include "WebCoreJSClientData.h"
-#include <JavaScriptCore/HeapInlines.h>
 #include <JavaScriptCore/IdentifierInlines.h>
 #include <JavaScriptCore/ImplementationVisibility.h>
 #include <JavaScriptCore/Intrinsic.h>
-#include <JavaScriptCore/JSCJSValueInlines.h>
-#include <JavaScriptCore/JSCellInlines.h>
-#include <JavaScriptCore/StructureInlines.h>
+#include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/VM.h>
 
 namespace WebCore {

@@ -1,4 +1,4 @@
-const JSC = @import("bun").JSC;
+const JSC = @import("root").bun.JSC;
 
 pub const SIMDUTFResult = extern struct {
     status: Status,

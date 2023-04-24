@@ -1,6 +1,6 @@
 const Fs = @import("./fs.zig");
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -577,7 +577,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                         }
 
                         var all_events = watchevents[0..watch_event_id];
-                        std.sort.sort(WatchEvent, all_events, void{}, WatchEvent.sortByIndex);
+                        std.sort.sort(WatchEvent, all_events, {}, WatchEvent.sortByIndex);
 
                         var last_event_index: usize = 0;
                         var last_event_id: INotify.EventListIndex = std.math.maxInt(INotify.EventListIndex);

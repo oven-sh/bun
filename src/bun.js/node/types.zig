@@ -1,10 +1,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const strings = bun.strings;
 const string = bun.string;
-const AsyncIO = @import("bun").AsyncIO;
-const JSC = @import("bun").JSC;
+const AsyncIO = @import("root").bun.AsyncIO;
+const JSC = @import("root").bun.JSC;
 const PathString = JSC.PathString;
 const Environment = bun.Environment;
 const C = bun.C;
@@ -12,7 +12,7 @@ const Syscall = @import("./syscall.zig");
 const os = std.os;
 const Buffer = JSC.MarkedArrayBuffer;
 const IdentityContext = @import("../../identity_context.zig").IdentityContext;
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const Fs = @import("../../fs.zig");
 const URL = @import("../../url.zig").URL;
 const Shimmer = @import("../bindings/shimmer.zig").Shimmer;
@@ -1556,9 +1556,9 @@ pub const Path = struct {
         const base_slice = path.slice();
 
         const out = if (isWindows)
-            std.fs.path.dirnameWindows(base_slice) orelse "C:\\"
+            std.fs.path.dirnameWindows(base_slice) orelse "."
         else
-            std.fs.path.dirnamePosix(base_slice) orelse "/";
+            std.fs.path.dirnamePosix(base_slice) orelse ".";
 
         return JSC.ZigString.init(out).toValueGC(globalThis);
     }

@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const JSC = bun.JSC;
 const Encoder = JSC.WebCore.Encoder;
 

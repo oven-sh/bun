@@ -527,13 +527,12 @@ declare module "net" {
    * This class is used to create a TCP or `IPC` server.
    * @since v0.1.90
    */
-  // change back to class once implemented
-  interface Server extends EventEmitter {
-    // constructor(connectionListener?: (socket: Socket) => void);
-    // constructor(
-    //   options?: ServerOpts,
-    //   connectionListener?: (socket: Socket) => void,
-    // );
+  class Server extends EventEmitter {
+    constructor(connectionListener?: (socket: Socket) => void);
+    constructor(
+      options?: ServerOpts,
+      connectionListener?: (socket: Socket) => void,
+    );
     /**
      * Start a server listening for connections. A `net.Server` can be a TCP or
      * an `IPC` server depending on what it listens to.
@@ -667,8 +666,8 @@ declare module "net" {
      * with `child_process.fork()`.
      * @since v0.2.0
      */
-    // maxConnections: number;
-    // connections: number;
+    maxConnections: number;
+    connections: number;
     /**
      * Indicates whether or not the server is listening for connections.
      * @since v5.7.0
@@ -864,11 +863,11 @@ declare module "net" {
    * @since v0.5.0
    * @param connectionListener Automatically set as a listener for the {@link 'connection'} event.
    */
-  // function createServer(connectionListener?: (socket: Socket) => void): Server;
-  // function createServer(
-  //   options?: ServerOpts,
-  //   connectionListener?: (socket: Socket) => void,
-  // ): Server;
+  function createServer(connectionListener?: (socket: Socket) => void): Server;
+  function createServer(
+    options?: ServerOpts,
+    connectionListener?: (socket: Socket) => void,
+  ): Server;
   /**
    * Aliases to {@link createConnection}.
    *

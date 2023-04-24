@@ -1,4 +1,4 @@
-const BoringSSL = @import("bun").BoringSSL;
+const BoringSSL = @import("root").bun.BoringSSL;
 const std = @import("std");
 pub const bun = @import("./bun.zig");
 

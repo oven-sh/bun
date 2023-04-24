@@ -1,6 +1,6 @@
 Spawn child processes with `Bun.spawn` or `Bun.spawnSync`.
 
-## Spawn a process
+## Spawn a process (`Bun.spawn()`)
 
 Provide a command as an array of strings. The result of `Bun.spawn()` is a `Bun.Subprocess` object.
 
@@ -28,9 +28,7 @@ By default, the input stream of the subprocess is undefined; it can be configure
 
 ```ts
 const proc = Bun.spawn(["cat"], {
-  stdin: await fetch(
-    "https://raw.githubusercontent.com/oven-sh/bun/main/examples/hashing.js",
-  ),
+  stdin: await fetch("https://raw.githubusercontent.com/oven-sh/bun/main/examples/hashing.js"),
 });
 
 const text = await new Response(proc.stdout).text();
@@ -89,17 +87,17 @@ const proc = Bun.spawn(["cat"], {
 });
 
 // enqueue string data
-proc.stdin!.write("hello");
+proc.stdin.write("hello");
 
 // enqueue binary data
 const enc = new TextEncoder();
-proc.stdin!.write(enc.encode(" world!"));
+proc.stdin.write(enc.encode(" world!"));
 
 // send buffered data
-proc.stdin!.flush();
+proc.stdin.flush();
 
 // close the input stream
-proc.stdin!.end();
+proc.stdin.end();
 ```
 
 ## Output streams
@@ -183,7 +181,7 @@ const proc = Bun.spawn(["echo", "hello"]);
 proc.unref();
 ```
 
-## Blocking API
+## Blocking API (`Bun.spawnSync()`)
 
 Bun provides a synchronous equivalent of `Bun.spawn` called `Bun.spawnSync`. This is a blocking API that supports the same inputs and parameters as `Bun.spawn`. It returns a `SyncSubprocess` object, which differs from `Subprocess` in a few ways.
 
@@ -194,7 +192,7 @@ Bun provides a synchronous equivalent of `Bun.spawn` called `Bun.spawnSync`. Thi
 ```ts
 const proc = Bun.spawnSync(["echo", "hello"]);
 
-console.log(proc.stdout!.toString());
+console.log(proc.stdout.toString());
 // => "hello\n"
 ```
 
@@ -227,55 +225,58 @@ spawnSync echo hi    1.47 ms/iter     (1.14 ms … 2.64 ms)   1.57 ms   2.37 ms 
 
 ## Reference
 
+A simple reference of the Spawn API and types are shown below. The real types have complex generics to strongly type the `Subprocess` streams with the options passed to `Bun.spawn` and `Bun.spawnSync`. For full details, find these types as defined [bun.d.ts](https://github.com/oven-sh/bun/blob/main/packages/bun-types/bun.d.ts).
+
 ```ts
 interface Bun {
-  spawn(command: string[], options?: SpawnOptions): Subprocess;
-  spawnSync(command: string[], options?: SpawnOptions): SyncSubprocess;
+  spawn(command: string[], options?: SpawnOptions.OptionsObject): Subprocess;
+  spawnSync(command: string[], options?: SpawnOptions.OptionsObject): SyncSubprocess;
+
+  spawn(options: { cmd: string[] } & SpawnOptions.OptionsObject): Subprocess;
+  spawnSync(options: { cmd: string[] } & SpawnOptions.OptionsObject): SyncSubprocess;
 }
 
-interface SpawnOptions {
-  cwd?: string;
-  env?: Record<string, string>;
-  stdin?:
+namespace SpawnOptions {
+  interface OptionsObject {
+    cwd?: string;
+    env?: Record<string, string>;
+    stdin?: SpawnOptions.Readable;
+    stdout?: SpawnOptions.Writable;
+    stderr?: SpawnOptions.Writable;
+    onExit?: (proc: Subprocess, exitCode: number | null, signalCode: string | null, error: Error | null) => void;
+  }
+
+  type Readable =
     | "pipe"
     | "inherit"
     | "ignore"
-    | ReadableStream
+    | null // equivalent to "ignore"
+    | undefined // to use default
     | BunFile
+    | ArrayBufferView
+    | number;
+
+  type Writable =
+    | "pipe"
+    | "inherit"
+    | "ignore"
+    | null // equivalent to "ignore"
+    | undefined // to use default
+    | BunFile
+    | ArrayBufferView
+    | number
+    | ReadableStream
     | Blob
     | Response
-    | Request
-    | number
-    | null;
-  stdout?:
-    | "pipe"
-    | "inherit"
-    | "ignore"
-    | BunFile
-    | TypedArray
-    | DataView
-    | null;
-  stderr?:
-    | "pipe"
-    | "inherit"
-    | "ignore"
-    | BunFile
-    | TypedArray
-    | DataView
-    | null;
-  onExit?: (
-    proc: Subprocess,
-    exitCode: number | null,
-    signalCode: string | null,
-    error: Error | null,
-  ) => void;
+    | Request;
 }
 
-interface Subprocess {
+interface Subprocess<Stdin, Stdout, Stderr> {
   readonly pid: number;
-  readonly stdin?: number | ReadableStream | FileSink;
-  readonly stdout?: number | ReadableStream;
-  readonly stderr?: number | ReadableStream;
+  // the exact stream types here are derived from the generic parameters
+  readonly stdin: number | ReadableStream | FileSink | undefined;
+  readonly stdout: number | ReadableStream | undefined;
+  readonly stderr: number | ReadableStream | undefined;
 
   readonly exited: Promise<number>;
 
@@ -288,12 +289,21 @@ interface Subprocess {
   kill(code?: number): void;
 }
 
-interface SyncSubprocess {
+interface SyncSubprocess<Stdout, Stderr> {
   readonly pid: number;
   readonly success: boolean;
-  readonly stdout: Buffer;
-  readonly stderr: Buffer;
+  // the exact buffer types here are derived from the generic parameters
+  readonly stdout: Buffer | undefined;
+  readonly stderr: Buffer | undefined;
 }
+
+type ReadableSubprocess = Subprocess<any, "pipe", "pipe">;
+type WritableSubprocess = Subprocess<"pipe", any, any>;
+type PipedSubprocess = Subprocess<"pipe", "pipe", "pipe">;
+type NullSubprocess = Subprocess<null, null, null>;
+
+type ReadableSyncSubprocess = SyncSubprocess<"pipe", "pipe">;
+type NullSyncSubprocess = SyncSubprocess<null, null>;
 
 type Signal =
   | "SIGABRT"

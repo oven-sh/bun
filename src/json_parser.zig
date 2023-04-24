@@ -1,12 +1,12 @@
 const std = @import("std");
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const js_lexer = bun.js_lexer;
 const importRecord = @import("import_record.zig");
 const js_ast = bun.JSAst;
 const options = @import("options.zig");
-
+const BabyList = @import("./baby_list.zig").BabyList;
 const fs = @import("fs.zig");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -141,8 +141,13 @@ fn JSONLikeParser_(
         lexer: Lexer,
         log: *logger.Log,
         allocator: std.mem.Allocator,
+        list_allocator: std.mem.Allocator,
 
         pub fn init(allocator: std.mem.Allocator, source_: logger.Source, log: *logger.Log) !Parser {
+            return initWithListAllocator(allocator, allocator, source_, log);
+        }
+
+        pub fn initWithListAllocator(allocator: std.mem.Allocator, list_allocator: std.mem.Allocator, source_: logger.Source, log: *logger.Log) !Parser {
             Expr.Data.Store.assert();
             Stmt.Data.Store.assert();
 
@@ -150,6 +155,7 @@ fn JSONLikeParser_(
                 .lexer = try Lexer.init(log, source_, allocator),
                 .allocator = allocator,
                 .log = log,
+                .list_allocator = list_allocator,
             };
         }
 
@@ -202,7 +208,7 @@ fn JSONLikeParser_(
                 .t_open_bracket => {
                     try p.lexer.next();
                     var is_single_line = !p.lexer.has_newline_before;
-                    var exprs = std.ArrayList(Expr).init(p.allocator);
+                    var exprs = std.ArrayList(Expr).init(p.list_allocator);
 
                     while (p.lexer.token != .t_close_bracket) {
                         if (exprs.items.len > 0) {
@@ -235,20 +241,18 @@ fn JSONLikeParser_(
                 .t_open_brace => {
                     try p.lexer.next();
                     var is_single_line = !p.lexer.has_newline_before;
-                    var properties = std.ArrayList(G.Property).init(p.allocator);
+                    var properties = std.ArrayList(G.Property).init(p.list_allocator);
 
                     const DuplicateNodeType = comptime if (opts.json_warn_duplicate_keys) *HashMapPool.LinkedList.Node else void;
                     const HashMapType = comptime if (opts.json_warn_duplicate_keys) HashMapPool.HashMap else void;
 
                     var duplicates_node: DuplicateNodeType = if (comptime opts.json_warn_duplicate_keys)
                         HashMapPool.get(p.allocator)
-                    else
-                        void{};
+                    else {};
 
                     var duplicates: HashMapType = if (comptime opts.json_warn_duplicate_keys)
                         duplicates_node.data
-                    else
-                        void{};
+                    else {};
 
                     defer {
                         if (comptime opts.json_warn_duplicate_keys) {
@@ -665,7 +669,7 @@ pub fn toAST(
             return Expr.init(
                 js_ast.E.Object,
                 js_ast.E.Object{
-                    .properties = js_ast.BabyList(G.Property).init(properties[0..property_i]),
+                    .properties = BabyList(G.Property).init(properties[0..property_i]),
                     .is_single_line = property_i <= 1,
                 },
                 logger.Loc.Empty,
@@ -731,8 +735,8 @@ pub fn toAST(
     }
 }
 
-const JSONParser = JSONLikeParser(js_lexer.JSONOptions{ .is_json = true });
-const RemoteJSONParser = JSONLikeParser(js_lexer.JSONOptions{ .is_json = true, .json_warn_duplicate_keys = false });
+const JSONParser = if (bun.fast_debug_build_mode) TSConfigParser else JSONLikeParser(js_lexer.JSONOptions{ .is_json = true });
+const RemoteJSONParser = if (bun.fast_debug_build_mode) TSConfigParser else JSONLikeParser(js_lexer.JSONOptions{ .is_json = true, .json_warn_duplicate_keys = false });
 const DotEnvJSONParser = JSONLikeParser(js_lexer.JSONOptions{
     .ignore_leading_escape_sequences = true,
     .ignore_trailing_escape_sequences = true,

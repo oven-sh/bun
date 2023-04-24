@@ -3,7 +3,7 @@
 const std = @import("std");
 const native_endian = @import("builtin").target.cpu.arch.endian();
 
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -14,9 +14,9 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 
-const uws = @import("bun").uws;
-const JSC = @import("bun").JSC;
-const PicoHTTP = @import("bun").picohttp;
+const uws = @import("root").bun.uws;
+const JSC = @import("root").bun.JSC;
+const PicoHTTP = @import("root").bun.picohttp;
 const ObjectPool = @import("../pool.zig").ObjectPool;
 const WebsocketHeader = @import("./websocket.zig").WebsocketHeader;
 const WebsocketDataFrame = @import("./websocket.zig").WebsocketDataFrame;

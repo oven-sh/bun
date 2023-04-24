@@ -7,7 +7,7 @@ const Router = @This();
 
 const Api = @import("./api/schema.zig").Api;
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -932,7 +932,7 @@ const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const expectEqualStrings = std.testing.expectEqualStrings;
 const expectStr = std.testing.expectEqualStrings;
-const Logger = @import("bun").logger;
+const Logger = @import("root").bun.logger;
 
 pub const Test = struct {
     pub fn makeRoutes(comptime testName: string, data: anytype) !Routes {
@@ -941,7 +941,7 @@ pub const Test = struct {
         const JSAst = bun.JSAst;
         JSAst.Expr.Data.Store.create(default_allocator);
         JSAst.Stmt.Data.Store.create(default_allocator);
-        var fs = try FileSystem.init1(default_allocator, null);
+        var fs = try FileSystem.init(null);
         var top_level_dir = fs.top_level_dir;
 
         var pages_parts = [_]string{ top_level_dir, "pages" };
@@ -998,7 +998,7 @@ pub const Test = struct {
         const JSAst = bun.JSAst;
         JSAst.Expr.Data.Store.create(default_allocator);
         JSAst.Stmt.Data.Store.create(default_allocator);
-        var fs = try FileSystem.init1WithForce(default_allocator, null, true);
+        var fs = try FileSystem.initWithForce(null, true);
         var top_level_dir = fs.top_level_dir;
 
         var pages_parts = [_]string{ top_level_dir, "pages" };

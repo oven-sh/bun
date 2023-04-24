@@ -1,4 +1,7 @@
 pub usingnamespace @import("src/main.zig");
+
+pub const bun = @import("src/bun.zig");
+
 pub const content = struct {
     pub const error_js_path = "packages/bun-error/dist/index.js";
     pub const error_js = @embedFile(error_js_path);

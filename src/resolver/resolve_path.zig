@@ -3,7 +3,7 @@ const std = @import("std");
 const strings = @import("../string_immutable.zig");
 const FeatureFlags = @import("../feature_flags.zig");
 const default_allocator = @import("../memory_allocator.zig").c_allocator;
-const bun = @import("bun");
+const bun = @import("root").bun;
 const Fs = @import("../fs.zig");
 
 threadlocal var parser_join_input_buffer: [4096]u8 = undefined;
@@ -128,12 +128,13 @@ pub fn longestCommonPathGeneric(input: []const []const u8, comptime separator: u
         },
         else => {
             var string_index: usize = 1;
-            while (index < min_length) : (index += 1) {
-                while (string_index < input.len) : (string_index += 1) {
-                    if (input[0][index] != input[index][string_index]) {
+            while (string_index < input.len) : (string_index += 1) {
+                while (index < min_length) : (index += 1) {
+                    if (input[0][index] != input[string_index][index]) {
                         break;
                     }
                 }
+                if (index == min_length) index -= 1;
                 if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
                     last_common_separator = index;
                 }

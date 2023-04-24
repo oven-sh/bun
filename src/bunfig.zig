@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -11,7 +11,7 @@ const default_allocator = bun.default_allocator;
 const URL = @import("./url.zig").URL;
 const C = bun.C;
 const options = @import("./options.zig");
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const js_ast = bun.JSAst;
 const js_lexer = bun.js_lexer;
 const Defines = @import("./defines.zig");
@@ -428,7 +428,7 @@ pub const Bunfig = struct {
             }
 
             if (json.get("bundle")) |_bun| {
-                if (comptime cmd == .DevCommand or cmd == .BuildCommand or cmd == .RunCommand or cmd == .AutoCommand or cmd == .BunCommand) {
+                if (comptime cmd == .DevCommand or cmd == .BuildCommand or cmd == .RunCommand or cmd == .AutoCommand or cmd == .BuildCommand) {
                     if (_bun.get("saveTo")) |file| {
                         try this.expect(file, .e_string);
                         this.bunfig.node_modules_bundle_path = try file.data.e_string.string(allocator);
@@ -440,7 +440,7 @@ pub const Bunfig = struct {
                     }
                 }
 
-                if (comptime cmd == .BunCommand) {
+                if (comptime cmd == .BuildCommand) {
                     if (_bun.get("logLevel")) |expr2| {
                         try this.loadLogLevel(expr2);
                     }
@@ -555,7 +555,7 @@ pub const Bunfig = struct {
             }
 
             switch (comptime cmd) {
-                .AutoCommand, .DevCommand, .BuildCommand, .BunCommand => {
+                .AutoCommand, .DevCommand, .BuildCommand => {
                     if (json.get("publicDir")) |public_dir| {
                         try this.expect(public_dir, .e_string);
                         this.bunfig.router = Api.RouteConfig{

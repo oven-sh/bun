@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -19,7 +19,7 @@ const linker = @import("../linker.zig");
 const options = @import("../options.zig");
 const initializeStore = @import("./create_command.zig").initializeStore;
 const lex = bun.js_lexer;
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const JSPrinter = bun.js_printer;
 
 fn exists(path: anytype) bool {
@@ -99,7 +99,7 @@ pub const InitCommand = struct {
     };
 
     pub fn exec(alloc: std.mem.Allocator, argv: [][*:0]u8) !void {
-        var fs = try Fs.FileSystem.init1(alloc, null);
+        var fs = try Fs.FileSystem.init(null);
         const pathname = Fs.PathName.init(fs.topLevelDirWithoutTrailingSlash());
         const destination_dir = std.fs.cwd();
 
@@ -282,6 +282,22 @@ pub const InitCommand = struct {
                 break :brk true;
             };
 
+            const needs_typescript_dependency = brk: {
+                if (fields.object.get("devDependencies")) |deps| {
+                    if (deps.hasAnyPropertyNamed(&.{"typescript"})) {
+                        break :brk false;
+                    }
+                }
+
+                if (fields.object.get("peerDependencies")) |deps| {
+                    if (deps.hasAnyPropertyNamed(&.{"typescript"})) {
+                        break :brk false;
+                    }
+                }
+
+                break :brk true;
+            };
+
             if (needs_dev_dependencies) {
                 var dev_dependencies = fields.object.get("devDependencies") orelse js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, logger.Loc.Empty);
                 const version = comptime brk: {
@@ -292,6 +308,12 @@ pub const InitCommand = struct {
 
                 try dev_dependencies.data.e_object.putString(alloc, "bun-types", comptime std.fmt.comptimePrint("^{any}", .{version.fmt("")}));
                 try fields.object.put(alloc, "devDependencies", dev_dependencies);
+            }
+
+            if (needs_typescript_dependency) {
+                var peer_dependencies = fields.object.get("peer_dependencies") orelse js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, logger.Loc.Empty);
+                try peer_dependencies.data.e_object.putString(alloc, "typescript", "^5.0.0");
+                try fields.object.put(alloc, "peerDependencies", peer_dependencies);
             }
         }
 

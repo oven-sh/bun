@@ -1,5 +1,5 @@
-const JSC = @import("bun").JSC;
-const bun = @import("bun");
+const JSC = @import("root").bun.JSC;
+const bun = @import("root").bun;
 const string = bun.string;
 const std = @import("std");
 

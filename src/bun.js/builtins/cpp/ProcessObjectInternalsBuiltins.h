@@ -47,6 +47,11 @@ class FunctionExecutable;
 namespace WebCore {
 
 /* ProcessObjectInternals */
+extern const char* const s_processObjectInternalsBindingCode;
+extern const int s_processObjectInternalsBindingCodeLength;
+extern const JSC::ConstructAbility s_processObjectInternalsBindingCodeConstructAbility;
+extern const JSC::ConstructorKind s_processObjectInternalsBindingCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_processObjectInternalsBindingCodeImplementationVisibility;
 extern const char* const s_processObjectInternalsGetStdioWriteStreamCode;
 extern const int s_processObjectInternalsGetStdioWriteStreamCodeLength;
 extern const JSC::ConstructAbility s_processObjectInternalsGetStdioWriteStreamCodeConstructAbility;
@@ -59,17 +64,21 @@ extern const JSC::ConstructorKind s_processObjectInternalsGetStdinStreamCodeCons
 extern const JSC::ImplementationVisibility s_processObjectInternalsGetStdinStreamCodeImplementationVisibility;
 
 #define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_DATA(macro) \
+    macro(binding, processObjectInternalsBinding, 1) \
     macro(getStdioWriteStream, processObjectInternalsGetStdioWriteStream, 2) \
     macro(getStdinStream, processObjectInternalsGetStdinStream, 3) \
 
+#define WEBCORE_BUILTIN_PROCESSOBJECTINTERNALS_BINDING 1
 #define WEBCORE_BUILTIN_PROCESSOBJECTINTERNALS_GETSTDIOWRITESTREAM 1
 #define WEBCORE_BUILTIN_PROCESSOBJECTINTERNALS_GETSTDINSTREAM 1
 
 #define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(macro) \
+    macro(processObjectInternalsBindingCode, binding, ASCIILiteral(), s_processObjectInternalsBindingCodeLength) \
     macro(processObjectInternalsGetStdioWriteStreamCode, getStdioWriteStream, ASCIILiteral(), s_processObjectInternalsGetStdioWriteStreamCodeLength) \
     macro(processObjectInternalsGetStdinStreamCode, getStdinStream, ASCIILiteral(), s_processObjectInternalsGetStdinStreamCodeLength) \
 
 #define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_FUNCTION_NAME(macro) \
+    macro(binding) \
     macro(getStdinStream) \
     macro(getStdioWriteStream) \
 

@@ -2,7 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const expect = std.testing.expect;
 
-const bun = @import("bun");
+const bun = @import("root").bun;
 
 const strings = bun.strings;
 const js_lexer = bun.js_lexer;
@@ -34,7 +34,7 @@ pub const MutableString = struct {
     }
 
     pub fn owns(this: *const MutableString, slice: []const u8) bool {
-        return @import("bun").isSliceInBuffer(slice, this.list.items.ptr[0..this.list.capacity]);
+        return @import("root").bun.isSliceInBuffer(slice, this.list.items.ptr[0..this.list.capacity]);
     }
 
     pub fn growIfNeeded(self: *MutableString, amount: usize) !void {
@@ -69,10 +69,9 @@ pub const MutableString = struct {
         return mutable;
     }
 
-    // Convert it to an ASCII identifier. Note: If you change this to a non-ASCII
-    // identifier, you're going to potentially cause trouble with non-BMP code
-    // points in target environments that don't support bracketed Unicode escapes.
-
+    /// Convert it to an ASCII identifier. Note: If you change this to a non-ASCII
+    /// identifier, you're going to potentially cause trouble with non-BMP code
+    /// points in target environments that don't support bracketed Unicode escapes.
     pub fn ensureValidIdentifier(str: string, allocator: std.mem.Allocator) !string {
         if (str.len == 0) {
             return "_";
@@ -102,7 +101,7 @@ pub const MutableString = struct {
             }
         }
 
-        if (!needs_gap and str.len >= 3 and str.len <= 10) {
+        if (!needs_gap) {
             return JSLexerTables.StrictModeReservedWordsRemap.get(str) orelse str;
         }
 
@@ -175,7 +174,15 @@ pub const MutableString = struct {
     pub inline fn reset(
         self: *MutableString,
     ) void {
-        self.list.shrinkRetainingCapacity(0);
+        self.list.clearRetainingCapacity();
+    }
+
+    pub inline fn resetTo(
+        self: *MutableString,
+        index: usize,
+    ) void {
+        std.debug.assert(index <= self.list.capacity);
+        self.list.items.len = index;
     }
 
     pub fn inflate(self: *MutableString, amount: usize) !void {
@@ -191,6 +198,14 @@ pub const MutableString = struct {
     pub inline fn append(self: *MutableString, char: []const u8) !void {
         try self.list.appendSlice(self.allocator, char);
     }
+    pub inline fn appendInt(self: *MutableString, int: u64) !void {
+        const count = bun.fmt.fastDigitCount(int);
+        try self.list.ensureUnusedCapacity(self.allocator, count);
+        const old = self.list.items.len;
+        self.list.items.len += count;
+        std.debug.assert(count == bun.fmt.formatIntBuf(self.list.items.ptr[old .. old + count], int, 10, .lower, .{}));
+    }
+
     pub inline fn appendAssumeCapacity(self: *MutableString, char: []const u8) void {
         self.list.appendSliceAssumeCapacity(
             char,

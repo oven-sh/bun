@@ -1,8 +1,8 @@
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Environment = bun.Environment;
-const JSC = @import("bun").JSC;
+const JSC = @import("root").bun.JSC;
 
 const ConstantType = enum { ERRNO, ERRNO_WIN, SIG, DLOPEN, OTHER };
 

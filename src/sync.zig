@@ -1,6 +1,6 @@
 const std = @import("std");
 const system = std.system;
-const bun = @import("bun");
+const bun = @import("root").bun;
 
 // https://gist.github.com/kprotty/0d2dc3da4840341d6ff361b27bdac7dc
 pub const ThreadPool = struct {
@@ -771,11 +771,15 @@ pub const WaitGroup = struct {
         self.* = undefined;
     }
 
-    pub fn add(self: *WaitGroup) void {
+    pub fn addN(self: *WaitGroup, n: usize) void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        self.active += 1;
+        self.active += n;
+    }
+
+    pub fn add(self: *WaitGroup) void {
+        return self.addN(1);
     }
 
     pub fn done(self: *WaitGroup) void {

@@ -1,31 +1,31 @@
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
 const Api = @import("../../api/schema.zig").Api;
 const RequestContext = @import("../../http.zig").RequestContext;
 const MimeType = @import("../../http.zig").MimeType;
 const ZigURL = @import("../../url.zig").URL;
-const HTTPClient = @import("bun").HTTP;
+const HTTPClient = @import("root").bun.HTTP;
 const NetworkThread = HTTPClient.NetworkThread;
 const Environment = @import("../../env.zig");
 
 const DiffMatchPatch = @import("../../deps/diffz/DiffMatchPatch.zig");
 
-const JSC = @import("bun").JSC;
+const JSC = @import("root").bun.JSC;
 const js = JSC.C;
 
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const Method = @import("../../http/method.zig").Method;
 
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 
-const Output = @import("bun").Output;
-const MutableString = @import("bun").MutableString;
-const strings = @import("bun").strings;
-const string = @import("bun").string;
-const default_allocator = @import("bun").default_allocator;
-const FeatureFlags = @import("bun").FeatureFlags;
+const Output = @import("root").bun.Output;
+const MutableString = @import("root").bun.MutableString;
+const strings = @import("root").bun.strings;
+const string = @import("root").bun.string;
+const default_allocator = @import("root").bun.default_allocator;
+const FeatureFlags = @import("root").bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
 const NewClass = @import("../base.zig").NewClass;
@@ -610,16 +610,16 @@ pub const Snapshots = struct {
         );
 
         var parse_result = try parser.parse();
-        var ast = if (parse_result.ok) parse_result.ast else return error.ParseError;
+        var ast = if (parse_result == .ast) parse_result.ast else return error.ParseError;
         defer ast.deinit();
 
-        if (ast.exports_ref == null) return;
-        const exports_ref = ast.exports_ref.?;
+        if (ast.exports_ref.isNull()) return;
+        const exports_ref = ast.exports_ref;
 
         // TODO: when common js transform changes, keep this updated or add flag to support this version
 
         const export_default = brk: {
-            for (ast.parts) |part| {
+            for (ast.parts.slice()) |part| {
                 for (part.stmts) |stmt| {
                     if (stmt.data == .s_export_default and stmt.data.s_export_default.value == .expr) {
                         break :brk stmt.data.s_export_default.value.expr;
@@ -1478,10 +1478,16 @@ pub const Expect = struct {
         const thisValue = callFrame.this();
 
         const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
             return .zero;
         };
         value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalObject.throw("toBeFalsy() must be called in a test", .{});
+            return .zero;
+        }
+        active_test_expectation_counter.actual += 1;
 
         const not = this.op.contains(.not);
         var pass = false;

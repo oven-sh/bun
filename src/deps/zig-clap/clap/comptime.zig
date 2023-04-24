@@ -76,7 +76,7 @@ pub fn ComptimeClap(
                 if (param.names.long == null and param.names.short == null) {
                     try pos.append(arg.value.?);
                     if (opt.stop_after_positional_at > 0 and pos.items.len >= opt.stop_after_positional_at) {
-                        const bun = @import("bun");
+                        const bun = @import("root").bun;
                         if (comptime bun.Environment.isWindows) @compileError(
                             "TODO: implement stop_after_positional_at on windows",
                         );

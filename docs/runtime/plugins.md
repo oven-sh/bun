@@ -19,13 +19,13 @@ plugin({
 });
 ```
 
-To consume this plugin, add this file to the `preload` option in your [`bunfig.toml`](/docs/project/configuration). Bun automatically loads the files/modules specified in `preload` before running a file. 
+To consume this plugin, add this file to the `preload` option in your [`bunfig.toml`](/docs/runtime/configuration). Bun automatically loads the files/modules specified in `preload` before running a file.
 
 ```toml
 preload = ["./yamlPlugin.ts"]
 ```
 
-{% details summary="Usage without preload" %} 
+{% details summary="Usage without preload" %}
 
 Alternatively, you can import this file manually at the top of your project's entrypoint, before any application code is imported.
 

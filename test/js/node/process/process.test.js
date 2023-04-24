@@ -66,10 +66,10 @@ it("process.hrtime.bigint()", () => {
 
 it("process.release", () => {
   expect(process.release.name).toBe("bun");
-  expect(process.release.sourceUrl).toBe(
+  expect(process.release.sourceUrl).toContain(
     `https://github.com/oven-sh/bun/release/bun-v${process.versions.bun}/bun-${process.platform}-${
       { arm64: "aarch64", x64: "x64" }[process.arch] || process.arch
-    }.zip`,
+    }`,
   );
 });
 
@@ -117,9 +117,26 @@ it("process.uptime()", () => {
 });
 
 it("process.umask()", () => {
-  const orig = process.umask(777);
+  let notNumbers = [265n, "string", true, false, null, {}, [], () => {}, Symbol("symbol"), BigInt(1)];
+  for (let notNumber of notNumbers) {
+    expect(() => {
+      process.umask(notNumber);
+    }).toThrow('The "mask" argument must be a number');
+  }
+
+  let rangeErrors = [NaN, -1.4, Infinity, -Infinity, -1, 1.3, 4294967296];
+  for (let rangeError of rangeErrors) {
+    expect(() => {
+      process.umask(rangeError);
+    }).toThrow(RangeError);
+  }
+
+  const orig = process.umask(0o777);
   expect(orig).toBeGreaterThan(0);
-  expect(process.umask(orig)).toBe(777);
+  expect(process.umask()).toBe(0o777);
+  expect(process.umask(undefined)).toBe(0o777);
+  expect(process.umask(Number(orig))).toBe(0o777);
+  expect(process.umask()).toBe(orig);
 });
 
 const versions = existsSync(import.meta.dir + "/../../src/generated_versions_list.zig");

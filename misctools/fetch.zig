@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -9,18 +9,18 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
-pub usingnamespace @import("bun");
+pub usingnamespace @import("root").bun;
 
 const clap = bun.clap;
 
 const URL = @import("../src/url.zig").URL;
-const Headers = @import("bun").HTTP.Headers;
+const Headers = @import("root").bun.HTTP.Headers;
 const Method = @import("../src/http/method.zig").Method;
 const ColonListType = @import("../src/cli/colon_list_type.zig").ColonListType;
 const HeadersTuple = ColonListType(string, noop_resolver);
 const path_handler = @import("../src/resolver/resolve_path.zig");
-const HTTPThread = @import("bun").HTTP.HTTPThread;
-const HTTP = @import("bun").HTTP;
+const HTTPThread = @import("root").bun.HTTP.HTTPThread;
+const HTTP = @import("root").bun.HTTP;
 fn noop_resolver(in: string) !string {
     return in;
 }

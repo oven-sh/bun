@@ -234,21 +234,21 @@ interface ImportMeta {
    * "file:///Users/me/projects/my-app/src/my-app.ts"
    * ```
    */
-  url: string;
+  readonly url: string;
   /**
    * Absolute path to the source file
    */
-  path: string;
+  readonly path: string;
   /**
    * Absolute path to the directory containing the source file.
    *
    * Does not have a trailing slash
    */
-  dir: string;
+  readonly dir: string;
   /**
    * Filename of the source file
    */
-  file: string;
+  readonly file: string;
   /**
    * Resolve a module ID the same as if you imported it
    *
@@ -284,6 +284,25 @@ interface ImportMeta {
    * relevant.
    */
   require: NodeJS.Require;
+
+  /**
+   * Did the current file start the process?
+   *
+   * @example
+   * ```ts
+   * if (import.meta.main) {
+   *  console.log("I started the process!");
+   * }
+   * ```
+   *
+   * @example
+   * ```ts
+   * console.log(
+   *   import.meta.main === (import.meta.path === Bun.main)
+   * )
+   * ```
+   */
+  readonly main: boolean;
 }
 
 /**
@@ -3149,3 +3168,8 @@ declare var module: NodeModule;
 // Same as module.exports
 declare var exports: any;
 declare var global: typeof globalThis;
+
+declare module "*.txt" {
+  var text: string;
+  export = text;
+}

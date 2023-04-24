@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -11,7 +11,7 @@ const C = bun.C;
 const std = @import("std");
 
 const lex = bun.js_lexer;
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 
 const options = @import("../options.zig");
 const js_parser = bun.js_parser;
@@ -605,7 +605,7 @@ pub const RunCommand = struct {
             // the use of npm/? is copying yarn
             // e.g.
             // > "yarn/1.22.4 npm/? node/v12.16.3 darwin x64",
-            "bun/" ++ Global.package_json_version ++ " npm/? node/v16.14.0 " ++ Global.os_name ++ " " ++ Global.arch_name,
+            "bun/" ++ Global.package_json_version ++ " npm/? node/v18.15.0 " ++ Global.os_name ++ " " ++ Global.arch_name,
         ) catch unreachable;
 
         if (this_bundler.env.get("npm_execpath") == null) {

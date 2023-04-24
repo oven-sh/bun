@@ -132,7 +132,7 @@ declare module "bun" {
    */
   // tslint:disable-next-line:unified-signatures
   export function write(
-    destination: FileBlob | PathLike,
+    destination: BunFile | PathLike,
     input: Blob | TypedArray | ArrayBufferLike | string | BlobPart[],
   ): Promise<number>;
 
@@ -147,10 +147,7 @@ declare module "bun" {
    * @param input - `Response` object
    * @returns A promise that resolves with the number of bytes written.
    */
-  export function write(
-    destination: FileBlob,
-    input: Response,
-  ): Promise<number>;
+  export function write(destination: BunFile, input: Response): Promise<number>;
 
   /**
    *
@@ -189,10 +186,7 @@ declare module "bun" {
    * @returns A promise that resolves with the number of bytes written.
    */
   // tslint:disable-next-line:unified-signatures
-  export function write(
-    destination: FileBlob,
-    input: FileBlob,
-  ): Promise<number>;
+  export function write(destination: BunFile, input: BunFile): Promise<number>;
 
   /**
    *
@@ -216,7 +210,7 @@ declare module "bun" {
   // tslint:disable-next-line:unified-signatures
   export function write(
     destinationPath: PathLike,
-    input: FileBlob,
+    input: BunFile,
   ): Promise<number>;
 
   export interface SystemError extends Error {
@@ -586,6 +580,7 @@ declare module "bun" {
     unref(): void;
   }
 
+  export interface FileBlob extends BunFile {}
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
    *
@@ -610,7 +605,7 @@ declare module "bun" {
    * ```
    *
    */
-  export interface FileBlob extends Blob {
+  export interface BunFile extends Blob {
     /**
      * Offset any operation on the file starting at `begin` and ending at `end`. `end` is relative to 0
      *
@@ -620,10 +615,13 @@ declare module "bun" {
      *
      * @param begin - start offset in bytes
      * @param end - absolute offset in bytes (relative to 0)
-     * @param contentType - MIME type for the new FileBlob
+     * @param contentType - MIME type for the new BunFile
      */
-    slice(begin?: number, end?: number, contentType?: string): FileBlob;
+    slice(begin?: number, end?: number, contentType?: string): BunFile;
 
+    /**
+     *
+     */
     /**
      * Offset any operation on the file starting at `begin`
      *
@@ -632,14 +630,14 @@ declare module "bun" {
      * If `begin` > 0, {@link Bun.write()} will be slower on macOS
      *
      * @param begin - start offset in bytes
-     * @param contentType - MIME type for the new FileBlob
+     * @param contentType - MIME type for the new BunFile
      */
-    slice(begin?: number, contentType?: string): FileBlob;
+    slice(begin?: number, contentType?: string): BunFile;
 
     /**
-     * @param contentType - MIME type for the new FileBlob
+     * @param contentType - MIME type for the new BunFile
      */
-    slice(contentType?: string): FileBlob;
+    slice(contentType?: string): BunFile;
 
     /**
      * Incremental writer for files and pipes.
@@ -649,6 +647,11 @@ declare module "bun" {
     readonly readable: ReadableStream;
 
     // TODO: writable: WritableStream;
+
+    /**
+     * A UNIX timestamp indicating when the file was last modified.
+     */
+    lastModified: number;
   }
 
   /**
@@ -738,6 +741,26 @@ declare module "bun" {
     strict?: boolean,
   ): boolean;
 
+  /**
+   * tsconfig.json options supported by Bun
+   */
+  interface TSConfig {
+    extends?: string;
+    compilerOptions?: {
+      paths?: Record<string, string[]>;
+      baseUrl?: string;
+      /** "preserve" is not supported yet */
+      jsx?: "preserve" | "react" | "react-jsx" | "react-jsxdev" | "react-native";
+      jsxFactory?: string;
+      jsxFragmentFactory?: string;
+      jsxImportSource?: string;
+      useDefineForClassFields?: boolean;
+      importsNotUsedAsValues?: "remove" | "preserve" | "error";
+      /** moduleSuffixes is not supported yet */
+      moduleSuffixes?: any;
+    };
+  }
+
   export interface TranspilerOptions {
     /**
      * Replace key with value. Value must be a JSON string.
@@ -760,7 +783,7 @@ declare module "bun" {
      *  Use this to set a custom JSX factory, fragment, or import source
      *  For example, if you want to use Preact instead of React. Or if you want to use Emotion.
      */
-    tsconfig?: string;
+    tsconfig?: string | TSConfig;
 
     /**
      *    Replace an import statement with a macro.
@@ -1354,7 +1377,6 @@ declare module "bun" {
       code: number,
       message: string,
     ) => void | Promise<void>;
-
     /**
      * Enable compression for clients that support it. By default, compression is disabled.
      *
@@ -1823,7 +1845,7 @@ declare module "bun" {
    *
    */
   // tslint:disable-next-line:unified-signatures
-  export function file(path: string | URL, options?: BlobPropertyBag): FileBlob;
+  export function file(path: string | URL, options?: BlobPropertyBag): BunFile;
 
   /**
    * `Blob` that leverages the fastest system calls available to operate on files.
@@ -1845,7 +1867,7 @@ declare module "bun" {
   export function file(
     path: ArrayBufferLike | Uint8Array,
     options?: BlobPropertyBag,
-  ): FileBlob;
+  ): BunFile;
 
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
@@ -1865,7 +1887,7 @@ declare module "bun" {
   export function file(
     fileDescriptor: number,
     options?: BlobPropertyBag,
-  ): FileBlob;
+  ): BunFile;
 
   /**
    * Allocate a new [`Uint8Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) without zeroing the bytes.
@@ -1917,15 +1939,15 @@ declare module "bun" {
   export function mmap(path: PathLike, opts?: MMapOptions): Uint8Array;
 
   /** Write to stdout */
-  const stdout: FileBlob;
+  const stdout: BunFile;
   /** Write to stderr */
-  const stderr: FileBlob;
+  const stderr: BunFile;
   /**
    * Read from stdin
    *
    * This is read-only
    */
-  const stdin: FileBlob;
+  const stdin: BunFile;
 
   interface unsafe {
     /**
@@ -2618,6 +2640,45 @@ declare module "bun" {
     target: PluginTarget;
   }
 
+  interface BunPlugin {
+    /**
+     * Human-readable name of the plugin
+     *
+     * In a future version of Bun, this will be used in error messages.
+     */
+    name?: string;
+
+    /**
+     * The target JavaScript environment the plugin should be applied to.
+     * - `bun`: The default environment when using `bun run` or `bun` to load a script
+     * - `browser`: The plugin will be applied to browser builds
+     * - `node`: The plugin will be applied to Node.js builds
+     *
+     * If in Bun's runtime, the default target is `bun`.
+     *
+     * If unspecified, it is assumed that the plugin is compatible with the default target.
+     */
+    target?: PluginTarget;
+    /**
+     * A function that will be called when the plugin is loaded.
+     *
+     * This function may be called in the same tick that it is registered, or it may be called later. It could potentially be called multiple times for different targets.
+     */
+    setup(
+      /**
+       * A builder object that can be used to register plugin hooks
+       * @example
+       * ```ts
+       * builder.onLoad({ filter: /\.yaml$/ }, ({ path }) => ({
+       *   loader: "object",
+       *   exports: require("js-yaml").load(fs.readFileSync(path, "utf8")),
+       * }));
+       * ```
+       */
+      builder: PluginBuilder,
+    ): void | Promise<void>;
+  }
+
   /**
    * Extend Bun's module resolution and loading behavior
    *
@@ -2657,45 +2718,8 @@ declare module "bun" {
    *
    * ```
    */
-  interface BunPlugin {
-    (options: {
-      /**
-       * Human-readable name of the plugin
-       *
-       * In a future version of Bun, this will be used in error messages.
-       */
-      name?: string;
-
-      /**
-       * The target JavaScript environment the plugin should be applied to.
-       * - `bun`: The default environment when using `bun run` or `bun` to load a script
-       * - `browser`: The plugin will be applied to browser builds
-       * - `node`: The plugin will be applied to Node.js builds
-       *
-       * If in Bun's runtime, the default target is `bun`.
-       *
-       * If unspecified, it is assumed that the plugin is compatible with the default target.
-       */
-      target?: PluginTarget;
-      /**
-       * A function that will be called when the plugin is loaded.
-       *
-       * This function may be called in the same tick that it is registered, or it may be called later. It could potentially be called multiple times for different targets.
-       */
-      setup(
-        /**
-         * A builder object that can be used to register plugin hooks
-         * @example
-         * ```ts
-         * builder.onLoad({ filter: /\.yaml$/ }, ({ path }) => ({
-         *   loader: "object",
-         *   exports: require("js-yaml").load(fs.readFileSync(path, "utf8")),
-         * }));
-         * ```
-         */
-        builder: PluginBuilder,
-      ): void | Promise<void>;
-    }): ReturnType<(typeof options)["setup"]>;
+  interface BunRegisterPlugin {
+    <T extends BunPlugin>(options: T): ReturnType<T["setup"]>;
 
     /**
      * Deactivate all plugins
@@ -2705,7 +2729,7 @@ declare module "bun" {
     clearAll(): void;
   }
 
-  const plugin: BunPlugin;
+  const plugin: BunRegisterPlugin;
 
   interface Socket<Data = undefined> {
     /**
@@ -2844,6 +2868,11 @@ declare module "bun" {
     Data = unknown,
     DataBinaryType extends BinaryType = "buffer",
   > {
+    /**
+     * Is called when the socket connects, or in case of TLS if no handshake is provided
+     * this will be called only after handshake
+     * @param socket
+     */
     open?(socket: Socket<Data>): void | Promise<void>;
     close?(socket: Socket<Data>): void | Promise<void>;
     error?(socket: Socket<Data>, error: Error): void | Promise<void>;
@@ -2852,6 +2881,18 @@ declare module "bun" {
       data: BinaryTypeList[DataBinaryType],
     ): void | Promise<void>;
     drain?(socket: Socket<Data>): void | Promise<void>;
+
+    /**
+     * When handshake is completed, this functions is called.
+     * @param socket
+     * @param success Indicates if the server authorized despite the authorizationError.
+     * @param authorizationError Certificate Authorization Error or null.
+     */
+    handshake?(
+      socket: Socket<Data>,
+      success: boolean,
+      authorizationError: Error | null,
+    ): void;
 
     /**
      * When the socket has been shutdown from the other end, this function is
@@ -2964,31 +3005,41 @@ declare module "bun" {
   ): UnixSocketListener<Data>;
 
   namespace SpawnOptions {
+    /**
+     * Option for stdout/stderr
+     */
     type Readable =
+      | "pipe"
       | "inherit"
       | "ignore"
-      | "pipe"
-      | null
-      | undefined
-      | FileBlob
+      | null // equivalent to "ignore"
+      | undefined // to use default
+      | BunFile
       | ArrayBufferView
       | number;
 
+    /**
+     * Option for stdin
+     */
     type Writable =
+      | "pipe"
       | "inherit"
       | "ignore"
-      | "pipe"
-      | null
-      | ReadableStream // supported by stdin
-      | undefined
-      | FileBlob
+      | null // equivalent to "ignore"
+      | undefined // to use default
+      | BunFile
       | ArrayBufferView
-      | Blob
       | number
+      | ReadableStream
+      | Blob
       | Response
       | Request;
 
-    interface OptionsObject {
+    interface OptionsObject<
+      In extends Writable = Writable,
+      Out extends Readable = Readable,
+      Err extends Readable = Readable,
+    > {
       /**
        * The current working directory of the process
        *
@@ -3004,25 +3055,69 @@ declare module "bun" {
        * Changes to `process.env` at runtime won't automatically be reflected in the default value. For that, you can pass `process.env` explicitly.
        *
        */
-      env?: Record<string, string | number>;
+      env?: Record<string, string | undefined>;
 
       /**
-       * The standard file descriptors of the process
-       * - `inherit`: The process will inherit the standard input of the current process
-       * - `pipe`: The process will have a new pipe for standard input
-       * - `null`: The process will have no standard input
+       * The standard file descriptors of the process, in the form [stdin, stdout, stderr].
+       * This overrides the `stdin`, `stdout`, and `stderr` properties.
+       *
+       * For stdin you may pass:
+       *
+       * - `"ignore"`, `null`, `undefined`: The process will have no standard input (default)
+       * - `"pipe"`: The process will have a new {@link FileSink} for standard input
+       * - `"inherit"`: The process will inherit the standard input of the current process
+       * - `ArrayBufferView`, `Blob`, `Bun.file()`, `Response`, `Request`: The process will read from buffer/stream.
+       * - `number`: The process will read from the file descriptor
+       *
+       * For stdout and stdin you may pass:
+       *
+       * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
+       * - `"ignore"`, `null`: The process will have no standard output/error
+       * - `"inherit"`: The process will inherit the standard output/error of the current process
+       * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
+       * - `number`: The process will write to the file descriptor
+       *
+       * @default ["ignore", "pipe", "inherit"] for `spawn`
+       * ["ignore", "pipe", "pipe"] for `spawnSync`
+       */
+      stdio?: [In, Out, Err];
+      /**
+       * The file descriptor for the standard input. It may be:
+       *
+       * - `"ignore"`, `null`, `undefined`: The process will have no standard input
+       * - `"pipe"`: The process will have a new {@link FileSink} for standard input
+       * - `"inherit"`: The process will inherit the standard input of the current process
        * - `ArrayBufferView`, `Blob`: The process will read from the buffer
        * - `number`: The process will read from the file descriptor
-       * - `undefined`: The default value
+       *
+       * @default "ignore"
        */
-      stdio?: [
-        SpawnOptions.Writable,
-        SpawnOptions.Readable,
-        SpawnOptions.Readable,
-      ];
-      stdin?: SpawnOptions.Writable;
-      stdout?: SpawnOptions.Readable;
-      stderr?: SpawnOptions.Readable;
+      stdin?: In;
+      /**
+       * The file descriptor for the standard output. It may be:
+       *
+       * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
+       * - `"ignore"`, `null`: The process will have no standard output/error
+       * - `"inherit"`: The process will inherit the standard output/error of the current process
+       * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
+       * - `number`: The process will write to the file descriptor
+       *
+       * @default "pipe"
+       */
+      stdout?: Out;
+      /**
+       * The file descriptor for the standard error. It may be:
+       *
+       * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
+       * - `"ignore"`, `null`: The process will have no standard output/error
+       * - `"inherit"`: The process will inherit the standard output/error of the current process
+       * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
+       * - `number`: The process will write to the file descriptor
+       *
+       * @default "inherit" for `spawn`
+       * "pipe" for `spawnSync`
+       */
+      stderr?: Err;
 
       /**
        * Callback that runs when the {@link Subprocess} exits
@@ -3045,7 +3140,7 @@ declare module "bun" {
        * ```
        */
       onExit?(
-        subprocess: Subprocess,
+        subprocess: Subprocess<In, Out, Err>,
         exitCode: number | null,
         signalCode: number | null,
         /**
@@ -3054,24 +3149,71 @@ declare module "bun" {
         error?: Errorlike,
       ): void | Promise<void>;
     }
+
+    type OptionsToSubprocess<Opts extends OptionsObject> =
+      Opts extends OptionsObject<infer In, infer Out, infer Err>
+        ? Subprocess<
+            // "Writable extends In" means "if In === Writable",
+            // aka if true that means the user didn't specify anything
+            Writable extends In ? "ignore" : In,
+            Readable extends Out ? "pipe" : Out,
+            Readable extends Err ? "inherit" : Err
+          >
+        : Subprocess<Writable, Readable, Readable>;
+
+    type OptionsToSyncSubprocess<Opts extends OptionsObject> =
+      Opts extends OptionsObject<any, infer Out, infer Err>
+        ? SyncSubprocess<
+            Readable extends Out ? "pipe" : Out,
+            Readable extends Err ? "pipe" : Err
+          >
+        : SyncSubprocess<Readable, Readable>;
+
+    type ReadableIO = ReadableStream<Buffer> | number | undefined;
+
+    type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
+      ? ReadableStream<Buffer>
+      : X extends BunFile | ArrayBufferView | number
+      ? number
+      : undefined;
+
+    type ReadableToSyncIO<X extends Readable> = X extends "pipe" | undefined
+      ? Buffer
+      : undefined;
+
+    type WritableIO = FileSink | number | undefined;
+
+    type WritableToIO<X extends Writable> = X extends "pipe"
+      ? FileSink
+      : X extends BunFile | ArrayBufferView | Blob | Request | Response | number
+      ? number
+      : undefined;
   }
 
-  interface SubprocessIO {
-    readonly stdin?: undefined | number | ReadableStream | FileSink;
-    readonly stdout?: undefined | number | ReadableStream;
-    readonly stderr?: undefined | number | ReadableStream;
-  }
-  interface Subprocess<T extends SubprocessIO = SubprocessIO> {
-    readonly stdin: T["stdin"] | undefined;
-    readonly stdout: T["stdout"] | undefined;
-    readonly stderr: T["stderr"] | undefined;
+  /**
+   * A process created by {@link Bun.spawn}.
+   *
+   * This type accepts 3 optional type parameters which correspond to the `stdio` array from the options object. Instead of specifying these, you should use one of the following utility types instead:
+   * - {@link ReadableSubprocess} (any, pipe, pipe)
+   * - {@link WritableSubprocess} (pipe, any, any)
+   * - {@link PipedSubprocess} (pipe, pipe, pipe)
+   * - {@link NullSubprocess} (ignore, ignore, ignore)
+   */
+  interface Subprocess<
+    In extends SpawnOptions.Writable = SpawnOptions.Writable,
+    Out extends SpawnOptions.Readable = SpawnOptions.Readable,
+    Err extends SpawnOptions.Readable = SpawnOptions.Readable,
+  > {
+    readonly stdin: SpawnOptions.WritableToIO<In>;
+    readonly stdout: SpawnOptions.ReadableToIO<Out>;
+    readonly stderr: SpawnOptions.ReadableToIO<Err>;
 
     /**
      * This returns the same value as {@link Subprocess.stdout}
      *
      * It exists for compatibility with {@link ReadableStream.pipeThrough}
      */
-    readonly readable: T["stdout"] | undefined;
+    readonly readable: SpawnOptions.ReadableToIO<Out>;
 
     /**
      * The process ID of the child process
@@ -3134,6 +3276,168 @@ declare module "bun" {
      */
     unref(): void;
   }
+
+  /**
+   * A process created by {@link Bun.spawnSync}.
+   *
+   * This type accepts 2 optional type parameters which correspond to the `stdout` and `stderr` options. Instead of specifying these, you should use one of the following utility types instead:
+   * - {@link ReadableSyncSubprocess} (pipe, pipe)
+   * - {@link NullSyncSubprocess} (ignore, ignore)
+   */
+  interface SyncSubprocess<
+    Out extends SpawnOptions.Readable = SpawnOptions.Readable,
+    Err extends SpawnOptions.Readable = SpawnOptions.Readable,
+  > {
+    stdout: SpawnOptions.ReadableToSyncIO<Out>;
+    stderr: SpawnOptions.ReadableToSyncIO<Err>;
+    exitCode: number;
+    success: boolean;
+  }
+
+  /**
+   * Spawn a new process
+   *
+   * ```js
+   * const subprocess = Bun.spawn({
+   *  cmd: ["echo", "hello"],
+   *  stdout: "pipe",
+   * });
+   * const text = await readableStreamToText(subprocess.stdout);
+   * console.log(text); // "hello\n"
+   * ```
+   *
+   * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
+   */
+  function spawn<Opts extends SpawnOptions.OptionsObject>(
+    options: Opts & {
+      /**
+       * The command to run
+       *
+       * The first argument will be resolved to an absolute executable path. It must be a file, not a directory.
+       *
+       * If you explicitly set `PATH` in `env`, that `PATH` will be used to resolve the executable instead of the default `PATH`.
+       *
+       * To check if the command exists before running it, use `Bun.which(bin)`.
+       *
+       * @example
+       * ```ts
+       * const subprocess = Bun.spawn(["echo", "hello"]);
+       * ```
+       */
+      cmd: string[]; // to support dynamically constructed commands
+    },
+  ): SpawnOptions.OptionsToSubprocess<Opts>;
+
+  /**
+   * Spawn a new process
+   *
+   * ```js
+   * const {stdout} = Bun.spawn(["echo", "hello"]));
+   * const text = await readableStreamToText(stdout);
+   * console.log(text); // "hello\n"
+   * ```
+   *
+   * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
+   */
+  function spawn<Opts extends SpawnOptions.OptionsObject>(
+    /**
+     * The command to run
+     *
+     * The first argument will be resolved to an absolute executable path. It must be a file, not a directory.
+     *
+     * If you explicitly set `PATH` in `env`, that `PATH` will be used to resolve the executable instead of the default `PATH`.
+     *
+     * To check if the command exists before running it, use `Bun.which(bin)`.
+     *
+     * @example
+     * ```ts
+     * const subprocess = Bun.spawn(["echo", "hello"]);
+     * ```
+     */
+    cmds: string[],
+    options?: Opts,
+  ): SpawnOptions.OptionsToSubprocess<Opts>;
+
+  /**
+   * Spawn a new process
+   *
+   * ```js
+   * const {stdout} = Bun.spawnSync({
+   *  cmd: ["echo", "hello"],
+   * });
+   * console.log(stdout.toString()); // "hello\n"
+   * ```
+   *
+   * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
+   */
+  function spawnSync<Opts extends SpawnOptions.OptionsObject>(
+    options: Opts & {
+      /**
+       * The command to run
+       *
+       * The first argument will be resolved to an absolute executable path. It must be a file, not a directory.
+       *
+       * If you explicitly set `PATH` in `env`, that `PATH` will be used to resolve the executable instead of the default `PATH`.
+       *
+       * To check if the command exists before running it, use `Bun.which(bin)`.
+       *
+       * @example
+       * ```ts
+       * const subprocess = Bun.spawnSync({ cmd: ["echo", "hello"] });
+       * ```
+       */
+      cmd: string[];
+    },
+  ): SpawnOptions.OptionsToSyncSubprocess<Opts>;
+
+  /**
+   * Synchronously spawn a new process
+   *
+   * ```js
+   * const {stdout} = Bun.spawnSync(["echo", "hello"]));
+   * console.log(stdout.toString()); // "hello\n"
+   * ```
+   *
+   * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
+   */
+  function spawnSync<Opts extends SpawnOptions.OptionsObject>(
+    /**
+     * The command to run
+     *
+     * The first argument will be resolved to an absolute executable path. It must be a file, not a directory.
+     *
+     * If you explicitly set `PATH` in `env`, that `PATH` will be used to resolve the executable instead of the default `PATH`.
+     *
+     * To check if the command exists before running it, use `Bun.which(bin)`.
+     *
+     * @example
+     * ```ts
+     * const subprocess = Bun.spawnSync(["echo", "hello"]);
+     * ```
+     */
+    cmds: string[],
+    options?: Opts,
+  ): SpawnOptions.OptionsToSyncSubprocess<Opts>;
+
+  /** Utility type for any process from {@link Bun.spawn()} with both stdout and stderr set to `"pipe"` */
+  type ReadableSubprocess = Subprocess<any, "pipe", "pipe">;
+  /** Utility type for any process from {@link Bun.spawn()} with stdin set to `"pipe"` */
+  type WritableSubprocess = Subprocess<"pipe", any, any>;
+  /** Utility type for any process from {@link Bun.spawn()} with stdin, stdout, stderr all set to `"pipe"`. A combination of {@link ReadableSubprocess} and {@link WritableSubprocess} */
+  type PipedSubprocess = Subprocess<"pipe", "pipe", "pipe">;
+  /** Utility type for any process from {@link Bun.spawn()} with stdin, stdout, stderr all set to `null` or similar. */
+  type NullSubprocess = Subprocess<
+    "ignore" | "inherit" | null | undefined,
+    "ignore" | "inherit" | null | undefined,
+    "ignore" | "inherit" | null | undefined
+  >;
+  /** Utility type for any process from {@link Bun.spawnSync()} with both stdout and stderr set to `"pipe"` */
+  type ReadableSyncSubprocess = SyncSubprocess<"pipe", "pipe">;
+  /** Utility type for any process from {@link Bun.spawnSync()} with both stdout and stderr set to `null` or similar */
+  type NullSyncSubprocess = SyncSubprocess<
+    "ignore" | "inherit" | null | undefined,
+    "ignore" | "inherit" | null | undefined
+  >;
 
   export class FileSystemRouter {
     /**
@@ -3211,128 +3515,6 @@ declare module "bun" {
     readonly kind: "exact" | "catch-all" | "optional-catch-all" | "dynamic";
     readonly src: string;
   }
-
-  interface SyncSubprocess {
-    stdout?: Buffer;
-    stderr?: Buffer;
-    exitCode: number;
-    success: boolean;
-  }
-
-  /**
-   * Spawn a new process
-   *
-   * ```js
-   * const subprocess = Bun.spawn({
-   *  cmd: ["echo", "hello"],
-   *  stdout: "pipe",
-   * });
-   * const text = await readableStreamToText(subprocess.stdout);
-   * console.log(text); // "hello\n"
-   * ```
-   *
-   * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
-   */
-  function spawn<Opts extends SpawnOptions.OptionsObject>(
-    options: Opts & {
-      /**
-       * The command to run
-       *
-       * The first argument will be resolved to an absolute executable path. It must be a file, not a directory.
-       *
-       * If you explicitly set `PATH` in `env`, that `PATH` will be used to resolve the executable instead of the default `PATH`.
-       *
-       * To check if the command exists before running it, use `Bun.which(bin)`.
-       *
-       */
-      cmd: string[]; // to support dynamically constructed commands
-    },
-  ): Subprocess<OptionsToSubprocessIO<Opts>>;
-
-  /**
-   * Spawn a new process
-   *
-   * ```js
-   * const {stdout} = Bun.spawn(["echo", "hello"]));
-   * const text = await readableStreamToText(stdout);
-   * console.log(text); // "hello\n"
-   * ```
-   *
-   * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
-   */
-  function spawn<Opts extends SpawnOptions.OptionsObject>(
-    /**
-     * The command to run
-     * @example
-     * ```ts
-     * const subprocess = Bun.spawn(["echo", "hello"]);
-     */
-    cmds: string[],
-    options?: Opts,
-  ): Subprocess<OptionsToSubprocessIO<Opts>>;
-  type OptionsToSubprocessIO<Opts extends SpawnOptions.OptionsObject> = {
-    stdin?: Opts["stdin"] extends number
-      ? number
-      : Opts["stdin"] extends "pipe"
-      ? FileSink
-      : ReadableStream;
-    stdout?: Opts["stdout"] extends number ? number : ReadableStream;
-    stderr?: Opts["stderr"] extends number ? number : ReadableStream;
-  };
-
-  /**
-   * Spawn a new process
-   *
-   * ```js
-   * const {stdout} = Bun.spawnSync({
-   *  cmd: ["echo", "hello"],
-   * });
-   * console.log(stdout.toString()); // "hello\n"
-   * ```
-   *
-   * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
-   */
-  function spawnSync(
-    options: SpawnOptions.OptionsObject & {
-      /**
-       * The command to run
-       *
-       * The first argument will be resolved to an absolute executable path. It must be a file, not a directory.
-       *
-       * If you explicitly set `PATH` in `env`, that `PATH` will be used to resolve the executable instead of the default `PATH`.
-       *
-       * To check if the command exists before running it, use `Bun.which(bin)`.
-       *
-       */
-      cmd: [string, ...string[]];
-    },
-  ): SyncSubprocess;
-
-  /**
-   * Synchronously spawn a new process
-   *
-   * ```js
-   * const {stdout} = Bun.spawnSync(["echo", "hello"]));
-   * console.log(stdout.toString()); // "hello\n"
-   * ```
-   *
-   * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
-   */
-  function spawnSync(
-    /**
-     * The command to run
-     * @example
-     * ```ts
-     * const subprocess = Bun.spawn(["echo", "hello"]);
-     */
-    cmds: [
-      /** One command is required */
-      string,
-      /** Additional arguments */
-      ...string[],
-    ],
-    options?: SpawnOptions.OptionsObject,
-  ): SyncSubprocess;
 
   /**
    * The current version of Bun

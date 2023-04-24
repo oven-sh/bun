@@ -24,6 +24,9 @@ export const enum Loader {
   toml = 8,
   wasm = 9,
   napi = 10,
+  base64 = 11,
+  dataurl = 12,
+  text = 13,
 }
 export const LoaderKeys: {
   1: "jsx";
@@ -46,6 +49,12 @@ export const LoaderKeys: {
   wasm: "wasm";
   10: "napi";
   napi: "napi";
+  11: "base64";
+  base64: "base64";
+  12: "dataurl";
+  dataurl: "dataurl";
+  13: "text";
+  text: "text";
 };
 export const enum FrameworkEntryPointType {
   client = 1,
@@ -702,6 +711,22 @@ export interface BunInstall {
   global_bin_dir?: string;
 }
 
+export interface ClientServerModule {
+  moduleId: uint32;
+  inputName: StringPointer;
+  assetName: StringPointer;
+  exportNames: StringPointer;
+}
+
+export interface ClientServerModuleManifest {
+  version: uint32;
+  clientModules: ClientServerModule[];
+  serverModules: ClientServerModule[];
+  ssrModules: ClientServerModule[];
+  exportNames: StringPointer[];
+  contents: Uint8Array;
+}
+
 export declare function encodeStackFrame(message: StackFrame, bb: ByteBuffer): void;
 export declare function decodeStackFrame(buffer: ByteBuffer): StackFrame;
 export declare function encodeStackFramePosition(message: StackFramePosition, bb: ByteBuffer): void;
@@ -816,3 +841,7 @@ export declare function encodeNPMRegistryMap(message: NPMRegistryMap, bb: ByteBu
 export declare function decodeNPMRegistryMap(buffer: ByteBuffer): NPMRegistryMap;
 export declare function encodeBunInstall(message: BunInstall, bb: ByteBuffer): void;
 export declare function decodeBunInstall(buffer: ByteBuffer): BunInstall;
+export declare function encodeClientServerModule(message: ClientServerModule, bb: ByteBuffer): void;
+export declare function decodeClientServerModule(buffer: ByteBuffer): ClientServerModule;
+export declare function encodeClientServerModuleManifest(message: ClientServerModuleManifest, bb: ByteBuffer): void;
+export declare function decodeClientServerModuleManifest(buffer: ByteBuffer): ClientServerModuleManifest;

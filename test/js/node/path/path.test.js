@@ -9,6 +9,32 @@ const strictEqual = (...args) => {
   expect(true).toBe(true);
 };
 
+it("should not inherit Object.prototype", () => {
+  expect(path).not.toHaveProperty("toString");
+});
+
+it("path.dirname", () => {
+  const fixtures = [
+    ["yo", "."],
+    ["/yo", "/"],
+    ["/yo/", "/"],
+    ["/yo/123", "/yo"],
+    [".", "."],
+    ["../", "."],
+    ["../../", ".."],
+    ["../../foo", "../.."],
+    ["../../foo/../", "../../foo"],
+    ["/foo/../", "/foo"],
+    ["../../foo/../bar", "../../foo/.."],
+  ];
+  for (const [input, expected] of fixtures) {
+    expect(path.posix.dirname(input)).toBe(expected);
+    if (process.platform !== "win32") {
+      expect(path.dirname(input)).toBe(expected);
+    }
+  }
+});
+
 it("path.basename", () => {
   strictEqual(path.basename(file), "path.test.js");
   strictEqual(path.basename(file, ".js"), "path.test");

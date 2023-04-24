@@ -20,6 +20,10 @@ else
 
 pub const huge_allocator_threshold: comptime_int = @import("./memory_allocator.zig").huge_threshold;
 
+/// We cannot use a threadlocal memory allocator for FileSystem-related things
+/// FileSystem is a singleton.
+pub const fs_allocator = default_allocator;
+
 pub const C = @import("c.zig");
 
 pub const FeatureFlags = @import("feature_flags.zig");
@@ -29,6 +33,12 @@ pub const base64 = @import("./base64/base64.zig");
 pub const path = @import("./resolver/resolve_path.zig");
 pub const fmt = struct {
     pub usingnamespace std.fmt;
+
+    pub fn quote(self: string) strings.QuotedFormatter {
+        return strings.QuotedFormatter{
+            .text = self,
+        };
+    }
 
     pub fn formatIp(address: std.net.Address, into: []u8) ![]u8 {
         // std.net.Address.format includes `:<port>` and square brackets (IPv6)
@@ -236,7 +246,7 @@ pub const MutableString = @import("string_mutable.zig").MutableString;
 pub const RefCount = @import("./ref_count.zig").RefCount;
 
 pub inline fn constStrToU8(s: []const u8) []u8 {
-    return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
+    return @constCast(s);
 }
 
 pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.MAX_PATH_BYTES;
@@ -370,6 +380,29 @@ pub fn span(ptr: anytype) Span(@TypeOf(ptr)) {
 
 pub const IdentityContext = @import("./identity_context.zig").IdentityContext;
 pub const ArrayIdentityContext = @import("./identity_context.zig").ArrayIdentityContext;
+pub const StringHashMapUnowned = struct {
+    pub const Key = struct {
+        hash: u64,
+        len: usize,
+
+        pub fn init(str: []const u8) Key {
+            return Key{
+                .hash = hash(str),
+                .len = str.len,
+            };
+        }
+    };
+
+    pub const Adapter = struct {
+        pub fn eql(_: @This(), a: Key, b: Key) bool {
+            return a.hash == b.hash and a.len == b.len;
+        }
+
+        pub fn hash(_: @This(), key: Key) u64 {
+            return key.hash;
+        }
+    };
+};
 pub const BabyList = @import("./baby_list.zig").BabyList;
 pub const ByteList = BabyList(u8);
 
@@ -496,6 +529,11 @@ pub const LinearFifo = @import("./linear_fifo.zig").LinearFifo;
 /// hash a string
 pub fn hash(content: []const u8) u64 {
     return std.hash.Wyhash.hash(0, content);
+}
+
+pub fn hash32(content: []const u8) u32 {
+    const res = hash(content);
+    return @truncate(u32, res);
 }
 
 pub const HiveArray = @import("./hive_array.zig").HiveArray;
@@ -686,6 +724,27 @@ pub const StringArrayHashMapContext = struct {
     pub fn eql(_: @This(), a: []const u8, b: []const u8, _: usize) bool {
         return strings.eqlLong(a, b, true);
     }
+
+    pub fn pre(input: []const u8) Prehashed {
+        return Prehashed{
+            .value = @This().hash(.{}, input),
+            .input = input,
+        };
+    }
+
+    pub const Prehashed = struct {
+        value: u32,
+        input: []const u8,
+        pub fn hash(this: @This(), s: []const u8) u32 {
+            if (s.ptr == this.input.ptr and s.len == this.input.len)
+                return this.value;
+            return @truncate(u32, std.hash.Wyhash.hash(0, s));
+        }
+
+        pub fn eql(_: @This(), a: []const u8, b: []const u8) bool {
+            return strings.eqlLong(a, b, true);
+        }
+    };
 };
 
 pub const StringHashMapContext = struct {
@@ -696,13 +755,20 @@ pub const StringHashMapContext = struct {
         return strings.eqlLong(a, b, true);
     }
 
+    pub fn pre(input: []const u8) Prehashed {
+        return Prehashed{
+            .value = @This().hash(.{}, input),
+            .input = input,
+        };
+    }
+
     pub const Prehashed = struct {
         value: u64,
         input: []const u8,
         pub fn hash(this: @This(), s: []const u8) u64 {
             if (s.ptr == this.input.ptr and s.len == this.input.len)
                 return this.value;
-            return std.hash.Wyhash.hash(0, s);
+            return StringHashMapContext.hash(.{}, s);
         }
 
         pub fn eql(_: @This(), a: []const u8, b: []const u8) bool {
@@ -823,7 +889,7 @@ pub const js_printer = @import("./js_printer.zig");
 pub const js_lexer = @import("./js_lexer.zig");
 pub const JSON = @import("./json_parser.zig");
 pub const JSAst = @import("./js_ast.zig");
-pub const bit_set = @import("./install/bit_set.zig");
+pub const bit_set = @import("./bit_set.zig");
 
 pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) []const u8) {
     const Map = struct {
@@ -843,6 +909,18 @@ pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) []const u8) {
     };
 
     return Map.get;
+}
+
+pub fn ComptimeEnumMap(comptime T: type) type {
+    comptime {
+        var entries: [std.enums.values(T).len]struct { string, T } = undefined;
+        var i: usize = 0;
+        inline for (std.enums.values(T)) |value| {
+            entries[i] = .{ .@"0" = @tagName(value), .@"1" = value };
+            i += 1;
+        }
+        return ComptimeStringMap(T, entries);
+    }
 }
 
 /// Write 0's for every byte in Type
@@ -1027,6 +1105,19 @@ pub fn cstring(input: []const u8) [:0]const u8 {
 }
 
 pub const Semver = @import("./install/semver.zig");
+pub const ImportRecord = @import("./import_record.zig").ImportRecord;
+pub const ImportKind = @import("./import_record.zig").ImportKind;
+
+pub usingnamespace @import("./util.zig");
+pub const fast_debug_build_cmd = .None;
+pub const fast_debug_build_mode = fast_debug_build_cmd != .None and
+    Environment.isDebug;
+
+pub const MultiArrayList = @import("./multi_array_list.zig").MultiArrayList;
+
+pub const Joiner = @import("./string_joiner.zig");
+pub const renamer = @import("./renamer.zig");
+pub const sourcemap = @import("./sourcemap/sourcemap.zig");
 
 pub fn asByteSlice(buffer: anytype) []const u8 {
     return switch (@TypeOf(buffer)) {
@@ -1042,6 +1133,68 @@ pub fn asByteSlice(buffer: anytype) []const u8 {
         },
     };
 }
+
+comptime {
+    if (fast_debug_build_cmd != .RunCommand and fast_debug_build_mode) {
+        _ = @import("./bun.js/node/buffer.zig").BufferVectorized.fill;
+        _ = @import("./cli/upgrade_command.zig").Version;
+    }
+}
+
+pub fn DebugOnlyDisabler(comptime Type: type) type {
+    return struct {
+        const T = Type;
+        threadlocal var disable_create_in_debug: if (Environment.allow_assert) usize else u0 = 0;
+        pub inline fn disable() void {
+            if (comptime !Environment.allow_assert) return;
+            disable_create_in_debug += 1;
+        }
+
+        pub inline fn enable() void {
+            if (comptime !Environment.allow_assert) return;
+            disable_create_in_debug -= 1;
+        }
+
+        pub inline fn assert() void {
+            if (comptime !Environment.allow_assert) return;
+            if (disable_create_in_debug > 0) {
+                Output.panic(comptime "[" ++ @typeName(T) ++ "] called while disabled (did you forget to call enable?)", .{});
+            }
+        }
+    };
+}
+
+const FailingAllocator = struct {
+    fn alloc(_: *anyopaque, _: usize, _: u8, _: usize) ?[*]u8 {
+        if (comptime Environment.allow_assert) {
+            unreachablePanic("FailingAllocator should never be reached. This means some memory was not defined", .{});
+        }
+        return null;
+    }
+
+    fn resize(_: *anyopaque, _: []u8, _: u8, _: usize, _: usize) bool {
+        if (comptime Environment.allow_assert) {
+            unreachablePanic("FailingAllocator should never be reached. This means some memory was not defined", .{});
+        }
+        return false;
+    }
+
+    fn free(
+        _: *anyopaque,
+        _: []u8,
+        _: u8,
+        _: usize,
+    ) void {
+        unreachable;
+    }
+};
+
+/// When we want to avoid initializing a value as undefined, we can use this allocator
+pub const failing_allocator = std.mem.Allocator{ .ptr = undefined, .vtable = &.{
+    .alloc = FailingAllocator.alloc,
+    .resize = FailingAllocator.resize,
+    .free = FailingAllocator.free,
+} };
 
 /// Reload Bun's process
 ///
@@ -1083,6 +1236,8 @@ pub fn reloadProcess(
 
     // Clear the terminal
     if (clear_terminal) {
+        Output.flush();
+        Output.disableBuffering();
         Output.resetTerminalAll();
     }
 
@@ -1118,3 +1273,115 @@ pub fn reloadProcess(
     }
 }
 pub var auto_reload_on_crash = false;
+
+pub const options = @import("./options.zig");
+pub const StringSet = struct {
+    map: Map,
+
+    pub const Map = StringArrayHashMap(void);
+
+    pub fn init(allocator: std.mem.Allocator) StringSet {
+        return StringSet{
+            .map = Map.init(allocator),
+        };
+    }
+
+    pub fn keys(self: StringSet) []const string {
+        return self.map.keys();
+    }
+
+    pub fn insert(self: *StringSet, key: []const u8) !void {
+        var entry = try self.map.getOrPut(key);
+        if (!entry.found_existing) {
+            entry.key_ptr.* = try self.map.allocator.dupe(u8, key);
+        }
+    }
+
+    pub fn deinit(self: *StringSet) void {
+        for (self.map.keys()) |key| {
+            self.map.allocator.free(key);
+        }
+
+        self.map.deinit();
+    }
+};
+
+pub const Schema = @import("./api/schema.zig");
+
+pub const StringMap = struct {
+    map: Map,
+    dupe_keys: bool = false,
+
+    pub const Map = StringArrayHashMap(string);
+
+    pub fn init(allocator: std.mem.Allocator, dupe_keys: bool) StringMap {
+        return StringMap{
+            .map = Map.init(allocator),
+            .dupe_keys = dupe_keys,
+        };
+    }
+
+    pub fn keys(self: StringMap) []const string {
+        return self.map.keys();
+    }
+
+    pub fn values(self: StringMap) []const string {
+        return self.map.values();
+    }
+
+    pub fn count(self: StringMap) usize {
+        return self.map.count();
+    }
+
+    pub fn toAPI(self: StringMap) Schema.Api.StringMap {
+        return Schema.Api.StringMap{
+            .keys = self.keys(),
+            .values = self.values(),
+        };
+    }
+
+    pub fn insert(self: *StringMap, key: []const u8, value: []const u8) !void {
+        var entry = try self.map.getOrPut(key);
+        if (!entry.found_existing) {
+            if (self.dupe_keys)
+                entry.key_ptr.* = try self.map.allocator.dupe(u8, key);
+        } else {
+            self.map.allocator.free(entry.value_ptr.*);
+        }
+
+        entry.value_ptr.* = try self.map.allocator.dupe(u8, value);
+    }
+
+    pub const put = insert;
+    pub fn get(self: *const StringMap, key: []const u8) ?[]const u8 {
+        return self.map.get(key);
+    }
+
+    pub fn deinit(self: *StringMap) void {
+        for (self.map.values()) |value| {
+            self.map.allocator.free(value);
+        }
+
+        if (self.dupe_keys) {
+            for (self.map.keys()) |key| {
+                self.map.allocator.free(key);
+            }
+        }
+
+        self.map.deinit();
+    }
+};
+
+pub const DotEnv = @import("./env_loader.zig");
+pub const BundleV2 = @import("./bundler/bundle_v2.zig").BundleV2;
+
+pub const Lock = @import("./lock.zig").Lock;
+pub const UnboundedQueue = @import("./bun.js/unbounded_queue.zig").UnboundedQueue;
+
+pub fn threadlocalAllocator() std.mem.Allocator {
+    if (comptime use_mimalloc) {
+        return MimallocArena.getThreadlocalDefault();
+    }
+
+    return default_allocator;
+}

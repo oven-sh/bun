@@ -1,14 +1,14 @@
 const Output = @This();
-const bun = @import("bun");
+const bun = @import("root").bun;
 const std = @import("std");
 const Environment = @import("./env.zig");
-const string = @import("bun").string;
-const root = @import("bun");
-const strings = @import("bun").strings;
-const StringTypes = @import("bun").StringTypes;
-const Global = @import("bun").Global;
-const ComptimeStringMap = @import("bun").ComptimeStringMap;
-const use_mimalloc = @import("bun").use_mimalloc;
+const string = @import("root").bun.string;
+const root = @import("root").bun;
+const strings = @import("root").bun.strings;
+const StringTypes = @import("root").bun.StringTypes;
+const Global = @import("root").bun.Global;
+const ComptimeStringMap = @import("root").bun.ComptimeStringMap;
+const use_mimalloc = @import("root").bun.use_mimalloc;
 
 const SystemTimer = @import("./system_timer.zig").Timer;
 
@@ -275,16 +275,16 @@ inline fn printElapsedToWithCtx(elapsed: f64, comptime printerFn: anytype, compt
     }
 }
 
-pub fn printElapsedTo(elapsed: f64, comptime printerFn: anytype, ctx: anytype) void {
+pub noinline fn printElapsedTo(elapsed: f64, comptime printerFn: anytype, ctx: anytype) void {
     printElapsedToWithCtx(elapsed, printerFn, true, ctx);
 }
 
 pub fn printElapsed(elapsed: f64) void {
-    printElapsedToWithCtx(elapsed, Output.prettyError, false, void{});
+    printElapsedToWithCtx(elapsed, Output.prettyError, false, {});
 }
 
 pub fn printElapsedStdout(elapsed: f64) void {
-    printElapsedToWithCtx(elapsed, Output.pretty, false, void{});
+    printElapsedToWithCtx(elapsed, Output.pretty, false, {});
 }
 
 pub fn printStartEnd(start: i128, end: i128) void {
@@ -303,7 +303,7 @@ pub fn printTimer(timer: *SystemTimer) void {
     printElapsed(@intToFloat(f64, elapsed));
 }
 
-pub fn printErrorable(comptime fmt: string, args: anytype) !void {
+pub noinline fn printErrorable(comptime fmt: string, args: anytype) !void {
     if (comptime Environment.isWasm) {
         try source.stream.seekTo(0);
         try source.stream.writer().print(fmt, args);
@@ -316,7 +316,7 @@ pub fn printErrorable(comptime fmt: string, args: anytype) !void {
 /// Print to stdout
 /// This will appear in the terminal, including in production.
 /// Text automatically buffers
-pub fn println(comptime fmt: string, args: anytype) void {
+pub noinline fn println(comptime fmt: string, args: anytype) void {
     if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
         return print(fmt ++ "\n", args);
     }
@@ -332,18 +332,19 @@ pub inline fn debug(comptime fmt: string, args: anytype) void {
     flush();
 }
 
-pub fn _debug(comptime fmt: string, args: anytype) void {
+pub inline fn _debug(comptime fmt: string, args: anytype) void {
     std.debug.assert(source_set);
     println(fmt, args);
 }
 
-pub fn print(comptime fmt: string, args: anytype) void {
+pub noinline fn print(comptime fmt: string, args: anytype) void {
     if (comptime Environment.isWasm) {
         source.stream.pos = 0;
         std.fmt.format(source.stream.writer(), fmt, args) catch unreachable;
         root.console_log(root.Uint8Array.fromSlice(source.stream.buffer[0..source.stream.pos]));
     } else {
-        std.debug.assert(source_set);
+        if (comptime Environment.allow_assert)
+            std.debug.assert(source_set);
 
         if (enable_buffering) {
             std.fmt.format(source.buffered_stream.writer(), fmt, args) catch unreachable;
@@ -375,6 +376,7 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
         var out_set = false;
         var really_disable = disabled;
         var evaluated_disable = false;
+        var lock = std.Thread.Mutex{};
 
         /// Debug-only logs which should not appear in release mode
         /// To enable a specific log at runtime, set the environment variable
@@ -409,6 +411,9 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
                 out = buffered_writer.writer();
                 out_set = true;
             }
+
+            lock.lock();
+            defer lock.unlock();
 
             if (Output.enable_ansi_colors_stderr) {
                 out.print(comptime prettyFmt("<r><d>[" ++ @tagName(tag) ++ "]<r> " ++ fmt, true), args) catch unreachable;
@@ -450,6 +455,9 @@ pub const color_map = ComptimeStringMap(string, .{
 });
 const RESET: string = "\x1b[0m";
 pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
+    if (comptime @import("root").bun.fast_debug_build_mode)
+        return fmt;
+
     comptime var new_fmt: [fmt.len * 4]u8 = undefined;
     comptime var new_fmt_i: usize = 0;
 
@@ -527,7 +535,7 @@ pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
     return comptime new_fmt[0..new_fmt_i];
 }
 
-pub fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime printer: anytype, comptime l: Level) void {
+pub noinline fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime printer: anytype, comptime l: Level) void {
     if (comptime l == .Warn) {
         if (level == .Error) return;
     }
@@ -539,7 +547,10 @@ pub fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime printer: 
     }
 }
 
-pub fn prettyWithPrinterFn(comptime fmt: string, args: anytype, comptime printFn: anytype, ctx: anytype) void {
+pub noinline fn prettyWithPrinterFn(comptime fmt: string, args: anytype, comptime printFn: anytype, ctx: anytype) void {
+    if (comptime @import("root").bun.fast_debug_build_mode)
+        return printFn(ctx, comptime prettyFmt(fmt, false), args);
+
     if (enable_ansi_colors) {
         printFn(ctx, comptime prettyFmt(fmt, true), args);
     } else {
@@ -547,7 +558,7 @@ pub fn prettyWithPrinterFn(comptime fmt: string, args: anytype, comptime printFn
     }
 }
 
-pub fn pretty(comptime fmt: string, args: anytype) void {
+pub noinline fn pretty(comptime fmt: string, args: anytype) void {
     prettyWithPrinter(fmt, args, print, .stdout);
 }
 
@@ -557,7 +568,7 @@ pub fn prettyln(comptime fmt: string, args: anytype) void {
     prettyWithPrinter(fmt, args, println, .stdout);
 }
 
-pub fn printErrorln(comptime fmt: string, args: anytype) void {
+pub noinline fn printErrorln(comptime fmt: string, args: anytype) void {
     if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
         return printError(fmt ++ "\n", args);
     }
@@ -565,7 +576,7 @@ pub fn printErrorln(comptime fmt: string, args: anytype) void {
     return printError(fmt, args);
 }
 
-pub fn prettyError(comptime fmt: string, args: anytype) void {
+pub noinline fn prettyError(comptime fmt: string, args: anytype) void {
     prettyWithPrinter(fmt, args, printError, .Error);
 }
 
@@ -583,7 +594,7 @@ pub const Level = enum(u8) {
 
 pub var level = if (Environment.isDebug) Level.Warn else Level.Error;
 
-pub fn prettyWarn(comptime fmt: string, args: anytype) void {
+pub noinline fn prettyWarn(comptime fmt: string, args: anytype) void {
     prettyWithPrinter(fmt, args, printError, .Warn);
 }
 
@@ -591,7 +602,7 @@ pub fn prettyWarnln(comptime fmt: string, args: anytype) void {
     prettyWithPrinter(fmt, args, printErrorln, .Warn);
 }
 
-pub fn printError(comptime fmt: string, args: anytype) void {
+pub noinline fn printError(comptime fmt: string, args: anytype) void {
     if (comptime Environment.isWasm) {
         source.error_stream.seekTo(0) catch return;
         source.error_stream.writer().print(fmt, args) catch unreachable;
@@ -605,7 +616,7 @@ pub fn printError(comptime fmt: string, args: anytype) void {
 }
 
 pub const DebugTimer = struct {
-    timer: @import("bun").DebugOnly(std.time.Timer) = undefined,
+    timer: @import("root").bun.DebugOnly(std.time.Timer) = undefined,
 
     pub fn start() DebugTimer {
         if (comptime Environment.isDebug) {

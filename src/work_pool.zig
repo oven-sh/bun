@@ -1,4 +1,4 @@
-const ThreadPool = @import("bun").ThreadPool;
+const ThreadPool = @import("root").bun.ThreadPool;
 const std = @import("std");
 
 pub const Batch = ThreadPool.Batch;
@@ -13,7 +13,7 @@ pub fn NewWorkPool(comptime max_threads: ?usize) type {
             @setCold(true);
 
             pool = ThreadPool.init(.{
-                .max_threads = max_threads orelse @floatToInt(u32, @floor(@intToFloat(f32, @max(std.Thread.getCpuCount() catch 0, 2)) * 0.8)),
+                .max_threads = max_threads orelse @max(@truncate(u32, std.Thread.getCpuCount() catch 0), 2),
                 .stack_size = 2 * 1024 * 1024,
             });
             return &pool;

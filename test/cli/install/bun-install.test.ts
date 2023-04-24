@@ -1581,6 +1581,153 @@ it("should handle scoped alias on unscoped dependency", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
+it("should handle aliased dependency with existing lockfile", async () => {
+  const urls: string[] = [];
+  setHandler(
+    dummyRegistry(urls, {
+      "0.0.2": {},
+      "0.0.3": {
+        bin: {
+          "baz-run": "index.js",
+        },
+      },
+      "0.1.0": {
+        dependencies: {
+          bar: "0.0.2",
+          baz: "latest",
+        },
+      },
+      latest: "0.0.3",
+    }),
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        "moz": "npm:@barn/moo@0.1.0",
+      },
+    }),
+  );
+  const {
+    stdout: stdout1,
+    stderr: stderr1,
+    exited: exited1,
+  } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr1).toBeDefined();
+  const err1 = await new Response(stderr1).text();
+  expect(err1).toContain("Saved lockfile");
+  expect(stdout1).toBeDefined();
+  const out1 = await new Response(stdout1).text();
+  expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + moz@0.1.0",
+    "",
+    " 3 packages installed",
+  ]);
+  expect(await exited1).toBe(0);
+  expect(urls.sort()).toEqual([
+    `${root_url}/@barn/moo`,
+    `${root_url}/@barn/moo-0.1.0.tgz`,
+    `${root_url}/bar`,
+    `${root_url}/bar-0.0.2.tgz`,
+    `${root_url}/baz`,
+    `${root_url}/baz-0.0.3.tgz`,
+  ]);
+  expect(requested).toBe(6);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "bar", "baz", "moz"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["baz-run"]);
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "baz-run"))).toBe(join("..", "baz", "index.js"));
+  expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
+  expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
+  expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
+    name: "baz",
+    version: "0.0.3",
+    bin: {
+      "baz-run": "index.js",
+    },
+  });
+  expect(await readdirSorted(join(package_dir, "node_modules", "moz"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "moz", "package.json")).json()).toEqual({
+    name: "@barn/moo",
+    version: "0.1.0",
+    dependencies: {
+      bar: "0.0.2",
+      baz: "latest",
+    },
+  });
+  await access(join(package_dir, "bun.lockb"));
+  // Perform `bun install` again but with lockfile from before
+  await rm(join(package_dir, "node_modules"), { force: true, recursive: true });
+  urls.length = 0;
+  const {
+    stdout: stdout2,
+    stderr: stderr2,
+    exited: exited2,
+  } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr2).toBeDefined();
+  const err2 = await new Response(stderr2).text();
+  expect(err2).not.toContain("Saved lockfile");
+  expect(stdout2).toBeDefined();
+  const out2 = await new Response(stdout2).text();
+  expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + moz@0.1.0",
+    "",
+    " 3 packages installed",
+  ]);
+  expect(await exited2).toBe(0);
+  expect(urls.sort()).toEqual([
+    `${root_url}/@barn/moo-0.1.0.tgz`,
+    `${root_url}/bar-0.0.2.tgz`,
+    `${root_url}/baz-0.0.3.tgz`,
+  ]);
+  expect(requested).toBe(9);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "bar", "baz", "moz"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["baz-run"]);
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "baz-run"))).toBe(join("..", "baz", "index.js"));
+  expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
+  expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
+  expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
+    name: "baz",
+    version: "0.0.3",
+    bin: {
+      "baz-run": "index.js",
+    },
+  });
+  expect(await readdirSorted(join(package_dir, "node_modules", "moz"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "moz", "package.json")).json()).toEqual({
+    name: "@barn/moo",
+    version: "0.1.0",
+    dependencies: {
+      bar: "0.0.2",
+      baz: "latest",
+    },
+  });
+  await access(join(package_dir, "bun.lockb"));
+});
+
 it("should handle GitHub URL in dependencies (user/repo)", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
@@ -2007,6 +2154,131 @@ it("should handle GitHub URL in dependencies (git+https://github.com/user/repo.g
   ]);
   const package_json = await file(join(package_dir, "node_modules", "uglify", "package.json")).json();
   expect(package_json.name).toBe("uglify-js");
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should handle GitHub URL with existing lockfile", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    `
+[install]
+cache = false
+`,
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        "html-minifier": "kangax/html-minifier#v4.0.0",
+      },
+    }),
+  );
+  const {
+    stdout: stdout1,
+    stderr: stderr1,
+    exited: exited1,
+  } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr1).toBeDefined();
+  const err1 = await new Response(stderr1).text();
+  expect(err1).toContain("Saved lockfile");
+  expect(stdout1).toBeDefined();
+  const out1 = await new Response(stdout1).text();
+  expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + html-minifier@github:kangax/html-minifier#4beb325",
+    "",
+    " 12 packages installed",
+  ]);
+  expect(await exited1).toBe(0);
+  expect(urls.sort()).toEqual([]);
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".bin",
+    ".cache",
+    "camel-case",
+    "clean-css",
+    "commander",
+    "he",
+    "html-minifier",
+    "lower-case",
+    "no-case",
+    "param-case",
+    "relateurl",
+    "source-map",
+    "uglify-js",
+    "upper-case",
+  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["he", "html-minifier", "uglifyjs"]);
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "he"))).toBe(join("..", "he", "bin", "he"));
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "html-minifier"))).toBe(
+    join("..", "html-minifier", "cli.js"),
+  );
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "uglifyjs"))).toBe(
+    join("..", "uglify-js", "bin", "uglifyjs"),
+  );
+  await access(join(package_dir, "bun.lockb"));
+  // Perform `bun install` again but with lockfile from before
+  await rm(join(package_dir, "node_modules"), { force: true, recursive: true });
+  urls.length = 0;
+  const {
+    stdout: stdout2,
+    stderr: stderr2,
+    exited: exited2,
+  } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr2).toBeDefined();
+  const err2 = await new Response(stderr2).text();
+  expect(err2).not.toContain("Saved lockfile");
+  expect(stdout2).toBeDefined();
+  const out2 = await new Response(stdout2).text();
+  expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + html-minifier@github:kangax/html-minifier#4beb325",
+    "",
+    " 12 packages installed",
+  ]);
+  expect(await exited2).toBe(0);
+  expect(urls.sort()).toEqual([]);
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".bin",
+    ".cache",
+    "camel-case",
+    "clean-css",
+    "commander",
+    "he",
+    "html-minifier",
+    "lower-case",
+    "no-case",
+    "param-case",
+    "relateurl",
+    "source-map",
+    "uglify-js",
+    "upper-case",
+  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["he", "html-minifier", "uglifyjs"]);
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "he"))).toBe(join("..", "he", "bin", "he"));
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "html-minifier"))).toBe(
+    join("..", "html-minifier", "cli.js"),
+  );
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "uglifyjs"))).toBe(
+    join("..", "uglify-js", "bin", "uglifyjs"),
+  );
   await access(join(package_dir, "bun.lockb"));
 });
 
@@ -2704,6 +2976,201 @@ it("should de-duplicate committish in Git URLs", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
+it("should handle Git URL with existing lockfile", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    `
+[install]
+cache = false
+`,
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        "html-minifier": "git+https://git@github.com/kangax/html-minifier#v4.0.0",
+      },
+    }),
+  );
+  const {
+    stdout: stdout1,
+    stderr: stderr1,
+    exited: exited1,
+  } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr1).toBeDefined();
+  const err1 = await new Response(stderr1).text();
+  expect(err1).toContain("Saved lockfile");
+  expect(stdout1).toBeDefined();
+  const out1 = await new Response(stdout1).text();
+  expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + html-minifier@git+https://git@github.com/kangax/html-minifier#4beb325eb01154a40c0cbebff2e5737bbd7071ab",
+    "",
+    " 12 packages installed",
+  ]);
+  expect(await exited1).toBe(0);
+  expect(urls.sort()).toEqual([]);
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".bin",
+    ".cache",
+    "camel-case",
+    "clean-css",
+    "commander",
+    "he",
+    "html-minifier",
+    "lower-case",
+    "no-case",
+    "param-case",
+    "relateurl",
+    "source-map",
+    "uglify-js",
+    "upper-case",
+  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["he", "html-minifier", "uglifyjs"]);
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "he"))).toBe(join("..", "he", "bin", "he"));
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "html-minifier"))).toBe(
+    join("..", "html-minifier", "cli.js"),
+  );
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "uglifyjs"))).toBe(
+    join("..", "uglify-js", "bin", "uglifyjs"),
+  );
+  await access(join(package_dir, "bun.lockb"));
+  // Perform `bun install` again but with lockfile from before
+  await rm(join(package_dir, "node_modules"), { force: true, recursive: true });
+  urls.length = 0;
+  const {
+    stdout: stdout2,
+    stderr: stderr2,
+    exited: exited2,
+  } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr2).toBeDefined();
+  const err2 = await new Response(stderr2).text();
+  expect(err2).not.toContain("Saved lockfile");
+  expect(stdout2).toBeDefined();
+  const out2 = await new Response(stdout2).text();
+  expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + html-minifier@git+https://git@github.com/kangax/html-minifier#4beb325eb01154a40c0cbebff2e5737bbd7071ab",
+    "",
+    " 12 packages installed",
+  ]);
+  expect(await exited2).toBe(0);
+  expect(urls.sort()).toEqual([]);
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".bin",
+    ".cache",
+    "camel-case",
+    "clean-css",
+    "commander",
+    "he",
+    "html-minifier",
+    "lower-case",
+    "no-case",
+    "param-case",
+    "relateurl",
+    "source-map",
+    "uglify-js",
+    "upper-case",
+  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["he", "html-minifier", "uglifyjs"]);
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "he"))).toBe(join("..", "he", "bin", "he"));
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "html-minifier"))).toBe(
+    join("..", "html-minifier", "cli.js"),
+  );
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "uglifyjs"))).toBe(
+    join("..", "uglify-js", "bin", "uglifyjs"),
+  );
+  await access(join(package_dir, "bun.lockb"));
+  // Perform `bun install` again but with cache & lockfile from before
+  await Promise.all(
+    [
+      ".bin",
+      "camel-case",
+      "clean-css",
+      "commander",
+      "he",
+      "html-minifier",
+      "lower-case",
+      "no-case",
+      "param-case",
+      "relateurl",
+      "source-map",
+      "uglify-js",
+      "upper-case",
+    ].map(async dir => await rm(join(package_dir, "node_modules", dir), { force: true, recursive: true })),
+  );
+
+  urls.length = 0;
+  const {
+    stdout: stdout3,
+    stderr: stderr3,
+    exited: exited3,
+  } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr3).toBeDefined();
+  const err3 = await new Response(stderr3).text();
+  expect(err3).not.toContain("Saved lockfile");
+  expect(stdout3).toBeDefined();
+  const out3 = await new Response(stdout3).text();
+  expect(out3.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + html-minifier@git+https://git@github.com/kangax/html-minifier#4beb325eb01154a40c0cbebff2e5737bbd7071ab",
+    "",
+    " 12 packages installed",
+  ]);
+  expect(await exited3).toBe(0);
+  expect(urls.sort()).toEqual([]);
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".bin",
+    ".cache",
+    "camel-case",
+    "clean-css",
+    "commander",
+    "he",
+    "html-minifier",
+    "lower-case",
+    "no-case",
+    "param-case",
+    "relateurl",
+    "source-map",
+    "uglify-js",
+    "upper-case",
+  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["he", "html-minifier", "uglifyjs"]);
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "he"))).toBe(join("..", "he", "bin", "he"));
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "html-minifier"))).toBe(
+    join("..", "html-minifier", "cli.js"),
+  );
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "uglifyjs"))).toBe(
+    join("..", "uglify-js", "bin", "uglifyjs"),
+  );
+  await access(join(package_dir, "bun.lockb"));
+});
+
 it("should prefer optionalDependencies over dependencies of the same name", async () => {
   const urls: string[] = [];
   setHandler(
@@ -2991,6 +3458,86 @@ it("should handle tarball path with aliasing", async () => {
   expect(await readlink(join(package_dir, "node_modules", ".bin", "baz-run"))).toBe(join("..", "bar", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["index.js", "package.json"]);
   expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+    name: "baz",
+    version: "0.0.3",
+    bin: {
+      "baz-run": "index.js",
+    },
+  });
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should de-duplicate dependencies alongside tarball URL", async () => {
+  const urls: string[] = [];
+  setHandler(
+    dummyRegistry(urls, {
+      "0.0.2": {},
+      "0.0.3": {
+        bin: {
+          "baz-run": "index.js",
+        },
+      },
+    }),
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        "@barn/moo": `${root_url}/moo-0.1.0.tgz`,
+        bar: "<=0.0.2",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    ` + @barn/moo@${root_url}/moo-0.1.0.tgz`,
+    " + bar@0.0.2",
+    "",
+    " 3 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([
+    `${root_url}/bar`,
+    `${root_url}/bar-0.0.2.tgz`,
+    `${root_url}/baz`,
+    `${root_url}/baz-0.0.3.tgz`,
+    `${root_url}/moo-0.1.0.tgz`,
+  ]);
+  expect(requested).toBe(5);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "@barn", "bar", "baz"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["baz-run"]);
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "baz-run"))).toBe(join("..", "baz", "index.js"));
+  expect(await readdirSorted(join(package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "@barn", "moo", "package.json")).json()).toEqual({
+    name: "@barn/moo",
+    version: "0.1.0",
+    dependencies: {
+      bar: "0.0.2",
+      baz: "latest",
+    },
+  });
+  expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
+  expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
+  expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
     name: "baz",
     version: "0.0.3",
     bin: {

@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -52,7 +52,7 @@ const Integrity = @import("./integrity.zig").Integrity;
 const clap = bun.clap;
 const ExtractTarball = @import("./extract_tarball.zig");
 const Npm = @import("./npm.zig");
-const Bitset = @import("./bit_set.zig").DynamicBitSetUnmanaged;
+const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const z_allocator = @import("../memory_allocator.zig").z_allocator;
 const Lockfile = @This();
 
@@ -879,7 +879,7 @@ pub const Printer = struct {
         if (lockfile_path.len > 0 and lockfile_path[0] == std.fs.path.sep)
             std.os.chdir(std.fs.path.dirname(lockfile_path) orelse "/") catch {};
 
-        _ = try FileSystem.init1(allocator, null);
+        _ = try FileSystem.init(null);
 
         var lockfile = try allocator.create(Lockfile);
 
@@ -943,7 +943,7 @@ pub const Printer = struct {
         };
 
         env_loader.loadProcess();
-        try env_loader.load(&fs.fs, &entries_option.entries, false);
+        try env_loader.load(&fs.fs, entries_option.entries, false);
         var log = logger.Log.init(allocator);
         try options.load(
             allocator,
@@ -2096,7 +2096,7 @@ pub const Package = extern struct {
         source: logger.Source,
         comptime features: Features,
     ) !void {
-        return package.parse(lockfile, allocator, log, source, void, void{}, features);
+        return package.parse(lockfile, allocator, log, source, void, {}, features);
     }
 
     pub fn parse(

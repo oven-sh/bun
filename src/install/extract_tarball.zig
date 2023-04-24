@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const default_allocator = bun.default_allocator;
 const Global = bun.Global;
 const json_parser = bun.JSON;
@@ -24,7 +24,7 @@ temp_dir: std.fs.Dir,
 dependency_id: DependencyID,
 skip_verify: bool = false,
 integrity: Integrity = .{},
-url: string = "",
+url: strings.StringOrTinyString,
 package_manager: *PackageManager,
 
 pub inline fn run(this: ExtractTarball, bytes: []const u8) !Install.ExtractData {
@@ -259,7 +259,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                         extract_destination,
                         null,
                         void,
-                        void{},
+                        {},
                         // for npm packages, the root dir is always "package"
                         1,
                         true,
@@ -271,7 +271,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                         extract_destination,
                         null,
                         void,
-                        void{},
+                        {},
                         // for npm packages, the root dir is always "package"
                         1,
                         true,
@@ -288,7 +288,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     const folder_name = switch (this.resolution.tag) {
         .npm => this.package_manager.cachedNPMPackageFolderNamePrint(&folder_name_buf, name, this.resolution.value.npm.version),
         .github => PackageManager.cachedGitHubFolderNamePrint(&folder_name_buf, resolved),
-        .local_tarball, .remote_tarball => PackageManager.cachedTarballFolderNamePrint(&folder_name_buf, this.url),
+        .local_tarball, .remote_tarball => PackageManager.cachedTarballFolderNamePrint(&folder_name_buf, this.url.slice()),
         else => unreachable,
     };
     if (folder_name.len == 0 or (folder_name.len == 1 and folder_name[0] == '/')) @panic("Tried to delete root and stopped it");
@@ -398,7 +398,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 
     const ret_json_path = try FileSystem.instance.dirname_store.append(@TypeOf(json_path), json_path);
     return .{
-        .url = this.url,
+        .url = this.url.slice(),
         .resolved = resolved,
         .json_path = ret_json_path,
         .json_buf = json_buf,

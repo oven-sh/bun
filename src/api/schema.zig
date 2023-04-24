@@ -362,6 +362,15 @@ pub const Api = struct {
         /// napi
         napi,
 
+        /// base64
+        base64,
+
+        /// dataurl
+        dataurl,
+
+        /// text
+        text,
+
         _,
 
         pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
@@ -3037,6 +3046,78 @@ pub const Api = struct {
                 try writer.writeValue(@TypeOf(global_bin_dir), global_bin_dir);
             }
             try writer.endMessage();
+        }
+    };
+
+    pub const ClientServerModule = struct {
+        /// moduleId
+        module_id: u32 = 0,
+
+        /// inputName
+        input_name: StringPointer,
+
+        /// assetName
+        asset_name: StringPointer,
+
+        /// exportNames
+        export_names: StringPointer,
+
+        pub fn decode(reader: anytype) anyerror!ClientServerModule {
+            var this = std.mem.zeroes(ClientServerModule);
+
+            this.module_id = try reader.readValue(u32);
+            this.input_name = try reader.readValue(StringPointer);
+            this.asset_name = try reader.readValue(StringPointer);
+            this.export_names = try reader.readValue(StringPointer);
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeInt(this.module_id);
+            try writer.writeValue(@TypeOf(this.input_name), this.input_name);
+            try writer.writeValue(@TypeOf(this.asset_name), this.asset_name);
+            try writer.writeValue(@TypeOf(this.export_names), this.export_names);
+        }
+    };
+
+    pub const ClientServerModuleManifest = struct {
+        /// version
+        version: u32 = 0,
+
+        /// clientModules
+        client_modules: []const ClientServerModule,
+
+        /// serverModules
+        server_modules: []const ClientServerModule,
+
+        /// ssrModules
+        ssr_modules: []const ClientServerModule,
+
+        /// exportNames
+        export_names: []const StringPointer,
+
+        /// contents
+        contents: []const u8,
+
+        pub fn decode(reader: anytype) anyerror!ClientServerModuleManifest {
+            var this = std.mem.zeroes(ClientServerModuleManifest);
+
+            this.version = try reader.readValue(u32);
+            this.client_modules = try reader.readArray(ClientServerModule);
+            this.server_modules = try reader.readArray(ClientServerModule);
+            this.ssr_modules = try reader.readArray(ClientServerModule);
+            this.export_names = try reader.readArray(StringPointer);
+            this.contents = try reader.readArray(u8);
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeInt(this.version);
+            try writer.writeArray(ClientServerModule, this.client_modules);
+            try writer.writeArray(ClientServerModule, this.server_modules);
+            try writer.writeArray(ClientServerModule, this.ssr_modules);
+            try writer.writeArray(StringPointer, this.export_names);
+            try writer.writeArray(u8, this.contents);
         }
     };
 };

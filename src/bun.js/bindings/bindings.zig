@@ -1,9 +1,9 @@
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const hasRef = std.meta.trait.hasField("ref");
-const C_API = @import("bun").JSC.C;
+const C_API = @import("root").bun.JSC.C;
 const StringPointer = @import("../../api/schema.zig").Api.StringPointer;
 const Exports = @import("./exports.zig");
 const strings = bun.strings;
@@ -13,7 +13,7 @@ const ZigException = Exports.ZigException;
 const ZigStackTrace = Exports.ZigStackTrace;
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
-const JSC = @import("bun").JSC;
+const JSC = @import("root").bun.JSC;
 const Shimmer = JSC.Shimmer;
 const FFI = @import("./FFI.zig");
 const NullableAllocator = @import("../../nullable_allocator.zig").NullableAllocator;
@@ -444,7 +444,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn cmpDesc(_: void, a: ZigString, b: ZigString) bool {
-        return strings.cmpStringsDesc(void{}, a.slice(), b.slice());
+        return strings.cmpStringsDesc({}, a.slice(), b.slice());
     }
 
     pub fn sortAsc(slice_: []ZigString) void {
@@ -452,7 +452,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn cmpAsc(_: void, a: ZigString, b: ZigString) bool {
-        return strings.cmpStringsAsc(void{}, a.slice(), b.slice());
+        return strings.cmpStringsAsc({}, a.slice(), b.slice());
     }
 
     pub inline fn init(slice_: []const u8) ZigString {
@@ -746,7 +746,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn toJSStringRef(this: *const ZigString) C_API.JSStringRef {
-        if (comptime @hasDecl(@import("bun"), "bindgen")) {
+        if (comptime @hasDecl(@import("root").bun, "bindgen")) {
             return undefined;
         }
 
@@ -3062,6 +3062,10 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("coerceToInt64", .{ this, globalThis });
     }
 
+    pub fn getIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSValue {
+        return JSC.JSObject.getIndex(this, globalThis, i);
+    }
+
     const PropertyIteratorFn = *const fn (
         globalObject_: *JSGlobalObject,
         ctx_ptr: ?*anyopaque,
@@ -3799,6 +3803,10 @@ pub const JSValue = enum(JSValueReprInt) {
         return getZigString(this, global).toSlice(allocator);
     }
 
+    pub inline fn toSliceZ(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) ZigString.Slice {
+        return getZigString(this, global).toSliceZ(allocator);
+    }
+
     // On exception, this returns the empty string.
     pub fn toString(this: JSValue, globalThis: *JSGlobalObject) *JSString {
         return cppFn("toString", .{ this, globalThis });
@@ -3947,6 +3955,136 @@ pub const JSValue = enum(JSValueReprInt) {
         if (get(this, global, property)) |prop| {
             if (prop.isEmptyOrUndefinedOrNull()) return null;
             return prop;
+        }
+
+        return null;
+    }
+
+    pub fn toEnumWithMapField(
+        this: JSValue,
+        globalThis: *JSGlobalObject,
+        comptime property_name: []const u8,
+        comptime Enum: type,
+        comptime map_name: []const u8,
+    ) !Enum {
+        if (!this.isString()) {
+            globalThis.throwInvalidArguments(property_name ++ " must be a string", .{});
+            return error.JSError;
+        }
+
+        const target_str = this.getZigString(globalThis);
+        return @field(Enum, map_name).getWithEql(target_str, ZigString.eqlComptime) orelse {
+            const one_of = struct {
+                pub const list = brk: {
+                    var str: []const u8 = "'";
+                    const field_names = std.meta.fieldNames(Enum);
+                    for (field_names, 0..) |entry, i| {
+                        str = str ++ entry ++ "'";
+                        if (i < field_names.len - 2) {
+                            str = str ++ ", '";
+                        } else if (i == field_names.len - 2) {
+                            str = str ++ " or '";
+                        }
+                    }
+                    break :brk str;
+                };
+
+                pub const label = property_name ++ " must be one of " ++ list;
+            }.label;
+            globalThis.throwInvalidArguments(one_of, .{});
+            return error.JSError;
+        };
+    }
+
+    pub fn toEnum(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime Enum: type) !Enum {
+        return toEnumWithMapField(this, globalThis, property_name, Enum, "Map");
+    }
+
+    pub fn toOptionalEnum(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime Enum: type) !?Enum {
+        if (this.isEmptyOrUndefinedOrNull())
+            return null;
+
+        return toEnum(this, globalThis, property_name, Enum);
+    }
+
+    pub fn getOptionalEnum(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime Enum: type) !?Enum {
+        if (get(this, globalThis, property_name)) |prop| {
+            return try toEnum(prop, globalThis, property_name, Enum);
+        }
+
+        return null;
+    }
+
+    pub fn getArray(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) !?JSValue {
+        if (getTruthy(this, globalThis, property_name)) |prop| {
+            if (!prop.jsTypeLoose().isArray()) {
+                globalThis.throwInvalidArguments(property_name ++ " must be an array", .{});
+                return error.JSError;
+            }
+
+            if (prop.getLengthOfArray(globalThis) == 0) {
+                return null;
+            }
+
+            return prop;
+        }
+
+        return null;
+    }
+
+    pub fn getObject(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) !?JSValue {
+        if (getTruthy(this, globalThis, property_name)) |prop| {
+            if (!prop.jsTypeLoose().isObject()) {
+                globalThis.throwInvalidArguments(property_name ++ " must be an object", .{});
+                return error.JSError;
+            }
+
+            return prop;
+        }
+
+        return null;
+    }
+
+    pub fn getFunction(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) !?JSValue {
+        if (getTruthy(this, globalThis, property_name)) |prop| {
+            if (!prop.isCell() or !prop.isCallable(globalThis.vm())) {
+                globalThis.throwInvalidArguments(property_name ++ " must be a function", .{});
+                return error.JSError;
+            }
+
+            return prop;
+        }
+
+        return null;
+    }
+
+    pub fn getOptional(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime T: type) !?T {
+        if (getTruthy(this, globalThis, property_name)) |prop| {
+            switch (comptime T) {
+                bool => {
+                    if (prop.isBoolean()) {
+                        return prop.toBoolean();
+                    }
+
+                    if (prop.isNumber()) {
+                        return prop.asDouble() != 0;
+                    }
+
+                    globalThis.throwInvalidArguments(property_name ++ " must be a boolean", .{});
+                    return error.JSError;
+                },
+                ZigString.Slice => {
+                    if (prop.isString()) {
+                        if (return prop.toSliceOrNull(globalThis)) |str| {
+                            return str;
+                        }
+                    }
+
+                    globalThis.throwInvalidArguments(property_name ++ " must be a string", .{});
+                    return error.JSError;
+                },
+                else => @compileError("TODO:" ++ @typeName(T)),
+            }
         }
 
         return null;

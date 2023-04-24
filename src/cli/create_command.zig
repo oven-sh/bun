@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const constStrToU8 = bun.constStrToU8;
 const Output = bun.Output;
@@ -12,7 +12,7 @@ const C = bun.C;
 const std = @import("std");
 
 const lex = bun.js_lexer;
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 
 const options = @import("../options.zig");
 const js_parser = bun.js_parser;
@@ -29,7 +29,7 @@ const bundler = bun.bundler;
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
-const HTTP = @import("bun").HTTP;
+const HTTP = @import("root").bun.HTTP;
 const NetworkThread = HTTP.NetworkThread;
 const ParseJSON = @import("../json_parser.zig").ParseJSONUTF8;
 const Archive = @import("../libarchive/libarchive.zig").Archive;
@@ -38,9 +38,9 @@ const JSPrinter = bun.js_printer;
 const DotEnv = @import("../env_loader.zig");
 const NPMClient = @import("../which_npm_client.zig").NPMClient;
 const which = @import("../which.zig").which;
-const clap = @import("bun").clap;
+const clap = @import("root").bun.clap;
 const Lock = @import("../lock.zig").Lock;
-const Headers = @import("bun").HTTP.Headers;
+const Headers = @import("root").bun.HTTP.Headers;
 const CopyFile = @import("../copy_file.zig");
 var bun_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 const Futex = @import("../futex.zig");
@@ -260,7 +260,7 @@ pub const CreateCommand = struct {
             return try CreateListExamplesCommand.exec(ctx);
         }
 
-        var filesystem = try fs.FileSystem.init1(ctx.allocator, null);
+        var filesystem = try fs.FileSystem.init(null);
         var env_loader: DotEnv.Loader = brk: {
             var map = try ctx.allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(ctx.allocator);
@@ -540,7 +540,7 @@ pub const CreateCommand = struct {
                     destination,
                     &archive_context,
                     void,
-                    void{},
+                    {},
                     1,
                     false,
                     false,
@@ -757,17 +757,17 @@ pub const CreateCommand = struct {
 
                 const Prune = struct {
                     pub const packages = ComptimeStringMap(void, .{
-                        .{ "@parcel/babel-preset", void{} },
-                        .{ "@parcel/core", void{} },
-                        .{ "@swc/cli", void{} },
-                        .{ "@swc/core", void{} },
-                        .{ "@webpack/cli", void{} },
-                        .{ "react-scripts", void{} },
-                        .{ "webpack-cli", void{} },
-                        .{ "webpack", void{} },
+                        .{ "@parcel/babel-preset", {} },
+                        .{ "@parcel/core", {} },
+                        .{ "@swc/cli", {} },
+                        .{ "@swc/core", {} },
+                        .{ "@webpack/cli", {} },
+                        .{ "react-scripts", {} },
+                        .{ "webpack-cli", {} },
+                        .{ "webpack", {} },
 
                         // one of cosmic config's imports breaks stuff
-                        .{ "cosmiconfig", void{} },
+                        .{ "cosmiconfig", {} },
                     });
                     pub var prune_count: u16 = 0;
 
@@ -1665,7 +1665,7 @@ const Commands = .{
     &[_]string{""},
     &[_]string{""},
 };
-const picohttp = @import("bun").picohttp;
+const picohttp = @import("root").bun.picohttp;
 
 pub const DownloadedExample = struct {
     tarball_bytes: MutableString,
@@ -1852,7 +1852,7 @@ pub const Example = struct {
 
         // ensure very stable memory address
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
-        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, api_url, header_entries, headers_buf, mutable, "", 60 * std.time.ns_per_min, http_proxy);
+        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, api_url, header_entries, headers_buf, mutable, "", 60 * std.time.ns_per_min, http_proxy, null);
         async_http.client.progress_node = progress;
         const response = try async_http.sendSync(true);
 
@@ -1916,7 +1916,7 @@ pub const Example = struct {
 
         // ensure very stable memory address
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
-        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy);
+        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy, null);
         async_http.client.progress_node = progress;
         var response = try async_http.sendSync(true);
 
@@ -1992,7 +1992,7 @@ pub const Example = struct {
 
         http_proxy = env_loader.getHttpProxy(parsed_tarball_url);
 
-        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, parsed_tarball_url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy);
+        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, parsed_tarball_url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy, null);
         async_http.client.progress_node = progress;
 
         refresher.maybeRefresh();
@@ -2022,7 +2022,7 @@ pub const Example = struct {
         var mutable = try ctx.allocator.create(MutableString);
         mutable.* = try MutableString.init(ctx.allocator, 2048);
 
-        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy);
+        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy, null);
 
         if (Output.enable_ansi_colors) {
             async_http.client.progress_node = progress_node;
@@ -2098,7 +2098,7 @@ pub const Example = struct {
 
 pub const CreateListExamplesCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
-        var filesystem = try fs.FileSystem.init1(ctx.allocator, null);
+        var filesystem = try fs.FileSystem.init(null);
         var env_loader: DotEnv.Loader = brk: {
             var map = try ctx.allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(ctx.allocator);

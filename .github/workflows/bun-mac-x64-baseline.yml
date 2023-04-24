@@ -110,7 +110,7 @@ jobs:
             obj: bun-obj-darwin-x64-baseline
             runner: macos-11
             artifact: bun-obj-darwin-x64-baseline
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/feb25/bun-webkit-macos-amd64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/apr12-23/bun-webkit-macos-amd64-lto.tar.gz"
             dependencies: true
             compile_obj: false
           # - cpu: haswell
@@ -119,7 +119,7 @@ jobs:
           #   obj: bun-obj-darwin-x64
           #   runner: macos-11
           #   artifact: bun-obj-darwin-x64
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/feb25/bun-webkit-macos-amd64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/apr12-23/bun-webkit-macos-amd64-lto.tar.gz"
           #   dependencies: true
           #   compile_obj: false
           - cpu: nehalem
@@ -128,7 +128,7 @@ jobs:
             obj: bun-obj-darwin-x64-baseline
             runner: macos-11
             artifact: bun-obj-darwin-x64-baseline
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/feb25/bun-webkit-macos-amd64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/apr12-23/bun-webkit-macos-amd64-lto.tar.gz"
             dependencies: false
             compile_obj: true
           # - cpu: haswell
@@ -137,7 +137,7 @@ jobs:
           #   obj: bun-obj-darwin-x64
           #   runner: macos-11
           #   artifact: bun-obj-darwin-x64
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/feb25/bun-webkit-macos-amd64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/apr12-23/bun-webkit-macos-amd64-lto.tar.gz"
           #   dependencies: false
           #   compile_obj: true
           # - cpu: native
@@ -145,7 +145,7 @@ jobs:
           #   tag: bun-darwin-aarch64
           #   obj: bun-obj-darwin-aarch64
           #   artifact: bun-obj-darwin-aarch64
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/feb25/bun-webkit-macos-amd64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/apr12-23/bun-webkit-macos-amd64-lto.tar.gz"
           #   runner: macos-arm64
           #   dependencies: true
           #   compile_obj: true
@@ -250,7 +250,7 @@ jobs:
             package: bun-darwin-x64
             runner: macos-11
             artifact: bun-obj-darwin-x64-baseline
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/feb25/bun-webkit-macos-amd64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/apr12-23/bun-webkit-macos-amd64-lto.tar.gz"
           # - cpu: haswell
           #   arch: x86_64
           #   tag: bun-darwin-x64
@@ -258,14 +258,14 @@ jobs:
           #   package: bun-darwin-x64
           #   runner: macos-11
           #   artifact: bun-obj-darwin-x64
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/feb25/bun-webkit-macos-amd64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/apr12-23/bun-webkit-macos-amd64-lto.tar.gz"
           # - cpu: native
           #   arch: aarch64
           #   tag: bun-darwin-aarch64
           #   obj: bun-obj-darwin-aarch64
           #   package: bun-darwin-aarch64
           #   artifact: bun-obj-darwin-aarch64
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/feb25/bun-webkit-macos-amd64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/apr12-23/bun-webkit-macos-amd64-lto.tar.gz"
           #   runner: macos-arm64
     steps:
       - uses: actions/checkout@v3
@@ -337,7 +337,7 @@ jobs:
           rm -rf packages/${{ matrix.package }}
           mkdir -p packages/${{ matrix.package }}
           mv ${{ runner.temp }}/release/* packages/${{ matrix.package }}/
-          make webcrypto bun-link-lld-release copy-to-bun-release-dir-bin
+          make bun-link-lld-release copy-to-bun-release-dir-bin
       - name: Zip
         env:
           CPU_TARGET: ${{ matrix.cpu }}
@@ -393,7 +393,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     needs: [macOS]
     if: github.event_name == 'pull_request'
-    timeout-minutes: 10
+    timeout-minutes: 30
     outputs:
       failing_tests: ${{ steps.test.outputs.failing_tests }}
       failing_tests_count: ${{ steps.test.outputs.failing_tests_count }}

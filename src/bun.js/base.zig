@@ -1,6 +1,6 @@
-pub const js = @import("bun").JSC.C;
+pub const js = @import("root").bun.JSC.C;
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -13,7 +13,7 @@ const C = bun.C;
 const JavaScript = @import("./javascript.zig");
 const ResolveError = JavaScript.ResolveError;
 const BuildError = JavaScript.BuildError;
-const JSC = @import("bun").JSC;
+const JSC = @import("root").bun.JSC;
 const WebCore = @import("./webcore.zig");
 const Test = @import("./test/jest.zig");
 const Fetch = WebCore.Fetch;
@@ -22,7 +22,7 @@ const Request = WebCore.Request;
 const Router = @import("./api/filesystem_router.zig");
 const FetchEvent = WebCore.FetchEvent;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
-const uws = @import("bun").uws;
+const uws = @import("root").bun.uws;
 const Body = WebCore.Body;
 const TaggedPointerTypes = @import("../tagged_pointer.zig");
 const TaggedPointerUnion = TaggedPointerTypes.TaggedPointerUnion;
@@ -422,7 +422,7 @@ pub const To = struct {
                         );
                     } else if (comptime ZigContextType == void) {
                         return ctxfn(
-                            void{},
+                            {},
                             ctx,
                             function,
                             thisObject,
@@ -1140,7 +1140,7 @@ pub fn NewClassWithInstanceType(
                     prop: js.JSStringRef,
                     exception: js.ExceptionRef,
                 ) callconv(.C) js.JSValueRef {
-                    var this: ObjectPtrType(ZigType) = if (comptime ZigType == void) void{} else GetJSPrivateData(ZigType, obj) orelse return js.JSValueMakeUndefined(ctx);
+                    var this: ObjectPtrType(ZigType) = if (comptime ZigType == void) {} else GetJSPrivateData(ZigType, obj) orelse return js.JSValueMakeUndefined(ctx);
 
                     const Field = @TypeOf(@field(
                         properties,
@@ -1597,9 +1597,9 @@ pub fn NewClassWithInstanceType(
 //                 } else if (@hasField(definition, "get") and @hasField(definition, "set")) {
 //                     data[i] = NewStaticProperty(className, property_names[i], definition.get, definition.set);
 //                 } else if (@hasField(definition, "get")) {
-//                     data[i] = NewStaticProperty(className, property_names[i], definition.get, void{});
+//                     data[i] = NewStaticProperty(className, property_names[i], definition.get, {});
 //                 } else if (@hasField(definition, "set")) {
-//                     data[i] = NewStaticProperty(className, property_names[i], void{}, definition.set);
+//                     data[i] = NewStaticProperty(className, property_names[i], {}, definition.set);
 //                 } else {
 //                     @compileError(className ++ "." ++ property_names[i] ++ " missing lazy, get, or set");
 //                 }
@@ -2173,7 +2173,6 @@ const Expect = Test.Expect;
 const DescribeScope = Test.DescribeScope;
 const TestScope = Test.TestScope;
 const NodeFS = JSC.Node.NodeFS;
-const Transpiler = @import("./api/transpiler.zig");
 const TextEncoder = WebCore.TextEncoder;
 const TextDecoder = WebCore.TextDecoder;
 const HTMLRewriter = JSC.Cloudflare.HTMLRewriter;

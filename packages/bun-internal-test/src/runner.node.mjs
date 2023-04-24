@@ -1,10 +1,10 @@
 import * as action from "@actions/core";
 import { spawnSync } from "child_process";
-import { fsyncSync, rmSync, statSync, writeFileSync, writeSync } from "fs";
+import { fsyncSync, rmSync, writeFileSync, writeSync } from "fs";
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
-import { basename, relative } from "path";
+import { relative } from "path";
 import { fileURLToPath } from "url";
 
 const cwd = resolve(fileURLToPath(import.meta.url), "../../../../");
@@ -51,42 +51,48 @@ var failingTests = [];
 
 async function runTest(path) {
   const name = path.replace(cwd, "").slice(1);
-  const {
-    stdout,
-    stderr,
-    status: exitCode,
-  } = spawnSync("bun", ["test", path], {
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 10_000,
-    env: {
-      ...process.env,
-      FORCE_COLOR: "1",
-    },
-  });
-
-  if (+exitCode !== 0) {
-    failingTests.push(name);
+  try {
+    var {
+      stdout,
+      stderr,
+      status: exitCode,
+      error: timedOut,
+    } = spawnSync("bun", ["test", path], {
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 1000 * 60 * 3,
+      env: {
+        ...process.env,
+        FORCE_COLOR: "1",
+      },
+    });
+  } catch (e) {
+    console.error(e);
   }
 
-  if (isAction && exitCode !== 0) {
+  const passed = exitCode === 0 && !timedOut;
+
+  if (!passed) {
+    failingTests.push(name);
+    if (timedOut) console.error(timedOut);
+  }
+
+  if (isAction && !passed) {
     findErrors(stdout);
     findErrors(stderr);
   }
 
   if (isAction) {
-    const prefix = +exitCode === 0 ? "PASS" : `FAIL`;
+    const prefix = passed ? "PASS" : `FAIL`;
     action.startGroup(`${prefix} - ${name}`);
   }
 
-  dump(stdout);
-  dump(stderr);
+  stdout && stdout?.byteLength && dump(stdout);
+  stderr && stderr?.byteLength && dump(stderr);
 
   if (isAction) {
     action.endGroup();
   }
 }
-
-let failed = false;
 
 function findErrors(data) {
   const text = new StringDecoder().write(new Buffer(data.buffer)).replaceAll(/\u001b\[.*?m/g, "");
@@ -149,4 +155,4 @@ if (isAction) {
   writeFileSync("failing-tests.txt", failingTests.join("\n"));
 }
 
-process.exit(failed ? 1 : 0);
+process.exit(failingTests.length);

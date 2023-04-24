@@ -1,8 +1,7 @@
 const std = @import("std");
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const StaticExport = @import("./bindings/static_export.zig");
-const c_char = StaticExport.c_char;
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -14,8 +13,8 @@ const default_allocator = bun.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Arena = @import("../mimalloc_arena.zig").Arena;
 const C = bun.C;
-const NetworkThread = @import("bun").HTTP.NetworkThread;
-const IO = @import("bun").AsyncIO;
+const NetworkThread = @import("root").bun.HTTP.NetworkThread;
+const IO = @import("root").bun.AsyncIO;
 const Allocator = std.mem.Allocator;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const Fs = @import("../fs.zig");
@@ -24,7 +23,7 @@ const ast = @import("../import_record.zig");
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const MacroEntryPoint = bun.bundler.MacroEntryPoint;
 const ParseResult = bun.bundler.ParseResult;
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const Api = @import("../api/schema.zig").Api;
 const options = @import("../options.zig");
 const Bundler = bun.Bundler;
@@ -37,49 +36,48 @@ const http = @import("../http.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../analytics/analytics_thread.zig");
-const ZigString = @import("bun").JSC.ZigString;
+const ZigString = @import("root").bun.JSC.ZigString;
 const Runtime = @import("../runtime.zig");
 const Router = @import("./api/filesystem_router.zig");
 const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../env_loader.zig");
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-const WebCore = @import("bun").JSC.WebCore;
+const WebCore = @import("root").bun.JSC.WebCore;
 const Request = WebCore.Request;
 const Response = WebCore.Response;
 const Headers = WebCore.Headers;
 const Fetch = WebCore.Fetch;
 const FetchEvent = WebCore.FetchEvent;
-const js = @import("bun").JSC.C;
-const JSC = @import("bun").JSC;
+const js = @import("root").bun.JSC.C;
+const JSC = @import("root").bun.JSC;
 const JSError = @import("./base.zig").JSError;
 const d = @import("./base.zig").d;
 const MarkedArrayBuffer = @import("./base.zig").MarkedArrayBuffer;
 const getAllocator = @import("./base.zig").getAllocator;
-const JSValue = @import("bun").JSC.JSValue;
+const JSValue = @import("root").bun.JSC.JSValue;
 const NewClass = @import("./base.zig").NewClass;
-const Microtask = @import("bun").JSC.Microtask;
-const JSGlobalObject = @import("bun").JSC.JSGlobalObject;
-const ExceptionValueRef = @import("bun").JSC.ExceptionValueRef;
-const JSPrivateDataPtr = @import("bun").JSC.JSPrivateDataPtr;
-const ZigConsoleClient = @import("bun").JSC.ZigConsoleClient;
-const Node = @import("bun").JSC.Node;
-const ZigException = @import("bun").JSC.ZigException;
-const ZigStackTrace = @import("bun").JSC.ZigStackTrace;
-const ErrorableResolvedSource = @import("bun").JSC.ErrorableResolvedSource;
-const ResolvedSource = @import("bun").JSC.ResolvedSource;
-const JSPromise = @import("bun").JSC.JSPromise;
-const JSInternalPromise = @import("bun").JSC.JSInternalPromise;
-const JSModuleLoader = @import("bun").JSC.JSModuleLoader;
-const JSPromiseRejectionOperation = @import("bun").JSC.JSPromiseRejectionOperation;
-const Exception = @import("bun").JSC.Exception;
-const ErrorableZigString = @import("bun").JSC.ErrorableZigString;
-const ZigGlobalObject = @import("bun").JSC.ZigGlobalObject;
-const VM = @import("bun").JSC.VM;
-const JSFunction = @import("bun").JSC.JSFunction;
+const Microtask = @import("root").bun.JSC.Microtask;
+const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
+const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
+const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
+const ZigConsoleClient = @import("root").bun.JSC.ZigConsoleClient;
+const Node = @import("root").bun.JSC.Node;
+const ZigException = @import("root").bun.JSC.ZigException;
+const ZigStackTrace = @import("root").bun.JSC.ZigStackTrace;
+const ErrorableResolvedSource = @import("root").bun.JSC.ErrorableResolvedSource;
+const ResolvedSource = @import("root").bun.JSC.ResolvedSource;
+const JSPromise = @import("root").bun.JSC.JSPromise;
+const JSInternalPromise = @import("root").bun.JSC.JSInternalPromise;
+const JSModuleLoader = @import("root").bun.JSC.JSModuleLoader;
+const JSPromiseRejectionOperation = @import("root").bun.JSC.JSPromiseRejectionOperation;
+const Exception = @import("root").bun.JSC.Exception;
+const ErrorableZigString = @import("root").bun.JSC.ErrorableZigString;
+const ZigGlobalObject = @import("root").bun.JSC.ZigGlobalObject;
+const VM = @import("root").bun.JSC.VM;
+const JSFunction = @import("root").bun.JSC.JSFunction;
 const Config = @import("./config.zig");
 const URL = @import("../url.zig").URL;
-const Transpiler = @import("./api/transpiler.zig");
 const Bun = JSC.API.Bun;
 const EventLoop = JSC.EventLoop;
 const PendingResolution = @import("../resolver/resolver.zig").PendingResolution;
@@ -243,7 +241,7 @@ pub const SavedSourceMap = struct {
         return SourceMap.Mapping.find(mappings, line, column);
     }
 };
-const uws = @import("bun").uws;
+const uws = @import("root").bun.uws;
 
 pub export fn Bun__getDefaultGlobal() *JSGlobalObject {
     _ = @sizeOf(JSC.VirtualMachine) + 1;
@@ -2730,290 +2728,315 @@ pub const BuildError = struct {
 };
 
 pub const JSPrivateDataTag = JSPrivateDataPtr.Tag;
+pub const HotReloader = NewHotReloader(VirtualMachine, JSC.EventLoop, false);
+pub const Watcher = HotReloader.Watcher;
 
-pub const Watcher = @import("../watcher.zig").NewWatcher(*HotReloader);
+pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime reload_immediately: bool) type {
+    return struct {
+        const watcher = @import("../watcher.zig");
+        pub const Watcher = watcher.NewWatcher(*@This());
+        const Reloader = @This();
 
-pub const HotReloader = struct {
-    const watcher = @import("../watcher.zig");
+        onAccept: std.ArrayHashMapUnmanaged(@This().Watcher.HashType, bun.BabyList(OnAcceptCallback), bun.ArrayIdentityContext, false) = .{},
+        ctx: *Ctx,
+        verbose: bool = false,
 
-    onAccept: std.ArrayHashMapUnmanaged(Watcher.HashType, bun.BabyList(OnAcceptCallback), bun.ArrayIdentityContext, false) = .{},
-    vm: *JSC.VirtualMachine,
-    verbose: bool = false,
+        tombstones: std.StringHashMapUnmanaged(*bun.fs.FileSystem.RealFS.EntriesOption) = .{},
 
-    tombstones: std.StringHashMapUnmanaged(*bun.fs.FileSystem.RealFS.EntriesOption) = .{},
+        pub fn eventLoop(this: @This()) *EventLoopType {
+            return this.ctx.eventLoop();
+        }
 
-    pub const HotReloadTask = struct {
-        reloader: *HotReloader,
-        count: u8 = 0,
-        hashes: [8]u32 = [_]u32{0} ** 8,
-        concurrent_task: JSC.ConcurrentTask = undefined,
+        pub fn enqueueTaskConcurrent(this: @This(), task: *JSC.ConcurrentTask) void {
+            if (comptime reload_immediately)
+                unreachable;
 
-        pub fn append(this: *HotReloadTask, id: u32) void {
-            if (this.count == 8) {
-                this.enqueue();
-                var reloader = this.reloader;
-                this.* = .{
-                    .reloader = reloader,
-                    .count = 0,
-                };
+            this.eventLoop().enqueueTaskConcurrent(task);
+        }
+
+        pub const HotReloadTask = struct {
+            reloader: *Reloader,
+            count: u8 = 0,
+            hashes: [8]u32 = [_]u32{0} ** 8,
+            concurrent_task: JSC.ConcurrentTask = undefined,
+
+            pub fn append(this: *HotReloadTask, id: u32) void {
+                if (this.count == 8) {
+                    this.enqueue();
+                    var reloader = this.reloader;
+                    this.* = .{
+                        .reloader = reloader,
+                        .count = 0,
+                    };
+                }
+
+                this.hashes[this.count] = id;
+                this.count += 1;
             }
 
-            this.hashes[this.count] = id;
-            this.count += 1;
-        }
-
-        pub fn run(this: *HotReloadTask) void {
-            this.reloader.vm.reload();
-        }
-
-        pub fn enqueue(this: *HotReloadTask) void {
-            if (this.count == 0)
-                return;
-            var that = bun.default_allocator.create(HotReloadTask) catch unreachable;
-
-            that.* = this.*;
-            this.count = 0;
-            that.concurrent_task.task = Task.init(that);
-            that.reloader.vm.eventLoop().enqueueTaskConcurrent(&that.concurrent_task);
-        }
-
-        pub fn deinit(this: *HotReloadTask) void {
-            bun.default_allocator.destroy(this);
-        }
-    };
-
-    fn NewCallback(comptime FunctionSignature: type) type {
-        return union(enum) {
-            javascript_callback: JSC.Strong,
-            zig_callback: struct {
-                ptr: *anyopaque,
-                function: *const FunctionSignature,
-            },
-        };
-    }
-
-    pub const OnAcceptCallback = NewCallback(fn (
-        vm: *JSC.VirtualMachine,
-        specifier: []const u8,
-    ) void);
-
-    pub fn enableHotModuleReloading(this: *VirtualMachine) void {
-        if (this.bun_watcher != null)
-            return;
-
-        var reloader = bun.default_allocator.create(HotReloader) catch @panic("OOM");
-        reloader.* = .{
-            .vm = this,
-            .verbose = this.log.level.atLeast(.info),
-        };
-        this.bun_watcher = JSC.Watcher.init(
-            reloader,
-            this.bundler.fs,
-            bun.default_allocator,
-        ) catch @panic("Failed to enable File Watcher");
-
-        this.bundler.resolver.watcher = Resolver.ResolveWatcher(*Watcher, onMaybeWatchDirectory).init(this.bun_watcher.?);
-
-        this.bun_watcher.?.start() catch @panic("Failed to start File Watcher");
-    }
-
-    pub fn onMaybeWatchDirectory(watch: *Watcher, file_path: string, dir_fd: StoredFileDescriptorType) void {
-        // We don't want to watch:
-        // - Directories outside the root directory
-        // - Directories inside node_modules
-        if (std.mem.indexOf(u8, file_path, "node_modules") == null and std.mem.indexOf(u8, file_path, watch.fs.top_level_dir) != null) {
-            watch.addDirectory(dir_fd, file_path, Watcher.getHash(file_path), false) catch {};
-        }
-    }
-
-    fn putTombstone(this: *HotReloader, key: []const u8, value: *bun.fs.FileSystem.RealFS.EntriesOption) void {
-        this.tombstones.put(bun.default_allocator, key, value) catch unreachable;
-    }
-
-    fn getTombstone(this: *HotReloader, key: []const u8) ?*bun.fs.FileSystem.RealFS.EntriesOption {
-        return this.tombstones.get(key);
-    }
-
-    pub fn onFileUpdate(
-        this: *HotReloader,
-        events: []watcher.WatchEvent,
-        changed_files: []?[:0]u8,
-        watchlist: watcher.Watchlist,
-    ) void {
-        var slice = watchlist.slice();
-        const file_paths = slice.items(.file_path);
-        var counts = slice.items(.count);
-        const kinds = slice.items(.kind);
-        const hashes = slice.items(.hash);
-        const parents = slice.items(.parent_hash);
-        var file_descriptors = slice.items(.fd);
-        var ctx = this.vm.bun_watcher.?;
-        defer ctx.flushEvictions();
-        defer Output.flush();
-
-        var bundler = &this.vm.bundler;
-        var fs: *Fs.FileSystem = bundler.fs;
-        var rfs: *Fs.FileSystem.RealFS = &fs.fs;
-        var resolver = &bundler.resolver;
-        var _on_file_update_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-
-        var current_task: HotReloadTask = .{
-            .reloader = this,
-        };
-        defer current_task.enqueue();
-
-        for (events) |event| {
-            const file_path = file_paths[event.index];
-            const update_count = counts[event.index] + 1;
-            counts[event.index] = update_count;
-            const kind = kinds[event.index];
-
-            // so it's consistent with the rest
-            // if we use .extname we might run into an issue with whether or not the "." is included.
-            // const path = Fs.PathName.init(file_path);
-            const id = hashes[event.index];
-
-            if (comptime Environment.isDebug) {
-                Output.prettyErrorln("[watch] {s} ({s}, {})", .{ file_path, @tagName(kind), event.op });
+            pub fn run(this: *HotReloadTask) void {
+                this.reloader.ctx.reload();
             }
 
-            switch (kind) {
-                .file => {
-                    if (event.op.delete or event.op.rename) {
-                        ctx.removeAtIndex(
-                            event.index,
-                            0,
-                            &.{},
-                            .file,
-                        );
-                    }
+            pub fn enqueue(this: *HotReloadTask) void {
+                if (this.count == 0)
+                    return;
 
-                    if (this.verbose)
-                        Output.prettyErrorln("<r><d>File changed: {s}<r>", .{fs.relativeTo(file_path)});
+                if (comptime reload_immediately) {
+                    bun.reloadProcess(bun.default_allocator, Output.enable_ansi_colors);
+                    unreachable;
+                }
 
-                    if (event.op.write or event.op.delete or event.op.rename) {
-                        current_task.append(id);
-                    }
+                var that = bun.default_allocator.create(HotReloadTask) catch unreachable;
+
+                that.* = this.*;
+                this.count = 0;
+                that.concurrent_task.task = Task.init(that);
+                this.reloader.enqueueTaskConcurrent(&that.concurrent_task);
+            }
+
+            pub fn deinit(this: *HotReloadTask) void {
+                bun.default_allocator.destroy(this);
+            }
+        };
+
+        fn NewCallback(comptime FunctionSignature: type) type {
+            return union(enum) {
+                javascript_callback: JSC.Strong,
+                zig_callback: struct {
+                    ptr: *anyopaque,
+                    function: *const FunctionSignature,
                 },
-                .directory => {
-                    var affected_buf: [128][]const u8 = undefined;
-                    var entries_option: ?*Fs.FileSystem.RealFS.EntriesOption = null;
+            };
+        }
 
-                    const affected = brk: {
-                        if (comptime Environment.isMac) {
+        pub const OnAcceptCallback = NewCallback(fn (
+            vm: *JSC.VirtualMachine,
+            specifier: []const u8,
+        ) void);
+
+        pub fn enableHotModuleReloading(this: *Ctx) void {
+            if (this.bun_watcher != null)
+                return;
+
+            var reloader = bun.default_allocator.create(Reloader) catch @panic("OOM");
+            reloader.* = .{
+                .ctx = this,
+                .verbose = if (@hasField(Ctx, "log")) this.log.level.atLeast(.info) else false,
+            };
+            this.bun_watcher = @This().Watcher.init(
+                reloader,
+                this.bundler.fs,
+                bun.default_allocator,
+            ) catch @panic("Failed to enable File Watcher");
+
+            this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.?);
+
+            this.bun_watcher.?.start() catch @panic("Failed to start File Watcher");
+        }
+
+        pub fn onMaybeWatchDirectory(watch: *@This().Watcher, file_path: string, dir_fd: StoredFileDescriptorType) void {
+            // We don't want to watch:
+            // - Directories outside the root directory
+            // - Directories inside node_modules
+            if (std.mem.indexOf(u8, file_path, "node_modules") == null and std.mem.indexOf(u8, file_path, watch.fs.top_level_dir) != null) {
+                watch.addDirectory(dir_fd, file_path, @This().Watcher.getHash(file_path), false) catch {};
+            }
+        }
+
+        fn putTombstone(this: *@This(), key: []const u8, value: *bun.fs.FileSystem.RealFS.EntriesOption) void {
+            this.tombstones.put(bun.default_allocator, key, value) catch unreachable;
+        }
+
+        fn getTombstone(this: *@This(), key: []const u8) ?*bun.fs.FileSystem.RealFS.EntriesOption {
+            return this.tombstones.get(key);
+        }
+
+        pub fn onFileUpdate(
+            this: *@This(),
+            events: []watcher.WatchEvent,
+            changed_files: []?[:0]u8,
+            watchlist: watcher.Watchlist,
+        ) void {
+            var slice = watchlist.slice();
+            const file_paths = slice.items(.file_path);
+            var counts = slice.items(.count);
+            const kinds = slice.items(.kind);
+            const hashes = slice.items(.hash);
+            const parents = slice.items(.parent_hash);
+            var file_descriptors = slice.items(.fd);
+            var ctx = this.ctx.bun_watcher.?;
+            defer ctx.flushEvictions();
+            defer Output.flush();
+
+            var bundler = if (@TypeOf(this.ctx.bundler) == *bun.Bundler)
+                this.ctx.bundler
+            else
+                &this.ctx.bundler;
+
+            var fs: *Fs.FileSystem = bundler.fs;
+            var rfs: *Fs.FileSystem.RealFS = &fs.fs;
+            var resolver = &bundler.resolver;
+            var _on_file_update_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+
+            var current_task: HotReloadTask = .{
+                .reloader = this,
+            };
+            defer current_task.enqueue();
+
+            for (events) |event| {
+                const file_path = file_paths[event.index];
+                const update_count = counts[event.index] + 1;
+                counts[event.index] = update_count;
+                const kind = kinds[event.index];
+
+                // so it's consistent with the rest
+                // if we use .extname we might run into an issue with whether or not the "." is included.
+                // const path = Fs.PathName.init(file_path);
+                const id = hashes[event.index];
+
+                if (comptime Environment.isDebug) {
+                    Output.prettyErrorln("[watch] {s} ({s}, {})", .{ file_path, @tagName(kind), event.op });
+                }
+
+                switch (kind) {
+                    .file => {
+                        if (event.op.delete or event.op.rename) {
+                            ctx.removeAtIndex(
+                                event.index,
+                                0,
+                                &.{},
+                                .file,
+                            );
+                        }
+
+                        if (this.verbose)
+                            Output.prettyErrorln("<r><d>File changed: {s}<r>", .{fs.relativeTo(file_path)});
+
+                        if (event.op.write or event.op.delete or event.op.rename) {
+                            current_task.append(id);
+                        }
+                    },
+                    .directory => {
+                        var affected_buf: [128][]const u8 = undefined;
+                        var entries_option: ?*Fs.FileSystem.RealFS.EntriesOption = null;
+
+                        const affected = brk: {
+                            if (comptime Environment.isMac) {
+                                if (rfs.entries.get(file_path)) |existing| {
+                                    this.putTombstone(file_path, existing);
+                                    entries_option = existing;
+                                } else if (this.getTombstone(file_path)) |existing| {
+                                    entries_option = existing;
+                                }
+
+                                var affected_i: usize = 0;
+
+                                // if a file descriptor is stale, we need to close it
+                                if (event.op.delete and entries_option != null) {
+                                    for (parents, 0..) |parent_hash, entry_id| {
+                                        if (parent_hash == id) {
+                                            const affected_path = file_paths[entry_id];
+                                            const was_deleted = check: {
+                                                std.os.access(affected_path, std.os.F_OK) catch break :check true;
+                                                break :check false;
+                                            };
+                                            if (!was_deleted) continue;
+
+                                            affected_buf[affected_i] = affected_path[file_path.len..];
+                                            affected_i += 1;
+                                            if (affected_i >= affected_buf.len) break;
+                                        }
+                                    }
+                                }
+
+                                break :brk affected_buf[0..affected_i];
+                            }
+
+                            break :brk event.names(changed_files);
+                        };
+
+                        if (affected.len > 0 and !Environment.isMac) {
                             if (rfs.entries.get(file_path)) |existing| {
                                 this.putTombstone(file_path, existing);
                                 entries_option = existing;
                             } else if (this.getTombstone(file_path)) |existing| {
                                 entries_option = existing;
                             }
+                        }
 
-                            var affected_i: usize = 0;
+                        resolver.bustDirCache(file_path);
 
-                            // if a file descriptor is stale, we need to close it
-                            if (event.op.delete and entries_option != null) {
-                                for (parents, 0..) |parent_hash, entry_id| {
-                                    if (parent_hash == id) {
-                                        const affected_path = file_paths[entry_id];
-                                        const was_deleted = check: {
-                                            std.os.access(affected_path, std.os.F_OK) catch break :check true;
-                                            break :check false;
-                                        };
-                                        if (!was_deleted) continue;
+                        if (entries_option) |dir_ent| {
+                            var last_file_hash: @This().Watcher.HashType = std.math.maxInt(@This().Watcher.HashType);
 
-                                        affected_buf[affected_i] = affected_path[file_path.len..];
-                                        affected_i += 1;
-                                        if (affected_i >= affected_buf.len) break;
-                                    }
+                            for (affected) |changed_name_| {
+                                const changed_name: []const u8 = if (comptime Environment.isMac)
+                                    changed_name_
+                                else
+                                    bun.asByteSlice(changed_name_.?);
+                                if (changed_name.len == 0 or changed_name[0] == '~' or changed_name[0] == '.') continue;
+
+                                const loader = (bundler.options.loaders.get(Fs.PathName.init(changed_name).ext) orelse .file);
+                                var prev_entry_id: usize = std.math.maxInt(usize);
+                                if (loader != .file) {
+                                    var path_string: bun.PathString = undefined;
+                                    var file_hash: @This().Watcher.HashType = last_file_hash;
+                                    const abs_path: string = brk: {
+                                        if (dir_ent.entries.get(@ptrCast([]const u8, changed_name))) |file_ent| {
+                                            // reset the file descriptor
+                                            file_ent.entry.cache.fd = 0;
+                                            file_ent.entry.need_stat = true;
+                                            path_string = file_ent.entry.abs_path;
+                                            file_hash = @This().Watcher.getHash(path_string.slice());
+                                            for (hashes, 0..) |hash, entry_id| {
+                                                if (hash == file_hash) {
+                                                    if (file_descriptors[entry_id] != 0) {
+                                                        if (prev_entry_id != entry_id) {
+                                                            current_task.append(@truncate(u32, entry_id));
+                                                            ctx.removeAtIndex(
+                                                                @truncate(u16, entry_id),
+                                                                0,
+                                                                &.{},
+                                                                .file,
+                                                            );
+                                                        }
+                                                    }
+
+                                                    prev_entry_id = entry_id;
+                                                    break;
+                                                }
+                                            }
+
+                                            break :brk path_string.slice();
+                                        } else {
+                                            var file_path_without_trailing_slash = std.mem.trimRight(u8, file_path, std.fs.path.sep_str);
+                                            @memcpy(&_on_file_update_path_buf, file_path_without_trailing_slash.ptr, file_path_without_trailing_slash.len);
+                                            _on_file_update_path_buf[file_path_without_trailing_slash.len] = std.fs.path.sep;
+
+                                            @memcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len + 1 ..].ptr, changed_name.ptr, changed_name.len);
+                                            const path_slice = _on_file_update_path_buf[0 .. file_path_without_trailing_slash.len + changed_name.len + 1];
+                                            file_hash = @This().Watcher.getHash(path_slice);
+                                            break :brk path_slice;
+                                        }
+                                    };
+
+                                    // skip consecutive duplicates
+                                    if (last_file_hash == file_hash) continue;
+                                    last_file_hash = file_hash;
+
+                                    if (this.verbose)
+                                        Output.prettyErrorln("<r> <d>File change: {s}<r>", .{fs.relativeTo(abs_path)});
                                 }
                             }
-
-                            break :brk affected_buf[0..affected_i];
                         }
 
-                        break :brk event.names(changed_files);
-                    };
-
-                    if (affected.len > 0 and !Environment.isMac) {
-                        if (rfs.entries.get(file_path)) |existing| {
-                            this.putTombstone(file_path, existing);
-                            entries_option = existing;
-                        } else if (this.getTombstone(file_path)) |existing| {
-                            entries_option = existing;
+                        if (this.verbose) {
+                            Output.prettyErrorln("<r> <d>Dir change: {s}<r>", .{fs.relativeTo(file_path)});
                         }
-                    }
-
-                    resolver.bustDirCache(file_path);
-
-                    if (entries_option) |dir_ent| {
-                        var last_file_hash: Watcher.HashType = std.math.maxInt(Watcher.HashType);
-
-                        for (affected) |changed_name_| {
-                            const changed_name: []const u8 = if (comptime Environment.isMac)
-                                changed_name_
-                            else
-                                bun.asByteSlice(changed_name_.?);
-                            if (changed_name.len == 0 or changed_name[0] == '~' or changed_name[0] == '.') continue;
-
-                            const loader = (bundler.options.loaders.get(Fs.PathName.init(changed_name).ext) orelse .file);
-                            var prev_entry_id: usize = std.math.maxInt(usize);
-                            if (loader.isJavaScriptLikeOrJSON() or loader == .css) {
-                                var path_string: bun.PathString = undefined;
-                                var file_hash: Watcher.HashType = last_file_hash;
-                                const abs_path: string = brk: {
-                                    if (dir_ent.entries.get(@ptrCast([]const u8, changed_name))) |file_ent| {
-                                        // reset the file descriptor
-                                        file_ent.entry.cache.fd = 0;
-                                        file_ent.entry.need_stat = true;
-                                        path_string = file_ent.entry.abs_path;
-                                        file_hash = Watcher.getHash(path_string.slice());
-                                        for (hashes, 0..) |hash, entry_id| {
-                                            if (hash == file_hash) {
-                                                if (file_descriptors[entry_id] != 0) {
-                                                    if (prev_entry_id != entry_id) {
-                                                        current_task.append(@truncate(u32, entry_id));
-                                                        ctx.removeAtIndex(
-                                                            @truncate(u16, entry_id),
-                                                            0,
-                                                            &.{},
-                                                            .file,
-                                                        );
-                                                    }
-                                                }
-
-                                                prev_entry_id = entry_id;
-                                                break;
-                                            }
-                                        }
-
-                                        break :brk path_string.slice();
-                                    } else {
-                                        var file_path_without_trailing_slash = std.mem.trimRight(u8, file_path, std.fs.path.sep_str);
-                                        @memcpy(&_on_file_update_path_buf, file_path_without_trailing_slash.ptr, file_path_without_trailing_slash.len);
-                                        _on_file_update_path_buf[file_path_without_trailing_slash.len] = std.fs.path.sep;
-
-                                        @memcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len + 1 ..].ptr, changed_name.ptr, changed_name.len);
-                                        const path_slice = _on_file_update_path_buf[0 .. file_path_without_trailing_slash.len + changed_name.len + 1];
-                                        file_hash = Watcher.getHash(path_slice);
-                                        break :brk path_slice;
-                                    }
-                                };
-
-                                // skip consecutive duplicates
-                                if (last_file_hash == file_hash) continue;
-                                last_file_hash = file_hash;
-
-                                if (this.verbose)
-                                    Output.prettyErrorln("<r> <d>File change: {s}<r>", .{fs.relativeTo(abs_path)});
-                            }
-                        }
-                    }
-
-                    if (this.verbose) {
-                        Output.prettyErrorln("<r> <d>Dir change: {s}<r>", .{fs.relativeTo(file_path)});
-                    }
-                },
+                    },
+                }
             }
         }
-    }
-};
+    };
+}

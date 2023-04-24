@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -177,7 +177,7 @@ pub const Arguments = struct {
     }
 };
 
-const HTTP = @import("bun").HTTP;
+const HTTP = @import("root").bun.HTTP;
 const NetworkThread = HTTP.NetworkThread;
 
 var stdout_: std.fs.File = undefined;
@@ -198,7 +198,7 @@ pub fn main() anyerror!void {
     try channel.buffer.ensureTotalCapacity(args.count);
 
     try NetworkThread.init();
-    if (args.concurrency > 0) HTTP.AsyncHTTP.max_simultaneous_requests = args.concurrency;
+    if (args.concurrency > 0) HTTP.AsyncHTTP.max_simultaneous_requests.store(args.concurrency, .Monotonic);
     const Group = struct {
         response_body: MutableString = undefined,
         context: HTTP.HTTPChannelContext = undefined,

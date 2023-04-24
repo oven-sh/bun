@@ -3,7 +3,7 @@ const std = @import("std");
 const crypto = std.crypto;
 const fmt = std.fmt;
 const testing = std.testing;
-const bun = @import("bun");
+const bun = @import("root").bun;
 
 pub const Error = error{InvalidUUID};
 const UUID = @This();

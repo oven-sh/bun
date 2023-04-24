@@ -209,14 +209,14 @@ pub const JumpTableInline = struct {
 //         while (i < start_codepoints.len) : (i += 2) {
 //             j = start_codepoints[i];
 //             while (j <= start_codepoints[i + 1]) : (j += 1) {
-//                 try starts.put(j, void{});
+//                 try starts.put(j, {});
 //             }
 //         }
 //         i = 0;
 //         while (i < part_codepoints.len) : (i += 2) {
 //             j = part_codepoints[i];
 //             while (j <= part_codepoints[i + 1]) : (j += 1) {
-//                 try parts.put(j, void{});
+//                 try parts.put(j, {});
 //             }
 //         }
 //     }

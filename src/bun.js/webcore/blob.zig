@@ -1,25 +1,25 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
-const bun = @import("bun");
+const bun = @import("root").bun;
 const RequestContext = @import("../../http.zig").RequestContext;
 const MimeType = @import("../../http.zig").MimeType;
 const ZigURL = @import("../../url.zig").URL;
-const HTTPClient = @import("bun").HTTP;
+const HTTPClient = @import("root").bun.HTTP;
 const NetworkThread = HTTPClient.NetworkThread;
 const AsyncIO = NetworkThread.AsyncIO;
-const JSC = @import("bun").JSC;
+const JSC = @import("root").bun.JSC;
 const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
 const FetchHeaders = JSC.FetchHeaders;
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const SystemError = JSC.SystemError;
-const Output = @import("bun").Output;
-const MutableString = @import("bun").MutableString;
-const strings = @import("bun").strings;
-const string = @import("bun").string;
-const default_allocator = @import("bun").default_allocator;
-const FeatureFlags = @import("bun").FeatureFlags;
+const Output = @import("root").bun.Output;
+const MutableString = @import("root").bun.MutableString;
+const strings = @import("root").bun.strings;
+const string = @import("root").bun.string;
+const default_allocator = @import("root").bun.default_allocator;
+const FeatureFlags = @import("root").bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
 const NewClass = @import("../base.zig").NewClass;
@@ -40,9 +40,9 @@ const NullableAllocator = @import("../../nullable_allocator.zig").NullableAlloca
 const VirtualMachine = JSC.VirtualMachine;
 const Task = JSC.Task;
 const JSPrinter = bun.js_printer;
-const picohttp = @import("bun").picohttp;
+const picohttp = @import("root").bun.picohttp;
 const StringJoiner = @import("../../string_joiner.zig");
-const uws = @import("bun").uws;
+const uws = @import("root").bun.uws;
 
 const null_fd = bun.invalid_fd;
 const Response = JSC.WebCore.Response;
@@ -98,6 +98,11 @@ pub const Blob = struct {
     /// and it's generally just harder to use
     pub const SizeType = u52;
     pub const max_size = std.math.maxInt(SizeType);
+
+    /// According to https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Date,
+    /// maximum Date in JavaScript is less than Number.MAX_SAFE_INTEGER (u52).
+    pub const JSTimeType = u52;
+    pub const init_timestamp = std.math.maxInt(JSTimeType);
 
     pub fn getFormDataEncoding(this: *Blob) ?*bun.FormData.AsyncFormData {
         var content_type_slice: ZigString.Slice = this.getContentType() orelse return null;
@@ -572,9 +577,18 @@ pub const Blob = struct {
             return null;
         }
 
-        if (path_or_blob == .blob and path_or_blob.blob.store == null) {
-            exception.* = JSC.toInvalidArguments("Blob is detached", .{}, ctx).asObjectRef();
-            return null;
+        if (path_or_blob == .blob) {
+            if (path_or_blob.blob.store == null) {
+                exception.* = JSC.toInvalidArguments("Blob is detached", .{}, ctx).asObjectRef();
+                return null;
+            } else {
+                // TODO only reset last_modified on success pathes instead of
+                // resetting last_modified at the beginning for better performance.
+                if (path_or_blob.blob.store.?.data == .file) {
+                    // reset last_modified to force getLastModified() to reload after writing.
+                    path_or_blob.blob.store.?.data.file.last_modified = init_timestamp;
+                }
+            }
         }
 
         var needs_async = false;
@@ -1439,7 +1453,7 @@ pub const Blob = struct {
                 }
             }
 
-            fn resolveSize(this: *ReadFile, fd: bun.FileDescriptor) void {
+            fn resolveSizeAndLastModified(this: *ReadFile, fd: bun.FileDescriptor) void {
                 const stat: std.os.Stat = switch (JSC.Node.Syscall.fstat(fd)) {
                     .result => |result| result,
                     .err => |err| {
@@ -1448,6 +1462,13 @@ pub const Blob = struct {
                         return;
                     },
                 };
+
+                if (this.store) |store| {
+                    if (store.data == .file) {
+                        store.data.file.last_modified = toJSTime(stat.mtime().tv_sec, stat.mtime().tv_nsec);
+                    }
+                }
+
                 if (std.os.S.ISDIR(stat.mode)) {
                     this.errno = error.EISDIR;
                     this.system_error = JSC.SystemError{
@@ -1483,7 +1504,7 @@ pub const Blob = struct {
                     return;
                 }
 
-                this.resolveSize(fd);
+                this.resolveSizeAndLastModified(fd);
                 if (this.errno != null)
                     return this.onFinish();
 
@@ -2170,6 +2191,8 @@ pub const Blob = struct {
         mode: JSC.Node.Mode = 0,
         seekable: ?bool = null,
         max_size: SizeType = Blob.max_size,
+        // milliseconds since ECMAScript epoch
+        last_modified: JSTimeType = init_timestamp,
 
         pub fn isSeekable(this: *const FileStore) ?bool {
             if (this.seekable) |seekable| {
@@ -2495,6 +2518,14 @@ pub const Blob = struct {
         return blob_.toJS(globalThis);
     }
 
+    pub fn getMimeType(this: *const Blob) ?bun.HTTP.MimeType {
+        if (this.store) |store| {
+            return store.mime_type;
+        }
+
+        return null;
+    }
+
     pub fn getType(
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
@@ -2511,6 +2542,23 @@ pub const Blob = struct {
         }
 
         return ZigString.Empty.toValue(globalThis);
+    }
+
+    pub fn getLastModified(
+        this: *Blob,
+        _: *JSC.JSGlobalObject,
+    ) callconv(.C) JSValue {
+        if (this.store) |store| {
+            if (store.data == .file) {
+                // last_modified can be already set during read.
+                if (store.data.file.last_modified == init_timestamp) {
+                    resolveFileStat(store);
+                }
+                return JSValue.jsNumber(store.data.file.last_modified);
+            }
+        }
+
+        return JSValue.jsNumber(init_timestamp);
     }
 
     pub fn getSize(this: *Blob, _: *JSC.JSGlobalObject) callconv(.C) JSValue {
@@ -2544,34 +2592,7 @@ pub const Blob = struct {
                 return;
             } else if (store.data == .file) {
                 if (store.data.file.seekable == null) {
-                    if (store.data.file.pathlike == .path) {
-                        var buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
-                        switch (JSC.Node.Syscall.stat(store.data.file.pathlike.path.sliceZ(&buffer))) {
-                            .result => |stat| {
-                                store.data.file.max_size = if (std.os.S.ISREG(stat.mode) or stat.size > 0)
-                                    @truncate(SizeType, @intCast(u64, @max(stat.size, 0)))
-                                else
-                                    Blob.max_size;
-                                store.data.file.mode = stat.mode;
-                                store.data.file.seekable = std.os.S.ISREG(stat.mode);
-                            },
-                            // the file may not exist yet. Thats's okay.
-                            else => {},
-                        }
-                    } else if (store.data.file.pathlike == .fd) {
-                        switch (JSC.Node.Syscall.fstat(store.data.file.pathlike.fd)) {
-                            .result => |stat| {
-                                store.data.file.max_size = if (std.os.S.ISREG(stat.mode) or stat.size > 0)
-                                    @truncate(SizeType, @intCast(u64, @max(stat.size, 0)))
-                                else
-                                    Blob.max_size;
-                                store.data.file.mode = stat.mode;
-                                store.data.file.seekable = std.os.S.ISREG(stat.mode);
-                            },
-                            // the file may not exist yet. Thats's okay.
-                            else => {},
-                        }
-                    }
+                    resolveFileStat(store);
                 }
 
                 if (store.data.file.seekable != null and store.data.file.max_size != Blob.max_size) {
@@ -2587,6 +2608,45 @@ pub const Blob = struct {
             this.size = 0;
         } else {
             this.size = 0;
+        }
+    }
+
+    fn toJSTime(sec: isize, nsec: isize) JSTimeType {
+        const millisec = @intCast(u64, @divTrunc(nsec, std.time.ns_per_ms));
+        return @truncate(JSTimeType, @intCast(u64, sec * std.time.ms_per_s) + millisec);
+    }
+
+    /// resolve file stat like size, last_modified
+    fn resolveFileStat(store: *Store) void {
+        if (store.data.file.pathlike == .path) {
+            var buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+            switch (JSC.Node.Syscall.stat(store.data.file.pathlike.path.sliceZ(&buffer))) {
+                .result => |stat| {
+                    store.data.file.max_size = if (std.os.S.ISREG(stat.mode) or stat.size > 0)
+                        @truncate(SizeType, @intCast(u64, @max(stat.size, 0)))
+                    else
+                        Blob.max_size;
+                    store.data.file.mode = stat.mode;
+                    store.data.file.seekable = std.os.S.ISREG(stat.mode);
+                    store.data.file.last_modified = toJSTime(stat.mtime().tv_sec, stat.mtime().tv_nsec);
+                },
+                // the file may not exist yet. Thats's okay.
+                else => {},
+            }
+        } else if (store.data.file.pathlike == .fd) {
+            switch (JSC.Node.Syscall.fstat(store.data.file.pathlike.fd)) {
+                .result => |stat| {
+                    store.data.file.max_size = if (std.os.S.ISREG(stat.mode) or stat.size > 0)
+                        @truncate(SizeType, @intCast(u64, @max(stat.size, 0)))
+                    else
+                        Blob.max_size;
+                    store.data.file.mode = stat.mode;
+                    store.data.file.seekable = std.os.S.ISREG(stat.mode);
+                    store.data.file.last_modified = toJSTime(stat.mtime().tv_sec, stat.mtime().tv_nsec);
+                },
+                // the file may not exist yet. Thats's okay.
+                else => {},
+            }
         }
     }
 

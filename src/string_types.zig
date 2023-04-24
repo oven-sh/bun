@@ -3,7 +3,7 @@ pub const string = []const u8;
 pub const stringZ = [:0]const u8;
 pub const stringMutable = []u8;
 pub const CodePoint = i32;
-const bun = @import("bun");
+const bun = @import("root").bun;
 // macOS sets file path limit to 1024
 // Since a pointer on x64 is 64 bits and only 46 bits are used
 // We can safely store the entire path slice in a single u64.
@@ -15,7 +15,7 @@ pub const PathString = packed struct {
     ptr: PointerIntType = 0,
     len: PathInt = 0,
 
-    const JSC = @import("bun").JSC;
+    const JSC = @import("root").bun.JSC;
     pub fn fromJS(value: JSC.JSValue, global: *JSC.JSGlobalObject, exception: JSC.C.ExceptionRef) PathString {
         if (!value.jsType().isStringLike()) {
             JSC.JSError(JSC.getAllocator(global), "Only path strings are supported for now", .{}, global, exception);

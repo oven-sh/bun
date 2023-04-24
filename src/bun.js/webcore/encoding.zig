@@ -3,22 +3,22 @@ const Api = @import("../../api/schema.zig").Api;
 const RequestContext = @import("../../http.zig").RequestContext;
 const MimeType = @import("../../http.zig").MimeType;
 const ZigURL = @import("../../url.zig").URL;
-const HTTPClient = @import("bun").HTTP;
+const HTTPClient = @import("root").bun.HTTP;
 const NetworkThread = HTTPClient.NetworkThread;
 
-const JSC = @import("bun").JSC;
+const JSC = @import("root").bun.JSC;
 const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
 
 const ObjectPool = @import("../../pool.zig").ObjectPool;
-const bun = @import("bun");
-const Output = @import("bun").Output;
-const MutableString = @import("bun").MutableString;
-const strings = @import("bun").strings;
-const string = @import("bun").string;
-const default_allocator = @import("bun").default_allocator;
-const FeatureFlags = @import("bun").FeatureFlags;
+const bun = @import("root").bun;
+const Output = @import("root").bun.Output;
+const MutableString = @import("root").bun.MutableString;
+const strings = @import("root").bun.strings;
+const string = @import("root").bun.string;
+const default_allocator = @import("root").bun.default_allocator;
+const FeatureFlags = @import("root").bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
 const NewClass = @import("../base.zig").NewClass;
@@ -38,7 +38,7 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const VirtualMachine = JSC.VirtualMachine;
 const Task = @import("../javascript.zig").Task;
 
-const picohttp = @import("bun").picohttp;
+const picohttp = @import("root").bun.picohttp;
 
 pub const TextEncoder = struct {
     filler: u32 = 0,

@@ -180,7 +180,7 @@ const zig_base64 = struct {
                 out_idx += 1;
             }
             if (encoder.pad_char) |pad_char| {
-                for (dest[out_idx..]) |*pad| {
+                for (dest[out_idx..out_len]) |*pad| {
                     pad.* = pad_char;
                 }
             }

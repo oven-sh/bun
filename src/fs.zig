@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -78,7 +78,6 @@ pub const BytecodeCacheFetcher = struct {
 };
 
 pub const FileSystem = struct {
-    allocator: std.mem.Allocator,
     top_level_dir: string = "/",
 
     // used on subsequent updates
@@ -144,18 +143,17 @@ pub const FileSystem = struct {
         ENOTDIR,
     };
 
-    pub fn init1(
-        allocator: std.mem.Allocator,
+    pub fn init(
         top_level_dir: ?string,
     ) !*FileSystem {
-        return init1WithForce(allocator, top_level_dir, false);
+        return initWithForce(top_level_dir, false);
     }
 
-    pub fn init1WithForce(
-        allocator: std.mem.Allocator,
+    pub fn initWithForce(
         top_level_dir: ?string,
         comptime force: bool,
     ) !*FileSystem {
+        const allocator = bun.fs_allocator;
         var _top_level_dir = top_level_dir orelse (if (Environment.isBrowser) "/project/" else try std.process.getCwdAlloc(allocator));
 
         // Ensure there's a trailing separator in the top level directory
@@ -172,10 +170,8 @@ pub const FileSystem = struct {
 
         if (!instance_loaded or force) {
             instance = FileSystem{
-                .allocator = allocator,
                 .top_level_dir = _top_level_dir,
                 .fs = Implementation.init(
-                    allocator,
                     _top_level_dir,
                 ),
                 // must always use default_allocator since the other allocators may not be threadsafe when an element resizes
@@ -282,7 +278,7 @@ pub const FileSystem = struct {
             const query = strings.copyLowercaseIfNeeded(_query, &scratch_lookup_buffer);
             const result = entry.data.get(query) orelse return null;
             const basename = result.base();
-            if (!strings.eql(basename, _query)) {
+            if (!strings.eqlLong(basename, _query, true)) {
                 return Entry.Lookup{ .entry = result, .diff_case = Entry.Lookup.DifferentCase{
                     .dir = entry.dir,
                     .query = _query,
@@ -367,11 +363,11 @@ pub const FileSystem = struct {
 
         abs_path: PathString = PathString.empty,
 
-        pub inline fn base(this: *const Entry) string {
+        pub inline fn base(this: *Entry) string {
             return this.base_.slice();
         }
 
-        pub inline fn base_lowercase(this: *const Entry) string {
+        pub inline fn base_lowercase(this: *Entry) string {
             return this.base_lowercase_.slice();
         }
 
@@ -538,7 +534,6 @@ pub const FileSystem = struct {
     pub const RealFS = struct {
         entries_mutex: Mutex = Mutex.init(),
         entries: *EntriesOption.Map,
-        allocator: std.mem.Allocator,
         cwd: string,
         parent_fs: *FileSystem = undefined,
         file_limit: usize = 32,
@@ -688,19 +683,17 @@ pub const FileSystem = struct {
         var _entries_option_map: *EntriesOption.Map = undefined;
         var _entries_option_map_loaded: bool = false;
         pub fn init(
-            allocator: std.mem.Allocator,
             cwd: string,
         ) RealFS {
             const file_limit = adjustUlimit() catch unreachable;
 
             if (!_entries_option_map_loaded) {
-                _entries_option_map = EntriesOption.Map.init(allocator);
+                _entries_option_map = EntriesOption.Map.init(bun.fs_allocator);
                 _entries_option_map_loaded = true;
             }
 
             return RealFS{
                 .entries = _entries_option_map,
-                .allocator = allocator,
                 .cwd = cwd,
                 .file_limit = file_limit,
                 .file_quota = file_limit,
@@ -796,7 +789,7 @@ pub const FileSystem = struct {
         }
 
         pub const EntriesOption = union(Tag) {
-            entries: DirEntry,
+            entries: *DirEntry,
             err: DirEntry.Err,
 
             pub const Tag = enum {
@@ -824,9 +817,10 @@ pub const FileSystem = struct {
             comptime Iterator: type,
             iterator: Iterator,
         ) !DirEntry {
+            _ = fs;
             var iter = (std.fs.IterableDir{ .dir = handle }).iterate();
             var dir = DirEntry.init(_dir);
-            const allocator = fs.allocator;
+            const allocator = bun.fs_allocator;
             errdefer dir.deinit(allocator);
 
             if (FeatureFlags.store_file_descriptors) {
@@ -860,7 +854,7 @@ pub const FileSystem = struct {
         threadlocal var temp_entries_option: EntriesOption = undefined;
 
         pub fn readDirectory(fs: *RealFS, _dir: string, _handle: ?std.fs.Dir) !*EntriesOption {
-            return readDirectoryWithIterator(fs, _dir, _handle, void, void{});
+            return readDirectoryWithIterator(fs, _dir, _handle, void, {});
         }
 
         pub fn readDirectoryWithIterator(fs: *RealFS, _dir: string, _handle: ?std.fs.Dir, comptime Iterator: type, iterator: Iterator) !*EntriesOption {
@@ -909,8 +903,10 @@ pub const FileSystem = struct {
             };
 
             if (comptime FeatureFlags.enable_entry_cache) {
+                var entries_ptr = bun.fs_allocator.create(DirEntry) catch unreachable;
+                entries_ptr.* = entries;
                 const result = EntriesOption{
-                    .entries = entries,
+                    .entries = entries_ptr,
                 };
 
                 var out = try fs.entries.put(&cache_result.?, result);
@@ -927,6 +923,28 @@ pub const FileSystem = struct {
 
         pub fn readFileWithHandle(
             fs: *RealFS,
+            path: string,
+            _size: ?usize,
+            file: std.fs.File,
+            comptime use_shared_buffer: bool,
+            shared_buffer: *MutableString,
+            comptime stream: bool,
+        ) !File {
+            return readFileWithHandleAndAllocator(
+                fs,
+                bun.fs_allocator,
+                path,
+                _size,
+                file,
+                use_shared_buffer,
+                shared_buffer,
+                stream,
+            );
+        }
+
+        pub fn readFileWithHandleAndAllocator(
+            fs: *RealFS,
+            allocator: std.mem.Allocator,
             path: string,
             _size: ?usize,
             file: std.fs.File,
@@ -1004,7 +1022,7 @@ pub const FileSystem = struct {
                 }
             } else {
                 // We use pread to ensure if the file handle was open, it doesn't seek from the last position
-                var buf = try fs.allocator.alloc(u8, size);
+                var buf = try allocator.alloc(u8, size);
                 const read_count = file.preadAll(buf, 0) catch |err| {
                     fs.readFileError(path, err);
                     return err;
@@ -1092,6 +1110,25 @@ pub const PathName = struct {
     ext: string,
     filename: string,
 
+    pub fn nonUniqueNameStringBase(self: *const PathName) string {
+        // /bar/foo/index.js -> foo
+        if (self.dir.len > 0 and strings.eqlComptime(self.base, "index")) {
+            // "/index" -> "index"
+            return Fs.PathName.init(self.dir).base;
+        }
+
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(!strings.includes(self.base, "/"));
+        }
+
+        // /bar/foo.js -> foo
+        return self.base;
+    }
+
+    pub fn fmtIdentifier(self: *const PathName) strings.FormatValidIdentifier {
+        return strings.fmtIdentifier(self.nonUniqueNameStringBase());
+    }
+
     // For readability, the names of certain automatically-generated symbols are
     // derived from the file name. For example, instead of the CommonJS wrapper for
     // a file being called something like "require273" it can be called something
@@ -1104,13 +1141,7 @@ pub const PathName = struct {
     // through the renaming logic that all other symbols go through to avoid name
     // collisions.
     pub fn nonUniqueNameString(self: *const PathName, allocator: std.mem.Allocator) !string {
-        if (strings.eqlComptime(self.base, "index")) {
-            if (self.dir.len > 0) {
-                return MutableString.ensureValidIdentifier(PathName.init(self.dir).base, allocator);
-            }
-        }
-
-        return MutableString.ensureValidIdentifier(self.base, allocator);
+        return MutableString.ensureValidIdentifier(self.nonUniqueNameStringBase(), allocator);
     }
 
     pub inline fn dirWithTrailingSlash(this: *const PathName) string {
@@ -1170,6 +1201,33 @@ pub const Path = struct {
     name: PathName,
     is_disabled: bool = false,
     is_symlink: bool = false,
+
+    pub fn packageName(this: *const Path) ?string {
+        var name_to_use = this.pretty;
+        if (strings.lastIndexOf(this.text, std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str)) |node_modules| {
+            name_to_use = this.text[node_modules + 14 ..];
+        }
+
+        const pkgname = bun.options.JSX.Pragma.parsePackageName(name_to_use);
+        if (pkgname.len == 0 or !std.ascii.isAlphanumeric(pkgname[0]))
+            return null;
+
+        return pkgname;
+    }
+
+    pub fn loader(this: *const Path, loaders: *const bun.options.Loader.HashTable) ?bun.options.Loader {
+        if (this.isDataURL()) {
+            return bun.options.Loader.dataurl;
+        }
+
+        const ext = this.name.ext;
+
+        return loaders.get(ext) orelse bun.options.Loader.fromString(ext);
+    }
+
+    pub fn isDataURL(this: *const Path) bool {
+        return strings.eqlComptime(this.namespace, "dataurl");
+    }
 
     pub fn isBun(this: *const Path) bool {
         return strings.eqlComptime(this.namespace, "bun");
@@ -1249,7 +1307,7 @@ pub const Path = struct {
                 var buf = try allocator.alloc(u8, this.text.len + this.pretty.len + 2);
                 bun.copy(u8, buf, this.text);
                 buf.ptr[this.text.len] = 0;
-                var new_pretty = buf[this.text.len + 1 ..];
+                var new_pretty = buf[this.text.len + 1 ..][0..this.pretty.len];
                 bun.copy(u8, buf[this.text.len + 1 ..], this.pretty);
                 var new_path = Fs.Path.init(buf[0..this.text.len]);
                 buf.ptr[buf.len - 1] = 0;

@@ -2089,8 +2089,13 @@ pub const OutputFile = struct {
             .buffer => |buffer| brk: {
                 var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
                 blob.* = JSC.WebCore.Blob.init(@constCast(buffer.bytes), buffer.allocator, globalObject);
-                blob.store.?.mime_type = this.loader.toMimeType();
-                blob.content_type = blob.store.?.mime_type.value;
+                if (blob.store) |store| {
+                    store.mime_type = this.loader.toMimeType();
+                    blob.content_type = store.mime_type.value;
+                } else {
+                    blob.content_type = this.loader.toMimeType().value;
+                }
+
                 blob.allocator = bun.default_allocator;
                 const blob_jsvalue = blob.toJS(globalObject);
                 blob_jsvalue.ensureStillAlive();

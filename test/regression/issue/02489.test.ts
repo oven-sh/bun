@@ -1,7 +1,15 @@
+import { TCPSocketListener } from "bun";
 import { sleep, listen } from "bun";
 import { describe, expect, it } from "bun:test";
 
 describe("an https fetch to a silent TCP socket", () => {
+  let were_done: (listener: TCPSocketListener) => void;
+  async function do_shutdown() {
+    const listener: TCPSocketListener = await new Promise(res => were_done = res);
+    listener.stop(true);
+    console.log("listener is ded");
+  }
+  do_shutdown();
   it("should respond to abort signals", async () => {
     const listener = listen({
       port: 0,
@@ -21,9 +29,8 @@ describe("an https fetch to a silent TCP socket", () => {
         Promise.race([check_after, fetch(`https://127.0.0.1:${listener.port}`, { signal: signal })]),
       ).toThrow(new DOMException("The operation timed out."));
       await check_after;
-      await sleep(1);
     } finally {
-      listener.stop(true);
+      were_done(listener);
     }
   });
 });

@@ -1322,7 +1322,7 @@ pub const ESModule = struct {
             if (specifier.len == 0) return null;
             var package = Package{ .name = parseName(specifier) orelse return null, .subpath = "" };
 
-            if (strings.startsWith(package.name, ".") or strings.indexAnyComptime(package.name, "\\%") != null)
+            if (strings.startsWith(package.name, ".") or strings.indexOfAnyComptime(package.name, "\\%") != null)
                 return null;
 
             const offset: usize = if (package.name.len == 0 or package.name[0] != '@') 0 else 1;
@@ -1959,12 +1959,12 @@ pub const ESModule = struct {
 };
 
 fn findInvalidSegment(path_: string) ?string {
-    var slash = strings.indexAnyComptime(path_, "/\\") orelse return "";
+    var slash = strings.indexOfAnyComptime(path_, "/\\") orelse return "";
     var path = path_[slash + 1 ..];
 
     while (path.len > 0) {
         var segment = path;
-        if (strings.indexAnyComptime(path, "/\\")) |new_slash| {
+        if (strings.indexOfAnyComptime(path, "/\\")) |new_slash| {
             segment = path[0..new_slash];
             path = path[new_slash + 1 ..];
         } else {

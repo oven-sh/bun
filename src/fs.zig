@@ -1133,25 +1133,16 @@ pub const PathName = struct {
         var dir = path;
         var is_absolute = true;
 
-        var _i = strings.lastIndexOfChar(path, '/');
-        while (_i) |i| {
-            // Stop if we found a non-trailing slash
-            if (i + 1 != path.len) {
-                base = path[i + 1 ..];
-                dir = path[0..i];
-                is_absolute = false;
-                break;
-            }
+        path = std.mem.trimRight(u8, path, "/");
 
-            // Ignore trailing slashes
-            path = path[0..i];
-
-            _i = strings.lastIndexOfChar(path, '/');
+        if (strings.lastIndexOfChar(path, '/')) |i| {
+            base = path[i + 1 ..];
+            dir = path[0..i];
+            is_absolute = false;
         }
 
         // Strip off the extension
-        var _dot = strings.lastIndexOfChar(base, '.');
-        if (_dot) |dot| {
+        if (strings.lastIndexOfChar(base, '.')) |dot| {
             ext = base[dot..];
             base = base[0..dot];
         }

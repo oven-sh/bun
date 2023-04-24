@@ -643,6 +643,32 @@ pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.IterableDir {
     const fd = try std.os.openatZ(dir.fd, path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | 0, 0);
     return std.fs.IterableDir{ .dir = .{ .fd = fd } };
 }
+
+pub fn openFileZ(file_path: [:0]u8, flags: std.fs.File.OpenFlags) !std.fs.File {
+    return openFileZPrechecked(file_path, flags, file_path.len > MAX_PATH_BYTES);
+}
+
+pub fn openFileZPrechecked(file_path: [:0]u8, flags: std.fs.File.OpenFlags, is_larger_than_max: bool) !std.fs.File {
+    var dir = std.fs.cwd();
+    var sub_path = file_path;
+
+    if (is_larger_than_max) {
+        while (strings.indexOfAnyComptime(sub_path, "/")) |i| {
+            sub_path[i] = 0;
+            const sub_dir = dir.openDirZ(sub_path[0..i :0], .{}, false);
+            sub_path[i] = '/';
+            if (sub_path.len != file_path.len) dir.close(); // the check is because closing cwd is illegal
+            dir = try sub_dir;
+            sub_path = sub_path[i + 1 ..];
+            if (sub_path.len <= MAX_PATH_BYTES) break;
+        } else return error.FileNameTooLong;
+    }
+
+    const file = dir.openFileZ(sub_path, flags);
+    if (sub_path.len != file_path.len) dir.close(); // the check is because closing cwd is illegal
+    return file;
+}
+
 pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
 
 /// This wrapper exists to avoid the call to sliceTo(0)

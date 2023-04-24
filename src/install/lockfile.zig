@@ -195,7 +195,6 @@ pub fn loadOverridesFromNonBunLockfile(this: *Lockfile, allocator: Allocator) !v
     if (dir.openFileZ("yarn.lock", .{})) |file| {
         defer file.close();
         this.dependency_overrides = try Yarn.loadFromFile(this, allocator, file);
-        this.dependency_overrides.print_debug();
     } else |_| {}
     // else if (std.fs.cwd().openFileZ("package-lock.json", .{})) |file| {
     //     defer file.close();
@@ -1590,12 +1589,12 @@ pub const Package = extern struct {
         return this.meta.isDisabled();
     }
 
-    const Alphabetizer = struct {
+    const NameAlphabetizer = struct {
         names: []const String,
         buf: []const u8,
         resolutions: []const Resolution,
 
-        pub fn isAlphabetical(ctx: Alphabetizer, lhs: PackageID, rhs: PackageID) bool {
+        pub fn isAlphabetical(ctx: NameAlphabetizer, lhs: PackageID, rhs: PackageID) bool {
             return switch (ctx.names[lhs].order(&ctx.names[rhs], ctx.buf, ctx.buf)) {
                 .eq => ctx.resolutions[lhs].order(&ctx.resolutions[rhs], ctx.buf, ctx.buf) == .lt,
                 .lt => true,
@@ -1611,15 +1610,12 @@ pub const Package = extern struct {
         pub fn isAlphabetical(ctx: DependencyAlphabetizer, lhs_: DependencyID, rhs_: DependencyID) bool {
             const lhs = ctx.dependencies[lhs_];
             const rhs = ctx.dependencies[rhs_];
+            std.debug.assert(lhs.behavior.isOptional() == rhs.behavior.isOptional());
 
-            return switch (std.math.order(@boolToInt(lhs.behavior.isOptional()), @boolToInt(rhs.behavior.isOptional()))) {
+            return switch (std.mem.order(u8, lhs.name.slice(ctx.buf), rhs.name.slice(ctx.buf))) {
+                .eq => unreachable,
                 .lt => true,
                 .gt => false,
-                .eq => switch (std.mem.order(u8, lhs.name.slice(ctx.buf), rhs.name.slice(ctx.buf))) {
-                    .eq => unreachable,
-                    .lt => true,
-                    .gt => false,
-                },
             };
         }
     };
@@ -2278,10 +2274,11 @@ pub const Package = extern struct {
         name_to_copy: *[1024]u8,
         log: *logger.Log,
     ) !WorkspaceIterator.Entry {
-        const path_to_use = if (path.len == 0) "package.json" else brk: {
-            const paths = [_]string{ path, "package.json" };
-            break :brk bun.path.joinStringBuf(path_buf, &paths, .auto);
+        const path_to_use = switch (path.len) {
+            0 => "package.json",
+            else => bun.path.joinStringBuf(path_buf, &[_]string{ path, "package.json" }, .auto),
         };
+
         var workspace_file = try dir.openFile(path_to_use, .{ .mode = .read_only });
         defer workspace_file.close();
 
@@ -2290,14 +2287,12 @@ pub const Package = extern struct {
         const workspace_source = logger.Source.initPathString(path, workspace_bytes);
 
         var workspace_json = try json_parser.PackageJSONVersionChecker.init(allocator, &workspace_source, log);
-
-        _ = try workspace_json.parseExpr();
-        if (!workspace_json.has_found_name) {
-            return error.MissingPackageName;
-        }
-        bun.copy(u8, name_to_copy[0..], workspace_json.found_name);
+        workspace_json.has_found_version = true; // ignore version
+        var name_writer = std.io.FixedBufferStream([]u8){ .buffer = name_to_copy, .pos = 0 };
+        _ = try workspace_json.parseExpr(name_writer.writer(), std.io.null_writer);
+        if (name_writer.pos == 0) return error.MissingPackageName;
         return WorkspaceIterator.Entry{
-            .name = name_to_copy[0..workspace_json.found_name.len],
+            .name = name_writer.getWritten(),
             .path = path_to_use,
         };
     }
@@ -3636,12 +3631,12 @@ fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaHash 
     std.sort.sort(
         PackageID,
         alphabetized_names,
-        Lockfile.Package.Alphabetizer{
+        Lockfile.Package.NameAlphabetizer{
             .names = names,
             .buf = bytes,
             .resolutions = resolutions,
         },
-        Lockfile.Package.Alphabetizer.isAlphabetical,
+        Lockfile.Package.NameAlphabetizer.isAlphabetical,
     );
 
     string_builder.allocate(this.allocator) catch unreachable;
@@ -3700,55 +3695,29 @@ pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Ve
     return null;
 }
 
-pub const DependencyOverride = struct {
-    version: string,
-    dependencies: []string,
-};
-
-const DependencyOverrideMap =
-    std.HashMapUnmanaged(string, DependencyOverride, DependencyOverrides.KeyContext, std.hash_map.default_max_load_percentage);
-
-//
-
-// const DependencyOverrides = {
-//   ["library_with_build_info_2@0.0.1"]: {
-//     version: "0.0.1"
-//     dependencies: ["add@2.0.2"],
-//   },
-//   ["library_with_build_info_3@^0.0.4"]: {
-//     version: "0.0.4"
-//     dependencies: ["add@2.0.2"],
-//   },
-
-//   ["add@2.0.2"]: {
-//     version: "2.0.2",
-//   },
-
-//   ["add@v2.0.2||2.0.5"]: {
-//     version: "2.0.2",
-//   },
-// };
-
+const DependencyOverrideMap = std.ArrayHashMapUnmanaged(string, Semver.Version, DependencyOverrides.KeyContext, false);
 const DependencyOverrides = struct {
-    // All the strings in this data structure live in the allocated file
+    // All the strings in this data structure live in the string_buffer
     map: DependencyOverrideMap = .{},
-    dependencies_buffer: ?[]string = null,
-    string_buffer: ?string = null,
+    string_buffer: string = "",
 
+    const USE_ARRAY_HASH_MAP = true; // this makes it easier to switch, but does not change the relevant iterator logic
+    const HASH_SIZE = if (USE_ARRAY_HASH_MAP) u32 else u64;
     const Self = @This();
 
     pub const KeyContext = struct {
-        pub fn hash(self: @This(), s: []const u8) u64 {
+        pub fn hash(self: @This(), s: []const u8) HASH_SIZE {
             _ = self;
-            if (strings.indexAnyComptime(s, "@")) |delim| {
+            if (strings.indexOfAnyComptime(s, "@")) |delim| {
                 const pkg_name = s[0..delim];
                 const pkg_version = s[delim + 1 ..];
-                return std.hash_map.hashString(pkg_name) ^ std.hash_map.hashString(pkg_version);
+                return @truncate(HASH_SIZE, std.hash_map.hashString(pkg_name) ^ std.hash_map.hashString(pkg_version));
             }
             return 0;
         }
-        pub fn eql(self: @This(), a: []const u8, b: []const u8) bool {
+        pub fn eql(self: @This(), a: []const u8, b: []const u8, idx: if (USE_ARRAY_HASH_MAP) usize else void) bool {
             _ = self;
+            _ = idx;
             return std.hash_map.eqlString(a, b);
         }
     };
@@ -3757,44 +3726,23 @@ const DependencyOverrides = struct {
         // const name_and_version = struct { pkg_name: string, pkg_version: string };
         const name_and_version = struct { pkg_name: []const u8, pkg_version: []const u8 };
 
-        pub fn hash(self: @This(), key: name_and_version) u64 {
+        pub fn hash(self: @This(), key: name_and_version) HASH_SIZE {
             _ = self;
-            return std.hash_map.hashString(key.pkg_name) ^ std.hash_map.hashString(key.pkg_version);
+            return @truncate(HASH_SIZE, std.hash_map.hashString(key.pkg_name) ^ std.hash_map.hashString(key.pkg_version));
         }
-        pub fn eql(self: @This(), key: name_and_version, other: string) bool {
+        pub fn eql(self: @This(), key: name_and_version, other: string, idx: if (USE_ARRAY_HASH_MAP) usize else void) bool {
             _ = self;
+            _ = idx;
             return std.hash_map.eqlString(key.pkg_name, other[0..key.pkg_name.len]) and
                 std.hash_map.eqlString(key.pkg_version, other[key.pkg_name.len + 1 ..]);
         }
     };
 
-    pub fn getOverrides(self: Self, pkg_name: string, pkg_version: string) ?DependencyOverride {
+    pub fn getOverrides(self: Self, pkg_name: string, pkg_version: string) ?Semver.Version {
         return self.map.getAdapted(KeyContext2.name_and_version{
             .pkg_name = pkg_name,
             .pkg_version = pkg_version,
         }, KeyContext2{});
-    }
-
-    pub fn print_debug(self: Self) void {
-        const map = self.map;
-        std.debug.print("{{", .{});
-        if (map.count() != 0) {
-            var map_iter = map.iterator();
-
-            while (map_iter.next()) |entry| {
-                std.debug.print("\n\t\"{s}\": {{ version: \"{s}\", dependencies: {{", .{ entry.key_ptr.*, entry.value_ptr.*.version });
-                var first = true;
-                for (entry.value_ptr.*.dependencies) |dep| {
-                    if (!first) std.debug.print(",", .{});
-                    std.debug.print(" \"{s}\"", .{dep});
-                    first = false;
-                }
-                if (!first) std.debug.print(" ", .{});
-
-                std.debug.print("}} }},", .{});
-            }
-        }
-        std.debug.print("\n}}\n\n", .{});
     }
 };
 
@@ -3832,8 +3780,11 @@ pub const Yarn = struct {
         META_HASH_LEN_IN_FILE;
 
     pub const over_allocated_space = @max(
-        (512 + 5) / 6, // for when we skip sha512 without parsing
-        @max("optionalDependencies".len, SENTINELS.len + ADVANCE_WIDTH - 1),
+        (512 + 5) / 6, // for when we skip sha512 without parsing (we divide by 6 because it's base64, add 5 to round up)
+        @max(
+            "optionalDependencies".len, // a long string we might check at the end of the file
+            SENTINELS.len + ADVANCE_WIDTH - 1,
+        ),
     ) + 1; // the `+ 1` is technically not necessary, but speculative loads might be happier with us?
 
     // we add these sentinels to the end of the file_buffer, just in case someone gives us a malicious file
@@ -3890,10 +3841,10 @@ pub const Yarn = struct {
         comptime std.debug.assert(over_allocated_space >= width);
 
         switch (impl) {
-            .naive => OUTER: while (true) {
+            .naive => outer: while (true) {
                 if (advance_over_current) cur.* = cur.*[1..];
                 const c = cur.*[0];
-                inline for (chars) |chr| if (c == chr) break :OUTER;
+                inline for (chars) |chr| if (c == chr) break :outer;
                 if (!advance_over_current) cur.* = cur.*[1..];
             },
 
@@ -3951,80 +3902,43 @@ pub const Yarn = struct {
         return advanceOverComptime(cur, delim);
     }
 
-    const alloc_int = usize;
+    fn toOwnedDependencyOverrideMap(allocator: Allocator, buf: string, map: DependencyOverrideMap) !DependencyOverrides {
+        var needed_buffer_size: u32 = 0;
+        var prev_off: u32 = 0; // a valid value for this can never be 0
+        var iter = map.iterator();
 
-    /// Estimates how many dependencies occurs in the file by counting how many runs of exactly 4 spaces there are.
-    ///     - Should be correct unless there's a pathological file, in which case we just overallocated a lil bit.
-    ///
-    /// Estimates the maximum number of "titles" which all resolve to the same version by counting the number of commas between colons. E.g. `pad@3.2.0, pad@3.x:` should give us 2.
-    ///     - We take the max because we only need to hold one set of titles in memory at once.
-    pub fn estimateAllocations(file_buffer: []u8) struct {
-        max_titles: alloc_int,
-        num_dependencies: alloc_int,
-    } {
-        const VEC_SIZE = 64;
-        const VEC_TYPE = @Vector(VEC_SIZE, u8);
-        const INT_TYPE = std.meta.Int(.unsigned, VEC_SIZE);
-
-        if (over_allocated_space < VEC_SIZE) // TODO: review this
-            @compileError(std.fmt.comptimePrint("Did not overallocate enough space! Should have overallocated {} bytes for `estimateAllocations`, got {}.\nPlease update `over_allocated_space` to be {}\n", .{ VEC_SIZE, over_allocated_space, VEC_SIZE }));
-
-        var cur: string = file_buffer[0..];
-        var num_dependencies: alloc_int = 0;
-        var max_commas_before_colon: alloc_int = 0;
-        var current_num_commas: alloc_int = 0;
-        var space_run: alloc_int = 0;
-
-        while (cur.len >= VEC_SIZE) : (cur = cur[VEC_SIZE..]) {
-            const vec: VEC_TYPE = cur[0..VEC_SIZE].*;
-
-            // count the number of times we find 4 spaces in a row
-            var space_mask = @bitCast(INT_TYPE, vec == @splat(VEC_SIZE, @as(u8, ' ')));
-            const stop_carry = (space_mask >> (VEC_SIZE - 1)) == 0;
-
-            while (true) {
-                space_run += @ctz(space_mask +% 1); // count trailing 1's
-                space_mask &= space_mask +% 1; // flip trailing 1's to 0's
-                if (space_mask == 0) break;
-                num_dependencies += @boolToInt(space_run == 4);
-                space_run = 0;
-                space_mask >>= @intCast(u6, @ctz(space_mask)); // shift out trailing 0's
+        while (iter.next()) |entry| {
+            needed_buffer_size += @intCast(u32, entry.key_ptr.len);
+            if (!entry.value_ptr.tag.pre.value.isInline()) {
+                const ptr = entry.value_ptr.tag.pre.value.ptr();
+                if (prev_off != ptr.off) needed_buffer_size += ptr.len;
+                prev_off = ptr.off;
             }
-
-            if (stop_carry) {
-                num_dependencies += @boolToInt(space_run == 4);
-                space_run = 0;
-            }
-
-            // count the number of commas between colons
-            var colon_mask = @bitCast(INT_TYPE, vec == @splat(VEC_SIZE, @as(u8, ':')));
-            var comma_mask = @bitCast(INT_TYPE, vec == @splat(VEC_SIZE, @as(u8, ',')));
-            const finishing_mask: INT_TYPE = switch (colon_mask) {
-                0 => std.math.maxInt(INT_TYPE),
-                else => @bitCast(
-                    INT_TYPE,
-                    (@as(std.meta.Int(.signed, VEC_SIZE), 1) << (VEC_SIZE - 1)) >> @intCast(u6, @clz(colon_mask)),
-                ),
-            };
-
-            while (colon_mask != 0) : (colon_mask &= colon_mask -% 1) {
-                const mask_up_to_colon = ~colon_mask & (colon_mask -% 1);
-                const found_commas = mask_up_to_colon & comma_mask;
-                comma_mask &= ~mask_up_to_colon;
-                max_commas_before_colon = @max(
-                    max_commas_before_colon,
-                    current_num_commas + @popCount(found_commas),
-                );
-                current_num_commas = 0;
-            }
-
-            current_num_commas += @popCount(finishing_mask & comma_mask);
         }
 
-        return .{
-            .max_titles = max_commas_before_colon + 1,
-            .num_dependencies = num_dependencies,
-        };
+        const string_buffer = try allocator.alloc(u8, needed_buffer_size);
+        var cur = string_buffer;
+        iter.reset();
+
+        while (iter.next()) |entry| {
+            const key_len = entry.key_ptr.len;
+            bun.copy(u8, cur, entry.key_ptr.*);
+            entry.key_ptr.* = cur[0..key_len];
+            cur = cur[key_len..];
+
+            if (!entry.value_ptr.tag.pre.value.isInline()) {
+                const ptr = entry.value_ptr.tag.pre.value.ptr();
+
+                if (prev_off != ptr.off) {
+                    bun.copy(u8, cur, buf[ptr.off..][0..ptr.len]);
+                    entry.value_ptr.tag.pre.value = String.init(string_buffer, cur[0..ptr.len]);
+                    cur = cur[ptr.len..];
+                }
+                prev_off = ptr.off;
+            }
+        }
+
+        return DependencyOverrides{ .map = map, .string_buffer = string_buffer };
     }
 
     /// Parses a yarn file and consumes the data. Caller owns a DependencyOverrideMap and the associated `values.dependencies`.
@@ -4034,26 +3948,25 @@ pub const Yarn = struct {
     // We could do that, but I doubt anyone cares. Just error.
     // Btw the yarn parser doesn't handle stacked escapes properly.
     // https://github.com/yarnpkg/yarn/blob/158d96dce95313d9a00218302631cd263877d164/src/lockfile/parse.js#L101
-    fn parse(this: *Lockfile, allocator: Allocator, file_buffer: []u8, sentinels_start: usize) !DependencyOverrides {
-        if (over_allocated_space < SENTINELS.len)
-            @compileError(std.fmt.comptimePrint("Did not overallocate enough space! Should have overallocated {} bytes for \"{s}\", got {}", .{ SENTINELS.len, SENTINELS, over_allocated_space }));
-
+    fn parse(this: *Lockfile, allocator: Allocator, list: std.ArrayListUnmanaged(u8)) !DependencyOverrides {
+        // Might look something like this: {
+        //   ["library_with_build_info_2@0.0.1"]: { version: "0.0.1" },
+        //   ["library_with_build_info_3@^0.0.4"]: { version: "0.0.4" },
+        //   ["add@2.0.2"]: { version: "2.0.2" }, ["add@v2.0.2||2.0.5"]: { version: "2.0.2" },
+        // };
+        // The term "title" is used to refer to keys in the map above.
+        // We build this map in two phases.
+        // In the first phase, we make a series of linked lists out of titles which terminate in the version number:
+        // "add@2.0.2" -> "add@v2.0.2||2.0.5" -> "2.0.2"
+        // The point of this is so we can clone the values into a string buffer
+        // In the second phase, we iterate over all keys. For each key, we see if its value can be followed (should have '@')
+        // If it can, we keep following the chain until we reach a value that cannot be followed. Then we can copy
         var map: DependencyOverrideMap = .{};
         errdefer map.clearAndFree(allocator); // caller owns this
 
-        const estimated_allocations = estimateAllocations(file_buffer);
-
-        const pkg_deps = try allocator.alloc(string, estimated_allocations.num_dependencies);
-        errdefer allocator.free(pkg_deps); // caller owns this
-
-        const pkg_titles = try allocator.alloc(string, estimated_allocations.max_titles);
-        defer allocator.free(pkg_titles);
-
-        // cursors
-        var pkg_deps_i: usize = 0;
-        var starting_pkg_deps_i: usize = pkg_deps_i;
-        var pkg_titles_i: usize = 0;
-        var cur = file_buffer;
+        try map.ensureTotalCapacity(allocator, list.capacity / 256); // overguesstimate how much memory we will need
+        var cur = list.allocatedSlice();
+        const sentinels_start: usize = @ptrToInt(&list.items.ptr[list.items.len]);
 
         // We try to match headers outside of the regular comment matching facilities for speed
         if (advanceOverComptime(&cur, YARN_LOCK_HEADER_0)) {
@@ -4074,20 +3987,11 @@ pub const Yarn = struct {
         // TODO: see if this improves performance by making the loop branches more predictable?
         if (ALLOW_CARRIAGE_RETURNS and cur[0] == '\r') cur = cur[1..];
         if (cur[0] == '\n') cur = cur[1..];
-        var dep_override_version: ?string = null;
-        var found_newline = false;
-        NEXT_DEPENDENCY: while (true) : ({
-            for (pkg_titles[0..pkg_titles_i]) |pkg_title| {
-                if (map.get(pkg_title)) |_| return error.@"Duplicate package titles found";
-                try map.putNoClobber(allocator, pkg_title, DependencyOverride{
-                    .version = dep_override_version orelse return error.@"Version not specified for package",
-                    .dependencies = pkg_deps[starting_pkg_deps_i..pkg_deps_i],
-                });
-            }
 
-            starting_pkg_deps_i = pkg_deps_i;
-            pkg_titles_i = 0;
-        }) {
+        // var dep_override_version: ?string = null;
+        var found_newline = false;
+
+        parse_dependency: while (true) {
             while (true) {
                 switch (cur[0]) {
                     '\n', if (ALLOW_CARRIAGE_RETURNS) '\r' => {},
@@ -4099,66 +4003,87 @@ pub const Yarn = struct {
             }
 
             // if we hit the sentinels, this is a valid place to stop.
-            comptime std.debug.assert(SENTINELS[0] == '\n');
-            if (sentinelCmp(@ptrToInt(cur.ptr), sentinels_start, SENTINELS[1]))
-                return DependencyOverrides{ .map = map, .dependencies_buffer = pkg_deps };
+            if (@ptrToInt(cur.ptr) >= sentinels_start) return toOwnedDependencyOverrideMap(allocator, list.items, map);
 
             // Otherwise, start matching dependencies
             if (!found_newline) return error.@"No newline before dependency name";
             found_newline = false;
 
-            var package_name: ?[]u8 = null;
+            const map_start_index = map.entries.len;
+            var name: ?string = null;
 
-            // var package: Package = .{};
-            // var dependency: Dependency = .{};
-
-            while (true) {
+            parse_comma_separated_titles: while (true) {
                 const is_quote = cur[0] == '"';
                 cur = cur[@boolToInt(is_quote)..];
                 const name_start = cur;
                 cur = cur[@boolToInt(cur[0] == '@')..]; // skip @ at the beginning
                 try advanceUntilAny(&cur, "@", false); // find the @?<name>@version
 
-                if (sentinelCmp(@ptrToInt(cur.ptr), sentinels_start, '@'))
-                    return error.@"Unable to find package name in yarn.lock";
+                {
+                    const at_pos = @ptrToInt(&cur[0]) - @ptrToInt(name_start.ptr);
 
-                const name = name_start[0 .. @ptrToInt(&cur[0]) - @ptrToInt(name_start.ptr)];
+                    if (sentinelCmp(@ptrToInt(cur.ptr), sentinels_start, '@') or at_pos == 0)
+                        return error.@"Unable to find package name in yarn.lock";
 
-                if (package_name) |pkg| {
-                    if (!strings.eql(pkg, name)) return error.@"Package names differ in dependency title";
-                } else {
-                    // package.name = String.init(name, name);
-                    // package.name_hash = String.Builder.stringHash(name);
-                    // package.meta.id = ++current_id;
+                    const current_name = name_start[0..at_pos];
+
+                    if (name) |s| if (!strings.eql(s, current_name))
+                        return error.@"Package names differ in dependency title";
+
+                    name = current_name;
                 }
 
-                package_name = name;
                 cur = cur[1..]; // skip '@'
-                // const version_start = cur;
 
-                switch (is_quote) {
-                    true => try advanceUntilAny(&cur, "\"", false),
-                    false => try advanceUntilAny(&cur, ":,", false),
+                advance_to_end_of_version: {
+                    var has_pre_version: bool = false;
+                    // Is this an exact version?
+                    if ('0' <= cur[0] and cur[0] <= '9') {
+                        var num_dots: u32 = 0;
+
+                        while (true) {
+                            cur = cur[1..];
+                            switch (cur[0]) {
+                                '0'...'9' => {},
+                                '.' => num_dots += 1,
+                                else => break,
+                            }
+                        }
+
+                        if (num_dots == 2) {
+                            has_pre_version = cur[0] == '-';
+                            cur = cur[@boolToInt(has_pre_version)..];
+                            const at_end_of_version = if (is_quote) cur[0] == '"' else cur[0] == ':' or cur[0] == ',';
+
+                            if (at_end_of_version) {
+                                if (has_pre_version) // error on a@1.0.0-
+                                    return error.@"empty release tag in yarn.lock file"
+                                else // for an exact version like a@1.0.0, don't insert into map
+                                    break :advance_to_end_of_version;
+                            }
+                        }
+                    }
+
+                    switch (is_quote) {
+                        true => try advanceUntilAny(&cur, "\"", false),
+                        false => try advanceUntilAny(&cur, ":,", false),
+                    }
+
+                    if (has_pre_version) break :advance_to_end_of_version;
+
+                    const package_title = name_start[0 .. @ptrToInt(&cur[0]) - @ptrToInt(name_start.ptr)];
+
+                    if ((try map.getOrPut(allocator, package_title)).found_existing)
+                        return error.@"Duplicate package titles found";
                 }
-
-                var package_title = name_start[0 .. @ptrToInt(&cur[0]) - @ptrToInt(name_start.ptr)];
-                pkg_titles[pkg_titles_i] = package_title;
-                pkg_titles_i += 1;
-                // dependency.version.literal = String.init(version, version);
-                // dependency.version.tag = Dependency.Version.Tag.infer(version);
-                // dependency.name = package.name;
-                // dependency.name_hash = package.name_hash;
-                // TODO: Don't know dependency.behavior without package.json?
-                // dependency.behavior.setNormal(true);
-                // Resolution.value.npm.version;
 
                 cur = cur[@boolToInt(is_quote)..]; // if we did hit a sentinel, we are now on the ':' sentinel
 
-                if (cur[0] != ',') break;
+                if (cur[0] != ',') break :parse_comma_separated_titles;
 
                 while (true) {
                     cur = cur[1..];
-                    if (cur[0] != ' ') break; // this branch should be 100% predictable
+                    if (cur[0] != ' ') break :parse_comma_separated_titles; // this branch should be 100% predictable
                 }
             }
 
@@ -4173,35 +4098,62 @@ pub const Yarn = struct {
             if (!advanceOverSkipInsignificant(&cur, "\n" ++ " " ** 2))
                 return error.@"There were no details to this dependency";
 
-            const YarnFields = enum { version, resolved };
-            inline for (@typeInfo(YarnFields).Enum.fields) |field| {
-                if (advanceOverComptime(&cur, field.name ++ " ")) {
-                    const is_quote = cur[0] == '"';
-                    var string_start = cur;
+            if (!advanceOverComptime(&cur, "version \"")) return error.@"Missing (quoted) version field in yarn.lock";
 
-                    if (is_quote) {
-                        cur = cur["\"".len..];
-                        string_start = cur;
-                        try advanceUntilAny(&cur, "\"", false);
-                    } else switch (cur[0]) {
-                        'A'...'Z', 'a'...'z' => try advanceUntilAnyNaive(&cur, NEWLINES, true),
-                        else => return switch (@intToEnum(YarnFields, field.value)) {
-                            .version => error.@"Unable to parse version",
-                            .resolved => error.@"Unable to parse resolved",
+            {
+                var version: Semver.Version = .{};
+                var cur_subver = &version.major;
+                var num_dots: u32 = 0;
+
+                while (true) : (cur = cur[1..]) {
+                    switch (cur[0]) {
+                        '0'...'9' => |c| {
+                            cur_subver.* = try std.math.add(u32, try std.math.mul(u32, cur_subver.*, 10), c - '0');
                         },
+                        '.' => {
+                            num_dots += 1;
+                            if (num_dots > 2) return error.@"Too many dots in version in yarn.lock";
+                            cur_subver = @intToPtr(*u32, @ptrToInt(cur_subver) + 4);
+                        },
+                        else => break,
                     }
-
-                    const data = string_start[0 .. @ptrToInt(&cur[0]) - @ptrToInt(string_start.ptr)];
-
-                    switch (@intToEnum(YarnFields, field.value)) {
-                        .version => dep_override_version = data,
-                        .resolved => {},
-                    }
-
-                    cur = cur[@boolToInt(is_quote)..];
-
-                    if (!advanceOverSkipInsignificant(&cur, "\n" ++ " " ** 2)) continue :NEXT_DEPENDENCY;
                 }
+
+                if (num_dots != 2) return error.@"Invalid version in yarn.lock";
+
+                if (cur[0] == '-') {
+                    cur = cur[1..];
+                    const prerelease_start = cur;
+                    if (cur[0] == '"') return error.@"empty release tag in yarn.lock file"; // error on a@1.0.0-
+                    try advanceUntilAnyNaive(&cur, "\"", true);
+
+                    const prerelease = prerelease_start[0 .. @ptrToInt(&cur[0]) - @ptrToInt(prerelease_start.ptr)];
+                    if (Environment.allow_assert) std.debug.assert(std.mem.indexOfAny(u8, prerelease, "+") == null);
+                    version.tag.pre = SlicedString.init(list.items, prerelease).external();
+                }
+
+                for (map.values()[map_start_index..]) |*value| value.* = version;
+
+                if (cur[0] != '"') return error.@"Missing closing quote to version field in yarn.lock";
+                cur = cur[1..];
+
+                if (!advanceOverSkipInsignificant(&cur, "\n" ++ " " ** 2)) continue :parse_dependency;
+            }
+
+            if (advanceOverComptime(&cur, "resolved ")) {
+                const is_quote = cur[0] == '"';
+                cur = cur[@boolToInt(is_quote)..];
+
+                if (is_quote) {
+                    try advanceUntilAny(&cur, "\"", false);
+                } else switch (cur[0]) {
+                    'A'...'Z', 'a'...'z' => try advanceUntilAnyNaive(&cur, NEWLINES, true),
+                    else => return error.@"Unable to parse `resolved` field in yarn.lock",
+                }
+
+                cur = cur[@boolToInt(is_quote)..];
+
+                if (!advanceOverSkipInsignificant(&cur, "\n" ++ " " ** 2)) continue :parse_dependency;
             }
 
             if (advanceOverComptime(&cur, "integrity ")) {
@@ -4235,7 +4187,7 @@ pub const Yarn = struct {
                     if (cur[0] != '=') break;
                 }
 
-                if (!advanceOverSkipInsignificant(&cur, "\n" ++ " " ** 2)) continue :NEXT_DEPENDENCY;
+                if (!advanceOverSkipInsignificant(&cur, "\n" ++ " " ** 2)) continue :parse_dependency;
             }
 
             for (checkOverAllocatedEnough([_]string{ "dependencies", "optionalDependencies" })) |field| {
@@ -4264,10 +4216,8 @@ pub const Yarn = struct {
                         else => return error.@"Unexpected dependency character",
                     }
 
-                    const dep_name_len = @ptrToInt(&cur[0]) - @ptrToInt(string_start.ptr);
+                    // const dep_name_len = @ptrToInt(&cur[0]) - @ptrToInt(string_start.ptr);
                     // const dependency_name = string_start[0..dep_name_len];
-                    // std.debug.print("\t<{s}> ", .{dependency_name});
-                    // pkg_deps.append(allocator, item: T);
 
                     cur = cur[@boolToInt(is_quoted)..];
                     var at_place = cur;
@@ -4286,65 +4236,43 @@ pub const Yarn = struct {
                         else => return error.@"Missing version for dependency",
                     }
 
+                    // This is here just in case we ever want to grab dependency info from yarn.lock
                     // Move dep_name over the quotation marks between the name and version as needed
                     //         truth x -> truth@x (shift 0)
                     //  truth "^0.5.0" -> truth@^0.5.0" (shift 1)
                     //   "true" v1.2.3 -> "true@v1.2.3 (shift 1)
                     // "true" "^0.0.1" -> "true@^0.0.1" (shift 2)
-                    var new_string_start = string_start[@boolToInt(is_quoted)..][@boolToInt(is_quoted2)..];
-                    C.memmove(new_string_start.ptr, string_start.ptr, dep_name_len);
-                    at_place[0] = '@';
 
-                    const dependency_ver = new_string_start[0 .. @ptrToInt(&cur[0]) - @ptrToInt(new_string_start.ptr)];
-                    pkg_deps[pkg_deps_i] = dependency_ver;
-                    pkg_deps_i += 1;
+                    // var new_string_start = string_start[@boolToInt(is_quoted)..][@boolToInt(is_quoted2)..];
+                    // C.memmove(new_string_start.ptr, string_start.ptr, dep_name_len);
+                    // at_place[0] = '@';
+                    // const dependency_ver = new_string_start[0 .. @ptrToInt(&cur[0]) - @ptrToInt(new_string_start.ptr)];
 
                     cur = cur[@boolToInt(is_quoted2)..]; // skip last '"'
 
                     if (!advanceOverSkipInsignificant(&cur, "\n" ++ " " ** 4)) break;
                 }
 
-                if (!advanceOverComptime(&cur, "\n" ++ " " ** 2)) continue :NEXT_DEPENDENCY;
+                if (!advanceOverComptime(&cur, "\n" ++ " " ** 2)) continue :parse_dependency;
             }
 
-            // just in case we forgot something, throw an error and let them report it.
-            for ([_]string{ "name", "uid", "registry", "bundledDependencies", "devDependencies", "peerDependencies" }) |field_name| {
-                if (advanceOver(&cur, field_name)) {
-                    return switch (field_name[0]) {
-                        'n' => error.@"Parsing `name` fields in yarn.lock is not supported",
-                        'u' => error.@"Parsing `uid` fields in yarn.lock is not supported",
-                        'r' => error.@"Parsing `registry` fields in yarn.lock is not supported",
-                        'b' => error.@"Parsing `bundledDependencies` fields in yarn.lock is not supported",
-                        'd' => error.@"Parsing `devDependencies` fields in yarn.lock is not supported",
-                        'p' => error.@"Parsing `peerDependencies` fields in yarn.lock is not supported",
-                        else => unreachable,
-                    };
-                }
-            }
             return error.@"Missing or invalid dependency field after indentation";
         }
     }
 
     /// Takes in a file owned by the caller to parse as a yarn.lock file
     pub fn loadFromFile(this: *Lockfile, allocator: Allocator, file: std.fs.File) !DependencyOverrides {
-        const file_size: u64 = (try file.stat()).size;
+        var body_pool = Npm.Registry.BodyPool.get(allocator);
+        defer Npm.Registry.BodyPool.release(body_pool);
 
-        // allocate enough to alleviate the need for bounds checking.
-        // "optionalDependencies" has the most amount of characters in the inner loop we might try to match
-        const alloc_size = over_allocated_space + @max(file_size, min_alloc_size);
+        // We over-allocate enough to alleviate the need for bounds checking.
+        try body_pool.data.readFile(file, over_allocated_space);
+        const afterFileContents = body_pool.data.list.allocatedSlice()[body_pool.data.list.items.len..];
+        for (afterFileContents[0..SENTINELS.len], SENTINELS) |*cur, sentinel| cur.* = sentinel;
 
-        const file_buffer = try allocator.alloc(u8, alloc_size);
-        // defer allocator.free(file_buffer);
-
-        const sentinels_start = @ptrToInt(&file_buffer[file_size]);
-        for (file_buffer[file_size..][0..SENTINELS.len], SENTINELS) |*cur, sentinel|
-            cur.* = sentinel;
-
-        // Because we make assumptions about what we will never find after the buffer, we need to zero out memory
-        std.mem.set(u8, file_buffer[file_size + SENTINELS.len .. alloc_size], 0);
-        std.debug.assert(try file.readAll(file_buffer[0..file_size]) == file_size);
-
-        return parse(this, allocator, file_buffer, sentinels_start);
+        // At the moment we make assumptions about what we will never find after the buffer, so we need to zero out memory
+        std.mem.set(u8, afterFileContents[SENTINELS.len..], 0);
+        return parse(this, allocator, body_pool.data.list);
     }
 
     inline fn parseMetaHash(meta_hash: *MetaHash, cur: *[]u8) !void {
@@ -4435,7 +4363,7 @@ pub const Yarn = struct {
     fn fmtNeedsQuote(comptime fmt: string, args: anytype) !bool {
         const child_stream = std.io.null_writer;
         const WriterType = CheckingWriter(@TypeOf(child_stream), IncrementalShouldWrapInQuotesChecker);
-        var writer: WriterType = .{ .child_stream = child_stream };
+        var writer: WriterType = .{ .child_stream = child_stream, .checker = .{} };
         try std.fmt.format(writer.writer(), fmt, args);
         return writer.checker.needs_quote;
     }
@@ -4456,11 +4384,6 @@ pub const Yarn = struct {
             .{fmtMetaHash(this.lockfile)},
         );
 
-        for (0..this.lockfile.packages.len) |i| {
-            std.debug.print("{}: {}\n", .{ i, this.lockfile.packages.get(i) });
-        }
-        std.debug.print("\n", .{});
-
         var slice = this.lockfile.packages.slice();
         const names: []const String = slice.items(.name);
         const resolved: []const Resolution = slice.items(.resolution);
@@ -4469,30 +4392,19 @@ pub const Yarn = struct {
         const dependency_lists = slice.items(.dependencies);
 
         const resolutions_buffer = this.lockfile.buffers.resolutions.items;
-        std.debug.print("Resolutions buffer:", .{});
-        for (resolutions_buffer) |n| {
-            std.debug.print(" {}", .{n});
-        }
-        std.debug.print("\n", .{});
-
         const dependencies_buffer = this.lockfile.buffers.dependencies.items;
-        std.debug.print("Dependencies buffer:", .{});
-        for (dependencies_buffer) |n| {
-            std.debug.print(" {}", .{n});
-        }
-        std.debug.print("\n", .{});
-
+        const allocator = this.lockfile.allocator;
         const RequestedVersion = std.HashMap(PackageID, []Dependency.Version, IdentityContext(PackageID), 80);
-        var requested_versions = RequestedVersion.init(this.lockfile.allocator);
-        const all_requested_versions_ = try this.lockfile.allocator.alloc(Dependency.Version, resolutions_buffer.len);
-        defer this.lockfile.allocator.free(all_requested_versions_);
+        var requested_versions = RequestedVersion.init(allocator);
+        const all_requested_versions_ = try allocator.alloc(Dependency.Version, resolutions_buffer.len);
+        defer allocator.free(all_requested_versions_);
         var all_requested_versions = all_requested_versions_;
         const package_count = @truncate(PackageID, names.len);
-        const alphabetized_names = try this.lockfile.allocator.alloc(PackageID, package_count - 1);
-        defer this.lockfile.allocator.free(alphabetized_names);
+        const alphabetized_names = try allocator.alloc(PackageID, package_count - 1);
+        defer allocator.free(alphabetized_names);
 
         const string_buf = this.lockfile.buffers.string_bytes.items;
-        std.debug.print("string_buf: {s}\n", .{string_buf});
+        var max_titles: usize = 0;
 
         // First, we need to build a map of all requested versions
         // This is so we can print requested versions
@@ -4516,16 +4428,8 @@ pub const Yarn = struct {
                     resolutions = resolutions[k + 1 ..];
                 }
 
-                var dependency_versions = requested_version_start[0..j];
-                if (dependency_versions.len == 2) {
-                    std.debug.print("str literals: ", .{});
-                    for (dependency_versions) |c| {
-                        std.debug.print("\"{s}\" ", .{c.literal.slice(string_buf)});
-                    }
-                    std.debug.print("\n", .{});
-                }
-                if (dependency_versions.len > 1)
-                    std.sort.insertionSort(Dependency.Version, dependency_versions, string_buf, Dependency.Version.isLessThan);
+                var dependency_versions = requested_version_start[0..j]; // e.g. a@^1.0.0, a@x, a@~1.2
+                max_titles = @max(max_titles, dependency_versions.len);
                 try requested_versions.put(i, dependency_versions);
             }
         }
@@ -4533,19 +4437,24 @@ pub const Yarn = struct {
         std.sort.sort(
             PackageID,
             alphabetized_names,
-            Lockfile.Package.Alphabetizer{
+            Lockfile.Package.NameAlphabetizer{
                 .names = names,
                 .buf = string_buf,
                 .resolutions = resolved,
             },
-            Lockfile.Package.Alphabetizer.isAlphabetical,
+            Lockfile.Package.NameAlphabetizer.isAlphabetical,
         );
 
         var max_deps_len: usize = 0;
         for (dependency_lists) |dep_list| max_deps_len = @max(max_deps_len, dep_list.get(dependencies_buffer).len);
+        const alphabetized_dependencies_global = try allocator.alloc(DependencyID, max_deps_len);
+        defer allocator.free(alphabetized_dependencies_global);
 
-        const alphabetized_dependencies_global = try this.lockfile.allocator.alloc(DependencyID, max_deps_len);
-        defer this.lockfile.allocator.free(alphabetized_dependencies_global);
+        const global_titles_slices = try allocator.alloc(string, max_titles);
+        defer allocator.free(global_titles_slices);
+
+        var body_pool = Npm.Registry.BodyPool.get(allocator);
+        defer Npm.Registry.BodyPool.release(body_pool);
 
         // When printing, we start at 1
         for (alphabetized_names) |i| {
@@ -4553,118 +4462,218 @@ pub const Yarn = struct {
             const resolution = resolved[i];
             const meta = metas[i];
             const dependencies: []const Dependency = dependency_lists[i].get(dependencies_buffer);
-            const version_formatter = resolution.fmt(string_buf);
+            const resolved_version_formatter = resolution.fmt(string_buf);
 
             // This prints:
             // "@babel/core@7.9.0":
-            {
-                try writer.writeAll("\n");
-                const dependency_versions = requested_versions.get(i).?;
 
-                const always_needs_quote = try needsQuote(name);
+            try writer.writeAll("\n");
+            const always_needs_quote = try needsQuote(name);
 
-                var prev_dependency_version: ?Dependency.Version = null;
-                for (dependency_versions) |*dependency_version| {
-                    if (prev_dependency_version) |*prev| {
-                        if (prev.eql(dependency_version, string_buf, string_buf)) {
-                            continue;
-                        }
-                        try writer.writeAll(", ");
-                    }
-                    const version_name = dependency_version.literal.slice(string_buf);
-                    const needs_quote = always_needs_quote or dependency_version.tag == .dist_tag or
-                        (version_name.len != 0 and try needsQuoteVersionSubstring(version_name));
+            if (requested_versions.get(i)) |dependency_versions| {
+                body_pool.data.list.clearRetainingCapacity();
+                const sorting_buffer_writer = body_pool.data.list.writer(allocator);
+                const titles_slices = global_titles_slices[0..dependency_versions.len];
 
+                for (dependency_versions, titles_slices) |dependency_version, *title_slice| {
+                    const needs_replacing = dependency_version.tag == .dist_tag or dependency_version.literal.isEmpty();
+
+                    title_slice.* = if (!needs_replacing) dependency_version.literal.slice(string_buf) else blk: {
+                        const old_len = body_pool.data.list.items.len;
+                        try std.fmt.format(sorting_buffer_writer, "^{any}", .{resolved_version_formatter});
+                        break :blk body_pool.data.list.items[old_len..];
+                    };
+                }
+
+                std.sort.sort(string, titles_slices, u8, std.mem.lessThan);
+                var previous_version_name: string = "";
+
+                for (titles_slices, 0..) |version_name, j| {
+                    if (strings.eql(previous_version_name, version_name)) continue;
+                    previous_version_name = version_name;
+                    const needs_quote = always_needs_quote or try needsQuoteVersionSubstring(version_name);
+                    if (j != 0) try writer.writeAll(", ");
                     if (needs_quote) try writer.writeByte('"');
-
                     try writer.writeAll(name);
                     try writer.writeByte('@');
-
-                    if (dependency_version.tag == .dist_tag or version_name.len == 0) {
-                        try std.fmt.format(writer, "^{any}", .{version_formatter});
-                    } else try writer.writeAll(version_name);
-
+                    try writer.writeAll(version_name);
                     if (needs_quote) try writer.writeByte('"');
-                    prev_dependency_version = dependency_version.*;
+                }
+                try writer.writeAll(":\n");
+            } else return error.@"Failed to find dependency versions in yarn.lock";
+
+            // package is not npm, go fetch version from package.json
+            const version_formatter: ?Semver.Version.Formatter = if (resolution.tag == .npm) null else version_formatter: {
+                // everything ultimately gets installed in node_modules, right?
+                const node_modules_offset = "node_modules".len + std.fs.path.sep_str.len;
+                const name_offset = node_modules_offset + name.len;
+                const path_len = name_offset + std.fs.path.sep_str.len + "package.json".len;
+
+                try body_pool.data.list.ensureTotalCapacityPrecise(allocator, path_len + "\x00".len);
+                body_pool.data.list.items.len = path_len + "\x00".len;
+
+                // Write the path into the same buffer we will read the file into
+                bun.copy(u8, body_pool.data.list.items, "node_modules" ++ std.fs.path.sep_str);
+                bun.copy(u8, body_pool.data.list.items[node_modules_offset..], name);
+                bun.copy(u8, body_pool.data.list.items[name_offset..], std.fs.path.sep_str ++ "package.json");
+                body_pool.data.list.items[path_len] = 0;
+
+                const package_json_file = bun.openFileZ(body_pool.data.list.items[0..path_len :0], .{}) catch |err| {
+                    Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> opening <b>{s}<r> folder", .{ @errorName(err), body_pool.data.list.items });
+                    Global.crash();
+                };
+
+                const file_read_error = body_pool.data.readFile(package_json_file, path_len);
+                package_json_file.close();
+                try file_read_error;
+
+                const file_size = body_pool.data.list.items.len;
+                var package_json_path = body_pool.data.list.items.ptr[file_size .. file_size + path_len];
+
+                // Write the path into the same buffer we already read the file into.
+                // Kinda dumb but we can remove this at some point
+                bun.copy(u8, package_json_path, "node_modules" ++ std.fs.path.sep_str);
+                bun.copy(u8, package_json_path[node_modules_offset..], name);
+                bun.copy(u8, package_json_path[name_offset..], std.fs.path.sep_str ++ "package.json");
+
+                const source = logger.Source.initPathString(package_json_path, body_pool.data.list.items);
+
+                var log = logger.Log.init(allocator);
+                defer log.deinit();
+
+                const BufferWriter = std.io.FixedBufferStream([]u8);
+                // https://github.com/npm/node-semver/blob/main/internal/constants.js#L5
+                var version_buffer: [256]u8 = undefined;
+                var version_writer = BufferWriter{ .buffer = &version_buffer, .pos = 0 };
+
+                initializeStore();
+                var package_json_checker = try json_parser.PackageJSONVersionChecker.init(allocator, &source, &log);
+                package_json_checker.has_found_name = true; // ignore the name field
+                _ = try package_json_checker.parseExpr(std.io.null_writer, version_writer.writer());
+                // pass in our writer to write the version
+                if (log.errors > 0) {
+                    Output.prettyErrorln("<r><red>error<r>: <b><red>Invalid package.json<r>: <b>{s}<r> folder", .{body_pool.data.list.items});
+                    Global.crash();
                 }
 
-                try writer.writeAll(":\n");
+                // This parser is kinda overkill, but w/e
+                const ver = Semver.Version.parse(.{
+                    .buf = &version_buffer,
+                    .slice = version_writer.getWritten(),
+                }, allocator);
+
+                if (ver.stopped_at != version_writer.pos or !ver.valid or ver.wildcard != .none)
+                    return error.InvalidVersion;
+
+                break :version_formatter .{
+                    .version = ver.version.fill(),
+                    .input = &version_buffer,
+                };
+            };
+
+            const format = "{any}";
+
+            {
+                try writer.writeAll(" " ** 2 ++ "version" ++ " ");
+                const needs_quote = if (version_formatter) |formatter|
+                    try fmtNeedsQuote(format, .{formatter})
+                else
+                    try fmtNeedsQuote(format, .{resolved_version_formatter});
+
+                if (!needs_quote) {
+                    if (version_formatter) |formatter|
+                        Output.prettyWarnln("<r><red>error<r>: <b><red>Trying to write version without quotes<r>: <b>" ++ format ++ "<r> folder", .{formatter})
+                    else
+                        Output.prettyWarnln("<r><red>error<r>: <b><red>Trying to write version without quotes<r>: <b>" ++ format ++ "<r> folder", .{resolved_version_formatter});
+                }
+
+                if (needs_quote) try writer.writeByte('"');
+
+                if (version_formatter) |formatter|
+                    try std.fmt.format(writer, format, .{formatter})
+                else
+                    try std.fmt.format(writer, format, .{resolved_version_formatter});
+
+                if (needs_quote) try writer.writeByte('"');
+                try writer.writeByte('\n');
             }
 
-            { // TODO: if package is not npm, go fetch version from package.json
-                if (resolution.tag != .npm) {}
-
-                const format = "{any}";
-
-                {
-                    try writer.writeAll(" " ** 2 ++ "version" ++ " ");
-                    const needs_quote = try fmtNeedsQuote(format, .{version_formatter});
-                    if (needs_quote) try writer.writeByte('"');
-                    try std.fmt.format(writer, format, .{version_formatter});
-                    if (needs_quote) try writer.writeByte('"');
-                    try writer.writeByte('\n');
-                }
-
-                {
+            switch (resolution.tag) {
+                .folder => {},
+                else => {
                     const url_formatter = resolution.fmtURL(&this.options, string_buf);
 
-                    try writer.writeAll(" " ** 2 ++ "resolved" ++ " ");
+                    try writer.writeAll(" " ** 2 ++ "resolved ");
                     const needs_quote = try fmtNeedsQuote(format, .{url_formatter});
                     if (needs_quote) try writer.writeByte('"');
                     try std.fmt.format(writer, format, .{url_formatter});
                     if (needs_quote) try writer.writeByte('"');
                     try writer.writeByte('\n');
+                },
+            }
+
+            if (meta.integrity.tag != .unknown) {
+                // Integrity is never quoted because it always starts with "sha" and contains only base64
+                // followed by equal signs
+                try std.fmt.format(writer, "  integrity {any}\n", .{&meta.integrity});
+            }
+
+            const dependencies_len = @intCast(u32, dependencies.len);
+
+            if (dependencies.len > 0) {
+                const alphabetized_deps = alphabetized_dependencies_global[0..dependencies_len];
+                for (alphabetized_deps, 0..) |*v, j| v.* = @intCast(DependencyID, j);
+
+                // Dutch national flag partition. https://en.wikipedia.org/wiki/Dutch_national_flag_problem
+                var l: u32 = 0;
+                var m: u32 = 0;
+                var n: u32 = dependencies_len - 1;
+
+                while (m <= n) {
+                    const behavior: Dependency.Behavior = dependencies[alphabetized_deps[m]].behavior;
+                    if (behavior.isOptional()) {
+                        std.mem.swap(DependencyID, &alphabetized_deps[m], &alphabetized_deps[n]);
+                        n -= 1;
+                    } else if (behavior.isNormal()) {
+                        m += 1;
+                    } else {
+                        std.mem.swap(DependencyID, &alphabetized_deps[l], &alphabetized_deps[m]);
+                        l += 1;
+                        m += 1;
+                    }
                 }
 
-                if (meta.integrity.tag != .unknown) {
-                    // Integrity is never quoted because it always starts with "sha" and contains only base64
-                    // followed by equal signs
-                    try std.fmt.format(writer, "  integrity {any}\n", .{&meta.integrity});
-                }
+                // const other_deps = alphabetized_deps[0..l];
+                const normal_deps = alphabetized_deps[l..m];
+                const optional_deps = alphabetized_deps[n + 1 ..];
 
-                if (dependencies.len > 0) {
-                    var behavior = Behavior.uninitialized;
-                    var dependency_behavior_change_count: u8 = 0;
-                    var alphabetized_deps = alphabetized_dependencies_global[0..dependencies.len];
-                    for (alphabetized_deps, 0..) |*v, j| v.* = @intCast(DependencyID, j);
+                inline for (
+                    [_][]DependencyID{ normal_deps, optional_deps },
+                    [_]string{ "dependencies", "optionalDependencies" },
+                ) |deps, category| {
+                    if (deps.len > 0) {
+                        std.sort.sort(
+                            u32,
+                            deps,
+                            Lockfile.Package.DependencyAlphabetizer{ .dependencies = dependencies, .buf = string_buf },
+                            Lockfile.Package.DependencyAlphabetizer.isAlphabetical,
+                        );
+                        try writer.writeAll(" " ** 2 ++ category ++ ":\n");
 
-                    std.sort.sort(
-                        DependencyID,
-                        alphabetized_deps,
-                        Lockfile.Package.DependencyAlphabetizer{ .dependencies = dependencies, .buf = string_buf },
-                        Lockfile.Package.DependencyAlphabetizer.isAlphabetical,
-                    );
+                        for (deps) |j| {
+                            const dep = dependencies[j];
+                            try writer.writeAll(" " ** 4);
 
-                    for (alphabetized_deps) |j| {
-                        const dep = dependencies[j];
-                        if (dep.behavior != behavior) {
-                            if (dep.behavior.isOptional()) {
-                                try writer.writeAll("  optionalDependencies:\n");
-                                if (comptime Environment.allow_assert) dependency_behavior_change_count += 1;
-                            } else if (dep.behavior.isNormal()) {
-                                try writer.writeAll("  dependencies:\n");
-                                if (comptime Environment.allow_assert) dependency_behavior_change_count += 1;
-                            } else {
-                                continue; // Emit ONLY dependencies + optionalDependencies
+                            inline for (
+                                [_]string{ dep.name.slice(string_buf), dep.version.literal.slice(string_buf) },
+                                [_]u8{ ' ', '\n' },
+                            ) |bytes, delim| {
+                                const needs_quote = try needsQuote(bytes);
+                                if (needs_quote) try writer.writeByte('"');
+                                try writer.writeAll(bytes);
+                                if (needs_quote) try writer.writeByte('"');
+                                try writer.writeByte(delim);
                             }
-                            behavior = dep.behavior;
-
-                            // assert its sorted
-                            if (comptime Environment.allow_assert)
-                                std.debug.assert(dependency_behavior_change_count <= 2);
-                        }
-
-                        try writer.writeAll(" " ** 4);
-
-                        inline for (
-                            [_]string{ dep.name.slice(string_buf), dep.version.literal.slice(string_buf) },
-                            [_]u8{ ' ', '\n' },
-                        ) |bytes, delim| {
-                            const needs_quote = try needsQuote(bytes);
-                            if (needs_quote) try writer.writeByte('"');
-                            try writer.writeAll(bytes);
-                            if (needs_quote) try writer.writeByte('"');
-                            try writer.writeByte(delim);
                         }
                     }
                 }

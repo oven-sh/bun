@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const expect = std.testing.expect;
 
 const bun = @import("bun");
@@ -411,6 +412,33 @@ pub const MutableString = struct {
     pub fn writeAll(self: *MutableString, bytes: string) !usize {
         try self.list.appendSlice(self.allocator, bytes);
         return bytes.len;
+    }
+
+    /// Reads a file into this MutableString.
+    /// An `over_alloc` of 0 will be increased to 1.
+    /// Guarantees `list.items.len = file_size`, and `list.capacity > list.items.len + over_alloc`
+    pub fn readFile(
+        self: *MutableString,
+        file: std.fs.File,
+        /// The number of bytes which should be allocated at the end of the buffer after the file contents.
+        over_alloc: usize,
+    ) !void {
+        const overhead = @max(1, over_alloc);
+
+        // (fast path) Try reading into the buffer without checking how big the file is
+        const already_read = try file.read(self.list.allocatedSlice());
+        self.list.items.len = already_read;
+        if (self.list.capacity >= try std.math.add(usize, already_read, overhead)) return;
+
+        // (slow path) Expand our buffer to fit
+        const file_size = try file.getEndPos();
+        try self.list.ensureTotalCapacityPrecise(self.allocator, try std.math.add(usize, file_size, overhead));
+        self.list.items.len = file_size;
+        var cur = self.list.items[already_read..];
+        while (true) {
+            cur = cur[try file.read(cur)..];
+            if (cur.len == 0) break;
+        }
     }
 };
 

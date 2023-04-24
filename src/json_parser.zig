@@ -356,12 +356,6 @@ pub const PackageJSONVersionChecker = struct {
     allocator: std.mem.Allocator,
     depth: usize = 0,
 
-    found_version_buf: [1024]u8 = undefined,
-    found_name_buf: [1024]u8 = undefined,
-
-    found_name: []const u8 = "",
-    found_version: []const u8 = "",
-
     has_found_name: bool = false,
     has_found_version: bool = false,
 
@@ -380,9 +374,76 @@ pub const PackageJSONVersionChecker = struct {
         };
     }
 
+    // Advances `cur` by one
+    fn decodeHexByte(cur: *[]const u8) !u8 {
+        var byte: u8 = 0;
+        comptime var shift: u3 = 0;
+        inline while (true) {
+            shift ^= 4;
+            byte |= (switch (cur.*[0]) {
+                '0'...'9' => |c| c,
+                'A'...'F', 'a'...'f' => |c| c +% 9,
+                else => return error.InvalidHex,
+            } & 0xF) << shift;
+            if (shift == 0) return byte;
+            cur.* = cur.*[1..]; // let's the second byte be advanced over by the caller
+        }
+    }
+
+    // Although we technically could use a leaky toUTF8 function, this will come in handy in the future
+    fn jsonEqlComptime(json_str: string, comptime str: string) bool {
+        return switch (std.math.order(json_str.len, str.len)) {
+            .lt => false,
+            .eq => strings.eqlComptimeIgnoreLen(json_str, str),
+            .gt => {
+                var cur = json_str;
+                for (str) |c| {
+                    if (cur[0] != c) {
+                        if (cur.len < 6 or !strings.hasPrefixComptimeIgnoreLen(cur, "\\u00")) return false;
+                        cur = cur["\\u00".len..];
+                        if (c != decodeHexByte(&cur) catch return false) return false;
+                    }
+
+                    cur = cur[1..];
+                }
+
+                return cur.len == 0;
+            },
+        };
+    }
+
+    // Although we technically could use a leaky toUTF8 function, this will come in handy in the future
+    fn jsonWriteBytes(writer_: anytype, data: string) !void {
+        var writer = writer_;
+        var cur = data;
+        while (strings.indexOfAnyComptime(cur, "\\")) |i| {
+            _ = try writer.write(cur[0..i]);
+            cur = cur[i + 1 ..];
+            _ = try writer.writeByte(switch (cur[0]) {
+                '"', '/', '\\' => |c| c,
+                'b' => 0x08,
+                'f' => 0x0C,
+                'n' => 0x0A,
+                't' => 0x09,
+                'r' => 0x0D,
+                'u' => blk: {
+                    cur = cur[1..];
+                    if (cur.len < 4 or !strings.hasPrefixComptimeIgnoreLen(cur, "00"))
+                        return error.@"Invalid escaped byte in `name` or `version` field of package.json";
+
+                    cur = cur["00".len..];
+                    break :blk try decodeHexByte(&cur);
+                },
+                else => return error.@"Invalid escaped byte in `name` or `version` field of package.json",
+            });
+            cur = cur[1..];
+        }
+        _ = try writer.write(cur);
+    }
+
     const Parser = @This();
 
-    pub fn parseExpr(p: *Parser) anyerror!Expr {
+    pub fn parseExpr(p: *Parser, name_writer: anytype, version_writer: anytype) anyerror!Expr {
         const loc = p.lexer.loc();
 
         if (p.has_found_name and p.has_found_version) return newExpr(E.Missing{}, loc);
@@ -432,7 +493,7 @@ pub const PackageJSONVersionChecker = struct {
                         }
                     }
 
-                    _ = try p.parseExpr();
+                    _ = try p.parseExpr(name_writer, version_writer);
                     has_exprs = true;
                 }
 
@@ -457,30 +518,29 @@ pub const PackageJSONVersionChecker = struct {
 
                     const key = newExpr(str, key_range.loc);
                     try p.lexer.expect(.t_string_literal);
-
                     try p.lexer.expect(.t_colon);
-                    const value = try p.parseExpr();
+                    const value_range = p.lexer.range();
+                    const value = try p.parseExpr(name_writer, version_writer);
 
                     if (p.depth == 1) {
                         // if you have multiple "name" fields in the package.json....
                         // first one wins
                         if (key.data == .e_string and value.data == .e_string) {
-                            if (!p.has_found_name and strings.eqlComptime(key.data.e_string.data, "name")) {
-                                const len = @min(
-                                    value.data.e_string.data.len,
-                                    p.found_name_buf.len,
-                                );
+                            const raw_key = raw_key: {
+                                const raw_key = key_range.in(p.source.contents);
+                                break :raw_key raw_key[1 .. raw_key.len - 1]; // skip quotes
+                            };
 
-                                bun.copy(u8, &p.found_name_buf, value.data.e_string.data[0..len]);
-                                p.found_name = p.found_name_buf[0..len];
+                            const raw_value = raw_value: {
+                                const raw_value = value_range.in(p.source.contents);
+                                break :raw_value raw_value[1 .. raw_value.len - 1]; // skip quotes
+                            };
+
+                            if (!p.has_found_name and jsonEqlComptime(raw_key, "name")) {
+                                try jsonWriteBytes(name_writer, raw_value);
                                 p.has_found_name = true;
-                            } else if (!p.has_found_version and strings.eqlComptime(key.data.e_string.data, "version")) {
-                                const len = @min(
-                                    value.data.e_string.data.len,
-                                    p.found_version_buf.len,
-                                );
-                                bun.copy(u8, &p.found_version_buf, value.data.e_string.data[0..len]);
-                                p.found_version = p.found_version_buf[0..len];
+                            } else if (!p.has_found_version and jsonEqlComptime(raw_key, "version")) {
+                                try jsonWriteBytes(version_writer, raw_value);
                                 p.has_found_version = true;
                             }
                         }

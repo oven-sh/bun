@@ -39,7 +39,7 @@ const AsyncHTTP = @import("bun").HTTP.AsyncHTTP;
 const HTTPChannel = @import("bun").HTTP.HTTPChannel;
 const NetworkThread = @import("bun").HTTP.NetworkThread;
 const HTTP = @import("bun").HTTP;
-
+const CheckingWriter = @import("../string_immutable.zig").CheckingWriter;
 const Integrity = @import("./integrity.zig").Integrity;
 const clap = @import("bun").clap;
 const ExtractTarball = @import("./extract_tarball.zig");
@@ -909,66 +909,74 @@ const PackageInstall = struct {
         };
     }
 
+    const IncrementalEqlsChecker = struct {
+        const Self = @This();
+        chars_to_match: string,
+        failed: bool = false,
+
+        pub fn check(self: *Self, name: string) void {
+            if (self.failed) return;
+            if (name.len > self.chars_to_match.len) {
+                self.failed = true;
+                return;
+            }
+            for (name, self.chars_to_match[0..name.len]) |c1, c2| {
+                if (c1 != c2) {
+                    self.failed = true;
+                    return;
+                }
+            }
+            self.chars_to_match = self.chars_to_match[name.len..];
+        }
+
+        pub fn is_equal(self: *Self) bool {
+            return self.chars_to_match.len == 0 and self.failed == false;
+        }
+    };
+
     fn verifyPackageJSONNameAndVersion(this: *PackageInstall) bool {
-        var allocator = this.allocator;
-        var total: usize = 0;
-        var read: usize = 0;
+        const buf = this.destination_dir_subpath_buf;
+        const dest_dir_subpath_len = this.destination_dir_subpath.len;
+        bun.copy(u8, buf[dest_dir_subpath_len..], std.fs.path.sep_str ++ "package.json");
+        buf[dest_dir_subpath_len + std.fs.path.sep_str.len + "package.json".len] = 0;
+        var package_json_path: [:0]u8 = buf[0 .. dest_dir_subpath_len + std.fs.path.sep_str.len + "package.json".len :0];
+        defer buf[dest_dir_subpath_len] = 0;
 
-        bun.copy(u8, this.destination_dir_subpath_buf[this.destination_dir_subpath.len..], std.fs.path.sep_str ++ "package.json");
-        this.destination_dir_subpath_buf[this.destination_dir_subpath.len + std.fs.path.sep_str.len + "package.json".len] = 0;
-        var package_json_path: [:0]u8 = this.destination_dir_subpath_buf[0 .. this.destination_dir_subpath.len + std.fs.path.sep_str.len + "package.json".len :0];
-        defer this.destination_dir_subpath_buf[this.destination_dir_subpath.len] = 0;
-
-        var package_json_file = this.destination_dir.dir.openFileZ(package_json_path, .{ .mode = .read_only }) catch return false;
+        var package_json_file = this.destination_dir.dir.openFileZ(
+            package_json_path,
+            .{ .mode = .read_only },
+        ) catch return false;
         defer package_json_file.close();
 
-        var body_pool = Npm.Registry.BodyPool.get(allocator);
-        var mutable: MutableString = body_pool.data;
-        defer {
-            body_pool.data = mutable;
-            Npm.Registry.BodyPool.release(body_pool);
-        }
+        const WriterType = CheckingWriter(@TypeOf(std.io.null_writer), IncrementalEqlsChecker);
+        var name_writer: WriterType = .{
+            .child_stream = std.io.null_writer,
+            .checker = .{ .chars_to_match = this.package_name },
+        };
+        var version_writer: WriterType = .{
+            .child_stream = std.io.null_writer,
+            .checker = .{ .chars_to_match = this.package_version },
+        };
 
-        mutable.reset();
-        mutable.list.expandToCapacity();
+        var body_pool = Npm.Registry.BodyPool.get(this.allocator);
+        defer Npm.Registry.BodyPool.release(body_pool);
 
-        // Heuristic: most package.jsons will be less than 2048 bytes.
-        read = package_json_file.read(mutable.list.items[total..]) catch return false;
-        var remain = mutable.list.items[@min(total, read)..];
-        if (read > 0 and remain.len < 1024) {
-            mutable.growBy(4096) catch return false;
-            mutable.list.expandToCapacity();
-        }
+        body_pool.data.readFile(package_json_file, 0) catch return false;
 
-        while (read > 0) : (read = package_json_file.read(remain) catch return false) {
-            total += read;
+        const source = logger.Source.initPathString(package_json_path, body_pool.data.list.items);
 
-            mutable.list.expandToCapacity();
-            remain = mutable.list.items[total..];
-
-            if (remain.len < 1024) {
-                mutable.growBy(4096) catch return false;
-            }
-            mutable.list.expandToCapacity();
-            remain = mutable.list.items[total..];
-        }
-
-        // If it's not long enough to have {"name": "foo", "version": "1.2.0"}, there's no way it's valid
-        if (total < "{\"name\":\"\",\"version\":\"\"}".len + this.package_name.len + this.package_version.len) return false;
-
-        const source = logger.Source.initPathString(bun.span(package_json_path), mutable.list.items[0..total]);
-        var log = logger.Log.init(allocator);
+        var log = logger.Log.init(this.allocator);
         defer log.deinit();
 
         initializeStore();
-
-        var package_json_checker = json_parser.PackageJSONVersionChecker.init(allocator, &source, &log) catch return false;
-        _ = package_json_checker.parseExpr() catch return false;
-        if (!package_json_checker.has_found_name or !package_json_checker.has_found_version or log.errors > 0) return false;
-
-        // Version is more likely to not match than name, so we check it first.
-        return strings.eql(package_json_checker.found_version, this.package_version) and
-            strings.eql(package_json_checker.found_name, this.package_name);
+        var package_json_checker = json_parser.PackageJSONVersionChecker.init(
+            this.allocator,
+            &source,
+            &log,
+        ) catch return false;
+        _ = package_json_checker.parseExpr(name_writer.writer(), version_writer.writer()) catch return false;
+        if (log.errors > 0) return false;
+        return name_writer.checker.is_equal() and version_writer.checker.is_equal();
     }
 
     pub const Result = union(Tag) {
@@ -2980,18 +2988,8 @@ pub const PackageManager = struct {
                                             } else if (this.lockfile.dependency_overrides.getOverrides(
                                                 name_str,
                                                 this.lockfile.str(&version.literal),
-                                            )) |found_| blk: {
-                                                const found: Lockfile.DependencyOverride = found_;
-                                                const semver: Semver.Version.ParseResult = Semver.Version.parse(
-                                                    SlicedString.init(found.version, found.version),
-                                                    this.allocator,
-                                                );
-
-                                                if (semver.stopped_at < found.version.len or
-                                                    !semver.valid or
-                                                    semver.wildcard != .none) break :blk;
-
-                                                if (manifest.findByVersion(semver.version.fill())) |find_result| {
+                                            )) |override_version| {
+                                                if (manifest.findByVersion(override_version)) |find_result| {
                                                     if (this.getOrPutResolvedPackageWithFindResult(
                                                         name_hash,
                                                         name,
@@ -4910,7 +4908,7 @@ pub const PackageManager = struct {
             for (updates) |*update| {
                 if (update.e_string) |e_string| {
                     e_string.data = switch (update.resolution.tag) {
-                        .npm => if (update.version.tag == .dist_tag and update.version.literal.isEmpty())
+                        .npm => if (update.version.tag == .dist_tag or update.version.literal.isEmpty())
                             std.fmt.allocPrint(allocator, "^{}", .{
                                 update.resolution.value.npm.version.fmt(update.version_buf),
                             }) catch unreachable
@@ -6407,9 +6405,12 @@ pub const PackageManager = struct {
                 break :brk this.destination_dir_subpath_buf[0..alias.len :0];
             };
 
-            var resolution_buf: [512]u8 = undefined;
+            var resolution_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             const extern_string_buf = this.lockfile.buffers.extern_strings.items;
-            var resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(buf)}) catch unreachable;
+            var resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(buf)}) catch |err| {
+                Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> opening <b>{s}<r> folder", .{ @errorName(err), resolution_buf });
+                Global.crash();
+            };
             var installer = PackageInstall{
                 .progress = this.progress,
                 .cache_dir = undefined,

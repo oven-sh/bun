@@ -126,7 +126,7 @@ pub inline fn containsAnyComptime(target: string, comptime chars: string) bool {
     return false;
 }
 
-pub inline fn indexAnyComptime(target: string, comptime chars: string) ?usize {
+pub inline fn indexOfAnyComptime(target: string, comptime chars: string) ?usize {
     for (target, 0..) |parent, i| {
         inline for (chars) |char| {
             if (char == parent) return i;
@@ -188,7 +188,7 @@ pub inline fn indexOf(self: string, str: string) ?usize {
 /// Writer that checks each string of bytes as they are written to it.
 pub fn CheckingWriter(comptime WriterType: type, comptime Checker: type) type {
     return struct {
-        checker: Checker = .{},
+        checker: Checker,
         child_stream: WriterType,
 
         pub const Error = switch (@typeInfo(@typeInfo(@TypeOf(Checker.check)).Fn.return_type.?)) {

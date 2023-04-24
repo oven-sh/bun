@@ -159,7 +159,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     const name = this.name.slice();
 
     var basename = this.name.slice();
-    if (basename[0] == '@') {
+    if (basename.len > 0 and basename[0] == '@') {
         if (std.mem.indexOfScalar(u8, basename, '/')) |i| {
             basename = basename[i + 1 ..];
         }

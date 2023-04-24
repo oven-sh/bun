@@ -966,6 +966,23 @@ pub const Version = extern struct {
                     stopped_at -= 1;
                     break;
                 },
+                'v', '=' => {
+                    if (i != 0) {
+                        is_done = true;
+                        stopped_at -= 1;
+                        result.valid = false;
+                        break;
+                    }
+
+                    while (true) {
+                        i += 1;
+                        if (i >= input.len) break;
+                        switch (input[i]) {
+                            'v', '=' => {},
+                            else => break,
+                        }
+                    }
+                },
                 '0'...'9' => {
                     part_start_i = i;
                     i += 1;
@@ -1138,18 +1155,16 @@ pub const Version = extern struct {
         // If there are no numbers, it's 0.
         if (byte_i == 0) return 0;
 
-        if (comptime Environment.isDebug) {
-            return std.fmt.parseInt(u32, bytes[0..byte_i], 10) catch |err| {
+        return std.fmt.parseInt(u32, bytes[0..byte_i], 10) catch |err| blk: {
+            if (comptime Environment.isDebug)
                 Output.prettyErrorln("ERROR {s} parsing version: \"{s}\", bytes: {s}", .{
                     @errorName(err),
                     input,
                     bytes[0..byte_i],
                 });
-                return 0;
-            };
-        }
 
-        return std.fmt.parseInt(u32, bytes[0..byte_i], 10) catch 0;
+            break :blk 0;
+        };
     }
 };
 

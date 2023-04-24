@@ -41,13 +41,9 @@ const Mimalloc = @import("../../mimalloc_arena.zig");
 const Runtime = @import("../../runtime.zig").Runtime;
 const JSLexer = bun.js_lexer;
 const Expr = JSAst.Expr;
+const Index = @import("../../ast/base.zig").Index;
 
 pub const JSBundler = struct {
-    heap: Mimalloc.Arena,
-    allocator: std.mem.Allocator,
-    configs: Config.List = .{},
-    has_pending_activity: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(true),
-
     const OwnedString = bun.MutableString;
 
     pub const Config = struct {
@@ -62,7 +58,6 @@ pub const JSBundler = struct {
         code_splitting: bool = false,
         minify: Minify = .{},
         server_components: ServerComponents = ServerComponents{},
-        plugins: PluginDeclaration.List = .{},
 
         names: Names = .{},
         label: OwnedString = OwnedString.initEmpty(bun.default_allocator),
@@ -71,21 +66,7 @@ pub const JSBundler = struct {
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
-        ///
-        /// { name: "", setup: (build) {} }
-        pub const PluginDeclaration = struct {
-            name: OwnedString = OwnedString.initEmpty(bun.default_allocator),
-            setup: JSC.Strong = .{},
-
-            pub const List = std.ArrayListUnmanaged(PluginDeclaration);
-
-            pub fn deinit(this: *PluginDeclaration) void {
-                this.name.deinit();
-                this.setup.deinit();
-            }
-        };
-
-        pub fn fromJS(globalThis: *JSC.JSGlobalObject, config: JSC.JSValue, allocator: std.mem.Allocator) !Config {
+        pub fn fromJS(globalThis: *JSC.JSGlobalObject, config: JSC.JSValue, plugins: *?*Plugin, allocator: std.mem.Allocator) !Config {
             var this = Config{
                 .entry_points = bun.StringSet.init(allocator),
                 .external = bun.StringSet.init(allocator),
@@ -99,6 +80,7 @@ pub const JSBundler = struct {
                 },
             };
             errdefer this.deinit(allocator);
+            errdefer if (plugins.*) |plugin| plugin.deinit();
 
             if (try config.getOptionalEnum(globalThis, "target", options.Platform)) |target| {
                 this.target = target;
@@ -194,12 +176,6 @@ pub const JSBundler = struct {
             if (try config.getArray(globalThis, "plugins")) |array| {
                 var iter = array.arrayIterator(globalThis);
                 while (iter.next()) |plugin| {
-                    var decl = PluginDeclaration{
-                        .name = OwnedString.initEmpty(allocator),
-                        .setup = .{},
-                    };
-                    errdefer decl.deinit();
-
                     if (try plugin.getObject(globalThis, "SECRET_SERVER_COMPONENTS_INTERNALS")) |internals| {
                         if (internals.get(globalThis, "router")) |router_value| {
                             if (router_value.as(JSC.API.FileSystemRouter) != null) {
@@ -244,21 +220,47 @@ pub const JSBundler = struct {
                             globalThis.throwInvalidArguments("Expected directive.server to be an array of strings", .{});
                             return error.JSException;
                         }
+
+                        continue;
                     }
 
-                    if (try plugin.getOptional(globalThis, "name", ZigString.Slice)) |slice| {
-                        defer slice.deinit();
-                        decl.name.appendSliceExact(slice.slice()) catch unreachable;
-                    }
+                    // var decl = PluginDeclaration{
+                    //     .name = OwnedString.initEmpty(allocator),
+                    //     .setup = .{},
+                    // };
+                    // defer decl.deinit();
 
-                    if (try plugin.getFunction(globalThis, "setup")) |setup| {
-                        decl.setup.set(globalThis, setup);
+                    // if (try plugin.getOptional(globalThis, "name", ZigString.Slice)) |slice| {
+                    //     defer slice.deinit();
+                    //     decl.name.appendSliceExact(slice.slice()) catch unreachable;
+                    // }
+
+                    if (try plugin.getFunction(globalThis, "setup")) |_| {
+                        // decl.setup.set(globalThis, setup);
                     } else {
                         globalThis.throwInvalidArguments("Expected plugin to have a setup() function", .{});
                         return error.JSError;
                     }
 
-                    try this.plugins.append(allocator, decl);
+                    var bun_plugins: *Plugin = plugins.* orelse brk: {
+                        plugins.* = Plugin.create(
+                            globalThis,
+                            switch (this.target) {
+                                .bun, .bun_macro => JSC.JSGlobalObject.BunPluginTarget.bun,
+                                .node => JSC.JSGlobalObject.BunPluginTarget.node,
+                                else => .browser,
+                            },
+                        );
+                        break :brk plugins.*.?;
+                    };
+
+                    const plugin_result = bun_plugins.addPlugin(globalThis, plugin);
+
+                    if (plugin_result.toError()) |err| {
+                        globalThis.throwValue(err);
+                        bun_plugins.deinit();
+                        return error.JSError;
+                    }
                 }
             }
 
@@ -312,7 +314,6 @@ pub const JSBundler = struct {
             self.define.deinit();
             self.dir.deinit();
             self.serve.deinit(allocator);
-            self.plugins.deinit(allocator);
             self.server_components.deinit(allocator);
             self.names.deinit();
             self.label.deinit();
@@ -324,12 +325,14 @@ pub const JSBundler = struct {
         globalThis: *JSC.JSGlobalObject,
         arguments: []const JSC.JSValue,
     ) JSC.JSValue {
-        const config = Config.fromJS(globalThis, arguments[0], globalThis.allocator()) catch {
+        var plugins: ?*Plugin = null;
+        const config = Config.fromJS(globalThis, arguments[0], &plugins, globalThis.allocator()) catch {
             return JSC.JSValue.jsUndefined();
         };
 
         return bun.BundleV2.generateFromJavaScript(
             config,
+            plugins,
             globalThis,
             globalThis.bunVM().eventLoop(),
             bun.default_allocator,
@@ -351,4 +354,373 @@ pub const JSBundler = struct {
     ) js.JSValueRef {
         return build(globalThis, @ptrCast([]const JSC.JSValue, arguments_)).asObjectRef();
     }
+
+    pub const Resolve = struct {
+        import_record: *bun.ImportRecord,
+        source_file: string = "",
+        default_namespace: string = "",
+
+        /// Null means the Resolve is aborted
+        completion: ?*bun.BundleV2.JSBundleCompletionTask = null,
+
+        value: Value,
+
+        pub const Value = union(enum) {
+            err: logger.Msg,
+            success: struct {
+                path: []const u8 = "",
+                namespace: []const u8 = "",
+
+                pub fn deinit(this: *@This()) void {
+                    bun.default_allocator.destroy(this.path);
+                    bun.default_allocator.destroy(this.namespace);
+                }
+            },
+            no_match: void,
+            pending: JSC.JSPromise.Strong,
+            consumed: void,
+
+            fn badPluginError() Value {
+                return .{
+                    .err = logger.Msg{
+                        .data = .{
+                            .text = bun.default_allocator.dupe(u8, "onResolve plugin returned an invalid value") catch unreachable,
+                        },
+                    },
+                };
+            }
+
+            pub fn consume(this: *Value) Value {
+                const result = this.*;
+                this.* = .{ .consumed = {} };
+                return result;
+            }
+
+            pub fn fromJS(globalObject: *JSC.JSGlobalObject, source_file: []const u8, default_namespace: string, value: JSC.JSValue) Value {
+                if (value.isEmptyOrUndefinedOrNull()) {
+                    return .{ .no_match = {} };
+                }
+
+                if (value.toError(globalObject)) |err| {
+                    return .{ .err = logger.Msg.fromJS(bun.default_allocator, globalObject, source_file, err) catch unreachable };
+                }
+
+                // I think we already do this check?
+                if (!value.isObject()) return badPluginError();
+
+                var namespace = ZigString.Slice.fromUTF8NeverFree(default_namespace);
+
+                if (value.getOptional(globalObject, "namespace", ZigString.Slice) catch return badPluginError()) |namespace_slice| {
+                    namespace = namespace_slice;
+                }
+
+                const path = value.getOptional(globalObject, "path", ZigString.Slice) catch {
+                    namespace.deinit();
+                    return badPluginError();
+                };
+
+                return .{
+                    .success = .{
+                        .path = path.cloneWithAllocator(bun.default_allocator).slice(),
+                        .namespace = namespace.slice(),
+                    },
+                };
+            }
+
+            pub fn deinit(this: *Resolve.Value) void {
+                switch (this.*) {
+                    .pending => |*pending| {
+                        pending.deinit();
+                    },
+                    .success => |*success| {
+                        success.deinit();
+                    },
+                    .err => |*err| {
+                        err.deinit(bun.default_allocator);
+                    },
+                    .consumed => {},
+                }
+                this.* = .{ .consumed = {} };
+            }
+        };
+
+        pub fn deinit(this: *Resolve) void {
+            this.value.deinit();
+            if (this.completion) |completion|
+                completion.deref();
+        }
+
+        const AnyTask = JSC.AnyTask.New(@This(), runOnJSThread);
+
+        pub fn runOnJSThread(this: *Load) void {
+            var completion = this.completion orelse {
+                this.deinit();
+                return;
+            };
+
+            const result = completion.plugins.?.matchOnResolve(
+                completion.globalThis,
+                this.path,
+                this.namespace,
+                this,
+            );
+
+            this.value = Value.fromJS(completion.globalThis, this.source_file, this.default_namespace, result);
+            completion.bundler.onResolveAsync(this);
+        }
+    };
+
+    pub const Load = struct {
+        source_index: Index,
+        default_loader: options.Loader,
+        path: []const u8 = "",
+        namespace: []const u8 = "",
+
+        /// Null means the task was aborted.
+        completion: ?*bun.BundleV2.JSBundleCompletionTask = null,
+
+        value: Value,
+        js_task: JSC.AnyTask = undefined,
+        task: JSC.AnyEventLoop.Task = undefined,
+        parse_task: *bun.ParseTask = undefined,
+
+        pub fn create(
+            completion: *bun.BundleV2.JSBundleCompletionTask,
+            source_index: Index,
+            default_loader: options.Loader,
+            path: Fs.Path,
+        ) Load {
+            return Load{
+                .source_index = source_index,
+                .default_loader = default_loader,
+                .completion = completion,
+                .value = .{ .pending = .{} },
+                .path = path.text,
+                .namespace = path.namespace,
+            };
+        }
+
+        pub const Value = union(enum) {
+            err: logger.Msg,
+            success: struct {
+                source_code: []const u8 = "",
+                loader: options.Loader = options.Loader.file,
+            },
+            pending: JSC.JSPromise.Strong,
+            consumed: void,
+
+            pub fn deinit(this: *Value) void {
+                switch (this.*) {
+                    .pending => |*pending| {
+                        pending.strong.deinit();
+                    },
+                    .success => |success| {
+                        bun.default_allocator.destroy(success.source_code);
+                    },
+                    .err => |*err| {
+                        err.deinit(bun.default_allocator);
+                    },
+                    .consumed => {},
+                }
+                this.* = .{ .consumed = {} };
+            }
+
+            pub fn consume(this: *Value) Value {
+                const result = this.*;
+                this.* = .{ .consumed = {} };
+                return result;
+            }
+        };
+
+        pub fn deinit(this: *Load) void {
+            this.value.deinit();
+            if (this.completion) |completion|
+                completion.deref();
+        }
+
+        const AnyTask = JSC.AnyTask.New(@This(), runOnJSThread);
+
+        pub fn runOnJSThread(this: *Load) void {
+            var completion = this.completion orelse {
+                this.deinit();
+                return;
+            };
+
+            const err = completion.plugins.?.matchOnLoad(
+                completion.globalThis,
+                this.path,
+                this.namespace,
+                this,
+            );
+
+            if (this.value == .pending) {
+                if (!err.isEmptyOrUndefinedOrNull()) {
+                    var code = ZigString.Empty;
+                    JSBundlerPlugin__OnLoadAsync(this, err, &code, .js);
+                }
+            }
+        }
+
+        pub fn dispatch(this: *Load) void {
+            var completion = this.completion orelse {
+                this.deinit();
+                return;
+            };
+            completion.ref();
+
+            this.js_task = AnyTask.init(this);
+            var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch {
+                completion.deref();
+                this.deinit();
+                return;
+            };
+            concurrent_task.* = JSC.ConcurrentTask{
+                .auto_delete = true,
+                .task = this.js_task.task(),
+            };
+            completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
+        }
+
+        export fn JSBundlerPlugin__getDefaultLoader(this: *Load) options.Loader {
+            return this.default_loader;
+        }
+
+        export fn JSBundlerPlugin__OnLoadAsync(
+            this: *Load,
+            error_value: JSC.JSValue,
+            source_code: *ZigString,
+            loader: options.Loader,
+        ) void {
+            if (this.completion) |completion| {
+                if (error_value.toError()) |err| {
+                    if (this.value == .pending) this.value.pending.strong.deinit();
+                    this.value = .{
+                        .err = logger.Msg.fromJS(bun.default_allocator, completion.globalThis, this.path, err) catch unreachable,
+                    };
+                } else if (!error_value.isEmptyOrUndefinedOrNull() and error_value.isCell() and error_value.jsType() == .JSPromise) {
+                    this.value.pending.strong.set(completion.globalThis, error_value);
+                    return;
+                } else {
+                    if (this.value == .pending) this.value.pending.strong.deinit();
+                    this.value = .{
+                        .success = .{
+                            .source_code = source_code.toSliceClone(bun.default_allocator).slice(),
+                            .loader = loader,
+                        },
+                    };
+                }
+
+                completion.bundler.onLoadAsync(this);
+            } else {
+                this.deinit();
+            }
+        }
+
+        comptime {
+            _ = JSBundlerPlugin__getDefaultLoader;
+            _ = JSBundlerPlugin__OnLoadAsync;
+        }
+    };
+
+    pub const Plugin = opaque {
+        extern fn JSBundlerPlugin__create(*JSC.JSGlobalObject, JSC.JSGlobalObject.BunPluginTarget) *Plugin;
+        pub fn create(globalObject: *JSC.JSGlobalObject, target: JSC.JSGlobalObject.BunPluginTarget) *Plugin {
+            return JSBundlerPlugin__create(globalObject, target);
+        }
+
+        extern fn JSBundlerPlugin__tombestone(*Plugin) void;
+
+        extern fn JSBundlerPlugin__anyMatches(
+            *Plugin,
+            namespaceString: *const ZigString,
+            path: *const ZigString,
+            bool,
+        ) bool;
+
+        extern fn JSBundlerPlugin__matchOnLoad(
+            *JSC.JSGlobalObject,
+            *Plugin,
+            namespaceString: *const ZigString,
+            path: *const ZigString,
+            context: *anyopaque,
+        ) JSValue;
+
+        extern fn JSBundlerPlugin__matchOnResolve(
+            *JSC.JSGlobalObject,
+            *Plugin,
+            namespaceString: *const ZigString,
+            path: *const ZigString,
+            importer: *const ZigString,
+            context: *anyopaque,
+        ) JSValue;
+
+        pub fn hasAnyMatches(
+            this: *Plugin,
+            path: *const Fs.Path,
+            is_onLoad: bool,
+        ) bool {
+            const namespace_string = if (strings.eqlComptime(path.namespace, "file"))
+                ZigString.Empty
+            else
+                ZigString.fromUTF8(path.namespace);
+            const path_string = ZigString.fromUTF8(path.text);
+            return JSBundlerPlugin__anyMatches(this, &namespace_string, &path_string, is_onLoad);
+        }
+
+        pub fn matchOnLoad(
+            this: *Plugin,
+            globalThis: *JSC.JSGlobalObject,
+            path: []const u8,
+            namespace: []const u8,
+            context: *anyopaque,
+        ) JSC.JSValue {
+            const namespace_string = if (strings.eqlComptime(namespace, "file"))
+                ZigString.Empty
+            else
+                ZigString.fromUTF8(namespace);
+            const path_string = ZigString.fromUTF8(path);
+            return JSBundlerPlugin__matchOnLoad(globalThis, this, &namespace_string, &path_string, context);
+        }
+
+        pub fn matchOnResolve(
+            this: *Plugin,
+            globalThis: *JSC.JSGlobalObject,
+            path: []const u8,
+            namespace: []const u8,
+            importer: []const u8,
+            context: *anyopaque,
+        ) JSC.JSValue {
+            const namespace_string = if (strings.eqlComptime(namespace, "file"))
+                ZigString.Empty
+            else
+                ZigString.fromUTF8(namespace);
+            const path_string = ZigString.fromUTF8(path);
+            const importer_string = ZigString.fromUTF8(importer);
+            return JSBundlerPlugin__matchOnResolve(globalThis, this, &namespace_string, &path_string, &importer_string, context);
+        }
+
+        pub fn addPlugin(
+            this: *Plugin,
+            globalObject: *JSC.JSGlobalObject,
+            object: JSC.JSValue,
+        ) JSValue {
+            return setupJSBundlerPlugin(this, globalObject, object);
+        }
+
+        pub fn deinit(this: *Plugin) void {
+            JSBundlerPlugin__tombestone(this);
+        }
+
+        pub fn setConfig(this: *Plugin, config: *anyopaque) void {
+            JSBundlerPlugin__setConfig(this, config);
+        }
+
+        extern fn JSBundlerPlugin__setConfig(*Plugin, *anyopaque) void;
+
+        extern fn setupJSBundlerPlugin(
+            *Plugin,
+            *JSC.JSGlobalObject,
+            JSC.JSValue,
+        ) JSValue;
+    };
 };

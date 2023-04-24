@@ -267,6 +267,11 @@ pub const BundleV2 = struct {
     graph: Graph = Graph{},
     linker: LinkerContext = LinkerContext{ .loop = undefined },
     bun_watcher: ?*Watcher.Watcher = null,
+    plugins: ?*JSC.API.JSBundler.Plugin = null,
+    completion: ?*JSBundleCompletionTask = null,
+
+    /// Allocations not tracked by a threadlocal heap
+    free_list: std.ArrayList(string) = std.ArrayList(string).init(bun.default_allocator),
 
     const debug = Output.scoped(.Bundle, false);
 
@@ -399,7 +404,12 @@ pub const BundleV2 = struct {
         task.jsx = this.bundler.options.jsx;
         task.task.node.next = null;
         task.tree_shaking = this.linker.options.tree_shaking;
-        batch.push(ThreadPoolLib.Batch.from(&task.task));
+
+        // Handle onLoad plugins as entry points
+        if (!this.enqueueOnLoadPluginIfNeeded(task)) {
+            batch.push(ThreadPoolLib.Batch.from(&task.task));
+        }
+
         return source_index.get();
     }
 
@@ -577,6 +587,7 @@ pub const BundleV2 = struct {
 
     pub fn generateFromJavaScript(
         config: bun.JSC.API.JSBundler.Config,
+        plugins: ?*bun.JSC.API.JSBundler.Plugin,
         globalThis: *JSC.JSGlobalObject,
         event_loop: *bun.JSC.EventLoop,
         allocator: std.mem.Allocator,
@@ -587,11 +598,15 @@ pub const BundleV2 = struct {
             .jsc_event_loop = event_loop,
             .promise = JSC.JSPromise.Strong.init(globalThis),
             .globalThis = globalThis,
-            .ref = JSC.PollRef.init(),
+            .poll_ref = JSC.PollRef.init(),
             .env = globalThis.bunVM().bundler.env,
+            .plugins = plugins,
             .log = Logger.Log.init(bun.default_allocator),
             .task = JSBundleCompletionTask.TaskCompletion.init(completion),
         };
+
+        if (plugins) |plugin|
+            plugin.setConfig(completion);
 
         // Ensure this exists before we spawn the thread to prevent any race
         // conditions from creating two
@@ -613,7 +628,7 @@ pub const BundleV2 = struct {
             BundleThread.instance.waker.wake() catch {};
         }
 
-        completion.ref.ref(globalThis.bunVM());
+        completion.poll_ref.ref(globalThis.bunVM());
 
         return completion.promise.value();
     }
@@ -628,13 +643,16 @@ pub const BundleV2 = struct {
         task: bun.JSC.AnyTask,
         globalThis: *JSC.JSGlobalObject,
         promise: JSC.JSPromise.Strong,
-        ref: JSC.PollRef = JSC.PollRef.init(),
+        poll_ref: JSC.PollRef = JSC.PollRef.init(),
         env: *bun.DotEnv.Loader,
         log: Logger.Log,
 
         result: Result = .{ .pending = {} },
 
         next: ?*JSBundleCompletionTask = null,
+        bundler: *BundleV2 = undefined,
+        plugins: ?*bun.JSC.API.JSBundler.Plugin = null,
+        ref_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(1),
 
         pub const Result = union(enum) {
             pending: void,
@@ -644,15 +662,22 @@ pub const BundleV2 = struct {
 
         pub const TaskCompletion = bun.JSC.AnyTask.New(JSBundleCompletionTask, onComplete);
 
-        pub fn onComplete(this: *JSBundleCompletionTask) void {
-            var globalThis = this.globalThis;
-
-            defer {
+        pub fn deref(this: *JSBundleCompletionTask) void {
+            if (this.ref_count.fetchSub(1, .Monotonic) == 1) {
                 this.config.deinit(bun.default_allocator);
                 bun.default_allocator.destroy(this);
             }
+        }
 
-            this.ref.unref(globalThis.bunVM());
+        pub fn ref(this: *JSBundleCompletionTask) void {
+            _ = this.ref_count.fetchAdd(1, .Monotonic);
+        }
+
+        pub fn onComplete(this: *JSBundleCompletionTask) void {
+            var globalThis = this.globalThis;
+            defer this.deref();
+
+            this.poll_ref.unref(globalThis.bunVM());
             const promise = this.promise.swap();
             const root_obj = JSC.JSValue.createEmptyObject(globalThis, 2);
 
@@ -674,6 +699,10 @@ pub const BundleV2 = struct {
                 .value => |*build| {
                     var output_files: []options.OutputFile = build.output_files.items;
                     const output_files_js = JSC.JSValue.createEmptyArray(globalThis, output_files.len);
+                    if (output_files_js == .zero) {
+                        @panic("Unexpected pending JavaScript exception in JSBundleCompletionTask.onComplete. This is a bug in Bun.");
+                    }
+
                     defer build.output_files.deinit();
                     for (output_files, 0..) |*output_file, i| {
                         var obj = JSC.JSValue.createEmptyObject(globalThis, 2);
@@ -709,6 +738,70 @@ pub const BundleV2 = struct {
             promise.resolve(globalThis, root_obj);
         }
     };
+
+    pub fn onLoadAsync(
+        this: *BundleV2,
+        load: *bun.JSC.API.JSBundler.Load,
+    ) void {
+        this.loop().enqueueTaskConcurrent(
+            bun.JSC.API.JSBundler.Load,
+            BundleV2,
+            load,
+            BundleV2.onLoad,
+            .task,
+        );
+    }
+
+    pub fn onResolveAsync(
+        this: *BundleV2,
+        resolve: *bun.JSC.API.JSBundler.Resolve,
+    ) void {
+        this.loop().enqueueTaskConcurrent(
+            bun.JSC.API.JSBundler.Resolve,
+            BundleV2,
+            resolve,
+            BundleV2.onResolve,
+            .task,
+        );
+    }
+
+    pub fn onLoad(
+        load: *bun.JSC.API.JSBundler.Load,
+        this: *BundleV2,
+    ) void {
+        defer load.deinit();
+
+        switch (load.value.consume()) {
+            .success => |code| {
+                this.graph.input_files.items(.loader)[load.source_index.get()] = code.loader;
+                this.graph.input_files.items(.source)[load.source_index.get()].contents = code.source_code;
+                var parse_task = load.parse_task;
+                parse_task.loader = code.loader;
+                this.free_list.append(code.source_code) catch unreachable;
+                parse_task.contents_or_fd = .{
+                    .contents = code.source_code,
+                };
+                this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&parse_task.task));
+            },
+            .err => |err| {
+                this.bundler.log.msgs.append(err) catch unreachable;
+                this.bundler.log.errors += @as(usize, @boolToInt(err.kind == .err));
+                this.bundler.log.warnings += @as(usize, @boolToInt(err.kind == .warn));
+
+                // An error ocurred, prevent spinning the event loop forever
+                this.graph.parse_pending -= 1;
+            },
+            .pending, .consumed => unreachable,
+        }
+    }
+
+    pub fn onResolve(
+        this: *BundleV2,
+        resolve: *bun.JSC.API.JSBundler.Resolve,
+    ) void {
+        _ = this;
+        defer resolve.deinit();
+    }
 
     pub fn generateInNewThreadWrap(
         instance: *BundleThread,
@@ -793,6 +886,9 @@ pub const BundleV2 = struct {
         bundler.resolver.opts = bundler.options;
 
         var this = try BundleV2.init(bundler, allocator, JSC.AnyEventLoop.init(allocator), false, JSC.WorkPool.get(), heap);
+        this.plugins = completion.plugins;
+        this.completion = completion;
+        completion.bundler = this;
 
         defer {
             if (this.graph.pool.pool.threadpool_context == @ptrCast(?*anyopaque, this.graph.pool)) {
@@ -831,6 +927,12 @@ pub const BundleV2 = struct {
 
             this.graph.pool.pool.wakeForIdleEvents();
         }
+
+        for (this.free_list.items) |free| {
+            bun.default_allocator.free(free);
+        }
+
+        this.free_list.clearAndFree();
     }
 
     pub fn runFromJSInNewThread(this: *BundleV2, config: *const bun.JSC.API.JSBundler.Config) !std.ArrayList(options.OutputFile) {
@@ -877,6 +979,26 @@ pub const BundleV2 = struct {
         }
 
         return try this.linker.generateChunksInParallel(chunks);
+    }
+
+    pub fn enqueueOnLoadPluginIfNeeded(this: *BundleV2, parse: *ParseTask) bool {
+        if (this.plugins) |plugins| {
+            if (plugins.hasAnyMatches(&parse.path, true)) {
+                // This is where onLoad plugins are enqueued
+                var load = bun.default_allocator.create(JSC.API.JSBundler.Load) catch unreachable;
+                load.* = JSC.API.JSBundler.Load.create(
+                    this.completion.?,
+                    parse.source_index,
+                    parse.path.loader(&this.bundler.options.loaders) orelse options.Loader.js,
+                    parse.path,
+                );
+                load.parse_task = parse;
+                load.dispatch();
+                return true;
+            }
+        }
+
+        return false;
     }
 
     pub fn onParseTaskComplete(parse_result: *ParseTask.Result, this: *BundleV2) void {
@@ -979,9 +1101,13 @@ pub const BundleV2 = struct {
                         new_task.ctx = this;
                         graph.input_files.append(graph.allocator, new_input_file) catch unreachable;
                         graph.ast.append(graph.allocator, js_ast.Ast.empty) catch unreachable;
-                        batch.push(ThreadPoolLib.Batch.from(&new_task.task));
-
                         diff += 1;
+
+                        if (this.enqueueOnLoadPluginIfNeeded(new_task)) {
+                            continue;
+                        }
+
+                        batch.push(ThreadPoolLib.Batch.from(&new_task.task));
                     } else {
                         bun.default_allocator.destroy(value);
                     }
@@ -1041,7 +1167,7 @@ pub const BundleV2 = struct {
 
 const UseDirective = js_ast.UseDirective;
 
-const ParseTask = struct {
+pub const ParseTask = struct {
     path: Fs.Path,
     secondary_path_for_commonjs_interop: ?Fs.Path = null,
     contents_or_fd: union(enum) {

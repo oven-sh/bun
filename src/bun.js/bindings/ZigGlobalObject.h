@@ -48,6 +48,8 @@ extern "C" void Bun__reportUnhandledError(JSC__JSGlobalObject*, JSC::EncodedJSVa
 // defined in ModuleLoader.cpp
 extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultReject(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
+extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultResolveForJSBundlerPlugin(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
+extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultRejectForJSBundlerPlugin(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 // #include "EventTarget.h"
 
 // namespace WebCore {
@@ -292,6 +294,8 @@ public:
 
         jsFunctionOnLoadObjectResultResolve,
         jsFunctionOnLoadObjectResultReject,
+        jsFunctionOnLoadObjectResultResolveForJSBundlerPlugin,
+        jsFunctionOnLoadObjectResultRejectForJSBundlerPlugin,
 
         Bun__TestScope__onReject,
         Bun__TestScope__onResolve,
@@ -299,7 +303,7 @@ public:
         CallbackJob__onResolve,
         CallbackJob__onReject,
     };
-    static constexpr size_t promiseFunctionsSize = 22;
+    static constexpr size_t promiseFunctionsSize = 24;
 
     static PromiseFunctions promiseHandlerID(EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
 

@@ -15,7 +15,7 @@ using namespace JSC;
 class JSBundlerPlugin final : public WTF::RefCounted<JSBundlerPlugin> {
 public:
     WTF_MAKE_ISO_ALLOCATED(JSBundlerPlugin);
-    static JSBundlerPlugin* create(JSC::JSGlobalObject* globalObject, BunPluginTarget target);
+    static JSBundlerPlugin* create(JSC::JSGlobalObject* globalObject, BunPluginTarget target, void* config = nullptr);
 
     // This is a list of pairs of regexps and functions to match against
     class Group {
@@ -84,11 +84,16 @@ public:
     bool anyMatchesCrossThread(const ZigString* namespaceStr, const ZigString* path, bool isOnLoad);
     void tombstone() { tombstoned = true; }
 
-    JSBundlerPlugin(BunPluginTarget target) { this->target = target; }
+    JSBundlerPlugin(BunPluginTarget target, void* config)
+    {
+        this->target = target;
+        this->config = config;
+    }
 
     OnLoad onLoad = {};
     OnResolve onResolve = {};
-    BunPluginTarget target { BunPluginTargetBun };
+    BunPluginTarget target { BunPluginTargetBrowser };
+    void* config { nullptr };
     bool tombstoned { false };
 
     using RefCounted::deref;

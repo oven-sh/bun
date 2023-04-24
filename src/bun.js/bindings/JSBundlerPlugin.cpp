@@ -404,19 +404,19 @@ EncodedJSValue JSBundlerPlugin::OnLoad::run(const ZigString* namespaceString, co
             nullptr,
             context);
 
-        if (!result) {
-            return JSValue::encode(jsUndefined());
+        if (!result || result.isUndefined()) {
+            RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
         }
 
         if (auto* promise = JSC::jsDynamicCast<JSPromise*>(result)) {
             switch (promise->status(vm)) {
             case JSPromise::Status::Pending: {
-                return JSValue::encode(result);
+                RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
             }
             case JSPromise::Status::Rejected: {
                 promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(static_cast<unsigned>(JSC::JSPromise::Status::Fulfilled)));
                 result = promise->result(vm);
-                return JSValue::encode(result);
+                RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
             }
             case JSPromise::Status::Fulfilled: {
                 result = promise->result(vm);
@@ -427,7 +427,9 @@ EncodedJSValue JSBundlerPlugin::OnLoad::run(const ZigString* namespaceString, co
 
         if (!result.isObject()) {
             JSC::throwTypeError(globalObject, throwScope, "onResolve() expects an object returned"_s);
-            return JSValue::encode({});
+            JSC::Exception* exception = scope.exception();
+            scope.clearException();
+            return JSValue::encode(exception);
         }
 
         RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
@@ -491,20 +493,26 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__matchOnLoad(JSC::JSGlobalObject*
         context);
 }
 
-extern "C" JSC::EncodedJSValue JSBundlerPlugin__matchOnResolve(JSC::JSGlobalObject* globalObject, Bun::JSBundlerPlugin* plugin, const ZigString* namespaceString, const ZigString* path, void* context)
+extern "C" JSC::EncodedJSValue JSBundlerPlugin__matchOnResolve(JSC::JSGlobalObject* globalObject, Bun::JSBundlerPlugin* plugin, const ZigString* namespaceString, const ZigString* path, const ZigString* importer, void* context)
 {
     Ref protect(*plugin);
-    return plugin->onLoad.run(
+    return plugin->onResolve.run(
         namespaceString,
         path,
+        importer,
         context);
 }
 
 extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* globalObject, BunPluginTarget target)
 {
-    RefPtr<Bun::JSBundlerPlugin> plugin = adoptRef(*new Bun::JSBundlerPlugin(target));
+    RefPtr<Bun::JSBundlerPlugin> plugin = adoptRef(*new Bun::JSBundlerPlugin(target, nullptr));
     plugin->ref();
     return plugin.leakRef();
+}
+
+extern "C" void JSBundlerPlugin__setConfig(Bun::JSBundlerPlugin* plugin, void* config)
+{
+    plugin->config = config;
 }
 
 extern "C" void JSBundlerPlugin__tombestone(Bun::JSBundlerPlugin* plugin)

@@ -222,12 +222,6 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
                 if (loaderString == "js"_s) {
                     loader = BunLoaderTypeJS;
                 } else if (loaderString == "object"_s) {
-                    if (bunPluginContext != nullptr) {
-                        throwException(globalObject, scope, createError(globalObject, "Expected loader to be one of \"js\", \"jsx\", \"ts\", \"tsx\", \"toml\", or \"json\""_s));
-                        result.value.error = scope.exception();
-                        result.type = OnLoadResultTypeError;
-                        return result;
-                    }
                     return handleOnLoadObjectResult(globalObject, object);
                 } else if (loaderString == "jsx"_s) {
                     loader = BunLoaderTypeJSX;

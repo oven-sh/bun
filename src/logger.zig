@@ -204,7 +204,7 @@ pub const Data = struct {
     text: string,
     location: ?Location = null,
     pub fn deinit(d: *Data, allocator: std.mem.Allocator) void {
-        if (d.location) |loc| {
+        if (d.location) |*loc| {
             loc.deinit(allocator);
         }
 
@@ -401,6 +401,19 @@ pub const Msg = struct {
     metadata: Metadata = .{ .build = 0 },
     notes: ?[]Data = null,
 
+    pub fn fromJS(allocator: std.mem.Allocator, globalObject: *bun.JSC.JSGlobalObject, file: string, err: bun.JSC.JSValue) !Msg {
+        var zig_exception_holder: bun.JSC.ZigException.Holder = bun.JSC.ZigException.Holder.init();
+        err.toZigException(globalObject, zig_exception_holder.zigException());
+        return Msg{
+            .data = .{
+                .text = zig_exception_holder.zigException().message.toSliceClone(allocator).slice(),
+                .location = Location{
+                    .file = file,
+                },
+            },
+        };
+    }
+
     pub fn count(this: *const Msg, builder: *StringBuilder) void {
         this.data.count(builder);
         if (this.notes) |notes| {
@@ -490,7 +503,7 @@ pub const Msg = struct {
     pub fn deinit(msg: *Msg, allocator: std.mem.Allocator) void {
         msg.data.deinit(allocator);
         if (msg.notes) |notes| {
-            for (notes) |note| {
+            for (notes) |*note| {
                 note.deinit(allocator);
             }
         }

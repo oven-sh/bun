@@ -265,7 +265,8 @@ describe("bundler", () => {
     },
   });
 
-  itBundled("browser/BunPolyfillExternal", {
+  // not implemented right now
+  itBundled.skip("browser/BunPolyfillExternal", {
     skipOnEsbuild: true,
     files: ImportBunError.options.files,
     platform: "browser",

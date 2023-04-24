@@ -161,7 +161,7 @@ describe("bundler", () => {
       `,
     },
     cjs2esm: {
-      exclude: ["/node_modules/lib/index.js"],
+      unhandled: ["/node_modules/lib/index.js"],
     },
     run: {
       stdout: "development",

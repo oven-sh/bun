@@ -149,9 +149,10 @@ export interface BundlerTestInput {
    * Shorthand for testing CJS->ESM cases.
    * Checks source code for the commonjs helper.
    *
-   * Set to true means all cjs files should be converted. You can pass `exclude` to expect them to stay commonjs.
+   * Set to true means all cjs files should be converted. You can pass `unhandled` to expect them
+   * to stay commonjs (will throw if esm)
    */
-  cjs2esm?: boolean | { exclude: string[] };
+  cjs2esm?: boolean | { unhandled: string[] };
   /**
    * Override the number of keep markers, which is auto detected by default.
    * Does nothing if dce is false.
@@ -249,6 +250,7 @@ export function expectBundled(
     bundleWarnings,
     capture,
     chunkNames,
+    cjs2esm,
     dce,
     dceKeepMarkerCount,
     define,
@@ -384,6 +386,9 @@ export function expectBundled(
 
   if (mode === "transform" && !outfile) {
     throw new Error("transform mode requires one single outfile");
+  }
+  if (cjs2esm && !outfile && !minifySyntax && !minifyWhitespace) {
+    throw new Error("cjs2esm=true requires one output file, minifyWhitespace=false, and minifySyntax=false");
   }
 
   if (outdir) {
@@ -855,6 +860,26 @@ export function expectBundled(
   if (capture) {
     const captures = api.captureFile(path.relative(root, outfile ?? outputPaths[0]));
     expect(captures).toEqual(capture);
+  }
+
+  // cjs2esm checks
+  if (cjs2esm) {
+    const outfiletext = api.readFile(path.relative(root, outfile ?? outputPaths[0]));
+    const regex = /\/\/\s+(.+?)\nvar\s+([a-zA-Z0-9_$]+)\s+=\s+__commonJS/g;
+    const matches = [...outfiletext.matchAll(regex)].map(match => "/" + match[1]);
+    const expectedMatches = cjs2esm === true ? [] : cjs2esm.unhandled ?? [];
+    try {
+      expect(matches).toEqual(expectedMatches);
+    } catch (error) {
+      if (matches.length === expectedMatches.length) {
+        console.error(`cjs2esm check failed.`);
+      } else {
+        console.error(
+          `cjs2esm check failed. expected ${expectedMatches.length} __commonJS helpers but found ${matches.length}.`,
+        );
+      }
+      throw error;
+    }
   }
 
   // Write runtime files to disk as well as run the post bundle hook.

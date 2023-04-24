@@ -1764,7 +1764,15 @@ pub const ModuleLoader = struct {
                 .@"node:buffer" => return jsSyntheticModule(.@"node:buffer"),
                 .@"node:string_decoder" => return jsSyntheticModule(.@"node:string_decoder"),
                 .@"node:module" => return jsSyntheticModule(.@"node:module"),
-                .@"node:events" => return jsSyntheticModule(.@"node:events"),
+                .@"node:events" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(jsModuleFromFile(jsc_vm.load_builtins_from_path, "events.exports.js")),
+                        .specifier = ZigString.init("node:events"),
+                        .source_url = ZigString.init("node:events"),
+                        .hash = 0,
+                    };
+                },
                 .@"node:process" => return jsSyntheticModule(.@"node:process"),
                 .@"node:tty" => return jsSyntheticModule(.@"node:tty"),
                 .@"node:util/types" => return jsSyntheticModule(.@"node:util/types"),

@@ -2469,8 +2469,9 @@ pub const PackageManager = struct {
             std.debug.assert(buffers.resolutions.items[dependency_id] == invalid_package_id);
         }
         buffers.resolutions.items[dependency_id] = package_id;
+        const string_buf = buffers.string_bytes.items;
         var dep = &buffers.dependencies.items[dependency_id];
-        if (dep.name.isEmpty()) {
+        if (dep.name.isEmpty() or strings.eql(dep.name.slice(string_buf), dep.version.literal.slice(string_buf))) {
             dep.name = this.lockfile.packages.items(.name)[package_id];
             dep.name_hash = this.lockfile.packages.items(.name_hash)[package_id];
         }
@@ -2484,8 +2485,9 @@ pub const PackageManager = struct {
             std.debug.assert(buffers.resolutions.items[dependency_id] == invalid_package_id);
         }
         buffers.resolutions.items[dependency_id] = package_id;
+        const string_buf = buffers.string_bytes.items;
         var dep = &buffers.dependencies.items[dependency_id];
-        if (dep.name.isEmpty()) {
+        if (dep.name.isEmpty() or strings.eql(dep.name.slice(string_buf), dep.version.literal.slice(string_buf))) {
             dep.name = this.lockfile.packages.items(.name)[package_id];
             dep.name_hash = this.lockfile.packages.items(.name_hash)[package_id];
         }

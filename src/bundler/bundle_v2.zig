@@ -772,6 +772,25 @@ pub const BundleV2 = struct {
         defer load.deinit();
 
         switch (load.value.consume()) {
+            .no_match => {
+                // If it's a file namespace, we should run it through the parser like normal.
+                // The file could be on disk.
+                const source = &this.graph.input_files.items(.source)[load.source_index.get()];
+                if (strings.eqlComptime(source.namespace, "file")) {
+                    this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&load.parse_task.task));
+                    return;
+                }
+
+                // When it's not a file, this is a build error and we should report it.
+                // we have no way of loading non-files.
+                this.bundler.log.addErrorFmt(&source, Logger.Loc.Empty, bun.default_allocator, "Module not found {} in namespace {}", .{
+                    bun.fmt.quote(source.path.pretty),
+                    bun.fmt.quote(source.namespace),
+                }) catch {};
+
+                // An error ocurred, prevent spinning the event loop forever
+                this.graph.parse_pending -= 1;
+            },
             .success => |code| {
                 this.graph.input_files.items(.loader)[load.source_index.get()] = code.loader;
                 this.graph.input_files.items(.source)[load.source_index.get()].contents = code.source_code;
@@ -801,6 +820,52 @@ pub const BundleV2 = struct {
     ) void {
         _ = this;
         defer resolve.deinit();
+
+        var import_record: ?*ImportRecord = if (resolve.importer_source_index < this.graph.ast.len) 
+            &this.graph.ast.items(.import_records)[resolve.importer_source_index]
+         else 
+            // entry point
+            null;
+
+        switch (resolve.value.consume()) {
+            .no_match => {
+                // If it's a file namespace, we should run it through the resolver like normal.
+                // The file could be on disk.
+                if (strings.eqlComptime(source.namespace, "file")) {
+                    this.runResolver(resolve.specifier)
+                }
+
+                // When it's not a file, this is a build error and we should report it.
+                // we have no way of loading non-files.
+                this.bundler.log.addErrorFmt(&source, Logger.Loc.Empty, bun.default_allocator, "Module not found {} in namespace {}", .{
+                    bun.fmt.quote(source.path.pretty),
+                    bun.fmt.quote(source.namespace),
+                }) catch {};
+
+                // An error ocurred, prevent spinning the event loop forever
+                this.graph.parse_pending -= 1;
+            },
+            .success => |code| {
+                this.graph.input_files.items(.loader)[load.source_index.get()] = code.loader;
+                this.graph.input_files.items(.source)[load.source_index.get()].contents = code.source_code;
+                var parse_task = load.parse_task;
+                parse_task.loader = code.loader;
+                this.free_list.append(code.source_code) catch unreachable;
+                parse_task.contents_or_fd = .{
+                    .contents = code.source_code,
+                };
+                this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&parse_task.task));
+            },
+            .err => |err| {
+                this.bundler.log.msgs.append(err) catch unreachable;
+                this.bundler.log.errors += @as(usize, @boolToInt(err.kind == .err));
+                this.bundler.log.warnings += @as(usize, @boolToInt(err.kind == .warn));
+
+                // An error ocurred, prevent spinning the event loop forever
+                this.graph.parse_pending -= 1;
+            },
+            .pending, .consumed => unreachable,
+        }
     }
 
     pub fn generateInNewThreadWrap(
@@ -979,6 +1044,37 @@ pub const BundleV2 = struct {
         }
 
         return try this.linker.generateChunksInParallel(chunks);
+    }
+
+    pub fn enqueueOnResolvePluginIfNeeded(
+        this: *BundleV2,
+        source_index: Index.Int,
+        import_record: *const ImportRecord,
+        source_file: []const u8,
+        import_record_index: u32,
+    ) bool {
+        _ = source_index;
+        if (this.plugins) |plugins| {
+            if (plugins.hasAnyMatches(&import_record.path, false)) {
+                // This is where onLoad plugins are enqueued
+                var resolve = bun.default_allocator.create(JSC.API.JSBundler.Resolve) catch unreachable;
+                resolve.* = JSC.API.JSBundler.Resolve{
+                    .completion = this.completion.?,
+                    .default_namespace = import_record.path.namespace,
+                    .import_record_index = import_record_index,
+                    .kind = import_record.kind,
+                    .source_file = source_file,
+                    .range = import_record.range,
+                    .value = .{
+                        .pending = {},
+                    },
+                };
+                resolve.dispatch();
+                return true;
+            }
+        }
+
+        return false;
     }
 
     pub fn enqueueOnLoadPluginIfNeeded(this: *BundleV2, parse: *ParseTask) bool {
@@ -1512,9 +1608,14 @@ pub const ParseTask = struct {
 
         try resolve_queue.ensureUnusedCapacity(estimated_resolve_queue_count);
         var last_error: ?anyerror = null;
-        for (ast.import_records.slice()) |*import_record| {
+
+        for (ast.import_records.slice(), 0..) |*import_record, i| {
             // Don't resolve the runtime
             if (import_record.is_unused or import_record.is_internal) {
+                continue;
+            }
+
+            if (this.ctx.enqueueOnResolvePluginIfNeeded(source.index.get(), import_record, file_path.text, i)) {
                 continue;
             }
 

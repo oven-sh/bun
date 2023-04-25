@@ -39,7 +39,7 @@ Passing the second argument at all will use `esbuild` instead of `bun build`. It
 At the start of test files, use `testForFile` instead of importing from `bun:test`:
 
 ```ts
-import { bundlerTest, expectBundled, itBundled, testForFile } from "./expectBundled";
+import { itBundled, testForFile } from "./expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 ```
 

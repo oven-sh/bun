@@ -1,13 +1,6 @@
 import assert from "assert";
 import dedent from "dedent";
-import {
-  ESBUILD_PATH,
-  RUN_UNCHECKED_TESTS,
-  bundlerTest,
-  expectBundled,
-  itBundled,
-  testForFile,
-} from "../expectBundled";
+import { ESBUILD_PATH, RUN_UNCHECKED_TESTS, itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:

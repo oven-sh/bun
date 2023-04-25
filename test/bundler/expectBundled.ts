@@ -303,6 +303,8 @@ function expectBundled(
     unsupportedCSSFeatures,
     unsupportedJSFeatures,
     useDefineForClassFields,
+    // @ts-expect-error
+    _referenceFn,
     ...unknownProps
   } = opts;
 
@@ -764,11 +766,34 @@ function expectBundled(
           target: platform === "neutral" ? "browser" : platform,
         } as BuildConfig;
 
+        if (DEBUG) {
+          if (_referenceFn) {
+            const x = _referenceFn.toString().replace(/^\s*expect\(.*$/gm, "// $&");
+            const debugFile = `import path from 'path';
+  import assert from 'assert';
+  const {plugins} = (${x})({ root: ${JSON.stringify(root)} });
+  const options = ${JSON.stringify({ ...buildConfig, plugins: undefined }, null, 2)};
+  options.plugins = typeof plugins === "function" ? [{ name: "plugin", setup: plugins }] : plugins;
+  const build = await Bun.build(options);
+  if (build.logs) {
+    throw build.logs;
+  }
+  for (const blob of build.outputs) {
+    await Bun.write(path.join(options.outdir, blob.path), blob.result);
+  }
+  `;
+            writeFileSync(path.join(root, "run.js"), debugFile);
+          } else {
+            console.log("TODO: generate run.js, currently only works if options are wrapped in a function");
+          }
+        }
+
         const build = await Bun.build(buildConfig);
+        Bun.gc(true);
 
         if (build.logs) {
           console.log(build.logs);
-          throw new Error("Build failed and i am not smart enough to pick apart it");
+          throw new Error("TODO: handle build logs, but we should make this api nicer");
         }
 
         for (const blob of build.outputs) {
@@ -1100,7 +1125,10 @@ export function itBundled(
   opts: BundlerTestInput | ((metadata: BundlerTestWrappedAPI) => BundlerTestInput),
 ): BundlerTestRef {
   if (typeof opts === "function") {
+    const fn = opts;
     opts = opts({ root: path.join(outBase, id.replaceAll("/", path.sep)) });
+    // @ts-expect-error
+    opts._referenceFn = fn;
   }
   const ref = testRef(id, opts);
   const { it } = testForFile(callerSourceOrigin());

@@ -48,7 +48,7 @@ namespace WebCore {
 const JSC::ConstructAbility s_bundlerPluginRunOnResolvePluginsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_bundlerPluginRunOnResolvePluginsCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_bundlerPluginRunOnResolvePluginsCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_bundlerPluginRunOnResolvePluginsCodeLength = 3262;
+const int s_bundlerPluginRunOnResolvePluginsCodeLength = 3284;
 static const JSC::Intrinsic s_bundlerPluginRunOnResolvePluginsCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_bundlerPluginRunOnResolvePluginsCode =
     "(function (\n" \
@@ -178,9 +178,12 @@ const char* const s_bundlerPluginRunOnResolvePluginsCode =
     "  }\n" \
     "\n" \
     "  if (promiseResult && @isPromise(promiseResult)) {\n" \
-    "    promiseResult.then(() => {}, (e) => {\n" \
-    "      this.addError(internalID, e, 0);\n" \
-    "    });\n" \
+    "    promiseResult.then(\n" \
+    "      () => {},\n" \
+    "      (e) => {\n" \
+    "        this.addError(internalID, e, 0);\n" \
+    "      }\n" \
+    "    );\n" \
     "  }\n" \
     "})\n" \
 ;
@@ -325,7 +328,7 @@ const char* const s_bundlerPluginRunSetupFunctionCode =
 const JSC::ConstructAbility s_bundlerPluginRunOnLoadPluginsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_bundlerPluginRunOnLoadPluginsCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_bundlerPluginRunOnLoadPluginsCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_bundlerPluginRunOnLoadPluginsCodeLength = 2709;
+const int s_bundlerPluginRunOnLoadPluginsCodeLength = 2726;
 static const JSC::Intrinsic s_bundlerPluginRunOnLoadPluginsCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_bundlerPluginRunOnLoadPluginsCode =
     "(function (internalID, path, namespace, defaultLoaderId) {\n" \
@@ -390,7 +393,6 @@ const char* const s_bundlerPluginRunOnLoadPluginsCode =
     "          );\n" \
     "        }\n" \
     "\n" \
-    "\n" \
     "        if (result && @isPromise(result)) {\n" \
     "          result = await result;\n" \
     "        }\n" \
@@ -399,14 +401,12 @@ const char* const s_bundlerPluginRunOnLoadPluginsCode =
     "          continue;\n" \
     "        }\n" \
     "\n" \
-    "\n" \
     "        var { contents, loader = defaultLoader } = result;\n" \
     "        if (!(typeof contents === \"string\") && !@isTypedArrayView(contents)) {\n" \
     "          @throwTypeError(\n" \
     "            'onLoad plugins must return an object with \"contents\" as a string or Uint8Array'\n" \
     "          );\n" \
     "        }\n" \
-    "\n" \
     "\n" \
     "        if (!(typeof loader === \"string\")) {\n" \
     "          @throwTypeError(\n" \
@@ -423,7 +423,6 @@ const char* const s_bundlerPluginRunOnLoadPluginsCode =
     "        return null;\n" \
     "      }\n" \
     "    }\n" \
-    "\n" \
     "\n" \
     "    this.onLoadAsync(internalID, null, null);\n" \
     "    return null;\n" \
@@ -443,11 +442,13 @@ const char* const s_bundlerPluginRunOnLoadPluginsCode =
     "  }\n" \
     "\n" \
     "  if (promiseResult && @isPromise(promiseResult)) {\n" \
-    "    promiseResult.then(() => {}, (e) => {\n" \
-    "      this.addError(internalID, e, 0);\n" \
-    "    });\n" \
+    "    promiseResult.then(\n" \
+    "      () => {},\n" \
+    "      (e) => {\n" \
+    "        this.addError(internalID, e, 0);\n" \
+    "      }\n" \
+    "    );\n" \
     "  }\n" \
-    "\n" \
     "})\n" \
 ;
 

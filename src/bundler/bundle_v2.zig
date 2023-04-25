@@ -1789,7 +1789,6 @@ pub const ParseTask = struct {
         };
 
         const source_dir = file_path.sourceDir();
-        _ = source_dir;
         const loader = task.loader orelse file_path.loader(&bundler.options.loaders) orelse options.Loader.file;
         const platform = use_directive.platform(task.known_platform orelse bundler.options.platform);
 
@@ -1858,10 +1857,6 @@ pub const ParseTask = struct {
                 continue;
             }
 
-            if (this.ctx.enqueueOnResolvePluginIfNeeded(source.index.get(), import_record, source.path.text, @truncate(u32, i), platform)) {
-                continue;
-            }
-
             if (platform.isBun()) {
                 if (JSC.HardcodedModule.Aliases.get(import_record.path.text)) |replacement| {
                     import_record.path.text = replacement.path;
@@ -1905,6 +1900,130 @@ pub const ParseTask = struct {
                     continue;
                 }
             }
+
+            if (this.ctx.enqueueOnResolvePluginIfNeeded(source.index.get(), import_record, source.path.text, @truncate(u32, i), platform)) {
+                continue;
+            }
+
+            var resolve_result = resolver.resolve(source_dir, import_record.path.text, import_record.kind) catch |err| {
+                // Disable failing packages from being printed.
+                // This may cause broken code to write.
+                // However, doing this means we tell them all the resolve errors
+                // Rather than just the first one.
+                import_record.path.is_disabled = true;
+
+                switch (err) {
+                    error.ModuleNotFound => {
+                        const addError = Logger.Log.addResolveErrorWithTextDupe;
+
+                        if (!import_record.handles_import_errors) {
+                            last_error = err;
+                            if (isPackagePath(import_record.path.text)) {
+                                if (platform.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
+                                    try addError(
+                                        log,
+                                        &source,
+                                        import_record.range,
+                                        this.allocator,
+                                        "Could not resolve Node.js builtin: \"{s}\".",
+                                        .{import_record.path.text},
+                                        import_record.kind,
+                                    );
+                                } else {
+                                    try addError(
+                                        log,
+                                        &source,
+                                        import_record.range,
+                                        this.allocator,
+                                        "Could not resolve: \"{s}\". Maybe you need to \"bun install\"?",
+                                        .{import_record.path.text},
+                                        import_record.kind,
+                                    );
+                                }
+                            } else {
+                                try addError(
+                                    log,
+                                    &source,
+                                    import_record.range,
+                                    this.allocator,
+                                    "Could not resolve: \"{s}\"",
+                                    .{
+                                        import_record.path.text,
+                                    },
+                                    import_record.kind,
+                                );
+                            }
+                        }
+                    },
+                    // assume other errors are already in the log
+                    else => {
+                        last_error = err;
+                    },
+                }
+                continue;
+            };
+            // if there were errors, lets go ahead and collect them all
+            if (last_error != null) continue;
+
+            var path: *Fs.Path = resolve_result.path() orelse {
+                import_record.path.is_disabled = true;
+                import_record.source_index = Index.invalid;
+
+                continue;
+            };
+
+            if (resolve_result.is_external) {
+                continue;
+            }
+
+            var resolve_entry = try resolve_queue.getOrPut(wyhash(0, path.text));
+            if (resolve_entry.found_existing) {
+                import_record.path = resolve_entry.value_ptr.*.path;
+
+                continue;
+            }
+
+            if (path.pretty.ptr == path.text.ptr) {
+                // TODO: outbase
+                const rel = bun.path.relative(bundler.fs.top_level_dir, path.text);
+                if (rel.len > 0 and rel[0] != '.') {
+                    path.pretty = rel;
+                }
+            }
+
+            var secondary_path_to_copy: ?Fs.Path = null;
+            if (resolve_result.path_pair.secondary) |*secondary| {
+                if (!secondary.is_disabled and
+                    secondary != path and
+                    !strings.eqlLong(secondary.text, path.text, true))
+                {
+                    secondary_path_to_copy = try secondary.dupeAlloc(allocator);
+                }
+            }
+
+            path.* = try path.dupeAlloc(allocator);
+            import_record.path = path.*;
+            debug("created ParseTask: {s}", .{path.text});
+
+            var resolve_task = bun.default_allocator.create(ParseTask) catch @panic("Ran out of memory");
+            resolve_task.* = ParseTask.init(&resolve_result, null, this.ctx);
+
+            resolve_task.secondary_path_for_commonjs_interop = secondary_path_to_copy;
+
+            if (use_directive != .none) {
+                resolve_task.known_platform = platform;
+            } else if (task.known_platform) |known_platform| {
+                resolve_task.known_platform = known_platform;
+            }
+
+            resolve_task.jsx.development = task.jsx.development;
+
+            if (resolve_task.loader == null) {
+                resolve_task.loader = path.loader(&bundler.options.loaders);
+                resolve_task.tree_shaking = task.tree_shaking;
+            }
+
+            resolve_entry.value_ptr.* = resolve_task;
         }
 
         if (last_error) |err| {

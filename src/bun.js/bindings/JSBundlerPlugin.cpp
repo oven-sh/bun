@@ -165,13 +165,13 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addFilter, (JSC::JSGlobalObject
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    JSC::RegExpObject* regExp = jsCast<JSC::RegExpObject*>(callFrame->argument(1));
-    WTF::String namespaceStr = callFrame->argument(2).toWTFString(globalObject);
+    JSC::RegExpObject* regExp = jsCast<JSC::RegExpObject*>(callFrame->argument(0));
+    WTF::String namespaceStr = callFrame->argument(1).toWTFString(globalObject);
     if (namespaceStr == "file"_s) {
         namespaceStr = String();
     }
 
-    bool isOnLoad = callFrame->argument(2).toNumber(globalObject) == 1;
+    bool isOnLoad = callFrame->argument(2).toNumber(globalObject) == 0;
     auto& vm = globalObject->vm();
 
     if (isOnLoad) {

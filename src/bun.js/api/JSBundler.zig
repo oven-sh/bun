@@ -685,7 +685,9 @@ pub const JSBundler = struct {
     pub const Plugin = opaque {
         extern fn JSBundlerPlugin__create(*JSC.JSGlobalObject, JSC.JSGlobalObject.BunPluginTarget) *Plugin;
         pub fn create(globalObject: *JSC.JSGlobalObject, target: JSC.JSGlobalObject.BunPluginTarget) *Plugin {
-            return JSBundlerPlugin__create(globalObject, target);
+            var plugin = JSBundlerPlugin__create(globalObject, target);
+            JSC.JSValue.fromCell(plugin).protect();
+            return plugin;
         }
 
         extern fn JSBundlerPlugin__tombestone(*Plugin) void;
@@ -772,6 +774,7 @@ pub const JSBundler = struct {
 
         pub fn deinit(this: *Plugin) void {
             JSBundlerPlugin__tombestone(this);
+            JSC.JSValue.fromCell(this).unprotect();
         }
 
         pub fn setConfig(this: *Plugin, config: *anyopaque) void {
@@ -792,7 +795,7 @@ pub const JSBundler = struct {
             which: JSValue,
         ) void {
             switch (which.to(i32)) {
-                0 => {
+                1 => {
                     var this: *JSBundler.Resolve = bun.cast(*Resolve, ctx);
                     var completion = this.completion orelse return;
                     this.value = .{
@@ -800,7 +803,7 @@ pub const JSBundler = struct {
                     };
                     completion.bundler.onResolveAsync(this);
                 },
-                1 => {
+                0 => {
                     var this: *Load = bun.cast(*Load, ctx);
                     var completion = this.completion orelse return;
                     this.value = .{

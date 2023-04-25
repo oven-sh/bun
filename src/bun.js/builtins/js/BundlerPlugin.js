@@ -76,7 +76,7 @@ function runOnResolvePlugins(specifier, inputNamespace, importer, internalID, ki
           }
   
           var { path, namespace: userNamespace = inputNamespace, external } = result;
-          if (!@isString(path) || !@isString(userNamespace)) {
+          if (!(typeof path === "string") || !(typeof userNamespace === "string")) {
             @throwTypeError(
               "onResolve plugins must return an object with a string 'path' and string 'loader' field"
             );
@@ -133,21 +133,21 @@ function runOnResolvePlugins(specifier, inputNamespace, importer, internalID, ki
     }
   }
   
-  function runSetupFunction(setup) {
+function runSetupFunction(setup) {
     "use strict";
-    var onLoadPlugins = new @Map(),
-      onResolvePlugins = new @Map();
+    var onLoadPlugins = new Map(),
+      onResolvePlugins = new Map();
   
     function validate(filterObject, callback, map) {
       if (!filterObject || !@isObject(filterObject)) {
         @throwTypeError('Expected an object with "filter" RegExp');
       }
   
-      if (!callback || @isCallable(callback)) {
+      if (!callback || !@isCallable(callback)) {
         @throwTypeError("callback must be a function");
       }
   
-      var { filter, namespace } = filterObject;
+      var { filter, namespace = "file" } = filterObject;
   
       if (!filter) {
         @throwTypeError('Expected an object with "filter" RegExp');
@@ -157,26 +157,25 @@ function runOnResolvePlugins(specifier, inputNamespace, importer, internalID, ki
         @throwTypeError("filter must be a RegExp");
       }
   
-      if (namespace && !@isString(namespace)) {
+      if (namespace && !(typeof namespace === "string")) {
         @throwTypeError("namespace must be a string");
       }
 
-      if (!namespace.test(/^([/@a-zA-Z0-9_\\-]+)$/)) {
-        @throwTypeError("namespace can only contain @a-zA-Z0-9_\\-");
-      }
-  
       if (namespace?.length ?? 0) {
         namespace = "file";
+      }
+
+      if (!/^([/@a-zA-Z0-9_\\-]+)$/.test(namespace)) {
+        @throwTypeError("namespace can only contain @a-zA-Z0-9_\\-");
       }
   
       var callbacks = map.@get(namespace);
   
       if (!callbacks) {
-        callbacks = [];
-        map.@set(namespace, callbacks);
+        map.@set(namespace, [[filter, callback]]);
+      } else {
+        @arrayPush(callbacks, [filter, callback]);
       }
-  
-      @arrayPush(callbacks, [filter, callback]);
     }
   
     function onLoad(filterObject, callback) {
@@ -216,7 +215,8 @@ function runOnResolvePlugins(specifier, inputNamespace, importer, internalID, ki
             if (!existing) {
               onResolveObject.@set(namespace, callbacks);
             } else {
-              @arrayPush(existing, ...callbacks);
+              onResolveObject.@set(existing.concat(callbacks));
+
             }
           }
         }
@@ -233,7 +233,7 @@ function runOnResolvePlugins(specifier, inputNamespace, importer, internalID, ki
             if (!existing) {
               onLoadObject.@set(namespace, callbacks);
             } else {
-              @arrayPush(existing, ...callbacks);
+              onLoadObject.@set(existing.concat(callbacks));
             }
           }
         }
@@ -327,13 +327,13 @@ function runOnResolvePlugins(specifier, inputNamespace, importer, internalID, ki
           }
   
           var { contents, loader = defaultLoader } = result;
-          if (!@isString(contents) && !@isTypedArrayView(contents)) {
+          if (!(typeof contents === "string") && !@isTypedArrayView(contents)) {
             @throwTypeError(
               'onLoad plugins must return an object with "contents" as a string or Uint8Array'
             );
           }
   
-          if (!@isString(loader)) {
+          if (!(typeof loader === "string")) {
             @throwTypeError(
               'onLoad plugins must return an object with "loader" as a string'
             );

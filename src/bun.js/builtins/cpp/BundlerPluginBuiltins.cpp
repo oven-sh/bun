@@ -48,7 +48,7 @@ namespace WebCore {
 const JSC::ConstructAbility s_bundlerPluginRunOnResolvePluginsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_bundlerPluginRunOnResolvePluginsCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_bundlerPluginRunOnResolvePluginsCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_bundlerPluginRunOnResolvePluginsCodeLength = 3060;
+const int s_bundlerPluginRunOnResolvePluginsCodeLength = 3082;
 static const JSC::Intrinsic s_bundlerPluginRunOnResolvePluginsCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_bundlerPluginRunOnResolvePluginsCode =
     "(function (specifier, inputNamespace, importer, internalID, kindId) {\n" \
@@ -96,7 +96,7 @@ const char* const s_bundlerPluginRunOnResolvePluginsCode =
     "          }\n" \
     "  \n" \
     "          var { path, namespace: userNamespace = inputNamespace, external } = result;\n" \
-    "          if (!@isString(path) || !@isString(userNamespace)) {\n" \
+    "          if (!(typeof path === \"string\") || !(typeof userNamespace === \"string\")) {\n" \
     "            @throwTypeError(\n" \
     "              \"onResolve plugins must return an object with a string 'path' and string 'loader' field\"\n" \
     "            );\n" \
@@ -157,24 +157,24 @@ const char* const s_bundlerPluginRunOnResolvePluginsCode =
 const JSC::ConstructAbility s_bundlerPluginRunSetupFunctionCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_bundlerPluginRunSetupFunctionCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_bundlerPluginRunSetupFunctionCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_bundlerPluginRunSetupFunctionCodeLength = 3471;
+const int s_bundlerPluginRunSetupFunctionCodeLength = 3515;
 static const JSC::Intrinsic s_bundlerPluginRunSetupFunctionCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_bundlerPluginRunSetupFunctionCode =
     "(function (setup) {\n" \
     "    \"use strict\";\n" \
-    "    var onLoadPlugins = new @Map(),\n" \
-    "      onResolvePlugins = new @Map();\n" \
+    "    var onLoadPlugins = new Map(),\n" \
+    "      onResolvePlugins = new Map();\n" \
     "  \n" \
     "    function validate(filterObject, callback, map) {\n" \
     "      if (!filterObject || !@isObject(filterObject)) {\n" \
     "        @throwTypeError('Expected an object with \"filter\" RegExp');\n" \
     "      }\n" \
     "  \n" \
-    "      if (!callback || @isCallable(callback)) {\n" \
+    "      if (!callback || !@isCallable(callback)) {\n" \
     "        @throwTypeError(\"callback must be a function\");\n" \
     "      }\n" \
     "  \n" \
-    "      var { filter, namespace } = filterObject;\n" \
+    "      var { filter, namespace = \"file\" } = filterObject;\n" \
     "  \n" \
     "      if (!filter) {\n" \
     "        @throwTypeError('Expected an object with \"filter\" RegExp');\n" \
@@ -184,26 +184,25 @@ const char* const s_bundlerPluginRunSetupFunctionCode =
     "        @throwTypeError(\"filter must be a RegExp\");\n" \
     "      }\n" \
     "  \n" \
-    "      if (namespace && !@isString(namespace)) {\n" \
+    "      if (namespace && !(typeof namespace === \"string\")) {\n" \
     "        @throwTypeError(\"namespace must be a string\");\n" \
     "      }\n" \
     "\n" \
-    "      if (!namespace.test(/^([/@a-zA-Z0-9_\\\\-]+)$/)) {\n" \
-    "        @throwTypeError(\"namespace can only contain @a-zA-Z0-9_\\\\-\");\n" \
-    "      }\n" \
-    "  \n" \
     "      if (namespace?.length ?? 0) {\n" \
     "        namespace = \"file\";\n" \
+    "      }\n" \
+    "\n" \
+    "      if (!/^([/@a-zA-Z0-9_\\\\-]+)$/.test(namespace)) {\n" \
+    "        @throwTypeError(\"namespace can only contain @a-zA-Z0-9_\\\\-\");\n" \
     "      }\n" \
     "  \n" \
     "      var callbacks = map.@get(namespace);\n" \
     "  \n" \
     "      if (!callbacks) {\n" \
-    "        callbacks = [];\n" \
-    "        map.@set(namespace, callbacks);\n" \
+    "        map.@set(namespace, [[filter, callback]]);\n" \
+    "      } else {\n" \
+    "        @arrayPush(callbacks, [filter, callback]);\n" \
     "      }\n" \
-    "  \n" \
-    "      @arrayPush(callbacks, [filter, callback]);\n" \
     "    }\n" \
     "  \n" \
     "    function onLoad(filterObject, callback) {\n" \
@@ -243,7 +242,8 @@ const char* const s_bundlerPluginRunSetupFunctionCode =
     "            if (!existing) {\n" \
     "              onResolveObject.@set(namespace, callbacks);\n" \
     "            } else {\n" \
-    "              @arrayPush(existing, ...callbacks);\n" \
+    "              onResolveObject.@set(existing.concat(callbacks));\n" \
+    "\n" \
     "            }\n" \
     "          }\n" \
     "        }\n" \
@@ -260,7 +260,7 @@ const char* const s_bundlerPluginRunSetupFunctionCode =
     "            if (!existing) {\n" \
     "              onLoadObject.@set(namespace, callbacks);\n" \
     "            } else {\n" \
-    "              @arrayPush(existing, ...callbacks);\n" \
+    "              onLoadObject.@set(existing.concat(callbacks));\n" \
     "            }\n" \
     "          }\n" \
     "        }\n" \
@@ -295,7 +295,7 @@ const char* const s_bundlerPluginRunSetupFunctionCode =
 const JSC::ConstructAbility s_bundlerPluginRunOnLoadPluginsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_bundlerPluginRunOnLoadPluginsCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_bundlerPluginRunOnLoadPluginsCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_bundlerPluginRunOnLoadPluginsCodeLength = 2603;
+const int s_bundlerPluginRunOnLoadPluginsCodeLength = 2625;
 static const JSC::Intrinsic s_bundlerPluginRunOnLoadPluginsCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_bundlerPluginRunOnLoadPluginsCode =
     "(function (internalID, path, namespace, defaultLoaderId) {\n" \
@@ -361,13 +361,13 @@ const char* const s_bundlerPluginRunOnLoadPluginsCode =
     "          }\n" \
     "  \n" \
     "          var { contents, loader = defaultLoader } = result;\n" \
-    "          if (!@isString(contents) && !@isTypedArrayView(contents)) {\n" \
+    "          if (!(typeof contents === \"string\") && !@isTypedArrayView(contents)) {\n" \
     "            @throwTypeError(\n" \
     "              'onLoad plugins must return an object with \"contents\" as a string or Uint8Array'\n" \
     "            );\n" \
     "          }\n" \
     "  \n" \
-    "          if (!@isString(loader)) {\n" \
+    "          if (!(typeof loader === \"string\")) {\n" \
     "            @throwTypeError(\n" \
     "              'onLoad plugins must return an object with \"loader\" as a string'\n" \
     "            );\n" \

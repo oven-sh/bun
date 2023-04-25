@@ -54,7 +54,7 @@ function runOnResolvePlugins(
 
   var promiseResult = (async (inputPath, inputNamespace, importer, kind) => {
     var results = this.onResolve.@get(inputNamespace);
-    if (!resuls) {
+    if (!results) {
       this.onResolveAsync(internalID, null, null, null);
       return null;
     }
@@ -67,6 +67,7 @@ function runOnResolvePlugins(
           namespace: inputNamespace,
           kind,
         });
+
         while (
           result &&
           @isPromise(result) &&
@@ -87,6 +88,7 @@ function runOnResolvePlugins(
         if (!result || !@isObject(result)) {
           continue;
         }
+
 
         var {
           path,
@@ -109,7 +111,6 @@ function runOnResolvePlugins(
         if (!userNamespace) {
           userNamespace = inputNamespace;
         }
-
         if (typeof external !== "boolean" && !@isUndefinedOrNull(external)) {
           @throwTypeError(
             'onResolve plugins "external" field must be boolean or unspecified'
@@ -120,14 +121,13 @@ function runOnResolvePlugins(
         if (!external) {
           if (userNamespace === "file") {
             // TODO: Windows
+            
             if (path[0] !== "/" || path.includes("..")) {
               @throwTypeError(
                 'onResolve plugin "path" must be absolute when the namespace is "file"'
               );
             }
           }
-
-
           if (userNamespace === "dataurl") {
             if (!path.startsWith("data:")) {
               @throwTypeError(
@@ -136,8 +136,7 @@ function runOnResolvePlugins(
             }
           }
         }
-
-        this.onReslveAsync(internalID, path, userNamespace, external);
+        this.onResolveAsync(internalID, path, userNamespace, external);
         return null;
       }
     }
@@ -413,7 +412,7 @@ function runOnLoadPlugins(internalID, path, namespace, defaultLoaderId) {
     promiseResult.then(
       () => {},
       (e) => {
-        this.addError(internalID, e, 0);
+        this.addError(internalID, e, 1);
       }
     );
   }

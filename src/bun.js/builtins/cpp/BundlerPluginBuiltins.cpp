@@ -48,7 +48,7 @@ namespace WebCore {
 const JSC::ConstructAbility s_bundlerPluginRunOnResolvePluginsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_bundlerPluginRunOnResolvePluginsCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_bundlerPluginRunOnResolvePluginsCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_bundlerPluginRunOnResolvePluginsCodeLength = 3287;
+const int s_bundlerPluginRunOnResolvePluginsCodeLength = 3300;
 static const JSC::Intrinsic s_bundlerPluginRunOnResolvePluginsCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_bundlerPluginRunOnResolvePluginsCode =
     "(function (\n" \
@@ -74,7 +74,7 @@ const char* const s_bundlerPluginRunOnResolvePluginsCode =
     "\n" \
     "  var promiseResult = (async (inputPath, inputNamespace, importer, kind) => {\n" \
     "    var results = this.onResolve.@get(inputNamespace);\n" \
-    "    if (!resuls) {\n" \
+    "    if (!results) {\n" \
     "      this.onResolveAsync(internalID, null, null, null);\n" \
     "      return null;\n" \
     "    }\n" \
@@ -87,6 +87,7 @@ const char* const s_bundlerPluginRunOnResolvePluginsCode =
     "          namespace: inputNamespace,\n" \
     "          kind,\n" \
     "        });\n" \
+    "\n" \
     "        while (\n" \
     "          result &&\n" \
     "          @isPromise(result) &&\n" \
@@ -107,6 +108,7 @@ const char* const s_bundlerPluginRunOnResolvePluginsCode =
     "        if (!result || !@isObject(result)) {\n" \
     "          continue;\n" \
     "        }\n" \
+    "\n" \
     "\n" \
     "        var {\n" \
     "          path,\n" \
@@ -129,7 +131,6 @@ const char* const s_bundlerPluginRunOnResolvePluginsCode =
     "        if (!userNamespace) {\n" \
     "          userNamespace = inputNamespace;\n" \
     "        }\n" \
-    "\n" \
     "        if (typeof external !== \"boolean\" && !@isUndefinedOrNull(external)) {\n" \
     "          @throwTypeError(\n" \
     "            'onResolve plugins \"external\" field must be boolean or unspecified'\n" \
@@ -140,14 +141,13 @@ const char* const s_bundlerPluginRunOnResolvePluginsCode =
     "        if (!external) {\n" \
     "          if (userNamespace === \"file\") {\n" \
     "            //\n" \
+    "            \n" \
     "            if (path[0] !== \"/\" || path.includes(\"..\")) {\n" \
     "              @throwTypeError(\n" \
     "                'onResolve plugin \"path\" must be absolute when the namespace is \"file\"'\n" \
     "              );\n" \
     "            }\n" \
     "          }\n" \
-    "\n" \
-    "\n" \
     "          if (userNamespace === \"dataurl\") {\n" \
     "            if (!path.startsWith(\"data:\")) {\n" \
     "              @throwTypeError(\n" \
@@ -156,8 +156,7 @@ const char* const s_bundlerPluginRunOnResolvePluginsCode =
     "            }\n" \
     "          }\n" \
     "        }\n" \
-    "\n" \
-    "        this.onReslveAsync(internalID, path, userNamespace, external);\n" \
+    "        this.onResolveAsync(internalID, path, userNamespace, external);\n" \
     "        return null;\n" \
     "      }\n" \
     "    }\n" \
@@ -447,7 +446,7 @@ const char* const s_bundlerPluginRunOnLoadPluginsCode =
     "    promiseResult.then(\n" \
     "      () => {},\n" \
     "      (e) => {\n" \
-    "        this.addError(internalID, e, 0);\n" \
+    "        this.addError(internalID, e, 1);\n" \
     "      }\n" \
     "    );\n" \
     "  }\n" \

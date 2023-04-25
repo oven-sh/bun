@@ -795,7 +795,7 @@ pub const JSBundler = struct {
             which: JSValue,
         ) void {
             switch (which.to(i32)) {
-                1 => {
+                0 => {
                     var this: *JSBundler.Resolve = bun.cast(*Resolve, ctx);
                     var completion = this.completion orelse return;
                     this.value = .{
@@ -803,7 +803,7 @@ pub const JSBundler = struct {
                     };
                     completion.bundler.onResolveAsync(this);
                 },
-                0 => {
+                1 => {
                     var this: *Load = bun.cast(*Load, ctx);
                     var completion = this.completion orelse return;
                     this.value = .{

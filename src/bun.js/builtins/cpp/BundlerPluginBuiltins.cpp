@@ -48,7 +48,7 @@ namespace WebCore {
 const JSC::ConstructAbility s_bundlerPluginRunOnResolvePluginsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_bundlerPluginRunOnResolvePluginsCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_bundlerPluginRunOnResolvePluginsCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_bundlerPluginRunOnResolvePluginsCodeLength = 3284;
+const int s_bundlerPluginRunOnResolvePluginsCodeLength = 3287;
 static const JSC::Intrinsic s_bundlerPluginRunOnResolvePluginsCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_bundlerPluginRunOnResolvePluginsCode =
     "(function (\n" \
@@ -80,7 +80,7 @@ const char* const s_bundlerPluginRunOnResolvePluginsCode =
     "    }\n" \
     "\n" \
     "    for (let [filter, callback] of results) {\n" \
-    "      if (filtertest(inputPath)) {\n" \
+    "      if (filter.test(inputPath)) {\n" \
     "        var result = callback({\n" \
     "          path: inputPath,\n" \
     "          importer,\n" \
@@ -136,6 +136,7 @@ const char* const s_bundlerPluginRunOnResolvePluginsCode =
     "          );\n" \
     "        }\n" \
     "\n" \
+    "\n" \
     "        if (!external) {\n" \
     "          if (userNamespace === \"file\") {\n" \
     "            //\n" \
@@ -145,6 +146,7 @@ const char* const s_bundlerPluginRunOnResolvePluginsCode =
     "              );\n" \
     "            }\n" \
     "          }\n" \
+    "\n" \
     "\n" \
     "          if (userNamespace === \"dataurl\") {\n" \
     "            if (!path.startsWith(\"data:\")) {\n" \

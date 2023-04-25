@@ -60,7 +60,7 @@ function runOnResolvePlugins(
     }
 
     for (let [filter, callback] of results) {
-      if (filtertest(inputPath)) {
+      if (filter.test(inputPath)) {
         var result = callback({
           path: inputPath,
           importer,
@@ -116,6 +116,7 @@ function runOnResolvePlugins(
           );
         }
 
+
         if (!external) {
           if (userNamespace === "file") {
             // TODO: Windows
@@ -125,6 +126,7 @@ function runOnResolvePlugins(
               );
             }
           }
+
 
           if (userNamespace === "dataurl") {
             if (!path.startsWith("data:")) {

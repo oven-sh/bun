@@ -1294,6 +1294,7 @@ pub const BundleV2 = struct {
                     import_record.path.namespace,
                     import_record.path.text,
                 });
+                _ = @atomicRmw(usize, &this.graph.resolve_pending, .Add, 1, .Monotonic);
 
                 resolve.* = JSC.API.JSBundler.Resolve.create(
                     .{

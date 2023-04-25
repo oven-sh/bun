@@ -403,7 +403,12 @@ pub const Msg = struct {
 
     pub fn fromJS(allocator: std.mem.Allocator, globalObject: *bun.JSC.JSGlobalObject, file: string, err: bun.JSC.JSValue) !Msg {
         var zig_exception_holder: bun.JSC.ZigException.Holder = bun.JSC.ZigException.Holder.init();
-        err.toZigException(globalObject, zig_exception_holder.zigException());
+        if (err.toError()) |value| {
+            value.toZigException(globalObject, zig_exception_holder.zigException());
+        } else {
+            zig_exception_holder.zig_exception.message = JSC.ZigString.fromUTF8(err.toSlice(globalObject, allocator).slice());
+        }
+
         return Msg{
             .data = .{
                 .text = zig_exception_holder.zigException().message.toSliceClone(allocator).slice(),

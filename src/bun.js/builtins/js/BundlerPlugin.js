@@ -31,335 +31,388 @@
 //
 // It should be generic enough to reuse for Bun.plugin() eventually, too.
 
-function runOnResolvePlugins(specifier, inputNamespace, importer, internalID, kindId) {
-    "use strict";
-  
-    // Must be kept in sync with ImportRecord.label
-    const kind = [
-      "entry-point",
-      "import-statement",
-      "require-call",
-      "dynamic-import",
-      "require-resolve",
-      "import-rule",
-      "url-token",
-      "internal",
-    ][kindId];
-  
-    var promiseResult = (async (inputPath, inputNamespace, importer, kind) => {
-      var { callbacks, filters } = this.onResolvePlugins;
-      var length = callbacks.length;
-  
-      for (var i = 0; i < length; ++i) {
-        if (inputPath.test(filters[i])) {
-          var result = callbacks[i]({
-            path: inputPath,
-            importer,
-            namespace: inputNamespace,
-            kind,
-          });
-  
-          if (result && @isPromise(result)) {
-            const flags = @getPromiseInternalField(result, @promiseFieldFlags);
-            if (!(flags & @promiseStateFulfilled)) {
-              result = await result;
-            } else {
-              result = @getPromiseInternalField(
-                result,
-                @promiseFieldReactionsOrResult
-              );
-            }
-          }
-  
-          if (!result || !@isObject(result)) {
-            continue;
-          }
-  
-          var { path, namespace: userNamespace = inputNamespace, external } = result;
-          if (!(typeof path === "string") || !(typeof userNamespace === "string")) {
-            @throwTypeError(
-              "onResolve plugins must return an object with a string 'path' and string 'loader' field"
-            );
-          }
-  
-          if (path.length === 0) {
-            continue;
-          }
+function runOnResolvePlugins(
+  specifier,
+  inputNamespace,
+  importer,
+  internalID,
+  kindId
+) {
+  "use strict";
 
-          if (userNamespace.length === 0) {
-            userNamespace = inputNamespace;
-          }
+  // Must be kept in sync with ImportRecord.label
+  const kind = [
+    "entry-point",
+    "import-statement",
+    "require-call",
+    "dynamic-import",
+    "require-resolve",
+    "import-rule",
+    "url-token",
+    "internal",
+  ][kindId];
 
-          if (typeof external !== "boolean" && !@isUndefinedOrNull(external)) {
-            @throwTypeError(
-              "onResolve plugins \"external\" field must be boolean or unspecified"
-            );
-          }
-          
-          if (!external) {
-            if (userNamespace === "file") {
-              // TODO: Windows
-              if (path[0] !== "/" || path.includes("..")) {
-                @throwTypeError(
-                  "onResolve plugin \"path\" must be absolute when the namespace is \"file\""
-                );
-              }
-            }
-    
-            if (userNamespace === "dataurl") {
-              if (!path.startsWith("data:")) {
-                @throwTypeError(
-                  "onResolve plugin \"path\" must start with \"data:\" when the namespace is\"dataurl\""
-                );
-              }
-            }
-          }
-  
-          this.onResolveAsync(internalID, path, userNamespace, external);      
-          return null;
-        }
-      }
-
+  var promiseResult = (async (inputPath, inputNamespace, importer, kind) => {
+    var results = this.onResolve.@get(inputNamespace);
+    if (!resuls) {
       this.onResolveAsync(internalID, null, null, null);
       return null;
-    })(specifier, inputNamespace, importer, kind);
-  
-    const flags = @getPromiseInternalField(promiseResult, @promiseFieldFlags);
-    // Unwrap the promise synchronously when we can
-    if (!(flags & @promiseStateFulfilled)) {
-      promiseResult.@then(@undefined, (error) => {
-        this.addError(internalID, error, 1);
-      });
     }
-  }
-  
-function runSetupFunction(setup) {
-    "use strict";
-    var onLoadPlugins = new Map(),
-      onResolvePlugins = new Map();
-  
-    function validate(filterObject, callback, map) {
-      if (!filterObject || !@isObject(filterObject)) {
-        @throwTypeError('Expected an object with "filter" RegExp');
-      }
-  
-      if (!callback || !@isCallable(callback)) {
-        @throwTypeError("callback must be a function");
-      }
-  
-      var { filter, namespace = "file" } = filterObject;
-  
-      if (!filter) {
-        @throwTypeError('Expected an object with "filter" RegExp');
-      }
-  
-      if (!@isRegExpObject(filter)) {
-        @throwTypeError("filter must be a RegExp");
-      }
-  
-      if (namespace && !(typeof namespace === "string")) {
-        @throwTypeError("namespace must be a string");
-      }
 
-      if (namespace?.length ?? 0) {
-        namespace = "file";
-      }
+    for (let [filter, callback] of results) {
+      if (filtertest(inputPath)) {
+        var result = callback({
+          path: inputPath,
+          importer,
+          namespace: inputNamespace,
+          kind,
+        });
+        while (
+          result &&
+          @isPromise(result) &&
+          (@getPromiseInternalField(result, @promiseFieldFlags) &
+            @promiseStateMask) ===
+            @promiseStateFulfilled
+        ) {
+          result = @getPromiseInternalField(
+            result,
+            @promiseFieldReactionsOrResult
+          );
+        }
 
-      if (!/^([/@a-zA-Z0-9_\\-]+)$/.test(namespace)) {
-        @throwTypeError("namespace can only contain @a-zA-Z0-9_\\-");
-      }
-  
-      var callbacks = map.@get(namespace);
-  
-      if (!callbacks) {
-        map.@set(namespace, [[filter, callback]]);
-      } else {
-        @arrayPush(callbacks, [filter, callback]);
-      }
-    }
-  
-    function onLoad(filterObject, callback) {
-      validate(filterObject, callback, onLoadPlugins);
-    }
-  
-    function onResolve(filterObject, callback) {
-      validate(filterObject, callback, onResolvePlugins);
-    }
-  
-    const processSetupResult = () => {
-      var anyOnLoad = false,
-        anyOnResolve = false;
-  
-      for (var [namespace, callbacks] of onLoadPlugins.entries()) {
-        for (var [filter] of callbacks) {
-          this.addFilter(filter, namespace, 0);
-          anyOnLoad = true;
+        if (result && @isPromise(result)) {
+          result = await result;
         }
-      }
-  
-      for (var [namespace, callbacks] of onResolvePlugins.entries()) {
-        for (var [filter] of callbacks) {
-          this.addFilter(filter, namespace, 1);
-          anyOnResolve = true;
-        }
-      }
-  
-      if (anyOnResolve) {
-        var onResolveObject = this.onResolve;
-        if (!onResolveObject) {
-          this.onResolve = onResolvePlugins;
-        } else {
-          for (var [namespace, callbacks] of onResolvePlugins.entries()) {
-            var existing = onResolveObject.@get(namespace);
-  
-            if (!existing) {
-              onResolveObject.@set(namespace, callbacks);
-            } else {
-              onResolveObject.@set(existing.concat(callbacks));
 
-            }
-          }
+        if (!result || !@isObject(result)) {
+          continue;
         }
-      }
-  
-      if (anyOnLoad) {
-        var onLoadObject = this.onLoad;
-        if (!onLoadObject) {
-          this.onLoad = onLoadPlugins;
-        } else {
-          for (var [namespace, callbacks] of onLoadPlugins.entries()) {
-            var existing = onLoadObject.@get(namespace);
-  
-            if (!existing) {
-              onLoadObject.@set(namespace, callbacks);
-            } else {
-              onLoadObject.@set(existing.concat(callbacks));
-            }
-          }
+
+        var {
+          path,
+          namespace: userNamespace = inputNamespace,
+          external,
+        } = result;
+        if (
+          !(typeof path === "string") ||
+          !(typeof userNamespace === "string")
+        ) {
+          @throwTypeError(
+            "onResolve plugins must return an object with a string 'path' and string 'loader' field"
+          );
         }
-      }
-  
-      return anyOnLoad || anyOnResolve;
-    };
-  
-    var setupResult = setup({
-      onLoad,
-      onResolve,
-    });
-  
-    if (setupResult && @isPromise(setupResult)) {
-      if (
-        @getPromiseInternalField(setupResult, @promiseFieldFlags) &
-        @promiseStateFulfilled
-      ) {
-        setupResult = @getPromiseInternalField(
-          setupResult,
-          @promiseFieldReactionsOrResult
-        );
-      } else {
-        return setupResult.@then(processSetupResult);
-      }
-    }
-  
-    return processSetupResult();
-  }
-  
-  function runOnLoadPlugins(internalID, path, namespace, defaultLoaderId) {
-    "use strict";
-  
-    const LOADERS_MAP = {
-      jsx: 0,
-      js: 1,
-      ts: 2,
-      tsx: 3,
-      css: 4,
-      file: 5,
-      json: 6,
-      toml: 7,
-      wasm: 8,
-      napi: 9,
-      base64: 10,
-      dataurl: 11,
-      text: 12,
-    };
-    const loaderName = [
-      "jsx",
-      "js",
-      "ts",
-      "tsx",
-      "css",
-      "file",
-      "json",
-      "toml",
-      "wasm",
-      "napi",
-      "base64",
-      "dataurl",
-      "text",
-    ][defaultLoaderId];
-  
-    var promiseResult = (async (internalID, path, namespace, defaultLoader) => {
-      var { callbacks, filters } = this.onLoadPlugins.@get(namespace);
-      var length = callbacks.length;
-  
-      for (var i = 0; i < length; ++i) {
-        if (specifier.test(filters[i])) {
-          var result = callbacks[i]({
-            path,
-            namespace,
-            loader: defaultLoader,
-          });
-  
-          if (result && @isPromise(result)) {
-            const flags = @getPromiseInternalField(result, @promiseFieldFlags);
-            if (!(flags & @promiseStateFulfilled)) {
-              result = await result;
-            } else {
-              result = @getPromiseInternalField(
-                result,
-                @promiseFieldReactionsOrResult
+
+        if (!path) {
+          continue;
+        }
+
+        if (!userNamespace) {
+          userNamespace = inputNamespace;
+        }
+
+        if (typeof external !== "boolean" && !@isUndefinedOrNull(external)) {
+          @throwTypeError(
+            'onResolve plugins "external" field must be boolean or unspecified'
+          );
+        }
+
+        if (!external) {
+          if (userNamespace === "file") {
+            // TODO: Windows
+            if (path[0] !== "/" || path.includes("..")) {
+              @throwTypeError(
+                'onResolve plugin "path" must be absolute when the namespace is "file"'
               );
             }
           }
-  
-          if (!result || !@isObject(result)) {
-            continue;
-          }
-  
-          var { contents, loader = defaultLoader } = result;
-          if (!(typeof contents === "string") && !@isTypedArrayView(contents)) {
-            @throwTypeError(
-              'onLoad plugins must return an object with "contents" as a string or Uint8Array'
-            );
-          }
-  
-          if (!(typeof loader === "string")) {
-            @throwTypeError(
-              'onLoad plugins must return an object with "loader" as a string'
-            );
-          }
-  
-          const chosenLoader = LOADERS_MAP[loader];
-          if (chosenLoader === @undefined) {
-            @throwTypeError('Loader "' + loader + '" is not supported.');
-          }
-  
-          this.onLoadAsync(internalID, contents, loader);
-          return null;
-        }
-      }
 
-      this.onLoadAsync(internalID, null, null);
-      return null;
-    })(internalID, path, namespace, loaderName);
-  
-    if (promiseResult && @isPromise(promiseResult)) {
-      const flags = @getPromiseInternalField(promiseResult, @promiseFieldFlags);
-      if (!(flags & @promiseStateFulfilled)) {
-        promiseResult.@then(@undefined, (e) => {
-          this.addError(internalID, e, 0);
-        });
+          if (userNamespace === "dataurl") {
+            if (!path.startsWith("data:")) {
+              @throwTypeError(
+                'onResolve plugin "path" must start with "data:" when the namespace is"dataurl"'
+              );
+            }
+          }
+        }
+
+        this.onReslveAsync(internalID, path, userNamespace, external);
+        return null;
       }
     }
+
+    this.onResolveAsync(internalID, null, null, null);
+    return null;
+  })(specifier, inputNamespace, importer, kind);
+
+  while (
+    promiseResult &&
+    @isPromise(promiseResult) &&
+    (@getPromiseInternalField(promiseResult, @promiseFieldFlags) &
+      @promiseStateMask) ===
+      @promiseStateFulfilled
+  ) {
+    promiseResult = @getPromiseInternalField(
+      promiseResult,
+      @promiseFieldReactionsOrResult
+    );
   }
-  
+
+  if (promiseResult && @isPromise(promiseResult)) {
+    promiseResult.then(
+      () => {},
+      (e) => {
+        this.addError(internalID, e, 0);
+      }
+    );
+  }
+}
+
+function runSetupFunction(setup) {
+  "use strict";
+  var onLoadPlugins = new Map(),
+    onResolvePlugins = new Map();
+
+  function validate(filterObject, callback, map) {
+    if (!filterObject || !@isObject(filterObject)) {
+      @throwTypeError('Expected an object with "filter" RegExp');
+    }
+
+    if (!callback || !@isCallable(callback)) {
+      @throwTypeError("callback must be a function");
+    }
+
+    var { filter, namespace = "file" } = filterObject;
+
+    if (!filter) {
+      @throwTypeError('Expected an object with "filter" RegExp');
+    }
+
+    if (!@isRegExpObject(filter)) {
+      @throwTypeError("filter must be a RegExp");
+    }
+
+    if (namespace && !(typeof namespace === "string")) {
+      @throwTypeError("namespace must be a string");
+    }
+
+    if (namespace?.length ?? 0) {
+      namespace = "file";
+    }
+
+    if (!/^([/@a-zA-Z0-9_\\-]+)$/.test(namespace)) {
+      @throwTypeError("namespace can only contain @a-zA-Z0-9_\\-");
+    }
+
+    var callbacks = map.@get(namespace);
+
+    if (!callbacks) {
+      map.@set(namespace, [[filter, callback]]);
+    } else {
+      @arrayPush(callbacks, [filter, callback]);
+    }
+  }
+
+  function onLoad(filterObject, callback) {
+    validate(filterObject, callback, onLoadPlugins);
+  }
+
+  function onResolve(filterObject, callback) {
+    validate(filterObject, callback, onResolvePlugins);
+  }
+
+  const processSetupResult = () => {
+    var anyOnLoad = false,
+      anyOnResolve = false;
+
+    for (var [namespace, callbacks] of onLoadPlugins.entries()) {
+      for (var [filter] of callbacks) {
+        this.addFilter(filter, namespace, 1);
+        anyOnLoad = true;
+      }
+    }
+
+    for (var [namespace, callbacks] of onResolvePlugins.entries()) {
+      for (var [filter] of callbacks) {
+        this.addFilter(filter, namespace, 0);
+        anyOnResolve = true;
+      }
+    }
+
+    if (anyOnResolve) {
+      var onResolveObject = this.onResolve;
+      if (!onResolveObject) {
+        this.onResolve = onResolvePlugins;
+      } else {
+        for (var [namespace, callbacks] of onResolvePlugins.entries()) {
+          var existing = onResolveObject.@get(namespace);
+
+          if (!existing) {
+            onResolveObject.@set(namespace, callbacks);
+          } else {
+            onResolveObject.@set(existing.concat(callbacks));
+          }
+        }
+      }
+    }
+
+    if (anyOnLoad) {
+      var onLoadObject = this.onLoad;
+      if (!onLoadObject) {
+        this.onLoad = onLoadPlugins;
+      } else {
+        for (var [namespace, callbacks] of onLoadPlugins.entries()) {
+          var existing = onLoadObject.@get(namespace);
+
+          if (!existing) {
+            onLoadObject.@set(namespace, callbacks);
+          } else {
+            onLoadObject.@set(existing.concat(callbacks));
+          }
+        }
+      }
+    }
+
+    return anyOnLoad || anyOnResolve;
+  };
+
+  var setupResult = setup({
+    onLoad,
+    onResolve,
+  });
+
+  if (setupResult && @isPromise(setupResult)) {
+    if (
+      @getPromiseInternalField(setupResult, @promiseFieldFlags) &
+      @promiseStateFulfilled
+    ) {
+      setupResult = @getPromiseInternalField(
+        setupResult,
+        @promiseFieldReactionsOrResult
+      );
+    } else {
+      return setupResult.@then(processSetupResult);
+    }
+  }
+
+  return processSetupResult();
+}
+
+function runOnLoadPlugins(internalID, path, namespace, defaultLoaderId) {
+  "use strict";
+
+  const LOADERS_MAP = {
+    jsx: 0,
+    js: 1,
+    ts: 2,
+    tsx: 3,
+    css: 4,
+    file: 5,
+    json: 6,
+    toml: 7,
+    wasm: 8,
+    napi: 9,
+    base64: 10,
+    dataurl: 11,
+    text: 12,
+  };
+  const loaderName = [
+    "jsx",
+    "js",
+    "ts",
+    "tsx",
+    "css",
+    "file",
+    "json",
+    "toml",
+    "wasm",
+    "napi",
+    "base64",
+    "dataurl",
+    "text",
+  ][defaultLoaderId];
+
+  var promiseResult = (async (internalID, path, namespace, defaultLoader) => {
+    var results = this.onLoad.@get(namespace);
+    if (!results) {
+      this.onLoadAsync(internalID, null, null, null);
+      return null;
+    }
+
+    for (let [filter, callback] of results) {
+      if (filter.test(path)) {
+        var result = callback({
+          path,
+          namespace,
+          loader: defaultLoader,
+        });
+
+        while (
+          result &&
+          @isPromise(result) &&
+          (@getPromiseInternalField(result, @promiseFieldFlags) &
+            @promiseStateMask) ===
+            @promiseStateFulfilled
+        ) {
+          result = @getPromiseInternalField(
+            result,
+            @promiseFieldReactionsOrResult
+          );
+        }
+
+        if (result && @isPromise(result)) {
+          result = await result;
+        }
+
+        if (!result || !@isObject(result)) {
+          continue;
+        }
+
+        var { contents, loader = defaultLoader } = result;
+        if (!(typeof contents === "string") && !@isTypedArrayView(contents)) {
+          @throwTypeError(
+            'onLoad plugins must return an object with "contents" as a string or Uint8Array'
+          );
+        }
+
+        if (!(typeof loader === "string")) {
+          @throwTypeError(
+            'onLoad plugins must return an object with "loader" as a string'
+          );
+        }
+
+        const chosenLoader = LOADERS_MAP[loader];
+        if (chosenLoader === @undefined) {
+          @throwTypeError('Loader "' + loader + '" is not supported.');
+        }
+
+        this.onLoadAsync(internalID, contents, chosenLoader);
+        return null;
+      }
+    }
+
+    this.onLoadAsync(internalID, null, null);
+    return null;
+  })(internalID, path, namespace, loaderName);
+
+  while (
+    promiseResult &&
+    @isPromise(promiseResult) &&
+    (@getPromiseInternalField(promiseResult, @promiseFieldFlags) &
+      @promiseStateMask) ===
+      @promiseStateFulfilled
+  ) {
+    promiseResult = @getPromiseInternalField(
+      promiseResult,
+      @promiseFieldReactionsOrResult
+    );
+  }
+
+  if (promiseResult && @isPromise(promiseResult)) {
+    promiseResult.then(
+      () => {},
+      (e) => {
+        this.addError(internalID, e, 0);
+      }
+    );
+  }
+}

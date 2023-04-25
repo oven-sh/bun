@@ -171,7 +171,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addFilter, (JSC::JSGlobalObject
         namespaceStr = String();
     }
 
-    bool isOnLoad = callFrame->argument(2).toNumber(globalObject) == 0;
+    bool isOnLoad = callFrame->argument(2).toNumber(globalObject) == 1;
     auto& vm = globalObject->vm();
 
     if (isOnLoad) {
@@ -267,7 +267,7 @@ extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* pluginObject, 
     return pluginObject->plugin.anyMatchesCrossThread(namespaceString, path, isOnLoad);
 }
 
-extern "C" void JSBundlerPlugin__matchOnLoad(JSC::JSGlobalObject* globalObject, Bun::JSBundlerPlugin* plugin, const ZigString* namespaceString, const ZigString* path, uint8_t defaultLoaderId, void* context)
+extern "C" void JSBundlerPlugin__matchOnLoad(JSC::JSGlobalObject* globalObject, Bun::JSBundlerPlugin* plugin, const ZigString* namespaceString, const ZigString* path, void* context, uint8_t defaultLoaderId)
 {
     WTF::String namespaceStringStr = namespaceString ? Zig::toStringCopy(*namespaceString) : WTF::String();
     WTF::String pathStr = path ? Zig::toStringCopy(*path) : WTF::String();
@@ -303,9 +303,12 @@ extern "C" void JSBundlerPlugin__matchOnLoad(JSC::JSGlobalObject* globalObject, 
     }
 }
 
-extern "C" void JSBundlerPlugin__matchOnResolve(JSC::JSGlobalObject* globalObject, Bun::JSBundlerPlugin* plugin, const ZigString* namespaceString, const ZigString* path, const ZigString* importer, uint8_t kindId, void* context)
+extern "C" void JSBundlerPlugin__matchOnResolve(JSC::JSGlobalObject* globalObject, Bun::JSBundlerPlugin* plugin, const ZigString* namespaceString, const ZigString* path, const ZigString* importer, void* context, uint8_t kindId)
 {
-    WTF::String namespaceStringStr = namespaceString ? Zig::toStringCopy(*namespaceString) : WTF::String();
+    WTF::String namespaceStringStr = namespaceString ? Zig::toStringCopy(*namespaceString) : WTF::String("file"_s);
+    if (namespaceStringStr.length() == 0) {
+        namespaceStringStr = WTF::String("file"_s);
+    }
     WTF::String pathStr = path ? Zig::toStringCopy(*path) : WTF::String();
     WTF::String importerStr = importer ? Zig::toStringCopy(*importer) : WTF::String();
     auto& vm = globalObject->vm();

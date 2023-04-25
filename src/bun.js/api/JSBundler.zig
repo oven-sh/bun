@@ -739,8 +739,8 @@ pub const JSBundler = struct {
             context: *anyopaque,
             default_loader: options.Loader,
         ) void {
-            const namespace_string = if (strings.eqlComptime(namespace, "file"))
-                ZigString.Empty
+            const namespace_string = if (namespace.len == 0)
+                ZigString.init("file")
             else
                 ZigString.fromUTF8(namespace);
             const path_string = ZigString.fromUTF8(path);
@@ -789,8 +789,8 @@ pub const JSBundler = struct {
         ) JSValue;
 
         pub export fn JSBundlerPlugin__addError(
-            _: *Plugin,
             ctx: *anyopaque,
+            _: *Plugin,
             exception: JSValue,
             which: JSValue,
         ) void {

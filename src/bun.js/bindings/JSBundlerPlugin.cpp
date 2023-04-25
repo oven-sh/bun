@@ -19,432 +19,44 @@
 #include "BunClientData.h"
 #include "ModuleLoader.h"
 #include "JavaScriptCore/RegularExpression.h"
+#include <JavaScriptCore/LazyProperty.h>
+#include <JavaScriptCore/LazyPropertyInlines.h>
+#include <JavaScriptCore/VMTrapsInlines.h>
 
 namespace Bun {
 
-#define WRAP_BUNDLER_PLUGIN(argName) JSValue(bitwise_cast<double>(reinterpret_cast<uintptr_t>(argName)))
-#define UNWRAP_BUNDLER_PLUGIN(callFrame) reinterpret_cast<JSBundlerPlugin*>(bitwise_cast<uintptr_t>(callFrame->thisValue().asDouble()))
+#define WRAP_BUNDLER_PLUGIN(argName) jsNumber(bitwise_cast<double>(reinterpret_cast<uintptr_t>(argName)))
+#define UNWRAP_BUNDLER_PLUGIN(callFrame) reinterpret_cast<void*>(bitwise_cast<uintptr_t>(callFrame->argument(0).asDouble()))
 
-WTF_MAKE_ISO_ALLOCATED_IMPL(JSBundlerPlugin);
+extern "C" void JSBundlerPlugin__addError(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
+extern "C" void JSBundlerPlugin__onLoadAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
+extern "C" void JSBundlerPlugin__onResolveAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
 
-static bool isValidNamespaceString(String& namespaceString)
+JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_addFilter);
+JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_addError);
+JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_onLoadAsync);
+JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_onResolveAsync);
+
+void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString)
 {
-    static JSC::Yarr::RegularExpression* namespaceRegex = nullptr;
-    if (!namespaceRegex) {
-        namespaceRegex = new JSC::Yarr::RegularExpression("^([/@a-zA-Z0-9_\\-]+)$"_s);
-    }
-    return namespaceRegex->match(namespaceString) > -1;
-}
+    auto* nsGroup = group(namespaceString);
 
-static EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, JSBundlerPlugin& plugin)
-{
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    Ref protect(plugin);
-
-    if (callframe->argumentCount() < 2) {
-        throwException(globalObject, scope, createError(globalObject, "onLoad() requires at least 2 arguments"_s));
-        return JSValue::encode(jsUndefined());
+    if (nsGroup == nullptr) {
+        namespaces.append(namespaceString);
+        groups.append(Vector<Yarr::RegularExpression> {});
+        nsGroup = &groups.last();
     }
 
-    auto* filterObject = callframe->uncheckedArgument(0).toObject(globalObject);
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    auto clientData = WebCore::clientData(vm);
-    auto& builtinNames = clientData->builtinNames();
-    JSC::RegExpObject* filter = nullptr;
-    if (JSValue filterValue = filterObject->getIfPropertyExists(globalObject, builtinNames.filterPublicName())) {
-        if (filterValue.isCell() && filterValue.asCell()->inherits<JSC::RegExpObject>())
-            filter = jsCast<JSC::RegExpObject*>(filterValue);
-    }
-
-    if (!filter) {
-        throwException(globalObject, scope, createError(globalObject, "onLoad() expects first argument to be an object with a filter RegExp"_s));
-        return JSValue::encode(jsUndefined());
-    }
-
-    String namespaceString = String();
-    if (JSValue namespaceValue = filterObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "namespace"_s))) {
-        if (namespaceValue.isString()) {
-            namespaceString = namespaceValue.toWTFString(globalObject);
-            RETURN_IF_EXCEPTION(scope, encodedJSValue());
-            if (!isValidNamespaceString(namespaceString)) {
-                throwException(globalObject, scope, createError(globalObject, "namespace can only contain letters, numbers, dashes, or underscores"_s));
-                return JSValue::encode(jsUndefined());
-            }
-        }
-        RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    }
-
-    auto func = callframe->uncheckedArgument(1);
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
-
-    if (!func.isCell() || !func.isCallable()) {
-        throwException(globalObject, scope, createError(globalObject, "onLoad() expects second argument to be a function"_s));
-        return JSValue::encode(jsUndefined());
-    }
-
-    plugin.onLoad.append(vm, filter->regExp(), jsCast<JSFunction*>(func), namespaceString);
-
-    return JSValue::encode(jsUndefined());
-}
-
-static EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, JSBundlerPlugin& plugin)
-{
-    Ref protect(plugin);
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (callframe->argumentCount() < 2) {
-        throwException(globalObject, scope, createError(globalObject, "onResolve() requires at least 2 arguments"_s));
-        return JSValue::encode(jsUndefined());
-    }
-
-    auto* filterObject = callframe->uncheckedArgument(0).toObject(globalObject);
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    auto clientData = WebCore::clientData(vm);
-    auto& builtinNames = clientData->builtinNames();
-    JSC::RegExpObject* filter = nullptr;
-    if (JSValue filterValue = filterObject->getIfPropertyExists(globalObject, builtinNames.filterPublicName())) {
-        if (filterValue.isCell() && filterValue.asCell()->inherits<JSC::RegExpObject>())
-            filter = jsCast<JSC::RegExpObject*>(filterValue);
-    }
-
-    if (!filter) {
-        throwException(globalObject, scope, createError(globalObject, "onResolve() expects first argument to be an object with a filter RegExp"_s));
-        return JSValue::encode(jsUndefined());
-    }
-
-    String namespaceString = String();
-    if (JSValue namespaceValue = filterObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "namespace"_s))) {
-        if (namespaceValue.isString()) {
-            namespaceString = namespaceValue.toWTFString(globalObject);
-            RETURN_IF_EXCEPTION(scope, encodedJSValue());
-            if (!isValidNamespaceString(namespaceString)) {
-                throwException(globalObject, scope, createError(globalObject, "namespace can only contain letters, numbers, dashes, or underscores"_s));
-                return JSValue::encode(jsUndefined());
-            }
-        }
-
-        RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    }
-
-    auto func = callframe->uncheckedArgument(1);
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
-
-    if (!func.isCell() || !func.isCallable()) {
-        throwException(globalObject, scope, createError(globalObject, "onResolve() expects second argument to be a function"_s));
-        return JSValue::encode(jsUndefined());
-    }
-
-    plugin.onResolve.append(vm, filter->regExp(), jsCast<JSFunction*>(func), namespaceString);
-
-    return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunctionAppendOnLoadJSBundlerPlugin, (JSGlobalObject * globalObject, CallFrame* callframe))
-{
-    auto& plugin = *UNWRAP_BUNDLER_PLUGIN(callframe);
-    return jsFunctionAppendOnLoadPluginBody(globalObject, callframe, plugin);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunctionAppendOnResolveJSBundlerPlugin, (JSGlobalObject * globalObject, CallFrame* callframe))
-{
-    auto& plugin = *UNWRAP_BUNDLER_PLUGIN(callframe);
-    return jsFunctionAppendOnResolvePluginBody(globalObject, callframe, plugin);
-}
-
-extern "C" EncodedJSValue setupJSBundlerPlugin(JSBundlerPlugin* bundlerPlugin, JSC::JSGlobalObject* globalObject, JSValue objValue)
-{
-    JSC::VM& vm = globalObject->vm();
-    auto clientData = WebCore::clientData(vm);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    if (!objValue || !objValue.isObject()) {
-        JSC::throwTypeError(globalObject, throwScope, "plugin needs to be an object"_s);
-        return JSValue::encode(throwScope.exception());
-    }
-
-    JSC::JSObject* obj = objValue.toObject(globalObject);
-
-    JSC::JSValue setupFunctionValue = obj->getIfPropertyExists(globalObject, Identifier::fromString(vm, "setup"_s));
-    if (!setupFunctionValue || setupFunctionValue.isUndefinedOrNull() || !setupFunctionValue.isCell() || !setupFunctionValue.isCallable()) {
-        JSC::throwTypeError(globalObject, throwScope, "plugin needs a setup() function"_s);
-        return JSValue::encode(throwScope.exception());
-    }
-
-    JSFunction* setupFunction = jsCast<JSFunction*>(setupFunctionValue);
-    JSObject* builderObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
-
-    JSC::JSFunction* onLoadFunction = JSC::JSFunction::create(vm, globalObject, 1, "onLoad"_s, jsFunctionAppendOnLoadJSBundlerPlugin, ImplementationVisibility::Public);
-    JSC::JSFunction* onResolveFunction = JSC::JSFunction::create(vm, globalObject, 1, "onResolve"_s, jsFunctionAppendOnResolveJSBundlerPlugin, ImplementationVisibility::Public);
-    JSC::JSBoundFunction* boundOnLoadFunction = JSC::JSBoundFunction::create(
-        vm,
-        globalObject,
-        onLoadFunction,
-        WRAP_BUNDLER_PLUGIN(bundlerPlugin),
-        JSC::ArgList(),
-        1,
-        jsString(vm, String("onLoad"_s)));
-
-    JSC::JSBoundFunction* boundOnResolveFunction = JSC::JSBoundFunction::create(
-        vm,
-        globalObject,
-        onResolveFunction,
-        WRAP_BUNDLER_PLUGIN(bundlerPlugin),
-        JSC::ArgList(),
-        1,
-        jsString(vm, String("onResolve"_s)));
-
-    bundlerPlugin->ref();
-    vm.heap.addFinalizer(boundOnLoadFunction, [bundlerPlugin](JSC::JSCell* cell) {
-        bundlerPlugin->deref();
-    });
-
-    bundlerPlugin->ref();
-    vm.heap.addFinalizer(boundOnResolveFunction, [bundlerPlugin](JSC::JSCell* cell) {
-        bundlerPlugin->deref();
-    });
-
-    builderObject->putDirect(
-        vm,
-        JSC::Identifier::fromString(vm, "onLoad"_s),
-        boundOnLoadFunction,
-        JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-    builderObject->putDirect(
-        vm,
-        JSC::Identifier::fromString(vm, "onResolve"_s),
-        boundOnResolveFunction,
-        JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-
-    JSC::MarkedArgumentBuffer args;
-    args.append(builderObject);
-
-    JSFunction* function = jsCast<JSFunction*>(setupFunctionValue);
-    JSC::CallData callData = JSC::getCallData(function);
-    JSValue result = call(globalObject, function, callData, JSC::jsUndefined(), args);
-
-    RETURN_IF_EXCEPTION(throwScope, JSValue::encode(throwScope.exception()));
-
-    if (auto* promise = JSC::jsDynamicCast<JSC::JSPromise*>(result)) {
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(promise));
-    }
-
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
-}
-
-void JSBundlerPlugin::Group::append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSFunction* func)
-{
     Yarr::RegularExpression regex(
         StringView(filter->pattern()),
         filter->flags().contains(Yarr::Flags::IgnoreCase) ? Yarr::TextCaseSensitivity::TextCaseInsensitive : Yarr::TextCaseSensitivity::TextCaseInsensitive,
         filter->multiline() ? Yarr::MultilineMode::MultilineEnabled : Yarr::MultilineMode::MultilineDisabled,
         filter->eitherUnicode() ? Yarr::UnicodeMode::UnicodeAwareMode : Yarr::UnicodeMode::UnicodeUnawareMode);
-    filters.append(WTFMove(regex));
-    callbacks.append(JSC::Strong<JSC::JSFunction> { vm, func });
+
+    nsGroup->append(WTFMove(regex));
 }
 
-void JSBundlerPlugin::Base::append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSFunction* func, String& namespaceString)
-{
-    if (namespaceString.isEmpty() || namespaceString == "file"_s) {
-        this->fileNamespace.append(vm, filter, func);
-    } else if (auto found = this->group(namespaceString)) {
-        found->append(vm, filter, func);
-    } else {
-        Group newGroup;
-        newGroup.append(vm, filter, func);
-        this->groups.append(WTFMove(newGroup));
-        this->namespaces.append(namespaceString);
-    }
-}
-
-JSFunction* JSBundlerPlugin::Group::find(String& path)
-{
-    size_t count = filters.size();
-    for (size_t i = 0; i < count; i++) {
-        int matchLength = 0;
-        if (filters[i].match(path, 0, &matchLength)) {
-            return callbacks[i].get();
-        }
-    }
-
-    return nullptr;
-}
-
-EncodedJSValue JSBundlerPlugin::OnResolve::run(const ZigString* namespaceString, const ZigString* path, const ZigString* importer, void* context)
-{
-    Group* groupPtr = this->group(namespaceString ? Zig::toString(*namespaceString) : String());
-    if (groupPtr == nullptr) {
-        return JSValue::encode(jsUndefined());
-    }
-    Group& group = *groupPtr;
-
-    auto pathString = Zig::toString(*path);
-
-    JSC::JSFunction* function = group.find(pathString);
-    if (!function) {
-        return JSValue::encode(JSC::jsUndefined());
-    }
-
-    JSC::MarkedArgumentBuffer arguments;
-    JSC::JSGlobalObject* globalObject = function->globalObject();
-    auto& vm = globalObject->vm();
-
-    JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
-    auto clientData = WebCore::clientData(vm);
-    auto& builtinNames = clientData->builtinNames();
-    paramsObject->putDirect(
-        vm, clientData->builtinNames().pathPublicName(),
-        Zig::toJSStringValue(*path, globalObject));
-    paramsObject->putDirect(
-        vm, clientData->builtinNames().importerPublicName(),
-        Zig::toJSStringValue(*importer, globalObject));
-    arguments.append(paramsObject);
-
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
-    scope.assertNoExceptionExceptTermination();
-
-    JSC::CallData callData = JSC::getCallData(function);
-
-    auto result = call(globalObject, function, callData, JSC::jsUndefined(), arguments);
-    if (UNLIKELY(scope.exception())) {
-        return JSValue::encode(scope.exception());
-    }
-
-    if (auto* promise = JSC::jsDynamicCast<JSPromise*>(result)) {
-        switch (promise->status(vm)) {
-        case JSPromise::Status::Pending: {
-            return JSValue::encode(promise);
-        }
-        case JSPromise::Status::Rejected: {
-            promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(static_cast<unsigned>(JSC::JSPromise::Status::Fulfilled)));
-            result = promise->result(vm);
-            return JSValue::encode(result);
-        }
-        case JSPromise::Status::Fulfilled: {
-            result = promise->result(vm);
-            break;
-        }
-        }
-    }
-
-    if (!result.isObject()) {
-        JSC::throwTypeError(globalObject, throwScope, "onLoad() expects an object returned"_s);
-        return JSValue::encode({});
-    }
-
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
-}
-
-EncodedJSValue JSBundlerPlugin::OnLoad::run(const ZigString* namespaceString, const ZigString* path, void* context)
-{
-    Group* groupPtr = this->group(namespaceString ? Zig::toString(*namespaceString) : String());
-    if (groupPtr == nullptr) {
-        return JSValue::encode(jsUndefined());
-    }
-    Group& group = *groupPtr;
-
-    auto pathString = Zig::toString(*path);
-
-    JSC::JSFunction* function = group.find(pathString);
-    if (!function) {
-        return JSValue::encode(JSC::jsUndefined());
-    }
-
-    JSC::MarkedArgumentBuffer arguments;
-    JSC::JSGlobalObject* globalObject = function->globalObject();
-    auto& vm = globalObject->vm();
-
-    auto& callbacks = group.callbacks;
-
-    auto& filters = group.filters;
-
-    for (size_t i = 0; i < filters.size(); i++) {
-        if (!filters[i].match(pathString)) {
-            continue;
-        }
-        JSC::JSFunction* function = callbacks[i].get();
-        if (UNLIKELY(!function)) {
-            continue;
-        }
-
-        JSC::MarkedArgumentBuffer arguments;
-        JSC::VM& vm = globalObject->vm();
-
-        JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
-        auto clientData = WebCore::clientData(vm);
-        auto& builtinNames = clientData->builtinNames();
-        paramsObject->putDirect(
-            vm, clientData->builtinNames().pathPublicName(),
-            Zig::toJSStringValue(*path, globalObject));
-        arguments.append(paramsObject);
-
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        auto scope = DECLARE_CATCH_SCOPE(vm);
-        scope.assertNoExceptionExceptTermination();
-
-        JSC::CallData callData = JSC::getCallData(function);
-
-        auto result = call(globalObject, function, callData, JSC::jsUndefined(), arguments);
-
-        if (UNLIKELY(!scope.exception() && result && !result.isUndefinedOrNull() && !result.isCell())) {
-            throwTypeError(globalObject, throwScope, "onLoad() expects an object returned"_s);
-        }
-
-        if (UNLIKELY(scope.exception())) {
-            JSC::Exception* exception = scope.exception();
-            scope.clearException();
-            return JSValue::encode(exception);
-        }
-
-        result = Bun::handleVirtualModuleResultForJSBundlerPlugin(
-            reinterpret_cast<Zig::GlobalObject*>(globalObject),
-            result,
-            path,
-            nullptr,
-            context);
-
-        if (UNLIKELY(scope.exception())) {
-            JSC::Exception* exception = scope.exception();
-            scope.clearException();
-            return JSValue::encode(exception);
-        }
-
-        if (!result || result.isUndefined()) {
-            RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
-        }
-
-        if (auto* promise = JSC::jsDynamicCast<JSPromise*>(result)) {
-            switch (promise->status(vm)) {
-            case JSPromise::Status::Pending: {
-                RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
-            }
-            case JSPromise::Status::Rejected: {
-                promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(static_cast<unsigned>(JSC::JSPromise::Status::Fulfilled)));
-                result = promise->result(vm);
-                RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
-            }
-            case JSPromise::Status::Fulfilled: {
-                result = promise->result(vm);
-                break;
-            }
-            }
-        }
-
-        if (!result.isObject()) {
-            JSC::throwTypeError(globalObject, throwScope, "onResolve() expects an object returned"_s);
-            JSC::Exception* exception = scope.exception();
-            scope.clearException();
-            return JSValue::encode(exception);
-        }
-
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
-    }
-
-    return JSValue::encode(JSC::jsUndefined());
-}
-
-bool JSBundlerPlugin::anyMatchesCrossThread(const ZigString* namespaceStr, const ZigString* path, bool isOnLoad)
+bool BundlerPlugin::anyMatchesCrossThread(const ZigString* namespaceStr, const ZigString* path, bool isOnLoad)
 {
     auto namespaceString = namespaceStr ? Zig::toString(*namespaceStr) : String();
     auto pathString = Zig::toString(*path);
@@ -455,7 +67,7 @@ bool JSBundlerPlugin::anyMatchesCrossThread(const ZigString* namespaceStr, const
             return false;
         }
 
-        auto& filters = group->filters;
+        auto& filters = *group;
 
         for (auto& filter : filters) {
             if (filter.match(pathString) > -1) {
@@ -469,7 +81,7 @@ bool JSBundlerPlugin::anyMatchesCrossThread(const ZigString* namespaceStr, const
             return false;
         }
 
-        auto& filters = group->filters;
+        auto& filters = *group;
 
         for (auto& filter : filters) {
             if (filter.match(pathString) > -1) {
@@ -481,46 +93,310 @@ bool JSBundlerPlugin::anyMatchesCrossThread(const ZigString* namespaceStr, const
     return false;
 }
 
-} // namespace Bun
+static const HashTableValue JSBundlerPluginHashTable[] = {
+    { "addFilter"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_addFilter, 3 } },
+    { "addError"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_addError, 3 } },
+    { "onLoadAsync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_onLoadAsync, 3 } },
+    { "onResolveAsync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_onResolveAsync, 4 } },
+};
 
-extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* plugin, const ZigString* namespaceString, const ZigString* path, bool isOnLoad)
+class JSBundlerPlugin final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+    static JSBundlerPlugin* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* config, BunPluginTarget target)
+    {
+        JSBundlerPlugin* ptr = new (NotNull, JSC::allocateCell<JSBundlerPlugin>(vm)) JSBundlerPlugin(vm, globalObject, structure, config, target);
+        ptr->finishCreation(vm);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename, SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<JSBundlerPlugin, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForBundlerPlugin.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBundlerPlugin = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForBundlerPlugin.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForBundlerPlugin = std::forward<decltype(space)>(space); });
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+    DECLARE_VISIT_CHILDREN;
+
+    Bun::BundlerPlugin plugin;
+    JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> onLoadFunction;
+    JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> onResolveFunction;
+    JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> setupFunction;
+
+private:
+    JSBundlerPlugin(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure, void* config, BunPluginTarget target)
+        : JSC::JSNonFinalObject(vm, structure)
+        , plugin(BundlerPlugin(config, target))
+    {
+    }
+
+    void finishCreation(JSC::VM&);
+};
+
+template<typename Visitor>
+void JSBundlerPlugin::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    return plugin->anyMatchesCrossThread(namespaceString, path, isOnLoad);
+    JSBundlerPlugin* thisObject = jsCast<JSBundlerPlugin*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    thisObject->onLoadFunction.visit(visitor);
+    thisObject->onResolveFunction.visit(visitor);
+    thisObject->setupFunction.visit(visitor);
+}
+DEFINE_VISIT_CHILDREN(JSBundlerPlugin);
+
+const JSC::ClassInfo JSBundlerPlugin::s_info = { "BundlerPlugin"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBundlerPlugin) };
+
+JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addFilter, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSBundlerPlugin* thisObject = jsCast<JSBundlerPlugin*>(callFrame->thisValue());
+    if (thisObject->plugin.tombstoned) {
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    JSC::RegExpObject* regExp = jsCast<JSC::RegExpObject*>(callFrame->argument(0));
+    WTF::String namespaceStr = callFrame->argument(1).toWTFString(globalObject);
+    if (namespaceStr == "file"_s) {
+        namespaceStr = String();
+    }
+
+    bool isOnLoad = callFrame->argument(2).toNumber(globalObject) == 1;
+    auto& vm = globalObject->vm();
+
+    if (isOnLoad) {
+        thisObject->plugin.onLoad.append(vm, regExp->regExp(), namespaceStr);
+    } else {
+        thisObject->plugin.onResolve.append(vm, regExp->regExp(), namespaceStr);
+    }
+
+    return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-extern "C" JSC::EncodedJSValue JSBundlerPlugin__matchOnLoad(JSC::JSGlobalObject* globalObject, Bun::JSBundlerPlugin* plugin, const ZigString* namespaceString, const ZigString* path, void* context)
+JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addError, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    Ref protect(*plugin);
-    return plugin->onLoad.run(
-        namespaceString,
-        path,
-        context);
+    JSBundlerPlugin* thisObject = jsCast<JSBundlerPlugin*>(callFrame->thisValue());
+    if (!thisObject->plugin.tombstoned) {
+        JSBundlerPlugin__addError(
+            UNWRAP_BUNDLER_PLUGIN(callFrame),
+            thisObject->plugin.config,
+            JSValue::encode(callFrame->argument(1)),
+            JSValue::encode(callFrame->argument(2)));
+    }
+
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onLoadAsync, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSBundlerPlugin* thisObject = jsCast<JSBundlerPlugin*>(callFrame->thisValue());
+    if (!thisObject->plugin.tombstoned) {
+        JSBundlerPlugin__onLoadAsync(
+            UNWRAP_BUNDLER_PLUGIN(callFrame),
+            thisObject->plugin.config,
+            JSValue::encode(callFrame->argument(1)),
+            JSValue::encode(callFrame->argument(2)));
+    }
+
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onResolveAsync, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSBundlerPlugin* thisObject = jsCast<JSBundlerPlugin*>(callFrame->thisValue());
+    if (!thisObject->plugin.tombstoned) {
+        JSBundlerPlugin__onResolveAsync(
+            UNWRAP_BUNDLER_PLUGIN(callFrame),
+            thisObject->plugin.config,
+            JSValue::encode(callFrame->argument(1)),
+            JSValue::encode(callFrame->argument(2)),
+            JSValue::encode(callFrame->argument(3)));
+    }
+
+    return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-extern "C" JSC::EncodedJSValue JSBundlerPlugin__matchOnResolve(JSC::JSGlobalObject* globalObject, Bun::JSBundlerPlugin* plugin, const ZigString* namespaceString, const ZigString* path, const ZigString* importer, void* context)
+void JSBundlerPlugin::finishCreation(JSC::VM& vm)
 {
-    Ref protect(*plugin);
-    return plugin->onResolve.run(
-        namespaceString,
-        path,
-        importer,
-        context);
+    Base::finishCreation(vm);
+    ASSERT(inherits(vm, info()));
+    this->onLoadFunction.initLater(
+        [](const JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction>::Initializer& init) {
+            auto& vm = init.vm;
+            auto* globalObject = init.owner->globalObject();
+
+            init.set(
+                JSC::JSFunction::create(vm, WebCore::bundlerPluginRunOnLoadPluginsCodeGenerator(vm), globalObject));
+        });
+
+    this->onResolveFunction.initLater(
+        [](const JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction>::Initializer& init) {
+            auto& vm = init.vm;
+            auto* globalObject = init.owner->globalObject();
+
+            init.set(
+                JSC::JSFunction::create(vm, WebCore::bundlerPluginRunOnResolvePluginsCodeGenerator(vm), globalObject));
+        });
+
+    this->setupFunction.initLater(
+        [](const JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction>::Initializer& init) {
+            auto& vm = init.vm;
+            auto* globalObject = init.owner->globalObject();
+
+            init.set(
+                JSC::JSFunction::create(vm, WebCore::bundlerPluginRunSetupFunctionCodeGenerator(vm), globalObject));
+        });
+
+    auto* clientData = WebCore::clientData(vm);
+
+    this->putDirect(vm, Identifier::fromString(vm, String("onLoad"_s)), jsUndefined(), 0);
+    this->putDirect(vm, Identifier::fromString(vm, String("onResolve"_s)), jsUndefined(), 0);
+    reifyStaticProperties(vm, JSBundlerPlugin::info(), JSBundlerPluginHashTable, *this);
+}
+
+extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* pluginObject, const ZigString* namespaceString, const ZigString* path, bool isOnLoad)
+{
+    return pluginObject->plugin.anyMatchesCrossThread(namespaceString, path, isOnLoad);
+}
+
+extern "C" void JSBundlerPlugin__matchOnLoad(JSC::JSGlobalObject* globalObject, Bun::JSBundlerPlugin* plugin, const ZigString* namespaceString, const ZigString* path, void* context, uint8_t defaultLoaderId)
+{
+    WTF::String namespaceStringStr = namespaceString ? Zig::toStringCopy(*namespaceString) : WTF::String();
+    WTF::String pathStr = path ? Zig::toStringCopy(*path) : WTF::String();
+
+    JSFunction* function = plugin->onLoadFunction.get(plugin);
+    if (UNLIKELY(!function))
+        return;
+
+    JSC::CallData callData = JSC::getCallData(function);
+
+    if (UNLIKELY(callData.type == JSC::CallData::Type::None))
+        return;
+
+    auto scope = DECLARE_CATCH_SCOPE(plugin->vm());
+    JSC::MarkedArgumentBuffer arguments;
+    arguments.append(WRAP_BUNDLER_PLUGIN(context));
+    arguments.append(JSC::jsString(plugin->vm(), pathStr));
+    arguments.append(JSC::jsString(plugin->vm(), namespaceStringStr));
+    arguments.append(JSC::jsNumber(defaultLoaderId));
+
+    auto result = call(globalObject, function, callData, plugin, arguments);
+
+    if (scope.exception()) {
+        auto exception = scope.exception();
+        scope.clearException();
+        if (!plugin->plugin.tombstoned) {
+            JSBundlerPlugin__addError(
+                context,
+                plugin->plugin.config,
+                JSC::JSValue::encode(exception),
+                JSValue::encode(jsNumber(0)));
+        }
+    }
+}
+
+extern "C" void JSBundlerPlugin__matchOnResolve(JSC::JSGlobalObject* globalObject, Bun::JSBundlerPlugin* plugin, const ZigString* namespaceString, const ZigString* path, const ZigString* importer, void* context, uint8_t kindId)
+{
+    WTF::String namespaceStringStr = namespaceString ? Zig::toStringCopy(*namespaceString) : WTF::String("file"_s);
+    if (namespaceStringStr.length() == 0) {
+        namespaceStringStr = WTF::String("file"_s);
+    }
+    WTF::String pathStr = path ? Zig::toStringCopy(*path) : WTF::String();
+    WTF::String importerStr = importer ? Zig::toStringCopy(*importer) : WTF::String();
+    auto& vm = globalObject->vm();
+
+    JSFunction* function = plugin->onResolveFunction.get(plugin);
+    if (UNLIKELY(!function))
+        return;
+
+    JSC::CallData callData = JSC::getCallData(function);
+
+    if (UNLIKELY(callData.type == JSC::CallData::Type::None))
+        return;
+
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    JSC::MarkedArgumentBuffer arguments;
+    arguments.append(JSC::jsString(vm, pathStr));
+    arguments.append(JSC::jsString(vm, namespaceStringStr));
+    arguments.append(JSC::jsString(vm, importerStr));
+    arguments.append(WRAP_BUNDLER_PLUGIN(context));
+    arguments.append(JSC::jsNumber(kindId));
+
+    auto result = call(globalObject, function, callData, plugin, arguments);
+
+    if (UNLIKELY(scope.exception())) {
+        auto exception = JSValue(scope.exception());
+        scope.clearException();
+        if (!plugin->plugin.tombstoned) {
+            JSBundlerPlugin__addError(
+                context,
+                plugin->plugin.config,
+                JSC::JSValue::encode(exception),
+                JSValue::encode(jsNumber(1)));
+        }
+        return;
+    }
 }
 
 extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* globalObject, BunPluginTarget target)
 {
-    RefPtr<Bun::JSBundlerPlugin> plugin = adoptRef(*new Bun::JSBundlerPlugin(target, nullptr));
-    plugin->ref();
-    return plugin.leakRef();
+    return JSBundlerPlugin::create(
+        globalObject->vm(),
+        globalObject,
+        // TODO: cache this structure on the global object
+        JSBundlerPlugin::createStructure(
+            globalObject->vm(),
+            globalObject,
+            globalObject->objectPrototype()),
+        nullptr,
+        target);
+}
+
+extern "C" EncodedJSValue JSBundlerPlugin__runSetupFunction(
+    Bun::JSBundlerPlugin* plugin,
+    EncodedJSValue encodedSetupFunction)
+{
+    auto& vm = plugin->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    auto* setupFunction = jsCast<JSFunction*>(plugin->setupFunction.get(plugin));
+    if (UNLIKELY(!setupFunction))
+        return JSValue::encode(jsUndefined());
+
+    JSC::CallData callData = JSC::getCallData(setupFunction);
+    if (UNLIKELY(callData.type == JSC::CallData::Type::None))
+        return JSValue::encode(jsUndefined());
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(JSValue::decode(encodedSetupFunction));
+    auto* lexicalGlobalObject = jsCast<JSFunction*>(JSValue::decode(encodedSetupFunction))->globalObject();
+
+    auto result = JSC::call(lexicalGlobalObject, setupFunction, callData, plugin, arguments);
+    if (UNLIKELY(scope.exception())) {
+        auto exception = scope.exception();
+        scope.clearException();
+        return JSValue::encode(exception);
+    }
+
+    return JSValue::encode(result);
 }
 
 extern "C" void JSBundlerPlugin__setConfig(Bun::JSBundlerPlugin* plugin, void* config)
 {
-    plugin->config = config;
+    plugin->plugin.config = config;
 }
 
 extern "C" void JSBundlerPlugin__tombestone(Bun::JSBundlerPlugin* plugin)
 {
-    plugin->tombstone();
-    plugin->deref();
+    plugin->plugin.tombstone();
 }
+
+} // namespace Bun

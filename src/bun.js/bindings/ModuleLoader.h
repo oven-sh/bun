@@ -37,7 +37,6 @@ union OnLoadResultValue {
 struct OnLoadResult {
     OnLoadResultValue value;
     OnLoadResultType type;
-    void* bundlerPluginContext { nullptr };
 };
 
 class PendingVirtualModuleResult : public JSC::JSInternalFieldObjectImpl<3> {
@@ -56,13 +55,12 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_subspaceForPendingVirtualModuleResult = std::forward<decltype(space)>(space); });
     }
 
-    JS_EXPORT_PRIVATE static PendingVirtualModuleResult* create(VM&, Structure*, void* bundlerPluginContext = nullptr);
-    static PendingVirtualModuleResult* create(JSC::JSGlobalObject* globalObject, const WTF::String& specifier, const WTF::String& referrer, void* bundlerPluginContext = nullptr);
+    JS_EXPORT_PRIVATE static PendingVirtualModuleResult* create(VM&, Structure*);
+    static PendingVirtualModuleResult* create(JSC::JSGlobalObject* globalObject, const WTF::String& specifier, const WTF::String& referrer);
     static PendingVirtualModuleResult* createWithInitialValues(VM&, Structure*);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
     JSC::JSInternalPromise* internalPromise();
-    JSC::JSPromise* promise();
 
     static std::array<JSValue, numberOfInternalFields> initialValues()
     {
@@ -76,32 +74,21 @@ public:
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
 
-    void* m_bundlerPluginContext { nullptr };
-
-    PendingVirtualModuleResult(JSC::VM&, JSC::Structure*, void* bundlerPluginContext = nullptr);
+    PendingVirtualModuleResult(JSC::VM&, JSC::Structure*);
     void finishCreation(JSC::VM&, const WTF::String& specifier, const WTF::String& referrer);
 };
 
-OnLoadResult handleOnLoadResult(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, ZigString* specifier, void* bunPluginContext = nullptr);
-OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, void* bunPluginContext = nullptr);
-
-JSValue handleVirtualModuleResultForJSBundlerPlugin(
-    Zig::GlobalObject* globalObject,
-    JSValue virtualModuleResult,
-    const ZigString* specifier,
-    const ZigString* referrer,
-    void* bundlerPluginContext);
-
+OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::JSValue objectValue);
 JSValue fetchSourceCodeSync(
     Zig::GlobalObject* globalObject,
     ErrorableResolvedSource* res,
-    const ZigString* specifier,
-    const ZigString* referrer);
+    ZigString* specifier,
+    ZigString* referrer);
 
 JSValue fetchSourceCodeAsync(
     Zig::GlobalObject* globalObject,
     ErrorableResolvedSource* res,
-    const ZigString* specifier,
-    const ZigString* referrer);
+    ZigString* specifier,
+    ZigString* referrer);
 
 } // namespace Bun

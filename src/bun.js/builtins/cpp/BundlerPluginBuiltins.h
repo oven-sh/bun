@@ -46,46 +46,55 @@ class FunctionExecutable;
 
 namespace WebCore {
 
-/* ConsoleObject */
-extern const char* const s_consoleObjectAsyncIteratorCode;
-extern const int s_consoleObjectAsyncIteratorCodeLength;
-extern const JSC::ConstructAbility s_consoleObjectAsyncIteratorCodeConstructAbility;
-extern const JSC::ConstructorKind s_consoleObjectAsyncIteratorCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_consoleObjectAsyncIteratorCodeImplementationVisibility;
-extern const char* const s_consoleObjectWriteCode;
-extern const int s_consoleObjectWriteCodeLength;
-extern const JSC::ConstructAbility s_consoleObjectWriteCodeConstructAbility;
-extern const JSC::ConstructorKind s_consoleObjectWriteCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_consoleObjectWriteCodeImplementationVisibility;
+/* BundlerPlugin */
+extern const char* const s_bundlerPluginRunOnResolvePluginsCode;
+extern const int s_bundlerPluginRunOnResolvePluginsCodeLength;
+extern const JSC::ConstructAbility s_bundlerPluginRunOnResolvePluginsCodeConstructAbility;
+extern const JSC::ConstructorKind s_bundlerPluginRunOnResolvePluginsCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_bundlerPluginRunOnResolvePluginsCodeImplementationVisibility;
+extern const char* const s_bundlerPluginRunSetupFunctionCode;
+extern const int s_bundlerPluginRunSetupFunctionCodeLength;
+extern const JSC::ConstructAbility s_bundlerPluginRunSetupFunctionCodeConstructAbility;
+extern const JSC::ConstructorKind s_bundlerPluginRunSetupFunctionCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_bundlerPluginRunSetupFunctionCodeImplementationVisibility;
+extern const char* const s_bundlerPluginRunOnLoadPluginsCode;
+extern const int s_bundlerPluginRunOnLoadPluginsCodeLength;
+extern const JSC::ConstructAbility s_bundlerPluginRunOnLoadPluginsCodeConstructAbility;
+extern const JSC::ConstructorKind s_bundlerPluginRunOnLoadPluginsCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_bundlerPluginRunOnLoadPluginsCodeImplementationVisibility;
 
-#define WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_DATA(macro) \
-    macro(asyncIterator, consoleObjectAsyncIterator, 0) \
-    macro(write, consoleObjectWrite, 1) \
+#define WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_DATA(macro) \
+    macro(runOnResolvePlugins, bundlerPluginRunOnResolvePlugins, 5) \
+    macro(runSetupFunction, bundlerPluginRunSetupFunction, 1) \
+    macro(runOnLoadPlugins, bundlerPluginRunOnLoadPlugins, 4) \
 
-#define WEBCORE_BUILTIN_CONSOLEOBJECT_ASYNCITERATOR 1
-#define WEBCORE_BUILTIN_CONSOLEOBJECT_WRITE 1
+#define WEBCORE_BUILTIN_BUNDLERPLUGIN_RUNONRESOLVEPLUGINS 1
+#define WEBCORE_BUILTIN_BUNDLERPLUGIN_RUNSETUPFUNCTION 1
+#define WEBCORE_BUILTIN_BUNDLERPLUGIN_RUNONLOADPLUGINS 1
 
-#define WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_CODE(macro) \
-    macro(consoleObjectAsyncIteratorCode, asyncIterator, "[Symbol.asyncIterator]"_s, s_consoleObjectAsyncIteratorCodeLength) \
-    macro(consoleObjectWriteCode, write, ASCIILiteral(), s_consoleObjectWriteCodeLength) \
+#define WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_CODE(macro) \
+    macro(bundlerPluginRunOnResolvePluginsCode, runOnResolvePlugins, ASCIILiteral(), s_bundlerPluginRunOnResolvePluginsCodeLength) \
+    macro(bundlerPluginRunSetupFunctionCode, runSetupFunction, ASCIILiteral(), s_bundlerPluginRunSetupFunctionCodeLength) \
+    macro(bundlerPluginRunOnLoadPluginsCode, runOnLoadPlugins, ASCIILiteral(), s_bundlerPluginRunOnLoadPluginsCodeLength) \
 
-#define WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_FUNCTION_NAME(macro) \
-    macro(asyncIterator) \
-    macro(write) \
+#define WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_FUNCTION_NAME(macro) \
+    macro(runOnLoadPlugins) \
+    macro(runOnResolvePlugins) \
+    macro(runSetupFunction) \
 
 #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
     JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
 
-WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
+WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
 #undef DECLARE_BUILTIN_GENERATOR
 
-class ConsoleObjectBuiltinsWrapper : private JSC::WeakHandleOwner {
+class BundlerPluginBuiltinsWrapper : private JSC::WeakHandleOwner {
 public:
-    explicit ConsoleObjectBuiltinsWrapper(JSC::VM& vm)
+    explicit BundlerPluginBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
-        WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
+        WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
 #define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
-        WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
+        WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
     }
@@ -93,28 +102,28 @@ public:
 #define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
     JSC::UnlinkedFunctionExecutable* name##Executable(); \
     const JSC::SourceCode& name##Source() const { return m_##name##Source; }
-    WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
+    WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
 #undef EXPOSE_BUILTIN_EXECUTABLES
 
-    WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+    WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
 
     void exportNames();
 
 private:
     JSC::VM& m_vm;
 
-    WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
+    WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
 
 #define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
     JSC::SourceCode m_##name##Source;\
     JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
-    WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
+    WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
 #undef DECLARE_BUILTIN_SOURCE_MEMBERS
 
 };
 
 #define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-inline JSC::UnlinkedFunctionExecutable* ConsoleObjectBuiltinsWrapper::name##Executable() \
+inline JSC::UnlinkedFunctionExecutable* BundlerPluginBuiltinsWrapper::name##Executable() \
 {\
     if (!m_##name##Executable) {\
         JSC::Identifier executableName = functionName##PublicName();\
@@ -124,13 +133,13 @@ inline JSC::UnlinkedFunctionExecutable* ConsoleObjectBuiltinsWrapper::name##Exec
     }\
     return m_##name##Executable.get();\
 }
-WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
+WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
 #undef DEFINE_BUILTIN_EXECUTABLES
 
-inline void ConsoleObjectBuiltinsWrapper::exportNames()
+inline void BundlerPluginBuiltinsWrapper::exportNames()
 {
 #define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
-    WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
+    WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
 #undef EXPORT_FUNCTION_NAME
 }
 

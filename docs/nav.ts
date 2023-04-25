@@ -158,6 +158,14 @@ export default {
       description: "Use `bun pm` to introspect your global module cache or project dependency tree.",
     }),
 
+    divider("Bundler"),
+    page("cli/build", "`Bun.build`", {
+      description: "Bundle code for comsumption in the browser with Bun's native bundler.",
+    }),
+    page("bundler/bundling", "How bundlers work", {
+      description: "A visual introduction to bundling",
+    }),
+
     divider("Test runner"),
     page("cli/test", "`bun test`", {
       description: "Bun's test runner uses Jest-compatible syntax but runs 100x faster.",

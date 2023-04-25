@@ -25,6 +25,13 @@ To consume this plugin, add this file to the `preload` option in your [`bunfig.t
 preload = ["./yamlPlugin.ts"]
 ```
 
+To preload files during `bun test`:
+
+```toml
+[test]
+preload = ["./loader.ts"]
+```
+
 {% details summary="Usage without preload" %}
 
 Alternatively, you can import this file manually at the top of your project's entrypoint, before any application code is imported.

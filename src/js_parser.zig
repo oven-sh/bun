@@ -15670,8 +15670,12 @@ fn NewParser_(
                         .bin_rem => {
                             if (p.should_fold_typescript_constant_expressions) {
                                 if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                    // is this correct?
-                                    return p.newExpr(E.Number{ .value = std.math.mod(f64, vals[0], vals[1]) catch 0.0 }, expr.loc);
+                                    return p.newExpr(
+                                        // Use libc fmod here to be consistent with what JavaScriptCore does
+                                        // https://github.com/oven-sh/WebKit/blob/7a0b13626e5db69aa5a32d037431d381df5dfb61/Source/JavaScriptCore/runtime/MathCommon.cpp#L574-L597
+                                        E.Number{ .value = bun.C.fmod(vals[0], vals[1]) },
+                                        expr.loc,
+                                    );
                                 }
                             }
                         },

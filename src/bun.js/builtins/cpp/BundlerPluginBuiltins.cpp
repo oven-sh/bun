@@ -48,7 +48,7 @@ namespace WebCore {
 const JSC::ConstructAbility s_bundlerPluginRunOnResolvePluginsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_bundlerPluginRunOnResolvePluginsCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_bundlerPluginRunOnResolvePluginsCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_bundlerPluginRunOnResolvePluginsCodeLength = 2725;
+const int s_bundlerPluginRunOnResolvePluginsCodeLength = 3060;
 static const JSC::Intrinsic s_bundlerPluginRunOnResolvePluginsCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_bundlerPluginRunOnResolvePluginsCode =
     "(function (specifier, inputNamespace, importer, internalID, kindId) {\n" \
@@ -95,7 +95,7 @@ const char* const s_bundlerPluginRunOnResolvePluginsCode =
     "            continue;\n" \
     "          }\n" \
     "  \n" \
-    "          var { path, namespace: userNamespace = inputNamespace } = result;\n" \
+    "          var { path, namespace: userNamespace = inputNamespace, external } = result;\n" \
     "          if (!@isString(path) || !@isString(userNamespace)) {\n" \
     "            @throwTypeError(\n" \
     "              \"onResolve plugins must return an object with a string 'path' and string 'loader' field\"\n" \
@@ -105,34 +105,42 @@ const char* const s_bundlerPluginRunOnResolvePluginsCode =
     "          if (path.length === 0) {\n" \
     "            continue;\n" \
     "          }\n" \
-    "  \n" \
+    "\n" \
     "          if (userNamespace.length === 0) {\n" \
     "            userNamespace = inputNamespace;\n" \
     "          }\n" \
-    "  \n" \
-    "          if (userNamespace === \"file\") {\n" \
-    "            //\n" \
-    "            if (path[0] !== \"/\" || path.includes(\"..\")) {\n" \
-    "              @throwTypeError(\n" \
-    "                \"onResolve plugin paths must be absolute when the namespace is 'file'\"\n" \
-    "              );\n" \
+    "\n" \
+    "          if (typeof external !== \"boolean\" && !@isUndefinedOrNull(external)) {\n" \
+    "            @throwTypeError(\n" \
+    "              \"onResolve plugins \\\"external\\\" field must be boolean or unspecified\"\n" \
+    "            );\n" \
+    "          }\n" \
+    "          \n" \
+    "          if (!external) {\n" \
+    "            if (userNamespace === \"file\") {\n" \
+    "              //\n" \
+    "              if (path[0] !== \"/\" || path.includes(\"..\")) {\n" \
+    "                @throwTypeError(\n" \
+    "                  \"onResolve plugin \\\"path\\\" must be absolute when the namespace is \\\"file\\\"\"\n" \
+    "                );\n" \
+    "              }\n" \
+    "            }\n" \
+    "    \n" \
+    "            if (userNamespace === \"dataurl\") {\n" \
+    "              if (!path.startsWith(\"data:\")) {\n" \
+    "                @throwTypeError(\n" \
+    "                  \"onResolve plugin \\\"path\\\" must start with \\\"data:\\\" when the namespace is\\\"dataurl\\\"\"\n" \
+    "                );\n" \
+    "              }\n" \
     "            }\n" \
     "          }\n" \
     "  \n" \
-    "          if (userNamespace === \"dataurl\") {\n" \
-    "            if (!path.startsWith(\"data:\")) {\n" \
-    "              @throwTypeError(\n" \
-    "                \"onResolve plugin paths must start with 'data:' when the namespace is 'dataurl'\"\n" \
-    "              );\n" \
-    "            }\n" \
-    "          }\n" \
-    "  \n" \
-    "          this.onResolveAsync(internalID, path, userNamespace);      \n" \
+    "          this.onResolveAsync(internalID, path, userNamespace, external);      \n" \
     "          return null;\n" \
     "        }\n" \
     "      }\n" \
     "\n" \
-    "      this.onResolveAsync(internalID, null, null);\n" \
+    "      this.onResolveAsync(internalID, null, null, null);\n" \
     "      return null;\n" \
     "    })(specifier, inputNamespace, importer, kind);\n" \
     "  \n" \

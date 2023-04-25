@@ -230,7 +230,7 @@ pub const JSBundler = struct {
                     // };
                     // defer decl.deinit();
 
-                    if (try plugin.getOptional(globalThis, "name", ZigString.Slice) catch null) |slice| {
+                    if (plugin.getOptional(globalThis, "name", ZigString.Slice) catch null) |slice| {
                         defer slice.deinit();
                         if (slice.len == 0) {
                             globalThis.throwInvalidArguments("Expected plugin to have a non-empty name", .{});
@@ -371,10 +371,10 @@ pub const JSBundler = struct {
         /// Null means the Resolve is aborted
         completion: ?*bun.BundleV2.JSBundleCompletionTask = null,
 
-        value: Value,
+        value: Value = .{ .pending = {} },
 
-        task: JSC.AnyEventLoop.Task = undefined,
         js_task: JSC.AnyTask = undefined,
+        task: JSC.AnyEventLoop.Task = undefined,
 
         pub const MiniImportRecord = struct {
             kind: bun.ImportKind,
@@ -384,13 +384,47 @@ pub const JSBundler = struct {
             importer_source_index: ?u32 = null,
             import_record_index: u32 = 0,
             range: logger.Range = logger.Range.None,
+            original_platform: options.Platform,
         };
+
+        pub fn create(
+            from: union(enum) {
+                MiniImportRecord: MiniImportRecord,
+                ImportRecord: struct {
+                    importer_source_index: u32,
+                    import_record_index: u32,
+                    source_file: []const u8 = "",
+                    original_platform: options.Platform,
+                    record: *const bun.ImportRecord,
+                },
+            },
+            completion: *bun.BundleV2.JSBundleCompletionTask,
+        ) Resolve {
+            return Resolve{
+                .import_record = switch (from) {
+                    .MiniImportRecord => from.MiniImportRecord,
+                    .ImportRecord => |file| MiniImportRecord{
+                        .kind = file.import_record.kind,
+                        .source_file = file.source_file,
+                        .namespace = file.record.path.namespace,
+                        .specifier = file.record.path.text,
+                        .importer_source_index = file.importer_source_index,
+                        .import_record_index = file.import_record_index,
+                        .range = file.record.range,
+                        .original_platform = file.original_platform,
+                    },
+                },
+                .completion = completion,
+                .value = .{ .pending = {} },
+            };
+        }
 
         pub const Value = union(enum) {
             err: logger.Msg,
             success: struct {
                 path: []const u8 = "",
                 namespace: []const u8 = "",
+                external: bool = false,
 
                 pub fn deinit(this: *@This()) void {
                     bun.default_allocator.destroy(this.path);
@@ -457,11 +491,11 @@ pub const JSBundler = struct {
 
             completion.plugins.?.matchOnResolve(
                 completion.globalThis,
-                this.specifier,
-                this.namespace,
-                this.source_file,
+                this.import_record.specifier,
+                this.import_record.namespace,
+                this.import_record.source_file,
                 this,
-                this.kind,
+                this.import_record.kind,
             );
         }
 
@@ -470,6 +504,7 @@ pub const JSBundler = struct {
             _: *anyopaque,
             path_value: JSValue,
             namespace_value: JSValue,
+            external_value: JSValue,
         ) void {
             var completion = this.completion orelse {
                 this.deinit();
@@ -484,6 +519,7 @@ pub const JSBundler = struct {
                     .success = .{
                         .path = path.slice(),
                         .namespace = namespace.slice(),
+                        .external = external_value.to(bool),
                     },
                 };
             }
@@ -523,7 +559,7 @@ pub const JSBundler = struct {
                 .source_index = source_index,
                 .default_loader = default_loader,
                 .completion = completion,
-                .value = .{ .pending = .{} },
+                .value = .{ .pending = {} },
                 .path = path.text,
                 .namespace = path.namespace,
             };

@@ -813,7 +813,7 @@ pub const Log = struct {
 
     inline fn _addResolveErrorWithLevel(
         log: *Log,
-        source: *const Source,
+        source: ?*const Source,
         r: Range,
         allocator: std.mem.Allocator,
         comptime fmt: string,
@@ -865,7 +865,7 @@ pub const Log = struct {
 
     inline fn _addResolveError(
         log: *Log,
-        source: *const Source,
+        source: ?*const Source,
         r: Range,
         allocator: std.mem.Allocator,
         comptime fmt: string,
@@ -879,7 +879,7 @@ pub const Log = struct {
 
     inline fn _addResolveWarn(
         log: *Log,
-        source: *const Source,
+        source: ?*const Source,
         r: Range,
         allocator: std.mem.Allocator,
         comptime fmt: string,
@@ -893,7 +893,7 @@ pub const Log = struct {
 
     pub fn addResolveError(
         log: *Log,
-        source: *const Source,
+        source: ?*const Source,
         r: Range,
         allocator: std.mem.Allocator,
         comptime fmt: string,
@@ -907,7 +907,7 @@ pub const Log = struct {
 
     pub fn addResolveErrorWithTextDupe(
         log: *Log,
-        source: *const Source,
+        source: ?*const Source,
         r: Range,
         allocator: std.mem.Allocator,
         comptime fmt: string,
@@ -920,7 +920,7 @@ pub const Log = struct {
 
     pub fn addResolveErrorWithTextDupeMaybeWarn(
         log: *Log,
-        source: *const Source,
+        source: ?*const Source,
         r: Range,
         allocator: std.mem.Allocator,
         comptime fmt: string,

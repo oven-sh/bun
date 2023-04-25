@@ -75,7 +75,7 @@ function runOnResolvePlugins(specifier, inputNamespace, importer, internalID, ki
             continue;
           }
   
-          var { path, namespace: userNamespace = inputNamespace } = result;
+          var { path, namespace: userNamespace = inputNamespace, external } = result;
           if (!@isString(path) || !@isString(userNamespace)) {
             @throwTypeError(
               "onResolve plugins must return an object with a string 'path' and string 'loader' field"
@@ -85,34 +85,42 @@ function runOnResolvePlugins(specifier, inputNamespace, importer, internalID, ki
           if (path.length === 0) {
             continue;
           }
-  
+
           if (userNamespace.length === 0) {
             userNamespace = inputNamespace;
           }
-  
-          if (userNamespace === "file") {
-            // TODO: Windows
-            if (path[0] !== "/" || path.includes("..")) {
-              @throwTypeError(
-                "onResolve plugin paths must be absolute when the namespace is 'file'"
-              );
+
+          if (typeof external !== "boolean" && !@isUndefinedOrNull(external)) {
+            @throwTypeError(
+              "onResolve plugins \"external\" field must be boolean or unspecified"
+            );
+          }
+          
+          if (!external) {
+            if (userNamespace === "file") {
+              // TODO: Windows
+              if (path[0] !== "/" || path.includes("..")) {
+                @throwTypeError(
+                  "onResolve plugin \"path\" must be absolute when the namespace is \"file\""
+                );
+              }
+            }
+    
+            if (userNamespace === "dataurl") {
+              if (!path.startsWith("data:")) {
+                @throwTypeError(
+                  "onResolve plugin \"path\" must start with \"data:\" when the namespace is\"dataurl\""
+                );
+              }
             }
           }
   
-          if (userNamespace === "dataurl") {
-            if (!path.startsWith("data:")) {
-              @throwTypeError(
-                "onResolve plugin paths must start with 'data:' when the namespace is 'dataurl'"
-              );
-            }
-          }
-  
-          this.onResolveAsync(internalID, path, userNamespace);      
+          this.onResolveAsync(internalID, path, userNamespace, external);      
           return null;
         }
       }
 
-      this.onResolveAsync(internalID, null, null);
+      this.onResolveAsync(internalID, null, null, null);
       return null;
     })(specifier, inputNamespace, importer, kind);
   

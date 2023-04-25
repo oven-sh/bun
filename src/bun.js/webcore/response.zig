@@ -944,7 +944,9 @@ pub const Fetch = struct {
 
         var headers: ?Headers = null;
         var method = Method.GET;
-        var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
+        var script_ctx = globalThis.bunVM();
+
+        var args = JSC.Node.ArgumentsSlice.from(script_ctx, arguments);
         defer args.deinit();
 
         var url: ZigURL = undefined;
@@ -954,7 +956,7 @@ pub const Fetch = struct {
         };
         var disable_timeout = false;
         var disable_keepalive = false;
-        var verbose = false;
+        var verbose = script_ctx.log.level.atLeast(.debug);
         var proxy: ?ZigURL = null;
         var follow_redirects = true;
         var signal: ?*JSC.WebCore.AbortSignal = null;

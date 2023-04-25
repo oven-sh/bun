@@ -21,6 +21,7 @@
 #include "JavaScriptCore/RegularExpression.h"
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
+#include <JavaScriptCore/VMTrapsInlines.h>
 
 namespace Bun {
 

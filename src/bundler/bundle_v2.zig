@@ -364,6 +364,7 @@ pub const BundleV2 = struct {
     pub fn runResolver(
         this: *BundleV2,
         import_record: bun.JSC.API.JSBundler.Resolve.MiniImportRecord,
+        platform: options.Platform,
     ) void {
         var resolve_result = this.bundler.resolver.resolve(
             Fs.PathName.init(import_record.source_file).dirWithTrailingSlash(),
@@ -393,7 +394,7 @@ pub const BundleV2 = struct {
 
                     if (!handles_import_errors) {
                         if (isPackagePath(import_record.specifier)) {
-                            if (import_record.target_platform.isWebLike() and options.ExternalModules.isNodeBuiltin(path_to_use)) {
+                            if (platform.isWebLike() and options.ExternalModules.isNodeBuiltin(path_to_use)) {
                                 addError(
                                     this.bundler.log,
                                     source,
@@ -438,8 +439,15 @@ pub const BundleV2 = struct {
         var out_source_index: ?Index = null;
 
         var path: *Fs.Path = resolve_result.path() orelse {
-            import_record.path.is_disabled = true;
-            import_record.source_index = Index.invalid;
+            if (import_record.importer_source_index) |importer| {
+                var record: *ImportRecord = &this.graph.ast.items(.import_records)[importer].slice()[import_record.import_record_index];
+
+                // Disable failing packages from being printed.
+                // This may cause broken code to write.
+                // However, doing this means we tell them all the resolve errors
+                // Rather than just the first one.
+                record.path.is_disabled = true;
+            }
 
             return;
         };
@@ -462,32 +470,32 @@ pub const BundleV2 = struct {
                 secondary != path and
                 !strings.eqlLong(secondary.text, path.text, true))
             {
-                secondary_path_to_copy = try secondary.dupeAlloc(this.graph.allocator);
+                secondary_path_to_copy = secondary.dupeAlloc(this.graph.allocator) catch @panic("Ran out of memory");
             }
         }
 
-        var entry = this.graph.path_to_source_index_map.getOrPut(path.hashKey()) catch @panic("Ran out of memory");
+        var entry = this.graph.path_to_source_index_map.getOrPut(this.graph.allocator, path.hashKey()) catch @panic("Ran out of memory");
         if (!entry.found_existing) {
-            path.* = try path.dupeAlloc(this.graph.allocator);
+            path.* = path.dupeAlloc(this.graph.allocator) catch @panic("Ran out of memory");
 
             // We need to parse this
             const source_index = Index.init(@intCast(u32, this.graph.ast.len));
-            entry.value_ptr.* = source_index;
+            entry.value_ptr.* = source_index.get();
             out_source_index = source_index;
             this.graph.ast.append(this.graph.allocator, js_ast.Ast.empty) catch unreachable;
             const loader = path.loader(&this.bundler.options.loaders) orelse options.Loader.file;
 
-            try this.graph.input_files.append(this.graph.allocator, .{
+            this.graph.input_files.append(this.graph.allocator, .{
                 .source = .{
-                    .path = path,
-                    .key_path = path,
+                    .path = path.*,
+                    .key_path = path.*,
                     .contents = "",
                     .index = source_index,
                 },
                 .loader = loader,
                 .side_effects = _resolver.SideEffects.has_side_effects,
-            });
-            var task = try this.graph.allocator.create(ParseTask);
+            }) catch @panic("Ran out of memory");
+            var task = this.graph.allocator.create(ParseTask) catch @panic("Ran out of memory");
             task.* = ParseTask.init(&resolve_result, source_index, this);
             task.loader = loader;
             task.jsx = this.bundler.options.jsx;
@@ -502,7 +510,7 @@ pub const BundleV2 = struct {
                 this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&task.task));
             }
         } else {
-            out_source_index = entry.value_ptr.*;
+            out_source_index = Index.init(entry.value_ptr.*);
         }
 
         if (out_source_index) |source_index| {
@@ -969,8 +977,8 @@ pub const BundleV2 = struct {
     }
 
     pub fn onResolve(
-        this: *BundleV2,
         resolve: *bun.JSC.API.JSBundler.Resolve,
+        this: *BundleV2,
     ) void {
         defer resolve.deinit();
         defer this.graph.resolve_pending -= 1;
@@ -982,7 +990,7 @@ pub const BundleV2 = struct {
                 //
                 // The file could be on disk.
                 if (strings.eqlComptime(resolve.import_record.namespace, "file")) {
-                    this.runResolver(resolve.import_record);
+                    this.runResolver(resolve.import_record, resolve.import_record.original_platform);
                     return;
                 }
 
@@ -996,7 +1004,7 @@ pub const BundleV2 = struct {
                     }) catch {};
                 } else {
                     const source = &this.graph.input_files.items(.source)[resolve.import_record.importer_source_index.?];
-                    this.bundler.log.addResolveError(
+                    this.bundler.log.addRangeErrorFmt(
                         source,
                         resolve.import_record.range,
                         this.graph.allocator,
@@ -1005,15 +1013,13 @@ pub const BundleV2 = struct {
                             bun.fmt.quote(resolve.import_record.specifier),
                             bun.fmt.quote(resolve.import_record.namespace),
                         },
-                        resolve.import_record.kind,
-                        error.ModuleNotFound,
                     ) catch {};
                 }
             },
             .success => |result| {
                 var out_source_index: ?Index = null;
                 if (!result.external) {
-                    this.free_list.appendSlice(&.{ result.namespace, result.path });
+                    this.free_list.appendSlice(&.{ result.namespace, result.path }) catch {};
 
                     var path = Fs.Path.init(result.path);
                     if (path.namespace.len == 0 or strings.eqlComptime(path.namespace, "file")) {
@@ -1026,12 +1032,12 @@ pub const BundleV2 = struct {
                     if (!existing.found_existing) {
                         // We need to parse this
                         const source_index = Index.init(@intCast(u32, this.graph.ast.len));
-                        existing.value_ptr.* = source_index;
+                        existing.value_ptr.* = source_index.get();
                         out_source_index = source_index;
                         this.graph.ast.append(this.graph.allocator, js_ast.Ast.empty) catch unreachable;
                         const loader = path.loader(&this.bundler.options.loaders) orelse options.Loader.file;
 
-                        try this.graph.input_files.append(this.graph.allocator, .{
+                        this.graph.input_files.append(this.graph.allocator, .{
                             .source = .{
                                 .path = path,
                                 .key_path = path,
@@ -1040,14 +1046,27 @@ pub const BundleV2 = struct {
                             },
                             .loader = loader,
                             .side_effects = _resolver.SideEffects.has_side_effects,
-                        });
-                        var task = try this.graph.allocator.create(ParseTask);
-                        task.* = ParseTask.init(&result, source_index, this);
-                        task.loader = loader;
-                        task.jsx = this.bundler.options.jsx;
+                        }) catch unreachable;
+                        var task = this.graph.allocator.create(ParseTask) catch unreachable;
+                        task.* = ParseTask{
+                            .ctx = this,
+                            .path = path,
+                            // unknown at this point:
+                            .contents_or_fd = .{
+                                .fd = .{
+                                    .dir = 0,
+                                    .file = 0,
+                                },
+                            },
+                            .side_effects = _resolver.SideEffects.has_side_effects,
+                            .jsx = this.bundler.options.jsx,
+                            .source_index = source_index,
+                            .module_type = .unknown,
+                            .loader = loader,
+                            .tree_shaking = this.linker.options.tree_shaking,
+                            .known_platform = resolve.import_record.original_platform,
+                        };
                         task.task.node.next = null;
-                        task.tree_shaking = this.linker.options.tree_shaking;
-                        task.known_platform = resolve.import_record.original_platform;
 
                         this.graph.parse_pending += 1;
 
@@ -1056,7 +1075,7 @@ pub const BundleV2 = struct {
                             this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&task.task));
                         }
                     } else {
-                        out_source_index = existing.value_ptr.*;
+                        out_source_index = Index.init(existing.value_ptr.*);
                         bun.default_allocator.free(result.namespace);
                         bun.default_allocator.free(result.path);
                     }
@@ -1282,7 +1301,7 @@ pub const BundleV2 = struct {
                             .record = import_record,
                             .source_file = source_file,
                             .import_record_index = import_record_index,
-                            .source_index = source_index,
+                            .importer_source_index = source_index,
                             .original_platform = original_platform orelse this.bundler.options.platform,
                         },
                     },
@@ -1839,7 +1858,7 @@ pub const ParseTask = struct {
                 continue;
             }
 
-            if (this.ctx.enqueueOnResolvePluginIfNeeded(source.index.get(), import_record, source.path.text, i, platform)) {
+            if (this.ctx.enqueueOnResolvePluginIfNeeded(source.index.get(), import_record, source.path.text, @truncate(u32, i), platform)) {
                 continue;
             }
 

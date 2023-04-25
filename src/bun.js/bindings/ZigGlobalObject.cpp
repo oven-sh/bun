@@ -3944,10 +3944,6 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(EncodedJSValue (*h
         return GlobalObject::PromiseFunctions::Bun__TestScope__onReject;
     } else if (handler == Bun__TestScope__onResolve) {
         return GlobalObject::PromiseFunctions::Bun__TestScope__onResolve;
-    } else if (handler == jsFunctionOnLoadObjectResultRejectForJSBundlerPlugin) {
-        return GlobalObject::PromiseFunctions::jsFunctionOnLoadObjectResultResolveForJSBundlerPlugin;
-    } else if (handler == jsFunctionOnLoadObjectResultResolveForJSBundlerPlugin) {
-        return GlobalObject::PromiseFunctions::jsFunctionOnLoadObjectResultRejectForJSBundlerPlugin;
     } else if (handler == CallbackJob__onResolve) {
         return GlobalObject::PromiseFunctions::CallbackJob__onResolve;
     } else if (handler == CallbackJob__onReject) {

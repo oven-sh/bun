@@ -1217,9 +1217,9 @@ pub const Path = struct {
         }
 
         var hasher = std.hash.Wyhash.init(0);
-        hasher.write(this.namespace);
-        hasher.write("::::::::");
-        hasher.write(this.text);
+        hasher.update(this.namespace);
+        hasher.update("::::::::");
+        hasher.update(this.text);
         return hasher.final();
     }
 

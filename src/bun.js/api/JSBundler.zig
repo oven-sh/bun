@@ -404,7 +404,7 @@ pub const JSBundler = struct {
                 .import_record = switch (from) {
                     .MiniImportRecord => from.MiniImportRecord,
                     .ImportRecord => |file| MiniImportRecord{
-                        .kind = file.import_record.kind,
+                        .kind = file.record.kind,
                         .source_file = file.source_file,
                         .namespace = file.record.path.namespace,
                         .specifier = file.record.path.text,
@@ -796,7 +796,7 @@ pub const JSBundler = struct {
                     var this: *JSBundler.Resolve = bun.cast(*Resolve, ctx);
                     var completion = this.completion orelse return;
                     this.value = .{
-                        .err = logger.Msg.fromJS(bun.default_allocator, completion.globalThis, this.source_file, exception) catch @panic("Out of memory in addError callback"),
+                        .err = logger.Msg.fromJS(bun.default_allocator, completion.globalThis, this.import_record.source_file, exception) catch @panic("Out of memory in addError callback"),
                     };
                     completion.bundler.onResolveAsync(this);
                 },

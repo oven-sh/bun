@@ -10,7 +10,7 @@ type BunPlugin = Parameters<(typeof Bun)["plugin"]>[0];
 export type JavaScriptLoader = "jsx" | "js" | "ts" | "tsx";
 export type MacroMap = Record<string, Record<string, string>>;
 export type Target = "bun" | "browser" | "node" | "neutral";
-export type Format = "iife" | "cjs" | "esm";
+export type ModuleFormat = "iife" | "cjs" | "esm";
 export type JsxTransform = "transform" | "preserve" | "automatic";
 export type Loader =
   | "base64"
@@ -44,8 +44,8 @@ type BundlerError = {
 };
 
 export interface BuildConfig extends BundlerConfig {
-  outdir?: string;
-  entrypoints?: string[];
+  entrypoints: string[];
+  outdir: string;
   root?: string; // equiv. outbase
   watch?: boolean;
 }
@@ -93,7 +93,6 @@ export interface BundlerConfig {
   conditions?: string[];
 
   origin?: string; // e.g. http://mydomain.com
-  assetOrigin?: string; // e.g. http://assets.mydomain.com
 
   // in Bun.Transpiler this only accepts a Loader string
   // change: set an ext->loader map
@@ -123,7 +122,7 @@ export interface BundlerConfig {
         content?: boolean;
       };
 
-  format?: Format;
+  module?: ModuleFormat;
 
   // removed: logging, mangleProps, reserveProps, mangleQuoted, mangleCache
 
@@ -136,7 +135,7 @@ export interface BundlerConfig {
         syntax?: boolean;
       };
 
-  treeShaking?: boolean;
+  treeshaking?: boolean;
 
   jsx?:
     | JsxTransform

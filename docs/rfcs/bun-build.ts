@@ -9,7 +9,7 @@ namespace Bun {
 export type BuildResult<T> = {
   // T will usually be a FileBlob
   // or a Blob (for in-memory builds)
-  outputs: { path: string; result: T }[];
+  outputs: Map<string, FileBlob | Blob>;
   // only exists if `manifest` is true
   manifest?: BuildManifest;
   log: Log;

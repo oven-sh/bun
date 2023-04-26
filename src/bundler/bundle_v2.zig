@@ -1351,6 +1351,7 @@ pub const BundleV2 = struct {
             graph.parse_pending + @intCast(usize, diff)
         else
             graph.parse_pending - @intCast(usize, -diff);
+
         switch (parse_result.value) {
             .empty => |empty_result| {
                 var input_files = graph.input_files.slice();
@@ -9309,6 +9310,7 @@ const CompileResult = union(enum) {
 };
 
 const ContentHasher = struct {
+    // xxhash64 outperforms Wyhash if the file is > 1KB or so
     hasher: std.hash.XxHash64 = std.hash.XxHash64.init(0),
 
     pub fn write(self: *ContentHasher, bytes: []const u8) void {

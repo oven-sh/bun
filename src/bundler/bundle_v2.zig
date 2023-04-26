@@ -794,7 +794,9 @@ pub const BundleV2 = struct {
                         options.OutputFile.initBuf(
                             source.contents,
                             bun.default_allocator,
-                            std.fmt.allocPrint(bun.default_allocator, "{}", .{template}) catch unreachable,
+                            std.fmt.allocPrint(bun.default_allocator, "{}", .{
+                                template,
+                            }) catch unreachable,
                             loader,
                         ),
                     ) catch unreachable;
@@ -1231,7 +1233,13 @@ pub const BundleV2 = struct {
             completion.env,
         );
         bundler.options.jsx = config.jsx;
+
         bundler.options.entry_names = config.names.entry_point.data;
+        bundler.options.chunk_names = config.names.chunk.data;
+        bundler.options.asset_names = config.names.asset.data;
+
+        bundler.options.public_path = config.public_path.list.items;
+
         bundler.options.output_dir = config.outdir.toOwnedSliceLeaky();
         bundler.options.minify_syntax = config.minify.syntax;
         bundler.options.minify_whitespace = config.minify.whitespace;
@@ -1295,6 +1303,8 @@ pub const BundleV2 = struct {
     }
 
     pub fn runFromJSInNewThread(this: *BundleV2, config: *const bun.JSC.API.JSBundler.Config) !std.ArrayList(options.OutputFile) {
+        this.unique_key = std.crypto.random.int(u64);
+
         if (this.bundler.log.errors > 0) {
             return error.BuildFailed;
         }
@@ -1334,7 +1344,7 @@ pub const BundleV2 = struct {
             this.graph.entry_points.items,
             this.graph.use_directive_entry_points,
             reachable_files,
-            std.crypto.random.int(u64),
+            this.unique_key,
         );
 
         if (this.bundler.log.errors > 0) {
@@ -3300,6 +3310,8 @@ const LinkerContext = struct {
                 chunk.template.placeholder.dir = pathname.dir;
             } else {
                 chunk.template = PathTemplate.chunk;
+                if (this.resolver.opts.chunk_names.len > 0)
+                    chunk.template.data = this.resolver.opts.chunk_names;
             }
         }
 
@@ -7850,7 +7862,7 @@ const LinkerContext = struct {
         output_files.items.len = chunks.len;
 
         for (chunks, output_files.items) |*chunk, *output_file| {
-            const buffer = chunk.intermediate_output.code(c.parse_graph, chunk, chunks) catch @panic("Failed to allocate memory for output file");
+            const buffer = chunk.intermediate_output.code(c.parse_graph, c.resolver.opts.public_path, chunk, chunks) catch @panic("Failed to allocate memory for output file");
             output_file.* = options.OutputFile.initBuf(
                 buffer,
                 Chunk.IntermediateOutput.allocatorForSize(buffer.len),
@@ -9233,7 +9245,8 @@ pub const Chunk = struct {
 
         pub fn code(
             this: IntermediateOutput,
-            graph: *Graph,
+            graph: *const Graph,
+            import_prefix: []const u8,
             chunk: *Chunk,
             chunks: []Chunk,
         ) ![]const u8 {
@@ -9252,12 +9265,24 @@ pub const Chunk = struct {
                         switch (piece.index.kind) {
                             .chunk => {
                                 const file_path = chunks[piece.index.index].final_rel_path;
-                                count += if (from_chunk_dir.len == 0) file_path.len else bun.path.relative(from_chunk_dir, file_path).len;
+                                const cheap_normalizer = cheapPrefixNormalizer(
+                                    import_prefix,
+                                    if (from_chunk_dir.len == 0)
+                                        file_path
+                                    else
+                                        bun.path.relative(from_chunk_dir, file_path),
+                                );
+                                count += cheap_normalizer[0].len + cheap_normalizer[1].len;
                             },
                             .asset => {
                                 const additional_output_file_index = additional_files[piece.index.index].last().?.output_file;
                                 const file_path = graph.additional_output_files.items[additional_output_file_index].input.text;
-                                count += if (from_chunk_dir.len == 0) file_path.len else bun.path.relative(from_chunk_dir, file_path).len;
+                                const cheap_normalizer = cheapPrefixNormalizer(import_prefix, if (from_chunk_dir.len == 0)
+                                    file_path
+                                else
+                                    bun.path.relative(from_chunk_dir, file_path));
+
+                                count += cheap_normalizer[0].len + cheap_normalizer[1].len;
                             },
                             .none => {},
                         }
@@ -9278,29 +9303,46 @@ pub const Chunk = struct {
                         switch (piece.index.kind) {
                             .chunk => {
                                 const file_path = chunks[index].final_rel_path;
-                                const relative_path = if (from_chunk_dir.len > 0)
-                                    bun.path.relative(from_chunk_dir, file_path)
-                                else
-                                    file_path;
 
-                                if (relative_path.len > 0)
-                                    @memcpy(remain.ptr, relative_path.ptr, relative_path.len);
+                                const cheap_normalizer = cheapPrefixNormalizer(
+                                    import_prefix,
+                                    if (from_chunk_dir.len == 0)
+                                        file_path
+                                    else
+                                        bun.path.relative(from_chunk_dir, file_path),
+                                );
 
-                                remain = remain[relative_path.len..];
+                                if (cheap_normalizer[0].len > 0) {
+                                    @memcpy(remain.ptr, cheap_normalizer[0].ptr, cheap_normalizer[0].len);
+                                    remain = remain[cheap_normalizer[0].len..];
+                                }
+
+                                if (cheap_normalizer[1].len > 0) {
+                                    @memcpy(remain.ptr, cheap_normalizer[1].ptr, cheap_normalizer[1].len);
+                                    remain = remain[cheap_normalizer[1].len..];
+                                }
                             },
                             .asset => {
                                 const additional_output_file_index = additional_files[piece.index.index].last().?.output_file;
                                 const file_path = graph.additional_output_files.items[additional_output_file_index].input.text;
 
-                                const relative_path = if (from_chunk_dir.len > 0)
-                                    bun.path.relative(from_chunk_dir, file_path)
-                                else
-                                    file_path;
+                                const cheap_normalizer = cheapPrefixNormalizer(
+                                    import_prefix,
+                                    if (from_chunk_dir.len == 0)
+                                        file_path
+                                    else
+                                        bun.path.relative(from_chunk_dir, file_path),
+                                );
 
-                                if (relative_path.len > 0)
-                                    @memcpy(remain.ptr, relative_path.ptr, relative_path.len);
+                                if (cheap_normalizer[0].len > 0) {
+                                    @memcpy(remain.ptr, cheap_normalizer[0].ptr, cheap_normalizer[0].len);
+                                    remain = remain[cheap_normalizer[0].len..];
+                                }
 
-                                remain = remain[relative_path.len..];
+                                if (cheap_normalizer[1].len > 0) {
+                                    @memcpy(remain.ptr, cheap_normalizer[1].ptr, cheap_normalizer[1].len);
+                                    remain = remain[cheap_normalizer[1].len..];
+                                }
                             },
                             .none => {},
                         }
@@ -9497,3 +9539,42 @@ const ContentHasher = struct {
         return self.hasher.final();
     }
 };
+
+// non-allocating
+// meant to be fast but not 100% thorough
+// users can correctly put in a trailing slash if they want
+// this is just being nice
+fn cheapPrefixNormalizer(prefix: []const u8, suffix: []const u8) [2]string {
+    if (prefix.len == 0)
+        return .{ prefix, suffix };
+
+    // There are a few cases here we want to handle:
+    // ["https://example.com/", "./out.js"] => "https://example.com/out.js"
+    // ["https://example.com/", "out.js"] => "https://example.com/out.js"
+    // ["https://example.com/", "/out.js"]  => "https://example.com/out.js"
+    if (strings.endsWithChar(prefix, '/')) {
+        // prevent /foo//bar
+        if (strings.startsWithChar(suffix, '/')) {
+            return .{
+                prefix[0 .. prefix.len - 1],
+                suffix[1..suffix.len],
+            };
+        }
+
+        // It gets really complicated if we try to deal with URLs more than this
+        // These would be ideal:
+        // - example.com + ./out.js => example.com/out.js
+        // - example.com/foo + ./out.js => example.com/fooout.js
+        // - example.com/bar/ + ./out.js => example.com/bar/out.js
+        // But it's not worth the complexity to handle these cases right now.
+    }
+
+    if (suffix.len > "./".len and strings.hasPrefixComptime(suffix, "./")) {
+        return .{
+            prefix,
+            suffix[2..],
+        };
+    }
+
+    return .{ prefix, suffix };
+}

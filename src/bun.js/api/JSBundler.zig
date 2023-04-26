@@ -63,6 +63,7 @@ pub const JSBundler = struct {
         label: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         external: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         sourcemap: options.SourceMapOption = .none,
+        public_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
@@ -77,6 +78,7 @@ pub const JSBundler = struct {
                 .names = .{
                     .owned_entry_point = OwnedString.initEmpty(allocator),
                     .owned_chunk = OwnedString.initEmpty(allocator),
+                    .owned_asset = OwnedString.initEmpty(allocator),
                 },
             };
             errdefer this.deinit(allocator);
@@ -159,6 +161,11 @@ pub const JSBundler = struct {
                 this.dir.appendSliceExact(globalThis.bunVM().bundler.fs.top_level_dir) catch unreachable;
             }
 
+            if (try config.getOptional(globalThis, "publicPath", ZigString.Slice)) |slice| {
+                defer slice.deinit();
+                this.public_path.appendSliceExact(slice.slice()) catch unreachable;
+            }
+
             if (try config.getObject(globalThis, "naming")) |naming| {
                 if (try naming.getOptional(globalThis, "entrypoint", ZigString.Slice)) |slice| {
                     defer slice.deinit();
@@ -170,6 +177,12 @@ pub const JSBundler = struct {
                     defer slice.deinit();
                     this.names.owned_chunk.appendSliceExact(slice.slice()) catch unreachable;
                     this.names.chunk.data = this.names.owned_chunk.list.items;
+                }
+
+                if (try naming.getOptional(globalThis, "asset", ZigString.Slice)) |slice| {
+                    defer slice.deinit();
+                    this.names.owned_asset.appendSliceExact(slice.slice()) catch unreachable;
+                    this.names.asset.data = this.names.owned_asset.list.items;
                 }
             }
 
@@ -283,9 +296,13 @@ pub const JSBundler = struct {
             owned_chunk: OwnedString = OwnedString.initEmpty(bun.default_allocator),
             chunk: options.PathTemplate = options.PathTemplate.chunk,
 
+            owned_asset: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+            asset: options.PathTemplate = options.PathTemplate.asset,
+
             pub fn deinit(self: *Names) void {
                 self.owned_entry_point.deinit();
                 self.owned_chunk.deinit();
+                self.owned_asset.deinit();
             }
         };
 
@@ -328,6 +345,7 @@ pub const JSBundler = struct {
             self.names.deinit();
             self.label.deinit();
             self.outdir.deinit();
+            self.public_path.deinit();
         }
     };
 

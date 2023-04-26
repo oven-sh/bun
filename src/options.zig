@@ -1386,6 +1386,8 @@ pub const BundleOptions = struct {
     entry_points: []const string,
     entry_names: []const u8 = "",
     asset_names: []const u8 = "",
+    chunk_names: []const u8 = "",
+    public_path: []const u8 = "",
     extension_order: []const string = &Defaults.ExtensionOrder,
     esm_extension_order: []const string = &Defaults.ModuleExtensionOrder,
     out_extensions: bun.StringHashMap(string),
@@ -2664,7 +2666,7 @@ pub const PathTemplate = struct {
     };
 
     pub const file = PathTemplate{
-        .data = "./[name]-[hash].[ext]",
+        .data = "./[name].[ext]",
         .placeholder = .{},
     };
 

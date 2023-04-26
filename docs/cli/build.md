@@ -28,18 +28,17 @@ Bundling is a key piece of infrastructure in the JavaScript ecosystem. As a brie
 
 Let's jump into the bundler API.
 
-## Usage
+## Basic example
 
 Let's build our first bundle. You have the following two files, which implement a simple client-side rendered React app.
 
 {% codetabs %}
 
 ```tsx#./index.tsx
-import {createRoot} from 'react-dom/client';
+import * as ReactDOM from 'react-dom/client';
 import {Component} from "./Component"
 
-const rootNode = document.getElementById('root');
-const root = ReactDOM.createRoot(rootNode);
+const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<Component message="Sup!" />)
 ```
 
@@ -60,109 +59,234 @@ To create our bundle:
 ```ts#JS_API
 Bun.build({
   entrypoints: ['./index.tsx'],
-  target: 'browser',
   outdir: './out',
 })
 ```
 
 ```bash#CLI
-$ bun build ./index.tsx --outdir ./out --platform browser
+$ bun build ./index.tsx --outdir ./out
 ```
 
 {% /codetabs %}
 
 Let's break that down.
 
-- `entrypoints: string[]`: An array of paths corresponding to the entrypoints of our application. In this case, we just have one.
-- `outdir: string`: The directory where output files will be written.
-- `target: "browser" | "bun" | "node"`: The platform our bundle is _targeting_. In this case, our bundle will be executed on the browser, so we set `target: "browser"`.
+- `entrypoints` — **Required.** An array of paths corresponding to the entrypoints of our application. In this case, we just have one.
+- `outdir` — **Required.** The directory where output files will be written.
 
-Our bundle will be generated into `./out/index.js`. The generated bundle that corresponds to `index.tsx` is named `index.js`, as it only contains vanilla JavaScript. To customize this file name:
+Running this build will generate a new file `./out/index.js`.
+
+```ts
+.
+├── index.tsx
+├── Component.tsx
+└── out
+    └── index.js
+```
+
+It looks something like this:
+
+```js#out/index.js
+// ...
+// ~20k lines of code
+// including the contents of `react-dom/client` and all its dependencies
+// this is where the $jsx and $createRoot functions are defined
+
+
+// Component.tsx
+function Component(props) {
+  return $jsx("p", {
+    children: props.message
+  }, undefined, false, undefined, this);
+}
+
+// index.tsx
+var rootNode = document.getElementById("root");
+var root = $createRoot(rootNode);
+root.render($jsx(Component, {
+  message: "Sup!"
+}, undefined, false, undefined, this));
+```
+
+As with the Bun runtime, Bun's bundler can handle TypeScript and JSX out of the box, with no configuration required. The resulting bundle contains vanilla JavaScript only.
+
+We can load this file in the browser to see our app in action. Create an `index.html` file in the `out` directory:
+
+```bash
+$ touch out/index.html
+```
+
+Then paste the following contents into it:
+
+```html
+<html>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/index.js"></script>
+  </body>
+</div>
+```
+
+Then spin up a static file server serving the `out` directory:
+
+```bash
+$ bunx serve out
+```
+
+Visit `http://localhost:5000` to see your bundled app in action.
+
+## API
+
+To generate a simple bundle:
 
 {% codetabs %}
 
 ```ts#JS_API
 Bun.build({
   entrypoints: ['./index.tsx'],
-  target: 'browser',
   outdir: './out',
-  naming: "[name]-[hash].[ext]"
 })
 ```
 
 ```bash#CLI
-$ bun build ./index.tsx --outdir ./out --platform browser --naming
+$ bun build ./index.tsx --outdir ./out
 ```
 
 {% /codetabs %}
 
-generates a new bundle for each entrypoint.
+### `entrypoints`
 
-## Targets
+`string[]` **Required.** An array of paths corresponding to the entrypoints of our application. One bundle will be generated for each entrypoint.
 
-`browser`
+### `outdir`
 
-Until this point, Bun has primarily been a server-first runtime. With an integrated bundler, Bun is going fullstack. The `Bun.build` API can be used in conjunction with the rest of Bun's fast native APIs to integrate bundling & routing & HTTP in a single file.
+`string` **Required.** The directory where output files will be written.
 
-Oh, and it's fast.
+### `target`
 
-{% image src="/images/bundler-speed.png" caption="Placeholder" /%}
+`"browser" | "bun" | "node"` Defaults to `"browser"`. Use this to indicate how the generated bundle will be executed. This may affect the bundling process in a few ways:
 
-We've created a set of sample projects demonstrating how to use the bundler to build fullstack React apps. Use `bun create` to jump into some code.
+- Module resolution. For example, when bundling for the browser, Bun will prioritize the `"browser"` export condition when resolving imports. An error will be thrown if any Node.js or Bun built-ins are imported or used, e.g. `node:fs` or `Bun.serve`.
 
-```bash
-# a React single-page app
-$ bun create react ./myapp
+{% table %}
 
-# a Next.js-like app with a /pages directory
-# with SSR and client-side hydration
-$ bun create react-ssr ./myapp
+---
 
-# an app that uses React server components!
-# this should be considered experimental
-$ bun create react-rsc ./myapp
+- `browser`
+- _Default._ Generates a bundle that is intended for execution in a browser environment. Prioritizes the `"browser"` export condition when resolving imports. An error will be thrown if any Node.js or Bun built-ins are imported or used, e.g. `node:fs` or `Bun.serve`.
+
+---
+
+- `bun`
+- For generating bundles that are intended to be run by the Bun runtime. In many cases, it isn't necessary to bundle server-side code; you can directly execute the source code without modification. However, bundling your server code can reduce startup times and improve running performance.
+
+  All bundles generated with `target: "bun"` are marked with a special `// @bun` pragma, which indicates to the Bun runtime that there's no need to re-transpile the file before execution. This
+
+---
+
+- `node`
+- ???
+
+{% /table %}
+
+### `module`
+
+`string`. Defaults to `"esm"`.
+
+Specifies the module format used in the the generated bundles. Currently the bundler only supports one module format: `"esm"`. Support for `"cjs"` and `"iife"` are planned.
+
+```ts#Bun.build
+Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+  module: "esm",
+})
 ```
 
-## Yes, another bundler
+```bash#CLI
+$ bun build ./index.tsx --outdir ./out --module esm
+```
 
-The first incarnation of Bun was a dev server, not a runtime. Most of that functionality is still available under the `bun dev` command. A dev server is kind of like an on-demand, opinionated bundler. As requests come in, the server maps the URL to a source file on disk, bundles/transforms the file, and serves the resulting asset. Bundling has always been in Bun's DNA.
+{% /codetabs %}
 
-With the new bundler, we're taking the next step. Bundling is now a first-class element of the Bun ecosystem, complete with a top-level `Bun.build` function and a stable plugin system.
+### `transform`
 
-There are a few reasons we decided Bun needed its own bundler.
+`boolean`. Defaults to `false`.
 
-### Cohesiveness
+Set to `true` to disable bundling. Instead, files are transpiled and individually written to `outdir`.
 
-Bundling is too important to be "outsourced". It's a fundamental aspect of modern development in the age of JSX, TypeScript, CSS modules, and server components—all things that require bundler integration to work.
+{% codetabs %}
 
-Bun aims integrate the various layers of JavaScript tooling into something that feels fast and cohesive. Bundling is a non-negotiable part of that.
+```ts#JS_API
+Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+  transform: true,
+})
+```
 
-### Performance
+```bash#CLI
+$ bun build ./index.tsx --outdir ./out
+```
 
-This one won't surprise anybody. As a runtime, Bun's codebase already contains the groundwork (implemented in Zig) for quickly parsing and transforming source code. While possible, it would have been hard to integrate with an existing native bundler, and the overhead involved in interprocess communication would hurt performance.
+{% /codetabs %}
 
-Ultimately the results speak for themselves. In our benchmarks, Bun is X% faster then esbuild, X times faster than Rollup, and X times faster than Webpack.
+### `splitting`
 
-<!-- Rust-based bundlers meet Bun's high standards of performance; the ones that get closest aren't written in Zig. It would be difficult and inefficient to integrate a third-party bundler written in another language into Bun's toolchain, and the overhead involved in inter-process communication would hurt performance. -->
+boolean, // default true, enable code splitting
 
-### Developer experience
+### `plugins`
 
-<!-- Bundling is a foundational part of modern JavaScript development.  -->
+BunPlugin[];
 
-Looking at the APIs of existing bundlers, we saw a lot of room for improvement. No one likes wrestling with bundler configurations. Bun's bundler API is designed to be unambiguous and unsurprising. Speaking of which...
+### `naming`
 
-## The API
+`string | { entrypoint?: string; chunk?: string; }`. Customizes the generated file names. // default '[name].[ext]'
 
-The API is currently minimal by design. Our goal with this initial release is to implement a minimal feature set that fast, stable, and accommodates most modern use cases without sacrificing performance.
+### `root`
 
-Here is the API as it currently exists:
+string; // project root
+
+### `manifest`
+
+boolean; // whether to return manifest
+
+### `external`
+
+Array<string>;
+
+### `origin`
+
+string; // e.g. https://mydomain.com
+
+### `assetOrigin`
+
+string; // e.g. https://assets.mydomain.com
+
+  <!-- ### `loader` 
+  
+  `{ [k in string]: Loader }` -->
+
+### `sourcemap`
+
+"none" | "inline" | "external"; // default: "none"
+
+### `minify`
+
+boolean;
+
+### `treeshaking`
+
+boolean;
+
+## Reference
 
 ```ts
 Bun.build({
   entrypoints: string[]; // list of file path
-  target?: "browser" | "bun" | "node"; // default: "browser"
-  format?: "esm"; // later: "cjs", "iife"
   outdir?: string; // output directory
+  target?: "browser" | "bun" | "node"; // default: "browser"
+  module?: "esm"; // later: "cjs", "iife"
   naming?: string, // default '[name].[ext]'
   root?: string; // project root
   transform?: boolean, // default: false, transform instead of bundling
@@ -174,195 +298,7 @@ Bun.build({
   assetOrigin?: string; // e.g. http://assets.mydomain.com
   loader?: { [k in string]: Loader };
   sourcemap?: "none" | "inline" | "external"; // default: "none"
-  format?: "esm"; // later: "cjs", "iife"
   minify?: boolean;
   treeShaking?: boolean;
 });
 ```
-
-Other bundlers have made poor architectural decisions in the pursuit of feature-completeness that end up crippling performance; this is a mistake we are carefully trying to avoid.
-
-### Module systems
-
-Only `target: "esm"` is supported for now. We plan to add support for other module systems and targets like `cjs` and `iife`, but (as in the runtime) Bun is designed to be ESM-first.
-
-### Targets
-
-Three "targets" are supported: `browser` (the default), `bun`, and `node`.
-
-#### `target: "browser"`
-
-- TypeScript and JSX are automatically transpiled to vanilla JavaScript. All source code is downleveled to ES6 syntax.
-- Modules are resolved using the `"browser"` condition when availabile
-- Usage of the Bun global and imports from `node:*`/`bun:*` are prohibited. In some select cases (e.g. `node:crypto`), Bun will automatically polyfill the missing APIs.
-
-#### `target: "bun"`
-
-- Bun and Node.js APIs are supported and left untouched.
-- Modules are resolved using the default resolution algorithm used by Bun's runtime.
-- The generated bundles are marked with a special `// @bun` pragma comment to indicate that they were generated by Bun. This indicates to Bun's runtime that the file does not need to be re-transpiled before execution. Synergy!
-
-#### `target: "node"`
-
-???
-
-### File types
-
-The bundler supports the following file types:
-
-- `.js` `.jsx` `.ts` `.tsx` - JavaScript and TypeScript files. Duh.
-- `.txt` — Plain text files. These are inlined as strings.
-- ` .json` `.toml` — These are parsed at compile time and inlined as JSON.
-- `.css` — When a `.css` import is encountered, Bun reads the `.css` file and resolves any `@import` statements within them. The "bundled" CSS file is written to the build directory. All traces of the import are removed from the JavaScript bundle.
-- _Unknown file types_ — These are copied into the `outdir` as-is, and the import is replaced with an asolute URL to the file, e.g. `/images/logo.png`. Specify `assetOrigin` to convert this to a fully-qualified URL like `https://mydomain.com/images/logo.png`.
-
-As with the runtime itself, the bundler is designed to be extensible via plugins. In fact, there's no different at all between a runtime plugin and a bundler plugin.
-
-```ts
-import YamlPlugin from "bun-plugin-yaml";
-
-const plugin = YamlPlugin();
-
-// register a runtime plugin
-Bun.plugin(plugin);
-
-// register a bundler plugin
-Bun.build({
-  entrypoints: ["./src/index.tsx"],
-  plugins: [plugin],
-});
-```
-
-## Usage
-
-With the `Bun.build` API living right alongside `Bun.serve` and the rest of Bun's runtime APIs, you can express complex build steps and workflows in a remarkably readable way.
-
-Want to bundle some React components and spin up a static file server to serve them? No problem.
-
-```ts
-const BUILD_DIR = import.meta.dir + "/build";
-
-const router = new Bun.FileSystemRouter({
-  dir: "./components",
-});
-
-const files = Object.values(router.routes);
-
-const { manifest } = await Bun.build({
-  entrypoints: files,
-  target: "browser",
-  outdir: BUILD_DIR,
-});
-
-Bun.serve({
-  port: 3000,
-  fetch(req) {
-    const url = new URL(req.url);
-    const match = manifest.outputs[url.pathname];
-    if (match) return new Response(Bun.file(BUILD_DIR + "/" + url.pathname));
-    return new Response("Not found", { status: 404 });
-  },
-});
-```
-
-## Sneak peek: `Bun.App`
-
-The bundler is just laying the groundwork for a more ambitious effort. In the next couple months, we'll be announcing `Bun.App`: a "super-API" that stitches together Bun's native-speed bundler, HTTP server, and file system router into a cohesive whole.
-
-The goal is to make it easy to express any kind of app with Bun with just a few lines of code:
-
-{% codetabs %}
-
-```ts#Static_file_server
-new Bun.App({
- bundlers: [
-   {
-     name: "static-server",
-     outdir: "./out",
-   },
- ],
- routers: [
-   {
-     mode: "static",
-     dir: "./public",
-     build: "static-server",
-   },
- ],
-});
-
-app.serve();
-app.build();
-```
-
-```ts#API_server
-const app = new Bun.App({
- configs: [
-   {
-     name: "simple-http",
-     target: "bun",
-     outdir: "./.build/server",
-     // bundler config...
-   },
- ],
- routers: [
-   {
-     mode: "handler",
-     handler: "./handler.tsx", // automatically included as entrypoint
-     prefix: "/api",
-     build: "simple-http",
-   },
- ],
-});
-
-app.serve();
-app.build();
-```
-
-```ts#Next.js-style_framework
-const projectRoot = process.cwd();
-
-const app = new Bun.App({
- configs: [
-   {
-     name: "react-ssr",
-     target: "bun",
-     outdir: "./.build/server",
-     // bundler config
-   },
-   {
-     name: "react-client",
-     target: "browser",
-     outdir: "./.build/client",
-     transform: {
-       exports: {
-         pick: ["default"],
-       },
-     },
-   },
- ],
- routers: [
-   {
-     mode: "handler",
-     handler: "./handler.tsx",
-     build: "react-ssr",
-     style: "nextjs",
-     dir: projectRoot + "/pages",
-   },
-   {
-     mode: "build",
-     build: "react-client",
-     dir: "./pages",
-     // style: "build",
-     // dir: projectRoot + "/pages",
-     prefix: "_pages",
-   },
- ],
-});
-
-app.serve();
-app.build();
-```
-
-{% /codetabs %}
-
-This API is still under [active discussion](https://github.com/oven-sh/bun/pull/2551) and subject to change.

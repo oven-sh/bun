@@ -58,16 +58,21 @@ void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, Stri
 
 bool BundlerPlugin::anyMatchesCrossThread(const ZigString* namespaceStr, const ZigString* path, bool isOnLoad)
 {
-    auto namespaceString = namespaceStr ? Zig::toString(*namespaceStr) : String();
-    auto pathString = Zig::toString(*path);
 
     if (isOnLoad) {
+        if (this->onLoad.fileNamespace.isEmpty() && this->onLoad.namespaces.isEmpty())
+            return false;
+
+        // Avoid unnecessary string copies
+        auto namespaceString = namespaceStr ? Zig::toString(*namespaceStr) : String();
+
         auto* group = this->onLoad.group(namespaceString);
         if (group == nullptr) {
             return false;
         }
 
         auto& filters = *group;
+        auto pathString = Zig::toString(*path);
 
         for (auto& filter : filters) {
             if (filter.match(pathString) > -1) {
@@ -76,11 +81,18 @@ bool BundlerPlugin::anyMatchesCrossThread(const ZigString* namespaceStr, const Z
         }
 
     } else {
+        if (this->onResolve.fileNamespace.isEmpty() && this->onResolve.namespaces.isEmpty())
+            return false;
+
+        // Avoid unnecessary string copies
+        auto namespaceString = namespaceStr ? Zig::toString(*namespaceStr) : String();
+
         auto* group = this->onResolve.group(namespaceString);
         if (group == nullptr) {
             return false;
         }
 
+        auto pathString = Zig::toString(*path);
         auto& filters = *group;
 
         for (auto& filter : filters) {

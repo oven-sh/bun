@@ -224,6 +224,16 @@ pub fn indexOfSigned(self: string, str: string) i32 {
 }
 
 pub inline fn lastIndexOfChar(self: string, char: u8) ?usize {
+    if (comptime Environment.isLinux) {
+        const memrchr = struct {
+            pub extern fn memrchr(ptr: [*]const u8, val: c_int, len: usize) ?[*]const u8;
+        }.memrchr;
+        const start = memrchr(self.ptr, char, self.len) orelse return null;
+        const i = @ptrToInt(start) - @ptrToInt(self.ptr);
+        std.debug.assert(i < self.len);
+        return @intCast(usize, i);
+    }
+
     return std.mem.lastIndexOfScalar(u8, self, char);
 }
 

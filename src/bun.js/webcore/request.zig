@@ -68,6 +68,8 @@ pub const Request = struct {
     // We must report a consistent value for this
     reported_estimated_size: ?u63 = null,
 
+    finalization_callback: ?*JSC.FinalizationCallback = null,
+
     const RequestMixin = BodyMixin(@This());
     pub usingnamespace JSC.Codegen.JSRequest;
 
@@ -279,6 +281,10 @@ pub const Request = struct {
 
     pub fn finalize(this: *Request) callconv(.C) void {
         this.finalizeWithoutDeinit();
+        if (this.finalization_callback) |finalizer| {
+            var pool = JSC.VirtualMachine.get().finalizationPool();
+            finalizer.call(pool);
+        }
         bun.default_allocator.destroy(this);
     }
 

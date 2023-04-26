@@ -4144,3 +4144,91 @@ pub const BinaryType = enum {
         }
     }
 };
+
+pub const FinalizationCallback = struct {
+    context: Ptr = Ptr{},
+    callback: ?*const fn (*anyopaque) void = null,
+
+    pub const Ptr = packed struct(u64) {
+        address: u60 = 0,
+
+        // Really should only have 2 references maximum
+        ref_count: u4 = 0,
+
+        pub fn ref(this: *Ptr) void {
+            this.ref_count += 1;
+        }
+
+        pub fn unref(this: *Ptr) void {
+            this.ref_count -= 1;
+        }
+
+        pub fn ptr(this: *Ptr) ?*anyopaque {
+            if (this.address == 0)
+                return null;
+
+            return @intToPtr(*anyopaque, @as(usize, this.addrress));
+        }
+
+        pub fn init(addr: *anyopaque) Ptr {
+            return .{
+                .address = @truncate(u60, @ptrToInt(addr)),
+                .ref_count = 1,
+            };
+        }
+    };
+
+    pub const Pool = bun.HiveArray(FinalizationCallback, 512).Fallback;
+
+    pub fn call(this: *FinalizationCallback, pool: *Pool) void {
+        var callback = this.callback orelse {
+            this.unregister();
+            pool.put(this);
+            return;
+        };
+        var ctx = this.context.ptr() orelse {
+            this.unregister();
+            pool.put(this);
+            return;
+        };
+        this.unregister();
+        pool.put(this);
+
+        callback(ctx);
+    }
+
+    /// Pointers to FinalizationCallback are invalidated immediately **before** the callback is called.
+    pub fn create(pool: *Pool, comptime Context: type, context: *Context, callback: *const fn (*Context) void) *FinalizationCallback {
+        var this: *FinalizationCallback = pool.get();
+        this.set(Context, context, callback);
+        return this;
+    }
+
+    pub fn set(this: *FinalizationCallback, comptime Context: type, context: *Context, callback: *const fn (*Context) void) void {
+        this.* = .{
+            .context = Ptr.init(bun.cast(*anyopaque, context)),
+            .callback = bun.cast(*const fn (*anyopaque) void, callback),
+        };
+    }
+
+    fn unregister(this: *FinalizationCallback) void {
+        this.* = .{};
+    }
+
+    pub fn ref(this: *FinalizationCallback) void {
+        this.context.ref();
+    }
+
+    pub fn detach(this: *FinalizationCallback, pool: *Pool) void {
+        this.unregister();
+        this.unref(pool);
+    }
+
+    pub fn unref(this: *FinalizationCallback, pool: *Pool) void {
+        this.context.unref();
+        if (this.context.ref_count == 0) {
+            this.unregister();
+            pool.put(this);
+        }
+    }
+};

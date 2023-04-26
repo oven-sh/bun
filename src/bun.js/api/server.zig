@@ -921,6 +921,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         method: HTTP.Method,
         aborted: bool = false,
         finalized: bun.DebugOnly(bool) = bun.DebugOnlyDefault(false),
+        request_finalization_callback: ?*JSC.FinalizationCallback = null,
         upgrade_context: ?*uws.uws_socket_context_t = null,
 
         /// We can only safely free once the request body promise is finalized
@@ -975,6 +976,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.resp.onAborted(*RequestContext, RequestContext.onAbort, this);
         }
 
+        pub fn onRequestFinalized(this: *RequestContext) void {
+            this.request_js_object = null;
+            this.request_finalization_callback = null;
+        }
+
         pub fn onResolve(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
             ctxLog("onResolve", .{});
 
@@ -983,13 +989,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             const result = arguments.ptr[0];
             result.ensureStillAlive();
 
+            // ctx.request_js_object is set to null by the finalization callback
             if (ctx.request_js_object != null and ctx.signal == null) {
                 var request_js = ctx.request_js_object.?.value();
                 request_js.ensureStillAlive();
                 if (request_js.as(Request)) |request_object| {
                     if (request_object.signal) |signal| {
-                        ctx.signal = signal;
-                        _ = signal.ref();
+                        ctx.signal = signal.ref();
                     }
                 }
             }
@@ -1042,13 +1048,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             var ctx = arguments.ptr[1].asPromisePtr(@This());
             const err = arguments.ptr[0];
 
+            // ctx.request_js_object is set to null by the finalization callback
             if (ctx.request_js_object != null and ctx.signal == null) {
                 var request_js = ctx.request_js_object.?.value();
                 request_js.ensureStillAlive();
                 if (request_js.as(Request)) |request_object| {
                     if (request_object.signal) |signal| {
-                        ctx.signal = signal;
-                        _ = signal.ref();
+                        ctx.signal = signal.ref();
                     }
                 }
             }
@@ -1327,6 +1333,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                     // but we received nothing or the connection was aborted
                     if (request_js.as(Request)) |req| {
+                        if (this.request_finalization_callback) |finalizer| {
+                            finalizer.detach(this.server.vm.finalizationPool());
+                            req.finalization_callback = null;
+                            this.request_finalization_callback = null;
+                        }
 
                         // the promise is pending
                         if (req.body == .Locked and (req.body.Locked.action != .none or req.body.Locked.promise != null)) {
@@ -1411,11 +1422,21 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                 // but we received nothing or the connection was aborted
                 if (request_js.as(Request)) |req| {
+                    if (this.request_finalization_callback) |finalizer| {
+                        finalizer.detach(this.server.vm.finalizationPool());
+                        if (finalizer == this.request_finalization_callback)
+                            req.finalization_callback = null;
+
+                        this.request_finalization_callback = null;
+                    }
+
                     // the promise is pending
                     if (req.body == .Locked and req.body.Locked.action != .none and req.body.Locked.promise != null) {
                         req.body.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
                     }
+
                     req.uws_request = null;
+                    req.upgrader = null;
                 }
             }
 
@@ -2117,6 +2138,19 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 // This object dies after the stack frame is popped
                 // so we have to clear it in here too
                 request_object.uws_request = null;
+
+                if (ctx.signal == null) {
+                    if (request_object.signal) |signal| {
+                        ctx.signal = signal.ref();
+                    } else if (ctx.request_finalization_callback == null and request_object.finalization_callback == null) {
+                        request_object.finalization_callback = JSC.FinalizationCallback.create(
+                            this.vm.finalizationPool(),
+                            RequestContext,
+                            ctx,
+                            RequestContext.onRequestFinalized,
+                        );
+                    }
+                }
 
                 ctx.setAbortHandler();
                 ctx.pending_promises_for_abort += 1;

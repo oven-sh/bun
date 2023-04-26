@@ -361,6 +361,7 @@ pub const VirtualMachine = struct {
     pending_unref_counter: i32 = 0,
     preload: []const string = &[_][]const u8{},
     unhandled_pending_rejection_to_capture: ?*JSC.JSValue = null,
+    finalization_pool: ?*JSC.FinalizationCallback.Pool = null,
 
     hot_reload: bun.CLI.Command.HotReload = .none,
 
@@ -463,6 +464,16 @@ pub const VirtualMachine = struct {
     };
 
     pub threadlocal var is_main_thread_vm: bool = false;
+
+    pub fn finalizationPool(this: *VirtualMachine) *JSC.FinalizationCallback.Pool {
+        if (this.finalization_pool == null) {
+            var pool = this.allocator.create(JSC.FinalizationCallback.Pool) catch @panic("Failed to create finalization pool");
+            pool.* = JSC.FinalizationCallback.Pool.init(this.allocator);
+            this.finalization_pool = pool;
+        }
+
+        return this.finalization_pool.?;
+    }
 
     pub const UnhandledRejectionScope = struct {
         ctx: ?*anyopaque = null,

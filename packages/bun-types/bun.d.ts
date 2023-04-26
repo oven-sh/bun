@@ -981,11 +981,11 @@ declare module "bun" {
     bundling?: boolean; // default true, enable bundling
     plugins?: BunPlugin[];
     // manifest?: boolean; // whether to return manifest
-    external?: Array<string | RegExp>;
+    external?: Array<string>;
+    publicPath: string;
     // origin?: string; // e.g. http://mydomain.com
-    // assetOrigin?: string; // e.g. http://assets.mydomain.com
     // loaders?: { [k in string]: Loader };
-    sourcemap?: "none" | "inline" | "external"; // default: "none"
+    // sourcemap?: "none" | "inline" | "external"; // default: "none"
     minify?:
       | boolean
       | {
@@ -993,7 +993,7 @@ declare module "bun" {
           syntax?: boolean;
           identifiers?: boolean;
         };
-    treeShaking?: boolean;
+    // treeshaking?: boolean;
   }
 
   type BuildResult<T = Blob> = {

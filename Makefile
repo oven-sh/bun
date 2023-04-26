@@ -520,7 +520,7 @@ npm-install:
 
 npm-install-dev:
 	$(NPM_CLIENT) install
-	cd test && $(NPM_CLIENT) install --production
+	cd test && $(NPM_CLIENT) install
 	cd packages/bun-types && $(NPM_CLIENT) install --production
 
 print-%  : ; @echo $* = $($*)

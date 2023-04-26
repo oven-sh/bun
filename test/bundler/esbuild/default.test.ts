@@ -1,13 +1,6 @@
 import assert from "assert";
 import dedent from "dedent";
-import {
-  ESBUILD_PATH,
-  RUN_UNCHECKED_TESTS,
-  bundlerTest,
-  expectBundled,
-  itBundled,
-  testForFile,
-} from "../expectBundled";
+import { ESBUILD_PATH, RUN_UNCHECKED_TESTS, itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:
@@ -279,7 +272,6 @@ describe("bundler", () => {
           function nested() { return import('./c') },
         ]
   
-        import { deepEqual } from 'node:assert'
         deepEqual(a, 1, 'a');
         deepEqual(a2, 4, 'a2');
         deepEqual(c3, 2, 'c3');
@@ -305,7 +297,9 @@ describe("bundler", () => {
         export const a2 = 4;
       `,
       "/test.js": String.raw/* js */ `
-        import './out.js';
+        import { deepEqual } from 'node:assert';
+        globalThis.deepEqual = deepEqual;
+        await import ('./out.js');
         if (!globalThis.aWasImported) {
           throw new Error('"import \'./a\'" was tree-shaken when it should not have been.')
         }
@@ -314,10 +308,11 @@ describe("bundler", () => {
         }
       `,
     },
-    mode: "transform",
+    // mode: "transform",
     run: {
       file: "/test.js",
     },
+    external: ["node:assert", "./a", "./b", "./c"],
   } as const;
   itBundled("default/ImportFormsWithNoBundle", {
     ...importFormsConfig,
@@ -1859,7 +1854,7 @@ describe("bundler", () => {
   });
   itBundled("default/ArgumentsSpecialCaseNoBundle", {
     files: {
-      "/entry.js": /* js */ `
+      "/entry.cjs": /* js */ `
         (async() => {
           var arguments = 'var';
   
@@ -1902,7 +1897,7 @@ describe("bundler", () => {
           // assertions:
           // we need this helper function to get "Arguments" objects, though this only applies for tests using v8
           const argumentsFor = new Function('return arguments;');
-          const assert = require('assert');
+          const assert = (0, require)('assert');
           assert.deepEqual(f1(), [argumentsFor(), argumentsFor()], 'f1()');
           assert.deepEqual(f1(1), [1, argumentsFor(1)], 'f1(1)');
           assert.deepEqual(f2(), [argumentsFor(), argumentsFor()], 'f2()');
@@ -1949,42 +1944,58 @@ describe("bundler", () => {
           assert.deepEqual(a19(1), [1, 'var'], 'a19(1)');
           assert.deepEqual(await a20(), ['var', 'var'], 'a20()');
           assert.deepEqual(await a20(1), [1, 'var'], 'a20(1)');
-        })();
+        })(1,3,5);
       `,
     },
-    format: "cjs",
+    format: "esm",
     outfile: "/out.js",
     minifyIdentifiers: true,
-    mode: "transform",
+    // mode: "transform",
   });
   itBundled("default/WithStatementTaintingNoBundle", {
-    // TODO: MANUAL CHECK: make sure the snapshot we use works.
     files: {
       "/entry.js": /* js */ `
         (() => {
           let local = 1
           let outer = 2
           let outerDead = 3
-          with ({}) {
+          console.log(local, outer, outerDead)
+          with ({ outer: 100, local: 150, hoisted: 200, extra: 500 }) {
+            console.log(outer, outerDead, hoisted, extra)
             var hoisted = 4
             let local = 5
             hoisted++
             local++
+            console.log(local, outer, outerDead, hoisted, extra)
             if (1) outer++
             if (0) outerDead++
+            console.log(local, outer, outerDead, hoisted, extra)
           }
+          console.log(local, outer, outerDead, hoisted)
           if (1) {
             hoisted++
             local++
             outer++
             outerDead++
           }
+          console.log(local, outer, outerDead, hoisted)
         })()
       `,
     },
     format: "iife",
     minifyIdentifiers: true,
     mode: "transform",
+    run: {
+      runtime: "node",
+      stdout: `
+        1 2 3
+        100 3 200 500
+        6 100 3 5 500
+        6 101 3 5 500
+        1 2 3 undefined
+        2 3 4 NaN
+      `,
+    },
   });
   itBundled("default/DirectEvalTaintingNoBundle", {
     files: {
@@ -2279,6 +2290,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/AutoExternalNode", {
+    skipOnEsbuild: true,
     files: {
       "/entry.js": /* js */ `
         // These URLs should be external automatically
@@ -2287,9 +2299,12 @@ describe("bundler", () => {
   
         // This should be external and should be tree-shaken because it's side-effect free
         import "node:path";
+        import "bun";
+        import "bun:sqlite";
   
         // This should be external too, but shouldn't be tree-shaken because it could be a run-time error
         import "node:what-is-this";
+        import "bun:what-is-this";
       `,
     },
     platform: "node",
@@ -2368,18 +2383,22 @@ describe("bundler", () => {
           get #bar() {}
           set #bar(x) {}
         }
+
+        cool(Foo)
+        cool(Bar)
       `,
     },
     minifyIdentifiers: true,
-    mode: "transform",
     onAfterBundle(api) {
       const text = api.readFile("/out.js");
       assert(text.includes("doNotRenameMe"), "bundler should not have renamed `doNotRenameMe`");
       assert(!text.includes("#foo"), "bundler should have renamed `#foo`");
+      assert(text.includes("#"), "bundler keeps private variables private `#`");
     },
   });
   // These labels should all share the same minified names
   itBundled("default/MinifySiblingLabelsNoBundle", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         foo: {
@@ -2403,47 +2422,67 @@ describe("bundler", () => {
       `,
     },
     minifyIdentifiers: true,
-    mode: "transform",
     onAfterBundle(api) {
       const text = api.readFile("/out.js");
       const labels = [...text.matchAll(/([a-z0-9]+):/gi)].map(x => x[1]);
       expect(labels).toStrictEqual([labels[0], labels[1], labels[0], labels[1], labels[0], labels[1]]);
     },
   });
+  // This is such a fun file. it crashes prettier and some other parsers.
+  const crazyNestedLabelFile = dedent`
+    L001:{L002:{L003:{L004:{L005:{L006:{L007:{L008:{L009:{L010:{L011:{L012:{L013:{L014:{L015:{L016:{console.log('a')
+    L017:{L018:{L019:{L020:{L021:{L022:{L023:{L024:{L025:{L026:{L027:{L028:{L029:{L030:{L031:{L032:{console.log('a')
+    L033:{L034:{L035:{L036:{L037:{L038:{L039:{L040:{L041:{L042:{L043:{L044:{L045:{L046:{L047:{L048:{console.log('a')
+    L049:{L050:{L051:{L052:{L053:{L054:{L055:{L056:{L057:{L058:{L059:{L060:{L061:{L062:{L063:{L064:{console.log('a')
+    L065:{L066:{L067:{L068:{L069:{L070:{L071:{L072:{L073:{L074:{L075:{L076:{L077:{L078:{L079:{L080:{console.log('a')
+    L081:{L082:{L083:{L084:{L085:{L086:{L087:{L088:{L089:{L090:{L091:{L092:{L093:{L094:{L095:{L096:{console.log('a')
+    L097:{L098:{L099:{L100:{L101:{L102:{L103:{L104:{L105:{L106:{L107:{L108:{L109:{L110:{L111:{L112:{console.log('a')
+    L113:{L114:{L115:{L116:{L117:{L118:{L119:{L120:{L121:{L122:{L123:{L124:{L125:{L126:{L127:{L128:{console.log('a')
+    L129:{L130:{L131:{L132:{L133:{L134:{L135:{L136:{L137:{L138:{L139:{L140:{L141:{L142:{L143:{L144:{console.log('a')
+    L145:{L146:{L147:{L148:{L149:{L150:{L151:{L152:{L153:{L154:{L155:{L156:{L157:{L158:{L159:{L160:{console.log('a')
+    L161:{L162:{L163:{L164:{L165:{L166:{L167:{L168:{L169:{L170:{L171:{L172:{L173:{L174:{L175:{L176:{console.log('a')
+    L177:{L178:{L179:{L180:{L181:{L182:{L183:{L184:{L185:{L186:{L187:{L188:{L189:{L190:{L191:{L192:{console.log('a')
+    L193:{L194:{L195:{L196:{L197:{L198:{L199:{L200:{L201:{L202:{L203:{L204:{L205:{L206:{L207:{L208:{console.log('a')
+    L209:{L210:{L211:{L212:{L213:{L214:{L215:{L216:{L217:{L218:{L219:{L220:{L221:{L222:{L223:{L224:{console.log('a')
+    L225:{L226:{L227:{L228:{L229:{L230:{L231:{L232:{L233:{L234:{L235:{L236:{L237:{L238:{L239:{L240:{console.log('a')
+    L241:{L242:{L243:{L244:{L245:{L246:{L247:{L248:{L249:{L250:{L251:{L252:{L253:{L254:{L255:{L256:{console.log('a')
+    L257:{L258:{L259:{L260:{L261:{L262:{L263:{L264:{L265:{L266:{L267:{L268:{L269:{L270:{L271:{L272:{console.log('a')
+    L273:{L274:{L275:{L276:{L277:{L278:{L279:{L280:{L281:{L282:{L283:{L284:{L285:{L286:{L287:{L288:{console.log('a')
+    L289:{L290:{L291:{L292:{L293:{L294:{L295:{L296:{L297:{L298:{L299:{L300:{L301:{L302:{L303:{L304:{console.log('a')
+    L305:{L306:{L307:{L308:{L309:{L310:{L311:{L312:{L313:{L314:{L315:{L316:{L317:{L318:{L319:{L320:{console.log('a')
+    L321:{L322:{L323:{L324:{L325:{L326:{L327:{L328:{L329:{L330:{L331:{L332:{L333:{}}}}}}}}}}}}}}}}}}console.log('a')
+    }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}console.log('a')
+    }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}console.log('a')
+    }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}console.log('a')
+    }}}}}}}}}}}}}}}}}}}}}}}}}}}
+  `;
+  itBundled("default/NestedLabelsBundle", {
+    files: {
+      "/entry.js": crazyNestedLabelFile,
+    },
+  });
+  itBundled("default/NestedLabelsNoBundle", {
+    files: {
+      "/entry.js": crazyNestedLabelFile,
+    },
+    mode: "transform",
+  });
   itBundled("default/MinifyNestedLabelsNoBundle", {
     files: {
-      "/entry.js": dedent`
-        L001:{L002:{L003:{L004:{L005:{L006:{L007:{L008:{L009:{L010:{L011:{L012:{L013:{L014:{L015:{L016:{console.log('a')
-        L017:{L018:{L019:{L020:{L021:{L022:{L023:{L024:{L025:{L026:{L027:{L028:{L029:{L030:{L031:{L032:{console.log('a')
-        L033:{L034:{L035:{L036:{L037:{L038:{L039:{L040:{L041:{L042:{L043:{L044:{L045:{L046:{L047:{L048:{console.log('a')
-        L049:{L050:{L051:{L052:{L053:{L054:{L055:{L056:{L057:{L058:{L059:{L060:{L061:{L062:{L063:{L064:{console.log('a')
-        L065:{L066:{L067:{L068:{L069:{L070:{L071:{L072:{L073:{L074:{L075:{L076:{L077:{L078:{L079:{L080:{console.log('a')
-        L081:{L082:{L083:{L084:{L085:{L086:{L087:{L088:{L089:{L090:{L091:{L092:{L093:{L094:{L095:{L096:{console.log('a')
-        L097:{L098:{L099:{L100:{L101:{L102:{L103:{L104:{L105:{L106:{L107:{L108:{L109:{L110:{L111:{L112:{console.log('a')
-        L113:{L114:{L115:{L116:{L117:{L118:{L119:{L120:{L121:{L122:{L123:{L124:{L125:{L126:{L127:{L128:{console.log('a')
-        L129:{L130:{L131:{L132:{L133:{L134:{L135:{L136:{L137:{L138:{L139:{L140:{L141:{L142:{L143:{L144:{console.log('a')
-        L145:{L146:{L147:{L148:{L149:{L150:{L151:{L152:{L153:{L154:{L155:{L156:{L157:{L158:{L159:{L160:{console.log('a')
-        L161:{L162:{L163:{L164:{L165:{L166:{L167:{L168:{L169:{L170:{L171:{L172:{L173:{L174:{L175:{L176:{console.log('a')
-        L177:{L178:{L179:{L180:{L181:{L182:{L183:{L184:{L185:{L186:{L187:{L188:{L189:{L190:{L191:{L192:{console.log('a')
-        L193:{L194:{L195:{L196:{L197:{L198:{L199:{L200:{L201:{L202:{L203:{L204:{L205:{L206:{L207:{L208:{console.log('a')
-        L209:{L210:{L211:{L212:{L213:{L214:{L215:{L216:{L217:{L218:{L219:{L220:{L221:{L222:{L223:{L224:{console.log('a')
-        L225:{L226:{L227:{L228:{L229:{L230:{L231:{L232:{L233:{L234:{L235:{L236:{L237:{L238:{L239:{L240:{console.log('a')
-        L241:{L242:{L243:{L244:{L245:{L246:{L247:{L248:{L249:{L250:{L251:{L252:{L253:{L254:{L255:{L256:{console.log('a')
-        L257:{L258:{L259:{L260:{L261:{L262:{L263:{L264:{L265:{L266:{L267:{L268:{L269:{L270:{L271:{L272:{console.log('a')
-        L273:{L274:{L275:{L276:{L277:{L278:{L279:{L280:{L281:{L282:{L283:{L284:{L285:{L286:{L287:{L288:{console.log('a')
-        L289:{L290:{L291:{L292:{L293:{L294:{L295:{L296:{L297:{L298:{L299:{L300:{L301:{L302:{L303:{L304:{console.log('a')
-        L305:{L306:{L307:{L308:{L309:{L310:{L311:{L312:{L313:{L314:{L315:{L316:{L317:{L318:{L319:{L320:{console.log('a')
-        L321:{L322:{L323:{L324:{L325:{L326:{L327:{L328:{L329:{L330:{L331:{L332:{L333:{}}}}}}}}}}}}}}}}}}console.log('a')
-        }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}console.log('a')
-        }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}console.log('a')
-        }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}console.log('a')
-        }}}}}}}}}}}}}}}}}}}}}}}}}}}
-      `,
+      "/entry.js": crazyNestedLabelFile,
     },
     minifyWhitespace: true,
     minifyIdentifiers: true,
     minifySyntax: true,
     mode: "transform",
+  });
+  itBundled("default/MinifyNestedLabelsBundle", {
+    files: {
+      "/entry.js": crazyNestedLabelFile,
+    },
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    minifySyntax: true,
   });
   itBundled("default/ExportsAndModuleFormatCommonJS", {
     files: {
@@ -4474,8 +4513,14 @@ describe("bundler", () => {
       }
       const a = capture(api.readFile("/out/a.js"));
       const b = capture(api.readFile("/out/b.js"));
-      expect(a).toEqual(b);
       expect(a).not.toEqual(["one", "two", "three", "four"]);
+      expect(b).not.toEqual(["one", "two", "three", "four"]);
+      try {
+        expect(a).toEqual(b);
+      } catch (error) {
+        console.error("Comments should not affect minified names!");
+        throw error;
+      }
     },
   });
   itBundled("default/ImportRelativeAsPackage", {

@@ -85,7 +85,7 @@ pub fn getEntries(dirinfo: *const DirInfo) ?*Fs.FileSystem.DirEntry {
     var entries_ptr = Fs.FileSystem.instance.fs.entries.atIndex(dirinfo.entries) orelse return null;
     switch (entries_ptr.*) {
         .entries => {
-            return &entries_ptr.entries;
+            return entries_ptr.entries;
         },
         .err => {
             return null;
@@ -97,7 +97,7 @@ pub fn getEntriesConst(dirinfo: *const DirInfo) ?*const Fs.FileSystem.DirEntry {
     const entries_ptr = Fs.FileSystem.instance.fs.entries.atIndex(dirinfo.entries) orelse return null;
     switch (entries_ptr.*) {
         .entries => {
-            return &entries_ptr.entries;
+            return entries_ptr.entries;
         },
         .err => {
             return null;

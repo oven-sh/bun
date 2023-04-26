@@ -13,7 +13,7 @@ dist
 *.log
 *.out.js
 *.out.refresh.js
-/package-lock.json
+**/package-lock.json
 build
 *.wat
 zig-out

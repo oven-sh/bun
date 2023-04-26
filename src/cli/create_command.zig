@@ -260,7 +260,7 @@ pub const CreateCommand = struct {
             return try CreateListExamplesCommand.exec(ctx);
         }
 
-        var filesystem = try fs.FileSystem.init1(ctx.allocator, null);
+        var filesystem = try fs.FileSystem.init(null);
         var env_loader: DotEnv.Loader = brk: {
             var map = try ctx.allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(ctx.allocator);
@@ -2098,7 +2098,7 @@ pub const Example = struct {
 
 pub const CreateListExamplesCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
-        var filesystem = try fs.FileSystem.init1(ctx.allocator, null);
+        var filesystem = try fs.FileSystem.init(null);
         var env_loader: DotEnv.Loader = brk: {
             var map = try ctx.allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(ctx.allocator);

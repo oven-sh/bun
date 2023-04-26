@@ -2152,7 +2152,7 @@ class Foo {
 
   describe("simplification", () => {
     it("unary operator", () => {
-      expectPrinted("a = !(b, c)", "a = (b , !c)");
+      expectPrinted("a = !(b, c)", "a = (b, !c)");
     });
 
     it("const inlining", () => {

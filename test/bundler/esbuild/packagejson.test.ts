@@ -1,4 +1,4 @@
-import { RUN_UNCHECKED_TESTS, expectBundled, itBundled, testForFile } from "../expectBundled";
+import { itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:
@@ -7,9 +7,7 @@ var { describe, test, expect } = testForFile(import.meta.path);
 // For debug, all files are written to $TEMP/bun-bundle-tests/packagejson
 
 describe("bundler", () => {
-  if (!RUN_UNCHECKED_TESTS) return;
-  itBundled("packagejson/PackageJsonMain", {
-    // GENERATED
+  itBundled("packagejson/Main", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -26,9 +24,11 @@ describe("bundler", () => {
         }
       `,
     },
+    run: {
+      stdout: "123",
+    },
   });
-  itBundled("packagejson/PackageJsonBadMain", {
-    // GENERATED
+  itBundled("packagejson/BadMain", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -45,9 +45,12 @@ describe("bundler", () => {
         }
       `,
     },
+    run: {
+      stdout: "123",
+    },
   });
-  itBundled("packagejson/PackageJsonSyntaxErrorComment", {
-    // GENERATED
+  itBundled("packagejson/SyntaxErrorComment", {
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -65,11 +68,12 @@ describe("bundler", () => {
         }
       `,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/node_modules/demo-pkg/package.json: ERROR: JSON does not support comments
-  `, */
+    bundleErrors: {
+      "/Users/user/project/node_modules/demo-pkg/package.json": ["JSON does not support comments"],
+    },
   });
-  itBundled("packagejson/PackageJsonSyntaxErrorTrailingComma", {
-    // GENERATED
+  itBundled("packagejson/SyntaxErrorTrailingComma", {
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -87,10 +91,11 @@ describe("bundler", () => {
         }
       `,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/node_modules/demo-pkg/package.json: ERROR: JSON does not support trailing commas
-  `, */
+    bundleErrors: {
+      "/Users/user/project/node_modules/demo-pkg/package.json": ["JSON does not support trailing commas"],
+    },
   });
-  itBundled("packagejson/PackageJsonModule", {
+  itBundled("packagejson/Module", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
@@ -110,13 +115,15 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/demo-pkg/main.esm.js": /* js */ `
         export default function() {
-          return 123
+          return 234
         }
       `,
     },
+    run: {
+      stdout: "234",
+    },
   });
-  itBundled("packagejson/PackageJsonBrowserString", {
-    // GENERATED
+  itBundled("packagejson/BrowserString", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -133,13 +140,15 @@ describe("bundler", () => {
         }
       `,
     },
+    run: {
+      stdout: "123",
+    },
   });
-  itBundled("packagejson/PackageJsonBrowserMapRelativeToRelative", {
-    // GENERATED
+  itBundled("packagejson/BrowserMapRelativeToRelative", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
-        console.log(fn())
+        console.log(JSON.stringify(fn()))
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
         {
@@ -165,13 +174,15 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/lib/util.js": `module.exports = 'util'`,
       "/Users/user/project/node_modules/demo-pkg/lib/util-browser.js": `module.exports = 'util-browser'`,
     },
+    run: {
+      stdout: `["main-browser","util-browser"]`,
+    },
   });
-  itBundled("packagejson/PackageJsonBrowserMapRelativeToModule", {
-    // GENERATED
+  itBundled("packagejson/BrowserMapRelativeToModule", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
-        console.log(fn())
+        console.log(JSON.stringify(fn()))
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
         {
@@ -190,13 +201,15 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/util.js": `module.exports = 'util'`,
       "/Users/user/project/node_modules/util-browser/index.js": `module.exports = 'util-browser'`,
     },
+    run: {
+      stdout: `["main","util-browser"]`,
+    },
   });
-  itBundled("packagejson/PackageJsonBrowserMapRelativeDisabled", {
-    // GENERATED
+  itBundled("packagejson/BrowserMapRelativeDisabled", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
-        console.log(fn())
+        console.log(JSON.stringify(fn(123)))
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
         {
@@ -209,14 +222,16 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/main.js": /* js */ `
         const util = require('./util-node')
         module.exports = function(obj) {
-          return util.inspect(obj)
+          return [util.inspect, obj]
         }
       `,
       "/Users/user/project/node_modules/demo-pkg/util-node.js": `module.exports = require('util')`,
     },
+    run: {
+      stdout: `[null,123]`,
+    },
   });
-  itBundled("packagejson/PackageJsonBrowserMapModuleToRelative", {
-    // GENERATED
+  itBundled("packagejson/BrowserMapModuleToRelative", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -246,9 +261,11 @@ describe("bundler", () => {
         }
       `,
     },
+    run: {
+      stdout: "123",
+    },
   });
-  itBundled("packagejson/PackageJsonBrowserMapModuleToModule", {
-    // GENERATED
+  itBundled("packagejson/BrowserMapModuleToModule", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -278,9 +295,12 @@ describe("bundler", () => {
         }
       `,
     },
+    run: {
+      stdout: "123",
+    },
   });
-  itBundled("packagejson/PackageJsonBrowserMapModuleDisabled", {
-    // GENERATED
+  itBundled("packagejson/BrowserMapModuleDisabled", {
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -295,8 +315,9 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
         const fn = require('node-pkg')
+        console.log(fn)
         module.exports = function() {
-          return fn()
+          return typeof fn === 'function' ? fn() : 123
         }
       `,
       "/Users/user/project/node_modules/node-pkg/index.js": /* js */ `
@@ -305,9 +326,11 @@ describe("bundler", () => {
         }
       `,
     },
+    run: {
+      stdout: "{}\n123",
+    },
   });
-  itBundled("packagejson/PackageJsonBrowserMapNativeModuleDisabled", {
-    // GENERATED
+  itBundled("packagejson/BrowserMapNativeModuleDisabled", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -323,13 +346,15 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
         const fs = require('fs')
         module.exports = function() {
-          return fs.readFile()
+          return fs.readFile === undefined
         }
       `,
     },
+    run: {
+      stdout: "true",
+    },
   });
-  itBundled("packagejson/PackageJsonBrowserMapAvoidMissing", {
-    // GENERATED
+  itBundled("packagejson/BrowserMapAvoidMissing", {
     files: {
       "/Users/user/project/src/entry.js": `import 'component-classes'`,
       "/Users/user/project/node_modules/component-classes/package.json": /* json */ `
@@ -343,18 +368,27 @@ describe("bundler", () => {
         try {
           var index = require('indexof');
         } catch (err) {
+          console.log('catch')
           var index = require('component-indexof');
         }
+        console.log(index())
       `,
       "/Users/user/project/node_modules/component-indexof/index.js": /* js */ `
         module.exports = function() {
           return 234
         }
       `,
+      "/Users/user/project/node_modules/indexof/index.js": /* js */ `
+        module.exports = function() {
+          return 123
+        }
+      `,
+    },
+    run: {
+      stdout: "234",
     },
   });
-  itBundled("packagejson/PackageJsonBrowserOverModuleBrowser", {
-    // GENERATED
+  itBundled("packagejson/BrowserOverModuleBrowser", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -374,19 +408,21 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/demo-pkg/main.esm.js": /* js */ `
         export default function() {
-          return 123
+          return 234
         }
       `,
       "/Users/user/project/node_modules/demo-pkg/main.browser.js": /* js */ `
         module.exports = function() {
-          return 123
+          return 345
         }
       `,
     },
     platform: "browser",
+    run: {
+      stdout: "345",
+    },
   });
-  itBundled("packagejson/PackageJsonBrowserOverMainNode", {
-    // GENERATED
+  itBundled("packagejson/BrowserOverMainNode", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -406,19 +442,21 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/demo-pkg/main.esm.js": /* js */ `
         export default function() {
-          return 123
+          return 234
         }
       `,
       "/Users/user/project/node_modules/demo-pkg/main.browser.js": /* js */ `
         module.exports = function() {
-          return 123
+          return 345
         }
       `,
     },
     platform: "node",
+    run: {
+      stdout: "123",
+    },
   });
-  itBundled("packagejson/PackageJsonBrowserWithModuleBrowser", {
-    // GENERATED
+  itBundled("packagejson/BrowserWithModuleBrowser", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -441,24 +479,26 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/demo-pkg/main.esm.js": /* js */ `
         export default function() {
-          return 123
+          return 234
         }
       `,
       "/Users/user/project/node_modules/demo-pkg/main.browser.js": /* js */ `
         module.exports = function() {
-          return 123
+          return 345
         }
       `,
       "/Users/user/project/node_modules/demo-pkg/main.browser.esm.js": /* js */ `
         export default function() {
-          return 123
+          return 456
         }
       `,
     },
     platform: "browser",
+    run: {
+      stdout: "456",
+    },
   });
-  itBundled("packagejson/PackageJsonBrowserWithMainNode", {
-    // GENERATED
+  itBundled("packagejson/BrowserWithMainNode", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -481,30 +521,33 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/demo-pkg/main.esm.js": /* js */ `
         export default function() {
-          return 123
+          return 234
         }
       `,
       "/Users/user/project/node_modules/demo-pkg/main.browser.js": /* js */ `
         module.exports = function() {
-          return 123
+          return 345
         }
       `,
       "/Users/user/project/node_modules/demo-pkg/main.browser.esm.js": /* js */ `
         export default function() {
-          return 123
+          return 456
         }
       `,
     },
     platform: "node",
+    run: {
+      stdout: "123",
+    },
   });
-  itBundled("packagejson/PackageJsonBrowserNodeModulesNoExt", {
-    // GENERATED
+  itBundled("packagejson/BrowserNodeModulesNoExt", {
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
-        import {browser as a} from 'demo-pkg/no-ext'
-        import {node as b} from 'demo-pkg/no-ext.js'
-        import {browser as c} from 'demo-pkg/ext'
-        import {browser as d} from 'demo-pkg/ext.js'
+        import {value as a} from 'demo-pkg/no-ext'
+        import {value as b} from 'demo-pkg/no-ext.js'
+        import {value as c} from 'demo-pkg/ext'
+        import {value as d} from 'demo-pkg/ext.js'
         console.log(a)
         console.log(b)
         console.log(c)
@@ -518,20 +561,28 @@ describe("bundler", () => {
           }
         }
       `,
-      "/Users/user/project/node_modules/demo-pkg/no-ext.js": `export let node = 'node'`,
-      "/Users/user/project/node_modules/demo-pkg/no-ext-browser.js": `export let browser = 'browser'`,
-      "/Users/user/project/node_modules/demo-pkg/ext.js": `export let node = 'node'`,
-      "/Users/user/project/node_modules/demo-pkg/ext-browser.js": `export let browser = 'browser'`,
+      "/Users/user/project/node_modules/demo-pkg/no-ext.js": `export let value = 'node'`,
+      "/Users/user/project/node_modules/demo-pkg/no-ext-browser.js": `export let value = 'browser'`,
+      "/Users/user/project/node_modules/demo-pkg/ext.js": `export let value = 'node'`,
+      "/Users/user/project/node_modules/demo-pkg/ext-browser.js": `export let value = 'browser'`,
+    },
+    run: {
+      stdout: `
+        browser
+        node
+        browser
+        browser
+      `,
     },
   });
-  itBundled("packagejson/PackageJsonBrowserNodeModulesIndexNoExt", {
-    // GENERATED
+  itBundled("packagejson/BrowserNodeModulesIndexNoExt", {
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
-        import {browser as a} from 'demo-pkg/no-ext'
-        import {node as b} from 'demo-pkg/no-ext/index.js'
-        import {browser as c} from 'demo-pkg/ext'
-        import {browser as d} from 'demo-pkg/ext/index.js'
+        import {value as a} from 'demo-pkg/no-ext'
+        import {value as b} from 'demo-pkg/no-ext/index.js'
+        import {value as c} from 'demo-pkg/ext'
+        import {value as d} from 'demo-pkg/ext/index.js'
         console.log(a)
         console.log(b)
         console.log(c)
@@ -545,20 +596,27 @@ describe("bundler", () => {
           }
         }
       `,
-      "/Users/user/project/node_modules/demo-pkg/no-ext/index.js": `export let node = 'node'`,
-      "/Users/user/project/node_modules/demo-pkg/no-ext-browser/index.js": `export let browser = 'browser'`,
-      "/Users/user/project/node_modules/demo-pkg/ext/index.js": `export let node = 'node'`,
-      "/Users/user/project/node_modules/demo-pkg/ext-browser/index.js": `export let browser = 'browser'`,
+      "/Users/user/project/node_modules/demo-pkg/no-ext/index.js": `export let value = 'node'`,
+      "/Users/user/project/node_modules/demo-pkg/no-ext-browser/index.js": `export let value = 'browser'`,
+      "/Users/user/project/node_modules/demo-pkg/ext/index.js": `export let value = 'node'`,
+      "/Users/user/project/node_modules/demo-pkg/ext-browser/index.js": `export let value = 'browser'`,
+    },
+    run: {
+      stdout: `
+        browser
+        node
+        browser
+        browser
+      `,
     },
   });
-  itBundled("packagejson/PackageJsonBrowserNoExt", {
-    // GENERATED
+  itBundled("packagejson/BrowserNoExt", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
-        import {browser as a} from './demo-pkg/no-ext'
-        import {node as b} from './demo-pkg/no-ext.js'
-        import {browser as c} from './demo-pkg/ext'
-        import {browser as d} from './demo-pkg/ext.js'
+        import {value as a} from './demo-pkg/no-ext'
+        import {value as b} from './demo-pkg/no-ext.js'
+        import {value as c} from './demo-pkg/ext'
+        import {value as d} from './demo-pkg/ext.js'
         console.log(a)
         console.log(b)
         console.log(c)
@@ -572,20 +630,27 @@ describe("bundler", () => {
           }
         }
       `,
-      "/Users/user/project/src/demo-pkg/no-ext.js": `export let node = 'node'`,
-      "/Users/user/project/src/demo-pkg/no-ext-browser.js": `export let browser = 'browser'`,
-      "/Users/user/project/src/demo-pkg/ext.js": `export let node = 'node'`,
-      "/Users/user/project/src/demo-pkg/ext-browser.js": `export let browser = 'browser'`,
+      "/Users/user/project/src/demo-pkg/no-ext.js": `export let value = 'node'`,
+      "/Users/user/project/src/demo-pkg/no-ext-browser.js": `export let value = 'browser'`,
+      "/Users/user/project/src/demo-pkg/ext.js": `export let value = 'node'`,
+      "/Users/user/project/src/demo-pkg/ext-browser.js": `export let value = 'browser'`,
+    },
+    run: {
+      stdout: `
+        browser
+        node
+        browser
+        browser
+      `,
     },
   });
-  itBundled("packagejson/PackageJsonBrowserIndexNoExt", {
-    // GENERATED
+  itBundled("packagejson/BrowserIndexNoExt", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
-        import {browser as a} from './demo-pkg/no-ext'
-        import {node as b} from './demo-pkg/no-ext/index.js'
-        import {browser as c} from './demo-pkg/ext'
-        import {browser as d} from './demo-pkg/ext/index.js'
+        import {value as a} from './demo-pkg/no-ext'
+        import {value as b} from './demo-pkg/no-ext/index.js'
+        import {value as c} from './demo-pkg/ext'
+        import {value as d} from './demo-pkg/ext/index.js'
         console.log(a)
         console.log(b)
         console.log(c)
@@ -599,30 +664,41 @@ describe("bundler", () => {
           }
         }
       `,
-      "/Users/user/project/src/demo-pkg/no-ext/index.js": `export let node = 'node'`,
-      "/Users/user/project/src/demo-pkg/no-ext-browser/index.js": `export let browser = 'browser'`,
-      "/Users/user/project/src/demo-pkg/ext/index.js": `export let node = 'node'`,
-      "/Users/user/project/src/demo-pkg/ext-browser/index.js": `export let browser = 'browser'`,
+      "/Users/user/project/src/demo-pkg/no-ext/index.js": `export let value = 'node'`,
+      "/Users/user/project/src/demo-pkg/no-ext-browser/index.js": `export let value = 'browser'`,
+      "/Users/user/project/src/demo-pkg/ext/index.js": `export let value = 'node'`,
+      "/Users/user/project/src/demo-pkg/ext-browser/index.js": `export let value = 'browser'`,
+    },
+    run: {
+      stdout: `
+        browser
+        node
+        browser
+        browser
+      `,
     },
   });
-  itBundled("packagejson/PackageJsonBrowserESBuildIssue2002A", {
-    // GENERATED
+  itBundled("packagejson/BrowserESBuildIssue2002A", {
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": `require('pkg/sub')`,
       "/Users/user/project/src/node_modules/pkg/package.json": /* json */ `
         {
-        "browser": {
-          "./sub": "./sub/foo.js"
+          "browser": {
+            "./sub": "./sub/foo.js"
+          }
         }
-      }
       `,
       "/Users/user/project/src/node_modules/pkg/sub/foo.js": `require('sub')`,
       "/Users/user/project/src/node_modules/sub/package.json": `{ "main": "./bar" }`,
-      "/Users/user/project/src/node_modules/sub/bar.js": `works()`,
+      "/Users/user/project/src/node_modules/sub/bar.js": `console.log('it works')`,
+    },
+    run: {
+      stdout: "it works",
     },
   });
-  itBundled("packagejson/PackageJsonBrowserESBuildIssue2002B", {
-    // GENERATED
+  itBundled("packagejson/BrowserESBuildIssue2002B", {
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": `require('pkg/sub')`,
       "/Users/user/project/src/node_modules/pkg/package.json": /* json */ `
@@ -634,11 +710,14 @@ describe("bundler", () => {
       }
       `,
       "/Users/user/project/src/node_modules/pkg/sub/foo.js": `require('sub')`,
-      "/Users/user/project/src/node_modules/pkg/sub/bar.js": `works()`,
+      "/Users/user/project/src/node_modules/pkg/sub/bar.js": `console.log('it works')`,
+    },
+    run: {
+      stdout: "it works",
     },
   });
-  itBundled("packagejson/PackageJsonBrowserESBuildIssue2002C", {
-    // GENERATED
+  itBundled("packagejson/BrowserESBuildIssue2002C", {
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": `require('pkg/sub')`,
       "/Users/user/project/src/node_modules/pkg/package.json": /* json */ `
@@ -650,11 +729,13 @@ describe("bundler", () => {
       }
       `,
       "/Users/user/project/src/node_modules/pkg/sub/foo.js": `require('sub')`,
-      "/Users/user/project/src/node_modules/sub/index.js": `works()`,
+      "/Users/user/project/src/node_modules/sub/index.js": `console.log('it works')`,
+    },
+    run: {
+      stdout: "it works",
     },
   });
-  itBundled("packagejson/PackageJsonDualPackageHazardImportOnly", {
-    // GENERATED
+  itBundled("packagejson/DualPackageHazardImportOnly", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import value from 'demo-pkg'
@@ -669,9 +750,11 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/main.js": `module.exports = 'main'`,
       "/Users/user/project/node_modules/demo-pkg/module.js": `export default 'module'`,
     },
+    run: {
+      stdout: "module",
+    },
   });
-  itBundled("packagejson/PackageJsonDualPackageHazardRequireOnly", {
-    // GENERATED
+  itBundled("packagejson/DualPackageHazardRequireOnly", {
     files: {
       "/Users/user/project/src/entry.js": `console.log(require('demo-pkg'))`,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
@@ -683,9 +766,12 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/main.js": `module.exports = 'main'`,
       "/Users/user/project/node_modules/demo-pkg/module.js": `export default 'module'`,
     },
+    run: {
+      stdout: "main",
+    },
   });
-  itBundled("packagejson/PackageJsonDualPackageHazardImportAndRequireSameFile", {
-    // GENERATED
+  itBundled("packagejson/DualPackageHazardImportAndRequireSameFile", {
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import value from 'demo-pkg'
@@ -700,9 +786,11 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/main.js": `module.exports = 'main'`,
       "/Users/user/project/node_modules/demo-pkg/module.js": `export default 'module'`,
     },
+    run: {
+      stdout: "main main",
+    },
   });
-  itBundled("packagejson/PackageJsonDualPackageHazardImportAndRequireSeparateFiles", {
-    // GENERATED
+  itBundled("packagejson/DualPackageHazardImportAndRequireSeparateFiles", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import './test-main'
@@ -722,15 +810,17 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/main.js": `module.exports = 'main'`,
       "/Users/user/project/node_modules/demo-pkg/module.js": `export default 'module'`,
     },
+    run: {
+      stdout: "main\nmain",
+    },
   });
-  itBundled("packagejson/PackageJsonDualPackageHazardImportAndRequireForceModuleBeforeMain", {
-    // GENERATED
+  itBundled("packagejson/DualPackageHazardImportAndRequireForceModuleBeforeMain", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import './test-main'
         import './test-module'
       `,
-      "/Users/user/project/src/test-main.js": `console.log(require('demo-pkg'))`,
+      "/Users/user/project/src/test-main.js": `console.log(require('demo-pkg').default)`,
       "/Users/user/project/src/test-module.js": /* js */ `
         import value from 'demo-pkg'
         console.log(value)
@@ -745,9 +835,11 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/module.js": `export default 'module'`,
     },
     mainFields: ["module", "main"],
+    run: {
+      stdout: "module\nmodule",
+    },
   });
-  itBundled("packagejson/PackageJsonDualPackageHazardImportAndRequireImplicitMain", {
-    // GENERATED
+  itBundled("packagejson/DualPackageHazardImportAndRequireImplicitMain", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import './test-index'
@@ -766,15 +858,17 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/index.js": `module.exports = 'index'`,
       "/Users/user/project/node_modules/demo-pkg/module.js": `export default 'module'`,
     },
+    run: {
+      stdout: "index\nindex",
+    },
   });
-  itBundled("packagejson/PackageJsonDualPackageHazardImportAndRequireImplicitMainForceModuleBeforeMain", {
-    // GENERATED
+  itBundled("packagejson/DualPackageHazardImportAndRequireImplicitMainForceModuleBeforeMain", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import './test-index'
         import './test-module'
       `,
-      "/Users/user/project/src/test-index.js": `console.log(require('demo-pkg'))`,
+      "/Users/user/project/src/test-index.js": `console.log(require('demo-pkg').default)`,
       "/Users/user/project/src/test-module.js": /* js */ `
         import value from 'demo-pkg'
         console.log(value)
@@ -788,9 +882,12 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/module.js": `export default 'module'`,
     },
     mainFields: ["module", "main"],
+    run: {
+      stdout: "module\nmodule",
+    },
   });
-  itBundled("packagejson/PackageJsonDualPackageHazardImportAndRequireBrowser", {
-    // GENERATED
+  itBundled("packagejson/DualPackageHazardImportAndRequireBrowser", {
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import './test-main'
@@ -816,9 +913,11 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/main.browser.js": `module.exports = 'browser main'`,
       "/Users/user/project/node_modules/demo-pkg/module.browser.js": `export default 'browser module'`,
     },
+    run: {
+      stdout: "browser main\nbrowser main",
+    },
   });
-  itBundled("packagejson/PackageJsonMainFieldsA", {
-    // GENERATED
+  itBundled("packagejson/MainFieldsA", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import value from 'demo-pkg'
@@ -834,9 +933,11 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/b.js": `export default 'b'`,
     },
     mainFields: ["a", "b"],
+    run: {
+      stdout: "a",
+    },
   });
-  itBundled("packagejson/PackageJsonMainFieldsB", {
-    // GENERATED
+  itBundled("packagejson/MainFieldsB", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import value from 'demo-pkg'
@@ -852,9 +953,12 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/b.js": `export default 'b'`,
     },
     mainFields: ["b", "a"],
+    run: {
+      stdout: "b",
+    },
   });
-  itBundled("packagejson/PackageJsonNeutralNoDefaultMainFields", {
-    // GENERATED
+  itBundled("packagejson/NeutralNoDefaultMainFields", {
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -883,8 +987,7 @@ describe("bundler", () => {
   NOTE: You can mark the path "demo-pkg" as external to exclude it from the bundle, which will remove this error.
   `, */
   });
-  itBundled("packagejson/PackageJsonNeutralExplicitMainFields", {
-    // GENERATED
+  itBundled("packagejson/NeutralExplicitMainFields", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -901,12 +1004,19 @@ describe("bundler", () => {
           return 123
         }
       `,
+      "/Users/user/project/node_modules/demo-pkg/main.esm.js": /* js */ `
+        export default function() {
+          return 234
+        }
+      `,
     },
     platform: "neutral",
     mainFields: ["hello"],
+    run: {
+      stdout: "123",
+    },
   });
-  itBundled("packagejson/PackageJsonExportsErrorInvalidModuleSpecifier", {
-    // GENERATED
+  itBundled("packagejson/ExportsErrorInvalidModuleSpecifier", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import 'pkg1'
@@ -924,25 +1034,17 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg6/package.json": `{ "exports": { ".": "./%31.js" } }`,
       "/Users/user/project/node_modules/pkg6/1.js": `console.log(1)`,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: ERROR: Could not resolve "pkg1"
-  Users/user/project/node_modules/pkg1/package.json: NOTE: The module specifier "./%%" is invalid:
-  NOTE: You can mark the path "pkg1" as external to exclude it from the bundle, which will remove this error.
-  Users/user/project/src/entry.js: ERROR: Could not resolve "pkg2"
-  Users/user/project/node_modules/pkg2/package.json: NOTE: The module specifier "./%2f" is invalid:
-  NOTE: You can mark the path "pkg2" as external to exclude it from the bundle, which will remove this error.
-  Users/user/project/src/entry.js: ERROR: Could not resolve "pkg3"
-  Users/user/project/node_modules/pkg3/package.json: NOTE: The module specifier "./%2F" is invalid:
-  NOTE: You can mark the path "pkg3" as external to exclude it from the bundle, which will remove this error.
-  Users/user/project/src/entry.js: ERROR: Could not resolve "pkg4"
-  Users/user/project/node_modules/pkg4/package.json: NOTE: The module specifier "./%5c" is invalid:
-  NOTE: You can mark the path "pkg4" as external to exclude it from the bundle, which will remove this error.
-  Users/user/project/src/entry.js: ERROR: Could not resolve "pkg5"
-  Users/user/project/node_modules/pkg5/package.json: NOTE: The module specifier "./%5C" is invalid:
-  NOTE: You can mark the path "pkg5" as external to exclude it from the bundle, which will remove this error.
-  `, */
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [
+        `Could not resolve: "pkg1". Maybe you need to "bun install"?`,
+        `Could not resolve: "pkg2". Maybe you need to "bun install"?`,
+        `Could not resolve: "pkg3". Maybe you need to "bun install"?`,
+        `Could not resolve: "pkg4". Maybe you need to "bun install"?`,
+        `Could not resolve: "pkg5". Maybe you need to "bun install"?`,
+      ],
+    },
   });
-  itBundled("packagejson/PackageJsonExportsErrorInvalidPackageConfiguration", {
-    // GENERATED
+  itBundled("packagejson/ExportsErrorInvalidPackageConfiguration", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import 'pkg1'
@@ -951,18 +1053,14 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg1/package.json": `{ "exports": { ".": false } }`,
       "/Users/user/project/node_modules/pkg2/package.json": `{ "exports": { "./foo": false } }`,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/node_modules/pkg1/package.json: WARNING: This value must be a string, an object, an array, or null
-  Users/user/project/node_modules/pkg2/package.json: WARNING: This value must be a string, an object, an array, or null
-  Users/user/project/src/entry.js: ERROR: Could not resolve "pkg1"
-  Users/user/project/node_modules/pkg1/package.json: NOTE: The package configuration has an invalid value here:
-  NOTE: You can mark the path "pkg1" as external to exclude it from the bundle, which will remove this error.
-  Users/user/project/src/entry.js: ERROR: Could not resolve "pkg2/foo"
-  Users/user/project/node_modules/pkg2/package.json: NOTE: The package configuration has an invalid value here:
-  NOTE: You can mark the path "pkg2/foo" as external to exclude it from the bundle, which will remove this error.
-  `, */
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [
+        `Could not resolve: "pkg1". Maybe you need to "bun install"?`,
+        `Could not resolve: "pkg2/foo". Maybe you need to "bun install"?`,
+      ],
+    },
   });
-  itBundled("packagejson/PackageJsonExportsErrorInvalidPackageTarget", {
-    // GENERATED
+  itBundled("packagejson/ExportsErrorInvalidPackageTarget", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import 'pkg1'
@@ -973,41 +1071,33 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg2/package.json": `{ "exports": { ".": "./../pkg3" } }`,
       "/Users/user/project/node_modules/pkg3/package.json": `{ "exports": { ".": "./node_modules/pkg" } }`,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: ERROR: Could not resolve "pkg1"
-  Users/user/project/node_modules/pkg1/package.json: NOTE: The package target "invalid" is invalid because it doesn't start with "./":
-  NOTE: You can mark the path "pkg1" as external to exclude it from the bundle, which will remove this error.
-  Users/user/project/src/entry.js: ERROR: Could not resolve "pkg2"
-  Users/user/project/node_modules/pkg2/package.json: NOTE: The package target "./../pkg3" is invalid because it contains invalid segment "..":
-  NOTE: You can mark the path "pkg2" as external to exclude it from the bundle, which will remove this error.
-  Users/user/project/src/entry.js: ERROR: Could not resolve "pkg3"
-  Users/user/project/node_modules/pkg3/package.json: NOTE: The package target "./node_modules/pkg" is invalid because it contains invalid segment "node_modules":
-  NOTE: You can mark the path "pkg3" as external to exclude it from the bundle, which will remove this error.
-  `, */
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [
+        `Could not resolve: "pkg1". Maybe you need to "bun install"?`,
+        `Could not resolve: "pkg2". Maybe you need to "bun install"?`,
+        `Could not resolve: "pkg3". Maybe you need to "bun install"?`,
+      ],
+    },
   });
-  itBundled("packagejson/PackageJsonExportsErrorPackagePathNotExported", {
-    // GENERATED
+  itBundled("packagejson/ExportsErrorPackagePathNotExported", {
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg1/foo'`,
       "/Users/user/project/node_modules/pkg1/package.json": `{ "exports": { ".": {} } }`,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: ERROR: Could not resolve "pkg1/foo"
-  Users/user/project/node_modules/pkg1/package.json: NOTE: The path "./foo" is not exported by package "pkg1":
-  NOTE: You can mark the path "pkg1/foo" as external to exclude it from the bundle, which will remove this error.
-  `, */
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [`Could not resolve: "pkg1/foo". Maybe you need to "bun install"?`],
+    },
   });
-  itBundled("packagejson/PackageJsonExportsErrorModuleNotFound", {
-    // GENERATED
+  itBundled("packagejson/ExportsErrorModuleNotFound", {
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg1'`,
       "/Users/user/project/node_modules/pkg1/package.json": `{ "exports": { ".": "./foo.js" } }`,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: ERROR: Could not resolve "pkg1"
-  Users/user/project/node_modules/pkg1/package.json: NOTE: The module "./foo.js" was not found on the file system:
-  NOTE: You can mark the path "pkg1" as external to exclude it from the bundle, which will remove this error.
-  `, */
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [`Could not resolve: "pkg1". Maybe you need to "bun install"?`],
+    },
   });
-  itBundled("packagejson/PackageJsonExportsErrorUnsupportedDirectoryImport", {
-    // GENERATED
+  itBundled("packagejson/ExportsErrorUnsupportedDirectoryImport", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import 'pkg1'
@@ -1017,17 +1107,14 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg2/package.json": `{ "exports": { ".": "./foo" } }`,
       "/Users/user/project/node_modules/pkg2/foo/bar.js": `console.log(bar)`,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: ERROR: Could not resolve "pkg1"
-  Users/user/project/node_modules/pkg1/package.json: NOTE: The module "./foo" was not found on the file system:
-  NOTE: You can mark the path "pkg1" as external to exclude it from the bundle, which will remove this error.
-  Users/user/project/src/entry.js: ERROR: Could not resolve "pkg2"
-  Users/user/project/node_modules/pkg2/package.json: NOTE: Importing the directory "./foo" is forbidden by this package:
-  Users/user/project/node_modules/pkg2/package.json: NOTE: The presence of "exports" here makes importing a directory forbidden:
-  NOTE: You can mark the path "pkg2" as external to exclude it from the bundle, which will remove this error.
-  `, */
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [
+        `Could not resolve: "pkg1". Maybe you need to "bun install"?`,
+        `Could not resolve: "pkg2". Maybe you need to "bun install"?`,
+      ],
+    },
   });
-  itBundled("packagejson/PackageJsonExportsRequireOverImport", {
-    // GENERATED
+  itBundled("packagejson/ExportsRequireOverImport", {
     files: {
       "/Users/user/project/src/entry.js": `require('pkg')`,
       "/Users/user/project/node_modules/pkg/package.json": /* json */ `
@@ -1042,9 +1129,11 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg/import.js": `console.log('FAILURE')`,
       "/Users/user/project/node_modules/pkg/require.js": `console.log('SUCCESS')`,
     },
+    run: {
+      stdout: "SUCCESS",
+    },
   });
-  itBundled("packagejson/PackageJsonExportsImportOverRequire", {
-    // GENERATED
+  itBundled("packagejson/ExportsImportOverRequire", {
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg'`,
       "/Users/user/project/node_modules/pkg/package.json": /* json */ `
@@ -1059,9 +1148,11 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg/require.js": `console.log('FAILURE')`,
       "/Users/user/project/node_modules/pkg/import.js": `console.log('SUCCESS')`,
     },
+    run: {
+      stdout: "SUCCESS",
+    },
   });
-  itBundled("packagejson/PackageJsonExportsDefaultOverImportAndRequire", {
-    // GENERATED
+  itBundled("packagejson/ExportsDefaultOverImportAndRequire", {
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg'`,
       "/Users/user/project/node_modules/pkg/package.json": /* json */ `
@@ -1077,9 +1168,12 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg/import.js": `console.log('FAILURE')`,
       "/Users/user/project/node_modules/pkg/default.js": `console.log('SUCCESS')`,
     },
+    run: {
+      stdout: "SUCCESS",
+    },
   });
-  itBundled("packagejson/PackageJsonExportsEntryPointImportOverRequire", {
-    // GENERATED
+  itBundled("packagejson/ExportsEntryPointImportOverRequire", {
+    notImplemented: true,
     files: {
       "/node_modules/pkg/package.json": /* json */ `
         {
@@ -1097,9 +1191,11 @@ describe("bundler", () => {
       "/node_modules/pkg/main.js": `console.log('FAILURE')`,
     },
     entryPoints: ["pkg"],
+    run: {
+      stdout: "SUCCESS",
+    },
   });
-  itBundled("packagejson/PackageJsonExportsEntryPointRequireOnly", {
-    // GENERATED
+  itBundled("packagejson/ExportsEntryPointRequireOnly", {
     files: {
       "/node_modules/pkg/package.json": /* json */ `
         {
@@ -1114,14 +1210,12 @@ describe("bundler", () => {
       "/node_modules/pkg/module.js": `console.log('FAILURE')`,
       "/node_modules/pkg/main.js": `console.log('FAILURE')`,
     },
-    entryPoints: ["pkg"],
-    /* TODO FIX expectedScanLog: `ERROR: Could not resolve "pkg"
-  node_modules/pkg/package.json: NOTE: The path "." is not currently exported by package "pkg":
-  node_modules/pkg/package.json: NOTE: None of the conditions provided ("require") match any of the currently active conditions ("browser", "default", "import"):
-  `, */
+    entryPointsRaw: ["pkg"],
+    bundleErrors: {
+      "<bun>": [`ModuleNotFound resolving "pkg" (entry point)`],
+    },
   });
-  itBundled("packagejson/PackageJsonExportsEntryPointModuleOverMain", {
-    // GENERATED
+  itBundled("packagejson/ExportsEntryPointModuleOverMain", {
     files: {
       "/node_modules/pkg/package.json": /* json */ `
         {
@@ -1132,10 +1226,14 @@ describe("bundler", () => {
       "/node_modules/pkg/module.js": `console.log('SUCCESS')`,
       "/node_modules/pkg/main.js": `console.log('FAILURE')`,
     },
-    entryPoints: ["pkg"],
+    entryPointsRaw: ["pkg"],
+    outfile: "out.js",
+    run: {
+      file: "out.js",
+      stdout: "SUCCESS",
+    },
   });
-  itBundled("packagejson/PackageJsonExportsEntryPointMainOnly", {
-    // GENERATED
+  itBundled("packagejson/ExportsEntryPointMainOnly", {
     files: {
       "/node_modules/pkg/package.json": /* json */ `
         {
@@ -1144,10 +1242,14 @@ describe("bundler", () => {
       `,
       "/node_modules/pkg/main.js": `console.log('SUCCESS')`,
     },
-    entryPoints: ["pkg"],
+    entryPointsRaw: ["pkg"],
+    outfile: "out.js",
+    run: {
+      file: "out.js",
+      stdout: "SUCCESS",
+    },
   });
-  itBundled("packagejson/PackageJsonExportsBrowser", {
-    // GENERATED
+  itBundled("packagejson/ExportsBrowser", {
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg'`,
       "/Users/user/project/node_modules/pkg/package.json": /* json */ `
@@ -1162,10 +1264,14 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg/node.js": `console.log('FAILURE')`,
       "/Users/user/project/node_modules/pkg/browser.js": `console.log('SUCCESS')`,
     },
+    platform: "browser",
     outfile: "/Users/user/project/out.js",
+    run: {
+      stdout: "SUCCESS",
+    },
   });
-  itBundled("packagejson/PackageJsonExportsNode", {
-    // GENERATED
+  itBundled("packagejson/ExportsNode", {
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg'`,
       "/Users/user/project/node_modules/pkg/package.json": /* json */ `
@@ -1180,10 +1286,13 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg/browser.js": `console.log('FAILURE')`,
       "/Users/user/project/node_modules/pkg/node.js": `console.log('SUCCESS')`,
     },
+    platform: "node",
     outfile: "/Users/user/project/out.js",
+    run: {
+      stdout: "SUCCESS",
+    },
   });
-  itBundled("packagejson/PackageJsonExportsNeutral", {
-    // GENERATED
+  itBundled("packagejson/ExportsNeutral", {
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg'`,
       "/Users/user/project/node_modules/pkg/package.json": /* json */ `
@@ -1200,9 +1309,12 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg/default.js": `console.log('SUCCESS')`,
     },
     outfile: "/Users/user/project/out.js",
+    platform: "neutral",
+    run: {
+      stdout: "SUCCESS",
+    },
   });
-  itBundled("packagejson/PackageJsonExportsOrderIndependent", {
-    // GENERATED
+  itBundled("packagejson/ExportsOrderIndependent", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import 'pkg1/foo/bar.js'
@@ -1229,9 +1341,11 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg2/1/bar.js": `console.log('SUCCESS')`,
       "/Users/user/project/node_modules/pkg2/2/foo/bar.js": `console.log('FAILURE')`,
     },
+    run: {
+      stdout: "SUCCESS\nSUCCESS",
+    },
   });
-  itBundled("packagejson/PackageJsonExportsWildcard", {
-    // GENERATED
+  itBundled("packagejson/ExportsWildcard", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import 'pkg1/foo'
@@ -1247,20 +1361,20 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg1/file.js": `console.log('SUCCESS')`,
       "/Users/user/project/node_modules/pkg1/file2.js": `console.log('SUCCESS')`,
     },
+    run: {
+      stdout: "SUCCESS\nSUCCESS",
+    },
   });
-  itBundled("packagejson/PackageJsonExportsErrorMissingTrailingSlash", {
-    // GENERATED
+  itBundled("packagejson/ExportsErrorMissingTrailingSlash", {
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg1/foo/bar'`,
       "/Users/user/project/node_modules/pkg1/package.json": `{ "exports": { "./foo/": "./test" } }`,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: ERROR: Could not resolve "pkg1/foo/bar"
-  Users/user/project/node_modules/pkg1/package.json: NOTE: The module specifier "./test" is invalid because it doesn't end in "/":
-  NOTE: You can mark the path "pkg1/foo/bar" as external to exclude it from the bundle, which will remove this error.
-  `, */
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [`Could not resolve: "pkg1/foo/bar". Maybe you need to "bun install"?`],
+    },
   });
-  itBundled("packagejson/PackageJsonExportsCustomConditions", {
-    // GENERATED
+  itBundled("packagejson/ExportsCustomConditions", {
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg1'`,
       "/Users/user/project/node_modules/pkg1/package.json": /* json */ `
@@ -1275,9 +1389,11 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg1/custom2.js": `console.log('SUCCESS')`,
     },
     outfile: "/Users/user/project/out.js",
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [`Could not resolve: "pkg1". Maybe you need to "bun install"?`],
+    },
   });
-  itBundled("packagejson/PackageJsonExportsNotExactMissingExtension", {
-    // GENERATED
+  itBundled("packagejson/ExportsNotExactMissingExtension", {
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg1/foo/bar'`,
       "/Users/user/project/node_modules/pkg1/package.json": /* json */ `
@@ -1289,9 +1405,11 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/pkg1/dir/bar.js": `console.log('SUCCESS')`,
     },
+    run: {
+      stdout: "SUCCESS",
+    },
   });
-  itBundled("packagejson/PackageJsonExportsNotExactMissingExtensionPattern", {
-    // GENERATED
+  itBundled("packagejson/ExportsNotExactMissingExtensionPattern", {
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg1/foo/bar'`,
       "/Users/user/project/node_modules/pkg1/package.json": /* json */ `
@@ -1303,14 +1421,11 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/pkg1/dir/bar.js": `console.log('SUCCESS')`,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: ERROR: Could not resolve "pkg1/foo/bar"
-  Users/user/project/node_modules/pkg1/package.json: NOTE: The module "./dir/bar" was not found on the file system:
-  Users/user/project/src/entry.js: NOTE: Import from "pkg1/foo/bar.js" to get the file "Users/user/project/node_modules/pkg1/dir/bar.js":
-  NOTE: You can mark the path "pkg1/foo/bar" as external to exclude it from the bundle, which will remove this error.
-  `, */
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [`Could not resolve: "pkg1/foo/bar". Maybe you need to "bun install"?`],
+    },
   });
-  itBundled("packagejson/PackageJsonExportsExactMissingExtension", {
-    // GENERATED
+  itBundled("packagejson/ExportsExactMissingExtension", {
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg1/foo/bar'`,
       "/Users/user/project/node_modules/pkg1/package.json": /* json */ `
@@ -1322,12 +1437,11 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/pkg1/dir/bar.js": `console.log('SUCCESS')`,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: ERROR: Could not resolve "pkg1/foo/bar"
-  Users/user/project/node_modules/pkg1/package.json: NOTE: The module "./dir/bar" was not found on the file system:
-  NOTE: You can mark the path "pkg1/foo/bar" as external to exclude it from the bundle, which will remove this error.
-  `, */
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [`Could not resolve: "pkg1/foo/bar". Maybe you need to "bun install"?`],
+    },
   });
-  itBundled("packagejson/PackageJsonExportsNoConditionsMatch", {
+  itBundled("packagejson/ExportsNoConditionsMatch", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
@@ -1348,20 +1462,15 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/pkg1/foo.js": `console.log('FAILURE')`,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: ERROR: Could not resolve "pkg1"
-  Users/user/project/node_modules/pkg1/package.json: NOTE: The path "." is not currently exported by package "pkg1":
-  Users/user/project/node_modules/pkg1/package.json: NOTE: None of the conditions provided ("what") match any of the currently active conditions ("browser", "default", "import"):
-  Users/user/project/node_modules/pkg1/package.json: NOTE: Consider enabling the "what" condition if this package expects it to be enabled. You can use 'Conditions: []string{"what"}' to do that:
-  NOTE: You can mark the path "pkg1" as external to exclude it from the bundle, which will remove this error.
-  Users/user/project/src/entry.js: ERROR: Could not resolve "pkg1/foo.js"
-  Users/user/project/node_modules/pkg1/package.json: NOTE: The path "./foo.js" is not currently exported by package "pkg1":
-  Users/user/project/node_modules/pkg1/package.json: NOTE: None of the conditions provided ("what") match any of the currently active conditions ("browser", "default", "import"):
-  Users/user/project/node_modules/pkg1/package.json: NOTE: Consider enabling the "what" condition if this package expects it to be enabled. You can use 'Conditions: []string{"what"}' to do that:
-  NOTE: You can mark the path "pkg1/foo.js" as external to exclude it from the bundle, which will remove this error.
-  `, */
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [
+        `Could not resolve: "pkg1". Maybe you need to "bun install"?`,
+        `Could not resolve: "pkg1/foo.js". Maybe you need to "bun install"?`,
+      ],
+    },
   });
-  itBundled("packagejson/PackageJsonExportsMustUseRequire", {
-    // GENERATED
+  itBundled("packagejson/ExportsMustUseRequire", {
+    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import 'pkg1'
@@ -1381,20 +1490,8 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/pkg1/foo.js": `console.log('FAILURE')`,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: ERROR: Could not resolve "pkg1"
-  Users/user/project/node_modules/pkg1/package.json: NOTE: The path "." is not currently exported by package "pkg1":
-  Users/user/project/node_modules/pkg1/package.json: NOTE: None of the conditions provided ("require") match any of the currently active conditions ("browser", "default", "import"):
-  Users/user/project/src/entry.js: NOTE: Consider using a "require()" call to import this file, which will work because the "require" condition is supported by this package:
-  NOTE: You can mark the path "pkg1" as external to exclude it from the bundle, which will remove this error.
-  Users/user/project/src/entry.js: ERROR: Could not resolve "pkg1/foo.js"
-  Users/user/project/node_modules/pkg1/package.json: NOTE: The path "./foo.js" is not currently exported by package "pkg1":
-  Users/user/project/node_modules/pkg1/package.json: NOTE: None of the conditions provided ("require") match any of the currently active conditions ("browser", "default", "import"):
-  Users/user/project/src/entry.js: NOTE: Consider using a "require()" call to import this file, which will work because the "require" condition is supported by this package:
-  NOTE: You can mark the path "pkg1/foo.js" as external to exclude it from the bundle, which will remove this error.
-  `, */
   });
-  itBundled("packagejson/PackageJsonExportsMustUseImport", {
-    // GENERATED
+  itBundled("packagejson/ExportsMustUseImport", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         require('pkg1')
@@ -1414,20 +1511,14 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/pkg1/foo.js": `console.log('FAILURE')`,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: ERROR: Could not resolve "pkg1"
-  Users/user/project/node_modules/pkg1/package.json: NOTE: The path "." is not currently exported by package "pkg1":
-  Users/user/project/node_modules/pkg1/package.json: NOTE: None of the conditions provided ("import") match any of the currently active conditions ("browser", "default", "require"):
-  Users/user/project/src/entry.js: NOTE: Consider using an "import" statement to import this file, which will work because the "import" condition is supported by this package:
-  NOTE: You can mark the path "pkg1" as external to exclude it from the bundle, which will remove this error. You can also surround this "require" call with a try/catch block to handle this failure at run-time instead of bundle-time.
-  Users/user/project/src/entry.js: ERROR: Could not resolve "pkg1/foo.js"
-  Users/user/project/node_modules/pkg1/package.json: NOTE: The path "./foo.js" is not currently exported by package "pkg1":
-  Users/user/project/node_modules/pkg1/package.json: NOTE: None of the conditions provided ("import") match any of the currently active conditions ("browser", "default", "require"):
-  Users/user/project/src/entry.js: NOTE: Consider using an "import" statement to import this file, which will work because the "import" condition is supported by this package:
-  NOTE: You can mark the path "pkg1/foo.js" as external to exclude it from the bundle, which will remove this error. You can also surround this "require" call with a try/catch block to handle this failure at run-time instead of bundle-time.
-  `, */
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [
+        `Could not resolve: "pkg1". Maybe you need to "bun install"?`,
+        `Could not resolve: "pkg1/foo.js". Maybe you need to "bun install"?`,
+      ],
+    },
   });
-  itBundled("packagejson/PackageJsonExportsReverseLookup", {
-    // GENERATED
+  itBundled("packagejson/ExportsReverseLookup", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         require('pkg/path/to/real/file')
@@ -1448,20 +1539,14 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg/path/to/real/file.js": ``,
       "/Users/user/project/node_modules/pkg/path/to/other/file.js": ``,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: ERROR: Could not resolve "pkg/path/to/real/file"
-  Users/user/project/node_modules/pkg/package.json: NOTE: The path "./path/to/real/file" is not exported by package "pkg":
-  Users/user/project/node_modules/pkg/package.json: NOTE: The file "./path/to/real/file.js" is exported at path "./lib/teal/file":
-  Users/user/project/src/entry.js: NOTE: Import from "pkg/lib/teal/file" to get the file "Users/user/project/node_modules/pkg/path/to/real/file.js":
-  NOTE: You can mark the path "pkg/path/to/real/file" as external to exclude it from the bundle, which will remove this error. You can also surround this "require" call with a try/catch block to handle this failure at run-time instead of bundle-time.
-  Users/user/project/src/entry.js: ERROR: Could not resolve "pkg/path/to/other/file"
-  Users/user/project/node_modules/pkg/package.json: NOTE: The path "./path/to/other/file" is not exported by package "pkg":
-  Users/user/project/node_modules/pkg/package.json: NOTE: The file "./path/to/other/file.js" is exported at path "./extra/other/file.js":
-  Users/user/project/src/entry.js: NOTE: Import from "pkg/extra/other/file.js" to get the file "Users/user/project/node_modules/pkg/path/to/other/file.js":
-  NOTE: You can mark the path "pkg/path/to/other/file" as external to exclude it from the bundle, which will remove this error. You can also surround this "require" call with a try/catch block to handle this failure at run-time instead of bundle-time.
-  `, */
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [
+        `Could not resolve: "pkg/path/to/real/file". Maybe you need to "bun install"?`,
+        `Could not resolve: "pkg/path/to/other/file". Maybe you need to "bun install"?`,
+      ],
+    },
   });
-  itBundled("packagejson/PackageJsonExportsPatternTrailers", {
-    // GENERATED
+  itBundled("packagejson/ExportsPatternTrailers", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import 'pkg/path/foo.js/bar.js'
@@ -1487,9 +1572,11 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg2/public/abc.js": `console.log('abc')`,
       "/Users/user/project/node_modules/pkg2/public/xyz.js": `console.log('xyz')`,
     },
+    run: {
+      stdout: `works\nabc\nxyz`,
+    },
   });
-  itBundled("packagejson/PackageJsonExportsAlternatives", {
-    // GENERATED
+  itBundled("packagejson/ExportsAlternatives", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import redApple from 'pkg/apples/red.js'
@@ -1511,16 +1598,14 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg/good-books/green-book.js": `export default '📗'`,
       "/Users/user/project/node_modules/pkg/bad-books/red-book.js": `export default '📕'`,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: ERROR: Could not resolve "pkg/apples/red.js"
-  Users/user/project/node_modules/pkg/package.json: NOTE: The module "./good-apples/red.js" was not found on the file system:
-  NOTE: You can mark the path "pkg/apples/red.js" as external to exclude it from the bundle, which will remove this error.
-  Users/user/project/src/entry.js: ERROR: Could not resolve "pkg/books/red"
-  Users/user/project/node_modules/pkg/package.json: NOTE: The module "./good-books/red-book.js" was not found on the file system:
-  NOTE: You can mark the path "pkg/books/red" as external to exclude it from the bundle, which will remove this error.
-  `, */
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [
+        `Could not resolve: "pkg/apples/red.js". Maybe you need to "bun install"?`,
+        `Could not resolve: "pkg/books/red". Maybe you need to "bun install"?`,
+      ],
+    },
   });
-  itBundled("packagejson/PackageJsonImports", {
-    // GENERATED
+  itBundled("packagejson/Imports", {
     files: {
       "/Users/user/project/src/foo/entry.js": /* js */ `
         import '#top-level'
@@ -1543,9 +1628,11 @@ describe("bundler", () => {
       "/Users/user/project/src/some-star/c.js": `console.log('c.js')`,
       "/Users/user/project/src/some-slash/d.js": `console.log('d.js')`,
     },
+    run: {
+      stdout: `a.js\nb.js\nc.js\nd.js`,
+    },
   });
-  itBundled("packagejson/PackageJsonImportsRemapToOtherPackage", {
-    // GENERATED
+  itBundled("packagejson/ImportsRemapToOtherPackage", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import '#top-level'
@@ -1568,9 +1655,11 @@ describe("bundler", () => {
       "/Users/user/project/src/node_modules/pkg/some-star/c.js": `console.log('c.js')`,
       "/Users/user/project/src/node_modules/pkg/some-slash/d.js": `console.log('d.js')`,
     },
+    run: {
+      stdout: `a.js\nb.js\nc.js\nd.js`,
+    },
   });
-  itBundled("packagejson/PackageJsonImportsErrorMissingRemappedPackage", {
-    // GENERATED
+  itBundled("packagejson/ImportsErrorMissingRemappedPackage", {
     files: {
       "/Users/user/project/src/entry.js": `import '#foo'`,
       "/Users/user/project/src/package.json": /* json */ `
@@ -1581,13 +1670,11 @@ describe("bundler", () => {
         }
       `,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: ERROR: Could not resolve "#foo"
-  Users/user/project/src/package.json: NOTE: The remapped path "bar" could not be resolved:
-  NOTE: You can mark the path "#foo" as external to exclude it from the bundle, which will remove this error.
-  `, */
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [`Could not resolve: "#foo". Maybe you need to "bun install"?`],
+    },
   });
-  itBundled("packagejson/PackageJsonImportsInvalidPackageConfiguration", {
-    // GENERATED
+  itBundled("packagejson/ImportsInvalidPackageConfiguration", {
     files: {
       "/Users/user/project/src/entry.js": `import '#foo'`,
       "/Users/user/project/src/package.json": /* json */ `
@@ -1596,14 +1683,11 @@ describe("bundler", () => {
         }
       `,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: ERROR: Could not resolve "#foo"
-  Users/user/project/src/package.json: NOTE: The package configuration has an invalid value here:
-  NOTE: You can mark the path "#foo" as external to exclude it from the bundle, which will remove this error.
-  Users/user/project/src/package.json: WARNING: The value for "imports" must be an object
-  `, */
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [`Could not resolve: "#foo". Maybe you need to "bun install"?`],
+    },
   });
-  itBundled("packagejson/PackageJsonImportsErrorEqualsHash", {
-    // GENERATED
+  itBundled("packagejson/ImportsErrorEqualsHash", {
     files: {
       "/Users/user/project/src/entry.js": `import '#'`,
       "/Users/user/project/src/package.json": /* json */ `
@@ -1612,13 +1696,11 @@ describe("bundler", () => {
         }
       `,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: ERROR: Could not resolve "#"
-  Users/user/project/src/package.json: NOTE: This "imports" map was ignored because the module specifier "#" is invalid:
-  NOTE: You can mark the path "#" as external to exclude it from the bundle, which will remove this error.
-  `, */
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [`Could not resolve: "#". Maybe you need to "bun install"?`],
+    },
   });
-  itBundled("packagejson/PackageJsonImportsErrorStartsWithHashSlash", {
-    // GENERATED
+  itBundled("packagejson/ImportsErrorStartsWithHashSlash", {
     files: {
       "/Users/user/project/src/entry.js": `import '#/foo'`,
       "/Users/user/project/src/package.json": /* json */ `
@@ -1627,13 +1709,11 @@ describe("bundler", () => {
         }
       `,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: ERROR: Could not resolve "#/foo"
-  Users/user/project/src/package.json: NOTE: This "imports" map was ignored because the module specifier "#/foo" is invalid:
-  NOTE: You can mark the path "#/foo" as external to exclude it from the bundle, which will remove this error.
-  `, */
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [`Could not resolve: "#/foo". Maybe you need to "bun install"?`],
+    },
   });
-  itBundled("packagejson/PackageJsonMainFieldsErrorMessageDefault", {
-    // GENERATED
+  itBundled("packagejson/MainFieldsErrorMessageDefault", {
     files: {
       "/Users/user/project/src/entry.js": `import 'foo'`,
       "/Users/user/project/node_modules/foo/package.json": /* json */ `
@@ -1642,28 +1722,11 @@ describe("bundler", () => {
         }
       `,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: ERROR: Could not resolve "foo"
-  NOTE: You can mark the path "foo" as external to exclude it from the bundle, which will remove this error.
-  `, */
-  });
-  itBundled("packagejson/PackageJsonMainFieldsErrorMessageNotIncluded", {
-    // GENERATED
-    files: {
-      "/Users/user/project/src/entry.js": `import 'foo'`,
-      "/Users/user/project/node_modules/foo/package.json": /* json */ `
-        {
-          "main": "./foo"
-        }
-      `,
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [`Could not resolve: "foo". Maybe you need to "bun install"?`],
     },
-    outfile: "/Users/user/project/out.js",
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: ERROR: Could not resolve "foo"
-  Users/user/project/node_modules/foo/package.json: NOTE: The "main" field here was ignored because the list of main fields to use is currently set to ["some", "fields"].
-  NOTE: You can mark the path "foo" as external to exclude it from the bundle, which will remove this error.
-  `, */
   });
-  itBundled("packagejson/PackageJsonMainFieldsErrorMessageEmpty", {
-    // GENERATED
+  itBundled("packagejson/MainFieldsErrorMessageNotIncluded", {
     files: {
       "/Users/user/project/src/entry.js": `import 'foo'`,
       "/Users/user/project/node_modules/foo/package.json": /* json */ `
@@ -1673,13 +1736,26 @@ describe("bundler", () => {
       `,
     },
     outfile: "/Users/user/project/out.js",
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: ERROR: Could not resolve "foo"
-  Users/user/project/node_modules/foo/package.json: NOTE: The "main" field here was ignored because the list of main fields to use is currently set to [].
-  NOTE: You can mark the path "foo" as external to exclude it from the bundle, which will remove this error.
-  `, */
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [`Could not resolve: "foo". Maybe you need to "bun install"?`],
+    },
   });
-  itBundled("packagejson/PackageJsonTypeShouldBeTypes", {
-    // GENERATED
+  itBundled("packagejson/MainFieldsErrorMessageEmpty", {
+    files: {
+      "/Users/user/project/src/entry.js": `import 'foo'`,
+      "/Users/user/project/node_modules/foo/package.json": /* json */ `
+        {
+          "main": "./foo"
+        }
+      `,
+    },
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [`Could not resolve: "foo". Maybe you need to "bun install"?`],
+    },
+    outfile: "/Users/user/project/out.js",
+  });
+  itBundled("packagejson/TypeShouldBeTypes", {
+    notImplemented: true,
     files: {
       "/Users/user/project/src/index.js": ``,
       "/Users/user/project/package.json": /* json */ `
@@ -1690,12 +1766,14 @@ describe("bundler", () => {
       `,
     },
     outfile: "/Users/user/project/out.js",
-    /* TODO FIX expectedScanLog: `Users/user/project/package.json: WARNING: "./src/index.d.ts" is not a valid value for the "type" field
-  Users/user/project/package.json: NOTE: TypeScript type declarations use the "types" field, not the "type" field:
-  `, */
+    bundleWarnings: {
+      "/Users/user/project/package.json": [
+        `"./src/index.d.ts" is not a valid value for "type" field (must be either "commonjs" or "module")`,
+      ],
+    },
   });
-  itBundled("packagejson/PackageJsonImportSelfUsingRequire", {
-    // GENERATED
+  itBundled("packagejson/ImportSelfUsingRequire", {
+    notImplemented: true,
     files: {
       "/Users/user/project/src/index.js": /* js */ `
         module.exports = 'index'
@@ -1704,8 +1782,8 @@ describe("bundler", () => {
           require("xyz/bar"),
         )
       `,
-      "/Users/user/project/src/foo-import.js": `export default 'foo'`,
-      "/Users/user/project/src/foo-require.js": `module.exports = 'foo'`,
+      "/Users/user/project/src/foo-import.js": `export default 'foo-import'`,
+      "/Users/user/project/src/foo-require.js": `module.exports = 'foo-require'`,
       "/Users/user/project/package.json": /* json */ `
         {
           "name": "xyz",
@@ -1720,9 +1798,12 @@ describe("bundler", () => {
       `,
     },
     outfile: "/Users/user/project/out.js",
+    run: {
+      stdout: `index foo-require`,
+    },
   });
-  itBundled("packagejson/PackageJsonImportSelfUsingImport", {
-    // GENERATED
+  itBundled("packagejson/ImportSelfUsingImport", {
+    notImplemented: true,
     files: {
       "/Users/user/project/src/index.js": /* js */ `
         import xyz from "xyz"
@@ -1730,8 +1811,8 @@ describe("bundler", () => {
         export default 'index'
         console.log(xyz, foo)
       `,
-      "/Users/user/project/src/foo-import.js": `export default 'foo'`,
-      "/Users/user/project/src/foo-require.js": `module.exports = 'foo'`,
+      "/Users/user/project/src/foo-import.js": `export default 'foo-import'`,
+      "/Users/user/project/src/foo-require.js": `module.exports = 'foo-require'`,
       "/Users/user/project/package.json": /* json */ `
         {
           "name": "xyz",
@@ -1746,9 +1827,12 @@ describe("bundler", () => {
       `,
     },
     outfile: "/Users/user/project/out.js",
+    run: {
+      stdout: `index foo-import`,
+    },
   });
-  itBundled("packagejson/PackageJsonImportSelfUsingRequireScoped", {
-    // GENERATED
+  itBundled("packagejson/ImportSelfUsingRequireScoped", {
+    notImplemented: true,
     files: {
       "/Users/user/project/src/index.js": /* js */ `
         module.exports = 'index'
@@ -1757,8 +1841,8 @@ describe("bundler", () => {
           require("@some-scope/xyz/bar"),
         )
       `,
-      "/Users/user/project/src/foo-import.js": `export default 'foo'`,
-      "/Users/user/project/src/foo-require.js": `module.exports = 'foo'`,
+      "/Users/user/project/src/foo-import.js": `export default 'foo-import'`,
+      "/Users/user/project/src/foo-require.js": `module.exports = 'foo-require'`,
       "/Users/user/project/package.json": /* json */ `
         {
           "name": "@some-scope/xyz",
@@ -1773,9 +1857,12 @@ describe("bundler", () => {
       `,
     },
     outfile: "/Users/user/project/out.js",
+    run: {
+      stdout: `index foo-require`,
+    },
   });
-  itBundled("packagejson/PackageJsonImportSelfUsingImportScoped", {
-    // GENERATED
+  itBundled("packagejson/ImportSelfUsingImportScoped", {
+    notImplemented: true,
     files: {
       "/Users/user/project/src/index.js": /* js */ `
         import xyz from "@some-scope/xyz"
@@ -1783,8 +1870,8 @@ describe("bundler", () => {
         export default 'index'
         console.log(xyz, foo)
       `,
-      "/Users/user/project/src/foo-import.js": `export default 'foo'`,
-      "/Users/user/project/src/foo-require.js": `module.exports = 'foo'`,
+      "/Users/user/project/src/foo-import.js": `export default 'foo-import'`,
+      "/Users/user/project/src/foo-require.js": `module.exports = 'foo-require'`,
       "/Users/user/project/package.json": /* json */ `
         {
           "name": "@some-scope/xyz",
@@ -1799,9 +1886,11 @@ describe("bundler", () => {
       `,
     },
     outfile: "/Users/user/project/out.js",
+    run: {
+      stdout: `index foo-import`,
+    },
   });
-  itBundled("packagejson/PackageJsonImportSelfUsingRequireFailure", {
-    // GENERATED
+  itBundled("packagejson/ImportSelfUsingRequireFailure", {
     files: {
       "/Users/user/project/src/index.js": `require("xyz/src/foo.js")`,
       "/Users/user/project/src/foo.js": `module.exports = 'foo'`,
@@ -1816,15 +1905,11 @@ describe("bundler", () => {
       `,
     },
     outfile: "/Users/user/project/out.js",
-    /* TODO FIX expectedScanLog: `Users/user/project/src/index.js: ERROR: Could not resolve "xyz/src/foo.js"
-  Users/user/project/package.json: NOTE: The path "./src/foo.js" is not exported by package "xyz":
-  Users/user/project/package.json: NOTE: The file "./src/foo.js" is exported at path "./bar":
-  Users/user/project/src/index.js: NOTE: Import from "xyz/bar" to get the file "Users/user/project/src/foo.js":
-  NOTE: You can mark the path "xyz/src/foo.js" as external to exclude it from the bundle, which will remove this error. You can also surround this "require" call with a try/catch block to handle this failure at run-time instead of bundle-time.
-  `, */
+    bundleErrors: {
+      "/Users/user/project/src/index.js": [`Could not resolve: "xyz/src/foo.js". Maybe you need to "bun install"?`],
+    },
   });
-  itBundled("packagejson/PackageJsonImportSelfUsingImportFailure", {
-    // GENERATED
+  itBundled("packagejson/ImportSelfUsingImportFailure", {
     files: {
       "/Users/user/project/src/index.js": `import "xyz/src/foo.js"`,
       "/Users/user/project/src/foo.js": `export default 'foo'`,
@@ -1839,26 +1924,17 @@ describe("bundler", () => {
       `,
     },
     outfile: "/Users/user/project/out.js",
-    /* TODO FIX expectedScanLog: `Users/user/project/src/index.js: ERROR: Could not resolve "xyz/src/foo.js"
-  Users/user/project/package.json: NOTE: The path "./src/foo.js" is not exported by package "xyz":
-  Users/user/project/package.json: NOTE: The file "./src/foo.js" is exported at path "./bar":
-  Users/user/project/src/index.js: NOTE: Import from "xyz/bar" to get the file "Users/user/project/src/foo.js":
-  NOTE: You can mark the path "xyz/src/foo.js" as external to exclude it from the bundle, which will remove this error.
-  `, */
+    bundleErrors: {
+      "/Users/user/project/src/index.js": [`Could not resolve: "xyz/src/foo.js". Maybe you need to "bun install"?`],
+    },
   });
   itBundled("packagejson/CommonJSVariableInESMTypeModule", {
-    // GENERATED
     files: {
       "/entry.js": `module.exports = null`,
       "/package.json": `{ "type": "module" }`,
     },
-    /* TODO FIX expectedScanLog: `entry.js: WARNING: The CommonJS "module" variable is treated as a global variable in an ECMAScript module and may not work as expected
-  package.json: NOTE: This file is considered to be an ECMAScript module because the enclosing "package.json" file sets the type of this file to "module":
-  NOTE: Node's package format requires that CommonJS files in a "type": "module" package use the ".cjs" file extension.
-  `, */
   });
-  itBundled("packagejson/PackageJsonNodePathsESBuildIssue2752", {
-    // GENERATED
+  itBundled("packagejson/NodePathsESBuildIssue2752", {
     files: {
       "/src/entry.js": /* js */ `
         import "pkg1"
@@ -1875,5 +1951,6 @@ describe("bundler", () => {
       "/tmp/pkg/@scope/pkg4/package.json": `{ "exports": { ".": { "import": "./bat.js" } } }`,
       "/tmp/pkg/@scope/pkg4/bat.js": `console.log('pkg4')`,
     },
+    nodePaths: ["/usr/lib/pkg", "/lib/pkg", "/var/lib/pkg", "/tmp/pkg"],
   });
 });

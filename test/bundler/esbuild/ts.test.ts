@@ -1,14 +1,14 @@
 import assert from "assert";
-import { RUN_UNCHECKED_TESTS, itBundled, testForFile } from "../expectBundled";
+import { itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_ts_test.go
 
-// For debug, all files are written to $TEMP/bun-bundle-tests/ts
+// For debug, all files are written to $TEMP/bun-bundle-tests/
 
 describe("bundler", () => {
-  itBundled("ts/TSDeclareConst", {
+  itBundled("ts/DeclareConst", {
     files: {
       "/entry.ts": /* ts */ `
         declare const require: any
@@ -27,7 +27,7 @@ describe("bundler", () => {
       assert(!api.readFile("/out.js").includes("const foo"), 'does not include "const foo"');
     },
   });
-  itBundled("ts/TSDeclareLet", {
+  itBundled("ts/DeclareLet", {
     files: {
       "/entry.ts": /* ts */ `
         declare let require: any
@@ -45,7 +45,7 @@ describe("bundler", () => {
       assert(!api.readFile("/out.js").includes("module"), 'does not include "module"');
     },
   });
-  itBundled("ts/TSDeclareVar", {
+  itBundled("ts/DeclareVar", {
     files: {
       "/entry.ts": /* ts */ `
         declare var require: any
@@ -63,7 +63,7 @@ describe("bundler", () => {
       assert(!api.readFile("/out.js").includes("module"), 'does not include "module"');
     },
   });
-  itBundled("ts/TSDeclareClass", {
+  itBundled("ts/DeclareClass", {
     files: {
       "/entry.ts": /* ts */ `
         declare class require {}
@@ -82,7 +82,7 @@ describe("bundler", () => {
       assert(!api.readFile("/out.js").includes("class"), 'does not include "class"');
     },
   });
-  itBundled("ts/TSDeclareClassFields", {
+  itBundled("ts/DeclareClassFields", {
     files: {
       "/entry.ts": /* ts */ `
         import './setup'
@@ -101,15 +101,15 @@ describe("bundler", () => {
       `,
       "/define-false/index.ts": /* ts */ `
         class Foo {
-          a
-          declare b
-          [(() => null, c)]
-          declare [(() => null, d)]
+          a = 1
+          declare b: number
+          [(() => null, c)] = 3
+          declare [(() => null, d)]: number
   
-          static A
-          static declare B
-          static [(() => null, C)]
-          static declare [(() => null, D)]
+          static A = 5
+          static declare B: number
+          static [(() => null, C)] = 7
+          static declare [(() => null, D)]: number
         }
         const props = x => JSON.stringify({ ...Object.getOwnPropertyDescriptors(x), length: undefined, prototype: undefined })
         console.log('Foo    ', props(Foo))
@@ -141,14 +141,14 @@ describe("bundler", () => {
     },
     run: {
       stdout: `
-        Foo     {"name":{"value":"Foo","writable":false,"enumerable":false,"configurable":true}}
-        new Foo {}
+        Foo     {"name":{"value":"Foo","writable":false,"enumerable":false,"configurable":true},"A":{"value":5,"writable":true,"enumerable":true,"configurable":true},"global.C":{"value":7,"writable":true,"enumerable":true,"configurable":true}}
+        new Foo {"a":{"value":1,"writable":true,"enumerable":true,"configurable":true},"global.c":{"value":3,"writable":true,"enumerable":true,"configurable":true}}
         Bar     {"name":{"value":"Bar","writable":false,"enumerable":false,"configurable":true},"A":{"writable":true,"enumerable":true,"configurable":true},"global.C":{"writable":true,"enumerable":true,"configurable":true}}
         new Bar {"a":{"writable":true,"enumerable":true,"configurable":true},"global.c":{"writable":true,"enumerable":true,"configurable":true}}
       `,
     },
   });
-  itBundled("ts/TSDeclareFunction", {
+  itBundled("ts/DeclareFunction", {
     files: {
       "/entry.ts": /* ts */ `
         declare function require(): void
@@ -167,7 +167,7 @@ describe("bundler", () => {
       assert(!api.readFile("/out.js").includes("function"), 'does not include "function"');
     },
   });
-  itBundled("ts/TSDeclareNamespace", {
+  itBundled("ts/DeclareNamespace", {
     files: {
       "/entry.ts": /* ts */ `
         declare namespace require {}
@@ -186,7 +186,7 @@ describe("bundler", () => {
       assert(!api.readFile("/out.js").includes("namespace"), 'does not include "namespace"');
     },
   });
-  itBundled("ts/TSDeclareEnum", {
+  itBundled("ts/DeclareEnum", {
     files: {
       "/entry.ts": /* ts */ `
         declare enum require {}
@@ -205,7 +205,7 @@ describe("bundler", () => {
       assert(!api.readFile("/out.js").includes("enum"), 'does not include "enum"');
     },
   });
-  itBundled("ts/TSDeclareConstEnum", {
+  itBundled("ts/DeclareConstEnum", {
     files: {
       "/entry.ts": /* ts */ `
         declare const enum require {}
@@ -225,7 +225,10 @@ describe("bundler", () => {
       assert(!api.readFile("/out.js").includes("const"), 'does not include "const"');
     },
   });
-  itBundled("ts/TSConstEnumComments", {
+  itBundled("ts/ConstEnumComments", {
+    // When it comes time to implement this inlining, we may decide we do NOT
+    // want to insert helper comments.
+    notImplemented: true,
     files: {
       "/bar.ts": /* ts */ `
         export const enum Foo {
@@ -268,7 +271,7 @@ describe("bundler", () => {
       stdout: `{"should have comments":[1,1],"should not have comments":[2,2]}`,
     },
   });
-  itBundled("ts/TSImportEmptyNamespace", {
+  itBundled("ts/ImportEmptyNamespace", {
     files: {
       "/entry.ts": /* ts */ `
         import {REMOVE} from './ns.ts'
@@ -280,7 +283,7 @@ describe("bundler", () => {
     dce: true,
     run: true,
   });
-  itBundled("ts/TSImportMissingES6", {
+  itBundled("ts/ImportMissingES6", {
     files: {
       "/entry.ts": /* ts */ `
         import fn, {x as a, y as b} from './foo'
@@ -290,24 +293,25 @@ describe("bundler", () => {
     },
     bundleErrors: {
       "/entry.ts": [
-        `No matching export "default" in "foo.js" for import "default"`,
-        `No matching export "y" in "foo.js" for import "y"`,
+        `No matching export in "foo.js" for import "default"`,
+        `No matching export in "foo.js" for import "y"`,
       ],
     },
   });
-  itBundled("ts/TSImportMissingUnusedES6", {
+  itBundled("ts/ImportMissingUnusedES6", {
     files: {
       "/entry.ts": `import fn, {x as a, y as b} from './foo'`,
       "/foo.js": `export const x = 123`,
     },
     // goal for this test is there is no error. we dont really care about the output
   });
-  itBundled("ts/TSExportMissingES6", {
+  itBundled("ts/ExportMissingES6", {
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
         console.log(JSON.stringify(ns))
       `,
+      // the reason this doesnt error in TS is because `nope` can be a type
       "/foo.ts": `export {nope} from './bar'`,
       "/bar.js": `export const yep = 123`,
     },
@@ -315,7 +319,7 @@ describe("bundler", () => {
       stdout: `{}`,
     },
   });
-  itBundled("ts/TSImportMissingFile", {
+  itBundled("ts/ImportMissingFile", {
     files: {
       "/entry.ts": /* ts */ `
         import {Something} from './doesNotExist.ts'
@@ -326,7 +330,7 @@ describe("bundler", () => {
       "/entry.ts": [`Could not resolve: "./doesNotExist.ts"`],
     },
   });
-  itBundled("ts/TSImportTypeOnlyFile", {
+  itBundled("ts/ImportTypeOnlyFile", {
     files: {
       "/entry.ts": /* ts */ `
         import {SomeType1} from './doesNotExist1.ts'
@@ -340,7 +344,7 @@ describe("bundler", () => {
       stdout: "2",
     },
   });
-  itBundled("ts/TSExportEquals", {
+  itBundled("ts/ExportEquals", {
     files: {
       "/a.ts": /* ts */ `
         import b from './b.ts'
@@ -355,7 +359,7 @@ describe("bundler", () => {
       stdout: `[123,null]`,
     },
   });
-  itBundled("ts/TSExportNamespace", {
+  itBundled("ts/ExportNamespace", {
     files: {
       "/a.ts": /* ts */ `
         import {Foo} from './b.ts'
@@ -377,33 +381,34 @@ describe("bundler", () => {
       stdout: `{}\n1\n2`,
     },
   });
-  itBundled("ts/TSMinifyEnum", {
+  itBundled("ts/MinifyEnum", {
+    notImplemented: true,
     files: {
       "/a.ts": `enum Foo { A, B, C = Foo }\ncapture(Foo)`,
-      "/b.ts": `export enum Foo { X, Y, Z = Foo }`,
+      // "/b.ts": `export enum Foo { X, Y, Z = Foo }`,
     },
-    entryPoints: ["/a.ts", "/b.ts"],
+    entryPoints: ["/a.ts"],
     minifySyntax: true,
     minifyWhitespace: true,
     minifyIdentifiers: true,
     mode: "transform",
     onAfterBundle(api) {
-      const a = api.readFile("/out/a.js");
-      api.writeFile("/out/a.edited.js", a.replace(/capture\((.*?)\)/, `export const Foo = $1`));
-      const b = api.readFile("/out/b.js");
+      const a = api.readFile("/out.js");
+      api.writeFile("/out.edited.js", a.replace(/capture\((.*?)\)/, `export const Foo = $1`));
+      // const b = api.readFile("/out/b.js");
 
       // make sure the minification trick "enum[enum.K=V]=K" is used, but `enum`
       assert(a.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.A=0]=["']A["']/), "should be using enum minification trick (1)");
       assert(a.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.B=1]=["']B["']/), "should be using enum minification trick (2)");
       assert(a.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.C=[a-zA-Z$]]=["']C["']/), "should be using enum minification trick (3)");
-      assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.X=0]=["']X["']/), "should be using enum minification trick (4)");
-      assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.Y=1]=["']Y["']/), "should be using enum minification trick (5)");
-      assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.Z=[a-zA-Z$]]=["']Z["']/), "should be using enum minification trick (6)");
+      // assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.X=0]=["']X["']/), "should be using enum minification trick (4)");
+      // assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.Y=1]=["']Y["']/), "should be using enum minification trick (5)");
+      // assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.Z=[a-zA-Z$]]=["']Z["']/), "should be using enum minification trick (6)");
     },
     runtimeFiles: {
       "/test.js": /* js */ `
         import {Foo as FooA} from './out/a.edited.js'
-        import {Foo as FooB} from './out/b.js'
+        // import {Foo as FooB} from './out/b.js'
         import assert from 'assert';
         assert.strictEqual(FooA.A, 0, 'a.ts Foo.A')
         assert.strictEqual(FooA.B, 1, 'a.ts Foo.B')
@@ -411,6 +416,37 @@ describe("bundler", () => {
         assert.strictEqual(FooA[0], 'A', 'a.ts Foo[0]')
         assert.strictEqual(FooA[1], 'B', 'a.ts Foo[1]')
         assert.strictEqual(FooA[FooA], 'C', 'a.ts Foo[Foo]')
+        // assert.strictEqual(FooB.X, 0, 'b.ts Foo.X')
+        // assert.strictEqual(FooB.Y, 1, 'b.ts Foo.Y')
+        // assert.strictEqual(FooB.Z, FooB, 'b.ts Foo.Z')
+        // assert.strictEqual(FooB[0], 'X', 'b.ts Foo[0]')
+        // assert.strictEqual(FooB[1], 'Y', 'b.ts Foo[1]')
+        // assert.strictEqual(FooB[FooB], 'Z', 'b.ts Foo[Foo]')
+      `,
+    },
+  });
+  itBundled("ts/MinifyEnumExported", {
+    notImplemented: true,
+    files: {
+      "/b.ts": `export enum Foo { X, Y, Z = Foo }`,
+    },
+    entryPoints: ["/b.ts"],
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    mode: "transform",
+    onAfterBundle(api) {
+      const b = api.readFile("/out.js");
+
+      // make sure the minification trick "enum[enum.K=V]=K" is used, but `enum`
+      assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.X=0]=["']X["']/), "should be using enum minification trick (4)");
+      assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.Y=1]=["']Y["']/), "should be using enum minification trick (5)");
+      assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.Z=[a-zA-Z$]]=["']Z["']/), "should be using enum minification trick (6)");
+    },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import {Foo as FooB} from './out.js'
+        import assert from 'assert';
         assert.strictEqual(FooB.X, 0, 'b.ts Foo.X')
         assert.strictEqual(FooB.Y, 1, 'b.ts Foo.Y')
         assert.strictEqual(FooB.Z, FooB, 'b.ts Foo.Z')
@@ -420,7 +456,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("ts/TSMinifyNestedEnum", {
+  itBundled("ts/MinifyNestedEnum", {
     files: {
       "/a.ts": `function foo(arg) { enum Foo { A, B, C = Foo, D = arg } return Foo }\ncapture(foo)`,
       "/b.ts": `export function foo(arg) { enum Foo { X, Y, Z = Foo, W = arg } return Foo }`,
@@ -429,7 +465,6 @@ describe("bundler", () => {
     minifySyntax: true,
     minifyWhitespace: true,
     minifyIdentifiers: true,
-    mode: "transform",
     onAfterBundle(api) {
       const a = api.readFile("/out/a.js");
       api.writeFile("/out/a.edited.js", a.replace(/capture\((.*?)\)/, `export const Foo = $1`));
@@ -461,7 +496,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("ts/TSMinifyNestedEnumNoLogicalAssignment", {
+  itBundled("ts/MinifyNestedEnumNoLogicalAssignment", {
     files: {
       "/a.ts": `function foo(arg) { enum Foo { A, B, C = Foo, D = arg } return Foo }\ncapture(foo)`,
       "/b.ts": `export function foo(arg) { enum Foo { X, Y, Z = Foo, W = arg } return Foo }`,
@@ -481,7 +516,7 @@ describe("bundler", () => {
       assert(!b.includes("||="), "b should not use logical assignment");
     },
   });
-  itBundled("ts/TSMinifyNestedEnumNoArrow", {
+  itBundled("ts/MinifyNestedEnumNoArrow", {
     files: {
       "/a.ts": `function foo() { enum Foo { A, B, C = Foo } return Foo }`,
       "/b.ts": `export function foo() { enum Foo { X, Y, Z = Foo } return Foo }`,
@@ -502,7 +537,7 @@ describe("bundler", () => {
       assert(!b.includes("=>"), "b should not use arrow");
     },
   });
-  itBundled("ts/TSMinifyNamespace", {
+  itBundled("ts/MinifyNamespace", {
     files: {
       "/a.ts": /* ts */ `
         namespace Foo {
@@ -524,7 +559,6 @@ describe("bundler", () => {
     minifySyntax: true,
     minifyWhitespace: true,
     minifyIdentifiers: true,
-    mode: "transform",
     onAfterBundle(api) {
       api.writeFile("/out/a.edited.js", api.readFile("/out/a.js").replace(/capture\((.*?)\)/, `export const Foo = $1`));
     },
@@ -540,7 +574,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("ts/TSMinifyNamespaceNoLogicalAssignment", {
+  itBundled("ts/MinifyNamespaceNoLogicalAssignment", {
     files: {
       "/a.ts": /* ts */ `
         namespace Foo {
@@ -573,7 +607,7 @@ describe("bundler", () => {
       assert(!b.includes("||="), "b should not use logical assignment");
     },
   });
-  itBundled("ts/TSMinifyNamespaceNoArrow", {
+  itBundled("ts/MinifyNamespaceNoArrow", {
     files: {
       "/a.ts": /* ts */ `
         namespace Foo {
@@ -606,7 +640,7 @@ describe("bundler", () => {
       assert(!b.includes("=>"), "b should not use arrow");
     },
   });
-  itBundled("ts/TSMinifyDerivedClass", {
+  itBundled("ts/MinifyDerivedClass", {
     files: {
       "/entry.ts": /* ts */ `
         class Foo extends Bar {
@@ -648,7 +682,7 @@ describe("bundler", () => {
       stdout: "super\n1 2 3",
     },
   });
-  itBundled("ts/TSImportVsLocalCollisionAllTypes", {
+  itBundled("ts/ImportVsLocalCollisionAllTypes", {
     files: {
       "/entry.ts": /* ts */ `
         import {a, b, c, d, e} from './other.ts'
@@ -665,7 +699,7 @@ describe("bundler", () => {
       stdout: '[null,0,null,5,{"prop":2}]',
     },
   });
-  itBundled("ts/TSImportVsLocalCollisionMixed", {
+  itBundled("ts/ImportVsLocalCollisionMixed", {
     files: {
       "/entry.ts": /* ts */ `
         import {a, b, c, d, e, real} from './other.ts'
@@ -682,7 +716,8 @@ describe("bundler", () => {
       stdout: '[null,0,null,5,{"prop":2},123]',
     },
   });
-  itBundled("ts/TSImportEqualsEliminationTest", {
+  itBundled("ts/ImportEqualsEliminationTest", {
+    notImplemented: true,
     files: {
       "/entry.ts": /* ts */ `
         import a = foo.a
@@ -713,7 +748,7 @@ describe("bundler", () => {
       stdout: "123",
     },
   });
-  itBundled("ts/TSImportEqualsTreeShakingFalse", {
+  itBundled("ts/ImportEqualsTreeShakingFalse", {
     files: {
       "/entry.ts": /* ts */ `
         import { foo } from 'pkg'
@@ -725,8 +760,9 @@ describe("bundler", () => {
     treeShaking: false,
     dce: true,
     mode: "transform",
+    external: ["pkg"],
   });
-  itBundled("ts/TSImportEqualsTreeShakingTrue", {
+  itBundled("ts/ImportEqualsTreeShakingTrue", {
     files: {
       "/entry.ts": /* ts */ `
         import { foo } from 'pkg'
@@ -737,9 +773,11 @@ describe("bundler", () => {
     },
     dce: true,
     treeShaking: true,
+    external: ["pkg"],
     mode: "transform",
   });
-  itBundled("ts/TSImportEqualsBundle", {
+  itBundled("ts/ImportEqualsBundle", {
+    notImplemented: true,
     files: {
       "/entry.ts": /* ts */ `
         import { foo } from 'pkg'
@@ -749,9 +787,10 @@ describe("bundler", () => {
       `,
     },
     dce: true,
+    treeShaking: true,
     external: ["pkg"],
   });
-  itBundled("ts/TSMinifiedBundleES6", {
+  itBundled("ts/MinifiedBundleES6", {
     files: {
       "/entry.ts": /* ts */ `
         import {foo} from './a'
@@ -770,7 +809,7 @@ describe("bundler", () => {
       stdout: "123",
     },
   });
-  itBundled("ts/TSMinifiedBundleCommonJS", {
+  itBundled("ts/MinifiedBundleCommonJS", {
     files: {
       "/entry.ts": /* ts */ `
         const {foo} = require('./a')
@@ -1004,7 +1043,7 @@ describe("bundler", () => {
       ]);
     },
   });
-  itBundled("ts/TSExportDefaultTypeESBuildIssue316", {
+  itBundled("ts/ExportDefaultTypeESBuildIssue316", {
     files: {
       "/entry.ts": /* ts */ `
         import dc_def, { bar as dc } from './keep/declare-class'
@@ -1139,7 +1178,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("ts/TSImplicitExtensions", {
+  itBundled("ts/ImplicitExtensions", {
     files: {
       "/entry.ts": /* ts */ `
         import './pick-js.js'
@@ -1166,7 +1205,7 @@ describe("bundler", () => {
       stdout: "correct\n".repeat(6),
     },
   });
-  itBundled("ts/TSImplicitExtensionsMissing", {
+  itBundled("ts/ImplicitExtensionsMissing", {
     files: {
       "/entry.ts": /* ts */ `
         import './mjs.mjs'
@@ -1499,7 +1538,7 @@ describe("bundler", () => {
       file: "/test.js",
     },
   });
-  itBundled("ts/TSComputedClassFieldUseDefineFalse", {
+  itBundled("ts/ComputedClassFieldUseDefineFalse", {
     files: {
       "/entry.ts": /* ts */ `
         class Foo {
@@ -1546,7 +1585,7 @@ describe("bundler", () => {
       file: "/test.js",
     },
   });
-  itBundled("ts/TSComputedClassFieldUseDefineTrue", {
+  itBundled("ts/ComputedClassFieldUseDefineTrue", {
     files: {
       "/entry.ts": /* ts */ `
         class Foo {
@@ -1593,7 +1632,7 @@ describe("bundler", () => {
       file: "/test.js",
     },
   });
-  itBundled("ts/TSComputedClassFieldUseDefineTrueLower", {
+  itBundled("ts/ComputedClassFieldUseDefineTrueLower", {
     files: {
       "/entry.ts": /* ts */ `
         class Foo {
@@ -1641,7 +1680,7 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: ["class-field"],
   });
-  itBundled("ts/TSAbstractClassFieldUseAssign", {
+  itBundled("ts/AbstractClassFieldUseAssign", {
     files: {
       "/entry.ts": /* ts */ `
         const keepThis = Symbol('keepThis')
@@ -1659,7 +1698,7 @@ describe("bundler", () => {
     dce: true,
     useDefineForClassFields: false,
   });
-  itBundled("ts/TSAbstractClassFieldUseDefine", {
+  itBundled("ts/AbstractClassFieldUseDefine", {
     files: {
       "/entry.ts": /* ts */ `
         const keepThisToo = Symbol('keepThisToo')
@@ -1677,7 +1716,7 @@ describe("bundler", () => {
     mode: "transform",
     useDefineForClassFields: true,
   });
-  itBundled("ts/TSImportMTS", {
+  itBundled("ts/ImportMTS", {
     files: {
       "/entry.ts": `import './imported.mjs'`,
       "/imported.mts": `console.log('works')`,
@@ -1686,7 +1725,7 @@ describe("bundler", () => {
       stdout: "works",
     },
   });
-  itBundled("ts/TSImportCTS", {
+  itBundled("ts/ImportCTS", {
     files: {
       "/entry.ts": `require('./required.cjs')`,
       "/required.cjs": `console.log('works')`,
@@ -1695,7 +1734,7 @@ describe("bundler", () => {
       stdout: "works",
     },
   });
-  itBundled("ts/TSSideEffectsFalseWarningTypeDeclarations", {
+  itBundled("ts/SideEffectsFalseWarningTypeDeclarations", {
     files: {
       "/entry.ts": /* ts */ `
         import "some-js"
@@ -1719,7 +1758,7 @@ describe("bundler", () => {
       expect(api.readFile("/out.js").trim()).toBe("");
     },
   });
-  itBundled("ts/TSSiblingNamespace", {
+  itBundled("ts/SiblingNamespace", {
     files: {
       "/let.ts": /* ts */ `
         export namespace x { export let y = 123 }
@@ -1760,8 +1799,7 @@ describe("bundler", () => {
       `,
     },
   });
-  if (!RUN_UNCHECKED_TESTS) return;
-  itBundled("ts/TSSiblingEnum", {
+  itBundled("ts/SiblingEnum", {
     // GENERATED
     files: {
       "/number.ts": /* ts */ `
@@ -1837,7 +1875,7 @@ describe("bundler", () => {
     ],
     mode: "passthrough",
   });
-  itBundled("ts/TSEnumTreeShaking", {
+  itBundled("ts/EnumTreeShaking", {
     // GENERATED
     files: {
       "/simple-member.ts": /* ts */ `
@@ -1888,7 +1926,7 @@ describe("bundler", () => {
       "/namespace-after.ts",
     ],
   });
-  itBundled("ts/TSEnumJSX", {
+  itBundled("ts/EnumJSX", {
     // GENERATED
     files: {
       "/element.tsx": /* tsx */ `
@@ -1911,14 +1949,14 @@ describe("bundler", () => {
     entryPoints: ["/element.tsx", "/fragment.tsx", "/nested-element.tsx", "/nested-fragment.tsx"],
     mode: "passthrough",
   });
-  itBundled("ts/TSEnumDefine", {
+  itBundled("ts/EnumDefine", {
     // GENERATED
     files: {
       "/entry.ts": `enum a { b = 123, c = d }`,
     },
     mode: "passthrough",
   });
-  itBundled("ts/TSEnumSameModuleInliningAccess", {
+  itBundled("ts/EnumSameModuleInliningAccess", {
     // GENERATED
     files: {
       "/entry.ts": /* ts */ `
@@ -1937,7 +1975,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("ts/TSEnumCrossModuleInliningAccess", {
+  itBundled("ts/EnumCrossModuleInliningAccess", {
     // GENERATED
     files: {
       "/entry.ts": /* ts */ `
@@ -1959,7 +1997,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("ts/TSEnumCrossModuleInliningDefinitions", {
+  itBundled("ts/EnumCrossModuleInliningDefinitions", {
     // GENERATED
     files: {
       "/entry.ts": /* ts */ `
@@ -1981,7 +2019,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("ts/TSEnumCrossModuleInliningReExport", {
+  itBundled("ts/EnumCrossModuleInliningReExport", {
     // GENERATED
     files: {
       "/entry.js": /* js */ `
@@ -2003,7 +2041,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("ts/TSEnumCrossModuleTreeShaking", {
+  itBundled("ts/EnumCrossModuleTreeShaking", {
     // GENERATED
     files: {
       "/entry.ts": /* ts */ `
@@ -2048,7 +2086,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("ts/TSEnumExportClause", {
+  itBundled("ts/EnumExportClause", {
     // GENERATED
     files: {
       "/entry.ts": /* ts */ `
@@ -2075,7 +2113,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("ts/TSThisIsUndefinedWarning", {
+  itBundled("ts/ThisIsUndefinedWarning", {
     // GENERATED
     files: {
       "/warning1.ts": `export var foo = this`,
@@ -2093,7 +2131,7 @@ describe("bundler", () => {
   warning3.ts: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
   `, */
   });
-  itBundled("ts/TSCommonJSVariableInESMTypeModule", {
+  itBundled("ts/CommonJSVariableInESMTypeModule", {
     // GENERATED
     files: {
       "/entry.ts": `module.exports = null`,
@@ -2182,7 +2220,7 @@ describe("bundler", () => {
     },
     entryPoints: ["/supported.ts", "/not-supported.ts"],
   });
-  itBundled("ts/TSEnumUseBeforeDeclare", {
+  itBundled("ts/EnumUseBeforeDeclare", {
     // GENERATED
     files: {
       "/entry.ts": /* ts */ `

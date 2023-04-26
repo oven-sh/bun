@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "eventemitter3": "^5.0.0",
+    "tiny-typed-emitter": "latest"
+  },
+  "prettier": "../../.prettierrc.cjs"
+}

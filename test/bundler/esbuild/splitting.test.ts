@@ -1,4 +1,6 @@
-import { RUN_UNCHECKED_TESTS, itBundled, testForFile } from "../expectBundled";
+import assert from "assert";
+import { readdirSync } from "fs";
+import { itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:
@@ -7,7 +9,7 @@ var { describe, test, expect } = testForFile(import.meta.path);
 // For debug, all files are written to $TEMP/bun-bundle-tests/splitting
 
 describe("bundler", () => {
-  itBundled("splitting/SplittingSharedES6IntoES6", {
+  itBundled("splitting/SharedES6IntoES6", {
     files: {
       "/a.js": /* js */ `
         import {foo} from "./shared.js"
@@ -21,7 +23,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/a.js", "/b.js"],
     splitting: true,
-    format: "esm",
     run: [
       { file: "/out/a.js", stdout: "123" },
       { file: "/out/b.js", stdout: "123" },
@@ -31,9 +32,7 @@ describe("bundler", () => {
       "/out/b.js": "123",
     },
   });
-  if (!RUN_UNCHECKED_TESTS) return;
-  itBundled("splitting/SplittingSharedCommonJSIntoES6", {
-    // GENERATED
+  itBundled("splitting/SharedCommonJSIntoES6", {
     files: {
       "/a.js": /* js */ `
         const {foo} = require("./shared.js")
@@ -47,28 +46,46 @@ describe("bundler", () => {
     },
     entryPoints: ["/a.js", "/b.js"],
     splitting: true,
-    format: "esm",
+    run: [
+      { file: "/out/a.js", stdout: "123" },
+      { file: "/out/b.js", stdout: "123" },
+    ],
+    assertNotPresent: {
+      "/out/a.js": "123",
+      "/out/b.js": "123",
+    },
   });
-  itBundled("splitting/SplittingDynamicES6IntoES6", {
-    // GENERATED
+  itBundled("splitting/DynamicES6IntoES6", {
     files: {
       "/entry.js": `import("./foo.js").then(({bar}) => console.log(bar))`,
       "/foo.js": `export let bar = 123`,
     },
     splitting: true,
-    format: "esm",
+    outdir: "/out",
+    assertNotPresent: {
+      "/out/entry.js": "123",
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: "123",
+    },
   });
-  itBundled("splitting/SplittingDynamicCommonJSIntoES6", {
-    // GENERATED
+  itBundled("splitting/DynamicCommonJSIntoES6", {
     files: {
       "/entry.js": `import("./foo.js").then(({default: {bar}}) => console.log(bar))`,
       "/foo.js": `exports.bar = 123`,
     },
     splitting: true,
-    format: "esm",
+    outdir: "/out",
+    assertNotPresent: {
+      "/out/entry.js": "123",
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: "123",
+    },
   });
-  itBundled("splitting/SplittingDynamicAndNotDynamicES6IntoES6", {
-    // GENERATED
+  itBundled("splitting/DynamicAndNotDynamicES6IntoES6", {
     files: {
       "/entry.js": /* js */ `
         import {bar as a} from "./foo.js"
@@ -77,10 +94,10 @@ describe("bundler", () => {
       "/foo.js": `export let bar = 123`,
     },
     splitting: true,
-    format: "esm",
+    outdir: "/out",
   });
-  itBundled("splitting/SplittingDynamicAndNotDynamicCommonJSIntoES6", {
-    // GENERATED
+  itBundled("splitting/DynamicAndNotDynamicCommonJSIntoES6", {
+    skipOnEsbuild: true,
     files: {
       "/entry.js": /* js */ `
         import {bar as a} from "./foo.js"
@@ -88,11 +105,14 @@ describe("bundler", () => {
       `,
       "/foo.js": `exports.bar = 123`,
     },
+    outdir: "/out",
     splitting: true,
-    format: "esm",
+    run: {
+      file: "/out/entry.js",
+      stdout: "123 123",
+    },
   });
-  itBundled("splitting/SplittingAssignToLocal", {
-    // GENERATED
+  itBundled("splitting/AssignToLocal", {
     files: {
       "/a.js": /* js */ `
         import {foo, setFoo} from "./shared.js"
@@ -104,7 +124,7 @@ describe("bundler", () => {
         console.log(foo)
       `,
       "/shared.js": /* js */ `
-        export let foo
+        export let foo = 456
         export function setFoo(value) {
           foo = value
         }
@@ -112,10 +132,24 @@ describe("bundler", () => {
     },
     entryPoints: ["/a.js", "/b.js"],
     splitting: true,
-    format: "esm",
+    runtimeFiles: {
+      "/test1.js": /* js */ `
+        await import('./out/a.js')
+        await import('./out/b.js')
+      `,
+      "/test2.js": /* js */ `
+        await import('./out/b.js')
+        await import('./out/a.js')
+      `,
+    },
+    run: [
+      { file: "/out/a.js", stdout: "123" },
+      { file: "/out/b.js", stdout: "456" },
+      { file: "/test1.js", stdout: "123\n123" },
+      { file: "/test2.js", stdout: "456\n123" },
+    ],
   });
-  itBundled("splitting/SplittingSideEffectsWithoutDependencies", {
-    // GENERATED
+  itBundled("splitting/SideEffectsWithoutDependencies", {
     files: {
       "/a.js": /* js */ `
         import {a} from "./shared.js"
@@ -133,10 +167,24 @@ describe("bundler", () => {
     },
     entryPoints: ["/a.js", "/b.js"],
     splitting: true,
-    format: "esm",
+    runtimeFiles: {
+      "/test1.js": /* js */ `
+        await import('./out/a.js')
+        await import('./out/b.js')
+      `,
+      "/test2.js": /* js */ `
+        await import('./out/b.js')
+        await import('./out/a.js')
+      `,
+    },
+    run: [
+      { file: "/out/a.js", stdout: "side effect\n1" },
+      { file: "/out/b.js", stdout: "side effect\n2" },
+      { file: "/test1.js", stdout: "side effect\n1\n2" },
+      { file: "/test2.js", stdout: "side effect\n2\n1" },
+    ],
   });
-  itBundled("splitting/SplittingNestedDirectories", {
-    // GENERATED
+  itBundled("splitting/NestedDirectories", {
     files: {
       "/Users/user/project/src/pages/pageA/page.js": /* js */ `
         import x from "../shared.js"
@@ -149,11 +197,15 @@ describe("bundler", () => {
       "/Users/user/project/src/pages/shared.js": `export default 123`,
     },
     entryPoints: ["/Users/user/project/src/pages/pageA/page.js", "/Users/user/project/src/pages/pageB/page.js"],
+    outputPaths: ["/out/pageA/page.js", "/out/pageB/page.js"],
     splitting: true,
-    format: "esm",
+
+    run: [
+      { file: "/out/pageA/page.js", stdout: "123" },
+      { file: "/out/pageB/page.js", stdout: "-123" },
+    ],
   });
-  itBundled("splitting/SplittingCircularReferenceESBuildIssue251", {
-    // GENERATED
+  itBundled("splitting/CircularReferenceESBuildIssue251", {
     files: {
       "/a.js": /* js */ `
         export * from './b.js';
@@ -162,22 +214,37 @@ describe("bundler", () => {
       "/b.js": /* js */ `
         export * from './a.js';
         export var q = 6;
+
+        export function foo() {
+          q = 7;
+        }
       `,
     },
     entryPoints: ["/a.js", "/b.js"],
     splitting: true,
-    format: "esm",
+
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import { p, q, foo } from './out/a.js';
+        console.log(p, q)
+        import { p as p2, q as q2, foo as foo2 } from './out/b.js';
+        console.log(p2, q2)
+        console.log(foo === foo2)
+        foo();
+        console.log(q, q2)
+      `,
+    },
+    run: [{ file: "/test.js", stdout: "5 6\n5 6\ntrue\n7 7" }],
   });
-  itBundled("splitting/SplittingMissingLazyExport", {
-    // GENERATED
+  itBundled("splitting/MissingLazyExport", {
     files: {
       "/a.js": /* js */ `
         import {foo} from './common.js'
-        console.log(foo())
+        console.log(JSON.stringify(foo()))
       `,
       "/b.js": /* js */ `
         import {bar} from './common.js'
-        console.log(bar())
+        console.log(JSON.stringify(bar()))
       `,
       "/common.js": /* js */ `
         import * as ns from './empty.js'
@@ -191,49 +258,75 @@ describe("bundler", () => {
     },
     entryPoints: ["/a.js", "/b.js"],
     splitting: true,
-    format: "esm",
-    /* TODO FIX expectedCompileLog: `common.js: WARNING: Import "missing" will always be undefined because the file "empty.js" has no exports
-  `, */
+    run: [
+      { file: "/out/a.js", stdout: "[{},null]" },
+      { file: "/out/b.js", stdout: "[null]" },
+    ],
+    bundleWarnings: {
+      "/empty.js": [`Import "missing" will always be undefined because the file "empty.js" has no exports`],
+    },
   });
-  itBundled("splitting/SplittingReExportESBuildIssue273", {
-    // GENERATED
+  itBundled("splitting/ReExportESBuildIssue273", {
     files: {
-      "/a.js": `export const a = 1`,
+      "/a.js": `export const a = { value: 1 }`,
       "/b.js": `export { a } from './a'`,
     },
     entryPoints: ["/a.js", "/b.js"],
     splitting: true,
-    format: "esm",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import { a } from './out/a.js';
+        import { a as a2 } from './out/b.js';
+        console.log(a === a2, a.value, a2.value)
+      `,
+    },
+    run: [{ file: "/test.js", stdout: "true 1 1" }],
   });
-  itBundled("splitting/SplittingDynamicImportESBuildIssue272", {
-    // GENERATED
+  itBundled("splitting/DynamicImportESBuildIssue272", {
     files: {
       "/a.js": `import('./b')`,
-      "/b.js": `export default 1`,
+      "/b.js": `export default 1; console.log('imported')`,
     },
     entryPoints: ["/a.js", "/b.js"],
     splitting: true,
-    format: "esm",
+
+    run: [{ file: "/out/a.js", stdout: "imported" }],
+    assertNotPresent: {
+      "/out/a.js": "imported",
+    },
   });
-  itBundled("splitting/SplittingDynamicImportOutsideSourceTreeESBuildIssue264", {
-    // GENERATED
+  itBundled("splitting/DynamicImportOutsideSourceTreeESBuildIssue264", {
     files: {
       "/Users/user/project/src/entry1.js": `import('package')`,
       "/Users/user/project/src/entry2.js": `import('package')`,
       "/Users/user/project/node_modules/package/index.js": `console.log('imported')`,
     },
+    runtimeFiles: {
+      "/both.js": /* js */ `
+        import('./out/entry1.js');
+        import('./out/entry2.js');
+      `,
+    },
     entryPoints: ["/Users/user/project/src/entry1.js", "/Users/user/project/src/entry2.js"],
     splitting: true,
-    format: "esm",
+
+    run: [
+      { file: "/out/entry1.js", stdout: "imported" },
+      { file: "/out/entry2.js", stdout: "imported" },
+      { file: "/both.js", stdout: "imported" },
+    ],
   });
-  itBundled("splitting/SplittingCrossChunkAssignmentDependencies", {
-    // GENERATED
+  itBundled("splitting/CrossChunkAssignmentDependencies", {
     files: {
       "/a.js": /* js */ `
         import {setValue} from './shared'
         setValue(123)
       `,
-      "/b.js": `import './shared'`,
+      "/b.js": `import './shared'; console.log('b')`,
+      "/c.js": /* js */ `
+        import * as shared from './shared'
+        globalThis.shared = shared;
+      `,
       "/shared.js": /* js */ `
         var observer;
         var value;
@@ -244,59 +337,136 @@ describe("bundler", () => {
           return value;
         }
         export function setValue(next) {
+          console.log('setValue', next)
           value = next;
           if (observer) observer();
         }
-        sideEffects(getValue);
+        console.log("side effects!", getValue);
       `,
     },
-    entryPoints: ["/a.js", "/b.js"],
+    entryPoints: ["/a.js", "/b.js", "/c.js"],
     splitting: true,
-    format: "esm",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import './out/c.js';
+        const { getValue, setObserver } = globalThis.shared;
+        function observer() {
+          console.log('observer', getValue());
+        }
+        setObserver(observer);
+        import('./out/a.js');
+        import('./out/b.js');
+      `,
+    },
+    run: [
+      { file: "/out/a.js", stdout: "side effects! [Function]\nsetValue 123" },
+      { file: "/out/b.js", stdout: "side effects! [Function]\nb" },
+      { file: "/test.js", stdout: "side effects! [Function]\nsetValue 123\nobserver 123\nb" },
+    ],
   });
-  itBundled("splitting/SplittingCrossChunkAssignmentDependenciesRecursive", {
-    // GENERATED
+  itBundled("splitting/CrossChunkAssignmentDependenciesRecursive", {
     files: {
       "/a.js": /* js */ `
         import { setX } from './x'
-        setX()
+        globalThis.a = { setX };
       `,
       "/b.js": /* js */ `
         import { setZ } from './z'
-        setZ()
+        globalThis.b = { setZ };
       `,
       "/c.js": /* js */ `
         import { setX2 } from './x'
         import { setY2 } from './y'
         import { setZ2 } from './z'
-        setX2();
-        setY2();
-        setZ2();
+        globalThis.c = { setX2, setY2, setZ2 };
       `,
       "/x.js": /* js */ `
         let _x
         export function setX(v) { _x = v }
         export function setX2(v) { _x = v }
+        globalThis.x = { setX, setX2 };
       `,
       "/y.js": /* js */ `
         import { setX } from './x'
         let _y
         export function setY(v) { _y = v }
         export function setY2(v) { setX(v); _y = v }
+        globalThis.y = { setY, setY2 };
       `,
       "/z.js": /* js */ `
         import { setY } from './y'
         let _z
         export function setZ(v) { _z = v }
         export function setZ2(v) { setY(v); _z = v }
+        globalThis.z = { setZ, setZ2, setY };
       `,
     },
     entryPoints: ["/a.js", "/b.js", "/c.js"],
     splitting: true,
-    format: "esm",
+
+    runtimeFiles: {
+      "/test_all.js": /* js */ `
+        import './out/a.js';
+        import './out/b.js';
+        import './out/c.js';
+        try {
+          a; b; c; x; y; z; // throw if not defined
+        } catch (error) {
+          throw new Error('chunks were not emitted right.')
+        }
+        import assert from 'assert';
+        assert(a.setX === x.setX, 'a.setX');
+        assert(b.setZ === z.setZ, 'b.setZ');
+        assert(c.setX2 === x.setX2, 'c.setX2');
+        assert(c.setY2 === y.setY2, 'c.setY2');
+        assert(c.setZ2 === z.setZ2, 'c.setZ2');
+        assert(z.setY === y.setY, 'z.setY');
+      `,
+      "/test_a_only.js": /* js */ `
+        import './out/a.js';
+        try {
+          a; x; // throw if not defined
+        } catch (error) {
+          throw new Error('chunks were not emitted right.')
+        }
+        import assert from 'assert';
+        assert(a.setX === x.setX, 'a.setX');
+        assert(globalThis.b === undefined, 'b should not be loaded');
+        assert(globalThis.c === undefined, 'c should not be loaded');
+        assert(globalThis.y === undefined, 'y should not be loaded');
+        assert(globalThis.z === undefined, 'z should not be loaded');
+      `,
+      "/test_b_only.js": /* js */ `
+        import './out/b.js';
+        try {
+          b; x; y; z; // throw if not defined
+        } catch (error) {
+          throw new Error('chunks were not emitted right.')
+        }
+        import assert from 'assert';
+        assert(globalThis.a === undefined, 'a should not be loaded');
+        assert(globalThis.c === undefined, 'c should not be loaded');
+      `,
+      "/test_c_only.js": /* js */ `
+        import './out/c.js';
+        try {
+          c; x; y; z; // throw if not defined
+        } catch (error) {
+          throw new Error('chunks were not emitted right.')
+        }
+        import assert from 'assert';
+        assert(globalThis.a === undefined, 'a should not be loaded');
+        assert(globalThis.b === undefined, 'b should not be loaded');
+      `,
+    },
+    run: [
+      { file: "/test_all.js" },
+      { file: "/test_a_only.js" },
+      { file: "/test_b_only.js" },
+      { file: "/test_c_only.js" },
+    ],
   });
-  itBundled("splitting/SplittingDuplicateChunkCollision", {
-    // GENERATED
+  itBundled("splitting/DuplicateChunkCollision", {
     files: {
       "/a.js": `import "./ab"`,
       "/b.js": `import "./ab"`,
@@ -308,10 +478,12 @@ describe("bundler", () => {
     entryPoints: ["/a.js", "/b.js", "/c.js", "/d.js"],
     splitting: true,
     minifyWhitespace: true,
-    format: "esm",
+    onAfterBundle(api) {
+      const files = readdirSync(api.outdir);
+      expect(files.length).toBe(6);
+    },
   });
-  itBundled("splitting/SplittingMinifyIdentifiersCrashESBuildIssue437", {
-    // GENERATED
+  itBundled("splitting/MinifyIdentifiersCrashESBuildIssue437", {
     files: {
       "/a.js": /* js */ `
         import {foo} from "./shared"
@@ -327,39 +499,65 @@ describe("bundler", () => {
     entryPoints: ["/a.js", "/b.js", "/c.js"],
     splitting: true,
     minifyIdentifiers: true,
-    format: "esm",
+    run: [
+      { file: "/out/a.js", stdout: "[Function]" },
+      { file: "/out/b.js", stdout: "[Function]" },
+    ],
   });
-  itBundled("splitting/SplittingHybridESMAndCJSESBuildIssue617", {
-    // GENERATED
+  itBundled("splitting/HybridESMAndCJSESBuildIssue617", {
     files: {
-      "/a.js": `export let foo`,
+      "/a.js": `export let foo = 123`,
       "/b.js": `export let bar = require('./a')`,
     },
     entryPoints: ["/a.js", "/b.js"],
     splitting: true,
-    format: "esm",
+    assertNotPresent: {
+      "/out/b.js": `123`,
+    },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import { foo } from './out/a.js'
+        import { bar } from './out/b.js'
+        console.log(JSON.stringify({ foo, bar }))
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: '{"foo":123,"bar":{"foo":123}}',
+    },
   });
-  itBundled("splitting/SplittingPublicPathEntryName", {
-    // GENERATED
+  itBundled("splitting/PublicPathEntryName", {
     files: {
       "/a.js": `import("./b")`,
       "/b.js": `console.log('b')`,
     },
+    outdir: "/out",
     splitting: true,
-    format: "esm",
     publicPath: "/www",
+    onAfterBundle(api) {
+      const t = new Bun.Transpiler();
+      const imports = t.scanImports(api.readFile("/out/a.js"));
+      expect(imports.length).toBe(1);
+      expect(imports[0].kind).toBe("dynamic-import");
+      assert(imports[0].path.startsWith("/www/"), `Expected path to start with "/www/" but got "${imports[0].path}"`);
+    },
   });
-  itBundled("splitting/SplittingChunkPathDirPlaceholderImplicitOutbase", {
-    // GENERATED
+  itBundled("splitting/ChunkPathDirPlaceholderImplicitOutbase", {
     files: {
       "/project/entry.js": `console.log(import('./output-path/should-contain/this-text/file'))`,
       "/project/output-path/should-contain/this-text/file.js": `console.log('file.js')`,
     },
-    format: "esm",
+    outdir: "/out",
     splitting: true,
+    chunkNames: "[dir]/[name]-[hash].[ext]",
+    onAfterBundle(api) {
+      assert(
+        readdirSync(api.outdir + "/output-path/should-contain/this-text").length === 1,
+        "Expected one file in out/output-path/should-contain/this-text/",
+      );
+    },
   });
-  itBundled("splitting/EdgeCaseESBuildIssue2793WithSplitting", {
-    // GENERATED
+  const EdgeCaseESBuildIssue2793WithSplitting = itBundled("splitting/EdgeCaseESBuildIssue2793WithSplitting", {
     files: {
       "/src/a.js": `export const A = 42;`,
       "/src/b.js": `export const B = async () => (await import(".")).A`,
@@ -370,21 +568,31 @@ describe("bundler", () => {
     },
     outdir: "/out",
     entryPoints: ["/src/index.js"],
-    format: "esm",
     splitting: true,
+    platform: "browser",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import { A, B } from './out/index.js'
+        console.log(A, B() instanceof Promise, await B())
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "42 true 42",
+    },
   });
   itBundled("splitting/EdgeCaseESBuildIssue2793WithoutSplitting", {
-    // GENERATED
-    files: {
-      "/src/a.js": `export const A = 42;`,
-      "/src/b.js": `export const B = async () => (await import(".")).A`,
-      "/src/index.js": /* js */ `
-        export * from "./a"
-        export * from "./b"
+    ...EdgeCaseESBuildIssue2793WithSplitting.options,
+    splitting: false,
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import { A, B } from './out/index.js'
+        console.log(A, B() instanceof Promise, await B())
       `,
     },
-    entryPoints: ["/src/index.js"],
-    format: "esm",
-    outdir: "/out",
+    run: {
+      file: "/test.js",
+      stdout: "42 true 42",
+    },
   });
 });

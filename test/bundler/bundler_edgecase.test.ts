@@ -1,12 +1,24 @@
 import assert from "assert";
 import dedent from "dedent";
-import { bundlerTest, expectBundled, itBundled, testForFile } from "./expectBundled";
+import { itBundled, testForFile } from "./expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 describe("bundler", () => {
   itBundled("edgecase/EmptyFile", {
     files: {
       "/entry.js": "",
+    },
+  });
+  itBundled("edgecase/EmptyCommonJSModule", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as module from './module.cjs';
+        console.log(typeof module)
+      `,
+      "/module.cjs": /* js */ ``,
+    },
+    run: {
+      stdout: "object",
     },
   });
   itBundled("edgecase/ImportStarFunction", {
@@ -82,5 +94,78 @@ describe("bundler", () => {
       `,
     },
     capture: ['"Hello\0"'],
+  });
+  // https://github.com/oven-sh/bun/issues/2699
+  itBundled("edgecase/ImportNamedFromExportStarCJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import { foo } from './foo';
+        console.log(foo);
+      `,
+      "/foo.js": /* js */ `
+        export * from './bar.cjs';
+      `,
+      "/bar.cjs": /* js */ `
+        module.exports = { foo: 'bar' };
+      `,
+    },
+    run: {
+      stdout: "bar",
+    },
+  });
+  itBundled("edgecase/NodeEnvDefaultUnset", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(process.env.NODE_ENV);
+        capture(process.env.NODE_ENV === 'production');
+        capture(process.env.NODE_ENV === 'development');
+      `,
+    },
+    platform: "browser",
+    capture: ['"development"', "false", "true"],
+    env: {
+      // undefined will ensure this variable is not passed to the bundler
+      NODE_ENV: undefined,
+    },
+  });
+  itBundled("edgecase/NodeEnvDefaultDevelopment", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(process.env.NODE_ENV);
+        capture(process.env.NODE_ENV === 'production');
+        capture(process.env.NODE_ENV === 'development');
+      `,
+    },
+    platform: "browser",
+    capture: ['"development"', "false", "true"],
+    env: {
+      NODE_ENV: "development",
+    },
+  });
+  itBundled("edgecase/NodeEnvDefaultProduction", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(process.env.NODE_ENV);
+        capture(process.env.NODE_ENV === 'production');
+        capture(process.env.NODE_ENV === 'development');
+      `,
+    },
+    platform: "browser",
+    capture: ['"production"', "true", "false"],
+    env: {
+      NODE_ENV: "production",
+    },
+  });
+  itBundled("edgecase/ProcessEnvArbitrary", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(process.env.ARBITRARY);
+      `,
+    },
+    platform: "browser",
+    capture: ["process.env.ARBITRARY"],
+    env: {
+      ARBITRARY: "secret environment stuff!",
+    },
   });
 });

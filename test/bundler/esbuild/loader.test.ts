@@ -1,4 +1,4 @@
-import { RUN_UNCHECKED_TESTS, expectBundled, itBundled, testForFile } from "../expectBundled";
+import { RUN_UNCHECKED_TESTS, itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:
@@ -102,26 +102,28 @@ describe("bundler", () => {
     },
   });
   itBundled("loader/JSXPreserveCapitalLetterMinify", {
-    // GENERATED
     files: {
       "/entry.jsx": /* jsx */ `
         import { mustStartWithUpperCaseLetter as XYYYY } from './foo'
-        console.log(<XYYYY tag-must-start-with-capital-letter />)
+        // This should be named "Y" due to frequency analysis
+        console.log(<XYYYY YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY />)
       `,
       "/foo.js": `export class mustStartWithUpperCaseLetter {}`,
     },
+    external: ["react"],
     minifyIdentifiers: true,
   });
   itBundled("loader/JSXPreserveCapitalLetterMinifyNested", {
-    // GENERATED
     files: {
       "/entry.jsx": /* jsx */ `
         x = () => {
-          class XYYYYY {} // This should be named "Y" due to frequency analysis
-          return <XYYYYY tag-must-start-with-capital-letter />
+          class RENAME_ME {} // This should be named "Y" due to frequency analysis
+          capture(RENAME_ME)
+          return <RENAME_ME YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY />
         }
       `,
     },
+    external: ["react"],
     minifyIdentifiers: true,
   });
   itBundled("loader/RequireCustomExtensionString", {

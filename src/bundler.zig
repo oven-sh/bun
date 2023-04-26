@@ -423,8 +423,7 @@ pub const Bundler = struct {
     ) !Bundler {
         js_ast.Expr.Data.Store.create(allocator);
         js_ast.Stmt.Data.Store.create(allocator);
-        var fs = try Fs.FileSystem.init1(
-            allocator,
+        var fs = try Fs.FileSystem.init(
             opts.absolute_working_dir,
         );
         const bundle_options = try options.BundleOptions.fromApi(
@@ -1779,7 +1778,7 @@ pub const Bundler = struct {
 
         if (bundler.linker.any_needs_runtime) {
             try bundler.output_files.append(
-                options.OutputFile.initBuf(runtime.Runtime.sourceContent(false), Linker.runtime_source_path, .js),
+                options.OutputFile.initBuf(runtime.Runtime.sourceContent(false), bun.default_allocator, Linker.runtime_source_path, .js),
             );
         }
 

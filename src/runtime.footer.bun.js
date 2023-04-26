@@ -15,7 +15,7 @@ export var __decorateClass = BUN_RUNTIME.__decorateClass;
 export var __decorateParam = BUN_RUNTIME.__decorateParam;
 export var $$bun_runtime_json_parse = JSON.parse;
 export var __internalIsCommonJSNamespace = BUN_RUNTIME.__internalIsCommonJSNamespace;
-
+export var $$typeof = BUN_RUNTIME.$$typeof;
 export var __require = (globalThis.require ||= function (moduleId) {
   if (typeof moduleId === "string") {
     return import.meta.require(moduleId);

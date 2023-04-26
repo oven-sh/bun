@@ -2904,6 +2904,10 @@ pub const Parser = struct {
         var before = ListManaged(js_ast.Part).init(p.allocator);
         var after = ListManaged(js_ast.Part).init(p.allocator);
         var parts = ListManaged(js_ast.Part).init(p.allocator);
+        defer {
+            after.deinit();
+            before.deinit();
+        }
 
         if (p.options.bundle) {
             // allocate an empty part for the bundle
@@ -4156,8 +4160,6 @@ pub const Parser = struct {
 
             parts_slice = _parts;
         } else {
-            after.deinit();
-            before.deinit();
             parts_slice = parts.items;
         }
 
@@ -4777,10 +4779,6 @@ fn NewParser_(
         // This variable is "ns2" not "ns1". It is only used during the second
         // "visit" pass.
         enclosing_namespace_arg_ref: ?Ref = null,
-
-        react_element_type: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
-        /// Symbol object
-        es6_symbol_global: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
 
         // TODO: remove all these
         jsx_runtime: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
@@ -6459,11 +6457,6 @@ fn NewParser_(
             switch (comptime jsx_transform_type) {
                 .react => {
                     if (!p.options.bundle) {
-                        if (p.options.features.jsx_optimization_inline) {
-                            p.react_element_type = p.declareGeneratedSymbol(.other, "REACT_ELEMENT_TYPE") catch unreachable;
-                            p.es6_symbol_global = p.declareGeneratedSymbol(.unbound, "Symbol") catch unreachable;
-                        }
-
                         p.jsx_fragment = p.declareGeneratedSymbol(.other, "Fragment") catch unreachable;
                         p.jsx_runtime = p.declareGeneratedSymbol(.other, "jsx") catch unreachable;
                         if (comptime FeatureFlags.support_jsxs_in_jsx_transform)
@@ -6559,8 +6552,6 @@ fn NewParser_(
                 return;
 
             if (p.options.features.jsx_optimization_inline) {
-                p.resolveGeneratedSymbol(&p.react_element_type);
-                p.resolveGeneratedSymbol(&p.es6_symbol_global);
                 if (p.runtime_imports.__merge) |*merge| {
                     p.resolveGeneratedSymbol(merge);
                 }
@@ -15104,8 +15095,6 @@ fn NewParser_(
                                         //     _owner: null
                                         // };
                                         //
-                                        if (!p.options.bundle)
-                                            p.recordUsage(p.react_element_type.ref);
                                         const key = if (e_.key) |key_| brk: {
                                             // key: void 0 === key ? null : "" + key,
                                             break :brk switch (key_.data) {
@@ -15180,16 +15169,7 @@ fn NewParser_(
                                             [_]G.Property{
                                             G.Property{
                                                 .key = Expr{ .data = Prefill.Data.@"$$typeof", .loc = tag.loc },
-                                                .value = if (p.options.bundle)
-                                                    p.runtimeIdentifier(tag.loc, "$$typeof")
-                                                else
-                                                    p.newExpr(
-                                                        E.Identifier{
-                                                            .ref = p.react_element_type.ref,
-                                                            .can_be_removed_if_unused = true,
-                                                        },
-                                                        tag.loc,
-                                                    ),
+                                                .value = p.runtimeIdentifier(tag.loc, "$$typeof"),
                                             },
                                             G.Property{
                                                 .key = Expr{ .data = Prefill.Data.type, .loc = tag.loc },
@@ -15670,8 +15650,12 @@ fn NewParser_(
                         .bin_rem => {
                             if (p.should_fold_typescript_constant_expressions) {
                                 if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                    // is this correct?
-                                    return p.newExpr(E.Number{ .value = std.math.mod(f64, vals[0], vals[1]) catch 0.0 }, expr.loc);
+                                    return p.newExpr(
+                                        // Use libc fmod here to be consistent with what JavaScriptCore does
+                                        // https://github.com/oven-sh/WebKit/blob/7a0b13626e5db69aa5a32d037431d381df5dfb61/Source/JavaScriptCore/runtime/MathCommon.cpp#L574-L597
+                                        E.Number{ .value = bun.C.fmod(vals[0], vals[1]) },
+                                        expr.loc,
+                                    );
                                 }
                             }
                         },
@@ -20156,7 +20140,9 @@ fn NewParser_(
                             // Merge adjacent local statements
                             if (output.items.len > 0) {
                                 var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_local and local.kind == prev_stmt.data.s_local.kind and local.is_export == prev_stmt.data.s_local.is_export) {
+                                if (prev_stmt.data == .s_local and
+                                    local.canMergeWith(prev_stmt.data.s_local))
+                                {
                                     prev_stmt.data.s_local.decls.append(p.allocator, local.decls.slice()) catch unreachable;
                                     continue;
                                 }

@@ -31,6 +31,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForCallSite;
     std::unique_ptr<IsoSubspace> m_subspaceForNapiExternal;
     std::unique_ptr<IsoSubspace> m_subspaceForRequireResolveFunction;
+    std::unique_ptr<IsoSubspace> m_subspaceForBundlerPlugin;
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/
 

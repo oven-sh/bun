@@ -58,7 +58,7 @@ pub const Cli = struct {
         Command.start(allocator, log) catch |err| {
             switch (err) {
                 error.MissingEntryPoint => {
-                    Output.prettyErrorln("<r><red>MissingEntryPoint<r> what do you want to bundle?\n\n<d>Example:\n\n<r>  <b><cyan>bun bun --use next<r>\n\n  <b><cyan>bun bun ./src/index.ts ./src/file2.ts<r>\n", .{});
+                    Output.prettyErrorln("<r><red>MissingEntryPoint<r> what do you want to build?\n\n<d>Example:\n\n<r>  <b><cyan>bun build ./src/index.ts<r>\n\n  <b><cyan>bun build --minify --outdir=out ./index.jsx ./lib/worker.ts<r>\n", .{});
                     Global.exit(1);
                 },
                 else => {

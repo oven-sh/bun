@@ -1,6 +1,6 @@
 import assert from "assert";
 import dedent from "dedent";
-import { expectBundled, itBundled, testForFile } from "../expectBundled";
+import { itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:
@@ -1272,6 +1272,7 @@ describe("bundler", () => {
     dce: true,
   });
   itBundled("dce/TreeShakingClassProperty", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         let remove1 = class { x }

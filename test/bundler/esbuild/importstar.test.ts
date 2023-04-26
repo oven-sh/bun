@@ -1,5 +1,5 @@
 import assert from "assert";
-import { expectBundled, itBundled, testForFile } from "../expectBundled";
+import { itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:
@@ -32,6 +32,10 @@ describe("bundler", () => {
       "/foo.js": `export const foo = 123`,
     },
     run: {
+      // esbuild:
+      // stdout: '{"default":{"foo":123},"foo":123} 123 234',
+
+      // bun:
       stdout: '{"foo":123} 123 234',
     },
   });
@@ -209,7 +213,7 @@ describe("bundler", () => {
       "/foo.js": `exports.foo = 123`,
     },
     run: {
-      stdout: '{"default":{"foo":123},"foo":123} 123 234',
+      stdout: '{"foo":123} 123 234',
     },
   });
   itBundled("importstar/ImportStarCommonJSNoCapture", {
@@ -247,6 +251,7 @@ describe("bundler", () => {
     runtimeFiles: {
       "/foo.js": `console.log('foo')`,
     },
+    external: ["./foo"],
     run: {
       stdout: "foo\n234",
     },
@@ -263,6 +268,7 @@ describe("bundler", () => {
     runtimeFiles: {
       "/foo.js": `export const foo = 123`,
     },
+    external: ["./foo"],
     run: {
       stdout: '{"foo":123} 123 234',
     },
@@ -275,6 +281,7 @@ describe("bundler", () => {
         console.log(ns.foo, ns.foo, foo)
       `,
     },
+    external: ["./foo"],
     mode: "transform",
     runtimeFiles: {
       "/foo.js": `export const foo = 123`,
@@ -292,6 +299,7 @@ describe("bundler", () => {
       `,
     },
     minifySyntax: true,
+    external: ["./foo"],
     mode: "transform",
     runtimeFiles: {
       "/foo.js": `console.log('foo')`,
@@ -310,6 +318,7 @@ describe("bundler", () => {
     },
     minifySyntax: true,
     mode: "transform",
+    external: ["./foo"],
     runtimeFiles: {
       "/foo.js": `export const foo = 123`,
     },
@@ -327,6 +336,7 @@ describe("bundler", () => {
     },
     minifySyntax: true,
     mode: "transform",
+    external: ["./foo"],
     runtimeFiles: {
       "/foo.js": `export const foo = 123`,
     },
@@ -355,7 +365,7 @@ describe("bundler", () => {
     },
     dce: true,
     run: {
-      stdout: '{"x":1,"z":4}',
+      stdout: '{"z":4,"x":1}',
     },
   });
   itBundled("importstar/ImportExportStarAmbiguousError", {
@@ -847,6 +857,9 @@ describe("bundler", () => {
     run: {
       stdout: '{"x":123} undefined',
     },
+    bundleWarnings: {
+      "/entry.js": [`Import "foo" will always be undefined because there is no matching export in "foo.js"`],
+    },
   });
   itBundled("importstar/ExportOtherCommonJS", {
     files: {
@@ -896,6 +909,9 @@ describe("bundler", () => {
     dce: true,
     run: {
       stdout: "undefined",
+    },
+    bundleWarnings: {
+      "/entry.js": [`Import "foo" will always be undefined because there is no matching export in "foo.js"`],
     },
   });
   itBundled("importstar/NamespaceImportMissingCommonJS", {
@@ -959,7 +975,7 @@ describe("bundler", () => {
       "/bar.js": `export const x = 123`,
     },
     bundleErrors: {
-      "/foo.js": ['ERROR: No matching export in "bar.js" for import "foo"'],
+      "/foo.js": [`No matching export in "bar.js" for import "foo"`],
     },
   });
   itBundled("importstar/NamespaceImportReExportUnusedMissingES6", {
@@ -972,7 +988,7 @@ describe("bundler", () => {
       "/bar.js": `export const x = 123`,
     },
     bundleErrors: {
-      "/foo.js": ['ERROR: No matching export in "bar.js" for import "foo"'],
+      "/foo.js": [`No matching export in "bar.js" for import "foo"`],
     },
   });
   itBundled("importstar/NamespaceImportReExportStarMissingES6", {
@@ -1208,7 +1224,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("importstar/ImportDefaultNamespaceComboNoDefault", {
+  const ImportDefaultNamespaceComboNoDefault = itBundled("importstar/ImportDefaultNamespaceComboNoDefault1", {
     files: {
       "/entry-default-ns-prop.js": `import def, * as ns from './foo'; console.log(def, ns, ns.default)`,
       "/entry-default-ns.js": `import def, * as ns from './foo'; console.log(def, ns)`,
@@ -1217,18 +1233,38 @@ describe("bundler", () => {
       "/entry-prop.js": `import * as ns from './foo'; console.log(ns.default)`,
       "/foo.js": `export let foo = 123`,
     },
-    entryPoints: [
-      "/entry-default-ns-prop.js",
-      "/entry-default-ns.js",
-      "/entry-default-prop.js",
-      "/entry-default.js",
-      "/entry-prop.js",
-    ],
+    entryPoints: ["/entry-default-ns-prop.js"],
     bundleErrors: {
       "/entry-default-ns-prop.js": ['No matching export in "foo.js" for import "default"'],
+    },
+  });
+  itBundled("importstar/ImportDefaultNamespaceComboNoDefault2", {
+    ...ImportDefaultNamespaceComboNoDefault.options,
+    entryPoints: ["/entry-default-ns.js"],
+    bundleErrors: {
       "/entry-default-ns.js": ['No matching export in "foo.js" for import "default"'],
+    },
+  });
+  itBundled("importstar/ImportDefaultNamespaceComboNoDefault3", {
+    ...ImportDefaultNamespaceComboNoDefault.options,
+    entryPoints: ["/entry-default-prop.js"],
+    bundleErrors: {
       "/entry-default-prop.js": ['No matching export in "foo.js" for import "default"'],
+    },
+  });
+  itBundled("importstar/ImportDefaultNamespaceComboNoDefault4", {
+    ...ImportDefaultNamespaceComboNoDefault.options,
+    entryPoints: ["/entry-default.js"],
+    bundleErrors: {
       "/entry-default.js": ['No matching export in "foo.js" for import "default"'],
+    },
+  });
+  itBundled("importstar/ImportDefaultNamespaceComboNoDefault5", {
+    ...ImportDefaultNamespaceComboNoDefault.options,
+    entryPoints: ["/entry-prop.js"],
+    bundleErrors: undefined,
+    bundleWarnings: {
+      "/entry-prop.js": [`Import "default" will always be undefined because there is no matching export in "foo.js"`],
     },
   });
   itBundled("importstar/ImportNamespaceUndefinedPropertyEmptyFile", {
@@ -1260,9 +1296,9 @@ describe("bundler", () => {
     entryPoints: ["/entry-nope.js", "/entry-default.js"],
     bundleWarnings: {
       "/entry-nope.js": [
-        'Import "nope" will always be undefined because the file "empty.js" has no exports',
-        'Import "nope" will always be undefined because the file "empty.mjs" has no exports',
-        'Import "nope" will always be undefined because the file "empty.cjs" has no exports',
+        `Import "nope" will always be undefined because there is no matching export in "empty.js"`,
+        `Import "nope" will always be undefined because there is no matching export in "empty.mjs"`,
+        `Import "nope" will always be undefined because there is no matching export in "empty.cjs"`,
       ],
     },
     run: [
@@ -1314,6 +1350,21 @@ describe("bundler", () => {
         stdout: `js\ncjs\n{} undefined {}`,
       },
     ],
+    bundleWarnings: {
+      "/foo/no-side-effects.js": [
+        `Import "nope" will always be undefined because the file "foo/no-side-effects.js" has no exports`,
+      ],
+      "/foo/no-side-effects.mjs": [
+        `Import "nope" will always be undefined because the file "foo/no-side-effects.mjs" has no exports`,
+      ],
+      "/foo/no-side-effects.cjs": [
+        `Import "nope" will always be undefined because the file "foo/no-side-effects.cjs" has no exports`,
+      ],
+      "/entry-default.js": [
+        `Import "default" will always be undefined because there is no matching export in "foo/no-side-effects.js"`,
+        `Import "default" will always be undefined because there is no matching export in "foo/no-side-effects.mjs"`,
+      ],
+    },
   });
   itBundled("importstar/ReExportStarEntryPointAndInnerFile", {
     files: {

@@ -44,6 +44,7 @@ pub const ImportKind = enum(u8) {
         labels.set(ImportKind.require_resolve, "require-resolve");
         labels.set(ImportKind.at, "import-rule");
         labels.set(ImportKind.url, "url-token");
+        labels.set(ImportKind.internal, "internal");
         break :brk labels;
     };
 

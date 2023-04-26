@@ -2654,19 +2654,19 @@ pub const RequestContext = struct {
                 }
 
                 if (FeatureFlags.strong_etags_for_built_files) {
-                    const did_send = ctx.writeETag(buffer) catch false;
+                    const did_send = ctx.writeETag(buffer.bytes) catch false;
                     if (did_send) return;
                 }
 
-                if (buffer.len == 0) {
+                if (buffer.bytes.len == 0) {
                     return try ctx.sendNoContent();
                 }
 
                 defer ctx.done();
                 try ctx.writeStatus(200);
-                try ctx.prepareToSendBody(buffer.len, false);
+                try ctx.prepareToSendBody(buffer.bytes.len, false);
                 if (!send_body) return;
-                _ = try ctx.writeSocket(buffer, SOCKET_FLAGS);
+                _ = try ctx.writeSocket(buffer.bytes, SOCKET_FLAGS);
             },
         }
     }

@@ -350,6 +350,70 @@ it("should add dependency with specified semver", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
+it("should add dependency (GitHub)", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "mishoo/UglifyJS#v3.14.1"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " installed uglify-js@github:mishoo/UglifyJS#e219a9a with binaries:",
+    "  - uglifyjs",
+    "",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([]);
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify-js"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["uglifyjs"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".cache"))).toEqual(["@GH@mishoo-UglifyJS-e219a9a"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "uglify-js"))).toEqual([
+    ".bun-tag",
+    ".gitattributes",
+    ".github",
+    ".gitignore",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "README.md",
+    "bin",
+    "lib",
+    "package.json",
+    "test",
+    "tools",
+  ]);
+  const package_json = await file(join(package_dir, "node_modules", "uglify-js", "package.json")).json();
+  expect(package_json.name).toBe("uglify-js");
+  expect(package_json.version).toBe("3.14.1");
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {
+      "uglify-js": "mishoo/UglifyJS#v3.14.1",
+    },
+  });
+  await access(join(package_dir, "bun.lockb"));
+});
+
 it("should add dependency alongside workspaces", async () => {
   const urls: string[] = [];
   setHandler(

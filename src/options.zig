@@ -646,7 +646,7 @@ pub const Platform = enum {
     };
 };
 
-pub const Loader = enum {
+pub const Loader = enum(u8) {
     jsx,
     js,
     ts,
@@ -660,6 +660,16 @@ pub const Loader = enum {
     base64,
     dataurl,
     text,
+
+    pub fn toMimeType(this: Loader) bun.HTTP.MimeType {
+        return switch (this) {
+            .jsx, .js, .ts, .tsx => bun.HTTP.MimeType.javascript,
+            .css => bun.HTTP.MimeType.css,
+            .toml, .json => bun.HTTP.MimeType.json,
+            .wasm => bun.HTTP.MimeType.wasm,
+            else => bun.HTTP.MimeType.other,
+        };
+    }
 
     pub const HashTable = bun.StringArrayHashMap(Loader);
 
@@ -1948,6 +1958,28 @@ pub const OutputFile = struct {
         close_handle_on_complete: bool = false,
         autowatch: bool = true,
 
+        pub fn toJS(this: FileOperation, globalObject: *JSC.JSGlobalObject, loader: Loader) JSC.JSValue {
+            var file_blob = JSC.WebCore.Blob.Store.initFile(
+                if (this.fd != 0) JSC.Node.PathOrFileDescriptor{
+                    .fd = this.fd,
+                } else JSC.Node.PathOrFileDescriptor{
+                    .path = JSC.Node.PathLike{ .string = bun.PathString.init(globalObject.allocator().dupe(u8, this.pathname) catch unreachable) },
+                },
+                loader.toMimeType(),
+                globalObject.allocator(),
+            ) catch |err| {
+                Output.panic("error: Unable to create file blob: \"{s}\"", .{@errorName(err)});
+            };
+
+            var blob = globalObject.allocator().create(JSC.WebCore.Blob) catch unreachable;
+            blob.* = JSC.WebCore.Blob.initWithStore(file_blob, globalObject);
+            blob.allocator = globalObject.allocator();
+            blob.globalThis = globalObject;
+            blob.content_type = loader.toMimeType().value;
+
+            return blob.toJS(globalObject);
+        }
+
         pub fn fromFile(fd: FileDescriptorType, pathname: string) FileOperation {
             return .{
                 .pathname = pathname,
@@ -1965,7 +1997,11 @@ pub const OutputFile = struct {
     };
 
     pub const Value = union(Kind) {
-        buffer: []const u8,
+        buffer: struct {
+            allocator: std.mem.Allocator,
+            bytes: []const u8,
+        },
+
         move: FileOperation,
         copy: FileOperation,
         noop: u0,
@@ -1998,12 +2034,17 @@ pub const OutputFile = struct {
         return res;
     }
 
-    pub fn initBuf(buf: []const u8, pathname: string, loader: Loader) OutputFile {
+    pub fn initBuf(buf: []const u8, allocator: std.mem.Allocator, pathname: string, loader: Loader) OutputFile {
         return .{
             .loader = loader,
             .input = Fs.Path.init(pathname),
             .size = buf.len,
-            .value = .{ .buffer = buf },
+            .value = .{
+                .buffer = .{
+                    .bytes = buf,
+                    .allocator = allocator,
+                },
+            },
         };
     }
 
@@ -2034,6 +2075,33 @@ pub const OutputFile = struct {
         }
 
         try bun.copyFile(fd_in, fd_out);
+    }
+
+    pub fn toJS(
+        this: *OutputFile,
+        globalObject: *JSC.JSGlobalObject,
+    ) bun.JSC.JSValue {
+        return switch (this.value) {
+            .pending => @panic("Unexpected pending output file"),
+            .noop => JSC.JSValue.undefined,
+            .move => this.value.move.toJS(globalObject, this.loader),
+            .copy => this.value.copy.toJS(globalObject, this.loader),
+            .buffer => |buffer| brk: {
+                var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
+                blob.* = JSC.WebCore.Blob.init(@constCast(buffer.bytes), buffer.allocator, globalObject);
+                if (blob.store) |store| {
+                    store.mime_type = this.loader.toMimeType();
+                    blob.content_type = store.mime_type.value;
+                } else {
+                    blob.content_type = this.loader.toMimeType().value;
+                }
+
+                blob.allocator = bun.default_allocator;
+                const blob_jsvalue = blob.toJS(globalObject);
+                blob_jsvalue.ensureStillAlive();
+                break :brk blob_jsvalue;
+            },
+        };
     }
 };
 

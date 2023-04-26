@@ -279,7 +279,7 @@ Accepts `BunPlugin[]`. A list of plugins to use during bundling.
 
 Bun implements a univeral plugin system for both Bun's runtime and bundler. Refer to the [plugin documentation](/docs/bundler/plugins) for complete documentation.
 
-### `manifest`
+## `manifest`
 
 Accepts `boolean`. Defaults to `true`. Whether to return a build manifest in the result of `Bun.build`.
 
@@ -336,37 +336,327 @@ export type ImportKind =
   | "url-token";
 ```
 
-### `sourcemap`
+## `sourcemap`
 
-"none" | "inline" | "external"; // default: "none"
+Accepts `"none" | "inline" | "external"`; Specifies the type of sourcemap to generate.
 
-### `minify`
+{% table %}
 
-boolean;
+---
 
-### `treeshaking`
+- `"none"` (default)
+- No sourcemap is generated.
 
-boolean;
+---
 
-### `external`
+- `"inline"`
+- A sourcemap is generated and appended to the end of the generated bundle as a base64 payload inside a `//# sourceMappingURL= ` comment.
 
-Array<string>;
+---
 
-### `origin`
+- `"external"`
+- A separate `*.js.map` file is created alongside the `*.js` bundle.
 
-string; // e.g. https://mydomain.com
+{% /table %}
 
-  <!-- ### `loader` 
-  
-  `{ [k in string]: Loader }` -->
+## `minify`
 
-### `naming`
+Accepts `boolean | { whitespace?: boolean; identifiers?: boolean; syntax?: boolean }`. Defaults to `false`. Whether to minify the generated bundles.
 
-`string | { entrypoint?: string; chunk?: string; }`. Customizes the generated file names. // default '[name].[ext]'
+{% codetabs %}
 
-### `root`
+```ts#JavaScript
+Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+  minify: true,
+})
+```
 
-string; // project root
+```bash#CLI
+$ bun build ./index.tsx --outdir ./out --minify
+```
+
+{% /codetabs %}
+
+This will enable all minification options. To granularly enable certain minifications:
+
+{% codetabs %}
+
+```ts#JavaScript
+Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+  minify: {
+    whitespace: true,
+    identifiers: true,
+    syntax: true,
+  },
+})
+```
+
+```bash#CLI
+$ bun build ./index.tsx --outdir ./out --minify-whitespace --minify-identifiers --minify-syntax
+```
+
+{% /codetabs %}
+
+<!-- ## `treeshaking`
+
+boolean; -->
+
+## `external`
+
+Accepts `Array<string>`. Defaults to `[]`. A list of import paths to consider _external_. An external import is one that will not be included in the final bundle. Instead, the `import` statement will be left as-is, to be resolved at runtime.
+
+For instance, consider the following entrypoint file:
+
+```ts#index.tsx
+import _ from "lodash";
+import {z} from "zod";
+
+const value = z.string().parse("Hello world!")
+console.log(_.upperCase(value));
+
+```
+
+Normally, bundling `index.tsx` would generate a bundle containing the entire source code of the `"zod"` package. If instead, we want to leave the `import` statement as-is, we can mark it as external:
+
+{% codetabs %}
+
+```ts#JavaScript
+Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+  external: ['zod'],
+})
+```
+
+```bash#CLI
+$ bun build ./index.tsx --outdir ./out --external zod
+```
+
+{% /codetabs %}
+
+The generated bundle will look something like this:
+
+```js#out/index.js
+import {z} from "zod";
+
+// ...
+// the contents of the "lodash" package
+// including the `_.upperCase` function
+
+var value = z.string().parse("Hello world!")
+console.log(_.upperCase(value));
+```
+
+## `naming`
+
+Accepts `string | { entrypoint?: string; chunk?: string; }`. Defaults to `[name].[ext]`. Customizes the generated file names.
+
+By default, the names of the generated files are based on the name of the entrypoint file.
+
+```txt
+.
+├── index.tsx
+└── out
+    └── index.js
+```
+
+Moreover, with multiple entrypoints, the generated file hierarchy will reflect the relative positions of the entrypoint files.
+
+```txt
+.
+├── index.tsx
+└── nested
+    └── index.tsx
+└── out
+    ├── index.js
+    └── nested
+        └── index.js
+```
+
+The names of these files can be customized with the `naming` field. This field accepts a template string, where the following tokens are replaced with their corresponding values:
+
+- `[name]` - The name of the entrypoint file, without the extension, e.g. `index`
+- `[ext]` - The extension of the generated bundle, e.g. `js`
+- `[hash]` - A hash of the bundle contents, e.g. `a1b2c3d4`
+- `[dir]` - The relative path from the build [`root`](#root) to the parent directory of the file, e.g. `nested`
+
+For example:
+
+{% table %}
+
+- Token
+- `[name]`
+- `[ext]`
+- `[hash]`
+- `[dir]`
+
+---
+
+- `./index.tsx`
+- `index`
+- `js`
+- `a1b2c3d4`
+- `""` (empty string)
+
+---
+
+- `./nested/entry.ts`
+- `entry`
+- `js`
+- `c3d4e5f6`
+- `nested/`
+
+{% /table %}
+
+We can combine these tokens to create a template string. For instance, to include the hash in the generated bundle names:
+
+{% codetabs %}
+
+```ts#JavaScript
+Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+  naming: '[name]-[hash].[ext]',
+})
+```
+
+```bash#CLI
+$ bun build ./index.tsx --outdir ./out --naming [name]-[hash].[ext]
+```
+
+{% /codetabs %}
+
+This build would result in the following file structure:
+
+```txt
+.
+├── index.tsx
+└── out
+    └── index-a1b2c3d4.js
+```
+
+## `root`
+
+Accepts `string`. This is the directory that should be considered the "project root". By default, this is computed to be the first common ancestor of all entrypoint files.
+
+Consider the following file structure:
+
+```txt
+.
+└── pages
+  └── index.tsx
+  └── settings.tsx
+```
+
+We can build both entrypoints in the `pages` directory:
+
+{% codetabs %}
+
+```ts#JavaScript
+Bun.build({
+  entrypoints: ['./pages/index.tsx', './pages/settings.tsx'],
+  outdir: './out',
+})
+```
+
+```bash#CLI
+$ bun build ./pages/index.tsx ./pages/settings.tsx --outdir ./out
+```
+
+{% /codetabs %}
+
+This would result in a file structure like this:
+
+```txt
+.
+└── pages
+  └── index.tsx
+  └── settings.tsx
+└── out
+  └── index.js
+  └── settings.js
+```
+
+Since the `pages` directory is the first common ancestor of the entrypoint files, it is considered the project root. This means that the generated bundles live at the top level of the `out` directory; there is no `out/pages` directory.
+
+This behavior can be overridden by specifying the `root` option:
+
+{% codetabs %}
+
+```ts#JavaScript
+Bun.build({
+  entrypoints: ['./pages/index.tsx', './pages/settings.tsx'],
+  outdir: './out',
+  root: '.',
+})
+```
+
+```bash#CLI
+$ bun build ./pages/index.tsx ./pages/settings.tsx --outdir ./out --root .
+```
+
+{% /codetabs %}
+
+By specifying `.` as `root`, the generated file structure will look like this:
+
+```txt
+.
+└── pages
+  └── index.tsx
+  └── settings.tsx
+└── out
+  └── pages
+    └── index.js
+    └── settings.js
+```
+
+## `origin`
+
+Accepts `string`. Used to generate absolute asset URLs.
+
+When the bundler encounters an unknown file type, it defaults to using the `"asset"` loader. This converts the import path to an absolute URL that can be referenced in the file. This is useful for referencing images, fonts, and other static assets.
+
+```tsx#Input
+import logo from "./images/logo.svg";
+
+export function Logo(){
+  return <img src={logo} />
+}
+```
+
+In the absence of a plugin that overrides `*.svg` loading, the `logo` import will be converted to an absolute path, as resolved relative to the project root.
+
+```ts
+var logo = "/logo.svg";
+
+export function Logo() {
+  return React.create;
+}
+```
+
+This is fine for local development, but in production, we want to serve the assets from a CDN. To do this, we can specify the `origin` option:
+
+{% codetabs %}
+
+```ts#JavaScript
+Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+  origin: 'https://cdn.mydomain.com',
+})
+```
+
+```bash#CLI
+$ bun build ./index.tsx --outdir ./out --origin https://cdn.mydomain.com
+```
+
+{% /codetabs %}
+
+With `origin` set to this value, the value of `logo` will become `https://cdn.mydomain.com/logo.svg`.
 
 ## Reference
 

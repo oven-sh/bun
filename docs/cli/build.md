@@ -107,8 +107,7 @@ root.render($jsx(Component, {
 }, undefined, false, undefined, this));
 ```
 
-As with the Bun runtime, Bun's bundler can handle TypeScript and JSX out of the box, with no configuration required. The resulting bundle contains vanilla JavaScript only.
-
+{% details summary="Tutorial: Run this file in your browser" %}
 We can load this file in the browser to see our app in action. Create an `index.html` file in the `out` directory:
 
 ```bash
@@ -133,6 +132,49 @@ $ bunx serve out
 ```
 
 Visit `http://localhost:5000` to see your bundled app in action.
+
+{% /details %}
+
+## Content types
+
+The bundler supports the same set of file types as the runtime. Refer to [Bundler > File types](/docs/runtime/loaders) for full documentation. The following table breaks down the bundler's set of standard "loaders". These are the file types that Bun can handle out of the box, with no configuration required.
+
+{% table %}
+
+- Loader
+- Input extensions
+- Output extension
+- Description
+
+---
+
+- `js`
+- `*.{cjs|mjs}`
+- `.js`
+- **JavaScript.** Parses the code and applies a set if default transforms, like dead-code elimination, tree shaking, and environment variable inlining. Note that Bun does not attempt to down-convert syntax at the moment. & transpiled to Contents are parsed and converted to ECMAScript 2020 syhtax. TypeScript files are transpiled to vanilla JavaScript.
+
+---
+
+- `jsx`
+- `*.{js|jsx}`
+- `*.js`
+- **JavaScript + JSX.** Same as the `js` loader, but JSX syntax is supported. By default, JSX is downconverted to `createElement` syntax and a `jsx` factory is injected into the bundle. This can be configured using the relevant `jsx*` compiler options in `tsconfig.json`. to vanilla `createElement` calls. The
+
+### JavaScript (`js`)
+
+All `*.{js|cjs|mjs}` files are transpiled using Bun's `js` loader.
+
+### TypeScript (`ts`)
+
+All `*.ts` files are transpiled with Bun's `ts` loader. All TypeScript syntax is stripped out, leaving vanilla JavaScript. No typechecking is performed.
+
+### JSX (`jsx`)
+
+All `*.jsx`
+All `*.{js|ts}` files will be transpiled to vanilla JavaScript. Features roughly targeting ECMAScript features
+As with the Bun runtime, Bun's bundler handles common file types out of the box, with no configuration required. The following loaders are implemented:
+
+## API
 
 ## `entrypoints`
 
@@ -309,8 +351,6 @@ export type BuildManifest = {
       }[];
     };
   };
-
-  // less important than `inputs`
   outputs: {
     [path: string]: {
       type: "chunk" | "entry-point" | "asset";
@@ -338,14 +378,18 @@ export type ImportKind =
 
 ## `sourcemap`
 
-Accepts `"none" | "inline" | "external"`; Specifies the type of sourcemap to generate.
+Specifies the type of sourcemap to generate.
+
+```ts
+sourcemap?: "none" | "inline" | "external";
+```
 
 {% table %}
 
 ---
 
-- `"none"` (default)
-- No sourcemap is generated.
+- `"none"`
+- _Default._ No sourcemap is generated.
 
 ---
 
@@ -355,13 +399,21 @@ Accepts `"none" | "inline" | "external"`; Specifies the type of sourcemap to gen
 ---
 
 - `"external"`
-- A separate `*.js.map` file is created alongside the `*.js` bundle.
+- A separate `*.js.map` file is created alongside each `*.js` bundle.
 
 {% /table %}
 
 ## `minify`
 
-Accepts `boolean | { whitespace?: boolean; identifiers?: boolean; syntax?: boolean }`. Defaults to `false`. Whether to minify the generated bundles.
+```ts
+minify?: boolean | {
+  whitespace?: boolean;
+  identifiers?: boolean;
+  syntax?: boolean
+}
+```
+
+Defaults to `false`. Whether to minify the generated bundles.
 
 {% codetabs %}
 
@@ -453,9 +505,17 @@ console.log(_.upperCase(value));
 
 ## `naming`
 
-Accepts `string | { entrypoint?: string; chunk?: string; }`. Defaults to `[name].[ext]`. Customizes the generated file names.
+Customizes the generated file names. Defaults to `[dir]/[name].[ext]`.
 
-By default, the names of the generated files are based on the name of the entrypoint file.
+```ts
+naming?: string | {
+  entrypoint?: string;
+  chunk?: string;
+  asset?: string;
+}
+```
+
+By default, the names of the generated bundles are based on the name of the associated entrypoint.
 
 ```txt
 .
@@ -464,7 +524,7 @@ By default, the names of the generated files are based on the name of the entryp
     └── index.js
 ```
 
-Moreover, with multiple entrypoints, the generated file hierarchy will reflect the relative positions of the entrypoint files.
+With multiple entrypoints, the generated file hierarchy will reflect the directory structure of the entrypoints.
 
 ```txt
 .
@@ -477,7 +537,7 @@ Moreover, with multiple entrypoints, the generated file hierarchy will reflect t
         └── index.js
 ```
 
-The names of these files can be customized with the `naming` field. This field accepts a template string, where the following tokens are replaced with their corresponding values:
+The names of these files can be customized with the `naming` field. This field accepts a template string that is used to generate the filenames for all bundles corresponding to entrypoints. where the following tokens are replaced with their corresponding values:
 
 - `[name]` - The name of the entrypoint file, without the extension, e.g. `index`
 - `[ext]` - The extension of the generated bundle, e.g. `js`
@@ -508,7 +568,7 @@ For example:
 - `entry`
 - `js`
 - `c3d4e5f6`
-- `nested/`
+- `"nested"`
 
 {% /table %}
 
@@ -520,7 +580,7 @@ We can combine these tokens to create a template string. For instance, to includ
 Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
-  naming: '[name]-[hash].[ext]',
+  naming: '[dir]/[name]-[hash].[ext]',
 })
 ```
 
@@ -538,6 +598,30 @@ This build would result in the following file structure:
 └── out
     └── index-a1b2c3d4.js
 ```
+
+{% callout %}
+
+When a `string` is provided for the `naming` field, it is used only for bundles _that correspond to entrypoints_. The names of [chunks](#splitting) and copied assets are not affected. Using the JavaScript API, separate template strings can be specified for each type of generated file.
+
+{% codetabs %}
+
+```ts#JavaScript
+Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+  naming: {
+    entrypoint: '[dir]/[name]-[hash].[ext]',
+    chunk: '[dir]/[name]-[hash].[ext]',
+    asset: '[dir]/[name]-[hash].[ext]',
+  },
+})
+```
+
+```bash#CLI
+$ bun build ./index.tsx --outdir ./out --naming-entrypoint [dir]/[name].[ext] --naming-chunk [dir]/[name]-[hash].[ext] --naming-asset [dir]/[name]-[hash].[ext]
+```
+
+{% /codetabs %}
 
 ## `root`
 
@@ -666,7 +750,7 @@ Bun.build({
   outdir?: string; // output directory
   target?: "browser" | "bun" | "node"; // default: "browser"
   module?: "esm"; // later: "cjs", "iife"
-  naming?: string, // default '[name].[ext]'
+  naming?: string, // default '[dir]/[name].[ext]'
   root?: string; // project root
   transform?: boolean, // default: false, transform instead of bundling
   splitting?: boolean, // default true, enable code splitting

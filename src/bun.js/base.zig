@@ -4163,11 +4163,14 @@ pub const FinalizationCallback = struct {
             this.ref_count -= 1;
         }
 
-        pub fn ptr(this: *Ptr) ?*anyopaque {
+        pub fn ptr(this: Ptr) ?*anyopaque {
             if (this.address == 0)
                 return null;
 
-            return @intToPtr(*anyopaque, @as(usize, this.addrress));
+            // zero the trailing little endian 4 bits from u64
+            // We want to make sure that the ref_count is not included in the pointer
+            const safe_addr = @as(usize, this.address) & @as(usize, 0xFFFFFFFFFFFFFFF0);
+            return @intToPtr(*anyopaque, safe_addr);
         }
 
         pub fn init(addr: *anyopaque) Ptr {

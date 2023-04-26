@@ -165,6 +165,7 @@ export type BuildManifest = {
         path: string;
         kind: ImportKind;
         external?: boolean;
+        asset?: boolean; // whether the import defaulted to "file" loader
       }[];
     };
   };
@@ -173,14 +174,10 @@ export type BuildManifest = {
   outputs: {
     [path: string]: {
       type: "chunk" | "entry-point" | "asset";
-      inputs: {
-        [path: string]: {
-          bytesInOutput: number;
-        };
-      };
+      inputs: { path: string }[];
       imports: {
         path: string;
-        kind: ImportKind | "file-loader";
+        kind: ImportKind;
         external?: boolean;
       }[];
       exports: string[];

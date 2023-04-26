@@ -9262,9 +9262,16 @@ pub const Chunk = struct {
 
                     for (pieces.slice()) |piece| {
                         count += piece.data_len;
+
                         switch (piece.index.kind) {
-                            .chunk => {
-                                const file_path = chunks[piece.index.index].final_rel_path;
+                            .chunk, .asset => {
+                                const index = piece.index.index;
+                                const file_path = switch (piece.index.kind) {
+                                    .asset => graph.additional_output_files.items[additional_files[index].last().?.output_file].input.text,
+                                    .chunk => chunks[index].final_rel_path,
+                                    else => unreachable,
+                                };
+
                                 const cheap_normalizer = cheapPrefixNormalizer(
                                     import_prefix,
                                     if (from_chunk_dir.len == 0)
@@ -9272,16 +9279,6 @@ pub const Chunk = struct {
                                     else
                                         bun.path.relative(from_chunk_dir, file_path),
                                 );
-                                count += cheap_normalizer[0].len + cheap_normalizer[1].len;
-                            },
-                            .asset => {
-                                const additional_output_file_index = additional_files[piece.index.index].last().?.output_file;
-                                const file_path = graph.additional_output_files.items[additional_output_file_index].input.text;
-                                const cheap_normalizer = cheapPrefixNormalizer(import_prefix, if (from_chunk_dir.len == 0)
-                                    file_path
-                                else
-                                    bun.path.relative(from_chunk_dir, file_path));
-
                                 count += cheap_normalizer[0].len + cheap_normalizer[1].len;
                             },
                             .none => {},
@@ -9298,33 +9295,15 @@ pub const Chunk = struct {
                             @memcpy(remain.ptr, data.ptr, data.len);
 
                         remain = remain[data.len..];
-                        const index = piece.index.index;
 
                         switch (piece.index.kind) {
-                            .chunk => {
-                                const file_path = chunks[index].final_rel_path;
-
-                                const cheap_normalizer = cheapPrefixNormalizer(
-                                    import_prefix,
-                                    if (from_chunk_dir.len == 0)
-                                        file_path
-                                    else
-                                        bun.path.relative(from_chunk_dir, file_path),
-                                );
-
-                                if (cheap_normalizer[0].len > 0) {
-                                    @memcpy(remain.ptr, cheap_normalizer[0].ptr, cheap_normalizer[0].len);
-                                    remain = remain[cheap_normalizer[0].len..];
-                                }
-
-                                if (cheap_normalizer[1].len > 0) {
-                                    @memcpy(remain.ptr, cheap_normalizer[1].ptr, cheap_normalizer[1].len);
-                                    remain = remain[cheap_normalizer[1].len..];
-                                }
-                            },
-                            .asset => {
-                                const additional_output_file_index = additional_files[piece.index.index].last().?.output_file;
-                                const file_path = graph.additional_output_files.items[additional_output_file_index].input.text;
+                            .asset, .chunk => {
+                                const index = piece.index.index;
+                                const file_path = switch (piece.index.kind) {
+                                    .asset => graph.additional_output_files.items[additional_files[index].last().?.output_file].input.text,
+                                    .chunk => chunks[index].final_rel_path,
+                                    else => unreachable,
+                                };
 
                                 const cheap_normalizer = cheapPrefixNormalizer(
                                     import_prefix,

@@ -9528,11 +9528,9 @@ fn cheapPrefixNormalizer(prefix: []const u8, suffix: []const u8) [2]string {
         return .{ prefix, suffix };
 
     // There are a few cases here we want to handle:
-    // ["https://example.com/", "./out.js"] => "https://example.com/out.js"
-    // ["https://example.com/", "out.js"] => "https://example.com/out.js"
     // ["https://example.com/", "/out.js"]  => "https://example.com/out.js"
+    // ["/foo/", "/bar.js"] => "/foo/bar.js"
     if (strings.endsWithChar(prefix, '/')) {
-        // prevent /foo//bar
         if (strings.startsWithChar(suffix, '/')) {
             return .{
                 prefix[0 .. prefix.len - 1],

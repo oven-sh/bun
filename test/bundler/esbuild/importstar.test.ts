@@ -1,5 +1,5 @@
 import assert from "assert";
-import { expectBundled, itBundled, testForFile } from "../expectBundled";
+import { itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:

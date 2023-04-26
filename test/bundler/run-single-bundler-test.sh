@@ -6,8 +6,11 @@ if [ -z "$1" ]; then
   exit 1
 fi
 
-if [ -z "$BUN_EXE"]; then
-  BUN_EXE=$(which bd 2>/dev/null || which bun 2>/dev/null)
+# using esbuild within bun-debug is extremely slow
+if [ -z "$2" ]; then
+  BUN=$(which bd 2>/dev/null || which bun-debug 2>/dev/null  || which bun 2>/dev/null)
+else
+  BUN=$(which bun 2>/dev/null)
 fi
 
 __dirname="$(dirname $(realpath "$0"))"
@@ -25,14 +28,14 @@ if [ -n "$2" ]; then
 fi
 
 export FORCE_COLOR=1
-bun test bundler_ esbuild/ 2>&1 \
+$BUN test bundler_ esbuild/ 2>&1 \
   | perl -ne 'print unless /^\e\[0m$/' \
-  | grep -v -P '\x1b\[0m\x1b\[33m-\x1b\[2m \x1b\[0m\x1b\[2mbundler' \
-  | grep -v ".test.ts:$" \
+  | grep -v -P '\x1b\[0m\x1b\[33m-\x1b\[2m \x1b\[0m\x1b\[2mbundler' --text \
+  | grep -v ".test.ts:$" --text \
   | tee /tmp/run-single-bundler-test.txt \
-  | grep "root:" -v
+  | grep "root:" -v --text
 
-symlinkDir=$(cat /tmp/run-single-bundler-test.txt | grep "root:" | cut -d " " -f 2)
+symlinkDir=$(cat /tmp/run-single-bundler-test.txt | grep "root:" --text | cut -d " " -f 2)
 rm /tmp/run-single-bundler-test.txt
 rm $__dirname/out -rf
 if [ -e "$symlinkDir" ]; then

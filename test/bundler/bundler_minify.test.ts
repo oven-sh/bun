@@ -1,6 +1,6 @@
 import assert from "assert";
 import dedent from "dedent";
-import { bundlerTest, expectBundled, itBundled, testForFile } from "./expectBundled";
+import { itBundled, testForFile } from "./expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 describe("bundler", () => {
@@ -53,7 +53,6 @@ describe("bundler", () => {
     ],
     minifySyntax: true,
     platform: "bun",
-    minifySyntax: true,
   });
   itBundled("minify/FunctionExpressionRemoveName", {
     notImplemented: true,

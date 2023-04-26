@@ -1,6 +1,6 @@
 import assert from "assert";
 import dedent from "dedent";
-import { bundlerTest, expectBundled, itBundled, testForFile } from "./expectBundled";
+import { itBundled, testForFile } from "./expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 describe("bundler", () => {
@@ -265,7 +265,8 @@ describe("bundler", () => {
     },
   });
 
-  itBundled("browser/BunPolyfillExternal", {
+  // not implemented right now
+  itBundled.skip("browser/BunPolyfillExternal", {
     skipOnEsbuild: true,
     files: ImportBunError.options.files,
     platform: "browser",

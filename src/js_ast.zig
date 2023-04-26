@@ -5089,7 +5089,11 @@ pub const EnumValue = struct {
 };
 
 pub const S = struct {
-    pub const Block = struct { stmts: StmtNodeList };
+    pub const Block = struct {
+        stmts: StmtNodeList,
+        close_brace_loc: logger.Loc = logger.Loc.Empty,
+    };
+
     pub const SExpr = struct {
         value: ExprNodeIndex,
 

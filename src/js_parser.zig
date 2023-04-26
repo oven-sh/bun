@@ -9562,9 +9562,11 @@ fn NewParser_(
                     try p.lexer.next();
                     var stmtOpts = ParseStatementOptions{};
                     const stmts = try p.parseStmtsUpTo(.t_close_brace, &stmtOpts);
+                    const close_brace_loc = p.lexer.loc();
                     try p.lexer.next();
                     return p.s(S.Block{
                         .stmts = stmts,
+                        .close_brace_loc = close_brace_loc,
                     }, loc);
                 },
 

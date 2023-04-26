@@ -46,15 +46,16 @@ pub const BuildCommand = struct {
         var this_bundler = try bundler.Bundler.init(allocator, log, ctx.args, null, null);
         this_bundler.options.entry_names = ctx.bundler_options.entry_names;
         this_bundler.resolver.opts.entry_names = ctx.bundler_options.entry_names;
-        this_bundler.options.output_dir = ctx.bundler_options.outdir;
-        this_bundler.resolver.opts.output_dir = ctx.bundler_options.outdir;
-        this_bundler.options.react_server_components = ctx.bundler_options.react_server_components;
-        this_bundler.resolver.opts.react_server_components = ctx.bundler_options.react_server_components;
-        this_bundler.options.code_splitting = ctx.bundler_options.code_splitting;
-        this_bundler.resolver.opts.code_splitting = ctx.bundler_options.code_splitting;
 
         this_bundler.options.source_map = options.SourceMapOption.fromApi(ctx.args.source_map);
         this_bundler.resolver.opts.source_map = options.SourceMapOption.fromApi(ctx.args.source_map);
+
+        if (this_bundler.options.source_map == .external and ctx.bundler_options.outdir.len == 0) {
+            try Output.errorWriter().print("error: cannot use an external source map without an output path\n", .{});
+            Output.flush();
+            Global.exit(1);
+            return;
+        }
 
         this_bundler.options.minify_syntax = ctx.bundler_options.minify_syntax;
         this_bundler.resolver.opts.minify_syntax = ctx.bundler_options.minify_syntax;
@@ -65,19 +66,24 @@ pub const BuildCommand = struct {
         this_bundler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         this_bundler.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
 
-        if (this_bundler.options.source_map == .external and this_bundler.options.output_dir.len == 0) {
-            try Output.errorWriter().print("error: cannot use an external source map without an output path\n", .{});
-            Output.flush();
-            Global.exit(1);
-            return;
-        }
-
-        if (this_bundler.options.entry_points.len > 1 and this_bundler.options.output_dir.len == 0) {
+        if (this_bundler.options.entry_points.len > 1 and ctx.bundler_options.outdir.len == 0) {
             try Output.errorWriter().print("error: cannot bundle multiple entry points without an output path\n", .{});
             Output.flush();
             Global.exit(1);
             return;
         }
+
+        var abs_output_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var root_dir = if (ctx.bundler_options.outdir.len > 0) try std.fs.cwd().makeOpenPathIterable(ctx.bundler_options.outdir, .{}) else try std.fs.cwd().makeOpenPathIterable(".", .{});
+        var abs_output_dir = try std.os.getFdPath(root_dir.dir.fd, &abs_output_dir_buf);
+
+        this_bundler.options.output_dir = abs_output_dir;
+        this_bundler.resolver.opts.output_dir = abs_output_dir;
+
+        this_bundler.options.react_server_components = ctx.bundler_options.react_server_components;
+        this_bundler.resolver.opts.react_server_components = ctx.bundler_options.react_server_components;
+        this_bundler.options.code_splitting = ctx.bundler_options.code_splitting;
+        this_bundler.resolver.opts.code_splitting = ctx.bundler_options.code_splitting;
 
         this_bundler.configureLinker();
 
@@ -172,7 +178,7 @@ pub const BuildCommand = struct {
                         output_files[0].input.text = std.fs.path.basename(ctx.bundler_options.outfile);
                     }
 
-                    if (output_dir.len == 0 and ctx.bundler_options.outfile.len == 0) {
+                    if (ctx.bundler_options.outfile.len == 0) {
                         // if --transform is passed, it won't have an output dir
                         if (output_files[0].value == .buffer)
                             try writer.writeAll(output_files[0].value.buffer);
@@ -181,7 +187,6 @@ pub const BuildCommand = struct {
 
                     var root_path = output_dir;
                     if (root_path.len == 0 and ctx.args.entry_points.len == 1) root_path = std.fs.path.dirname(ctx.args.entry_points[0]) orelse ".";
-                    const root_dir = try std.fs.cwd().makeOpenPathIterable(root_path, .{});
                     var all_paths = try ctx.allocator.alloc([]const u8, output_files.len);
                     var max_path_len: usize = 0;
                     for (all_paths, output_files) |*dest, src| {

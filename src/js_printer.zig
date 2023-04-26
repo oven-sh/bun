@@ -487,6 +487,7 @@ pub const Options = struct {
     rewrite_require_resolve: bool = true,
     allocator: std.mem.Allocator = default_allocator,
     source_map_handler: ?SourceMapHandler = null,
+    source_map_builder: ?*bun.sourcemap.Chunk.Builder = null,
     css_import_behavior: Api.CssInJsBehavior = Api.CssInJsBehavior.facade,
 
     commonjs_named_exports: js_ast.Ast.CommonJSNamedExports = .{},
@@ -972,7 +973,7 @@ fn NewPrinter(
             switch (stmt.data) {
                 .s_block => |block| {
                     p.printSpace();
-                    p.printBlock(stmt.loc, block.stmts);
+                    p.printBlock(stmt.loc, block.stmts, block.close_brace_loc);
                     p.printNewline();
                 },
                 else => {
@@ -991,7 +992,7 @@ fn NewPrinter(
             }
         }
 
-        pub fn printBlock(p: *Printer, loc: logger.Loc, stmts: []const Stmt) void {
+        pub fn printBlock(p: *Printer, loc: logger.Loc, stmts: []const Stmt, close_brace_loc: ?logger.Loc) void {
             p.addSourceMapping(loc);
             p.print("{");
             p.printNewline();
@@ -1002,6 +1003,9 @@ fn NewPrinter(
             p.needs_semicolon = false;
 
             p.printIndent();
+            if (close_brace_loc != null and close_brace_loc.?.start > loc.start) {
+                p.addSourceMapping(close_brace_loc.?);
+            }
             p.print("}");
         }
 
@@ -1173,6 +1177,19 @@ fn NewPrinter(
             printer.source_map_builder.addSourceMapping(location, printer.writer.slice());
         }
 
+        // pub inline fn addSourceMappingForName(printer: *Printer, location: logger.Loc, name: string, ref: Ref) void {
+        //     _ = location;
+        //     if (comptime !generate_source_map) {
+        //         return;
+        //     }
+
+        //     if (printer.symbols().get(printer.symbols().follow(ref))) |symbol| {
+        //         if (!strings.eqlLong(symbol.original_name, name)) {
+        //             printer.source_map_builder.addSourceMapping()
+        //         }
+        //     }
+        // }
+
         pub fn printSymbol(p: *Printer, ref: Ref) void {
             std.debug.assert(!ref.isNull());
             const name = p.renamer.nameForSymbol(ref);
@@ -1231,7 +1248,7 @@ fn NewPrinter(
         pub fn printFunc(p: *Printer, func: G.Fn) void {
             p.printFnArgs(func.open_parens_loc, func.args, func.flags.contains(.has_rest_arg), false);
             p.printSpace();
-            p.printBlock(func.body.loc, func.body.stmts);
+            p.printBlock(func.body.loc, func.body.stmts, null);
         }
         pub fn printClass(p: *Printer, class: G.Class) void {
             if (class.extends) |extends| {
@@ -1254,7 +1271,7 @@ fn NewPrinter(
                 if (item.kind == .class_static_block) {
                     p.print("static");
                     p.printSpace();
-                    p.printBlock(item.class_static_block.?.loc, item.class_static_block.?.stmts.slice());
+                    p.printBlock(item.class_static_block.?.loc, item.class_static_block.?.stmts.slice(), null);
                     p.printNewline();
                     continue;
                 }
@@ -2307,7 +2324,7 @@ fn NewPrinter(
                     }
 
                     if (!wasPrinted) {
-                        p.printBlock(e.body.loc, e.body.stmts);
+                        p.printBlock(e.body.loc, e.body.stmts, null);
                     }
 
                     if (wrap) {
@@ -3954,7 +3971,7 @@ fn NewPrinter(
                     switch (s.body.data) {
                         .s_block => {
                             p.printSpace();
-                            p.printBlock(s.body.loc, s.body.data.s_block.stmts);
+                            p.printBlock(s.body.loc, s.body.data.s_block.stmts, s.body.data.s_block.close_brace_loc);
                             p.printSpace();
                         },
                         else => {
@@ -4039,7 +4056,7 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
                     p.print("try");
                     p.printSpace();
-                    p.printBlock(s.body_loc, s.body);
+                    p.printBlock(s.body_loc, s.body, null);
 
                     if (s.catch_) |catch_| {
                         p.printSpace();
@@ -4051,14 +4068,14 @@ fn NewPrinter(
                             p.print(")");
                         }
                         p.printSpace();
-                        p.printBlock(catch_.loc, catch_.body);
+                        p.printBlock(catch_.loc, catch_.body, null);
                     }
 
                     if (s.finally) |finally| {
                         p.printSpace();
                         p.print("finally");
                         p.printSpace();
-                        p.printBlock(finally.loc, finally.stmts);
+                        p.printBlock(finally.loc, finally.stmts, null);
                     }
 
                     p.printNewline();
@@ -4123,7 +4140,7 @@ fn NewPrinter(
                             switch (c.body[0].data) {
                                 .s_block => {
                                     p.printSpace();
-                                    p.printBlock(c.body[0].loc, c.body[0].data.s_block.stmts);
+                                    p.printBlock(c.body[0].loc, c.body[0].data.s_block.stmts, c.body[0].data.s_block.close_brace_loc);
                                     p.printNewline();
                                     continue;
                                 },
@@ -4522,7 +4539,7 @@ fn NewPrinter(
                 },
                 .s_block => |s| {
                     p.printIndent();
-                    p.printBlock(stmt.loc, s.stmts);
+                    p.printBlock(stmt.loc, s.stmts, s.close_brace_loc);
                     p.printNewline();
                 },
                 .s_debugger => {
@@ -4585,7 +4602,11 @@ fn NewPrinter(
                     p.printSemicolonAfterStatement();
                 },
                 .s_expr => |s| {
-                    p.printIndent();
+                    if (!p.options.minify_whitespace and p.options.indent > 0) {
+                        p.addSourceMapping(stmt.loc);
+                        p.printIndent();
+                    }
+
                     p.stmt_start = p.writer.written;
                     p.printExpr(s.value, .lowest, ExprFlag.ExprResultIsUnused());
                     p.printSemicolonAfterStatement();
@@ -4846,7 +4867,7 @@ fn NewPrinter(
             switch (s.yes.data) {
                 .s_block => |block| {
                     p.printSpace();
-                    p.printBlock(s.yes.loc, block.stmts);
+                    p.printBlock(s.yes.loc, block.stmts, block.close_brace_loc);
 
                     if (s.no != null) {
                         p.printSpace();
@@ -4894,7 +4915,7 @@ fn NewPrinter(
                 switch (no_block.data) {
                     .s_block => {
                         p.printSpace();
-                        p.printBlock(no_block.loc, no_block.data.s_block.stmts);
+                        p.printBlock(no_block.loc, no_block.data.s_block.stmts, null);
                         p.printNewline();
                     },
                     .s_if => {
@@ -5748,11 +5769,13 @@ pub fn printJSON(
 pub fn print(
     allocator: std.mem.Allocator,
     platform: options.Platform,
+    ast: Ast,
+    source: *const logger.Source,
     opts: Options,
     import_records: []const ImportRecord,
     parts: []const js_ast.Part,
     renamer: bun.renamer.Renamer,
-    generate_source_maps: bool,
+    comptime generate_source_maps: bool,
 ) PrintResult {
     var buffer_writer = BufferWriter.init(allocator) catch |err| return .{ .err = err };
     var buffer_printer = BufferPrinter.init(buffer_writer);
@@ -5761,11 +5784,13 @@ pub fn print(
         *BufferPrinter,
         &buffer_printer,
         platform,
+        ast,
+        source,
         opts,
         import_records,
         parts,
         renamer,
-        generate_source_maps,
+        comptime generate_source_maps,
     );
 }
 
@@ -5773,17 +5798,21 @@ pub fn printWithWriter(
     comptime Writer: type,
     _writer: Writer,
     platform: options.Platform,
+    ast: Ast,
+    source: *const logger.Source,
     opts: Options,
     import_records: []const ImportRecord,
     parts: []const js_ast.Part,
     renamer: bun.renamer.Renamer,
-    generate_source_maps: bool,
+    comptime generate_source_maps: bool,
 ) PrintResult {
     return switch (platform.isBun()) {
         inline else => |is_bun_platform| printWithWriterAndPlatform(
             Writer,
             _writer,
             is_bun_platform,
+            ast,
+            source,
             opts,
             import_records,
             parts,
@@ -5798,11 +5827,13 @@ pub fn printWithWriterAndPlatform(
     comptime Writer: type,
     _writer: Writer,
     comptime is_bun_platform: bool,
+    ast: Ast,
+    source: *const logger.Source,
     opts: Options,
     import_records: []const ImportRecord,
     parts: []const js_ast.Part,
     renamer: bun.renamer.Renamer,
-    generate_source_maps: bool,
+    comptime generate_source_maps: bool,
 ) PrintResult {
     const PrinterType = NewPrinter(
         false,
@@ -5810,7 +5841,7 @@ pub fn printWithWriterAndPlatform(
         false,
         is_bun_platform,
         false,
-        false,
+        generate_source_maps,
     );
     var writer = _writer;
     var printer = PrinterType.init(
@@ -5818,7 +5849,7 @@ pub fn printWithWriterAndPlatform(
         import_records,
         opts,
         renamer,
-        undefined,
+        getSourceMapBuilder(generate_source_maps, is_bun_platform, opts, source, &ast),
     );
     defer printer.temporary_bindings.deinit(bun.default_allocator);
     defer _writer.* = printer.writer.*;
@@ -5838,13 +5869,15 @@ pub fn printWithWriterAndPlatform(
         }
     }
 
+    const source_map = if (generate_source_maps) printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()) else null;
+
     printer.writer.done() catch |err|
         return .{ .err = err };
 
     return .{
         .result = .{
             .code = writer.ctx.getWritten(),
-            .source_map = if (generate_source_maps) printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()) else null,
+            .source_map = source_map,
         },
     };
 }

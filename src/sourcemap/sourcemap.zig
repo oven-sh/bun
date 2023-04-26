@@ -5,6 +5,7 @@ pub const VLQ_CONTINUATION_BIT: u32 = VLQ_BASE;
 pub const VLQ_CONTINUATION_MASK: u32 = 1 << VLQ_CONTINUATION_BIT;
 const std = @import("std");
 const bun = @import("root").bun;
+const string = bun.string;
 const JSAst = bun.JSAst;
 const BabyList = JSAst.BabyList;
 const Logger = @import("root").bun.logger;
@@ -315,7 +316,7 @@ pub const Mapping = struct {
     };
 };
 
-pub const LineColumnOffset = packed struct {
+pub const LineColumnOffset = struct {
     lines: i32 = 0,
     columns: i32 = 0,
 
@@ -339,8 +340,7 @@ pub const LineColumnOffset = packed struct {
             std.debug.assert(i >= offset);
             std.debug.assert(i < input.len);
 
-            columns += @intCast(i32, i - offset);
-            offset = i;
+            offset = i + 1;
 
             var cp = strings.CodepointIterator.initOffset(input, offset);
             var cursor = strings.CodepointIterator.Cursor{};
@@ -366,8 +366,6 @@ pub const LineColumnOffset = packed struct {
                 },
             }
         }
-
-        columns += @intCast(i32, input.len - offset);
     }
 
     pub fn comesBefore(a: LineColumnOffset, b: LineColumnOffset) bool {
@@ -503,16 +501,16 @@ pub const SourceMapPieces = struct {
 // After all chunks are computed, they are joined together in a second pass.
 // This rewrites the first mapping in each chunk to be relative to the end
 // state of the previous chunk.
-pub fn appendSourceMapChunk(j: *Joiner, prev_end_state_: SourceMapState, start_state_: SourceMapState, source_map_: MutableString) !void {
+pub fn appendSourceMapChunk(j: *Joiner, allocator: std.mem.Allocator, prev_end_state_: SourceMapState, start_state_: SourceMapState, source_map_: bun.string) !void {
     var prev_end_state = prev_end_state_;
     var start_state = start_state_;
     // Handle line breaks in between this mapping and the previous one
     if (start_state.generated_line > 0) {
-        j.append(try strings.repeatingAlloc(source_map_.allocator, @intCast(usize, start_state.generated_line), ';'), 0, source_map_.allocator);
+        j.append(try strings.repeatingAlloc(allocator, @intCast(usize, start_state.generated_line), ';'), 0, allocator);
         prev_end_state.generated_column = 0;
     }
 
-    var source_map = source_map_.list.items;
+    var source_map = source_map_;
     if (strings.indexOfNotChar(source_map, ';')) |semicolons| {
         j.append(source_map[0..semicolons], 0, null);
         source_map = source_map[semicolons..];
@@ -544,13 +542,13 @@ pub fn appendSourceMapChunk(j: *Joiner, prev_end_state_: SourceMapState, start_s
     start_state.original_column += original_column_.value;
 
     j.append(
-        appendMappingToBuffer(MutableString.initEmpty(source_map.allocator), j.lastByte(), prev_end_state, start_state).list.items,
+        appendMappingToBuffer(MutableString.initEmpty(allocator), j.lastByte(), prev_end_state, start_state).list.items,
         0,
-        source_map.allocator,
+        allocator,
     );
 
     // Then append everything after that without modification.
-    j.append(source_map_.list.items, @truncate(u32, @ptrToInt(source_map.ptr) - @ptrToInt(source_map_.list.items.ptr)), source_map_.allocator);
+    j.push(source_map);
 }
 
 const vlq_lookup_table: [256]VLQ = brk: {

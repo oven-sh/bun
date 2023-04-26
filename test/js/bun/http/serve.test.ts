@@ -894,7 +894,6 @@ it("should support multiple Set-Cookie headers", async () => {
   );
 });
 
-
 describe("should support Content-Range with Bun.file()", () => {
   // this must be a big file so we can test potentially multiple chunks
   // more than 65 KB
@@ -992,7 +991,6 @@ describe("should support Content-Range with Bun.file()", () => {
 
 it("request body and signal life cycle", async () => {
   {
-   
     const headers = {
       headers: {
         "Content-Type": "text/html",
@@ -1007,9 +1005,8 @@ it("request body and signal life cycle", async () => {
     });
 
     try {
-
       const requests = [];
-      for(let i = 0; i < 1000; i++){
+      for (let i = 0; i < 1000; i++) {
         requests.push(fetch(`http://${server.hostname}:${server.port}`));
       }
       await Promise.all(requests);
@@ -1017,6 +1014,5 @@ it("request body and signal life cycle", async () => {
     await Bun.sleep(10);
     expect(true).toBe(true);
     server.stop(true);
-  
   }
 });

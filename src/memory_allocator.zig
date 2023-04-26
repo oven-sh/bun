@@ -56,7 +56,9 @@ const CAllocator = struct {
     const malloc_size = c.malloc_size;
     pub const supports_posix_memalign = true;
 
-    fn alignedAlloc(len: usize, alignment: usize) ?[*]u8 {
+    fn alignedAlloc(len: usize, log2_align: usize) ?[*]u8 {
+        const alignment = @as(usize, 1) << @intCast(Allocator.Log2Align, log2_align);
+
         if (comptime FeatureFlags.log_allocations) std.debug.print("Malloc: {d}\n", .{len});
 
         var ptr: ?*anyopaque = if (mimalloc.canUseAlignedAlloc(len, alignment))

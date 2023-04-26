@@ -921,7 +921,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         method: HTTP.Method,
         aborted: bool = false,
         finalized: bun.DebugOnly(bool) = bun.DebugOnlyDefault(false),
-        request_finalization_callback: ?*JSC.FinalizationCallback = null,
+        request_object_finalization_callback: ?*JSC.FinalizationCallback = null,
         upgrade_context: ?*uws.uws_socket_context_t = null,
 
         /// We can only safely free once the request body promise is finalized
@@ -976,9 +976,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.resp.onAborted(*RequestContext, RequestContext.onAbort, this);
         }
 
-        pub fn onRequestFinalized(this: *RequestContext) void {
+        pub fn onJSRequestObjectFinalized(this: *RequestContext) void {
             this.request_js_object = null;
-            this.request_finalization_callback = null;
+            this.request_object_finalization_callback = null;
         }
 
         pub fn onResolve(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
@@ -1333,10 +1333,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                     // but we received nothing or the connection was aborted
                     if (request_js.as(Request)) |req| {
-                        if (this.request_finalization_callback) |finalizer| {
+                        if (this.request_object_finalization_callback) |finalizer| {
                             finalizer.detach(this.server.vm.finalizationPool());
                             req.finalization_callback = null;
-                            this.request_finalization_callback = null;
+                            this.request_object_finalization_callback = null;
                         }
 
                         // the promise is pending
@@ -1422,12 +1422,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                 // but we received nothing or the connection was aborted
                 if (request_js.as(Request)) |req| {
-                    if (this.request_finalization_callback) |finalizer| {
+                    if (this.request_object_finalization_callback) |finalizer| {
                         finalizer.detach(this.server.vm.finalizationPool());
-                        if (finalizer == this.request_finalization_callback)
+                        if (finalizer == this.request_object_finalization_callback)
                             req.finalization_callback = null;
 
-                        this.request_finalization_callback = null;
+                        this.request_object_finalization_callback = null;
                     }
 
                     // the promise is pending
@@ -2142,12 +2142,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 if (ctx.signal == null) {
                     if (request_object.signal) |signal| {
                         ctx.signal = signal.ref();
-                    } else if (ctx.request_finalization_callback == null and request_object.finalization_callback == null) {
+                    } else if (ctx.request_object_finalization_callback == null and request_object.finalization_callback == null) {
                         request_object.finalization_callback = JSC.FinalizationCallback.create(
                             this.vm.finalizationPool(),
                             RequestContext,
                             ctx,
-                            RequestContext.onRequestFinalized,
+                            RequestContext.onJSRequestObjectFinalized,
                         );
                     }
                 }

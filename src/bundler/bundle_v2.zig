@@ -759,6 +759,7 @@ pub const BundleV2 = struct {
     ) !void {
         if (this.graph.estimated_file_loader_count > 0) {
             const unique_key_for_additional_files = this.graph.input_files.items(.unique_key_for_additional_file);
+            const content_hashes_for_additional_files = this.graph.input_files.items(.content_hash_for_additional_file);
             const sources = this.graph.input_files.items(.source);
             var additional_output_files = std.ArrayList(options.OutputFile).init(this.bundler.allocator);
 
@@ -784,9 +785,7 @@ pub const BundleV2 = struct {
                         template.placeholder.ext = template.placeholder.ext[1..];
 
                     if (template.needs(.hash)) {
-                        var hasher = ContentHasher{};
-                        hasher.write(source.contents);
-                        template.placeholder.hash = hasher.digest();
+                        template.placeholder.hash = content_hashes_for_additional_files[index];
                     }
 
                     const loader = source.path.loader(&this.bundler.options.loaders) orelse options.Loader.file;
@@ -1469,6 +1468,7 @@ pub const BundleV2 = struct {
                 // do not reuse it.
                 graph.input_files.items(.source)[result.source.index.get()] = result.source;
                 graph.input_files.items(.unique_key_for_additional_file)[result.source.index.get()] = result.unique_key_for_additional_file;
+                graph.input_files.items(.content_hash_for_additional_file)[result.source.index.get()] = result.content_hash_for_additional_file;
 
                 debug("onParse({d}, {s}) = {d} imports, {d} exports", .{
                     result.source.index.get(),
@@ -1687,6 +1687,9 @@ pub const ParseTask = struct {
 
             /// Used by "file" loader files.
             unique_key_for_additional_file: []const u8 = "",
+
+            /// Used by "file" loader files.
+            content_hash_for_additional_file: u64 = 0,
         };
 
         pub const Error = struct {
@@ -2153,6 +2156,13 @@ pub const ParseTask = struct {
             .log = log.*,
             .use_directive = use_directive,
             .unique_key_for_additional_file = unique_key_for_additional_file,
+
+            // Hash the files in here so that we do it in parallel.
+            .content_hash_for_additional_file = if (loader.shouldCopyForBundling())
+                ContentHasher.run(source.contents)
+            else
+                0,
+
             .watcher_data = .{
                 .fd = if (task.contents_or_fd == .fd) task.contents_or_fd.fd.file else 0,
                 .dir_fd = if (task.contents_or_fd == .fd) task.contents_or_fd.fd.dir else 0,
@@ -2432,6 +2442,7 @@ pub const Graph = struct {
         side_effects: _resolver.SideEffects = _resolver.SideEffects.has_side_effects,
         additional_files: BabyList(AdditionalFile) = .{},
         unique_key_for_additional_file: string = "",
+        content_hash_for_additional_file: u64 = 0,
 
         pub const List = MultiArrayList(InputFile);
     };
@@ -9469,6 +9480,12 @@ const ContentHasher = struct {
     pub fn write(self: *ContentHasher, bytes: []const u8) void {
         self.hasher.update(std.mem.asBytes(&bytes.len));
         self.hasher.update(bytes);
+    }
+
+    pub fn run(bytes: []const u8) u64 {
+        var hasher = ContentHasher{};
+        hasher.write(bytes);
+        return hasher.digest();
     }
 
     pub fn writeInts(self: *ContentHasher, i: []const u32) void {

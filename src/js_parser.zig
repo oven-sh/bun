@@ -2803,7 +2803,7 @@ pub const Parser = struct {
             }
             break :brk .none;
         };
-        return .{ .ast = try p.toAST(parts, exports_kind, null) };
+        return .{ .ast = try p.toAST(parts, exports_kind, null, "") };
     }
 
     pub fn parse(self: *Parser) !js_ast.Result {
@@ -4166,7 +4166,7 @@ pub const Parser = struct {
         // Pop the module scope to apply the "ContainsDirectEval" rules
         // p.popScope();
 
-        return js_ast.Result{ .ast = try p.toAST(parts_slice, exports_kind, wrapper_expr) };
+        return js_ast.Result{ .ast = try p.toAST(parts_slice, exports_kind, wrapper_expr, hashbang) };
     }
 
     pub fn init(_options: Options, log: *logger.Log, source: *const logger.Source, define: *Define, allocator: Allocator) !Parser {
@@ -20481,7 +20481,13 @@ fn NewParser_(
             p.log.addRangeError(p.source, logger.Range{ .loc = comma_after_spread, .len = 1 }, "Unexpected \",\" after rest pattern") catch unreachable;
         }
 
-        pub fn toAST(p: *P, _parts: []js_ast.Part, exports_kind: js_ast.ExportsKind, commonjs_wrapper_expr: ?Expr) !js_ast.Ast {
+        pub fn toAST(
+            p: *P,
+            _parts: []js_ast.Part,
+            exports_kind: js_ast.ExportsKind,
+            commonjs_wrapper_expr: ?Expr,
+            hashbang: []const u8,
+        ) !js_ast.Ast {
             const allocator = p.allocator;
             var parts = _parts;
 
@@ -21180,6 +21186,8 @@ fn NewParser_(
                 // .top_Level_await_keyword = p.top_level_await_keyword,
                 .bun_plugin = p.bun_plugin,
                 .commonjs_named_exports = p.commonjs_named_exports,
+
+                .hashbang = hashbang,
 
                 // TODO:
                 // .const_values = p.const_values,

@@ -990,7 +990,7 @@ describe("should support Content-Range with Bun.file()", () => {
   }
 });
 
-describe("request body and signal life cycle", async () => {
+it("request body and signal life cycle", async () => {
   {
    
     const headers = {

@@ -406,16 +406,21 @@ pub const Request = struct {
     pub fn constructInto(
         globalThis: *JSC.JSGlobalObject,
         arguments: []const JSC.JSValue,
-        req: *Request,
-    ) bool {
-        req.body.* = .{ .Empty = {} };
+    ) ?Request {
+        const body_ptr = bun.default_allocator.create(Body.Value) catch {
+            return null;
+        };
+        body_ptr.* = .{ .Empty = {} };
+        var req = Request{ .body = body_ptr, .body_owned = true };
 
         if (arguments.len == 0) {
             globalThis.throw("Failed to construct 'Request': 1 argument required, but only 0 present.", .{});
-            return false;
+            bun.default_allocator.destroy(body_ptr);
+            return null;
         } else if (arguments[0].isEmptyOrUndefinedOrNull() or !arguments[0].isCell()) {
             globalThis.throw("Failed to construct 'Request': expected non-empty string or object, got undefined", .{});
-            return false;
+            bun.default_allocator.destroy(body_ptr);
+            return null;
         }
 
         const url_or_object = arguments[0];
@@ -431,18 +436,21 @@ pub const Request = struct {
         if (is_first_argument_a_url) {
             const slice = arguments[0].toSliceOrNull(globalThis) orelse {
                 req.finalizeWithoutDeinit();
-                return false;
+                bun.default_allocator.destroy(body_ptr);
+                return null;
             };
             req.url = (slice.cloneIfNeeded(globalThis.allocator()) catch {
                 req.finalizeWithoutDeinit();
-                return false;
+                bun.default_allocator.destroy(body_ptr);
+                return null;
             }).slice();
             req.url_was_allocated = req.url.len > 0;
             if (req.url.len > 0)
                 fields.insert(.url);
         } else if (!url_or_object_type.isObject()) {
             globalThis.throw("Failed to construct 'Request': expected non-empty string or object", .{});
-            return false;
+            bun.default_allocator.destroy(body_ptr);
+            return null;
         }
 
         const values_to_try_ = [_]JSValue{
@@ -463,12 +471,12 @@ pub const Request = struct {
             if (value_type == .DOMWrapper) {
                 if (value.as(Request)) |request| {
                     if (values_to_try.len == 1) {
-                        request.cloneInto(req, globalThis.allocator(), globalThis);
+                        request.cloneInto(&req, globalThis.allocator(), globalThis);
                         if (req.url_was_allocated) {
                             req.url = req.url;
                             req.url_was_allocated = true;
                         }
-                        return true;
+                        return req;
                     }
 
                     if (!fields.contains(.method)) {
@@ -534,7 +542,8 @@ pub const Request = struct {
                         req.body.* = body;
                     } else {
                         req.finalizeWithoutDeinit();
-                        return false;
+                        bun.default_allocator.destroy(body_ptr);
+                        return null;
                     }
                 }
             }
@@ -542,7 +551,7 @@ pub const Request = struct {
             if (!fields.contains(.url)) {
                 if (value.fastGet(globalThis, .url)) |url| {
                     req.url = (url.toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {
-                        return false;
+                        return null;
                     }).slice();
                     req.url_was_allocated = req.url.len > 0;
                     if (req.url.len > 0)
@@ -554,11 +563,13 @@ pub const Request = struct {
                 {
                     const slice = value.toSliceOrNull(globalThis) orelse {
                         req.finalizeWithoutDeinit();
-                        return false;
+                        bun.default_allocator.destroy(body_ptr);
+                        return null;
                     };
                     req.url = (slice.cloneIfNeeded(globalThis.allocator()) catch {
                         req.finalizeWithoutDeinit();
-                        return false;
+                        bun.default_allocator.destroy(body_ptr);
+                        return null;
                     }).slice();
                     req.url_was_allocated = req.url.len > 0;
                     if (req.url.len > 0)
@@ -577,7 +588,8 @@ pub const Request = struct {
                     } else {
                         globalThis.throw("Failed to construct 'Request': signal is not of type AbortSignal.", .{});
                         req.finalizeWithoutDeinit();
-                        return false;
+                        bun.default_allocator.destroy(body_ptr);
+                        return null;
                     }
                 }
             }
@@ -604,14 +616,16 @@ pub const Request = struct {
         if (req.url.len == 0) {
             globalThis.throw("Failed to construct 'Request': url is required.", .{});
             req.finalizeWithoutDeinit();
-            return false;
+            bun.default_allocator.destroy(body_ptr);
+            return null;
         }
 
         const parsed_url = ZigURL.parse(req.url);
         if (parsed_url.hostname.len == 0) {
             globalThis.throw("Failed to construct 'Request': Invalid URL (missing a hostname)", .{});
             req.finalizeWithoutDeinit();
-            return false;
+            bun.default_allocator.destroy(body_ptr);
+            return null;
         }
 
         if (req.body.* == .Blob and
@@ -622,26 +636,22 @@ pub const Request = struct {
             req.headers.?.put("content-type", req.body.Blob.content_type, globalThis);
         }
 
-        return true;
+        return req;
     }
-
     pub fn constructor(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) ?*Request {
         const arguments_ = callframe.arguments(2);
         const arguments = arguments_.ptr[0..arguments_.len];
-        const allocator = getAllocator(globalThis);
-        var request_ = allocator.create(Request) catch return null;
-        request_.body = allocator.create(Body.Value) catch {
-            allocator.destroy(request_);
+
+        var request = constructInto(globalThis, arguments) orelse {
             return null;
         };
-        if (constructInto(globalThis, arguments, request_) == false) {
-            allocator.destroy(request_.body);
-            allocator.destroy(request_);
+        var request_ = getAllocator(globalThis).create(Request) catch {
             return null;
-        }
+        };
+        request_.* = request;
         return request_;
     }
 

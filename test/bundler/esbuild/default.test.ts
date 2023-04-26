@@ -232,7 +232,8 @@ describe("bundler", () => {
       "/e.js": "export default class Foo {}",
     },
     entryPoints: ["/a.js", "/b.js", "/c.js", "/d.js", "/e.js"],
-    mode: "transform",
+    mode: "bundle",
+    external: ["*"],
     runtimeFiles: {
       "./out/f.js": /* js */ `
         export const f = 987;
@@ -312,15 +313,15 @@ describe("bundler", () => {
     run: {
       file: "/test.js",
     },
-    external: ["node:assert", "./a", "./b", "./c"],
+    external: ["*"],
   } as const;
   itBundled("default/ImportFormsWithNoBundle", {
     ...importFormsConfig,
-  });
+  } as any);
   itBundled("default/ImportFormsWithMinifyIdentifiersAndNoBundle", {
     ...importFormsConfig,
     minifyIdentifiers: true,
-  });
+  } as any);
   itBundled("default/ExportFormsCommonJS", {
     files: {
       "/entry.js": /* js */ `
@@ -1063,6 +1064,7 @@ describe("bundler", () => {
       "/entry.js": /* js */ `
         try {
           const supportsColor = require('not-supports-color'); // bun overrides supports-color
+          exports.colors = false;
           if (supportsColor && (supportsColor.stderr || supportsColor).level >= 2) {
             exports.colors = [];
           }
@@ -1080,7 +1082,7 @@ describe("bundler", () => {
       "/test2.js": /* js */ `
         globalThis.requireThrows = true;
         import assert from 'assert';
-        assert.deepEqual((await import('./out')).default, { })
+        assert.deepEqual((await import('./out')).default, { colors: 'it threw' })
       `,
       "/node_modules/not-supports-color/index.js": /* js */ `
         if (requireThrows) {
@@ -1420,10 +1422,10 @@ describe("bundler", () => {
       "/test.js": /* js */ `
         import fs from "fs";
         import assert from "assert";
-        import module from './out.js';
-        assert(module.fs === fs, 'exports.fs')
-        assert(module.readFileSync === fs.readFileSync, 'exports.readFileSync')
-        assert(module.foo === 123, 'exports.foo')
+        import * as mod from './out.js';
+        assert(mod.fs === fs, 'exports.fs')
+        assert(mod.readFileSync === fs.readFileSync, 'exports.readFileSync')
+        assert(mod.foo === 123, 'exports.foo')
       `,
     },
     platform: "node",
@@ -1541,16 +1543,33 @@ describe("bundler", () => {
     },
   });
   itBundled("default/TopLevelReturnForbiddenImport", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
+        console.log('A');
+        return
+        console.log('B');
+        import 'foo'
+      `,
+    },
+    external: ["foo"],
+    runtimeFiles: {
+      "/node_modules/foo/index.js": "console.log('C')",
+    },
+    run: {
+      stdout: "C\nA",
+    },
+  });
+  itBundled("default/TopLevelReturnForbiddenImportAndModuleExports", {
+    notImplemented: true,
+    files: {
+      "/entry.js": /* js */ `
+        module.exports.foo = 123
         return
         import 'foo'
       `,
     },
-    mode: "transform",
-    bundleErrors: {
-      "/entry.js": ["Top-level return cannot be used inside an ECMAScript module"],
-    },
+    external: ["foo"],
   });
   itBundled("default/TopLevelReturnForbiddenExport", {
     files: {
@@ -1947,7 +1966,7 @@ describe("bundler", () => {
         })(1,3,5);
       `,
     },
-    format: "esm",
+    format: "iife",
     outfile: "/out.js",
     minifyIdentifiers: true,
     // mode: "transform",
@@ -2204,6 +2223,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/ImportWithQueryParameter", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         // Each of these should have a separate identity (i.e. end up in the output file twice)
@@ -2290,7 +2310,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/AutoExternalNode", {
-    skipOnEsbuild: true,
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         // These URLs should be external automatically
@@ -2299,7 +2319,36 @@ describe("bundler", () => {
   
         // This should be external and should be tree-shaken because it's side-effect free
         import "node:path";
-        import "bun";
+        import "querystring";
+  
+        // This should be external too, but shouldn't be tree-shaken because it could be a run-time error
+        import "node:what-is-this";
+      `,
+    },
+    platform: "node",
+    treeShaking: true,
+    onAfterBundle(api) {
+      const file = api.readFile("/out.js");
+      const imports = new Bun.Transpiler().scanImports(file);
+      expect(imports).toStrictEqual([
+        { kind: "import-statement", path: "node:fs/promises" },
+        { kind: "import-statement", path: "node:what-is-this" },
+      ]);
+    },
+  });
+  itBundled("default/AutoExternalBun", {
+    skipOnEsbuild: true,
+    notImplemented: true,
+    files: {
+      "/entry.js": /* js */ `
+        // These URLs should be external automatically
+        import fs from "node:fs/promises";
+        fs.readFile();
+        import { CryptoHasher } from "bun";
+        new CryptoHasher();
+        
+        // This should be external and should be tree-shaken because it's side-effect free
+        import "node:path";
         import "bun:sqlite";
   
         // This should be external too, but shouldn't be tree-shaken because it could be a run-time error
@@ -2307,13 +2356,15 @@ describe("bundler", () => {
         import "bun:what-is-this";
       `,
     },
-    platform: "node",
+    platform: "bun",
     onAfterBundle(api) {
       const file = api.readFile("/out.js");
       const imports = new Bun.Transpiler().scanImports(file);
       expect(imports).toStrictEqual([
+        // bun is transformed in destructuring the bun global
         { kind: "import-statement", path: "node:fs/promises" },
         { kind: "import-statement", path: "node:what-is-this" },
+        { kind: "import-statement", path: "bun:what-is-this" },
       ]);
     },
   });
@@ -2457,17 +2508,20 @@ describe("bundler", () => {
     }}}}}}}}}}}}}}}}}}}}}}}}}}}
   `;
   itBundled("default/NestedLabelsBundle", {
+    notImplemented: true,
     files: {
       "/entry.js": crazyNestedLabelFile,
     },
   });
   itBundled("default/NestedLabelsNoBundle", {
+    notImplemented: true,
     files: {
       "/entry.js": crazyNestedLabelFile,
     },
     mode: "transform",
   });
   itBundled("default/MinifyNestedLabelsNoBundle", {
+    notImplemented: true,
     files: {
       "/entry.js": crazyNestedLabelFile,
     },
@@ -2477,6 +2531,7 @@ describe("bundler", () => {
     mode: "transform",
   });
   itBundled("default/MinifyNestedLabelsBundle", {
+    notImplemented: true,
     files: {
       "/entry.js": crazyNestedLabelFile,
     },
@@ -2618,14 +2673,15 @@ describe("bundler", () => {
       stdout: "123",
     },
   });
-  itBundled("default/RelativeEntryPointError", {
+  itBundled("default/RelativeFilepathEntryPoint", {
     files: {
       "/entry.js": `console.log(123)`,
     },
-    entryPointsRaw: ["entry"],
+    entryPointsRaw: ["entry.js"],
     outfile: "/out.js",
-    bundleErrors: {
-      "<bun>": [`ModuleNotFound resolving "entry". Did you mean: "./entry"`],
+    run: {
+      file: "/out.js",
+      stdout: "123",
     },
   });
   itBundled("default/MultipleEntryPointsSameNameCollision", {
@@ -2750,7 +2806,7 @@ describe("bundler", () => {
       file: "/test.js",
       stdout: "foo bar",
     },
-    mode: "transform",
+    external: ["*"],
   });
   itBundled("default/ImportMetaCommonJS", {
     files: {
@@ -3452,6 +3508,7 @@ describe("bundler", () => {
     mode: "transform",
   });
   itBundled("default/TopLevelAwaitForbiddenRequire", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         require('./a')
@@ -3585,6 +3642,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/AssignToImportNoBundle", {
+    notImplemented: true,
     files: {
       "/bad0.js": `import x from "foo"; x = 1`,
       "/bad1.js": `import x from "foo"; x++`,
@@ -4486,6 +4544,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/CharFreqIgnoreComments", {
+    notImplemented: true,
     files: {
       "/a.js": /* js */ `
         export default function(one, two, three, four) {

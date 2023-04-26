@@ -168,4 +168,53 @@ describe("bundler", () => {
       ARBITRARY: "secret environment stuff!",
     },
   });
+  itBundled("edgecase/StarExternal", {
+    files: {
+      "/entry.js": /* js */ `
+        import { foo } from './foo';
+        import { bar } from './bar';
+        console.log(foo);
+      `,
+    },
+    external: ["*"],
+  });
+  itBundled("edgecase/ImportNamespaceAndDefault", {
+    files: {
+      "/entry.js": /* js */ `
+        import def2, * as ns2 from './c'
+        console.log(def2, JSON.stringify(ns2))
+      `,
+    },
+    external: ["*"],
+    runtimeFiles: {
+      "/c.js": /* js */ `
+        export default 1
+        export const ns = 2
+        export const def2 = 3
+      `,
+    },
+    run: {
+      stdout: '1 {"def2":3,"default":1,"ns":2}',
+    },
+  });
+  itBundled("edgecase/ExternalES6ConvertedToCommonJSSimplified", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(JSON.stringify(require('./e')));
+      `,
+      "/e.js": `export * from 'x'`,
+    },
+    external: ["x"],
+    runtimeFiles: {
+      "/node_modules/x/index.js": /* js */ `
+        export const ns = 123
+        export const ns2 = 456
+      `,
+    },
+    run: {
+      stdout: `
+        {"ns":123,"ns2":456}
+      `,
+    },
+  });
 });

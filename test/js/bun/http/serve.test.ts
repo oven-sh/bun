@@ -2,6 +2,8 @@ import { file, gc, Serve, serve, Server } from "bun";
 import { afterEach, describe, it, expect, afterAll } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { resolve } from "path";
+import { renderToReadableStream } from "react-dom/server";
+import app_jsx from "./app.jsx";
 
 type Handler = (req: Request) => Response;
 afterEach(() => gc(true));
@@ -892,6 +894,7 @@ it("should support multiple Set-Cookie headers", async () => {
   );
 });
 
+
 describe("should support Content-Range with Bun.file()", () => {
   // this must be a big file so we can test potentially multiple chunks
   // more than 65 KB
@@ -984,5 +987,36 @@ describe("should support Content-Range with Bun.file()", () => {
         expect(response.status).toBe(206);
       });
     });
+  }
+});
+
+describe("request body and signal life cycle", async () => {
+  {
+   
+    const headers = {
+      headers: {
+        "Content-Type": "text/html",
+      },
+    };
+
+    const server = Bun.serve({
+      async fetch(req) {
+        await queueMicrotask(() => Bun.gc(true));
+        return new Response(await renderToReadableStream(app_jsx), headers);
+      },
+    });
+
+    try {
+
+      const requests = [];
+      for(let i = 0; i < 1000; i++){
+        requests.push(fetch(`http://${server.hostname}:${server.port}`));
+      }
+      await Promise.all(requests);
+    } catch {}
+    await Bun.sleep(10);
+    expect(true).toBe(true);
+    server.stop(true);
+  
   }
 });

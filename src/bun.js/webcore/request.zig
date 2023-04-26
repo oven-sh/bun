@@ -59,7 +59,8 @@ pub const Request = struct {
 
     headers: ?*FetchHeaders = null,
     signal: ?*AbortSignal = null,
-    body: Body.Value = Body.Value{ .Null = {} },
+    body: *Body.Value,
+    body_owned: bool = true,
     method: Method = Method.GET,
     uws_request: ?*uws.Request = null,
     https: bool = false,
@@ -94,7 +95,7 @@ pub const Request = struct {
             }
         }
 
-        if (this.body == .Blob) {
+        if (this.body.* == .Blob) {
             if (this.body.Blob.content_type.len > 0)
                 return ZigString.Slice.fromUTF8NeverFree(this.body.Blob.content_type);
         }
@@ -136,11 +137,11 @@ pub const Request = struct {
             try writer.print(comptime Output.prettyFmt("<r><b>{s}<r>", enable_ansi_colors), .{this.url});
 
             try writer.writeAll("\"");
-            if (this.body == .Blob) {
+            if (this.body.* == .Blob) {
                 try writer.writeAll("\n");
                 try formatter.writeIndent(Writer, writer);
                 try this.body.Blob.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
-            } else if (this.body == .InternalBlob) {
+            } else if (this.body.* == .InternalBlob) {
                 try writer.writeAll("\n");
                 try formatter.writeIndent(Writer, writer);
                 if (this.body.size() == 0) {
@@ -148,7 +149,7 @@ pub const Request = struct {
                 } else {
                     try Blob.writeFormatForSize(this.body.size(), writer, enable_ansi_colors);
                 }
-            } else if (this.body == .Locked) {
+            } else if (this.body.* == .Locked) {
                 if (this.body.Locked.readable) |stream| {
                     try writer.writeAll("\n");
                     try formatter.writeIndent(Writer, writer);
@@ -162,9 +163,12 @@ pub const Request = struct {
     }
 
     pub fn fromRequestContext(ctx: *RequestContext) !Request {
+        var body = try bun.default_allocator.create(Body.Value);
+        body.* = .{ .Null = {} };
         var req = Request{
             .url = bun.asByteSlice(ctx.getFullURL()),
-            .body = .{ .Null = {} },
+            .body_owned = true,
+            .body = body,
             .method = ctx.method,
             .headers = FetchHeaders.createFromPicoHeaders(ctx.request.headers),
             .url_was_allocated = true,
@@ -179,7 +183,7 @@ pub const Request = struct {
             }
         }
 
-        switch (this.body) {
+        switch (this.body.*) {
             .Blob => |blob| {
                 if (blob.content_type.len > 0) {
                     return blob.content_type;
@@ -270,7 +274,6 @@ pub const Request = struct {
             bun.default_allocator.free(bun.constStrToU8(this.url));
         }
 
-        this.body.deinit();
         if (this.signal) |signal| {
             _ = signal.unref();
             this.signal = null;
@@ -279,6 +282,10 @@ pub const Request = struct {
 
     pub fn finalize(this: *Request) callconv(.C) void {
         this.finalizeWithoutDeinit();
+        if (this.body_owned) {
+            this.body.deinit();
+            bun.default_allocator.destroy(this.body);
+        }
         bun.default_allocator.destroy(this);
     }
 
@@ -399,15 +406,16 @@ pub const Request = struct {
     pub fn constructInto(
         globalThis: *JSC.JSGlobalObject,
         arguments: []const JSC.JSValue,
-    ) ?Request {
-        var req = Request{};
+        req: *Request,
+    ) bool {
+        req.body.* = .{ .Empty = {} };
 
         if (arguments.len == 0) {
             globalThis.throw("Failed to construct 'Request': 1 argument required, but only 0 present.", .{});
-            return null;
+            return false;
         } else if (arguments[0].isEmptyOrUndefinedOrNull() or !arguments[0].isCell()) {
             globalThis.throw("Failed to construct 'Request': expected non-empty string or object, got undefined", .{});
-            return null;
+            return false;
         }
 
         const url_or_object = arguments[0];
@@ -423,18 +431,18 @@ pub const Request = struct {
         if (is_first_argument_a_url) {
             const slice = arguments[0].toSliceOrNull(globalThis) orelse {
                 req.finalizeWithoutDeinit();
-                return null;
+                return false;
             };
             req.url = (slice.cloneIfNeeded(globalThis.allocator()) catch {
                 req.finalizeWithoutDeinit();
-                return null;
+                return false;
             }).slice();
             req.url_was_allocated = req.url.len > 0;
             if (req.url.len > 0)
                 fields.insert(.url);
         } else if (!url_or_object_type.isObject()) {
             globalThis.throw("Failed to construct 'Request': expected non-empty string or object", .{});
-            return null;
+            return false;
         }
 
         const values_to_try_ = [_]JSValue{
@@ -455,12 +463,12 @@ pub const Request = struct {
             if (value_type == .DOMWrapper) {
                 if (value.as(Request)) |request| {
                     if (values_to_try.len == 1) {
-                        request.cloneInto(&req, globalThis.allocator(), globalThis);
+                        request.cloneInto(req, globalThis.allocator(), globalThis);
                         if (req.url_was_allocated) {
                             req.url = req.url;
                             req.url_was_allocated = true;
                         }
-                        return req;
+                        return true;
                     }
 
                     if (!fields.contains(.method)) {
@@ -476,10 +484,10 @@ pub const Request = struct {
                     }
 
                     if (!fields.contains(.body)) {
-                        switch (request.body) {
+                        switch (request.body.*) {
                             .Null, .Empty, .Used => {},
                             else => {
-                                req.body = request.body.clone(globalThis);
+                                req.body.* = request.body.clone(globalThis);
                                 fields.insert(.body);
                             },
                         }
@@ -511,7 +519,7 @@ pub const Request = struct {
                         switch (response.body.value) {
                             .Null, .Empty, .Used => {},
                             else => {
-                                req.body = response.body.value.clone(globalThis);
+                                req.body.* = response.body.value.clone(globalThis);
                                 fields.insert(.body);
                             },
                         }
@@ -523,10 +531,10 @@ pub const Request = struct {
                 if (value.fastGet(globalThis, .body)) |body_| {
                     fields.insert(.body);
                     if (Body.Value.fromJS(globalThis, body_)) |body| {
-                        req.body = body;
+                        req.body.* = body;
                     } else {
                         req.finalizeWithoutDeinit();
-                        return null;
+                        return false;
                     }
                 }
             }
@@ -534,7 +542,7 @@ pub const Request = struct {
             if (!fields.contains(.url)) {
                 if (value.fastGet(globalThis, .url)) |url| {
                     req.url = (url.toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {
-                        return null;
+                        return false;
                     }).slice();
                     req.url_was_allocated = req.url.len > 0;
                     if (req.url.len > 0)
@@ -546,11 +554,11 @@ pub const Request = struct {
                 {
                     const slice = value.toSliceOrNull(globalThis) orelse {
                         req.finalizeWithoutDeinit();
-                        return null;
+                        return false;
                     };
                     req.url = (slice.cloneIfNeeded(globalThis.allocator()) catch {
                         req.finalizeWithoutDeinit();
-                        return null;
+                        return false;
                     }).slice();
                     req.url_was_allocated = req.url.len > 0;
                     if (req.url.len > 0)
@@ -569,7 +577,7 @@ pub const Request = struct {
                     } else {
                         globalThis.throw("Failed to construct 'Request': signal is not of type AbortSignal.", .{});
                         req.finalizeWithoutDeinit();
-                        return null;
+                        return false;
                     }
                 }
             }
@@ -596,17 +604,17 @@ pub const Request = struct {
         if (req.url.len == 0) {
             globalThis.throw("Failed to construct 'Request': url is required.", .{});
             req.finalizeWithoutDeinit();
-            return null;
+            return false;
         }
 
         const parsed_url = ZigURL.parse(req.url);
         if (parsed_url.hostname.len == 0) {
             globalThis.throw("Failed to construct 'Request': Invalid URL (missing a hostname)", .{});
             req.finalizeWithoutDeinit();
-            return null;
+            return false;
         }
 
-        if (req.body == .Blob and
+        if (req.body.* == .Blob and
             req.headers != null and
             req.body.Blob.content_type.len > 0 and
             !req.headers.?.fastHas(.ContentType))
@@ -614,7 +622,7 @@ pub const Request = struct {
             req.headers.?.put("content-type", req.body.Blob.content_type, globalThis);
         }
 
-        return req;
+        return true;
     }
 
     pub fn constructor(
@@ -623,17 +631,24 @@ pub const Request = struct {
     ) callconv(.C) ?*Request {
         const arguments_ = callframe.arguments(2);
         const arguments = arguments_.ptr[0..arguments_.len];
-
-        const request = constructInto(globalThis, arguments) orelse return null;
-        var request_ = getAllocator(globalThis).create(Request) catch return null;
-        request_.* = request;
+        const allocator = getAllocator(globalThis);
+        var request_ = allocator.create(Request) catch return null;
+        request_.body = allocator.create(Body.Value) catch {
+            allocator.destroy(request_);
+            return null;
+        };
+        if (constructInto(globalThis, arguments, request_) == false) {
+            allocator.destroy(request_.body);
+            allocator.destroy(request_);
+            return null;
+        }
         return request_;
     }
 
     pub fn getBodyValue(
         this: *Request,
     ) *Body.Value {
-        return &this.body;
+        return this.body;
     }
 
     pub fn getFetchHeaders(
@@ -661,7 +676,7 @@ pub const Request = struct {
             } else {
                 this.headers = FetchHeaders.createEmpty();
 
-                if (this.body == .Blob) {
+                if (this.body.* == .Blob) {
                     const content_type = this.body.Blob.content_type;
                     if (content_type.len > 0) {
                         this.headers.?.put("content-type", content_type, globalThis);
@@ -700,7 +715,8 @@ pub const Request = struct {
         this.ensureURL() catch {};
 
         req.* = Request{
-            .body = this.body.clone(globalThis),
+            .body_owned = true,
+            .body = this.body.cloneWithAllocator(globalThis, bun.default_allocator),
             .url = allocator.dupe(u8, this.url) catch {
                 globalThis.throw("Failed to clone request", .{});
                 return;

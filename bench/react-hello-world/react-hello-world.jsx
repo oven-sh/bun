@@ -23,6 +23,7 @@ const port = Number(process.env.PORT || 3001);
 Bun.serve({
   port,
   async fetch(req) {
+    // await queueMicrotask(() => Bun.gc(true));
     return new Response(await renderToReadableStream(<App />), headers);
   },
 });

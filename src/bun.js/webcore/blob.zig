@@ -711,7 +711,7 @@ pub const Blob = struct {
             }
 
             if (data.as(Request)) |request| {
-                switch (request.body) {
+                switch (request.body.*) {
                     // .InlineBlob,
                     .InternalBlob,
                     .Used,

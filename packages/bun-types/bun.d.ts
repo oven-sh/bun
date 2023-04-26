@@ -750,12 +750,7 @@ declare module "bun" {
       paths?: Record<string, string[]>;
       baseUrl?: string;
       /** "preserve" is not supported yet */
-      jsx?:
-        | "preserve"
-        | "react"
-        | "react-jsx"
-        | "react-jsxdev"
-        | "react-native";
+      jsx?: "preserve" | "react" | "react-jsx" | "react-jsxdev";
       jsxFactory?: string;
       jsxFragmentFactory?: string;
       jsxImportSource?: string;
@@ -978,10 +973,12 @@ declare module "bun" {
     naming?: {
       chunk?: string;
       entrypoint?: string;
+      asset?: string;
     }; // | string;
     // root?: string; // project root
     // transform?: boolean; // default: false, transform instead of bundling
     splitting?: boolean; // default true, enable code splitting
+    bundling?: boolean; // default true, enable bundling
     plugins?: BunPlugin[];
     // manifest?: boolean; // whether to return manifest
     external?: Array<string | RegExp>;
@@ -999,7 +996,7 @@ declare module "bun" {
     treeShaking?: boolean;
   }
 
-  type BuildResult<T> = {
+  type BuildResult<T = Blob> = {
     outputs: Array<{ path: string; result: T }>;
   };
 

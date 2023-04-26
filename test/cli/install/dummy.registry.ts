@@ -36,7 +36,7 @@ export function dummyRegistry(urls: string[], info: any = { "0.0.2": {} }) {
     urls.push(request.url);
     expect(request.method).toBe("GET");
     if (request.url.endsWith(".tgz")) {
-      return new Response(file(join(import.meta.dir, basename(request.url).toLowerCase())));
+      return new Response(file(join(import.meta.dir, "resources", basename(request.url).toLowerCase())));
     }
     expect(request.headers.get("accept")).toBe(
       "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",

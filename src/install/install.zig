@@ -2994,25 +2994,25 @@ pub const PackageManager = struct {
                                                             continue :retry_with_new_resolve_result;
                                                         }
                                                     }
-                                                }
-                                            } else if (this.lockfile.dependency_overrides.getOverrides(
-                                                name_str,
-                                                this.lockfile.str(&version.literal),
-                                            )) |override_version| {
-                                                if (manifest.findByVersion(override_version)) |find_result| {
-                                                    if (this.getOrPutResolvedPackageWithFindResult(
-                                                        name_hash,
-                                                        name,
-                                                        version,
-                                                        id,
-                                                        dependency.behavior,
-                                                        &manifest,
-                                                        find_result,
-                                                        successFn,
-                                                    ) catch null) |new_resolve_result| {
-                                                        resolve_result_ = new_resolve_result;
-                                                        _ = this.network_dedupe_map.remove(task_id);
-                                                        continue :retry_with_new_resolve_result;
+                                                } else if (this.lockfile.dependency_overrides.getOverrides(
+                                                    name_str,
+                                                    this.lockfile.str(&version.literal),
+                                                )) |override_version| {
+                                                    if (manifest.findByVersion(override_version)) |find_result| {
+                                                        if (this.getOrPutResolvedPackageWithFindResult(
+                                                            name_hash,
+                                                            name,
+                                                            version,
+                                                            id,
+                                                            dependency.behavior,
+                                                            &manifest,
+                                                            find_result,
+                                                            successFn,
+                                                        ) catch null) |new_resolve_result| {
+                                                            resolve_result_ = new_resolve_result;
+                                                            _ = this.network_dedupe_map.remove(task_id);
+                                                            continue :retry_with_new_resolve_result;
+                                                        }
                                                     }
                                                 }
                                             }

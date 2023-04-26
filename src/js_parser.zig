@@ -4780,10 +4780,6 @@ fn NewParser_(
         // "visit" pass.
         enclosing_namespace_arg_ref: ?Ref = null,
 
-        react_element_type: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
-        /// Symbol object
-        es6_symbol_global: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
-
         // TODO: remove all these
         jsx_runtime: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
         jsx_factory: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
@@ -6461,11 +6457,6 @@ fn NewParser_(
             switch (comptime jsx_transform_type) {
                 .react => {
                     if (!p.options.bundle) {
-                        if (p.options.features.jsx_optimization_inline) {
-                            p.react_element_type = p.declareGeneratedSymbol(.other, "REACT_ELEMENT_TYPE") catch unreachable;
-                            p.es6_symbol_global = p.declareGeneratedSymbol(.unbound, "Symbol") catch unreachable;
-                        }
-
                         p.jsx_fragment = p.declareGeneratedSymbol(.other, "Fragment") catch unreachable;
                         p.jsx_runtime = p.declareGeneratedSymbol(.other, "jsx") catch unreachable;
                         if (comptime FeatureFlags.support_jsxs_in_jsx_transform)
@@ -6561,8 +6552,6 @@ fn NewParser_(
                 return;
 
             if (p.options.features.jsx_optimization_inline) {
-                p.resolveGeneratedSymbol(&p.react_element_type);
-                p.resolveGeneratedSymbol(&p.es6_symbol_global);
                 if (p.runtime_imports.__merge) |*merge| {
                     p.resolveGeneratedSymbol(merge);
                 }
@@ -15104,8 +15093,6 @@ fn NewParser_(
                                         //     _owner: null
                                         // };
                                         //
-                                        if (!p.options.bundle)
-                                            p.recordUsage(p.react_element_type.ref);
                                         const key = if (e_.key) |key_| brk: {
                                             // key: void 0 === key ? null : "" + key,
                                             break :brk switch (key_.data) {
@@ -15180,16 +15167,7 @@ fn NewParser_(
                                             [_]G.Property{
                                             G.Property{
                                                 .key = Expr{ .data = Prefill.Data.@"$$typeof", .loc = tag.loc },
-                                                .value = if (p.options.bundle)
-                                                    p.runtimeIdentifier(tag.loc, "$$typeof")
-                                                else
-                                                    p.newExpr(
-                                                        E.Identifier{
-                                                            .ref = p.react_element_type.ref,
-                                                            .can_be_removed_if_unused = true,
-                                                        },
-                                                        tag.loc,
-                                                    ),
+                                                .value = p.runtimeIdentifier(tag.loc, "$$typeof"),
                                             },
                                             G.Property{
                                                 .key = Expr{ .data = Prefill.Data.type, .loc = tag.loc },

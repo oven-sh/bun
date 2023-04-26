@@ -5651,7 +5651,7 @@ pub const Ast = struct {
     /// they can be manipulated efficiently without a full AST traversal
     import_records: ImportRecord.List = .{},
 
-    hashbang: ?string = null,
+    hashbang: string = "",
     directive: ?string = null,
     url_for_css: ?string = null,
     parts: Part.List = Part.List{},

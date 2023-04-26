@@ -5838,8 +5838,8 @@ const LinkerContext = struct {
         // Start with the hashbang if there is one. This must be done before the
         // banner because it only works if it's literally the first character.
         if (chunk.isEntryPoint()) {
-            if (c.graph.ast.items(.hashbang)[chunk.entry_point.source_index]) |hashbang| {
-                std.debug.assert(hashbang.len > 0);
+            const hashbang = c.graph.ast.items(.hashbang)[chunk.entry_point.source_index];
+            if (hashbang.len > 0) {
                 j.push(hashbang);
                 j.push("\n");
                 line_offset.advance(hashbang);

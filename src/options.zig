@@ -661,6 +661,16 @@ pub const Loader = enum(u8) {
     dataurl,
     text,
 
+    pub fn shouldCopyForBundling(this: Loader) bool {
+        return switch (this) {
+            .file,
+            // TODO: CSS
+            .css,
+            => true,
+            else => false,
+        };
+    }
+
     pub fn toMimeType(this: Loader) bun.HTTP.MimeType {
         return switch (this) {
             .jsx, .js, .ts, .tsx => bun.HTTP.MimeType.javascript,
@@ -1375,6 +1385,9 @@ pub const BundleOptions = struct {
     external: ExternalModules = ExternalModules{},
     entry_points: []const string,
     entry_names: []const u8 = "",
+    asset_names: []const u8 = "",
+    chunk_names: []const u8 = "",
+    public_path: []const u8 = "",
     extension_order: []const string = &Defaults.ExtensionOrder,
     esm_extension_order: []const string = &Defaults.ModuleExtensionOrder,
     out_extensions: bun.StringHashMap(string),
@@ -2571,6 +2584,10 @@ pub const PathTemplate = struct {
     data: string = "",
     placeholder: Placeholder = .{},
 
+    pub fn needs(this: *const PathTemplate, comptime field: std.meta.FieldEnum(Placeholder)) bool {
+        return strings.contains(this.data, comptime "[" ++ @tagName(field) ++ "]");
+    }
+
     pub fn format(self: PathTemplate, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         var remain = self.data;
         while (strings.indexOfChar(remain, '[')) |j| {
@@ -2649,6 +2666,11 @@ pub const PathTemplate = struct {
     };
 
     pub const file = PathTemplate{
+        .data = "./[name].[ext]",
+        .placeholder = .{},
+    };
+
+    pub const asset = PathTemplate{
         .data = "./[name]-[hash].[ext]",
         .placeholder = .{},
     };

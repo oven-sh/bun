@@ -7,15 +7,14 @@ Bun's fast native bundler is now in beta. It can be used via the `bun build` CLI
 {% codetabs %}
 
 ```ts#JavaScript
-Bun.build({
+await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './build',
-  minify: true,
 });
 ```
 
 ```sh#CLI
-$ bun build ./index.tsx --outdir ./build --minify
+$ bun build ./index.tsx --outdir ./build
 ```
 
 {% /codetabs %}
@@ -56,7 +55,7 @@ To create our bundle:
 
 {% codetabs %}
 
-```ts#JS_API
+```ts#JavaScript
 Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
@@ -135,45 +134,30 @@ $ bunx serve out
 
 Visit `http://localhost:5000` to see your bundled app in action.
 
-## API
+## `entrypoints`
 
-To generate a simple bundle:
+**Required.** Accepts `string[]`.
 
-{% codetabs %}
+An array of paths corresponding to the entrypoints of our application. One bundle will be generated for each entrypoint.
 
-```ts#JS_API
-Bun.build({
-  entrypoints: ['./index.tsx'],
-  outdir: './out',
-})
-```
+## `outdir`
 
-```bash#CLI
-$ bun build ./index.tsx --outdir ./out
-```
+**Required.** Accepts `string`. The directory where output files will be written.
 
-{% /codetabs %}
+## `target`
 
-### `entrypoints`
+Accepts `"browser" | "bun" | "node"`. Defaults to `"browser"`.
 
-`string[]` **Required.** An array of paths corresponding to the entrypoints of our application. One bundle will be generated for each entrypoint.
+Use this to indicate how the generated bundle will be executed. Depending on the target, Bun will apply different optimizations and transformations.
 
-### `outdir`
-
-`string` **Required.** The directory where output files will be written.
-
-### `target`
-
-`"browser" | "bun" | "node"` Defaults to `"browser"`. Use this to indicate how the generated bundle will be executed. This may affect the bundling process in a few ways:
-
-- Module resolution. For example, when bundling for the browser, Bun will prioritize the `"browser"` export condition when resolving imports. An error will be thrown if any Node.js or Bun built-ins are imported or used, e.g. `node:fs` or `Bun.serve`.
+<!-- - Module resolution. For example, when bundling for the browser, Bun will prioritize the `"browser"` export condition when resolving imports. An error will be thrown if any Node.js or Bun built-ins are imported or used, e.g. `node:fs` or `Bun.serve`. -->
 
 {% table %}
 
 ---
 
 - `browser`
-- _Default._ Generates a bundle that is intended for execution in a browser environment. Prioritizes the `"browser"` export condition when resolving imports. An error will be thrown if any Node.js or Bun built-ins are imported or used, e.g. `node:fs` or `Bun.serve`.
+- _Default._ For generating bundles that are intended for execution by a browser. Prioritizes the `"browser"` export condition when resolving imports. An error will be thrown if any Node.js or Bun built-ins are imported or used, e.g. `node:fs` or `Bun.serve`.
 
 ---
 
@@ -185,15 +169,17 @@ $ bun build ./index.tsx --outdir ./out
 ---
 
 - `node`
-- ???
+- For generating bundles that are intended to be run by Node.js. Prioritizes the `"node"` export condition when resolving imports. In the future, this will automatically polyfill the `Bun` global and other built-in `bun:*` modules, though this is not yet implemented.
 
 {% /table %}
 
-### `module`
+## `module`
 
-`string`. Defaults to `"esm"`.
+Accepts `"esm"`. Defaults to `"esm"`.
 
 Specifies the module format used in the the generated bundles. Currently the bundler only supports one module format: `"esm"`. Support for `"cjs"` and `"iife"` are planned.
+
+{% codetabs %}
 
 ```ts#Bun.build
 Bun.build({
@@ -209,63 +195,146 @@ $ bun build ./index.tsx --outdir ./out --module esm
 
 {% /codetabs %}
 
-### `transform`
+## `bundling`
 
-`boolean`. Defaults to `false`.
+Accepts `boolean`. Defaults to `true`.
 
-Set to `true` to disable bundling. Instead, files are transpiled and individually written to `outdir`.
+Set to `false` to disable bundling. Instead, files will be transpiled and individually written to `outdir`.
 
 {% codetabs %}
 
-```ts#JS_API
+```ts#JavaScript
 Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
-  transform: true,
+  bundling: false,
 })
 ```
 
 ```bash#CLI
-$ bun build ./index.tsx --outdir ./out
+$ bun build ./index.tsx --outdir ./out --no-bundling
 ```
 
 {% /codetabs %}
 
-### `splitting`
+## `splitting`
 
-boolean, // default true, enable code splitting
+Accepts `boolean`. Defaults to `false`. Whether to enable code splitting.
 
-### `plugins`
+When `true`, the bundler will enable _code splitting_. When multiple entrypoints both import the same file, module, or set of files/modules, it's often useful to split the shared code into a separate bundle. This shared bundle is known as a _chunk_. Consider the following files:
 
-BunPlugin[];
+{% codetabs %}
 
-### `naming`
+```ts#entry-a.ts
+import { shared } from './shared.ts';
+```
 
-`string | { entrypoint?: string; chunk?: string; }`. Customizes the generated file names. // default '[name].[ext]'
+```ts#entry-b.ts
+import { shared } from './shared.ts';
+```
 
-### `root`
+```ts#shared.ts
+export const shared = 'shared';
+```
 
-string; // project root
+{% /codetabs %}
+
+To bundle `entry-a.ts` and `entry-b.ts` with code-splitting enabled:
+
+{% codetabs %}
+
+```ts#JavaScript
+Bun.build({
+  entrypoints: ['./entry-a.ts', './entry-b.ts'],
+  outdir: './out',
+  splitting: true,
+})
+```
+
+```bash#CLI
+$ bun build ./entry-a.ts ./entry-b.ts --outdir ./out --splitting
+```
+
+{% /codetabs %}
+
+Running this build will result in the following files:
+
+```txt
+.
+├── entry-a.tsx
+├── entry-b.tsx
+├── shared.tsx
+└── out
+    ├── entry-a.js
+    ├── entry-b.js
+    └── chunk-2fce6291bf86559d.js
+
+```
+
+The generated `chunk-2fce6291bf86559d.js` file contains the shared code. To avoid collisions, the file name automatically includes a content hash by default. This can be customized with [`naming`](#naming).
+
+## `plugins`
+
+Accepts `BunPlugin[]`. A list of plugins to use during bundling.
+
+Bun implements a univeral plugin system for both Bun's runtime and bundler. Refer to the [plugin documentation](/docs/bundler/plugins) for complete documentation.
 
 ### `manifest`
 
-boolean; // whether to return manifest
+Accepts `boolean`. Defaults to `true`. Whether to return a build manifest in the result of `Bun.build`.
 
-### `external`
+```ts
+const result = await Bun.build({
+  entrypoints: ["./index.tsx"],
+  outdir: "./out",
+  manifest: true,
+});
 
-Array<string>;
+console.log(result.manifest);
+```
 
-### `origin`
+The manifest has the following form:
 
-string; // e.g. https://mydomain.com
+```ts
+export type BuildManifest = {
+  inputs: {
+    [path: string]: {
+      output: {
+        path: string;
+      };
+      imports: {
+        path: string;
+        kind: ImportKind;
+        external?: boolean;
+      }[];
+    };
+  };
 
-### `assetOrigin`
+  // less important than `inputs`
+  outputs: {
+    [path: string]: {
+      type: "chunk" | "entry-point" | "asset";
+      inputs: { path: string }[];
+      imports: {
+        path: string;
+        kind: ImportKind;
+        external?: boolean;
+        asset?: boolean;
+      }[];
+      exports: string[];
+    };
+  };
+};
 
-string; // e.g. https://assets.mydomain.com
-
-  <!-- ### `loader` 
-  
-  `{ [k in string]: Loader }` -->
+export type ImportKind =
+  | "entry-point"
+  | "import-statement"
+  | "require-call"
+  | "dynamic-import"
+  | "require-resolve"
+  | "import-rule"
+  | "url-token";
+```
 
 ### `sourcemap`
 
@@ -278,6 +347,26 @@ boolean;
 ### `treeshaking`
 
 boolean;
+
+### `external`
+
+Array<string>;
+
+### `origin`
+
+string; // e.g. https://mydomain.com
+
+  <!-- ### `loader` 
+  
+  `{ [k in string]: Loader }` -->
+
+### `naming`
+
+`string | { entrypoint?: string; chunk?: string; }`. Customizes the generated file names. // default '[name].[ext]'
+
+### `root`
+
+string; // project root
 
 ## Reference
 
@@ -295,10 +384,9 @@ Bun.build({
   manifest?: boolean; // whether to return manifest
   external?: Array<string | RegExp>;
   origin?: string; // e.g. http://mydomain.com
-  assetOrigin?: string; // e.g. http://assets.mydomain.com
   loader?: { [k in string]: Loader };
   sourcemap?: "none" | "inline" | "external"; // default: "none"
   minify?: boolean;
-  treeShaking?: boolean;
+  treeshaking?: boolean;
 });
 ```

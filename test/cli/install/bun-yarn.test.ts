@@ -45,6 +45,7 @@ async function command(...args: Array<string>) {
   const err = await new Response(stderr).text();
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
+  expect(await exited).toBe(0);
   return { err, out };
 }
 

@@ -1384,7 +1384,7 @@ pub fn Ref(comptime T: type) type {
             this.ref_count -= 1;
             if (this.ref_count == 0) {
                 if (@hasDecl(T, "deinit")) {
-                    T.deinit(this.value);
+                    this.value.deinit();
                 }
                 this.allocator.destroy(this);
                 return null;
@@ -1419,7 +1419,7 @@ pub fn HiveRef(comptime T: type, comptime capacity: u16) type {
             this.ref_count -= 1;
             if (this.ref_count == 0) {
                 if (@hasDecl(T, "deinit")) {
-                    T.deinit(this.value);
+                    this.value.deinit();
                 }
                 this.allocator.put(this);
                 return null;

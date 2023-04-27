@@ -494,11 +494,15 @@ describe("bundler", () => {
   itBundled("default/JSXSyntaxInJS", {
     files: {
       "/entry.mjs": `console.log(<div/>)`,
+      "/entry.cjs": `console.log(<div/>)`,
     },
     bundleErrors: {
       // TODO: this could be a nicer error
       "/entry.mjs": [`Unexpected <`],
+      "/entry.cjs": [`Unexpected <`],
     },
+    outdir: "/out",
+    entryPoints: ["/entry.mjs", "/entry.cjs"],
   });
   itBundled("default/JSXConstantFragments", {
     notImplemented: true, // jsx in bun is too different to esbuild

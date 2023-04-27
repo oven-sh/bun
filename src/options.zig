@@ -965,7 +965,7 @@ pub const JSX = struct {
                 &pragma.import_source.development,
                 &[_]string{
                     pragma.package_name,
-                    "jsx-dev-runtime",
+                    "/jsx-dev-runtime",
                 },
                 &.{
                     Defaults.ImportSourceDev,
@@ -977,7 +977,7 @@ pub const JSX = struct {
                 &pragma.import_source.production,
                 &[_]string{
                     pragma.package_name,
-                    "jsx-runtime",
+                    "/jsx-runtime",
                 },
                 &.{
                     Defaults.ImportSource,

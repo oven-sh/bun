@@ -91,11 +91,10 @@ export interface BundlerTestInput {
   ignoreDCEAnnotations?: boolean;
   inject?: string[];
   jsx?: {
-    factory?: string;
-    fragment?: string;
-    automaticRuntime?: boolean;
-    development?: boolean;
-    preserve?: boolean;
+    runtime?: "automatic" | "classic";
+    importSource?: string; // for automatic
+    factory?: string; // for classic
+    fragment?: string; // for classic
   };
   outbase?: string;
   /** Defaults to `/out.js` */
@@ -253,9 +252,10 @@ function expectBundled(
   ignoreFilter = false,
 ): Promise<BundlerTestRef> | BundlerTestRef {
   var { expect, it, test } = testForFile(callerSourceOrigin());
-  if (!ignoreFilter && FILTER && id !== FILTER) return testRef(id, opts);
+  if (!ignoreFilter && FILTER && !filterMatches(id)) return testRef(id, opts);
 
   let {
+    notImplemented,
     bundleWarnings,
     bundleErrors,
     banner,
@@ -473,11 +473,11 @@ function expectBundled(
               minifyWhitespace && `--minify-whitespace`,
               globalName && `--global-name=${globalName}`,
               // inject && inject.map(x => ["--inject", path.join(root, x)]),
-              jsx.preserve && "--jsx=preserve",
-              jsx.automaticRuntime === false && "--jsx=classic",
-              jsx.factory && `--jsx-factory=${jsx.factory}`,
-              jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
-              jsx.development === false && `--jsx-production`,
+              // jsx.preserve && "--jsx=preserve",
+              jsx.runtime && ["--jsx-runtime", jsx.runtime],
+              jsx.factory && ["--jsx-factory", jsx.factory],
+              jsx.fragment && ["--jsx-fragment", jsx.fragment],
+              jsx.importSource && ["--jsx-import-source", jsx.importSource],
               // metafile && `--manifest=${metafile}`,
               // sourceMap && `--sourcemap${sourceMap !== true ? `=${sourceMap}` : ""}`,
               entryNames && entryNames !== "[name].[ext]" && [`--entry-names`, entryNames],
@@ -506,11 +506,11 @@ function expectBundled(
               external && external.map(x => `--external:${x}`),
               inject && inject.map(x => `--inject:${path.join(root, x)}`),
               define && Object.entries(define).map(([k, v]) => `--define:${k}=${v}`),
-              jsx.automaticRuntime && "--jsx=automatic",
-              jsx.preserve && "--jsx=preserve",
+              `--jsx=${jsx.runtime ?? "automatic"}`,
+              // jsx.preserve && "--jsx=preserve",
               jsx.factory && `--jsx-factory=${jsx.factory}`,
               jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
-              jsx.development && `--jsx-dev`,
+              env?.NODE_ENV !== "production" && `--jsx-dev`,
               entryNames && entryNames !== "[name].[ext]" && `--entry-names=${entryNames.replace(/\.\[ext]$/, "")}`,
               chunkNames &&
                 chunkNames !== "[name]-[hash].[ext]" &&
@@ -1142,7 +1142,7 @@ export function itBundled(
   const ref = testRef(id, opts);
   const { it } = testForFile(callerSourceOrigin());
 
-  if (FILTER && id !== FILTER) {
+  if (FILTER && !filterMatches(id)) {
     return ref;
   } else if (!FILTER) {
     try {
@@ -1170,7 +1170,7 @@ export function itBundled(
   return ref;
 }
 itBundled.skip = (id: string, opts: BundlerTestInput) => {
-  if (FILTER && id !== FILTER) {
+  if (FILTER && !filterMatches(id)) {
     return testRef(id, opts);
   }
   const { it } = testForFile(callerSourceOrigin());
@@ -1180,4 +1180,8 @@ itBundled.skip = (id: string, opts: BundlerTestInput) => {
 
 function formatError(err: { file: string; error: string; line?: string; col?: string }) {
   return `${err.file}${err.line ? " :" + err.line : ""}${err.col ? ":" + err.col : ""}: ${err.error}`;
+}
+
+function filterMatches(id: string) {
+  return FILTER === id || FILTER + "Dev" === id || FILTER + "Prod" === id;
 }

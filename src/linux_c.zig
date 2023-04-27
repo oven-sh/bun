@@ -293,7 +293,7 @@ pub const SystemErrno = enum(u8) {
 };
 
 pub fn preallocate_file(fd: std.os.fd_t, offset: std.os.off_t, len: std.os.off_t) anyerror!void {
-    _ = std.os.linux.fallocate(fd, 0, @intCast(i64, offset), len);
+    _ = std.os.linux.fallocate(fd, std.os.linux.FALLOC.FL_KEEP_SIZE | 0, @intCast(i64, offset), len);
 }
 
 /// splice() moves data between two file descriptors without copying

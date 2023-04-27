@@ -3464,7 +3464,7 @@ pub const NodeFS = struct {
                         const pos = JSC.Node.Syscall.system.lseek(
                             fd,
                             @intCast(std.os.off_t, 0),
-                            @enumToInt(std.os.SEEK.CUR),
+                            std.os.linux.SEEK.CUR,
                         );
 
                         switch (JSC.Node.Syscall.getErrno(pos)) {

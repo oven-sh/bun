@@ -8054,7 +8054,7 @@ const LinkerContext = struct {
         } else &.{};
 
         // Generate the final output files by joining file pieces together
-        const len = (if (c.options.source_maps == .external) chunks.len * @as(usize, 2) else chunks.len) + @as(usize, @boolToInt(react_client_components_manifest.len > 0));
+        const len = (if (c.options.source_maps == .external) chunks.len * 2 else chunks.len) + @as(usize, @boolToInt(react_client_components_manifest.len > 0));
         var output_files = std.ArrayList(options.OutputFile).initCapacity(bun.default_allocator, len) catch unreachable;
         for (chunks) |*chunk| {
             var chunk_substitute_result = c.substituteChunkFinalPaths(chunks, chunk.intermediate_output, chunk.final_rel_path);

@@ -192,10 +192,26 @@ pub fn getErrno(rc: anytype) std.os.E {
     };
 }
 
-pub fn open(file_path: [:0]const u8, flags: JSC.Node.Mode, perm: JSC.Node.Mode) Maybe(bun.FileDescriptor) {
+pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: JSC.Node.Mode, perm: JSC.Node.Mode) Maybe(bun.FileDescriptor) {
+    if (comptime Environment.isMac) {
+        // https://opensource.apple.com/source/xnu/xnu-7195.81.3/libsyscall/wrappers/open-base.c
+        const rc = bun.AsyncIO.darwin.@"openat$NOCANCEL"(dirfd, file_path.ptr, @intCast(c_uint, flags), @intCast(c_int, perm));
+        log("openat({d}, {s}) = {d}", .{ dirfd, file_path, rc });
+
+        return switch (Syscall.getErrno(rc)) {
+            .SUCCESS => .{ .result = @intCast(bun.FileDescriptor, rc) },
+            else => |err| .{
+                .err = .{
+                    .errno = @truncate(Syscall.Error.Int, @enumToInt(err)),
+                    .syscall = .open,
+                },
+            },
+        };
+    }
+
     while (true) {
-        const rc = Syscall.system.open(file_path, flags, perm);
-        log("open({s}): {d}", .{ file_path, rc });
+        const rc = Syscall.system.openat(@intCast(Syscall.system.fd_t, dirfd), file_path, flags, perm);
+        log("openat({d}, {s}) = {d}", .{ dirfd, file_path, rc });
         return switch (Syscall.getErrno(rc)) {
             .SUCCESS => .{ .result = @intCast(bun.FileDescriptor, rc) },
             .INTR => continue,
@@ -211,6 +227,11 @@ pub fn open(file_path: [:0]const u8, flags: JSC.Node.Mode, perm: JSC.Node.Mode) 
     }
 
     unreachable;
+}
+
+pub fn open(file_path: [:0]const u8, flags: JSC.Node.Mode, perm: JSC.Node.Mode) Maybe(bun.FileDescriptor) {
+    // this is what open() does anyway.
+    return openat(@intCast(bun.FileDescriptor, std.fs.cwd().fd), file_path, flags, perm);
 }
 
 /// This function will prevent stdout and stderr from being closed.

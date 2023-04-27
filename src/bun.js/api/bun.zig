@@ -1534,6 +1534,10 @@ pub const Crypto = struct {
             };
         }
 
+        pub fn reset(this: *EVP, engine: *BoringSSL.ENGINE) void {
+            _ = BoringSSL.EVP_DigestInit_ex(&this.ctx, this.md, engine);
+        }
+
         pub fn hash(this: *EVP, engine: *BoringSSL.ENGINE, input: []const u8, output: []u8) ?u32 {
             var outsize: c_uint = @min(@truncate(u16, output.len), this.size());
             if (BoringSSL.EVP_Digest(input.ptr, input.len, output.ptr, &outsize, this.md, engine) != 1) {
@@ -1543,7 +1547,7 @@ pub const Crypto = struct {
             return outsize;
         }
 
-        pub fn final(this: *EVP, output: []u8) []const u8 {
+        pub fn final(this: *EVP, engine: *BoringSSL.ENGINE, output: []u8) []const u8 {
             var outsize: u32 = @min(@truncate(u16, output.len), this.size());
             if (BoringSSL.EVP_DigestFinal_ex(
                 &this.ctx,
@@ -1552,6 +1556,8 @@ pub const Crypto = struct {
             ) != 1) {
                 return "";
             }
+
+            this.reset(engine);
 
             return output[0..outsize];
         }
@@ -1562,6 +1568,14 @@ pub const Crypto = struct {
 
         pub fn size(this: *EVP) u16 {
             return @truncate(u16, BoringSSL.EVP_MD_CTX_size(&this.ctx));
+        }
+
+        pub fn copy(this: *const EVP, engine: *BoringSSL.ENGINE) error{OutOfMemory}!EVP {
+            var new = init(this.algorithm, this.md, engine);
+            if (BoringSSL.EVP_MD_CTX_copy_ex(&new.ctx, &this.ctx) == 0) {
+                return error.OutOfMemory;
+            }
+            return new;
         }
 
         pub fn byNameAndEngine(engine: *BoringSSL.ENGINE, name: []const u8) ?EVP {
@@ -1789,6 +1803,16 @@ pub const Crypto = struct {
             return thisValue;
         }
 
+        pub fn copy(
+            this: *CryptoHasher,
+            globalObject: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) callconv(.C) JSC.JSValue {
+            const new = bun.default_allocator.create(CryptoHasher) catch @panic("Out of memory");
+            new.evp = this.evp.copy(globalObject.bunVM().rareData().boringEngine()) catch @panic("Out of memory");
+            return new.toJS(globalObject);
+        }
+
         pub fn digest_(
             this: *@This(),
             globalThis: *JSGlobalObject,
@@ -1830,7 +1854,7 @@ pub const Crypto = struct {
                 output_digest_buf = std.mem.zeroes(EVP.Digest);
             }
 
-            const result = this.evp.final(output_digest_slice);
+            const result = this.evp.final(globalThis.bunVM().rareData().boringEngine(), output_digest_slice);
 
             if (output) |output_buf| {
                 return output_buf.value;
@@ -1845,7 +1869,7 @@ pub const Crypto = struct {
 
             var output_digest_slice: []u8 = &output_digest_buf;
 
-            const out = this.evp.final(output_digest_slice);
+            const out = this.evp.final(globalThis.bunVM().rareData().boringEngine(), output_digest_slice);
 
             return encoding.encodeWithMaxSize(globalThis, out.len, BoringSSL.EVP_MAX_MD_SIZE, out);
         }

@@ -68,12 +68,47 @@ describe("createHash", () => {
     s.end();
   });
 
+
   it("repeated calls doesnt segfault", () => {
     function fn() {
       crypto.createHash("sha1").update(Math.random(), "ascii").digest("base64");
     }
 
     for (let i = 0; i < 10; i++) fn();
+  });
+
+  it("multiple calls to digest throws exception", () => {
+    const hash = crypto.createHash("sha256");
+    hash.update("hello world");
+    expect(hash.digest("hex")).toBe("b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9");
+    expect(() => hash.digest("hex")).toThrow();
+  });
+
+  it("copy is the same", () => {
+    const hash = crypto.createHash("sha256");
+    hash.update("hello");
+    const copy = hash.copy();
+
+    expect(copy.digest("hex")).toBe(hash.digest("hex"));
+  });
+
+  it("copy is not linked", () => {
+    const hash = crypto.createHash("sha256");
+    hash.update("hello");
+    const copy = hash.copy();
+
+    hash.update("world");
+    expect(copy.digest("hex")).not.toBe(hash.digest("hex"));
+  });
+
+  it("copy updates the same", () => {
+    const hash = crypto.createHash("sha256");
+    hash.update("hello");
+    const copy = hash.copy();
+
+    hash.update("world");
+    copy.update("world");
+    expect(copy.digest("hex")).toBe(hash.digest("hex"));
   });
 });
 

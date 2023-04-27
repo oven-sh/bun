@@ -122,9 +122,9 @@ Then paste the following contents into it:
 <html>
   <body>
     <div id="root"></div>
-    <script type="module" src="/index.js"></script>
+    < script type="module" src="/index.js"></ script>
   </body>
-</div>
+</html>
 ```
 
 Then spin up a static file server serving the `out` directory:

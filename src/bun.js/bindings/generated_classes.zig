@@ -213,6 +213,8 @@ pub const JSCryptoHasher = struct {
         if (@TypeOf(CryptoHasher.getByteLength) != GetterType)
             @compileLog("Expected CryptoHasher.getByteLength to be a getter");
 
+        if (@TypeOf(CryptoHasher.copy) != CallbackType)
+            @compileLog("Expected CryptoHasher.copy to be a callback but received " ++ @typeName(@TypeOf(CryptoHasher.copy)));
         if (@TypeOf(CryptoHasher.digest) != CallbackType)
             @compileLog("Expected CryptoHasher.digest to be a callback but received " ++ @typeName(@TypeOf(CryptoHasher.digest)));
         if (@TypeOf(CryptoHasher.update) != CallbackType)
@@ -224,6 +226,7 @@ pub const JSCryptoHasher = struct {
             @compileLog("Expected CryptoHasher.hash to be a static callback");
         if (!JSC.is_bindgen) {
             @export(CryptoHasher.constructor, .{ .name = "CryptoHasherClass__construct" });
+            @export(CryptoHasher.copy, .{ .name = "CryptoHasherPrototype__copy" });
             @export(CryptoHasher.digest, .{ .name = "CryptoHasherPrototype__digest" });
             @export(CryptoHasher.finalize, .{ .name = "CryptoHasherClass__finalize" });
             @export(CryptoHasher.getAlgorithm, .{ .name = "CryptoHasherPrototype__getAlgorithm" });

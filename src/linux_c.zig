@@ -293,7 +293,86 @@ pub const SystemErrno = enum(u8) {
 };
 
 pub fn preallocate_file(fd: std.os.fd_t, offset: std.os.off_t, len: std.os.off_t) anyerror!void {
-    _ = std.os.linux.fallocate(fd, std.os.linux.FALLOC.FL_KEEP_SIZE | 0, @intCast(i64, offset), len);
+    // https://gist.github.com/Jarred-Sumner/b37b93399b63cbfd86e908c59a0a37df
+    //  ext4 NVME Linux kernel 5.17.0-1016-oem x86_64
+    //
+    // hyperfine "./micro 1024 temp" "./micro 1024 temp --preallocate" --prepare="rm -rf temp && free && sync && echo 3 > /proc/sys/vm/drop_caches && free"
+    // Benchmark 1: ./micro 1024 temp
+    //   Time (mean ± σ):       1.8 ms ±   0.2 ms    [User: 0.6 ms, System: 0.1 ms]
+    //   Range (min … max):     1.2 ms …   2.3 ms    67 runs
+    // Benchmark 2: ./micro 1024 temp --preallocate
+    //   Time (mean ± σ):       1.8 ms ±   0.1 ms    [User: 0.6 ms, System: 0.1 ms]
+    //   Range (min … max):     1.4 ms …   2.2 ms    121 runs
+    // Summary
+    //   './micro 1024 temp --preallocate' ran
+    //     1.01 ± 0.13 times faster than './micro 1024 temp'
+
+    // hyperfine "./micro 65432 temp" "./micro 65432 temp --preallocate" --prepare="rm -rf temp && free && sync && echo 3 > /proc/sys/vm/drop_caches && free"
+    // Benchmark 1: ./micro 65432 temp
+    //   Time (mean ± σ):       1.8 ms ±   0.2 ms    [User: 0.7 ms, System: 0.1 ms]
+    //   Range (min … max):     1.2 ms …   2.3 ms    94 runs
+    // Benchmark 2: ./micro 65432 temp --preallocate
+    //   Time (mean ± σ):       2.0 ms ±   0.1 ms    [User: 0.6 ms, System: 0.1 ms]
+    //   Range (min … max):     1.7 ms …   2.3 ms    108 runs
+    // Summary
+    //   './micro 65432 temp' ran
+    //     1.08 ± 0.12 times faster than './micro 65432 temp --preallocate'
+
+    // hyperfine "./micro 654320 temp" "./micro 654320 temp --preallocate" --prepare="rm -rf temp && free && sync && echo 3 > /proc/sys/vm/drop_caches && free"
+    // Benchmark 1: ./micro 654320 temp
+    //   Time (mean ± σ):       2.3 ms ±   0.2 ms    [User: 0.9 ms, System: 0.3 ms]
+    //   Range (min … max):     1.9 ms …   2.9 ms    96 runs
+
+    // Benchmark 2: ./micro 654320 temp --preallocate
+    //   Time (mean ± σ):       2.2 ms ±   0.1 ms    [User: 0.9 ms, System: 0.2 ms]
+    //   Range (min … max):     1.9 ms …   2.7 ms    115 runs
+
+    //   Warning: Command took less than 5 ms to complete. Results might be inaccurate.
+
+    // Summary
+    //   './micro 654320 temp --preallocate' ran
+    //     1.04 ± 0.10 times faster than './micro 654320 temp'
+
+    // hyperfine "./micro 6543200 temp" "./micro 6543200 temp --preallocate" --prepare="rm -rf temp && free && sync && echo 3 > /proc/sys/vm/drop_caches && free"
+    // Benchmark 1: ./micro 6543200 temp
+    //   Time (mean ± σ):       6.3 ms ±   0.4 ms    [User: 0.4 ms, System: 4.9 ms]
+    //   Range (min … max):     5.8 ms …   8.6 ms    84 runs
+
+    // Benchmark 2: ./micro 6543200 temp --preallocate
+    //   Time (mean ± σ):       5.5 ms ±   0.3 ms    [User: 0.5 ms, System: 3.9 ms]
+    //   Range (min … max):     5.1 ms …   7.1 ms    93 runs
+
+    // Summary
+    //   './micro 6543200 temp --preallocate' ran
+    //     1.14 ± 0.09 times faster than './micro 6543200 temp'
+
+    // hyperfine "./micro 65432000 temp" "./micro 65432000 temp --preallocate" --prepare="rm -rf temp && free && sync && echo 3 > /proc/sys/vm/drop_caches && free"
+    // Benchmark 1: ./micro 65432000 temp
+    //   Time (mean ± σ):      52.9 ms ±   0.4 ms    [User: 3.1 ms, System: 48.7 ms]
+    //   Range (min … max):    52.4 ms …  54.4 ms    36 runs
+
+    // Benchmark 2: ./micro 65432000 temp --preallocate
+    //   Time (mean ± σ):      44.6 ms ±   0.8 ms    [User: 2.3 ms, System: 41.2 ms]
+    //   Range (min … max):    44.0 ms …  47.3 ms    37 runs
+
+    // Summary
+    //   './micro 65432000 temp --preallocate' ran
+    //     1.19 ± 0.02 times faster than './micro 65432000 temp'
+
+    // hyperfine "./micro 65432000 temp" "./micro 65432000 temp --preallocate" --prepare="rm -rf temp"
+    // Benchmark 1: ./micro 65432000 temp
+    //   Time (mean ± σ):      51.7 ms ±   0.9 ms    [User: 2.1 ms, System: 49.6 ms]
+    //   Range (min … max):    50.7 ms …  54.1 ms    49 runs
+
+    // Benchmark 2: ./micro 65432000 temp --preallocate
+    //   Time (mean ± σ):      43.8 ms ±   2.3 ms    [User: 2.2 ms, System: 41.4 ms]
+    //   Range (min … max):    42.7 ms …  54.7 ms    56 runs
+
+    // Summary
+    //   './micro 65432000 temp --preallocate' ran
+    //     1.18 ± 0.06 times faster than './micro 65432000 temp'
+    //
+    _ = std.os.linux.fallocate(fd, 0, @intCast(i64, offset), len);
 }
 
 /// splice() moves data between two file descriptors without copying

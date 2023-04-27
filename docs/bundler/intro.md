@@ -1,3 +1,5 @@
+<!-- This document is a work in progress. It's not currently included in the actual docs. -->
+
 The goal of this document is to break down why bundling is necessary, how it works, and how the bundler became such a key part of modern JavaScript development. The content is not specific to Bun's bundler, but is rather aimed at anyone looking for a greater understanding of how bundlers work and, by extension, how most modern frameworks are implemented.
 
 ## What is bundling

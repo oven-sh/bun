@@ -294,7 +294,7 @@ pub const Body = struct {
         /// Avoids a heap allocation.
         InternalBlob: InternalBlob,
         /// Single-use Blob that stores the bytes in the Value itself.
-        // InlineBlob: InlineBlob,
+        InlineBlob: InlineBlob,
         Locked: PendingValue,
         Used: void,
         Empty: void,
@@ -309,7 +309,7 @@ pub const Body = struct {
                 this.* = switch (blob) {
                     .Blob => .{ .Blob = blob.Blob },
                     .InternalBlob => .{ .InternalBlob = blob.InternalBlob },
-                    // .InlineBlob => .{ .InlineBlob = blob.InlineBlob },
+                    .InlineBlob => .{ .InlineBlob = blob.InlineBlob },
                 };
             }
         }
@@ -318,7 +318,7 @@ pub const Body = struct {
             return switch (this.*) {
                 .Blob => this.Blob.size,
                 .InternalBlob => @truncate(Blob.SizeType, this.InternalBlob.sliceConst().len),
-                // .InlineBlob => @truncate(Blob.SizeType, this.InlineBlob.sliceConst().len),
+                .InlineBlob => @truncate(Blob.SizeType, this.InlineBlob.sliceConst().len),
                 else => 0,
             };
         }
@@ -326,24 +326,24 @@ pub const Body = struct {
         pub fn estimatedSize(this: *const Value) usize {
             return switch (this.*) {
                 .InternalBlob => this.InternalBlob.sliceConst().len,
-                // .InlineBlob => this.InlineBlob.sliceConst().len,
+                .InlineBlob => this.InlineBlob.sliceConst().len,
                 else => 0,
             };
         }
 
         pub fn createBlobValue(data: []u8, allocator: std.mem.Allocator, was_string: bool) Value {
-            // if (data.len <= InlineBlob.available_bytes) {
-            //     var _blob = InlineBlob{
-            //         .bytes = undefined,
-            //         .was_string = was_string,
-            //         .len = @truncate(InlineBlob.IntSize, data.len),
-            //     };
-            //     @memcpy(&_blob.bytes, data.ptr, data.len);
-            //     allocator.free(data);
-            //     return Value{
-            //         .InlineBlob = _blob,
-            //     };
-            // }
+            if (data.len <= InlineBlob.available_bytes) {
+                var _blob = InlineBlob{
+                    .bytes = undefined,
+                    .was_string = was_string,
+                    .len = @truncate(InlineBlob.IntSize, data.len),
+                };
+                @memcpy(&_blob.bytes, data.ptr, data.len);
+                allocator.free(data);
+                return Value{
+                    .InlineBlob = _blob,
+                };
+            }
 
             return Value{
                 .InternalBlob = InternalBlob{
@@ -356,7 +356,7 @@ pub const Body = struct {
         pub const Tag = enum {
             Blob,
             InternalBlob,
-            // InlineBlob,
+            InlineBlob,
             Locked,
             Used,
             Empty,
@@ -378,7 +378,7 @@ pub const Body = struct {
                 },
                 .InternalBlob,
                 .Blob,
-                // .InlineBlob,
+                .InlineBlob,
                 => {
                     var blob = this.use();
                     defer blob.detach();
@@ -465,58 +465,58 @@ pub const Body = struct {
                     };
                 }
 
-                // if (str.is16Bit()) {
-                //     if (str.maxUTF8ByteLength() < InlineBlob.available_bytes or
-                //         (str.len <= InlineBlob.available_bytes and str.utf8ByteLength() <= InlineBlob.available_bytes))
-                //     {
-                //         var blob = InlineBlob{
-                //             .was_string = true,
-                //             .bytes = undefined,
-                //             .len = 0,
-                //         };
-                //         if (comptime Environment.allow_assert) {
-                //             std.debug.assert(str.utf8ByteLength() <= InlineBlob.available_bytes);
-                //         }
+                if (str.is16Bit()) {
+                    if (str.maxUTF8ByteLength() < InlineBlob.available_bytes or
+                        (str.len <= InlineBlob.available_bytes and str.utf8ByteLength() <= InlineBlob.available_bytes))
+                    {
+                        var blob = InlineBlob{
+                            .was_string = true,
+                            .bytes = undefined,
+                            .len = 0,
+                        };
+                        if (comptime Environment.allow_assert) {
+                            std.debug.assert(str.utf8ByteLength() <= InlineBlob.available_bytes);
+                        }
 
-                //         const result = strings.copyUTF16IntoUTF8(
-                //             blob.bytes[0..blob.bytes.len],
-                //             []const u16,
-                //             str.utf16SliceAligned(),
-                //             true,
-                //         );
-                //         blob.len = @intCast(InlineBlob.IntSize, result.written);
-                //         std.debug.assert(@as(usize, result.read) == str.len);
-                //         std.debug.assert(@as(usize, result.written) <= InlineBlob.available_bytes);
+                        const result = strings.copyUTF16IntoUTF8(
+                            blob.bytes[0..blob.bytes.len],
+                            []const u16,
+                            str.utf16SliceAligned(),
+                            true,
+                        );
+                        blob.len = @intCast(InlineBlob.IntSize, result.written);
+                        std.debug.assert(@as(usize, result.read) == str.len);
+                        std.debug.assert(@as(usize, result.written) <= InlineBlob.available_bytes);
 
-                //         return Body.Value{
-                //             .InlineBlob = blob,
-                //         };
-                //     }
-                // } else {
-                //     if (str.maxUTF8ByteLength() <= InlineBlob.available_bytes or
-                //         (str.len <= InlineBlob.available_bytes and str.utf8ByteLength() <= InlineBlob.available_bytes))
-                //     {
-                //         var blob = InlineBlob{
-                //             .was_string = true,
-                //             .bytes = undefined,
-                //             .len = 0,
-                //         };
-                //         if (comptime Environment.allow_assert) {
-                //             std.debug.assert(str.utf8ByteLength() <= InlineBlob.available_bytes);
-                //         }
-                //         const result = strings.copyLatin1IntoUTF8(
-                //             blob.bytes[0..blob.bytes.len],
-                //             []const u8,
-                //             str.slice(),
-                //         );
-                //         blob.len = @intCast(InlineBlob.IntSize, result.written);
-                //         std.debug.assert(@as(usize, result.read) == str.len);
-                //         std.debug.assert(@as(usize, result.written) <= InlineBlob.available_bytes);
-                //         return Body.Value{
-                //             .InlineBlob = blob,
-                //         };
-                //     }
-                // }
+                        return Body.Value{
+                            .InlineBlob = blob,
+                        };
+                    }
+                } else {
+                    if (str.maxUTF8ByteLength() <= InlineBlob.available_bytes or
+                        (str.len <= InlineBlob.available_bytes and str.utf8ByteLength() <= InlineBlob.available_bytes))
+                    {
+                        var blob = InlineBlob{
+                            .was_string = true,
+                            .bytes = undefined,
+                            .len = 0,
+                        };
+                        if (comptime Environment.allow_assert) {
+                            std.debug.assert(str.utf8ByteLength() <= InlineBlob.available_bytes);
+                        }
+                        const result = strings.copyLatin1IntoUTF8(
+                            blob.bytes[0..blob.bytes.len],
+                            []const u8,
+                            str.slice(),
+                        );
+                        blob.len = @intCast(InlineBlob.IntSize, result.written);
+                        std.debug.assert(@as(usize, result.read) == str.len);
+                        std.debug.assert(@as(usize, result.written) <= InlineBlob.available_bytes);
+                        return Body.Value{
+                            .InlineBlob = blob,
+                        };
+                    }
+                }
 
                 var buffer = str.toOwnedSlice(bun.default_allocator) catch {
                     globalThis.vm().throwError(globalThis, ZigString.static("Failed to clone string").toErrorInstance(globalThis));
@@ -541,11 +541,11 @@ pub const Body = struct {
                         };
                     }
 
-                    // if (bytes.len <= InlineBlob.available_bytes) {
-                    //     return Body.Value{
-                    //         .InlineBlob = InlineBlob.init(bytes),
-                    //     };
-                    // }
+                    if (bytes.len <= InlineBlob.available_bytes) {
+                        return Body.Value{
+                            .InlineBlob = InlineBlob.init(bytes),
+                        };
+                    }
 
                     return Body.Value{
                         .InternalBlob = .{
@@ -656,7 +656,7 @@ pub const Body = struct {
                         .getText => {
                             switch (new.*) {
                                 .InternalBlob,
-                                // .InlineBlob,
+                                .InlineBlob,
                                 => {
                                     var blob = new.useAsAnyBlob();
                                     promise.resolve(global, blob.toString(global, .transfer));
@@ -707,7 +707,7 @@ pub const Body = struct {
             return switch (this.*) {
                 .Blob => this.Blob.sharedView(),
                 .InternalBlob => this.InternalBlob.sliceConst(),
-                // .InlineBlob => this.InlineBlob.sliceConst(),
+                .InlineBlob => this.InlineBlob.sliceConst(),
                 else => "",
             };
         }
@@ -735,18 +735,19 @@ pub const Body = struct {
                     this.* = .{ .Used = {} };
                     return new_blob;
                 },
-                // .InlineBlob => {
-                //     const cloned = this.InlineBlob.bytes;
-                //     const new_blob = Blob.create(
-                //         cloned[0..this.InlineBlob.len],
-                //         bun.default_allocator,
-                //         JSC.VirtualMachine.get().global,
-                //         this.InlineBlob.was_string,
-                //     );
+                .InlineBlob => {
+                    const cloned = this.InlineBlob.bytes;
+                    // keep same behavior as InternalBlob but clone the data
+                    const new_blob = Blob.create(
+                        cloned[0..this.InlineBlob.len],
+                        bun.default_allocator,
+                        JSC.VirtualMachine.get().global,
+                        false,
+                    );
 
-                //     this.* = .{ .Used = {} };
-                //     return new_blob;
-                // },
+                    this.* = .{ .Used = {} };
+                    return new_blob;
+                },
                 else => {
                     return Blob.initEmpty(undefined);
                 },
@@ -757,7 +758,7 @@ pub const Body = struct {
             const any_blob: AnyBlob = switch (this.*) {
                 .Blob => AnyBlob{ .Blob = this.Blob },
                 .InternalBlob => AnyBlob{ .InternalBlob = this.InternalBlob },
-                // .InlineBlob => AnyBlob{ .InlineBlob = this.InlineBlob },
+                .InlineBlob => AnyBlob{ .InlineBlob = this.InlineBlob },
                 .Locked => this.Locked.toAnyBlobAllowPromise() orelse return null,
                 else => return null,
             };
@@ -770,7 +771,7 @@ pub const Body = struct {
             const any_blob: AnyBlob = switch (this.*) {
                 .Blob => .{ .Blob = this.Blob },
                 .InternalBlob => .{ .InternalBlob = this.InternalBlob },
-                // .InlineBlob => .{ .InlineBlob = this.InlineBlob },
+                .InlineBlob => .{ .InlineBlob = this.InlineBlob },
                 .Locked => this.Locked.toAnyBlobAllowPromise() orelse AnyBlob{ .Blob = .{} },
                 else => .{ .Blob = Blob.initEmpty(undefined) },
             };
@@ -867,9 +868,9 @@ pub const Body = struct {
                 };
             }
 
-            // if (this.* == .InlineBlob) {
-            //     return this.*;
-            // }
+            if (this.* == .InlineBlob) {
+                return this.*;
+            }
 
             if (this.* == .Blob) {
                 return Value{ .Blob = this.Blob.dupe() };

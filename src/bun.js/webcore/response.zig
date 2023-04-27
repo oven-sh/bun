@@ -321,14 +321,14 @@ pub const Response = struct {
 
                 return default.value;
             },
-            // .InlineBlob => {
-            //     // auto-detect HTML if unspecified
-            //     if (strings.hasPrefixComptime(response.body.value.slice(), "<!DOCTYPE html>")) {
-            //         return MimeType.html.value;
-            //     }
+            .InlineBlob => {
+                // auto-detect HTML if unspecified
+                if (strings.hasPrefixComptime(response.body.value.slice(), "<!DOCTYPE html>")) {
+                    return MimeType.html.value;
+                }
 
-            //     return response.body.value.InlineBlob.contentType();
-            // },
+                return response.body.value.InlineBlob.contentType();
+            },
             .InternalBlob => {
                 // auto-detect HTML if unspecified
                 if (strings.hasPrefixComptime(response.body.value.slice(), "<!DOCTYPE html>")) {
@@ -760,11 +760,6 @@ pub const Fetch = struct {
 
         fn toBodyValue(this: *FetchTasklet) Body.Value {
             var response_buffer = this.response_buffer.list;
-            const response = Body.Value{
-                .InternalBlob = .{
-                    .bytes = response_buffer.toManaged(bun.default_allocator),
-                },
-            };
             this.response_buffer = .{
                 .allocator = default_allocator,
                 .list = .{
@@ -773,11 +768,18 @@ pub const Fetch = struct {
                 },
             };
 
-            // if (response_buffer.items.len < InlineBlob.available_bytes) {
-            //     const inline_blob = InlineBlob.init(response_buffer.items);
-            //     defer response_buffer.deinit(bun.default_allocator);
-            //     return .{ .InlineBlob = inline_blob };
-            // }
+            if (response_buffer.items.len < InlineBlob.available_bytes) {
+                const inline_blob = InlineBlob.init(response_buffer.items);
+                defer response_buffer.deinit(bun.default_allocator);
+                return .{ .InlineBlob = inline_blob };
+            }
+
+            const response = Body.Value{
+                .InternalBlob = .{
+                    .bytes = response_buffer.toManaged(bun.default_allocator),
+                },
+            };
+
             return response;
         }
 

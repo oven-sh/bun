@@ -881,39 +881,6 @@ pub const Body = struct {
 
             return Value{ .Empty = {} };
         }
-
-        pub fn cloneWithAllocator(this: *Value, globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator) *Value {
-            if (this.* == .InternalBlob) {
-                var internal_blob = this.InternalBlob;
-                this.* = .{
-                    .Blob = Blob.init(
-                        internal_blob.toOwnedSlice(),
-                        internal_blob.bytes.allocator,
-                        globalThis,
-                    ),
-                };
-            }
-
-            // if (this.* == .InlineBlob) {
-            //     return this.*;
-            // }
-
-            if (this.* == .Blob) {
-                var value = allocator.create(Value) catch unreachable;
-                value.* = Value{ .Blob = this.Blob.dupe() };
-                return value;
-            }
-
-            if (this.* == .Null) {
-                var value = allocator.create(Value) catch unreachable;
-                value.* = Value{ .Null = {} };
-                return value;
-            }
-
-            var value = allocator.create(Value) catch unreachable;
-            value.* = Value{ .Empty = {} };
-            return value;
-        }
     };
 
     pub fn @"404"(_: js.JSContextRef) Body {

@@ -1476,8 +1476,8 @@ fn NewSocket(comptime ssl: bool) type {
                         globalObject.throw("Only Blob/buffered bodies are supported for now", .{});
                         return .{ .fail = {} };
                     } else if (args.ptr[0].as(JSC.WebCore.Request)) |request| {
-                        request.body.toBlobIfPossible();
-                        if (request.body.tryUseAsAnyBlob()) |blob| {
+                        request.body.value.toBlobIfPossible();
+                        if (request.body.value.tryUseAsAnyBlob()) |blob| {
                             break :getter blob;
                         }
 

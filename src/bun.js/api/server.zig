@@ -941,7 +941,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         needs_content_length: bool = false,
         needs_content_range: bool = false,
         sendfile: SendfileContext = undefined,
-        request_body: ?*JSC.WebCore.Body.Value = null,
+        request_body: ?*bun.Ref(JSC.WebCore.Body.Value) = null,
         request_body_buf: std.ArrayListUnmanaged(u8) = .{},
         request_body_content_len: usize = 0,
 
@@ -1252,7 +1252,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (this.request_body) |body| {
-                if (body.* == .Locked) {
+                if (body.value == .Locked) {
                     return false;
                 }
             }
@@ -1297,15 +1297,15 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                     // but we received nothing or the connection was aborted
 
-                    if (body.* == .Locked) {
+                    if (body.value == .Locked) {
                         // the promise is pending
-                        if (body.Locked.action != .none or body.Locked.promise != null) {
+                        if (body.value.Locked.action != .none or body.value.Locked.promise != null) {
                             this.pending_promises_for_abort += 1;
-                            body.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
-                        } else if (body.Locked.readable != null) {
-                            body.Locked.readable.?.abort(this.server.globalThis);
-                            body.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
-                            body.Locked.readable = null;
+                            body.value.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
+                        } else if (body.value.Locked.readable != null) {
+                            body.value.Locked.readable.?.abort(this.server.globalThis);
+                            body.value.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
+                            body.value.Locked.readable = null;
                         }
                     }
                 }
@@ -1373,8 +1373,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                 // but we received nothing or the connection was aborted
                 // the promise is pending
-                if (body.* == .Locked and body.Locked.action != .none and body.Locked.promise != null) {
-                    body.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
+                if (body.value == .Locked and body.value.Locked.action != .none and body.value.Locked.promise != null) {
+                    body.value.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
                 }
             }
 
@@ -1420,12 +1420,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.request_body_buf.clearAndFree(this.allocator);
             this.response_buf_owned.clearAndFree(this.allocator);
 
-            if (this.request_body != null) {
-                var body = this.request_body.?;
+            if (this.request_body) |body| {
+                _ = body.unref();
                 this.request_body = null;
-
-                body.deinit();
-                this.allocator.destroy(body);
             }
             server.request_pool_allocator.destroy(this);
         }
@@ -2618,8 +2615,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (this.request_body != null) {
                 var body = this.request_body.?;
 
-                if (body.* == .Locked) {
-                    if (body.Locked.readable) |readable| {
+                if (body.value == .Locked) {
+                    if (body.value.Locked.readable) |readable| {
                         if (readable.ptr == .Bytes) {
                             std.debug.assert(this.request_body_buf.items.len == 0);
 
@@ -2647,7 +2644,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 if (last) {
                     var bytes = this.request_body_buf;
                     defer this.request_body_buf = .{};
-                    var old = body.*;
+                    var old = body.value;
 
                     const total = bytes.items.len + chunk.len;
                     getter: {
@@ -2662,7 +2659,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         // } else {
                         bytes.ensureTotalCapacityPrecise(this.allocator, total) catch |err| {
                             this.request_body_buf.clearAndFree(this.allocator);
-                            body.toError(err, this.server.globalThis);
+                            body.value.toError(err, this.server.globalThis);
                             break :getter;
                         };
 
@@ -2670,7 +2667,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         bytes.items.len = total;
                         var slice = bytes.items[prev_len..];
                         @memcpy(slice.ptr, chunk.ptr, chunk.len);
-                        body.* = .{
+                        body.value = .{
                             .InternalBlob = .{
                                 .bytes = bytes.toManaged(this.allocator),
                             },
@@ -2679,7 +2676,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     }
 
                     if (old == .Locked) {
-                        old.resolve(body, this.server.globalThis);
+                        old.resolve(&body.value, this.server.globalThis);
                     }
                     return;
                 }
@@ -2727,12 +2724,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 // no content-length or 0 content-length
                 // no transfer-encoding
                 if (this.request_body != null) {
-                    var body_ptr = this.request_body.?;
-                    var body = body_ptr.*;
-
-                    body.Locked.onReceiveValue = null;
-                    body_ptr.* = .{ .Null = {} };
-                    body.resolve(body_ptr, this.server.globalThis);
+                    var body = this.request_body.?;
+                    var old = body.value;
+                    old.Locked.onReceiveValue = null;
+                    var new_body = .{ .Null = {} };
+                    old.resolve(&new_body, this.server.globalThis);
+                    body.value = new_body;
                 }
             } else {
                 this.setAbortHandler();
@@ -4541,13 +4538,10 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             }
 
             if (existing_request == null) {
-                var body_ = ctx.bunVM().allocator.create(JSC.WebCore.Body.Value) catch unreachable;
-                body_.* = body;
                 existing_request = Request{
                     .url = url.href,
                     .headers = headers,
-                    .body = body_,
-                    .body_owned = true,
+                    .body = bun.Ref(JSC.WebCore.Body.Value).init(body, this.allocator) catch unreachable,
                     .method = method,
                 };
             }
@@ -4899,11 +4893,9 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             var ctx = this.request_pool_allocator.create(RequestContext) catch @panic("ran out of memory");
             ctx.create(this, req, resp);
             var request_object = this.allocator.create(JSC.WebCore.Request) catch unreachable;
-            var body = this.allocator.create(JSC.WebCore.Body.Value) catch unreachable;
-            // default body state is .Null
-            body.* = .{
+            var body = bun.Ref(JSC.WebCore.Body.Value).init(.{
                 .Null = {},
-            };
+            }, this.allocator) catch unreachable;
 
             ctx.request_body = body;
             const js_signal = JSC.WebCore.AbortSignal.create(this.globalThis);
@@ -4918,9 +4910,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 .uws_request = req,
                 .https = ssl_enabled,
                 .signal = ctx.signal,
-                // ctx owns the body because ctx always live longer than request_object
-                .body_owned = false,
-                .body = body,
+                .body = body.ref(),
             };
 
             if (comptime debug_mode) {
@@ -4960,7 +4950,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                     // we defer pre-allocating the body until we receive the first chunk
                     // that way if the client is lying about how big the body is or the client aborts
                     // we don't waste memory
-                    ctx.request_body.?.* = .{
+                    ctx.request_body.?.value = .{
                         .Locked = .{
                             .task = ctx,
                             .global = this.globalThis,
@@ -5007,11 +4997,9 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             var ctx = this.request_pool_allocator.create(RequestContext) catch @panic("ran out of memory");
             ctx.create(this, req, resp);
             var request_object = this.allocator.create(JSC.WebCore.Request) catch unreachable;
-            var body = this.allocator.create(JSC.WebCore.Body.Value) catch unreachable;
-            // default body state is .Null
-            body.* = .{
+            var body = bun.Ref(JSC.WebCore.Body.Value).init(.{
                 .Null = {},
-            };
+            }, this.allocator) catch unreachable;
 
             ctx.request_body = body;
             const js_signal = JSC.WebCore.AbortSignal.create(this.globalThis);
@@ -5027,9 +5015,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 .upgrader = ctx,
                 .https = ssl_enabled,
                 .signal = ctx.signal,
-                // ctx owns the body because ctx always live longer than request_object
-                .body_owned = false,
-                .body = body,
+                .body = body.ref(),
             };
             ctx.upgrade_context = upgrade_ctx;
 

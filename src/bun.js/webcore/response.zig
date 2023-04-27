@@ -1016,7 +1016,7 @@ pub const Fetch = struct {
                             return JSC.JSValue.jsUndefined().asObjectRef();
                         }
                     } else {
-                        body = request.body.useAsAnyBlob();
+                        body = request.body.value.useAsAnyBlob();
                     }
 
                     if (options.get(ctx, "timeout")) |timeout_value| {
@@ -1095,7 +1095,7 @@ pub const Fetch = struct {
                     }
                     headers = Headers.from(head, bun.default_allocator) catch unreachable;
                 }
-                body = request.body.useAsAnyBlob();
+                body = request.body.value.useAsAnyBlob();
                 // no proxy only url
                 url = ZigURL.parse(getAllocator(ctx).dupe(u8, request.url) catch unreachable);
                 url_proxy_buffer = url.href;

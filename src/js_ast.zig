@@ -9281,7 +9281,7 @@ pub const Macro = struct {
                                     blob_ = resp.body.use();
                                 } else if (value.as(JSC.WebCore.Request)) |resp| {
                                     mime_type = HTTP.MimeType.init(resp.mimeType());
-                                    blob_ = resp.body.use();
+                                    blob_ = resp.body.value.use();
                                 } else if (value.as(JSC.WebCore.Blob)) |resp| {
                                     blob_ = resp.*;
                                     blob_.?.allocator = null;

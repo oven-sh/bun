@@ -292,6 +292,7 @@ pub const SystemErrno = enum(u8) {
     };
 };
 
+pub const preallocate_length = 2048 * 1024;
 pub fn preallocate_file(fd: std.os.fd_t, offset: std.os.off_t, len: std.os.off_t) anyerror!void {
     // https://gist.github.com/Jarred-Sumner/b37b93399b63cbfd86e908c59a0a37df
     //  ext4 NVME Linux kernel 5.17.0-1016-oem x86_64

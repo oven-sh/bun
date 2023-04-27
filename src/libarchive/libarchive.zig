@@ -608,7 +608,7 @@ pub const Archive = struct {
                                 }
                                 // archive_read_data_into_fd reads in chunks of 1 MB
                                 // #define	MAX_WRITE	(1024 * 1024)
-                                if (size > 4096) {
+                                if (size > 1_000_000) {
                                     C.preallocate_file(
                                         file.handle,
                                         0,

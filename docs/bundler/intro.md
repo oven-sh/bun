@@ -65,3 +65,9 @@ Bundlers typically have some set of built-in "loaders".
 The JavaScript files above are just that: plain JavaScript. They can be directly executed by any modern browser.
 
 But modern tooling goes far beyond HTML, JavaScript, and CSS. JSX, TypeScript, and PostCSS/CSS-in-JS are all popular technologies that involve non-standard syntax that must be converted into vanilla JavaScript and CSS before if can be consumed by a browser.
+
+## Chunking
+
+## Module resolution
+
+## Plugins

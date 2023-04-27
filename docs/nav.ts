@@ -157,8 +157,11 @@ export default {
     page("cli/build", "`Bun.build`", {
       description: "Bundle code for comsumption in the browser with Bun's native bundler.",
     }),
-    page("bundler/intro", "How bundlers work", {
-      description: "A visual introduction to bundling",
+    // page("bundler/intro", "How bundlers work", {
+    //   description: "A visual introduction to bundling",
+    // }),
+    page("bundler/loaders", "Loaders", {
+      description: "Bun's built-in loaders for the bundler and runtime",
     }),
     page("bundler/plugins", "Plugins", {
       description: `Implement custom loaders and module resolution logic with Bun's plugin system.`,

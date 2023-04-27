@@ -68,7 +68,6 @@ describe("createHash", () => {
     s.end();
   });
 
-
   it("repeated calls doesnt segfault", () => {
     function fn() {
       crypto.createHash("sha1").update(Math.random(), "ascii").digest("base64");

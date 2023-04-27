@@ -50,9 +50,7 @@ describe("CryptoHasher", () => {
   it("CryptoHasher sha256", () => {
     var hasher = new CryptoHasher("sha256");
     hasher.update("hello world");
-    expect(hasher.digest("hex")).toBe(
-      "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9",
-    );
+    expect(hasher.digest("hex")).toBe("b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9");
     expect(hasher.algorithm).toBe("sha256");
   });
 
@@ -60,22 +58,16 @@ describe("CryptoHasher", () => {
     var hasher = new CryptoHasher("sha256");
     hasher.update("hello ");
     hasher.update("world");
-    expect(hasher.digest("hex")).toBe(
-      "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9",
-    );
+    expect(hasher.digest("hex")).toBe("b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9");
     expect(hasher.algorithm).toBe("sha256");
   });
 
   it("CryptoHasher resets when digest is called", () => {
     var hasher = new CryptoHasher("sha256");
     hasher.update("hello");
-    expect(hasher.digest("hex")).toBe(
-      "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
-    );
+    expect(hasher.digest("hex")).toBe("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
     hasher.update("world");
-    expect(hasher.digest("hex")).toBe(
-      "486ea46224d1bb4fb680f34f7c9ad96a8f24ec88be73ea8e5a6c65260e9cb8a7",
-    );
+    expect(hasher.digest("hex")).toBe("486ea46224d1bb4fb680f34f7c9ad96a8f24ec88be73ea8e5a6c65260e9cb8a7");
   });
 
   for (let alg of CryptoHasher.algorithms) {
@@ -88,7 +80,6 @@ describe("CryptoHasher", () => {
       expect(copy.algorithm).toBe(orig.algorithm);
     });
 
-
     it(`CryptoHasher ${alg} copy is not linked`, () => {
       const orig = new CryptoHasher(alg);
       orig.update("hello");
@@ -97,7 +88,6 @@ describe("CryptoHasher", () => {
       orig.update("world");
       expect(copy.digest("hex")).not.toBe(orig.digest("hex"));
     });
-
 
     it(`CryptoHasher ${alg} copy updates the same`, () => {
       const orig = new CryptoHasher(alg);

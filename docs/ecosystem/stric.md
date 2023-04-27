@@ -9,6 +9,8 @@ export default new App()
 
 Stric provides support for [ArrowJS](https://www.arrow-js.com), a library for building reactive interfaces in **native** JavaScript. 
 
+{% codetabs %}
+
 ```ts#src/App.ts
 import { html } from "@stricjs/arrow/utils";
 
@@ -16,5 +18,14 @@ export function render() {
   html`<p>Hi</p>`;
 };
 ```
+```ts#index.ts
+import { PageRouter } from "@stricjs/arrow";
+
+new PageRouter()
+    .static("/", "App.ts")
+    .serve();
+```
+
+{% /codetabs %}
 
 For more info, see Stric's [documentation](https://stricjs.gitbook.io/docs).

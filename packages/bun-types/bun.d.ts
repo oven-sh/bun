@@ -2204,7 +2204,12 @@ declare module "bun" {
     update(input: StringOrBuffer, inputEncoding?: CryptoEncoding): CryptoHasher;
 
     /**
-     * Finalize the hash
+     * Perform a deep copy of the hasher
+     */
+    copy(): CryptoHasher;
+
+    /**
+     * Finalize the hash. Resets the CryptoHasher so it can be reused.
      *
      * @param encoding `DigestEncoding` to return the hash in. If none is provided, it will return a `Uint8Array`.
      */

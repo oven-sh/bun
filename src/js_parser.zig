@@ -20128,6 +20128,12 @@ fn NewParser_(
                         break;
                     }
 
+                    // don't merge super calls to ensure they are called before "this" is accessed
+                    if (stmt.isSuperCall()) {
+                        output.append(stmt) catch unreachable;
+                        continue;
+                    }
+
                     switch (stmt.data) {
                         .s_empty => continue,
 
@@ -20151,7 +20157,7 @@ fn NewParser_(
                             // Merge adjacent expression statements
                             if (output.items.len > 0) {
                                 var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_expr) {
+                                if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                     prev_stmt.data.s_expr.does_not_affect_tree_shaking = prev_stmt.data.s_expr.does_not_affect_tree_shaking and
                                         s_expr.does_not_affect_tree_shaking;
                                     prev_stmt.data.s_expr.value = prev_stmt.data.s_expr.value.joinWithComma(
@@ -20166,7 +20172,7 @@ fn NewParser_(
                             // Absorb a previous expression statement
                             if (output.items.len > 0) {
                                 var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_expr) {
+                                if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                     s_switch.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_switch.test_, p.allocator);
                                     output.items.len -= 1;
                                 }
@@ -20176,7 +20182,7 @@ fn NewParser_(
                             // Absorb a previous expression statement
                             if (output.items.len > 0) {
                                 var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_expr) {
+                                if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                     s_if.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_if.test_, p.allocator);
                                     output.items.len -= 1;
                                 }
@@ -20189,7 +20195,7 @@ fn NewParser_(
                             // Merge return statements with the previous expression statement
                             if (output.items.len > 0 and ret.value != null) {
                                 var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_expr) {
+                                if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                     ret.value = prev_stmt.data.s_expr.value.joinWithComma(ret.value.?, p.allocator);
                                     prev_stmt.* = stmt;
                                     continue;
@@ -20207,7 +20213,7 @@ fn NewParser_(
                             // Merge throw statements with the previous expression statement
                             if (output.items.len > 0) {
                                 var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_expr) {
+                                if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                     prev_stmt.* = p.s(S.Throw{
                                         .value = prev_stmt.data.s_expr.value.joinWithComma(
                                             stmt.data.s_throw.value,

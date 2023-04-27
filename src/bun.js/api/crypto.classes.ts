@@ -63,6 +63,10 @@ export default [
         fn: "update",
         length: 2,
       },
+      copy: {
+        fn: "copy",
+        length: 0,
+      },
       byteLength: {
         getter: "getByteLength",
       },

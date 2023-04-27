@@ -27,7 +27,7 @@ export function testForFile(file: string): BunTestExports {
 }
 
 /** Use `esbuild` instead of `bun build` */
-const ESBUILD = process.env.BUN_BUNDLER_TEST_USE_ESBUILD;
+export const ESBUILD = process.env.BUN_BUNDLER_TEST_USE_ESBUILD;
 /** Write extra files to disk and log extra info. */
 const DEBUG = process.env.BUN_BUNDLER_TEST_DEBUG;
 /** Set this to the id of a bundle test to run just that test */
@@ -95,6 +95,7 @@ export interface BundlerTestInput {
     fragment?: string;
     automaticRuntime?: boolean;
     development?: boolean;
+    preserve?: boolean;
   };
   outbase?: string;
   /** Defaults to `/out.js` */
@@ -392,7 +393,7 @@ function expectBundled(
     const entryPaths = entryPoints.map(file => path.join(root, file));
 
     if (external) {
-      external = external.map(x => x.replace(/\{\{root\}\}/g, root));
+      external = external.map(x => (typeof x !== "string" ? x : x.replace(/\{\{root\}\}/g, root)));
     }
 
     outfile = useOutFile ? path.join(root, outfile ?? "/out.js") : undefined;
@@ -404,7 +405,7 @@ function expectBundled(
         : entryPaths.map(file => path.join(outdir!, path.basename(file)))
     ).map(x => x.replace(/\.ts$/, ".js"));
 
-    if (mode === "transform" && !outfile) {
+    if (mode === "transform" && !outfile && !ESBUILD) {
       throw new Error("transform mode requires one single outfile");
     }
     if (cjs2esm && !outfile && !minifySyntax && !minifyWhitespace) {
@@ -475,6 +476,7 @@ function expectBundled(
               minifyWhitespace && `--minify-whitespace`,
               globalName && `--global-name=${globalName}`,
               // inject && inject.map(x => ["--inject", path.join(root, x)]),
+              jsx.preserve && "--jsx=preserve",
               jsx.automaticRuntime === false && "--jsx=classic",
               jsx.factory && `--jsx-factory=${jsx.factory}`,
               jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
@@ -508,6 +510,7 @@ function expectBundled(
               inject && inject.map(x => `--inject:${path.join(root, x)}`),
               define && Object.entries(define).map(([k, v]) => `--define:${k}=${v}`),
               jsx.automaticRuntime && "--jsx=automatic",
+              jsx.preserve && "--jsx=preserve",
               jsx.factory && `--jsx-factory=${jsx.factory}`,
               jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
               jsx.development && `--jsx-dev`,
@@ -579,7 +582,7 @@ function expectBundled(
         }
       }
 
-      const { stdout, stderr, success } = Bun.spawnSync({
+      const { stdout, stderr, success, exitCode } = Bun.spawnSync({
         cmd,
         cwd: root,
         stdio: ["ignore", "pipe", "pipe"],
@@ -785,6 +788,7 @@ function expectBundled(
             writeFileSync(path.join(root, "run.js"), debugFile);
           } else {
             console.log("TODO: generate run.js, currently only works if options are wrapped in a function");
+            console.log("options:", buildConfig);
           }
         }
 

@@ -941,7 +941,13 @@ pub const BundleV2 = struct {
                         obj.put(
                             globalThis,
                             JSC.ZigString.static("result"),
-                            output_file.toJS(globalThis),
+                            output_file.toJS(
+                                if (output_file.value == .saved)
+                                    bun.default_allocator.dupe(u8, output_file.input.text) catch unreachable
+                                else
+                                    "",
+                                globalThis,
+                            ),
                         );
                         output_files_js.putIndex(globalThis, @intCast(u32, i), obj);
                     }
@@ -7861,30 +7867,271 @@ const LinkerContext = struct {
         )) catch unreachable;
         output_files.items.len = chunks.len;
 
+        const root_path = c.resolver.opts.output_dir;
+
+        if (root_path.len > 0) {
+            try c.writeOutputFilesToDisk(root_path, chunks, react_client_components_manifest, &output_files);
+        } else {
+            // In-memory build
+            for (chunks, output_files.items) |*chunk, *output_file| {
+                const buffer = chunk.intermediate_output.code(
+                    null,
+                    c.parse_graph,
+                    c.resolver.opts.public_path,
+                    chunk,
+                    chunks,
+                ) catch @panic("Failed to allocate memory for output file");
+                output_file.* = options.OutputFile.initBuf(
+                    buffer,
+                    Chunk.IntermediateOutput.allocatorForSize(buffer.len),
+                    // clone for main thread
+                    bun.default_allocator.dupe(u8, chunk.final_rel_path) catch unreachable,
+                    // TODO: remove this field
+                    .js,
+                );
+            }
+
+            if (react_client_components_manifest.len > 0) {
+                output_files.appendAssumeCapacity(options.OutputFile.initBuf(
+                    react_client_components_manifest,
+                    bun.default_allocator,
+                    components_manifest_path,
+                    .file,
+                ));
+            }
+
+            output_files.appendSliceAssumeCapacity(c.parse_graph.additional_output_files.items);
+        }
+
+        return output_files;
+    }
+
+    fn writeOutputFilesToDisk(
+        c: *LinkerContext,
+        root_path: string,
+        chunks: []Chunk,
+        react_client_components_manifest: []const u8,
+        output_files: *std.ArrayList(options.OutputFile),
+    ) !void {
+        var root_dir = std.fs.cwd().makeOpenPathIterable(root_path, .{}) catch |err| {
+            c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{s} opening outdir {}", .{
+                @errorName(err),
+                bun.fmt.quote(root_path),
+            }) catch unreachable;
+            return err;
+        };
+        defer root_dir.close();
+        const from_path: []const u8 = brk: {
+            var all_paths = c.allocator.alloc(
+                []const u8,
+                chunks.len +
+                    @as(
+                    usize,
+                    @boolToInt(
+                        react_client_components_manifest.len > 0,
+                    ),
+                ) +
+                    c.parse_graph.additional_output_files.items.len,
+            ) catch unreachable;
+            defer c.allocator.free(all_paths);
+
+            var remaining_paths = all_paths;
+
+            for (all_paths[0..chunks.len], chunks) |*dest, src| {
+                dest.* = src.final_rel_path;
+            }
+            remaining_paths = remaining_paths[chunks.len..];
+
+            if (react_client_components_manifest.len > 0) {
+                remaining_paths[0] = components_manifest_path;
+                remaining_paths = remaining_paths[1..];
+            }
+
+            for (remaining_paths, c.parse_graph.additional_output_files.items) |*dest, output_file| {
+                dest.* = output_file.input.text;
+            }
+
+            remaining_paths = remaining_paths[c.parse_graph.additional_output_files.items.len..];
+
+            std.debug.assert(remaining_paths.len == 0);
+
+            break :brk resolve_path.longestCommonPath(all_paths);
+        };
+
+        // Optimization: when writing to disk, we can re-use the memory
+        var max_heap_allocator: bun.MaxHeapAllocator = undefined;
+        const code_allocator = max_heap_allocator.init(bun.default_allocator);
+        defer max_heap_allocator.deinit();
+
+        var pathbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+
         for (chunks, output_files.items) |*chunk, *output_file| {
-            const buffer = chunk.intermediate_output.code(c.parse_graph, c.resolver.opts.public_path, chunk, chunks) catch @panic("Failed to allocate memory for output file");
-            output_file.* = options.OutputFile.initBuf(
-                buffer,
-                Chunk.IntermediateOutput.allocatorForSize(buffer.len),
-                // clone for main thread
-                bun.default_allocator.dupe(u8, chunk.final_rel_path) catch unreachable,
-                // TODO: remove this field
-                .js,
-            );
+            defer max_heap_allocator.reset();
+
+            var rel_path = chunk.final_rel_path;
+            if (rel_path.len > from_path.len) {
+                rel_path = resolve_path.relative(from_path, rel_path);
+                if (std.fs.path.dirname(rel_path)) |parent| {
+                    if (parent.len > root_path.len) {
+                        root_dir.dir.makePath(parent) catch |err| {
+                            c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{s} creating outdir {} while saving chunk {}", .{
+                                @errorName(err),
+                                bun.fmt.quote(parent),
+                                bun.fmt.quote(chunk.final_rel_path),
+                            }) catch unreachable;
+                            return err;
+                        };
+                    }
+                }
+            }
+
+            const buffer = chunk.intermediate_output.code(
+                code_allocator,
+                c.parse_graph,
+                c.resolver.opts.public_path,
+                chunk,
+                chunks,
+            ) catch @panic("Failed to allocate memory for output chunk");
+
+            switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
+                &pathbuf,
+                JSC.Node.Arguments.WriteFile{
+                    .data = JSC.Node.StringOrBuffer{
+                        .buffer = JSC.Buffer{
+                            .buffer = .{
+                                .ptr = @constCast(buffer.ptr),
+                                // TODO: handle > 4 GB files
+                                .len = @truncate(u32, buffer.len),
+                                .byte_len = @truncate(u32, buffer.len),
+                            },
+                        },
+                    },
+                    .encoding = .buffer,
+                    .dirfd = @intCast(bun.FileDescriptor, root_dir.dir.fd),
+                    .file = .{
+                        .path = JSC.Node.PathLike{
+                            .string = JSC.PathString.init(rel_path),
+                        },
+                    },
+                },
+            )) {
+                .err => |err| {
+                    c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing chunk {}", .{
+                        bun.fmt.quote(err.toSystemError().message.slice()),
+                        bun.fmt.quote(chunk.final_rel_path),
+                    }) catch unreachable;
+                    return error.WriteFailed;
+                },
+                .result => {},
+            }
+
+            output_file.* = options.OutputFile{
+                .input = Fs.Path.init(chunk.final_rel_path),
+                .loader = .js,
+                .size = @truncate(u32, buffer.len),
+                .value = .{
+                    .saved = .{},
+                },
+            };
         }
 
         if (react_client_components_manifest.len > 0) {
-            output_files.appendAssumeCapacity(options.OutputFile.initBuf(
-                react_client_components_manifest,
-                bun.default_allocator,
-                "./components-manifest.blob",
-                .file,
-            ));
+            switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
+                &pathbuf,
+                JSC.Node.Arguments.WriteFile{
+                    .data = JSC.Node.StringOrBuffer{
+                        .buffer = JSC.Buffer{
+                            .buffer = .{
+                                .ptr = @constCast(react_client_components_manifest.ptr),
+                                // TODO: handle > 4 GB files
+                                .len = @truncate(u32, react_client_components_manifest.len),
+                                .byte_len = @truncate(u32, react_client_components_manifest.len),
+                            },
+                        },
+                    },
+                    .encoding = .buffer,
+                    .dirfd = @intCast(bun.FileDescriptor, root_dir.dir.fd),
+                    .file = .{
+                        .path = JSC.Node.PathLike{
+                            .string = JSC.PathString.init(components_manifest_path),
+                        },
+                    },
+                },
+            )) {
+                .err => |err| {
+                    c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing chunk {}", .{
+                        bun.fmt.quote(err.toSystemError().message.slice()),
+                        bun.fmt.quote(components_manifest_path),
+                    }) catch unreachable;
+                    return error.WriteFailed;
+                },
+                .result => {},
+            }
+
+            output_files.appendAssumeCapacity(options.OutputFile{
+                .input = Fs.Path.init(components_manifest_path),
+                .loader = .file,
+                .size = @truncate(u32, react_client_components_manifest.len),
+                .value = .{
+                    .saved = .{},
+                },
+            });
         }
 
-        output_files.appendSliceAssumeCapacity(c.parse_graph.additional_output_files.items);
+        {
+            const offset = output_files.items.len;
+            output_files.items.len += c.parse_graph.additional_output_files.items.len;
 
-        return output_files;
+            for (c.parse_graph.additional_output_files.items, output_files.items[offset..][0..c.parse_graph.additional_output_files.items.len]) |*src, *dest| {
+                const bytes = src.value.buffer.bytes;
+                src.value.buffer.bytes.len = 0;
+
+                defer {
+                    src.value.buffer.allocator.free(bytes);
+                }
+
+                switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
+                    &pathbuf,
+                    JSC.Node.Arguments.WriteFile{
+                        .data = JSC.Node.StringOrBuffer{
+                            .buffer = JSC.Buffer{
+                                .buffer = .{
+                                    .ptr = @constCast(bytes.ptr),
+                                    // TODO: handle > 4 GB files
+                                    .len = @truncate(u32, bytes.len),
+                                    .byte_len = @truncate(u32, bytes.len),
+                                },
+                            },
+                        },
+                        .encoding = .buffer,
+                        .dirfd = @intCast(bun.FileDescriptor, root_dir.dir.fd),
+                        .file = .{
+                            .path = JSC.Node.PathLike{
+                                .string = JSC.PathString.init(src.input.text),
+                            },
+                        },
+                    },
+                )) {
+                    .err => |err| {
+                        c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing chunk {}", .{
+                            bun.fmt.quote(err.toSystemError().message.slice()),
+                            bun.fmt.quote(src.input.text),
+                        }) catch unreachable;
+                        return error.WriteFailed;
+                    },
+                    .result => {},
+                }
+
+                dest.* = .{
+                    .input = src.input,
+                    .loader = src.loader,
+                    .size = @truncate(u32, bytes.len),
+                    .value = .{
+                        .saved = .{},
+                    },
+                };
+            }
+        }
     }
 
     // Sort cross-chunk exports by chunk name for determinism
@@ -9245,6 +9492,7 @@ pub const Chunk = struct {
 
         pub fn code(
             this: IntermediateOutput,
+            allocator_to_use: ?std.mem.Allocator,
             graph: *const Graph,
             import_prefix: []const u8,
             chunk: *Chunk,
@@ -9285,7 +9533,7 @@ pub const Chunk = struct {
                         }
                     }
 
-                    var total_buf = try allocatorForSize(count).alloc(u8, count);
+                    var total_buf = try (allocator_to_use orelse allocatorForSize(count)).alloc(u8, count);
                     var remain = total_buf;
 
                     for (pieces.slice()) |piece| {
@@ -9335,7 +9583,7 @@ pub const Chunk = struct {
                 .joiner => |joiner_| {
                     // TODO: make this safe
                     var joiny = joiner_;
-                    return joiny.done(allocatorForSize(joiny.len));
+                    return joiny.done((allocator_to_use orelse allocatorForSize(joiny.len)));
                 },
                 .empty => return "",
             }
@@ -9555,3 +9803,5 @@ fn cheapPrefixNormalizer(prefix: []const u8, suffix: []const u8) [2]string {
 
     return .{ prefix, suffix };
 }
+
+const components_manifest_path = "./components-manifest.blob";

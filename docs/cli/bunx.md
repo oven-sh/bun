@@ -56,15 +56,12 @@ By default, Bun respects shebangs. If an executable is marked with `#!/usr/bin/e
 $ bunx --bun my-cli
 ```
 
-{% callout %}
-**Note** — The `--bun` flag must occur _before_ the executable name. Flags that appear _after_ the name are passed through to the executable.
+The `--bun` flag must occur _before_ the executable name. Flags that appear _after_ the name are passed through to the executable.
 
 ```bash
 $ bunx --bun my-cli # good
 $ bunx my-cli --bun # bad
 ```
-
-{% /callout %}
 
 <!-- ## Environment variables
 

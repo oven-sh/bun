@@ -535,6 +535,9 @@ JSC_DECLARE_CUSTOM_GETTER(CryptoHasherPrototype__algorithmGetterWrap);
 extern "C" JSC::EncodedJSValue CryptoHasherPrototype__getByteLength(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(CryptoHasherPrototype__byteLengthGetterWrap);
 
+extern "C" EncodedJSValue CryptoHasherPrototype__copy(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(CryptoHasherPrototype__copyCallback);
+
 extern "C" EncodedJSValue CryptoHasherPrototype__digest(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(CryptoHasherPrototype__digestCallback);
 
@@ -546,6 +549,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCryptoHasherPrototype, JSCryptoHasherProto
 static const HashTableValue JSCryptoHasherPrototypeTableValues[] = {
     { "algorithm"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, CryptoHasherPrototype__algorithmGetterWrap, 0 } },
     { "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, CryptoHasherPrototype__byteLengthGetterWrap, 0 } },
+    { "copy"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, CryptoHasherPrototype__copyCallback, 0 } },
     { "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, CryptoHasherPrototype__digestCallback, 0 } },
     { "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, CryptoHasherPrototype__updateCallback, 2 } }
 };
@@ -605,6 +609,22 @@ JSC_DEFINE_CUSTOM_GETTER(CryptoHasherPrototype__byteLengthGetterWrap, (JSGlobalO
     JSC::EncodedJSValue result = CryptoHasherPrototype__getByteLength(thisObject->wrapped(), globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(CryptoHasherPrototype__copyCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSCryptoHasher* thisObject = jsDynamicCast<JSCryptoHasher*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return CryptoHasherPrototype__copy(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_HOST_FUNCTION(CryptoHasherPrototype__digestCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

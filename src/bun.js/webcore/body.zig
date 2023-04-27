@@ -99,7 +99,7 @@ pub const Body = struct {
             try writer.writeAll("\n");
             try formatter.writeIndent(Writer, writer);
             try this.value.Blob.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
-        } else if (this.value == .InternalBlob) {
+        } else if (this.value == .InternalBlob or this.value == .InlineBlob) {
             try formatter.printComma(Writer, writer, enable_ansi_colors);
             try writer.writeAll("\n");
             try formatter.writeIndent(Writer, writer);

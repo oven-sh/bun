@@ -941,7 +941,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         needs_content_length: bool = false,
         needs_content_range: bool = false,
         sendfile: SendfileContext = undefined,
-        request_body: ?*bun.Ref(JSC.WebCore.Body.Value) = null,
+        request_body: ?*JSC.WebCore.BodyValueRef = null,
         request_body_buf: std.ArrayListUnmanaged(u8) = .{},
         request_body_content_len: usize = 0,
 
@@ -4146,6 +4146,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         config: ServerConfig = ServerConfig{},
         pending_requests: usize = 0,
         request_pool_allocator: std.mem.Allocator = undefined,
+
         listen_callback: JSC.AnyTask = undefined,
         allocator: std.mem.Allocator,
         poll_ref: JSC.PollRef = .{},
@@ -4541,7 +4542,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 existing_request = Request{
                     .url = url.href,
                     .headers = headers,
-                    .body = bun.Ref(JSC.WebCore.Body.Value).init(body, this.allocator) catch unreachable,
+                    .body = JSC.WebCore.InitRequestBodyValue(body) catch unreachable,
                     .method = method,
                 };
             }
@@ -4893,9 +4894,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             var ctx = this.request_pool_allocator.create(RequestContext) catch @panic("ran out of memory");
             ctx.create(this, req, resp);
             var request_object = this.allocator.create(JSC.WebCore.Request) catch unreachable;
-            var body = bun.Ref(JSC.WebCore.Body.Value).init(.{
-                .Null = {},
-            }, this.allocator) catch unreachable;
+            var body = JSC.WebCore.InitRequestBodyValue(.{ .Null = {} }) catch unreachable;
 
             ctx.request_body = body;
             const js_signal = JSC.WebCore.AbortSignal.create(this.globalThis);
@@ -4997,9 +4996,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             var ctx = this.request_pool_allocator.create(RequestContext) catch @panic("ran out of memory");
             ctx.create(this, req, resp);
             var request_object = this.allocator.create(JSC.WebCore.Request) catch unreachable;
-            var body = bun.Ref(JSC.WebCore.Body.Value).init(.{
-                .Null = {},
-            }, this.allocator) catch unreachable;
+            var body = JSC.WebCore.InitRequestBodyValue(.{ .Null = {} }) catch unreachable;
 
             ctx.request_body = body;
             const js_signal = JSC.WebCore.AbortSignal.create(this.globalThis);

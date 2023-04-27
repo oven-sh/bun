@@ -1394,4 +1394,39 @@ pub fn Ref(comptime T: type) type {
     };
 }
 
+pub fn HiveRef(comptime T: type, comptime capacity: u16) type {
+    return struct {
+        const HiveAllocator = HiveArray(@This(), capacity).Fallback;
+
+        ref_count: u32,
+        allocator: *HiveAllocator,
+        value: T,
+
+        pub fn init(value: T, allocator: *HiveAllocator) !*@This() {
+            var this = try allocator.tryGet();
+            this.allocator = allocator;
+            this.ref_count = 1;
+            this.value = value;
+            return this;
+        }
+
+        pub fn ref(this: *@This()) *@This() {
+            this.ref_count += 1;
+            return this;
+        }
+
+        pub fn unref(this: *@This()) ?*@This() {
+            this.ref_count -= 1;
+            if (this.ref_count == 0) {
+                if (@hasField(T, "deinit")) {
+                    T.deinit(this.value);
+                }
+                this.allocator.put(this);
+                return null;
+            }
+            return this;
+        }
+    };
+}
+
 pub const MaxHeapAllocator = @import("./max_heap_allocator.zig").MaxHeapAllocator;

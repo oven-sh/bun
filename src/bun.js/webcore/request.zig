@@ -52,6 +52,15 @@ const BodyMixin = JSC.WebCore.BodyMixin;
 const Body = JSC.WebCore.Body;
 const Blob = JSC.WebCore.Blob;
 
+const body_value_pool_size: u16 = 256;
+pub const BodyValueRef = bun.HiveRef(Body.Value, body_value_pool_size);
+const BodyValueHiveAllocator = bun.HiveArray(BodyValueRef, body_value_pool_size).Fallback;
+
+var body_value_hive_allocator = BodyValueHiveAllocator.init(bun.default_allocator);
+
+pub fn InitRequestBodyValue(value: Body.Value) !*BodyValueRef {
+    return try BodyValueRef.init(value, &body_value_hive_allocator);
+}
 // https://developer.mozilla.org/en-US/docs/Web/API/Request
 pub const Request = struct {
     url: []const u8 = "",
@@ -59,7 +68,7 @@ pub const Request = struct {
 
     headers: ?*FetchHeaders = null,
     signal: ?*AbortSignal = null,
-    body: *bun.Ref(Body.Value),
+    body: *BodyValueRef,
     method: Method = Method.GET,
     uws_request: ?*uws.Request = null,
     https: bool = false,
@@ -164,7 +173,7 @@ pub const Request = struct {
     pub fn fromRequestContext(ctx: *RequestContext) !Request {
         var req = Request{
             .url = bun.asByteSlice(ctx.getFullURL()),
-            .body = try bun.Ref(Body.Value).init(.{ .Null = {} }, bun.default_allocator),
+            .body = try InitRequestBodyValue(.{ .Null = {} }),
             .method = ctx.method,
             .headers = FetchHeaders.createFromPicoHeaders(ctx.request.headers),
             .url_was_allocated = true,
@@ -401,7 +410,7 @@ pub const Request = struct {
         arguments: []const JSC.JSValue,
     ) ?Request {
         var req = Request{
-            .body = bun.Ref(Body.Value).init(.{ .Null = {} }, bun.default_allocator) catch {
+            .body = InitRequestBodyValue(.{ .Null = {} }) catch {
                 return null;
             },
         };
@@ -717,7 +726,7 @@ pub const Request = struct {
     ) void {
         this.ensureURL() catch {};
 
-        var body = bun.Ref(Body.Value).init(this.body.value.clone(globalThis), bun.default_allocator) catch {
+        var body = InitRequestBodyValue(this.body.value.clone(globalThis)) catch {
             globalThis.throw("Failed to clone request", .{});
             return;
         };

@@ -60,7 +60,7 @@ const FileSystemFlags = JSC.Node.FileSystemFlags;
 // The tagged unions for each type should become regular unions
 // and the tags should be passed in as comptime arguments to the functions performing the syscalls
 // This would reduce stack size, at the cost of instruction cache misses
-const Arguments = struct {
+pub const Arguments = struct {
     pub const Rename = struct {
         old_path: PathLike,
         new_path: PathLike,
@@ -1540,6 +1540,7 @@ const Arguments = struct {
         mode: Mode = 0o666,
         file: PathOrFileDescriptor,
         data: StringOrBuffer,
+        dirfd: FileDescriptor = @intCast(FileDescriptor, std.fs.cwd().fd),
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?WriteFile {
             const file = PathOrFileDescriptor.fromJS(ctx, arguments, arguments.arena.allocator(), exception) orelse {
@@ -2766,10 +2767,14 @@ pub const NodeFS = struct {
         return Maybe(Return.Fsync).todo;
     }
 
+    pub fn ftruncateSync(args: Arguments.FTruncate) Maybe(Return.Ftruncate) {
+        return Maybe(Return.Ftruncate).errnoSys(system.ftruncate(args.fd, args.len orelse 0), .ftruncate) orelse
+            Maybe(Return.Ftruncate).success;
+    }
+
     pub fn ftruncate(_: *NodeFS, args: Arguments.FTruncate, comptime flavor: Flavor) Maybe(Return.Ftruncate) {
         switch (comptime flavor) {
-            .sync => return Maybe(Return.Ftruncate).errnoSys(system.ftruncate(args.fd, args.len orelse 0), .ftruncate) orelse
-                Maybe(Return.Ftruncate).success,
+            .sync => return ftruncateSync(args),
             else => {},
         }
 
@@ -3418,55 +3423,89 @@ pub const NodeFS = struct {
         return Maybe(Return.ReadFile).todo;
     }
 
-    pub fn writeFile(this: *NodeFS, args: Arguments.WriteFile, comptime flavor: Flavor) Maybe(Return.WriteFile) {
+    pub fn writeFileWithPathBuffer(pathbuf: *[bun.MAX_PATH_BYTES]u8, args: Arguments.WriteFile) Maybe(Return.WriteFile) {
         var path: [:0]const u8 = undefined;
 
-        switch (comptime flavor) {
-            .sync => {
-                const fd = switch (args.file) {
-                    .path => brk: {
-                        path = args.file.path.sliceZ(&this.sync_error_buf);
-                        break :brk switch (Syscall.open(
-                            path,
-                            @enumToInt(args.flag) | os.O.NOCTTY,
-                            args.mode,
-                        )) {
-                            .err => |err| return .{
-                                .err = err.withPath(path),
-                            },
-                            .result => |fd_| fd_,
-                        };
+        const fd = switch (args.file) {
+            .path => brk: {
+                path = args.file.path.sliceZ(pathbuf);
+                break :brk switch (Syscall.openat(
+                    args.dirfd,
+                    path,
+                    @enumToInt(args.flag) | os.O.NOCTTY,
+                    args.mode,
+                )) {
+                    .err => |err| return .{
+                        .err = err.withPath(path),
                     },
-                    .fd => |_fd| _fd,
+                    .result => |fd_| fd_,
                 };
-
-                defer {
-                    if (args.file == .path)
-                        _ = Syscall.close(fd);
-                }
-
-                var buf = args.data.slice();
-                var written: usize = 0;
-
-                while (buf.len > 0) {
-                    switch (Syscall.write(fd, buf)) {
-                        .err => |err| return .{
-                            .err = err,
-                        },
-                        .result => |amt| {
-                            buf = buf[amt..];
-                            written += amt;
-                            if (amt == 0) {
-                                break;
-                            }
-                        },
-                    }
-                }
-
-                _ = this.ftruncate(.{ .fd = fd, .len = @truncate(JSC.WebCore.Blob.SizeType, written) }, .sync);
-
-                return Maybe(Return.WriteFile).success;
             },
+            .fd => |_fd| _fd,
+        };
+
+        defer {
+            if (args.file == .path)
+                _ = Syscall.close(fd);
+        }
+
+        var buf = args.data.slice();
+        var written: usize = 0;
+
+        // Attempt to pre-allocate large files
+        if (comptime Environment.isMac or Environment.isLinux) {
+            preallocate: {
+                // Worthwhile after 6 MB at least on ext4 linux
+                if (buf.len >= 2_000_000) {
+                    const offset: usize = if (Environment.isMac or args.file == .path)
+                        // on mac, it's relatively positioned
+                        0
+                    else brk: {
+                        // on linux, it's absolutely positioned
+                        const pos = JSC.Node.Syscall.system.lseek(
+                            fd,
+                            @intCast(std.os.off_t, 0),
+                            std.os.linux.SEEK.CUR,
+                        );
+
+                        switch (JSC.Node.Syscall.getErrno(pos)) {
+                            .SUCCESS => break :brk @intCast(usize, pos),
+                            else => break :preallocate,
+                        }
+                    };
+
+                    bun.C.preallocate_file(
+                        fd,
+                        @intCast(std.os.off_t, offset),
+                        @intCast(std.os.off_t, buf.len),
+                    ) catch {};
+                }
+            }
+        }
+
+        while (buf.len > 0) {
+            switch (Syscall.write(fd, buf)) {
+                .err => |err| return .{
+                    .err = err,
+                },
+                .result => |amt| {
+                    buf = buf[amt..];
+                    written += amt;
+                    if (amt == 0) {
+                        break;
+                    }
+                },
+            }
+        }
+
+        _ = ftruncateSync(.{ .fd = fd, .len = @truncate(JSC.WebCore.Blob.SizeType, written) });
+
+        return Maybe(Return.WriteFile).success;
+    }
+
+    pub fn writeFile(this: *NodeFS, args: Arguments.WriteFile, comptime flavor: Flavor) Maybe(Return.WriteFile) {
+        switch (comptime flavor) {
+            .sync => return writeFileWithPathBuffer(&this.sync_error_buf, args),
             else => {},
         }
 

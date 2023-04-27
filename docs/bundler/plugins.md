@@ -2,27 +2,52 @@
 **Note** — Introduced in Bun v0.1.11.
 {% /callout %}
 
-Bun's runtime can be extended to support additional file types using _plugins_. Plugins can intercept imports and perform custom loading logic: reading files, transpiling code, etc. They can be used to extend Bun's runtime with _loaders_ for additional file types.
+Bun provides a universal plugin API that can be used to extend both the _runtime_ and _bundler_.
+
+Plugins intercept imports and perform custom loading logic: reading files, transpiling code, etc. They can be used to add support for additional file types, like `.scss` or `.yaml`. In the context of Bun's bundler, plugins can be used to implement framework-level features like CSS extraction, macros, and client-server code co-location.
 
 ## Usage
 
 A plugin is defined as simple JavaScript object containing a `name` property and a `setup` function. Register a plugin with Bun using the `plugin` function.
 
 ```tsx#yamlPlugin.ts
-import { plugin } from "bun";
+import type { BunPlugin } from "bun";
 
-plugin({
+const myPlugin: BunPlugin = {
   name: "YAML loader",
   setup(build) {
     // implementation
   },
+};
+```
+
+This plugin can be passed into the `plugins` array when calling `Bun.build`.
+
+```ts
+Bun.build({
+  entrypoints: ["./app.ts"],
+  outdir: "./out",
+  plugins: [myPlugin],
 });
+```
+
+It can also be "registered" with the Bun runtime using the `Bun.plugin()` function. Once registered, the currently executing `bun` process will incorporate the plugin into its module resolution algorithm.
+
+```ts
+Bun.plugin(myPlugin);
 ```
 
 To consume this plugin, add this file to the `preload` option in your [`bunfig.toml`](/docs/runtime/configuration). Bun automatically loads the files/modules specified in `preload` before running a file.
 
 ```toml
 preload = ["./yamlPlugin.ts"]
+```
+
+To preload files during `bun test`:
+
+```toml
+[test]
+preload = ["./loader.ts"]
 ```
 
 {% details summary="Usage without preload" %}
@@ -243,15 +268,24 @@ namespace Bun {
 }
 
 type PluginBuilder = {
+  onResolve: (
+    args: { filter: RegExp; namespace?: string },
+    callback: (args: { path: string; importer: string }) => {
+      path: string;
+      namespace?: string;
+    } | void,
+  ) => void;
   onLoad: (
     args: { filter: RegExp; namespace?: string },
     callback: (args: { path: string }) => {
-      loader?: "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "object";
+      loader?: Loader;
       contents?: string;
       exports?: Record<string, any>;
     },
   ) => void;
 };
+
+type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "object";
 ```
 
 The `onLoad` method optionally accepts a `namespace` in addition to the `filter` regex. This namespace will be be used to prefix the import in transpiled code; for instance, a loader with a `filter: /\.yaml$/` and `namespace: "yaml:"` will transform an import from `./myfile.yaml` into `yaml:./myfile.yaml`.

@@ -88,9 +88,9 @@ pub const JSBundler = struct {
                 this.target = target;
             }
 
-            if (try config.getOptional(globalThis, "hot", bool)) |hot| {
-                this.hot = hot;
-            }
+            // if (try config.getOptional(globalThis, "hot", bool)) |hot| {
+            //     this.hot = hot;
+            // }
 
             if (try config.getOptional(globalThis, "splitting", bool)) |hot| {
                 this.code_splitting = hot;
@@ -103,9 +103,10 @@ pub const JSBundler = struct {
 
             if (config.getTruthy(globalThis, "minify")) |hot| {
                 if (hot.isBoolean()) {
-                    this.minify.whitespace = hot.coerce(bool, globalThis);
-                    this.minify.syntax = this.minify.whitespace;
-                    this.minify.identifiers = this.minify.whitespace;
+                    const value = hot.coerce(bool, globalThis);
+                    this.minify.whitespace = value;
+                    this.minify.syntax = value;
+                    this.minify.identifiers = value;
                 } else if (hot.isObject()) {
                     if (try hot.getOptional(globalThis, "whitespace", bool)) |whitespace| {
                         this.minify.whitespace = whitespace;
@@ -122,7 +123,7 @@ pub const JSBundler = struct {
                 }
             }
 
-            if (try config.getArray(globalThis, "entrypoints")) |entry_points| {
+            if (try config.getArray(globalThis, "entrypoints") orelse try config.getArray(globalThis, "entryPoints")) |entry_points| {
                 var iter = entry_points.arrayIterator(globalThis);
                 while (iter.next()) |entry_point| {
                     var slice = entry_point.toSliceOrNull(globalThis) orelse {

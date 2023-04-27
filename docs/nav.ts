@@ -190,7 +190,10 @@ export default {
     page("ecosystem/buchta", "Buchta", {
       description: `Buchta is a Bun-native fullstack framework for Svelte and Preact apps.`,
     }),
-
+    page("ecosystem/stric", "Stric", {
+      description: `Stric is a minimalist, fast web framework for Bun.`,
+    }),
+    
     page("ecosystem/awesome", "Awesome", {
       href: "https://github.com/apvarun/awesome-bun",
       description: ``,

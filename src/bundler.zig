@@ -366,6 +366,7 @@ pub const Bundler = struct {
     elapsed: u64 = 0,
     needs_runtime: bool = false,
     router: ?Router = null,
+    source_map: options.SourceMapOption = .none,
 
     linker: Linker,
     timer: SystemTimer = undefined,

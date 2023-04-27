@@ -1181,7 +1181,7 @@ pub const BundleV2 = struct {
         bundler.options.minify_whitespace = config.minify.whitespace;
         bundler.options.minify_identifiers = config.minify.identifiers;
         bundler.options.inlining = config.minify.syntax;
-        bundler.options.sourcemap = config.sourcemap;
+        bundler.options.source_map = config.source_map;
 
         try bundler.configureDefines();
         bundler.configureLinker();
@@ -2954,7 +2954,7 @@ const LinkerContext = struct {
                     task.ctx.source_maps.wait_group.finish();
                 }
 
-                SourceMapData.compute(task.ctx, ThreadPool.Worker.get().allocator, task.source_index);
+                SourceMapData.compute(task.ctx, ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", task.ctx)).allocator, task.source_index);
             }
         };
 
@@ -5361,14 +5361,20 @@ const LinkerContext = struct {
         chunks: []Chunk,
     };
     fn generateChunkJS(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) void {
-        generateChunkJS_(ctx, chunk, chunk_index) catch |err| Output.panic("TODO: handle error: {s}", .{@errorName(err)});
+        defer ctx.wg.finish();
+        const worker = ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", ctx.c));
+        defer worker.unget();
+        generateChunkJS_(ctx, worker, chunk, chunk_index) catch |err| Output.panic("TODO: handle error: {s}", .{@errorName(err)});
     }
 
     // This version generates the renamer for the chunk too
     // We have both to avoid extra thread switching overhead
     fn generateChunkJSWithRenamer(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) void {
-        generateJSRenamer(ctx, chunk, chunk_index);
-        generateChunkJS(ctx, chunk, chunk_index);
+        defer ctx.wg.finish();
+        const worker = ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", ctx.c));
+        defer worker.unget();
+        generateJSRenamer_(ctx, worker, chunk, chunk_index);
+        generateChunkJS_(ctx, worker, chunk, chunk_index) catch |err| Output.panic("TODO: handle error: {s}", .{@errorName(err)});
     }
 
     // TODO: investigate if we need to parallelize this function
@@ -5622,9 +5628,14 @@ const LinkerContext = struct {
     }
 
     fn generateJSRenamer(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) void {
+        defer ctx.wg.finish();
+        var worker = ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", ctx.c));
+        defer worker.unget();
+        generateJSRenamer_(ctx, worker, chunk, chunk_index);
+    }
+
+    fn generateJSRenamer_(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chunk: *Chunk, chunk_index: usize) void {
         _ = chunk_index;
-        // defer ctx.wg.finish();
-        var worker = ThreadPool.Worker.get();
         chunk.renamer = ctx.c.renameSymbolsInChunk(
             worker.allocator,
             chunk,
@@ -5632,11 +5643,8 @@ const LinkerContext = struct {
         ) catch @panic("TODO: handle error");
     }
 
-    fn generateChunkJS_(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) !void {
+    fn generateChunkJS_(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chunk: *Chunk, chunk_index: usize) !void {
         _ = chunk_index;
-        defer ctx.wg.finish();
-        var worker = ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", ctx.c));
-        defer worker.unget();
 
         const allocator = worker.allocator;
         const c = ctx.c;
@@ -8046,12 +8054,9 @@ const LinkerContext = struct {
         } else &.{};
 
         // Generate the final output files by joining file pieces together
-        var output_files = std.ArrayList(options.OutputFile).initCapacity(bun.default_allocator, chunks.len + @as(
-            usize,
-            @boolToInt(react_client_components_manifest.len > 0),
-        )) catch unreachable;
-        output_files.items.len = chunks.len;
-        for (chunks, output_files.items) |*chunk, *output_file| {
+        const len = (if (c.options.source_maps == .external) chunks.len * @as(usize, 2) else chunks.len) + @as(usize, @boolToInt(react_client_components_manifest.len > 0));
+        var output_files = std.ArrayList(options.OutputFile).initCapacity(bun.default_allocator, len) catch unreachable;
+        for (chunks) |*chunk| {
             var chunk_substitute_result = c.substituteChunkFinalPaths(chunks, chunk.intermediate_output, chunk.final_rel_path);
 
             if (c.options.source_maps != .none) {
@@ -8071,11 +8076,12 @@ const LinkerContext = struct {
                         chunk_substitute_result.j.push("\n");
                     },
                     .external => {
-                        output_files.append(options.OutputFile.initBuf(
+                        output_files.appendAssumeCapacity(options.OutputFile.initBuf(
                             output_source_map,
+                            Chunk.IntermediateOutput.allocatorForSize(output_source_map.len),
                             source_map_final_rel_path.items,
                             .text,
-                        )) catch unreachable;
+                        ));
                     },
                     else => {},
                 }
@@ -8083,14 +8089,14 @@ const LinkerContext = struct {
 
             const buffer = chunk.intermediate_output.code(chunk, chunks) catch @panic("Failed to allocate memory for output file");
 
-            output_file.* = options.OutputFile.initBuf(
+            output_files.appendAssumeCapacity(options.OutputFile.initBuf(
                 buffer,
                 Chunk.IntermediateOutput.allocatorForSize(buffer.len),
                 // clone for main thread
                 bun.default_allocator.dupe(u8, chunk.final_rel_path) catch unreachable,
                 // TODO: remove this field
                 .js,
-            ) catch unreachable;
+            ));
         }
 
         if (react_client_components_manifest.len > 0) {

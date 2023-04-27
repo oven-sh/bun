@@ -1105,7 +1105,8 @@ pub inline fn copyU16IntoU8(output_: []u8, comptime InputType: type, input_: Inp
     var output_ptr = output.ptr;
 
     if (comptime Environment.enableSIMD) {
-        const last_vector_ptr = input.ptr + (@min(input.len, output.len) & ~(group - 1));
+        const end_len = (@min(input.len, output.len) & ~(group - 1));
+        const last_vector_ptr = input.ptr + end_len;
         while (last_vector_ptr != input_ptr) {
             const input_vec1: @Vector(group, u16) = input_ptr[0..group].*;
             output_ptr[0] = @truncate(u8, input_vec1[0]);
@@ -1128,6 +1129,9 @@ pub inline fn copyU16IntoU8(output_: []u8, comptime InputType: type, input_: Inp
             output_ptr += group;
             input_ptr += group;
         }
+
+        input = input[end_len..];
+        output = output[end_len..];
     }
 
     const last_input_ptr = input_ptr + @min(input.len, output.len);

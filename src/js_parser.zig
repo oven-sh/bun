@@ -12304,7 +12304,7 @@ fn NewParser_(
             const scopeIndex = p.pushScopeForParsePass(.class_body, body_loc) catch unreachable;
 
             var opts = PropertyOpts{ .is_class = true, .allow_ts_decorators = class_opts.allow_ts_decorators, .class_has_extends = extends != null };
-            while (p.lexer.token != T.t_close_brace) {
+            while (!p.lexer.token.isCloseBraceOrEOF()) {
                 if (p.lexer.token == .t_semicolon) {
                     try p.lexer.next();
                     continue;

@@ -1729,10 +1729,10 @@ pub const JSStringList = std.ArrayList(js.JSStringRef);
 
 pub const ArrayBuffer = extern struct {
     ptr: [*]u8 = undefined,
-    offset: u32,
-    len: u32,
-    byte_len: u32,
-    typed_array_type: JSC.JSValue.JSType,
+    offset: u32 = 0,
+    len: u32 = 0,
+    byte_len: u32 = 0,
+    typed_array_type: JSC.JSValue.JSType = .Cell,
     value: JSC.JSValue = JSC.JSValue.zero,
     shared: bool = false,
 

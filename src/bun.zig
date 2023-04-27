@@ -1393,3 +1393,6 @@ pub fn Ref(comptime T: type) type {
         }
     };
 }
+
+pub const MaxHeapAllocator = @import("./max_heap_allocator.zig").MaxHeapAllocator;
+

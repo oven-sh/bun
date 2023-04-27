@@ -140,39 +140,40 @@ pub extern "c" fn clonefile([*c]const u8, [*c]const u8, uint32_t: c_int) c_int;
 //     };
 // }
 
-pub const struct_fstore = extern struct {
-    fst_flags: c_uint,
-    fst_posmode: c_int,
-    fst_offset: off_t,
-    fst_length: off_t,
-    fst_bytesalloc: off_t,
-};
-pub const fstore_t = struct_fstore;
+// benchmarking this did nothing on macOS
+// i verified it wasn't returning -1
+pub fn preallocate_file(_: os.fd_t, _: off_t, _: off_t) !void {
+    //     pub const struct_fstore = extern struct {
+    //     fst_flags: c_uint,
+    //     fst_posmode: c_int,
+    //     fst_offset: off_t,
+    //     fst_length: off_t,
+    //     fst_bytesalloc: off_t,
+    // };
+    // pub const fstore_t = struct_fstore;
 
-pub const F_ALLOCATECONTIG = @as(c_int, 0x00000002);
-pub const F_ALLOCATEALL = @as(c_int, 0x00000004);
-pub const F_PEOFPOSMODE = @as(c_int, 3);
-pub const F_VOLPOSMODE = @as(c_int, 4);
+    // pub const F_ALLOCATECONTIG = @as(c_int, 0x00000002);
+    // pub const F_ALLOCATEALL = @as(c_int, 0x00000004);
+    // pub const F_PEOFPOSMODE = @as(c_int, 3);
+    // pub const F_VOLPOSMODE = @as(c_int, 4);
+    // var fstore = zeroes(fstore_t);
+    // fstore.fst_flags = F_ALLOCATECONTIG;
+    // fstore.fst_posmode = F_PEOFPOSMODE;
+    // fstore.fst_offset = 0;
+    // fstore.fst_length = len + offset;
 
-pub fn preallocate_file(fd: os.fd_t, offset: off_t, len: off_t) !void {
-    var fstore = zeroes(fstore_t);
-    fstore.fst_flags = F_ALLOCATECONTIG;
-    fstore.fst_posmode = F_PEOFPOSMODE;
-    fstore.fst_offset = 0;
-    fstore.fst_length = len + offset;
+    // // Based on https://api.kde.org/frameworks/kcoreaddons/html/posix__fallocate__mac_8h_source.html
+    // var rc = os.system.fcntl(fd, os.F.PREALLOCATE, &fstore);
 
-    // Based on https://api.kde.org/frameworks/kcoreaddons/html/posix__fallocate__mac_8h_source.html
-    var rc = os.system.fcntl(fd, os.F.PREALLOCATE, &fstore);
+    // switch (rc) {
+    //     0 => return,
+    //     else => {
+    //         fstore.fst_flags = F_ALLOCATEALL;
+    //         rc = os.system.fcntl(fd, os.F.PREALLOCATE, &fstore);
+    //     },
+    // }
 
-    switch (rc) {
-        0 => return,
-        else => {
-            fstore.fst_flags = F_ALLOCATEALL;
-            rc = os.system.fcntl(fd, os.F.PREALLOCATE, &fstore);
-        },
-    }
-
-    std.mem.doNotOptimizeAway(&fstore);
+    // std.mem.doNotOptimizeAway(&fstore);
 }
 
 pub const SystemErrno = enum(u8) {
@@ -788,3 +789,7 @@ pub const sockaddr_dl = extern struct {
 pub usingnamespace @cImport({
     @cInclude("sys/spawn.h");
 });
+
+// it turns out preallocating on APFS on an M1 is slower.
+// so this is a linux-only optimization for now.
+pub const preallocate_length = std.math.maxInt(u51);

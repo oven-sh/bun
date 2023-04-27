@@ -10,6 +10,9 @@ const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap
 
 pub const T = enum(u8) {
     t_end_of_file,
+    // close brace is here so that we can do comparisons against EOF or close brace in one branch
+    t_close_brace,
+
     t_syntax_error,
 
     // "#!/usr/bin/env node"
@@ -35,7 +38,6 @@ pub const T = enum(u8) {
     t_bar,
     t_bar_bar,
     t_caret,
-    t_close_brace,
     t_close_bracket,
     t_close_paren,
     t_colon,
@@ -150,6 +152,10 @@ pub const T = enum(u8) {
                 return false;
             },
         }
+    }
+
+    pub fn isCloseBraceOrEOF(self: T) bool {
+        return @enumToInt(self) <= @enumToInt(T.t_close_brace);
     }
 };
 

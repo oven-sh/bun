@@ -2117,7 +2117,7 @@ pub const Blob = struct {
                     }
 
                     if (os.S.ISREG(stat.mode) and
-                        this.max_length > std.mem.page_size and
+                        this.max_length > bun.C.preallocate_length and
                         this.max_length != Blob.max_size)
                     {
                         bun.C.preallocate_file(this.destination_fd, 0, this.max_length) catch {};

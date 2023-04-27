@@ -16146,11 +16146,17 @@ fn NewParser_(
                         p.maybeCommaSpreadError(e_.comma_after_spread);
                     }
                     var items = e_.items.slice();
+                    var spread_item_count: usize = 0;
                     for (items) |*item| {
                         switch (item.data) {
                             .e_missing => {},
                             .e_spread => |spread| {
                                 spread.value = p.visitExprInOut(spread.value, ExprIn{ .assign_target = in.assign_target });
+
+                                spread_item_count += if (spread.value.data == .e_array)
+                                    @as(usize, spread.value.data.e_array.items.len)
+                                else
+                                    0;
                             },
                             .e_binary => |e2| {
                                 if (in.assign_target != .none and e2.op == .bin_assign) {
@@ -16173,6 +16179,11 @@ fn NewParser_(
                                 item.* = p.visitExprInOut(item.*, ExprIn{ .assign_target = in.assign_target });
                             },
                         }
+                    }
+
+                    // "[1, ...[2, 3], 4]" => "[1, 2, 3, 4]"
+                    if (p.options.features.minify_syntax and spread_item_count > 0 and in.assign_target == .none) {
+                        e_.items = e_.inlineSpreadOfArrayLiterals(p.allocator, spread_item_count) catch e_.items;
                     }
                 },
                 .e_object => |e_| {

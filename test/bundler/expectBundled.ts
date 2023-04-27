@@ -1040,6 +1040,7 @@ function expectBundled(
           env: {
             ...bunEnv,
             FORCE_COLOR: "0",
+            IS_TEST_RUNNER: "1",
           },
           stdio: ["ignore", "pipe", "pipe"],
         });
@@ -1100,7 +1101,10 @@ function expectBundled(
           const result = stdout!.toString("utf-8").trim();
           const expected = dedent(run.stdout).trim();
           if (expected !== result) {
-            console.log({ file });
+            console.log(`runtime failed file=${file}`);
+            console.log(`reference stdout:`);
+            console.log(result);
+            console.log(`---`);
           }
           expect(result).toBe(expected);
         }
@@ -1109,7 +1113,10 @@ function expectBundled(
           const result = stdout!.toString("utf-8").trim();
           const expected = dedent(run.partialStdout).trim();
           if (!result.includes(expected)) {
-            console.log({ file });
+            console.log(`runtime failed file=${file}`);
+            console.log(`reference stdout:`);
+            console.log(result);
+            console.log(`---`);
           }
           expect(result).toContain(expected);
         }

@@ -123,4 +123,15 @@ describe("bundler", () => {
       assert([...code.matchAll(/var /g)].length === 1, "expected only 1 variable declaration statement");
     },
   });
+  itBundled("minify/InlineArraySpread", {
+    files: {
+      "/entry.js": /* js */ `
+        capture([1, 2, ...[3, 4], 5, 6, ...[7, ...[...[...[...[8, 9]]]]], 10, ...[...[...[...[...[...[...[11]]]]]]]]);
+        capture([1, 2, ...[3, 4], 5, 6, ...[7, [...[...[...[8, 9]]]]], 10, ...[...[...[...[...[...[...11]]]]]]]);
+      `,
+    },
+    capture: ["[1,2,3,4,5,6,7,8,9,10,11]", "[1,2,3,4,5,6,7,[8,9],10,...11]"],
+    minifySyntax: true,
+    minifyWhitespace: true,
+  });
 });

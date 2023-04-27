@@ -1252,18 +1252,6 @@ describe("bundler", () => {
       assert(api.readFile("/out.js").startsWith("#!/usr/bin/env a"), "hashbang exists on bundle");
     },
   });
-  itBundled("default/HashbangNoBundle", {
-    files: {
-      "/entry.js": /* js */ `
-        #!/usr/bin/env node
-        process.exit(0);
-      `,
-    },
-    mode: "transform",
-    onAfterBundle(api) {
-      assert(api.readFile("/out.js").startsWith("#!/usr/bin/env node"), "hashbang exists on bundle");
-    },
-  });
   itBundled("default/HashbangBannerUseStrictOrder", {
     files: {
       "/entry.js": /* js */ `

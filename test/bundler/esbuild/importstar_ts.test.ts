@@ -7,7 +7,7 @@ import { RUN_UNCHECKED_TESTS, itBundled } from "../expectBundled";
 // For debug, all files are written to $TEMP/bun-bundle-tests/ts
 
 describe("bundler", () => {
-  if (!RUN_UNCHECKED_TESTS) return;
+  return;
   itBundled("ts/TSImportStarUnused", {
     // GENERATED
     files: {

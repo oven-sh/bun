@@ -1000,7 +1000,7 @@ declare module "bun" {
     outputs: Array<{ path: string; result: T }>;
   };
 
-  function build(config: BuildConfig): BuildResult<Blob>;
+  function build(config: BuildConfig): Promise<BuildResult<Blob>>;
 
   /**
    * **0** means the message was **dropped**

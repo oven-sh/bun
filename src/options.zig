@@ -2120,6 +2120,7 @@ pub const OutputFile = struct {
 
     pub fn toJS(
         this: *OutputFile,
+        owned_pathname: []const u8,
         globalObject: *JSC.JSGlobalObject,
     ) bun.JSC.JSValue {
         return switch (this.value) {
@@ -2127,7 +2128,7 @@ pub const OutputFile = struct {
             .noop => JSC.JSValue.undefined,
             .move => this.value.move.toJS(globalObject, this.loader),
             .copy => this.value.copy.toJS(globalObject, this.loader),
-            .saved => SavedFile.toJS(globalObject, this.input.text, this.size),
+            .saved => SavedFile.toJS(globalObject, owned_pathname, this.size),
             .buffer => |buffer| brk: {
                 var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
                 blob.* = JSC.WebCore.Blob.init(@constCast(buffer.bytes), buffer.allocator, globalObject);

@@ -15607,11 +15607,6 @@ fn NewParser_(
                                     return e_.right;
                                 }
                             }
-
-                            // TODO:
-                            // "(1 && fn)()" => "fn()"
-                            // "(1 && this.fn)" => "this.fn"
-                            // "(1 && this.fn)()" => "(0, this.fn)()"
                         },
                         .bin_add => {
                             if (p.should_fold_typescript_constant_expressions) {
@@ -15891,7 +15886,10 @@ fn NewParser_(
                     // though this is a run-time error, we make it a compile-time error when
                     // bundling because scope hoisting means these will no longer be run-time
                     // errors.
-                    if ((in.assign_target != .none or is_delete_target) and @as(Expr.Tag, e_.target.data) == .e_identifier and p.symbols.items[e_.target.data.e_identifier.ref.innerIndex()].kind == .import) {
+                    if ((in.assign_target != .none or is_delete_target) and
+                        @as(Expr.Tag, e_.target.data) == .e_identifier and
+                        p.symbols.items[e_.target.data.e_identifier.ref.innerIndex()].kind == .import)
+                    {
                         const r = js_lexer.rangeOfIdentifier(p.source, e_.target.loc);
                         p.log.addRangeErrorFmt(
                             p.source,
@@ -15935,15 +15933,18 @@ fn NewParser_(
 
                             switch (e_.op) {
                                 .un_not => {
-                                    e_.value = SideEffects.simplifyBoolean(p, e_.value);
+                                    if (p.options.features.minify_syntax)
+                                        e_.value = SideEffects.simplifyBoolean(p, e_.value);
 
                                     const side_effects = SideEffects.toBoolean(e_.value.data);
                                     if (side_effects.ok) {
                                         return p.newExpr(E.Boolean{ .value = !side_effects.value }, expr.loc);
                                     }
 
-                                    if (e_.value.maybeSimplifyNot(p.allocator)) |exp| {
-                                        return exp;
+                                    if (p.options.features.minify_syntax) {
+                                        if (e_.value.maybeSimplifyNot(p.allocator)) |exp| {
+                                            return exp;
+                                        }
                                     }
                                 },
                                 .un_void => {
@@ -15979,28 +15980,30 @@ fn NewParser_(
                                 else => {},
                             }
 
-                            // "-(a, b)" => "a, -b"
-                            if (switch (e_.op) {
-                                .un_delete, .un_typeof => false,
-                                else => true,
-                            }) {
-                                switch (e_.value.data) {
-                                    .e_binary => |comma| {
-                                        if (comma.op == .bin_comma) {
-                                            return Expr.joinWithComma(
-                                                comma.left,
-                                                p.newExpr(
-                                                    E.Unary{
-                                                        .op = e_.op,
-                                                        .value = comma.right,
-                                                    },
-                                                    comma.right.loc,
-                                                ),
-                                                p.allocator,
-                                            );
-                                        }
-                                    },
-                                    else => {},
+                            if (p.options.features.minify_syntax) {
+                                // "-(a, b)" => "a, -b"
+                                if (switch (e_.op) {
+                                    .un_delete, .un_typeof => false,
+                                    else => true,
+                                }) {
+                                    switch (e_.value.data) {
+                                        .e_binary => |comma| {
+                                            if (comma.op == .bin_comma) {
+                                                return Expr.joinWithComma(
+                                                    comma.left,
+                                                    p.newExpr(
+                                                        E.Unary{
+                                                            .op = e_.op,
+                                                            .value = comma.right,
+                                                        },
+                                                        comma.right.loc,
+                                                    ),
+                                                    p.allocator,
+                                                );
+                                            }
+                                        },
+                                        else => {},
+                                    }
                                 }
                             }
                         },

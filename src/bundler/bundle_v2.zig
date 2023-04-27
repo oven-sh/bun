@@ -941,7 +941,13 @@ pub const BundleV2 = struct {
                         obj.put(
                             globalThis,
                             JSC.ZigString.static("result"),
-                            output_file.toJS(globalThis),
+                            output_file.toJS(
+                                if (output_file.value == .saved)
+                                    bun.default_allocator.dupe(u8, output_file.input.text) catch unreachable
+                                else
+                                    "",
+                                globalThis,
+                            ),
                         );
                         output_files_js.putIndex(globalThis, @intCast(u32, i), obj);
                     }

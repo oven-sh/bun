@@ -410,7 +410,7 @@ pub const Request = struct {
         const body_ptr = bun.default_allocator.create(Body.Value) catch {
             return null;
         };
-        body_ptr.* = .{ .Empty = {} };
+        body_ptr.* = .{ .Null = {} };
         var req = Request{ .body = body_ptr, .body_owned = true };
 
         if (arguments.len == 0) {

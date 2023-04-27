@@ -5350,10 +5350,22 @@ describe("bundler", () => {
     minifyWhitespace: true,
     minifyIdentifiers: true,
     onAfterBundle(api) {
-      let importFile = api.readFile("/out/import.js").replace(/remove\(.*?\)/g, "remove()");
-      let requireFile = api.readFile("/out/require.js").replace(/remove\(.*?\)/g, "remove()");
-      assert(!["W", "X", "Y", "Z"].some(x => importFile.includes(x)));
-      assert(!["A", "B", "C", "D"].some(x => requireFile.includes(x)));
+      let importFile = api
+        .readFile("/out/import.js")
+        .replace(/remove\(.*?\)/g, "remove()")
+        .replace(/Object\.[a-z]+\b/gi, "null");
+      let requireFile = api
+        .readFile("/out/require.js")
+        .replace(/remove\(.*?\)/g, "remove()")
+        .replace(/Object\.[a-z]+\b/gi, "null");
+      assert(
+        !["W", "X", "Y", "Z"].some(x => importFile.includes(x)),
+        'import.js should not contain "W", "X", "Y", or "Z"',
+      );
+      assert(
+        !["A", "B", "C", "D"].some(x => requireFile.includes(x)),
+        'require.js should not contain "A", "B", "C", or "D"',
+      );
     },
   });
   itBundled("default/ToESMWrapperOmission", {
@@ -6199,28 +6211,6 @@ describe("bundler", () => {
   // NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "prop" import (which is non-standard behavior).
   // `, */
   // });
-  return;
-  itBundled("default/ExternalPackages", {
-    // GENERATED
-    files: {
-      "/project/entry.js": /* js */ `
-        import 'pkg1'
-        import './file'
-        import './node_modules/pkg2/index.js'
-        import '#pkg3'
-      `,
-      "/project/package.json": /* json */ `
-        {
-        "imports": {
-          "#pkg3": "./libs/pkg3.js"
-        }
-      }
-      `,
-      "/project/file.js": `console.log('file')`,
-      "/project/node_modules/pkg2/index.js": `console.log('pkg2')`,
-      "/project/libs/pkg3.js": `console.log('pkg3')`,
-    },
-  });
   itBundled("default/MetafileVariousCases", {
     // GENERATED
     files: {
@@ -6290,7 +6280,8 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/project/entry.js", "/project/entry.css"],
-    mode: "convertformat",
+    external: ["*"],
+    metafile: true,
   });
   itBundled("default/MetafileVeryLongExternalPaths", {
     // GENERATED
@@ -6321,7 +6312,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/CommentPreservation", {
-    // GENERATED
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         console.log(
@@ -6467,28 +6458,54 @@ describe("bundler", () => {
         for (a of /*foo*/b);
   
         if (/*foo*/a);
-        with (/*foo*/a);
         while (/*foo*/a);
         do {} while (/*foo*/a);
         switch (/*foo*/a) {}
       `,
     },
-    format: "cjs",
+    external: ["foo"],
+    onAfterBundle(api) {
+      const commentCounts: Record<string, number> = {
+        before: 44,
+        after: 18,
+        "comment before": 4,
+        "comment after": 4,
+        foo: 21,
+        bar: 4,
+        a: 1,
+        b: 1,
+        c: 1,
+      };
+      const file = api.readFile("/out.js");
+      const comments = [...file.matchAll(/\/\*([^*]+)\*\//g), ...file.matchAll(/\/\/([^\n]+)/g)]
+        .map(m => m[1].trim())
+        .filter(m => m && !m.includes("__PURE__"));
+
+      for (const key in commentCounts) {
+        const count = comments.filter(c => c === key).length;
+        if (count !== commentCounts[key]) {
+          throw new Error(`Expected ${commentCounts[key]} comments with "${key}", got ${count}`);
+        }
+      }
+    },
   });
   itBundled("default/CommentPreservationImportAssertions", {
     // GENERATED
+    notImplemented: true,
     files: {
       "/entry.jsx": /* jsx */ `
-        import 'foo' /* before */ assert { type: 'json' }
-        import 'foo' assert /* before */ { type: 'json' }
-        import 'foo' assert { /* before */ type: 'json' }
-        import 'foo' assert { type: /* before */ 'json' }
-        import 'foo' assert { type: 'json' /* before */ }
+        import 'foo' /* a */ assert { type: 'json' }
+        import 'foo' assert /* b */ { type: 'json' }
+        import 'foo' assert { /* c */ type: 'json' }
+        import 'foo' assert { type: /* d */ 'json' }
+        import 'foo' assert { type: 'json' /* e */ }
       `,
     },
+    external: ["foo"],
   });
   itBundled("default/CommentPreservationTransformJSX", {
     // GENERATED
+    notImplemented: true,
     files: {
       "/entry.jsx": /* jsx */ `
         console.log(
@@ -6518,6 +6535,7 @@ describe("bundler", () => {
   });
   itBundled("default/CommentPreservationPreserveJSX", {
     // GENERATED
+    notImplemented: true,
     files: {
       "/entry.jsx": /* jsx */ `
         console.log(
@@ -6544,20 +6562,5 @@ describe("bundler", () => {
         )
       `,
     },
-  });
-  itBundled("default/ErrorMessageCrashStdinESBuildIssue2913", {
-    // GENERATED
-    files: {
-      "/project/node_modules/fflate/package.json": `{ "main": "main.js" }`,
-      "/project/node_modules/fflate/main.js": ``,
-    },
-    stdin: {
-      contents: `import "node_modules/fflate"`,
-      cwd: "/project",
-    },
-    platform: "neutral",
-    /* TODO FIX expectedScanLog: `<stdin>: ERROR: Could not resolve "node_modules/fflate"
-  NOTE: You can mark the path "node_modules/fflate" as external to exclude it from the bundle, which will remove this error.
-  `, */
   });
 });

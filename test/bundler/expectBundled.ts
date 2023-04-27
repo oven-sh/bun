@@ -369,9 +369,6 @@ function expectBundled(
   if (!ESBUILD && inject) {
     throw new Error("inject not implemented in bun build");
   }
-  if (!ESBUILD && publicPath) {
-    throw new Error("publicPath not implemented in bun build");
-  }
   if (!ESBUILD && chunkNames) {
     throw new Error("chunkNames is not implemented in bun build");
   }
@@ -481,19 +478,19 @@ function expectBundled(
               jsx.factory && `--jsx-factory=${jsx.factory}`,
               jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
               jsx.development === false && `--jsx-production`,
-              // metafile && `--metafile=${metafile}`,
+              // metafile && `--manifest=${metafile}`,
               // sourceMap && `--sourcemap${sourceMap !== true ? `=${sourceMap}` : ""}`,
               entryNames && entryNames !== "[name].[ext]" && [`--entry-names`, entryNames],
-              // chunkNames && chunkNames !== "[name]-[hash].[ext]" && [`--chunk-names`, chunkNames],
+              chunkNames && chunkNames !== "[name]-[hash].[ext]" && [`--chunk-names`, chunkNames],
               // `--format=${format}`,
               // legalComments && `--legal-comments=${legalComments}`,
               splitting && `--splitting`,
-              // treeShaking && `--tree-shaking`,
+              // treeShaking === false && `--no-tree-shaking`, // ??
               // outbase && `--outbase=${outbase}`,
               // keepNames && `--keep-names`,
               // mainFields && `--main-fields=${mainFields}`,
               // loader && Object.entries(loader).map(([k, v]) => ["--loader", `${k}=${v}`]),
-              // publicPath && `--public-path=${publicPath}`,
+              publicPath && `--public-path=${publicPath}`,
               mode === "transform" && "--transform",
             ]
           : [
@@ -767,6 +764,7 @@ function expectBundled(
           sourcemap: sourceMap === true ? "external" : sourceMap || "none",
           splitting,
           target: platform === "neutral" ? "browser" : platform,
+          publicPath,
         } as BuildConfig;
 
         if (DEBUG) {

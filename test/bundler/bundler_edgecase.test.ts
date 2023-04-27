@@ -156,6 +156,26 @@ describe("bundler", () => {
       NODE_ENV: "production",
     },
   });
+  itBundled("edgecase/NodeEnvOptionalChaining", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(process?.env?.NODE_ENV);
+        capture(process?.env?.NODE_ENV === 'production');
+        capture(process?.env?.NODE_ENV === 'development');
+        capture(process.env?.NODE_ENV);
+        capture(process.env?.NODE_ENV === 'production');
+        capture(process.env?.NODE_ENV === 'development');
+        capture(process?.env.NODE_ENV);
+        capture(process?.env.NODE_ENV === 'production');
+        capture(process?.env.NODE_ENV === 'development');
+      `,
+    },
+    platform: "browser",
+    capture: ['"development"', "false", "true", '"development"', "false", "true", '"development"', "false", "true"],
+    env: {
+      NODE_ENV: "development",
+    },
+  });
   itBundled("edgecase/ProcessEnvArbitrary", {
     files: {
       "/entry.js": /* js */ `

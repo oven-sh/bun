@@ -197,7 +197,7 @@ pub const Request = struct {
                 return MimeType.other.value;
             },
             .InternalBlob => return this.body.value.InternalBlob.contentType(),
-            .InlineBlob => return this.body.value.InlineBlob.contentType(),
+            // .InlineBlob => return this.body.value.InlineBlob.contentType(),
             .Null, .Error, .Used, .Locked, .Empty => return MimeType.other.value,
         }
     }

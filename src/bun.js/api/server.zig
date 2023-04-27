@@ -2209,7 +2209,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     this.runErrorHandler(err);
                     return;
                 },
-                .InlineBlob,
+                // .InlineBlob,
                 .InternalBlob,
                 .Blob,
                 => {
@@ -2648,31 +2648,31 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                     const total = bytes.items.len + chunk.len;
                     getter: {
-                        if (total <= JSC.WebCore.InlineBlob.available_bytes) {
-                            if (total == 0) {
-                                body.value = .{ .Empty = {} };
-                                break :getter;
-                            }
+                        // if (total <= JSC.WebCore.InlineBlob.available_bytes) {
+                        //     if (total == 0) {
+                        //         body.value = .{ .Empty = {} };
+                        //         break :getter;
+                        //     }
 
-                            body.value = .{ .InlineBlob = JSC.WebCore.InlineBlob.concat(bytes.items, chunk) };
+                        //     body.value = .{ .InlineBlob = JSC.WebCore.InlineBlob.concat(bytes.items, chunk) };
+                        //     this.request_body_buf.clearAndFree(this.allocator);
+                        // } else {
+                        bytes.ensureTotalCapacityPrecise(this.allocator, total) catch |err| {
                             this.request_body_buf.clearAndFree(this.allocator);
-                        } else {
-                            bytes.ensureTotalCapacityPrecise(this.allocator, total) catch |err| {
-                                this.request_body_buf.clearAndFree(this.allocator);
-                                body.value.toError(err, this.server.globalThis);
-                                break :getter;
-                            };
+                            body.value.toError(err, this.server.globalThis);
+                            break :getter;
+                        };
 
-                            const prev_len = bytes.items.len;
-                            bytes.items.len = total;
-                            var slice = bytes.items[prev_len..];
-                            @memcpy(slice.ptr, chunk.ptr, chunk.len);
-                            body.value = .{
-                                .InternalBlob = .{
-                                    .bytes = bytes.toManaged(this.allocator),
-                                },
-                            };
-                        }
+                        const prev_len = bytes.items.len;
+                        bytes.items.len = total;
+                        var slice = bytes.items[prev_len..];
+                        @memcpy(slice.ptr, chunk.ptr, chunk.len);
+                        body.value = .{
+                            .InternalBlob = .{
+                                .bytes = bytes.toManaged(this.allocator),
+                            },
+                        };
+                        // }
                     }
 
                     if (old == .Locked) {

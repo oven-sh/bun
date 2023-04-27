@@ -440,7 +440,7 @@ pub const Blob = struct {
                     bun.default_allocator.destroy(this);
                     promise.reject(globalThis, ZigString.init("Body was used after it was consumed").toErrorInstance(globalThis));
                 },
-                .InlineBlob,
+                // .InlineBlob,
                 .InternalBlob,
                 .Null,
                 .Empty,
@@ -677,7 +677,7 @@ pub const Blob = struct {
         var source_blob: Blob = brk: {
             if (data.as(Response)) |response| {
                 switch (response.body.value) {
-                    .InlineBlob,
+                    // .InlineBlob,
                     .InternalBlob,
                     .Used,
                     .Empty,
@@ -712,7 +712,7 @@ pub const Blob = struct {
 
             if (data.as(Request)) |request| {
                 switch (request.body.value) {
-                    .InlineBlob,
+                    // .InlineBlob,
                     .InternalBlob,
                     .Used,
                     .Empty,
@@ -3402,19 +3402,19 @@ pub const Blob = struct {
 
 pub const AnyBlob = union(enum) {
     Blob: Blob,
-    InlineBlob: InlineBlob,
+    // InlineBlob: InlineBlob,
     InternalBlob: InternalBlob,
 
     pub fn toJSON(this: *AnyBlob, global: *JSGlobalObject, comptime lifetime: JSC.WebCore.Lifetime) JSValue {
         switch (this.*) {
             .Blob => return this.Blob.toJSON(global, lifetime),
-            .InlineBlob => {
-                if (this.InlineBlob.len == 0) {
-                    return JSValue.jsNull();
-                }
-                var str = this.InlineBlob.toStringOwned(global);
-                return str.parseJSON(global);
-            },
+            // .InlineBlob => {
+            //     if (this.InlineBlob.len == 0) {
+            //         return JSValue.jsNull();
+            //     }
+            //     var str = this.InlineBlob.toStringOwned(global);
+            //     return str.parseJSON(global);
+            // },
             .InternalBlob => {
                 if (this.InternalBlob.bytes.items.len == 0) {
                     return JSValue.jsNull();
@@ -3435,14 +3435,14 @@ pub const AnyBlob = union(enum) {
     pub fn toString(this: *AnyBlob, global: *JSGlobalObject, comptime lifetime: JSC.WebCore.Lifetime) JSValue {
         switch (this.*) {
             .Blob => return this.Blob.toString(global, lifetime),
-            .InlineBlob => {
-                if (this.InlineBlob.len == 0) {
-                    return ZigString.Empty.toValue(global);
-                }
-                const owned = this.InlineBlob.toStringOwned(global);
-                this.* = .{ .InlineBlob = .{ .len = 0 } };
-                return owned;
-            },
+            // .InlineBlob => {
+            //     if (this.InlineBlob.len == 0) {
+            //         return ZigString.Empty.toValue(global);
+            //     }
+            //     const owned = this.InlineBlob.toStringOwned(global);
+            //     this.* = .{ .InlineBlob = .{ .len = 0 } };
+            //     return owned;
+            // },
             .InternalBlob => {
                 if (this.InternalBlob.bytes.items.len == 0) {
                     return ZigString.Empty.toValue(global);
@@ -3458,19 +3458,19 @@ pub const AnyBlob = union(enum) {
     pub fn toArrayBuffer(this: *AnyBlob, global: *JSGlobalObject, comptime lifetime: JSC.WebCore.Lifetime) JSValue {
         switch (this.*) {
             .Blob => return this.Blob.toArrayBuffer(global, lifetime),
-            .InlineBlob => {
-                if (this.InlineBlob.len == 0) {
-                    return JSC.ArrayBuffer.create(global, "", .ArrayBuffer);
-                }
-                var bytes = this.InlineBlob.sliceConst();
-                this.InlineBlob.len = 0;
-                const value = JSC.ArrayBuffer.create(
-                    global,
-                    bytes,
-                    .ArrayBuffer,
-                );
-                return value;
-            },
+            // .InlineBlob => {
+            //     if (this.InlineBlob.len == 0) {
+            //         return JSC.ArrayBuffer.create(global, "", .ArrayBuffer);
+            //     }
+            //     var bytes = this.InlineBlob.sliceConst();
+            //     this.InlineBlob.len = 0;
+            //     const value = JSC.ArrayBuffer.create(
+            //         global,
+            //         bytes,
+            //         .ArrayBuffer,
+            //     );
+            //     return value;
+            // },
             .InternalBlob => {
                 if (this.InternalBlob.bytes.items.len == 0) {
                     return JSC.ArrayBuffer.create(global, "", .ArrayBuffer);
@@ -3520,7 +3520,7 @@ pub const AnyBlob = union(enum) {
     pub fn contentType(self: *const @This()) []const u8 {
         return switch (self.*) {
             .Blob => self.Blob.content_type,
-            .InlineBlob => self.InlineBlob.contentType(),
+            // .InlineBlob => self.InlineBlob.contentType(),
             .InternalBlob => self.InternalBlob.contentType(),
         };
     }
@@ -3528,7 +3528,7 @@ pub const AnyBlob = union(enum) {
     pub fn wasString(self: *const @This()) bool {
         return switch (self.*) {
             .Blob => self.Blob.is_all_ascii orelse false,
-            .InlineBlob => self.InlineBlob.was_string,
+            // .InlineBlob => self.InlineBlob.was_string,
             .InternalBlob => self.InternalBlob.was_string,
         };
     }
@@ -3536,7 +3536,7 @@ pub const AnyBlob = union(enum) {
     pub inline fn slice(self: *const @This()) []const u8 {
         return switch (self.*) {
             .Blob => self.Blob.sharedView(),
-            .InlineBlob => self.InlineBlob.sliceConst(),
+            // .InlineBlob => self.InlineBlob.sliceConst(),
             .InternalBlob => self.InternalBlob.sliceConst(),
         };
     }
@@ -3544,7 +3544,7 @@ pub const AnyBlob = union(enum) {
     pub fn needsToReadFile(self: *const @This()) bool {
         return switch (self.*) {
             .Blob => self.Blob.needsToReadFile(),
-            .InlineBlob => false,
+            // .InlineBlob => false,
             .InternalBlob => false,
         };
     }
@@ -3557,9 +3557,9 @@ pub const AnyBlob = union(enum) {
                     .Blob = .{},
                 };
             },
-            .InlineBlob => {
-                self.InlineBlob.len = 0;
-            },
+            // .InlineBlob => {
+            //     self.InlineBlob.len = 0;
+            // },
             .InternalBlob => {
                 self.InternalBlob.bytes.clearAndFree();
                 self.* = .{

@@ -3453,11 +3453,11 @@ pub const NodeFS = struct {
         var written: usize = 0;
 
         // Attempt to pre-allocate large files
-        if (comptime Environment.isMac or Environment.isLinux) {
+        if (Environment.isLinux) {
             preallocate: {
                 // Worthwhile after 6 MB at least on ext4 linux
-                if (buf.len >= 2_000_000) {
-                    const offset: usize = if (Environment.isMac or args.file == .path)
+                if (buf.len >= bun.C.preallocate_length) {
+                    const offset: usize = if (args.file == .path)
                         // on mac, it's relatively positioned
                         0
                     else brk: {

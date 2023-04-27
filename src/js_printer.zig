@@ -5989,9 +5989,8 @@ pub fn printCommonJSThreaded(
         defer lock.unlock();
         lock.lock();
         result.off = @truncate(u32, try getPos(getter));
-        if (comptime Environment.isMac or Environment.isLinux) {
-            // Don't bother preallocate the file if it's less than 1 KB. Preallocating is potentially two syscalls
-            if (printer.writer.written > 1024) {
+        if (comptime Environment.isLinux) {
+            if (printer.writer.written > C.preallocate_length) {
                 // on mac, it's relative to current position in file handle
                 // on linux, it's absolute
                 try C.preallocate_file(

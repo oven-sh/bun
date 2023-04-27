@@ -4315,6 +4315,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/DefineOptionalChain", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         log([

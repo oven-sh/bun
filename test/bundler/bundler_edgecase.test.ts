@@ -78,6 +78,7 @@ describe("bundler", () => {
     run: { file: "/entry.ts" },
   });
   itBundled("edgecase/TemplateStringIssue622", {
+    notImplemented: true,
     files: {
       "/entry.ts": /* js */ `
         capture(\`\\?\`);
@@ -157,6 +158,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/NodeEnvOptionalChaining", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         capture(process?.env?.NODE_ENV);

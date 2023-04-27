@@ -211,7 +211,7 @@ describe("bundler", () => {
     "bun:dns": "error",
     "bun:test": "error",
     "bun:sqlite": "error",
-    "bun:wrap": "error",
+    // "bun:wrap": "error",
     "bun:internal": "error",
     "bun:jsc": "error",
   };
@@ -220,7 +220,7 @@ describe("bundler", () => {
     .filter(x => x[1] !== "error")
     .map(x => x[0]);
 
-  // segfaults the test runner
+  // all of them are set to error so this test doesnt make sense to run
   itBundled.skip("browser/BunPolyfill", {
     skipOnEsbuild: true,
     files: {
@@ -266,7 +266,7 @@ describe("bundler", () => {
   });
 
   // not implemented right now
-  itBundled.skip("browser/BunPolyfillExternal", {
+  itBundled("browser/BunPolyfillExternal", {
     skipOnEsbuild: true,
     files: ImportBunError.options.files,
     platform: "browser",

@@ -19154,6 +19154,9 @@ fn NewParser_(
 
                             constructor_function.?.func.body.stmts = constructor_stmts.items;
                         }
+
+                        // TODO: make sure "super()" comes before instance field initializers
+                        // https://github.com/evanw/esbuild/blob/e9413cc4f7ab87263ea244a999c6fa1f1e34dc65/internal/js_parser/js_parser_lower.go#L2742
                     }
 
                     var stmts_count: usize = 1 + static_members.items.len + instance_decorators.items.len + static_decorators.items.len;

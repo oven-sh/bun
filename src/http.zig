@@ -2243,6 +2243,8 @@ pub const RequestContext = struct {
         const send_body = ctx.method.hasBody();
 
         switch (result.file.value) {
+            .saved => {},
+
             .pending => |resolve_result| {
                 const path = resolve_result.pathConst() orelse {
                     try ctx.sendNoContent();

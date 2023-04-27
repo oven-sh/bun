@@ -2014,14 +2014,42 @@ pub const OutputFile = struct {
             allocator: std.mem.Allocator,
             bytes: []const u8,
         },
-
+        saved: SavedFile,
         move: FileOperation,
         copy: FileOperation,
         noop: u0,
         pending: resolver.Result,
     };
 
-    pub const Kind = enum { move, copy, noop, buffer, pending };
+    pub const SavedFile = struct {
+        pub fn toJS(
+            globalThis: *JSC.JSGlobalObject,
+            path: []const u8,
+            byte_size: usize,
+        ) JSC.JSValue {
+            const mime_type = globalThis.bunVM().mimeType(path);
+            const store = JSC.WebCore.Blob.Store.initFile(
+                JSC.Node.PathOrFileDescriptor{
+                    .path = JSC.Node.PathLike{
+                        .string = JSC.PathString.init(path),
+                    },
+                },
+                mime_type,
+                bun.default_allocator,
+            ) catch unreachable;
+
+            var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
+            blob.* = JSC.WebCore.Blob.initWithStore(store, globalThis);
+            if (mime_type) |mime| {
+                blob.content_type = mime.value;
+            }
+            blob.size = @truncate(JSC.WebCore.Blob.SizeType, byte_size);
+            blob.allocator = bun.default_allocator;
+            return blob.toJS(globalThis);
+        }
+    };
+
+    pub const Kind = enum { move, copy, noop, buffer, pending, saved };
 
     pub fn initPending(loader: Loader, pending: resolver.Result) OutputFile {
         return .{
@@ -2099,6 +2127,7 @@ pub const OutputFile = struct {
             .noop => JSC.JSValue.undefined,
             .move => this.value.move.toJS(globalObject, this.loader),
             .copy => this.value.copy.toJS(globalObject, this.loader),
+            .saved => SavedFile.toJS(globalObject, this.input.text, this.size),
             .buffer => |buffer| brk: {
                 var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
                 blob.* = JSC.WebCore.Blob.init(@constCast(buffer.bytes), buffer.allocator, globalObject);

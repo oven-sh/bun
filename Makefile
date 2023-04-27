@@ -1320,9 +1320,9 @@ mimalloc-debug:
 			-DMI_OVERRIDE=OFF \
 			-DCMAKE_C_FLAGS="$(CFLAGS)" \
 			-DCMAKE_CXX_FLAGS="$(CFLAGS)" \
-			-GNinja
+			-GNinja \
 			. \
-			&& ninja;
+			&& ninja
 	cp $(BUN_DEPS_DIR)/mimalloc/$(_MIMALLOC_DEBUG_FILE) $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE)
 
 
@@ -1345,7 +1345,7 @@ mimalloc:
 			-DMI_OSX_ZONE=OFF \
 			-DCMAKE_C_FLAGS="$(CFLAGS)" \
 			-GNinja \
-			 .\
+			 . \
 			&& ninja;
 	cp $(BUN_DEPS_DIR)/mimalloc/$(MIMALLOC_INPUT_PATH) $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE)
 

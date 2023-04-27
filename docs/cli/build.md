@@ -238,7 +238,7 @@ The behavior described in this table can be overridden with [plugins](/docs/bund
 
 ### `entrypoints`
 
-**Required** An array of paths corresponding to the entrypoints of our application. One bundle will be generated for each entrypoint.
+**Required.** An array of paths corresponding to the entrypoints of our application. One bundle will be generated for each entrypoint.
 
 ### `outdir`
 
@@ -941,20 +941,29 @@ Bun.build({
   entrypoints: string[]; // list of file path
   outdir: string; // output directory
   target?: "browser" | "bun" | "node"; // default: "browser"
-  module?: "esm"; // later: "cjs", "iife"
-  naming?: string, // default '[dir]/[name].[ext]'
-  root?: string; // project root
-  transform?: boolean, // default: false, transform instead of bundling
+  bundling?: boolean, // default: false, transform instead of bundling
   splitting?: boolean, // default true, enable code splitting
   plugins?: BunPlugin[];
   manifest?: boolean; // whether to return manifest
   external?: Array<string | RegExp>;
+  naming?: string | {
+    entrypoint?: string;
+    chunk?: string;
+    asset?: string;
+  }, // default './[dir]/[name].[ext]'
+  root?: string; // project root
   origin?: string; // e.g. http://mydomain.com
-  loader?: { [k in string]: Loader };
-  sourcemap?: "none" | "inline" | "external"; // default: "none"
   minify?: boolean | {
-    identifiers
+    identifiers?: boolean;
+    whitespace?: boolean;
+    syntax?: boolean;
   };
-  treeshaking?: boolean;
 });
 ```
+
+<!--
+module?: "esm"; // later: "cjs", "iife"
+loader?: { [k in string]: Loader };
+sourcemap?: "none" | "inline" | "external"; // default: "none"
+treeshaking?: boolean;
+-->

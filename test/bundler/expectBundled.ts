@@ -95,6 +95,7 @@ export interface BundlerTestInput {
     fragment?: string;
     automaticRuntime?: boolean;
     development?: boolean;
+    preserve?: boolean;
   };
   outbase?: string;
   /** Defaults to `/out.js` */
@@ -475,6 +476,7 @@ function expectBundled(
               minifyWhitespace && `--minify-whitespace`,
               globalName && `--global-name=${globalName}`,
               // inject && inject.map(x => ["--inject", path.join(root, x)]),
+              jsx.preserve && "--jsx=preserve",
               jsx.automaticRuntime === false && "--jsx=classic",
               jsx.factory && `--jsx-factory=${jsx.factory}`,
               jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
@@ -508,6 +510,7 @@ function expectBundled(
               inject && inject.map(x => `--inject:${path.join(root, x)}`),
               define && Object.entries(define).map(([k, v]) => `--define:${k}=${v}`),
               jsx.automaticRuntime && "--jsx=automatic",
+              jsx.preserve && "--jsx=preserve",
               jsx.factory && `--jsx-factory=${jsx.factory}`,
               jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
               jsx.development && `--jsx-dev`,

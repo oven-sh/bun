@@ -217,4 +217,15 @@ describe("bundler", () => {
       `,
     },
   });
+  itBundled("edgecase/ImportTrailingSlash", {
+    files: {
+      "/entry.js": /* js */ `
+        import "slash/"
+      `,
+      "/node_modules/slash/index.js": /* js */ `console.log(1)`,
+    },
+    run: {
+      stdout: "1",
+    },
+  });
 });

@@ -1470,7 +1470,6 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/ThisInsideFunctionTSNoBundleUseDefineForClassFields", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         function foo(x = this) { return [x, this]; }

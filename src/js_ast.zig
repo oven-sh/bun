@@ -2511,6 +2511,10 @@ pub const Stmt = struct {
         return @as(Stmt.Tag, self.data) == .s_type_script;
     }
 
+    pub fn isSuperCall(self: Stmt) bool {
+        return self.data == .s_expr and self.data.s_expr.value.data == .e_call and self.data.s_expr.value.data.e_call.target.data == .e_super;
+    }
+
     pub fn empty() Stmt {
         return Stmt{ .data = .{ .s_empty = None }, .loc = logger.Loc{} };
     }

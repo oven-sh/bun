@@ -1771,7 +1771,6 @@ pub const Expect = struct {
         return .zero;
     }
 
-    // red implementation
     pub fn toBeEven(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         defer this.postMatch(globalObject);
 
@@ -1792,6 +1791,29 @@ pub const Expect = struct {
 
         const not = this.op.contains(.not);
         var pass = false;
+
+        if (value.isAnyInt()) {
+            const _value = value.toInt64();
+            pass = @mod(_value, 2) == 0;
+            if (_value == -0) { // negative zero is even
+                pass = true;
+            }
+        } else if (value.isBigInt() or value.isBigInt32()) {
+            const _value = value.toInt64();
+            pass = switch (_value == -0) { // negative zero is even
+                true => true,
+                else => _value & 1 == 0,
+            };
+        } else if (value.isNumber()) {
+            const _value = JSValue.asNumber(value);
+            if (@mod(_value, 1) == 0 and @mod(_value, 2) == 0) { // if the fraction is all zeros and even
+                pass = true;
+            } else {
+                pass = false;
+            }
+        } else {
+            pass = false;
+        }
 
         if (not) pass = !pass;
         if (pass) return thisValue;
@@ -2145,7 +2167,6 @@ pub const Expect = struct {
         return .zero;
     }
 
-    // red implementation
     pub fn toBeOdd(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         defer this.postMatch(globalObject);
 
@@ -2166,6 +2187,27 @@ pub const Expect = struct {
 
         const not = this.op.contains(.not);
         var pass = false;
+
+        if (value.isBigInt32()) {
+            pass = value.toInt32() & 1 == 1;
+        } else if (value.isBigInt()) {
+            pass = value.toInt64() & 1 == 1;
+        } else if (value.isInt32()) {
+            const _value = value.toInt32();
+            pass = @mod(_value, 2) == 1;
+        } else if (value.isAnyInt()) {
+            const _value = value.toInt64();
+            pass = @mod(_value, 2) == 1;
+        } else if (value.isNumber()) {
+            const _value = JSValue.asNumber(value);
+            if (@mod(_value, 1) == 0 and @mod(_value, 2) == 1) { // if the fraction is all zeros and odd
+                pass = true;
+            } else {
+                pass = false;
+            }
+        } else {
+            pass = false;
+        }
 
         if (not) pass = !pass;
         if (pass) return thisValue;

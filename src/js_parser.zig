@@ -2986,6 +2986,8 @@ pub const Parser = struct {
                         // Move class export statements to the top of the file if we can
                         // This automatically resolves some cyclical import issues
                         // https://github.com/kysely-org/kysely/issues/412
+                        // TODO: this breaks code if they have any static variables or properties which reference anything from the parent scope
+                        // we need to fix it before we merge v0.6.0
                         var list = if (!p.options.bundle and class.is_export and class.class.extends == null) &before else &parts;
                         var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
                         sliced.items.len = 1;

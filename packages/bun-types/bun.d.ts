@@ -966,23 +966,23 @@ declare module "bun" {
 
   interface BuildConfig {
     entrypoints: string[]; // list of file path
-    target?: Target; // default: "browser"
-    // module?: ModuleFormat; // later: "cjs", "iife"
     outdir?: string; // output directory
+    target?: Target; // default: "browser"
+    // format?: ModuleFormat; // later: "cjs", "iife"
 
-    naming?: {
-      chunk?: string;
-      entrypoint?: string;
-      asset?: string;
-    }; // | string;
+    naming?:
+      | string
+      | {
+          chunk?: string;
+          entrypoint?: string;
+          asset?: string;
+        }; // | string;
     // root?: string; // project root
-    // transform?: boolean; // default: false, transform instead of bundling
     splitting?: boolean; // default true, enable code splitting
-    bundling?: boolean; // default true, enable bundling
     plugins?: BunPlugin[];
     // manifest?: boolean; // whether to return manifest
     external?: Array<string>;
-    publicPath: string;
+    publicPath?: string;
     // origin?: string; // e.g. http://mydomain.com
     // loaders?: { [k in string]: Loader };
     // sourcemap?: "none" | "inline" | "external"; // default: "none"

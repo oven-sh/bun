@@ -1,5 +1,5 @@
 {% callout %}
-**Note** — Added in Bun v0.6.0
+**Note** — Available in the Bun v0.6.0 nightly. Run `bun upgrade --canary` to try it out.
 {% /callout %}
 
 Bun's fast native bundler is now in beta. It can be used via the `bun build` CLI command or the `Bun.build()` JavaScript API.
@@ -58,7 +58,7 @@ To create our bundle:
 {% codetabs %}
 
 ```ts#JavaScript
-Bun.build({
+await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
 })
@@ -70,12 +70,7 @@ $ bun build ./index.tsx --outdir ./out
 
 {% /codetabs %}
 
-Let's break that down.
-
-- `entrypoints` — **Required.** An array of paths corresponding to the entrypoints of our application. In this case, we just have one.
-- `outdir` — **Required.** The directory where output files will be written.
-
-Running this build will generate a new file `./out/index.js`.
+For each file specified in `entrypoints`, Bun will generate a new bundle. This bundle will be written to disk in the `./out` directory (as resolved from the current working directory). After running the build, the file system looks like this:
 
 ```ts
 .
@@ -85,18 +80,18 @@ Running this build will generate a new file `./out/index.js`.
     └── index.js
 ```
 
-It looks something like this:
+The contents of the `out/index.js` file looks something like this:
 
 ```js#out/index.js
 // ...
 // ~20k lines of code
 // including the contents of `react-dom/client` and all its dependencies
-// this is where the $jsx and $createRoot functions are defined
+// this is where the $jsxDEV and $createRoot functions are defined
 
 
 // Component.tsx
 function Component(props) {
-  return $jsx("p", {
+  return $jsxDEV("p", {
     children: props.message
   }, undefined, false, undefined, this);
 }
@@ -104,7 +99,7 @@ function Component(props) {
 // index.tsx
 var rootNode = document.getElementById("root");
 var root = $createRoot(rootNode);
-root.render($jsx(Component, {
+root.render($jsxDEV(Component, {
   message: "Sup!"
 }, undefined, false, undefined, this));
 ```
@@ -184,15 +179,14 @@ Like the Bun runtime, the bundler supports an array of file types out of the box
 ---
 
 - `.*`
-- If the bundler encounters a file with an unsupported extension, it treats it as an _external file_. That means the import is converted into a path, and the referenced file is copied into the `outdir` as-is.
+- If the bundler encounters a file with an unsupported extension, it treats it as an _external file_. The referenced file is copied as-is into `outdir`, and the import is resolved as a _path_ to the file.
 
   {% codetabs %}
 
   ```ts#Build_file
-  Bun.build({
+  await Bun.build({
     entrypoints: ['./index.ts'],
-    outdir: './out',
-    origin: 'https://example.com',
+    outdir: './out'
   })
   ```
 
@@ -208,27 +202,11 @@ Like the Bun runtime, the bundler supports an array of file types out of the box
 
   {% /codetabs %}
 
-  By default, a hash is added to the file name to avoid collisions; this behavior can be overridden with the [`naming.asset`](#naming) option.
+  {% callout %}
+  The exact behavior of the file loader is also impacted by [`naming`](#naming) and [`publicPath`](#publicpath).
+  {% /callout %}
 
-  If a value is provided for `origin`, the bundler will construct an absolute URL instead of using a relative path.
-
-  {% codetabs %}
-
-  ```ts-diff#Build_file
-    Bun.build({
-      entrypoints: ['./index.ts'],
-      outdir: './out',
-  +   origin: 'https://example.com',
-    })
-  ```
-
-  ```ts-diff#Output
-  - var logo = "./logo-ab237dfe.svg";
-  + var logo = "https://example.com/logo-ab237dfe.svg";
-    console.log(logo);
-  ```
-
-  {% /codetabs %}
+  Refer to the [Bundler > Loaders](/docs/bundler/loaders#file) page for more complete documentation on the file loader.
 
 {% /table %}
 
@@ -240,9 +218,65 @@ The behavior described in this table can be overridden with [plugins](/docs/bund
 
 **Required.** An array of paths corresponding to the entrypoints of our application. One bundle will be generated for each entrypoint.
 
+{% codetabs %}
+
+```ts#JavaScript
+const result = await Bun.build({
+  entrypoints: ['./index.ts']
+}); // => Promise
+
+await result;
+// => { outputs: Array<{ path: string; result: Blob }> }
+```
+
+```bash#CLI
+$ bunx build --entrypoints ./index.ts
+# the bundle will be printed to stdout
+# <bundled code>
+```
+
+{% /codetabs %}
+
 ### `outdir`
 
-**Required.** The directory where output files will be written.
+The directory where output files will be written.
+
+{% codetabs %}
+
+```ts#JavaScript
+const result = await Bun.build({
+  entrypoints: ['./index.ts'],
+  outdir: './out'
+});
+
+result;
+// => { outputs: Array<{ path: string; result: BunFile }> }
+```
+
+```bash#CLI
+$ bunx build --entrypoints ./index.ts --outdir ./out
+# the bundle will be printed to stdout
+# ...
+```
+
+{% /codetabs %}
+
+When specified:
+
+- The JavaScript API will write the generated bundles to the appropriate location in `outdir`. The result of the `Bun.build` call will contain `BunFile` instances corresponding to the new files.
+
+  ```ts
+  const result = await Bun.build({
+    /* ... */
+  });
+  // => { outputs: Array<{ path: string; result: BunFile }> }
+
+  for (const { path, result } of result.outputs) {
+    console.log(`Wrote file: ${path}`);
+  }
+  ```
+
+- The CLI will print a summary of the written files. The bundled code will not be written to `stdout`.
 
 ### `target`
 
@@ -251,7 +285,7 @@ The intended execution environment for the bundle.
 {% codetabs %}
 
 ```ts#JavaScript
-Bun.build({
+await Bun.build({
   entrypoints: ['./index.ts'],
   outdir: './out',
   target: 'browser', // default
@@ -298,27 +332,27 @@ Currently the bundler only supports one module format: `"esm"`. Support for `"cj
 {% codetabs %}
 
 ```ts#Bun.build
-Bun.build({
+await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
-  module: "esm",
+  format: "esm",
 })
 ```
 
 ```bash#CLI
-$ bun build ./index.tsx --outdir ./out --module esm
+$ bun build ./index.tsx --outdir ./out --format esm
 ```
 
 {% /codetabs %} -->
 
-### `bundling`
+<!-- ### `bundling`
 
 Whether to enable bundling.
 
 {% codetabs %}
 
 ```ts#JavaScript
-Bun.build({
+await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
   bundling: true, // default
@@ -337,7 +371,7 @@ Set to `false` to disable bundling. Instead, files will be transpiled and indivi
 {% codetabs %}
 
 ```ts#JavaScript
-Bun.build({
+await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
   bundling: false,
@@ -348,7 +382,7 @@ Bun.build({
 $ bun build ./index.tsx --outdir ./out --no-bundling
 ```
 
-{% /codetabs %}
+{% /codetabs %} -->
 
 ### `splitting`
 
@@ -357,7 +391,7 @@ Whether to enable code splitting.
 {% codetabs %}
 
 ```ts#JavaScript
-Bun.build({
+await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
   splitting: false, // default
@@ -393,7 +427,7 @@ To bundle `entry-a.ts` and `entry-b.ts` with code-splitting enabled:
 {% codetabs %}
 
 ```ts#JavaScript
-Bun.build({
+await Bun.build({
   entrypoints: ['./entry-a.ts', './entry-b.ts'],
   outdir: './out',
   splitting: true,
@@ -429,7 +463,7 @@ A list of plugins to use during bundling.
 {% codetabs %}
 
 ```ts#JavaScript
-Bun.build({
+await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
   plugins: [/* ... */],
@@ -510,7 +544,7 @@ Specifies the type of sourcemap to generate.
 {% codetabs %}
 
 ```ts#JavaScript
-Bun.build({
+await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
   sourcemap: "inline", // default "none"
@@ -544,12 +578,18 @@ $ bun build ./index.tsx --outdir ./out --sourcemap=inline
 
 ### `minify`
 
-Whether to enable minification. Default `false`. To enable minification:
+Whether to enable minification. Default `false`.
+
+{% callout %}
+When targeting `bun`, identifiers will be minified by default.
+{% /callout %}
+
+To enable all minification options:
 
 {% codetabs %}
 
 ```ts#JavaScript
-Bun.build({
+await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
   minify: true, // default false
@@ -562,12 +602,12 @@ $ bun build ./index.tsx --outdir ./out --minify
 
 {% /codetabs %}
 
-This will enable all minification options. To granularly enable certain minifications:
+To granularly enable certain minifications:
 
 {% codetabs %}
 
 ```ts#JavaScript
-Bun.build({
+await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
   minify: {
@@ -595,7 +635,7 @@ A list of import paths to consider _external_. Defaults to `[]`.
 {% codetabs %}
 
 ```ts#JavaScript
-Bun.build({
+await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
   external: ["lodash", "react"], // default: []
@@ -618,7 +658,6 @@ import {z} from "zod";
 
 const value = z.string().parse("Hello world!")
 console.log(_.upperCase(value));
-
 ```
 
 Normally, bundling `index.tsx` would generate a bundle containing the entire source code of the `"zod"` package. If instead, we want to leave the `import` statement as-is, we can mark it as external:
@@ -626,7 +665,7 @@ Normally, bundling `index.tsx` would generate a bundle containing the entire sou
 {% codetabs %}
 
 ```ts#JavaScript
-Bun.build({
+await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
   external: ['zod'],
@@ -659,10 +698,10 @@ Customizes the generated file names. Defaults to `./[dir]/[name].[ext]`.
 {% codetabs %}
 
 ```ts#JavaScript
-Bun.build({
+await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
-  naming: "[dir]/[name].[ext]", // default
+  naming: "./[dir]/[name].[ext]", // default
 })
 ```
 
@@ -694,12 +733,12 @@ With multiple entrypoints, the generated file hierarchy will reflect the directo
         └── index.js
 ```
 
-The names of these files can be customized with the `naming` field. This field accepts a template string that is used to generate the filenames for all bundles corresponding to entrypoints. where the following tokens are replaced with their corresponding values:
+The names and locations of the generated files can be customized with the `naming` field. This field accepts a template string that is used to generate the filenames for all bundles corresponding to entrypoints. where the following tokens are replaced with their corresponding values:
 
-- `[name]` - The name of the entrypoint file, without the extension, e.g. `index`
-- `[ext]` - The extension of the generated bundle, e.g. `js`
-- `[hash]` - A hash of the bundle contents, e.g. `a1b2c3d4`
-- `[dir]` - The relative path from the build [`root`](#root) to the parent directory of the file, e.g. `nested`
+- `[name]` - The name of the entrypoint file, without the extension.
+- `[ext]` - The extension of the generated bundle.
+- `[hash]` - A hash of the bundle contents.
+- `[dir]` - The relative path from the build root to the parent directory of the file.
 
 For example:
 
@@ -734,7 +773,7 @@ We can combine these tokens to create a template string. For instance, to includ
 {% codetabs %}
 
 ```ts#JavaScript
-Bun.build({
+await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
   naming: '[dir]/[name]-[hash].[ext]',
@@ -761,7 +800,7 @@ When a `string` is provided for the `naming` field, it is used only for bundles 
 {% codetabs %}
 
 ```ts#JavaScript
-Bun.build({
+await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
   naming: {
@@ -778,14 +817,14 @@ n/a
 
 {% /codetabs %}
 
-### `root`
+<!-- ### `root`
 
 The root directory of the project.
 
 {% codetabs %}
 
 ```ts#JavaScript
-Bun.build({
+await Bun.build({
   entrypoints: ['./pages/a.tsx', './pages/b.tsx'],
   outdir: './out',
   root: '.',
@@ -812,7 +851,7 @@ We can build both entrypoints in the `pages` directory:
 {% codetabs %}
 
 ```ts#JavaScript
-Bun.build({
+await Bun.build({
   entrypoints: ['./pages/index.tsx', './pages/settings.tsx'],
   outdir: './out',
 })
@@ -843,7 +882,7 @@ This behavior can be overridden by specifying the `root` option:
 {% codetabs %}
 
 ```ts#JavaScript
-Bun.build({
+await Bun.build({
   entrypoints: ['./pages/index.tsx', './pages/settings.tsx'],
   outdir: './out',
   root: '.',
@@ -867,92 +906,80 @@ By specifying `.` as `root`, the generated file structure will look like this:
   └── pages
     └── index.js
     └── settings.js
-```
+``` -->
 
-### `origin`
+### `publicPath`
 
-Used to generate absolute asset URLs.
+A prefix to be appended to any import paths in bundled code.
+
+<!-- $ bun build ./index.tsx --outdir ./out --publicPath https://cdn.example.com -->
+
+In many cases, generated bundles will contain no `import` statements. After all, the goal of bundling is to combine all of the code into a single file. However there are a number of cases with the generated bundles will contain `import` statements.
+
+- **Asset imports** — When importing an unrecognized file type like `*.svg`, the bundler defers to the [`file` loader](/docs/bundler/loaders#file), which copies the file into `outdir` as is. The import is converted into a variable
+- **External modules** — Files and modules can be marked as [`external`](#external), in which case they will not be included in the bundle. Instead, the `import` statement will be left in the final bundle.
+- **Chunking**. When [`splitting`](#splitting) is enabled, the bundler may generate separate "chunk" files that represent code that is shared among multiple entrypoints.
+
+In any of these cases, the final bundles may contain paths to other files. By default these imports are _relative_. Here is an example of a simple asset import:
 
 {% codetabs %}
 
-```ts#JavaScript
-Bun.build({
-  entrypoints: ['./index.tsx'],
-  outdir: './out',
-  origin: 'https://cdn.example.com', // default is undefined
-})
+```ts#Input
+import logo from './logo.svg';
+console.log(logo);
 ```
 
-```bash#CLI
-$ bun build ./index.tsx --outdir ./out --origin https://cdn.example.com
+```ts#Output
+// logo.svg is copied into <outdir>
+// and hash is added to the filename to prevent collisions
+var logo = './logo-a7305bdef.svg';
+console.log(logo);
 ```
 
 {% /codetabs %}
 
-When the bundler encounters an unknown file type, it defaults to using the `"file"` loader. This converts the import path to an absolute URL that can be referenced in the file. This is useful for referencing images, fonts, and other static assets.
-
-```tsx#Input
-import logo from "./images/logo.svg";
-
-export function Logo(){
-  return <img src={logo} />
-}
-```
-
-In the absence of a plugin that overrides `*.svg` loading, the `logo` import will be converted to a relative path:
-
-```ts
-var logo = "./logo.svg";
-
-console.log(logo);
-```
-
-This is fine for local development, but in production, we may want these imports to correspond to absolute URLs. To do this, we can specify the `origin` option:
+Setting `publicPath` will prefix all file paths with the specified value.
 
 {% codetabs %}
 
 ```ts#JavaScript
-Bun.build({
+await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
-  origin: 'https://cdn.mydomain.com',
+  publicPath: 'https://cdn.example.com/', // default is undefined
 })
 ```
 
 ```bash#CLI
-$ bun build ./index.tsx --outdir ./out --origin https://cdn.mydomain.com
+n/a
 ```
 
 {% /codetabs %}
 
-With `origin` set to this value, the generated bundle will now be something like this:
+The output file would now look something like this.
 
-```ts-diff
-- var logo = "./logo.svg";
-+ var logo = "https://cdn.mydomain.com/logo.svg";
-
-console.log(logo);
+```ts-diff#Output
+- var logo = './logo-a7305bdef.svg';
++ var logo = 'https://cdn.example.com/logo-a7305bdef.svg';
 ```
 
 ## Reference
 
 ```ts
-Bun.build({
+await Bun.build({
   entrypoints: string[]; // list of file path
-  outdir: string; // output directory
+  outdir?: string; // output directory
   target?: "browser" | "bun" | "node"; // default: "browser"
-  bundling?: boolean, // default: false, transform instead of bundling
   splitting?: boolean, // default true, enable code splitting
   plugins?: BunPlugin[];
   manifest?: boolean; // whether to return manifest
-  external?: Array<string | RegExp>;
+  external?: Array<string>;
   naming?: string | {
     entrypoint?: string;
     chunk?: string;
     asset?: string;
   }, // default './[dir]/[name].[ext]'
-  root?: string; // project root
-  origin?: string; // e.g. http://mydomain.com
+  publicPath?: string; // e.g. http://mydomain.com/
   minify?: boolean | {
     identifiers?: boolean;
     whitespace?: boolean;
@@ -962,7 +989,8 @@ Bun.build({
 ```
 
 <!--
-module?: "esm"; // later: "cjs", "iife"
+root?: string; // project root
+format?: "esm"; // later: "cjs", "iife"
 loader?: { [k in string]: Loader };
 sourcemap?: "none" | "inline" | "external"; // default: "none"
 treeshaking?: boolean;

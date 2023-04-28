@@ -1027,42 +1027,6 @@ describe("bundler", () => {
       stdout: "./test.txt",
     },
   });
-  itBundled("default/RequireWithoutCallPlatformNeutral", {
-    notImplemented: true,
-    // `require` on line one has to be renamed to `__require`
-    files: {
-      "/entry.js": /* js */ `
-        const req = require
-        req('./entry')
-        capture(req)
-      `,
-    },
-    target: "neutral",
-    onAfterBundle(api) {
-      const varName = api.captureFile("/out.js")[0];
-      const assignmentValue = api.readFile("/out.js").match(new RegExp(`${varName} = (.*);`))![1];
-      expect(assignmentValue).not.toBe("require");
-    },
-  });
-  itBundled("default/NestedRequireWithoutCallPlatformNeutral", {
-    notImplemented: true,
-    // `require` on line one has to be renamed to `__require`
-    files: {
-      "/entry.js": /* js */ `
-        (() => {
-          const req = require
-          req('./entry')
-          capture(req)
-        })()
-      `,
-    },
-    target: "neutral",
-    onAfterBundle(api) {
-      const varName = api.captureFile("/out.js")[0];
-      const assignmentValue = api.readFile("/out.js").match(new RegExp(`${varName} = (.*);`))![1];
-      expect(assignmentValue).not.toBe("require");
-    },
-  });
   itBundled("default/RequireWithCallInsideTry", {
     files: {
       "/entry.js": /* js */ `
@@ -1096,27 +1060,6 @@ describe("bundler", () => {
       `,
     },
     run: [{ file: "/test1.js" }, { file: "/test2.js" }],
-  });
-  itBundled("default/RequireWithoutCallInsideTry", {
-    notImplemented: true,
-    // `require` has to be renamed to `__require`
-    files: {
-      "/entry.js": /* js */ `
-        try {
-          oldLocale = globalLocale._abbr;
-          var aliasedRequire = require;
-          aliasedRequire('./locale/' + name);
-          getSetGlobalLocale(oldLocale);
-          capture(aliasedRequire)
-        } catch (e) {}
-      `,
-    },
-    target: "neutral",
-    onAfterBundle(api) {
-      const varName = api.captureFile("/out.js")[0];
-      const assignmentValue = api.readFile("/out.js").match(new RegExp(`${varName} = (.*);`))![1];
-      expect(assignmentValue).not.toBe("require");
-    },
   });
   itBundled("default/RequirePropertyAccessCommonJS", {
     files: {

@@ -102,7 +102,7 @@ export interface BundlerTestInput {
   /** Defaults to `/out` */
   outdir?: string;
   /** Defaults to "browser". "bun" is set to "node" when using esbuild. */
-  target?: "bun" | "node" | "neutral" | "browser";
+  target?: "bun" | "node" | "browser";
   publicPath?: string;
   keepNames?: boolean;
   legalComments?: "none" | "inline" | "eof" | "linked" | "external";
@@ -333,9 +333,6 @@ function expectBundled(
 
   if (!ESBUILD && format !== "esm") {
     throw new Error("formats besides esm not implemented in bun build");
-  }
-  if (!ESBUILD && target === "neutral") {
-    throw new Error("target=neutral not implemented in bun build");
   }
   if (!ESBUILD && metafile) {
     throw new Error("metafile not implemented in bun build");
@@ -771,7 +768,7 @@ function expectBundled(
           outdir: buildOutDir,
           sourcemap: sourceMap === true ? "external" : sourceMap || "none",
           splitting,
-          target: target === "neutral" ? "browser" : target,
+          target,
           publicPath,
         } as BuildConfig;
 
@@ -801,13 +798,11 @@ for (const blob of build.outputs) {
         const build = await Bun.build(buildConfig);
         Bun.gc(true);
 
+        console.log(build);
+
         if (build.logs) {
           console.log(build.logs);
           throw new Error("TODO: handle build logs, but we should make this api nicer");
-        }
-
-        for (const blob of build.outputs) {
-          await Bun.write(path.join(buildOutDir, blob.path), blob.result);
         }
       } else {
         await esbuild.build({

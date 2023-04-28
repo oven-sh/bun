@@ -184,7 +184,7 @@ If the bundler encounters an import with an unrecognized extension, it treats th
 
 {% codetabs %}
 
-```ts#Build_file
+```ts#Build file
 await Bun.build({
   entrypoints: ['./index.ts'],
   outdir: './out'
@@ -315,7 +315,7 @@ Depending on the target, Bun will apply different module resolution rules and op
 - `bun`
 - For generating bundles that are intended to be run by the Bun runtime. In many cases, it isn't necessary to bundle server-side code; you can directly execute the source code without modification. However, bundling your server code can reduce startup times and improve running performance.
 
-  All bundles generated with `target: "bun"` are marked with a special `// @bun` pragma, which indicates to the Bun runtime that there's no need to re-transpile the file before execution. This
+  All bundles generated with `target: "bun"` are marked with a special `// @bun` pragma, which indicates to the Bun runtime that there's no need to re-transpile the file before execution.
 
 ---
 
@@ -493,7 +493,6 @@ const result = await Bun.build({
 console.log(result.manifest);
 ```
 
-The manifest takes the following form:
 {% details summary="Manifest structure" %}
 
 The manifest has the following form:
@@ -571,7 +570,7 @@ $ bun build ./index.tsx --outdir ./out --sourcemap=inline
 ---
 
 - `"inline"`
-- A sourcemap is generated and appended to the end of the generated bundle as a base64 payload inside a `//# sourceMappingURL= ` comment.
+- A sourcemap is generated and appended to the end of the generated bundle as a base64 payload inside a `//# sourceMappingURL=` comment.
 
 ---
 
@@ -809,9 +808,10 @@ await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
   naming: {
-    entrypoint: '[dir]/[name]-[hash].[ext]',
-    chunk: '[dir]/[name]-[hash].[ext]',
-    asset: '[dir]/[name]-[hash].[ext]',
+    // default values
+    entrypoint: '[dir]/[name].[ext]',
+    chunk: '[name]-[hash].[ext]',
+    asset: '[name]-[hash].[ext]',
   },
 })
 ```
@@ -973,19 +973,19 @@ The output file would now look something like this.
 ```ts
 await Bun.build({
   entrypoints: string[]; // list of file path
-  outdir?: string; // output directory
+  outdir?: string; // default to in-memory build
   target?: "browser" | "bun" | "node"; // default: "browser"
-  splitting?: boolean, // default true, enable code splitting
+  splitting?: boolean; // default true
   plugins?: BunPlugin[];
-  manifest?: boolean; // whether to return manifest
-  external?: Array<string>;
+  manifest?: boolean; // default false
+  external?: string[];
   naming?: string | {
-    entrypoint?: string;
-    chunk?: string;
-    asset?: string;
-  }, // default './[dir]/[name].[ext]'
+    entrypoint?: string; // default '[dir]/[name].[ext]'
+    chunk?: string; // default '[name]-[hash].[ext]'
+    asset?: string; // default '[name]-[hash].[ext]'
+  };
   publicPath?: string; // e.g. http://mydomain.com/
-  minify?: boolean | {
+  minify?: boolean | { // default false
     identifiers?: boolean;
     whitespace?: boolean;
     syntax?: boolean;

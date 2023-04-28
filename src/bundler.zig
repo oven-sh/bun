@@ -1009,7 +1009,7 @@ pub const Bundler = struct {
                     );
 
                 output_file.size = switch (bundler.options.target) {
-                    .neutral, .browser, .node => try bundler.print(
+                    .browser, .node => try bundler.print(
                         result,
                         js_printer.FileWriter,
                         js_printer.NewFileWriter(file),

@@ -378,7 +378,6 @@ pub const ModuleType = enum {
 };
 
 pub const Target = enum {
-    neutral,
     browser,
     bun,
     bun_macro,
@@ -387,10 +386,6 @@ pub const Target = enum {
     pub const Map = ComptimeStringMap(
         Target,
         .{
-            .{
-                "neutral",
-                Target.neutral,
-            },
             .{
                 "browser",
                 Target.browser,
@@ -428,9 +423,8 @@ pub const Target = enum {
             Eight.case("bun") => Target.bun,
             Eight.case("macro") => Target.bun_macro,
             Eight.case("node") => Target.node,
-            Eight.case("neutral") => Target.neutral,
             else => {
-                JSC.throwInvalidArguments("target must be one of: deno, browser, bun, macro, node, neutral", .{}, global, exception);
+                JSC.throwInvalidArguments("target must be one of: deno, browser, bun, macro, node", .{}, global, exception);
 
                 return null;
             },
@@ -477,7 +471,7 @@ pub const Target = enum {
 
     pub inline fn supportsBrowserField(this: Target) bool {
         return switch (this) {
-            .neutral, .browser => true,
+            .browser => true,
             else => false,
         };
     }
@@ -495,7 +489,7 @@ pub const Target = enum {
 
     pub inline fn isWebLike(target: Target) bool {
         return switch (target) {
-            .neutral, .browser => true,
+            .browser => true,
             else => false,
         };
     }
@@ -592,8 +586,7 @@ pub const Target = enum {
         // The neutral target is for people that don't want esbuild to try to
         // pick good defaults for their platform. In that case, the list of main
         // fields is empty by default. You must explicitly configure it yourself.
-
-        array.set(Target.neutral, &listc);
+        // array.set(Target.neutral, &listc);
 
         break :brk array;
     };
@@ -639,8 +632,7 @@ pub const Target = enum {
         // The neutral target is for people that don't want esbuild to try to
         // pick good defaults for their platform. In that case, the list of main
         // fields is empty by default. You must explicitly configure it yourself.
-
-        array.set(Target.neutral, &listc);
+        // array.set(Target.neutral, &listc);
 
         break :brk array;
     };
@@ -1446,7 +1438,7 @@ pub const BundleOptions = struct {
 
     pub inline fn cssImportBehavior(this: *const BundleOptions) Api.CssInJsBehavior {
         switch (this.target) {
-            .neutral, .browser => {
+            .browser => {
                 if (this.framework) |framework| {
                     return framework.client_css_in_js;
                 }
@@ -2390,7 +2382,7 @@ pub const Framework = struct {
 
     pub fn platformEntryPoint(this: *const Framework, target: Target) ?*const EntryPoint {
         const entry: *const EntryPoint = switch (target) {
-            .neutral, .browser => &this.client,
+            .browser => &this.client,
             .bun => &this.server,
             .node => return null,
         };

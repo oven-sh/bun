@@ -437,7 +437,6 @@ pub const Target = enum {
             .browser => .browser,
             .bun => .bun,
             .bun_macro => .bun_macro,
-            else => ._none,
         };
     }
 
@@ -483,7 +482,6 @@ pub const Target = enum {
         return switch (this) {
             .browser => browser_define_value_true,
             .bun_macro, .bun, .node => browser_define_value_false,
-            else => null,
         };
     }
 
@@ -1139,36 +1137,38 @@ pub fn definesFromTransformOptions(
         }
     }
 
-    if (NODE_ENV) |node_env| {
-        if (node_env.len > 0) {
-            var quoted_node_env: string = "";
-            if ((strings.startsWithChar(node_env, '"') and strings.endsWithChar(node_env, '"')) or
-                (strings.startsWithChar(node_env, '\'') and strings.endsWithChar(node_env, '\'')))
-            {
-                quoted_node_env = node_env;
-            } else {
+    var quoted_node_env: string = brk: {
+        if (NODE_ENV) |node_env| {
+            if (node_env.len > 0) {
+                if ((strings.startsWithChar(node_env, '"') and strings.endsWithChar(node_env, '"')) or
+                    (strings.startsWithChar(node_env, '\'') and strings.endsWithChar(node_env, '\'')))
+                {
+                    break :brk node_env;
+                }
+
                 // avoid allocating if we can
                 if (strings.eqlComptime(node_env, "production")) {
-                    quoted_node_env = "\"production\"";
+                    break :brk "\"production\"";
                 } else if (strings.eqlComptime(node_env, "development")) {
-                    quoted_node_env = "\"development\"";
+                    break :brk "\"development\"";
                 } else if (strings.eqlComptime(node_env, "test")) {
-                    quoted_node_env = "\"test\"";
+                    break :brk "\"test\"";
                 } else {
-                    quoted_node_env = try std.fmt.allocPrint(allocator, "\"{s}\"", .{node_env});
+                    break :brk try std.fmt.allocPrint(allocator, "\"{s}\"", .{node_env});
                 }
             }
-
-            _ = try user_defines.getOrPutValue(
-                "process.env.NODE_ENV",
-                quoted_node_env,
-            );
-            _ = try user_defines.getOrPutValue(
-                "process.env.BUN_ENV",
-                quoted_node_env,
-            );
         }
-    }
+        break :brk "\"development\"";
+    };
+
+    _ = try user_defines.getOrPutValue(
+        "process.env.NODE_ENV",
+        quoted_node_env,
+    );
+    _ = try user_defines.getOrPutValue(
+        "process.env.BUN_ENV",
+        quoted_node_env,
+    );
 
     if (hmr) {
         try user_defines.put(DefaultUserDefines.HotModuleReloading.Key, DefaultUserDefines.HotModuleReloading.Value);

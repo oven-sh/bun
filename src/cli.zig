@@ -168,6 +168,7 @@ pub const Arguments = struct {
         clap.parseParam("--minify-syntax                   Minify syntax and inline data (experimental)") catch unreachable,
         clap.parseParam("--minify-whitespace               Minify whitespace (experimental)") catch unreachable,
         clap.parseParam("--minify-identifiers              Minify identifiers") catch unreachable,
+        clap.parseParam("--target <STR>                    The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
         clap.parseParam("<POS>...                          ") catch unreachable,
     };
 
@@ -206,7 +207,6 @@ pub const Arguments = struct {
     const build_only_params = [_]ParamType{
         clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
         clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
-        clap.parseParam("--target <STR>                   The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
         clap.parseParam("--splitting                      Enable code splitting") catch unreachable,
         // clap.parseParam("--manifest <STR>                 Write JSON manifest") catch unreachable,
         // clap.parseParam("--public-path <STR>              A prefix to be appended to any import paths in bundled code") catch unreachable,

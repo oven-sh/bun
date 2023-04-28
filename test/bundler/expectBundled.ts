@@ -367,6 +367,14 @@ function expectBundled(
   if (!ESBUILD && inject) {
     throw new Error("inject not implemented in bun build");
   }
+  if (!ESBUILD && loader) {
+    const loaderValues = [...new Set(Object.values(loader))];
+    const supportedLoaderTypes = ["js", "jsx", "ts", "tsx", "css", "json", "text", "file"];
+    const unsupportedLoaderTypes = loaderValues.filter(x => !supportedLoaderTypes.includes(x));
+    if (unsupportedLoaderTypes.length) {
+      throw new Error(`loader '${unsupportedLoaderTypes.join("', '")}' not implemented in bun build`);
+    }
+  }
   if (ESBUILD && skipOnEsbuild) {
     return testRef(id, opts);
   }
@@ -511,6 +519,9 @@ function expectBundled(
               chunkNames &&
                 chunkNames !== "[name]-[hash].[ext]" &&
                 `--chunk-names=${chunkNames.replace(/\.\[ext]$/, "")}`,
+              assetNames &&
+                assetNames !== "[name]-[hash].[ext]" &&
+                `--asset-names=${assetNames.replace(/\.\[ext]$/, "")}`,
               metafile && `--metafile=${metafile}`,
               sourceMap && `--sourcemap${sourceMap !== true ? `=${sourceMap}` : ""}`,
               banner && `--banner:js=${banner}`,

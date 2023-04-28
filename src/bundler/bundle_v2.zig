@@ -746,9 +746,6 @@ pub const BundleV2 = struct {
 
         try this.cloneAST();
 
-        const reachable = try this.findReachableFiles();
-        _ = reachable;
-
         var chunks = try this.linker.link(
             this,
             this.graph.entry_points.items,

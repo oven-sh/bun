@@ -357,7 +357,7 @@ function print(buffer: string | Uint8Array) {
       }
     } catch (error) {
       // @ts-ignore
-      if (e.code === "EAGAIN") {
+      if (error.code === "EAGAIN") {
         continue;
       }
       throw error;

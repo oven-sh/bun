@@ -45,6 +45,8 @@ pub const BuildCommand = struct {
 
         var this_bundler = try bundler.Bundler.init(allocator, log, ctx.args, null, null);
         this_bundler.options.entry_names = ctx.bundler_options.entry_names;
+        this_bundler.options.chunk_names = ctx.bundler_options.chunk_names;
+        this_bundler.options.asset_names = ctx.bundler_options.asset_names;
         this_bundler.resolver.opts.entry_names = ctx.bundler_options.entry_names;
         this_bundler.options.output_dir = ctx.bundler_options.outdir;
         this_bundler.resolver.opts.output_dir = ctx.bundler_options.outdir;

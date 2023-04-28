@@ -155,8 +155,8 @@ pub const Arguments = struct {
         clap.parseParam("--jsx-runtime <STR>               \"automatic\" (default) or \"classic\"") catch unreachable,
         clap.parseParam("-r, --preload <STR>...            Import a module before other modules are loaded") catch unreachable,
         clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --platform dependent") catch unreachable,
-        clap.parseParam("--no-summary                     Don't print a summary (when generating .bun") catch unreachable,
-        clap.parseParam("-v, --version                    Print version and exit") catch unreachable,
+        clap.parseParam("--no-summary                      Don't print a summary (when generating .bun") catch unreachable,
+        clap.parseParam("-v, --version                     Print version and exit") catch unreachable,
         clap.parseParam("--platform <STR>                  \"bun\" or \"browser\" or \"node\", used when building or bundling") catch unreachable,
         clap.parseParam("--tsconfig-override <STR>         Load tsconfig from path instead of cwd/tsconfig.json") catch unreachable,
         clap.parseParam("-d, --define <STR>...             Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON.") catch unreachable,
@@ -208,8 +208,10 @@ pub const Arguments = struct {
         clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'inline', 'external', or 'none'") catch unreachable,
         clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
         clap.parseParam("--entry-names <STR>              Pattern to use for entry point filenames") catch unreachable,
+        clap.parseParam("--chunk-names <STR>              Pattern to use for chunk filenames") catch unreachable,
+        clap.parseParam("--asset-names <STR>              Pattern to use for asset filenames") catch unreachable,
         clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
-        clap.parseParam("--server-components        Enable React Server Components (experimental)") catch unreachable,
+        clap.parseParam("--server-components              Enable React Server Components (experimental)") catch unreachable,
         clap.parseParam("--splitting                      Split up code!") catch unreachable,
         clap.parseParam("--transform                      Do not bundle") catch unreachable,
     };
@@ -501,7 +503,15 @@ pub const Arguments = struct {
             }
 
             if (args.option("--entry-names")) |entry_names| {
-                ctx.bundler_options.entry_names = entry_names;
+                ctx.bundler_options.entry_names = try strings.concat(allocator, &.{ "./", entry_names });
+            }
+
+            if (args.option("--chunk-names")) |chunk_names| {
+                ctx.bundler_options.asset_names = try strings.concat(allocator, &.{ "./", chunk_names });
+            }
+
+            if (args.option("--asset-names")) |asset_names| {
+                ctx.bundler_options.asset_names = try strings.concat(allocator, &.{ "./", asset_names });
             }
 
             if (comptime FeatureFlags.react_server_components) {
@@ -923,6 +933,8 @@ pub const Command = struct {
             outdir: []const u8 = "",
             outfile: []const u8 = "",
             entry_names: []const u8 = "./[name].[ext]",
+            chunk_names: []const u8 = "./[name]-[hash].[ext]",
+            asset_names: []const u8 = "./[name]-[hash].[ext]",
             react_server_components: bool = false,
             code_splitting: bool = false,
             transform_only: bool = false,

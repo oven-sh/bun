@@ -27,14 +27,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - tag: linux-x64
-            os: ubuntu-latest
-          - tag: linux-x64-baseline
-            os: ubuntu-latest
-          - tag: darwin-x64
-            os: macos-latest
-          - tag: darwin-x64-baseline
-            os: macos-latest
+          - os: ubuntu-latest
+            tag: linux-x64
+            url: linux/x64?avx2=true
+          - os: ubuntu-latest
+            tag: linux-x64-baseline
+            url: linux/x64?baseline=true
+          - os: macos-latest
+            tag: darwin-x64
+            url: darwin/x64?avx2=true
+          - os: macos-latest
+            tag: darwin-x64-baseline
+            url: darwin/x64?baseline=true
     steps:
       - id: checkout
         name: Checkout
@@ -43,13 +47,12 @@ jobs:
           submodules: false
       - id: setup
         name: Setup
-        run: |
-          npm install @oven/bun-${{ matrix.tag }}@${{ github.event.inputs.version }}
-          chmod +x node_modules/@oven/bun-${{ matrix.tag }}/bin/bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-download-url: https://bun.sh/download/${{ github.event.inputs.version }}/${{ matrix.url }}
       - id: test
         name: Test
         run: |
-          export PATH="${PATH}:node_modules/@oven/bun-${{ matrix.tag }}/bin"
           bun install
           bun install --cwd test
           bun x ts-node --esm scripts/bun-test.ts ${{ github.event.inputs.path }} --isolated --timeout=${{ github.event.inputs.timeout }}

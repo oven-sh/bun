@@ -46,7 +46,7 @@ jobs:
         run: |
           npm install @oven/bun-${{ matrix.tag }}@${{ github.event.inputs.version }}
           chmod +x node_modules/@oven/bun-${{ matrix.tag }}/bin/bun
-          cp node_modules/@oven/bun-${{ matrix.tag }}/bin/bun /usr/bin/bun
+          echo "node_modules/@oven/bun-${{ matrix.tag }}/bin" >> $GITHUB_PATH
       - id: test
         name: Test
         run: |

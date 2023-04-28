@@ -46,10 +46,10 @@ jobs:
         run: |
           npm install @oven/bun-${{ matrix.tag }}@${{ github.event.inputs.version }}
           chmod +x node_modules/@oven/bun-${{ matrix.tag }}/bin/bun
-          sudo cp node_modules/@oven/bun-${{ matrix.tag }}/bin/bun /usr/bin/bun
+          cp node_modules/@oven/bun-${{ matrix.tag }}/bin/bun /usr/bin/bun
       - id: test
         name: Test
         run: |
           bun install
           bun install --cwd test
-          bun x ts-node --esm scripts/bun-test.ts test/ --isolated --timeout=${{ github.event.inputs.timeout }}
+          bun x ts-node --esm scripts/bun-test.ts ${{ github.event.inputs.path }} --isolated --timeout=${{ github.event.inputs.timeout }}

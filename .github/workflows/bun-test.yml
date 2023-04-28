@@ -48,9 +48,8 @@ jobs:
           chmod +x node_modules/@oven/bun-${{ matrix.tag }}/bin/bun
       - id: test
         name: Test
-        env:
-          PATH: "${PATH}:node_modules/@oven/bun-${{ matrix.tag }}/bin"
         run: |
+          echo "node_modules/@oven/bun-${{ matrix.tag }}/bin" >> $GITHUB_PATH
           bun install
           bun install --cwd test
           bun x ts-node --esm scripts/bun-test.ts ${{ github.event.inputs.path }} --isolated --timeout=${{ github.event.inputs.timeout }}

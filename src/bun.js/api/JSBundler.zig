@@ -167,11 +167,6 @@ pub const JSBundler = struct {
                 this.public_path.appendSliceExact(slice.slice()) catch unreachable;
             }
 
-            // if (try config.getOptional(globalThis, "naming", ZigString.Slice)) |slice| {
-            //     defer slice.deinit();
-            //     this.names.owned_entry_point.appendSliceExact(slice.slice()) catch unreachable;
-            //     this.names.entry_point.data = this.names.owned_entry_point.list.items;
-            // } else
             if (config.getTruthy(globalThis, "naming")) |naming| {
                 if (naming.isString()) {
                     if (try config.getOptional(globalThis, "naming", ZigString.Slice)) |slice| {
@@ -202,25 +197,6 @@ pub const JSBundler = struct {
                     return error.JSException;
                 }
             }
-            // if (try config.getObject(globalThis, "naming")) |naming| {
-            //     if (try naming.getOptional(globalThis, "entrypoint", ZigString.Slice)) |slice| {
-            //         defer slice.deinit();
-            //         this.names.owned_entry_point.appendSliceExact(slice.slice()) catch unreachable;
-            //         this.names.entry_point.data = this.names.owned_entry_point.list.items;
-            //     }
-
-            //     if (try naming.getOptional(globalThis, "chunk", ZigString.Slice)) |slice| {
-            //         defer slice.deinit();
-            //         this.names.owned_chunk.appendSliceExact(slice.slice()) catch unreachable;
-            //         this.names.chunk.data = this.names.owned_chunk.list.items;
-            //     }
-
-            //     if (try naming.getOptional(globalThis, "asset", ZigString.Slice)) |slice| {
-            //         defer slice.deinit();
-            //         this.names.owned_asset.appendSliceExact(slice.slice()) catch unreachable;
-            //         this.names.asset.data = this.names.owned_asset.list.items;
-            //     }
-            // }
 
             if (try config.getArray(globalThis, "plugins")) |array| {
                 var iter = array.arrayIterator(globalThis);

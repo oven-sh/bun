@@ -145,6 +145,28 @@ export default "Hello, world!";
 
 {% /codetabs %}
 
+### `wasm`
+
+**WebAssembly loader**. Default for `.wasm`.
+
+WebAssembly files can be directly imported. The file is read and returned as a `WebAssembly.Module`.
+
+```ts
+import wasm from "./module.wasm";
+console.log(wasm); // => WebAssembly.Module
+```
+
+### `napi`
+
+**Native addon loader**. Default for `.node`.
+
+```ts
+import addon from "./addon.node";
+console.log(addon);
+```
+
+Native addons can be directly imported. The file is copied into the `outdir` as-is, and the import is resolved as a relative path pointing to the copied file.
+
 ### `file`
 
 **File loader**. Default for all unrecognized file types.

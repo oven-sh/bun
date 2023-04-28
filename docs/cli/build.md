@@ -176,41 +176,42 @@ Like the Bun runtime, the bundler supports an array of file types out of the box
   console.log(contents); // => "Hello, world!"
   ```
 
----
-
-- `.*`
-- If the bundler encounters a file with an unsupported extension, it treats it as an _external file_. The referenced file is copied as-is into `outdir`, and the import is resolved as a _path_ to the file.
-
-  {% codetabs %}
-
-  ```ts#Build_file
-  await Bun.build({
-    entrypoints: ['./index.ts'],
-    outdir: './out'
-  })
-  ```
-
-  ```ts#Input
-  import logo from "./logo.svg";
-  console.log(logo);
-  ```
-
-  ```ts#Output
-  var logo = "./logo-ab237dfe.svg";
-  console.log(logo);
-  ```
-
-  {% /codetabs %}
-
-  {% callout %}
-  The exact behavior of the file loader is also impacted by [`naming`](#naming) and [`publicPath`](#publicpath).
-  {% /callout %}
-
-  Refer to the [Bundler > Loaders](/docs/bundler/loaders#file) page for more complete documentation on the file loader.
-
 {% /table %}
 
-The behavior described in this table can be overridden with [plugins](/docs/bundler/plugins). Refer to the [Bundler > Loaders](/docs/bundler/loaders) page for complete documentation on Bun's built-in loaders.
+### Assets
+
+If the bundler encounters an import with an unrecognized extension, it treats the imported file as an _external file_. The referenced file is copied as-is into `outdir`, and the import is resolved as a _path_ to the file.
+
+{% codetabs %}
+
+```ts#Build_file
+await Bun.build({
+  entrypoints: ['./index.ts'],
+  outdir: './out'
+})
+```
+
+```ts#Input
+import logo from "./logo.svg";
+console.log(logo);
+```
+
+```ts#Output
+var logo = "./logo-ab237dfe.svg";
+console.log(logo);
+```
+
+{% /codetabs %}
+
+{% callout %}
+The exact behavior of the file loader is also impacted by [`naming`](#naming) and [`publicPath`](#publicpath).
+{% /callout %}
+
+Refer to the [Bundler > Loaders](/docs/bundler/loaders#file) page for more complete documentation on the file loader.
+
+### Plugins
+
+The behavior described in this table can be overridden with [plugins](/docs/bundler/plugins). Refer to the [Bundler > Loaders](/docs/bundler/plugins) page for complete documentation.
 
 ## API
 
@@ -776,7 +777,7 @@ We can combine these tokens to create a template string. For instance, to includ
 await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
-  naming: '[dir]/[name]-[hash].[ext]',
+  naming: 'files/[dir]/[name]-[hash].[ext]',
 })
 ```
 
@@ -792,7 +793,8 @@ This build would result in the following file structure:
 .
 ├── index.tsx
 └── out
-    └── index-a1b2c3d4.js
+    └── files
+        └── index-a1b2c3d4.js
 ```
 
 When a `string` is provided for the `naming` field, it is used only for bundles _that correspond to entrypoints_. The names of [chunks](#splitting) and copied assets are not affected. Using the JavaScript API, separate template strings can be specified for each type of generated file.

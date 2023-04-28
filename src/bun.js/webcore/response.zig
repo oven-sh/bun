@@ -951,7 +951,7 @@ pub const Fetch = struct {
         var args = JSC.Node.ArgumentsSlice.from(script_ctx, arguments);
         defer args.deinit();
 
-        var url: ZigURL = undefined;
+        var url = ZigURL{};
         var first_arg = args.nextEat().?;
         var body: AnyBlob = AnyBlob{
             .Blob = .{},
@@ -1302,6 +1302,18 @@ pub const Fetch = struct {
         var promise = JSPromise.Strong.init(globalThis);
         var promise_val = promise.value();
 
+        if (url.isEmpty()) {
+            const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
+            return JSPromise.rejectedPromiseValue(globalThis, err).asRef();
+        }
+
+        if (url.protocol.len > 0) {
+            if (!(url.isHTTP() or url.isHTTPS())) {
+                const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "protocol must be http: or https:", .{}, ctx);
+                return JSPromise.rejectedPromiseValue(globalThis, err).asRef();
+            }
+        }
+
         if (!method.hasRequestBody() and body.size() > 0) {
             const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_unexpected_body, .{}, ctx);
             return JSPromise.rejectedPromiseValue(globalThis, err).asRef();
@@ -1479,7 +1491,7 @@ pub const FetchEvent = struct {
         var existing_response: ?*Response = arguments[0].?.value().as(Response);
 
         if (existing_response == null) {
-            switch (JSValue.fromRef(arg).jsType()) {
+            switch (JSValue.fromRef(arg).jsTypeLoose()) {
                 .JSPromise => {
                     this.pending_promise = JSValue.fromRef(arg);
                 },

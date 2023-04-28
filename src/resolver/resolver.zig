@@ -2217,7 +2217,10 @@ pub const Resolver = struct {
         file: string,
         dirname_fd: StoredFileDescriptorType,
     ) !?*TSConfigJSON {
-        const entry = try r.caches.fs.readFile(
+        // Since tsconfig.json is cached permanently, in our DirEntries cache
+        // we must use the global allocator
+        const entry = try r.caches.fs.readFileWithAllocator(
+            bun.fs_allocator,
             r.fs,
             file,
             dirname_fd,
@@ -2227,12 +2230,12 @@ pub const Resolver = struct {
         // The file name needs to be persistent because it can have errors
         // and if those errors need to print the filename
         // then it will be undefined memory if we parse another tsconfig.json late
-        const key_path = try Path.init(file).dupeAlloc(r.allocator);
+        const key_path = Fs.Path.init(r.fs.dirname_store.append(string, file) catch unreachable);
 
         const source = logger.Source.initPathString(key_path.text, entry.contents);
         const file_dir = source.path.sourceDir();
 
-        var result = (try TSConfigJSON.parse(r.allocator, r.log, source, &r.caches.json, r.opts.jsx.development)) orelse return null;
+        var result = (try TSConfigJSON.parse(bun.fs_allocator, r.log, source, &r.caches.json, r.opts.jsx.development)) orelse return null;
 
         if (result.hasBaseURL()) {
 

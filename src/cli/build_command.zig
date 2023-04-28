@@ -170,7 +170,6 @@ pub const BuildCommand = struct {
         {
             {
                 dump: {
-                    std.debug.print("...DUMPING\n", .{});
                     defer Output.flush();
                     var writer = Output.writer();
                     var output_dir = this_bundler.options.output_dir;
@@ -179,7 +178,7 @@ pub const BuildCommand = struct {
                         output_files[0].input.text = std.fs.path.basename(ctx.bundler_options.outfile);
                     }
 
-                    if (ctx.bundler_options.outfile.len == 0 and output_files.len == 1) {
+                    if (ctx.bundler_options.outfile.len == 0 and output_files.len == 1 and ctx.bundler_options.outdir.len == 0) {
                         // if --transform is passed, it won't have an output dir
                         if (output_files[0].value == .buffer)
                             try writer.writeAll(output_files[0].value.buffer.bytes);

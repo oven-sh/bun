@@ -7825,34 +7825,6 @@ const LinkerContext = struct {
         shifts: []sourcemap.SourceMapShifts,
     };
 
-    fn substituteChunkFinalPaths(
-        this: *LinkerContext,
-        chunks: []Chunk,
-        intermediate_output: Chunk.IntermediateOutput,
-        final_rel_path: string,
-    ) SubstituteChunkFinalPathResult {
-        _ = final_rel_path;
-        _ = chunks;
-        _ = this;
-        if (intermediate_output == .pieces and intermediate_output.pieces.len == 0) {
-            return .{
-                .j = intermediate_output.joiner,
-                .shifts = &[_]sourcemap.SourceMapShifts{},
-            };
-        }
-
-        return .{
-            .j = intermediate_output.joiner,
-            .shifts = &[_]sourcemap.SourceMapShifts{},
-        };
-    }
-
-    fn substituteJsonFinalPaths(
-        this: *LinkerContext,
-    ) !void {
-        _ = this;
-    }
-
     pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk) !std.ArrayList(options.OutputFile) {
         switch (c.options.source_maps) {
             .none => {
@@ -8057,41 +8029,49 @@ const LinkerContext = struct {
         const len = (if (c.options.source_maps == .external) chunks.len * 2 else chunks.len) + @as(usize, @boolToInt(react_client_components_manifest.len > 0));
         var output_files = std.ArrayList(options.OutputFile).initCapacity(bun.default_allocator, len) catch unreachable;
         for (chunks) |*chunk| {
-            var chunk_substitute_result = c.substituteChunkFinalPaths(chunks, chunk.intermediate_output, chunk.final_rel_path);
+            var code_result = if (c.options.source_maps != .none)
+                chunk.intermediate_output.codeWithSourceMapShifts(chunk, chunks) catch @panic("Failed to allocate memory for output file")
+            else
+                chunk.intermediate_output.code(chunk, chunks) catch @panic("Failed to allocate memory for output file");
 
-            if (c.options.source_maps != .none) {
-                var output_source_map = chunk.output_source_map.finalize(c.allocator, chunk_substitute_result.shifts) catch unreachable;
+            if (c.options.source_maps == .external) {
+                var output_source_map = chunk.output_source_map.finalize(c.allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
                 var source_map_final_rel_path = std.ArrayList(u8).initCapacity(c.allocator, chunk.final_rel_path.len + ".map".len) catch unreachable;
-                source_map_final_rel_path.appendSlice(chunk.final_rel_path) catch unreachable;
-                source_map_final_rel_path.appendSlice(".map") catch unreachable;
+                source_map_final_rel_path.appendSliceAssumeCapacity(chunk.final_rel_path);
+                source_map_final_rel_path.appendSliceAssumeCapacity(".map");
 
-                switch (c.options.source_maps) {
-                    .@"inline" => {
-                        chunk_substitute_result.j.ensureNewlineAtEnd();
-                        // TODO: CSS comment prefix
-                        chunk_substitute_result.j.push("//# sourceMappingURL=data:application/json;base64,");
-                        var encode_buf = c.allocator.alloc(u8, base64.encodeLen(output_source_map)) catch unreachable;
-                        _ = base64.encode(encode_buf, output_source_map);
-                        chunk_substitute_result.j.push(encode_buf);
-                        chunk_substitute_result.j.push("\n");
-                    },
-                    .external => {
-                        output_files.appendAssumeCapacity(options.OutputFile.initBuf(
-                            output_source_map,
-                            Chunk.IntermediateOutput.allocatorForSize(output_source_map.len),
-                            source_map_final_rel_path.items,
-                            .text,
-                        ));
-                    },
-                    else => {},
-                }
+                output_files.appendAssumeCapacity(options.OutputFile.initBuf(
+                    output_source_map,
+                    Chunk.IntermediateOutput.allocatorForSize(output_source_map.len),
+                    source_map_final_rel_path.items,
+                    .text,
+                ));
             }
 
-            const buffer = chunk.intermediate_output.code(chunk, chunks) catch @panic("Failed to allocate memory for output file");
+            if (c.options.source_maps == .@"inline") {
+                const output_source_map = chunk.output_source_map.finalize(c.allocator, code_result.shifts) catch @panic("Failed to allocate memory for inline source map");
+
+                const encode_len = base64.encodeLen(output_source_map);
+
+                const source_map_start = "//# sourceMappingURL=data:application/json;base64,";
+                const total_size = code_result.buffer.len + source_map_start.len + encode_len + 1;
+                var buf = std.ArrayList(u8).initCapacity(Chunk.IntermediateOutput.allocatorForSize(total_size), total_size) catch @panic("Failed to allocate memory for output file with inline source map");
+
+                buf.appendSliceAssumeCapacity(code_result.buffer);
+                buf.appendSliceAssumeCapacity(source_map_start);
+
+                buf.items.len += encode_len;
+                _ = base64.encode(buf.items[buf.items.len - encode_len ..], output_source_map);
+
+                buf.appendAssumeCapacity('\n');
+
+                Chunk.IntermediateOutput.allocatorForSize(code_result.buffer.len).free(code_result.buffer);
+                code_result.buffer = buf.items;
+            }
 
             output_files.appendAssumeCapacity(options.OutputFile.initBuf(
-                buffer,
-                Chunk.IntermediateOutput.allocatorForSize(buffer.len),
+                code_result.buffer,
+                Chunk.IntermediateOutput.allocatorForSize(code_result.buffer.len),
                 // clone for main thread
                 bun.default_allocator.dupe(u8, chunk.final_rel_path) catch unreachable,
                 // TODO: remove this field
@@ -9471,7 +9451,100 @@ pub const Chunk = struct {
                 return bun.default_allocator;
         }
 
-        pub fn code(this: IntermediateOutput, chunk: *Chunk, chunks: []Chunk) ![]const u8 {
+        pub const CodeResult = struct {
+            buffer: string,
+            shifts: []sourcemap.SourceMapShifts,
+        };
+
+        pub fn codeWithSourceMapShifts(this: IntermediateOutput, chunk: *Chunk, chunks: []Chunk) !CodeResult {
+            switch (this) {
+                .pieces => |*pieces| {
+                    var shift = sourcemap.SourceMapShifts{
+                        .after = .{},
+                        .before = .{},
+                    };
+
+                    var shifts = try std.ArrayList(sourcemap.SourceMapShifts).initCapacity(allocatorForSize(pieces.len + 1), pieces.len + 1);
+                    shifts.appendAssumeCapacity(shift);
+
+                    var count: usize = 0;
+                    var file_path_buf: [4096]u8 = undefined;
+                    _ = file_path_buf;
+                    var from_chunk_dir = std.fs.path.dirname(chunk.final_rel_path) orelse "";
+                    if (strings.eqlComptime(from_chunk_dir, "."))
+                        from_chunk_dir = "";
+
+                    for (pieces.slice()) |piece| {
+                        count += piece.data_len;
+                        if (piece.index.kind != .none) {
+                            const file_path = chunks[piece.index.index].final_rel_path;
+                            count += if (from_chunk_dir.len == 0) file_path.len else bun.path.relative(from_chunk_dir, file_path).len;
+                        }
+                    }
+
+                    var total_buf = try allocatorForSize(count).alloc(u8, count);
+                    var remain = total_buf;
+
+                    for (pieces.slice()) |piece| {
+                        const data = piece.data();
+                        var data_offset = sourcemap.LineColumnOffset{};
+                        data_offset.advance(data);
+                        shift.before.add(data_offset);
+                        shift.after.add(data_offset);
+
+                        if (data.len > 0)
+                            @memcpy(remain.ptr, data.ptr, data.len);
+
+                        remain = remain[data.len..];
+                        const index = piece.index.index;
+
+                        if (piece.index.kind != .none) {
+                            const piece_chunk = chunks[index];
+                            shift.before.advance(piece_chunk.unique_key);
+
+                            const file_path = piece_chunk.final_rel_path;
+                            const relative_path = if (from_chunk_dir.len > 0)
+                                bun.path.relative(from_chunk_dir, file_path)
+                            else
+                                file_path;
+
+                            shift.after.advance(relative_path);
+
+                            if (relative_path.len > 0)
+                                @memcpy(remain.ptr, relative_path.ptr, relative_path.len);
+
+                            remain = remain[relative_path.len..];
+
+                            shift.before.advance(piece_chunk.unique_key);
+                            shift.after.advance(relative_path);
+                            shifts.appendAssumeCapacity(shift);
+                        }
+                    }
+
+                    std.debug.assert(remain.len == 0);
+                    std.debug.assert(total_buf.len == count);
+
+                    return .{
+                        .buffer = total_buf,
+                        .shifts = shifts.items,
+                    };
+                },
+                .joiner => |joiner_| {
+                    // TODO: make this safe
+                    var joiny = joiner_;
+                    return .{
+                        .buffer = try joiny.done(allocatorForSize(joiny.len)),
+                        .shifts = &[_]sourcemap.SourceMapShifts{},
+                    };
+                },
+                .empty => return .{
+                    .buffer = "",
+                    .shifts = &[_]sourcemap.SourceMapShifts{},
+                },
+            }
+        }
+
+        pub fn code(this: IntermediateOutput, chunk: *Chunk, chunks: []Chunk) !CodeResult {
             switch (this) {
                 .pieces => |*pieces| {
                     var count: usize = 0;
@@ -9518,14 +9591,23 @@ pub const Chunk = struct {
                     std.debug.assert(remain.len == 0);
                     std.debug.assert(total_buf.len == count);
 
-                    return total_buf;
+                    return .{
+                        .buffer = total_buf,
+                        .shifts = &[_]sourcemap.SourceMapShifts{},
+                    };
                 },
                 .joiner => |joiner_| {
                     // TODO: make this safe
                     var joiny = joiner_;
-                    return joiny.done(allocatorForSize(joiny.len));
+                    return .{
+                        .buffer = try joiny.done(allocatorForSize(joiny.len)),
+                        .shifts = &[_]sourcemap.SourceMapShifts{},
+                    };
                 },
-                .empty => return "",
+                .empty => return .{
+                    .buffer = "",
+                    .shifts = &[_]sourcemap.SourceMapShifts{},
+                },
             }
         }
     };

@@ -332,6 +332,15 @@ pub const LineColumnOffset = struct {
         }
     };
 
+    pub fn add(this: *LineColumnOffset, b: LineColumnOffset) void {
+        if (b.lines == 0) {
+            this.columns += b.columns;
+        } else {
+            this.lines += b.lines;
+            this.columns = b.columns;
+        }
+    }
+
     pub fn advance(this: *LineColumnOffset, input: []const u8) void {
         var columns = this.columns;
         defer this.columns = columns;

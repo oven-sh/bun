@@ -46,9 +46,10 @@ jobs:
         run: |
           npm install @oven/bun-${{ matrix.tag }}@${{ github.event.inputs.version }}
           chmod +x node_modules/@oven/bun-${{ matrix.tag }}/bin/bun
-          echo "node_modules/@oven/bun-${{ matrix.tag }}/bin" >> $GITHUB_PATH
       - id: test
         name: Test
+        env:
+          PATH: "${PATH}:node_modules/@oven/bun-${{ matrix.tag }}/bin"
         run: |
           bun install
           bun install --cwd test

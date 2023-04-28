@@ -493,6 +493,7 @@ const result = await Bun.build({
 console.log(result.manifest);
 ```
 
+The manifest takes the following form:
 {% details summary="Manifest structure" %}
 
 The manifest has the following form:
@@ -537,6 +538,8 @@ export type ImportKind =
 ```
 
 {% /details %}
+
+By design, the manifest is a simple JSON object that can easily be serialized or written to disk. It is also compatible with esbuild's [`metafile`](https://esbuild.github.io/api/#metafile) format.
 
 ### `sourcemap`
 

@@ -661,6 +661,16 @@ pub const Loader = enum(u8) {
     dataurl,
     text,
 
+    pub fn shouldCopyForBundling(this: Loader) bool {
+        return switch (this) {
+            .file,
+            // TODO: CSS
+            .css,
+            => true,
+            else => false,
+        };
+    }
+
     pub fn toMimeType(this: Loader) bun.HTTP.MimeType {
         return switch (this) {
             .jsx, .js, .ts, .tsx => bun.HTTP.MimeType.javascript,
@@ -1375,6 +1385,9 @@ pub const BundleOptions = struct {
     external: ExternalModules = ExternalModules{},
     entry_points: []const string,
     entry_names: []const u8 = "",
+    asset_names: []const u8 = "",
+    chunk_names: []const u8 = "",
+    public_path: []const u8 = "",
     extension_order: []const string = &Defaults.ExtensionOrder,
     esm_extension_order: []const string = &Defaults.ModuleExtensionOrder,
     out_extensions: bun.StringHashMap(string),
@@ -2001,14 +2014,42 @@ pub const OutputFile = struct {
             allocator: std.mem.Allocator,
             bytes: []const u8,
         },
-
+        saved: SavedFile,
         move: FileOperation,
         copy: FileOperation,
         noop: u0,
         pending: resolver.Result,
     };
 
-    pub const Kind = enum { move, copy, noop, buffer, pending };
+    pub const SavedFile = struct {
+        pub fn toJS(
+            globalThis: *JSC.JSGlobalObject,
+            path: []const u8,
+            byte_size: usize,
+        ) JSC.JSValue {
+            const mime_type = globalThis.bunVM().mimeType(path);
+            const store = JSC.WebCore.Blob.Store.initFile(
+                JSC.Node.PathOrFileDescriptor{
+                    .path = JSC.Node.PathLike{
+                        .string = JSC.PathString.init(path),
+                    },
+                },
+                mime_type,
+                bun.default_allocator,
+            ) catch unreachable;
+
+            var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
+            blob.* = JSC.WebCore.Blob.initWithStore(store, globalThis);
+            if (mime_type) |mime| {
+                blob.content_type = mime.value;
+            }
+            blob.size = @truncate(JSC.WebCore.Blob.SizeType, byte_size);
+            blob.allocator = bun.default_allocator;
+            return blob.toJS(globalThis);
+        }
+    };
+
+    pub const Kind = enum { move, copy, noop, buffer, pending, saved };
 
     pub fn initPending(loader: Loader, pending: resolver.Result) OutputFile {
         return .{
@@ -2079,6 +2120,7 @@ pub const OutputFile = struct {
 
     pub fn toJS(
         this: *OutputFile,
+        owned_pathname: []const u8,
         globalObject: *JSC.JSGlobalObject,
     ) bun.JSC.JSValue {
         return switch (this.value) {
@@ -2086,6 +2128,7 @@ pub const OutputFile = struct {
             .noop => JSC.JSValue.undefined,
             .move => this.value.move.toJS(globalObject, this.loader),
             .copy => this.value.copy.toJS(globalObject, this.loader),
+            .saved => SavedFile.toJS(globalObject, owned_pathname, this.size),
             .buffer => |buffer| brk: {
                 var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
                 blob.* = JSC.WebCore.Blob.init(@constCast(buffer.bytes), buffer.allocator, globalObject);
@@ -2571,6 +2614,10 @@ pub const PathTemplate = struct {
     data: string = "",
     placeholder: Placeholder = .{},
 
+    pub fn needs(this: *const PathTemplate, comptime field: std.meta.FieldEnum(Placeholder)) bool {
+        return strings.contains(this.data, comptime "[" ++ @tagName(field) ++ "]");
+    }
+
     pub fn format(self: PathTemplate, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         var remain = self.data;
         while (strings.indexOfChar(remain, '[')) |j| {
@@ -2649,6 +2696,11 @@ pub const PathTemplate = struct {
     };
 
     pub const file = PathTemplate{
+        .data = "./[name].[ext]",
+        .placeholder = .{},
+    };
+
+    pub const asset = PathTemplate{
         .data = "./[name]-[hash].[ext]",
         .placeholder = .{},
     };

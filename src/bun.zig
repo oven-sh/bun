@@ -1360,3 +1360,5 @@ pub fn threadlocalAllocator() std.mem.Allocator {
 
     return default_allocator;
 }
+
+pub const MaxHeapAllocator = @import("./max_heap_allocator.zig").MaxHeapAllocator;

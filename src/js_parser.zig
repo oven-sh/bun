@@ -2803,7 +2803,7 @@ pub const Parser = struct {
             }
             break :brk .none;
         };
-        return .{ .ast = try p.toAST(parts, exports_kind, null) };
+        return .{ .ast = try p.toAST(parts, exports_kind, null, "") };
     }
 
     pub fn parse(self: *Parser) !js_ast.Result {
@@ -2986,6 +2986,8 @@ pub const Parser = struct {
                         // Move class export statements to the top of the file if we can
                         // This automatically resolves some cyclical import issues
                         // https://github.com/kysely-org/kysely/issues/412
+                        // TODO: this breaks code if they have any static variables or properties which reference anything from the parent scope
+                        // we need to fix it before we merge v0.6.0
                         var list = if (!p.options.bundle and class.is_export and class.class.extends == null) &before else &parts;
                         var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
                         sliced.items.len = 1;
@@ -4166,7 +4168,7 @@ pub const Parser = struct {
         // Pop the module scope to apply the "ContainsDirectEval" rules
         // p.popScope();
 
-        return js_ast.Result{ .ast = try p.toAST(parts_slice, exports_kind, wrapper_expr) };
+        return js_ast.Result{ .ast = try p.toAST(parts_slice, exports_kind, wrapper_expr, hashbang) };
     }
 
     pub fn init(_options: Options, log: *logger.Log, source: *const logger.Source, define: *Define, allocator: Allocator) !Parser {
@@ -12306,7 +12308,7 @@ fn NewParser_(
             const scopeIndex = p.pushScopeForParsePass(.class_body, body_loc) catch unreachable;
 
             var opts = PropertyOpts{ .is_class = true, .allow_ts_decorators = class_opts.allow_ts_decorators, .class_has_extends = extends != null };
-            while (p.lexer.token != T.t_close_brace) {
+            while (!p.lexer.token.isCloseBraceOrEOF()) {
                 if (p.lexer.token == .t_semicolon) {
                     try p.lexer.next();
                     continue;
@@ -15609,11 +15611,6 @@ fn NewParser_(
                                     return e_.right;
                                 }
                             }
-
-                            // TODO:
-                            // "(1 && fn)()" => "fn()"
-                            // "(1 && this.fn)" => "this.fn"
-                            // "(1 && this.fn)()" => "(0, this.fn)()"
                         },
                         .bin_add => {
                             if (p.should_fold_typescript_constant_expressions) {
@@ -15893,7 +15890,10 @@ fn NewParser_(
                     // though this is a run-time error, we make it a compile-time error when
                     // bundling because scope hoisting means these will no longer be run-time
                     // errors.
-                    if ((in.assign_target != .none or is_delete_target) and @as(Expr.Tag, e_.target.data) == .e_identifier and p.symbols.items[e_.target.data.e_identifier.ref.innerIndex()].kind == .import) {
+                    if ((in.assign_target != .none or is_delete_target) and
+                        @as(Expr.Tag, e_.target.data) == .e_identifier and
+                        p.symbols.items[e_.target.data.e_identifier.ref.innerIndex()].kind == .import)
+                    {
                         const r = js_lexer.rangeOfIdentifier(p.source, e_.target.loc);
                         p.log.addRangeErrorFmt(
                             p.source,
@@ -15937,15 +15937,18 @@ fn NewParser_(
 
                             switch (e_.op) {
                                 .un_not => {
-                                    e_.value = SideEffects.simplifyBoolean(p, e_.value);
+                                    if (p.options.features.minify_syntax)
+                                        e_.value = SideEffects.simplifyBoolean(p, e_.value);
 
                                     const side_effects = SideEffects.toBoolean(e_.value.data);
                                     if (side_effects.ok) {
                                         return p.newExpr(E.Boolean{ .value = !side_effects.value }, expr.loc);
                                     }
 
-                                    if (e_.value.maybeSimplifyNot(p.allocator)) |exp| {
-                                        return exp;
+                                    if (p.options.features.minify_syntax) {
+                                        if (e_.value.maybeSimplifyNot(p.allocator)) |exp| {
+                                            return exp;
+                                        }
                                     }
                                 },
                                 .un_void => {
@@ -15981,28 +15984,30 @@ fn NewParser_(
                                 else => {},
                             }
 
-                            // "-(a, b)" => "a, -b"
-                            if (switch (e_.op) {
-                                .un_delete, .un_typeof => false,
-                                else => true,
-                            }) {
-                                switch (e_.value.data) {
-                                    .e_binary => |comma| {
-                                        if (comma.op == .bin_comma) {
-                                            return Expr.joinWithComma(
-                                                comma.left,
-                                                p.newExpr(
-                                                    E.Unary{
-                                                        .op = e_.op,
-                                                        .value = comma.right,
-                                                    },
-                                                    comma.right.loc,
-                                                ),
-                                                p.allocator,
-                                            );
-                                        }
-                                    },
-                                    else => {},
+                            if (p.options.features.minify_syntax) {
+                                // "-(a, b)" => "a, -b"
+                                if (switch (e_.op) {
+                                    .un_delete, .un_typeof => false,
+                                    else => true,
+                                }) {
+                                    switch (e_.value.data) {
+                                        .e_binary => |comma| {
+                                            if (comma.op == .bin_comma) {
+                                                return Expr.joinWithComma(
+                                                    comma.left,
+                                                    p.newExpr(
+                                                        E.Unary{
+                                                            .op = e_.op,
+                                                            .value = comma.right,
+                                                        },
+                                                        comma.right.loc,
+                                                    ),
+                                                    p.allocator,
+                                                );
+                                            }
+                                        },
+                                        else => {},
+                                    }
                                 }
                             }
                         },
@@ -16148,11 +16153,17 @@ fn NewParser_(
                         p.maybeCommaSpreadError(e_.comma_after_spread);
                     }
                     var items = e_.items.slice();
+                    var spread_item_count: usize = 0;
                     for (items) |*item| {
                         switch (item.data) {
                             .e_missing => {},
                             .e_spread => |spread| {
                                 spread.value = p.visitExprInOut(spread.value, ExprIn{ .assign_target = in.assign_target });
+
+                                spread_item_count += if (spread.value.data == .e_array)
+                                    @as(usize, spread.value.data.e_array.items.len)
+                                else
+                                    0;
                             },
                             .e_binary => |e2| {
                                 if (in.assign_target != .none and e2.op == .bin_assign) {
@@ -16175,6 +16186,11 @@ fn NewParser_(
                                 item.* = p.visitExprInOut(item.*, ExprIn{ .assign_target = in.assign_target });
                             },
                         }
+                    }
+
+                    // "[1, ...[2, 3], 4]" => "[1, 2, 3, 4]"
+                    if (p.options.features.minify_syntax and spread_item_count > 0 and in.assign_target == .none) {
+                        e_.items = e_.inlineSpreadOfArrayLiterals(p.allocator, spread_item_count) catch e_.items;
                     }
                 },
                 .e_object => |e_| {
@@ -19156,6 +19172,9 @@ fn NewParser_(
 
                             constructor_function.?.func.body.stmts = constructor_stmts.items;
                         }
+
+                        // TODO: make sure "super()" comes before instance field initializers
+                        // https://github.com/evanw/esbuild/blob/e9413cc4f7ab87263ea244a999c6fa1f1e34dc65/internal/js_parser/js_parser_lower.go#L2742
                     }
 
                     var stmts_count: usize = 1 + static_members.items.len + instance_decorators.items.len + static_decorators.items.len;
@@ -20130,6 +20149,12 @@ fn NewParser_(
                         break;
                     }
 
+                    // don't merge super calls to ensure they are called before "this" is accessed
+                    if (stmt.isSuperCall()) {
+                        output.append(stmt) catch unreachable;
+                        continue;
+                    }
+
                     switch (stmt.data) {
                         .s_empty => continue,
 
@@ -20153,7 +20178,7 @@ fn NewParser_(
                             // Merge adjacent expression statements
                             if (output.items.len > 0) {
                                 var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_expr) {
+                                if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                     prev_stmt.data.s_expr.does_not_affect_tree_shaking = prev_stmt.data.s_expr.does_not_affect_tree_shaking and
                                         s_expr.does_not_affect_tree_shaking;
                                     prev_stmt.data.s_expr.value = prev_stmt.data.s_expr.value.joinWithComma(
@@ -20168,7 +20193,7 @@ fn NewParser_(
                             // Absorb a previous expression statement
                             if (output.items.len > 0) {
                                 var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_expr) {
+                                if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                     s_switch.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_switch.test_, p.allocator);
                                     output.items.len -= 1;
                                 }
@@ -20178,7 +20203,7 @@ fn NewParser_(
                             // Absorb a previous expression statement
                             if (output.items.len > 0) {
                                 var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_expr) {
+                                if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                     s_if.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_if.test_, p.allocator);
                                     output.items.len -= 1;
                                 }
@@ -20191,7 +20216,7 @@ fn NewParser_(
                             // Merge return statements with the previous expression statement
                             if (output.items.len > 0 and ret.value != null) {
                                 var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_expr) {
+                                if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                     ret.value = prev_stmt.data.s_expr.value.joinWithComma(ret.value.?, p.allocator);
                                     prev_stmt.* = stmt;
                                     continue;
@@ -20209,7 +20234,7 @@ fn NewParser_(
                             // Merge throw statements with the previous expression statement
                             if (output.items.len > 0) {
                                 var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_expr) {
+                                if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                     prev_stmt.* = p.s(S.Throw{
                                         .value = prev_stmt.data.s_expr.value.joinWithComma(
                                             stmt.data.s_throw.value,
@@ -20483,7 +20508,13 @@ fn NewParser_(
             p.log.addRangeError(p.source, logger.Range{ .loc = comma_after_spread, .len = 1 }, "Unexpected \",\" after rest pattern") catch unreachable;
         }
 
-        pub fn toAST(p: *P, _parts: []js_ast.Part, exports_kind: js_ast.ExportsKind, commonjs_wrapper_expr: ?Expr) !js_ast.Ast {
+        pub fn toAST(
+            p: *P,
+            _parts: []js_ast.Part,
+            exports_kind: js_ast.ExportsKind,
+            commonjs_wrapper_expr: ?Expr,
+            hashbang: []const u8,
+        ) !js_ast.Ast {
             const allocator = p.allocator;
             var parts = _parts;
 
@@ -21182,6 +21213,8 @@ fn NewParser_(
                 // .top_Level_await_keyword = p.top_level_await_keyword,
                 .bun_plugin = p.bun_plugin,
                 .commonjs_named_exports = p.commonjs_named_exports,
+
+                .hashbang = hashbang,
 
                 // TODO:
                 // .const_values = p.const_values,

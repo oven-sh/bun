@@ -102,7 +102,6 @@ export default {
     page("runtime/web-apis", "Web APIs", {
       description: `Bun implements an array of Web-standard APIs like fetch, URL, and WebSocket.`,
     }),
-
     page("runtime/nodejs-apis", "Node.js compatibility", {
       description: `Bun aims for full Node.js compatibility. This page tracks the current compatibility status.`,
     }),
@@ -125,10 +124,6 @@ export default {
     page("runtime/configuration", "Configuration", {
       description: `Bun's runtime is configurable with environment variables and the bunfig.toml config file.`,
     }),
-    page("runtime/plugins", "Plugins", {
-      description: `Implement custom loaders and module resolution logic with Bun's plugin system.`,
-    }),
-
     page("runtime/framework", "Framework API", {
       disabled: true,
       description:
@@ -156,6 +151,20 @@ export default {
     }),
     page("install/utilities", "Utilities", {
       description: "Use `bun pm` to introspect your global module cache or project dependency tree.",
+    }),
+
+    divider("Bundler"),
+    page("cli/build", "`Bun.build`", {
+      description: "Bundle code for comsumption in the browser with Bun's native bundler.",
+    }),
+    // page("bundler/intro", "How bundlers work", {
+    //   description: "A visual introduction to bundling",
+    // }),
+    page("bundler/loaders", "Loaders", {
+      description: "Bun's built-in loaders for the bundler and runtime",
+    }),
+    page("bundler/plugins", "Plugins", {
+      description: `Implement custom loaders and module resolution logic with Bun's plugin system.`,
     }),
 
     divider("Test runner"),

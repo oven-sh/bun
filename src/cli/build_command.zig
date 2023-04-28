@@ -214,6 +214,14 @@ pub const BuildCommand = struct {
                     for (output_files) |f| {
                         var rel_path: []const u8 = undefined;
                         switch (f.value) {
+                            // Nothing to do in this case
+                            .saved => {
+                                rel_path = f.input.text;
+                                if (f.input.text.len > from_path.len) {
+                                    rel_path = resolve_path.relative(from_path, f.input.text);
+                                }
+                            },
+
                             // easy mode: write the buffer
                             .buffer => |value| {
                                 rel_path = f.input.text;

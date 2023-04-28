@@ -390,4 +390,41 @@ describe("bundler", () => {
       },
     };
   });
+  itBundled("plugin/ManyFiles", ({ root }) => {
+    const FILES = 200;
+    const create = (fn: (i: number) => string) => new Array(FILES).fill(0).map((_, i) => fn(i));
+
+    let onResolveCount = 0;
+    let importers: string[] = [];
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          ${create(i => `import * as foo${i} from "./${i}.magic";`).join("\n")}
+          ${create(i => `console.log(foo${i}.foo);`).join("\n")}
+        `,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /\.magic$/ }, async args => {
+          importers.push(args.importer);
+          onResolveCount++;
+          return {
+            path: args.path,
+            namespace: "magic",
+          };
+        });
+        builder.onLoad({ filter: /\.magic$/, namespace: "magic" }, async args => {
+          return {
+            contents: `export const foo = "${args.path}";`,
+            loader: "js",
+          };
+        });
+      },
+      run: {
+        stdout: create(i => `./${i}.magic`).join("\n"),
+      },
+      onAfterBundle(api) {},
+    };
+  });
 });
+
+// TODO: add async on resolve stuff

@@ -1354,6 +1354,47 @@ pub const E = struct {
             return this.items.slice();
         }
 
+        pub fn inlineSpreadOfArrayLiterals(
+            this: *Array,
+            allocator: std.mem.Allocator,
+            estimated_count: usize,
+        ) !ExprNodeList {
+            var out = try allocator.alloc(
+                Expr,
+                // This over-allocates a little but it's fine
+                estimated_count + @as(usize, this.items.len),
+            );
+            var remain = out;
+            for (this.items.slice()) |item| {
+                switch (item.data) {
+                    .e_spread => |val| {
+                        if (val.value.data == .e_array) {
+                            for (val.value.data.e_array.items.slice()) |inner_item| {
+                                if (inner_item.data == .e_missing) {
+                                    remain[0] = Expr.init(E.Undefined, .{}, inner_item.loc);
+                                    remain = remain[1..];
+                                } else {
+                                    remain[0] = inner_item;
+                                    remain = remain[1..];
+                                }
+                            }
+
+                            // skip empty arrays
+                            // don't include the inlined spread.
+                            continue;
+                        }
+                        // non-arrays are kept in
+                    },
+                    else => {},
+                }
+
+                remain[0] = item;
+                remain = remain[1..];
+            }
+
+            return ExprNodeList.init(out[0 .. out.len - remain.len]);
+        }
+
         pub fn toJS(this: @This(), ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
             var stack = std.heap.stackFallback(32 * @sizeOf(ExprNodeList), JSC.getAllocator(ctx));
             var allocator = stack.get();
@@ -2509,6 +2550,10 @@ pub const Stmt = struct {
 
     pub fn isTypeScript(self: *Stmt) bool {
         return @as(Stmt.Tag, self.data) == .s_type_script;
+    }
+
+    pub fn isSuperCall(self: Stmt) bool {
+        return self.data == .s_expr and self.data.s_expr.value.data == .e_call and self.data.s_expr.value.data.e_call.target.data == .e_super;
     }
 
     pub fn empty() Stmt {
@@ -5655,7 +5700,7 @@ pub const Ast = struct {
     /// they can be manipulated efficiently without a full AST traversal
     import_records: ImportRecord.List = .{},
 
-    hashbang: ?string = null,
+    hashbang: string = "",
     directive: ?string = null,
     url_for_css: ?string = null,
     parts: Part.List = Part.List{},

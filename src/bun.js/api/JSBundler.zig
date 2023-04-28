@@ -63,6 +63,7 @@ pub const JSBundler = struct {
         label: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         external: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         source_map: options.SourceMapOption = .none,
+        public_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
@@ -77,6 +78,7 @@ pub const JSBundler = struct {
                 .names = .{
                     .owned_entry_point = OwnedString.initEmpty(allocator),
                     .owned_chunk = OwnedString.initEmpty(allocator),
+                    .owned_asset = OwnedString.initEmpty(allocator),
                 },
             };
             errdefer this.deinit(allocator);
@@ -86,9 +88,9 @@ pub const JSBundler = struct {
                 this.target = target;
             }
 
-            if (try config.getOptional(globalThis, "hot", bool)) |hot| {
-                this.hot = hot;
-            }
+            // if (try config.getOptional(globalThis, "hot", bool)) |hot| {
+            //     this.hot = hot;
+            // }
 
             if (try config.getOptional(globalThis, "splitting", bool)) |hot| {
                 this.code_splitting = hot;
@@ -101,9 +103,10 @@ pub const JSBundler = struct {
 
             if (config.getTruthy(globalThis, "minify")) |hot| {
                 if (hot.isBoolean()) {
-                    this.minify.whitespace = hot.coerce(bool, globalThis);
-                    this.minify.syntax = this.minify.whitespace;
-                    this.minify.identifiers = this.minify.whitespace;
+                    const value = hot.coerce(bool, globalThis);
+                    this.minify.whitespace = value;
+                    this.minify.syntax = value;
+                    this.minify.identifiers = value;
                 } else if (hot.isObject()) {
                     if (try hot.getOptional(globalThis, "whitespace", bool)) |whitespace| {
                         this.minify.whitespace = whitespace;
@@ -120,7 +123,7 @@ pub const JSBundler = struct {
                 }
             }
 
-            if (try config.getArray(globalThis, "entrypoints")) |entry_points| {
+            if (try config.getArray(globalThis, "entrypoints") orelse try config.getArray(globalThis, "entryPoints")) |entry_points| {
                 var iter = entry_points.arrayIterator(globalThis);
                 while (iter.next()) |entry_point| {
                     var slice = entry_point.toSliceOrNull(globalThis) orelse {
@@ -159,6 +162,11 @@ pub const JSBundler = struct {
                 this.dir.appendSliceExact(globalThis.bunVM().bundler.fs.top_level_dir) catch unreachable;
             }
 
+            if (try config.getOptional(globalThis, "publicPath", ZigString.Slice)) |slice| {
+                defer slice.deinit();
+                this.public_path.appendSliceExact(slice.slice()) catch unreachable;
+            }
+
             if (try config.getObject(globalThis, "naming")) |naming| {
                 if (try naming.getOptional(globalThis, "entrypoint", ZigString.Slice)) |slice| {
                     defer slice.deinit();
@@ -170,6 +178,12 @@ pub const JSBundler = struct {
                     defer slice.deinit();
                     this.names.owned_chunk.appendSliceExact(slice.slice()) catch unreachable;
                     this.names.chunk.data = this.names.owned_chunk.list.items;
+                }
+
+                if (try naming.getOptional(globalThis, "asset", ZigString.Slice)) |slice| {
+                    defer slice.deinit();
+                    this.names.owned_asset.appendSliceExact(slice.slice()) catch unreachable;
+                    this.names.asset.data = this.names.owned_asset.list.items;
                 }
             }
 
@@ -283,9 +297,13 @@ pub const JSBundler = struct {
             owned_chunk: OwnedString = OwnedString.initEmpty(bun.default_allocator),
             chunk: options.PathTemplate = options.PathTemplate.chunk,
 
+            owned_asset: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+            asset: options.PathTemplate = options.PathTemplate.asset,
+
             pub fn deinit(self: *Names) void {
                 self.owned_entry_point.deinit();
                 self.owned_chunk.deinit();
+                self.owned_asset.deinit();
             }
         };
 
@@ -328,6 +346,7 @@ pub const JSBundler = struct {
             self.names.deinit();
             self.label.deinit();
             self.outdir.deinit();
+            self.public_path.deinit();
         }
     };
 

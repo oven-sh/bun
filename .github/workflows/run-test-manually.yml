@@ -1,7 +1,6 @@
 name: Run Tests Manually
 
 on:
-  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
     inputs:
       version:
@@ -9,11 +8,6 @@ on:
         required: true
         default: "canary"
         type: string
-      use_bun:
-        description: "Use Bun?"
-        required: true
-        default: true
-        type: boolean
 jobs:
   linux-test:
     name: Tests ${{matrix.tag}} ${{github.event.inputs.version}}
@@ -39,21 +33,8 @@ jobs:
           sudo cp node_modules/@oven/bun-${{matrix.tag}}/bin/bun /usr/bin/bun
       - id: test
         name: Test
-        if: ${{github.event.inputs.use_bun == 'true'}}
         run: |
           bun install
           bun install --cwd test/bun.js
           bun install --cwd test/bun.js/third-party/body-parser-test
-          cd packages/bun-internal-test
-          bun install
-          bun run test
-      - id: test-node-runner
-        name: Test (node runner)
-        if: ${{github.event.inputs.use_bun == 'false'}}
-        run: |
-          bun install
-          bun install --cwd test/bun.js
-          bun install --cwd test/bun.js/third-party/body-parser-test
-          cd packages/bun-internal-test
-          bun install
-          node src/runner.node.mjs
+          bun run scripts/bun-test.ts test/ --isolated

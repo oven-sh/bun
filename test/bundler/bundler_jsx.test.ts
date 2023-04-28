@@ -156,7 +156,7 @@ describe("bundler", () => {
       `,
       ...helpers,
     },
-    platform: "bun",
+    target: "bun",
     devStdout: `
       {"$$typeof":"Symbol(jsxdev)","type":"div","props":{"children":"Hello World"},"key":"undefined","source":false,"self":"undefined"}
       {"$$typeof":"Symbol(jsxdev)","type":"div","props":{"className":"container","children":{"$$typeof":"Symbol(jsxdev)","type":"hello","props":{"prop":2,"children":{"$$typeof":"Symbol(jsxdev)","type":"h1","props":{"onClick":"Function:onClick","children":"hello"},"key":"undefined","source":false,"self":"undefined"}},"key":"undefined","source":false,"self":"undefined"}},"key":"undefined","source":false,"self":"undefined"}
@@ -179,7 +179,7 @@ describe("bundler", () => {
       `,
       ...helpers,
     },
-    platform: "bun",
+    target: "bun",
     devStdout: `
       {"$$typeof":"Symbol(jsxdev)","type":"Symbol(jsxdev.fragment)","props":{"children":"Fragment"},"key":"undefined","source":false,"self":"undefined"}
     `,
@@ -195,7 +195,7 @@ describe("bundler", () => {
       `,
       ...helpers,
     },
-    platform: "bun",
+    target: "bun",
     jsx: {
       importSource: "custom-automatic",
     },
@@ -216,7 +216,7 @@ describe("bundler", () => {
       `,
       ...helpers,
     },
-    platform: "bun",
+    target: "bun",
     jsx: {
       runtime: "classic",
       importSource: "ignore-me",
@@ -238,7 +238,7 @@ describe("bundler", () => {
       `,
       ...helpers,
     },
-    platform: "bun",
+    target: "bun",
     jsx: {
       runtime: "classic",
       importSource: "ignore-me",
@@ -283,7 +283,7 @@ describe("bundler", () => {
       `,
       ...helpers,
     },
-    platform: "bun",
+    target: "bun",
     devStdout: `
       ["classic.jsx",["custom-classic","div",{"props":123},["Hello World"]],["custom-classic","CustomFragment","null",["Fragment"]]]
       ["classic-renamed.jsx",["custom-renamed","div",{"props":123},["Hello World"]],["custom-renamed","something","null",["Fragment"]]]
@@ -308,7 +308,7 @@ describe("bundler", () => {
       `,
       ...helpers,
     },
-    platform: "bun",
+    target: "bun",
     jsx: {
       runtime: "classic",
       factory: "h",

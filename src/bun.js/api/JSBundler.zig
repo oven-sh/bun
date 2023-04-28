@@ -32,7 +32,7 @@ const TSConfigJSON = @import("../../resolver/tsconfig_json.zig").TSConfigJSON;
 const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
 const logger = bun.logger;
 const Loader = options.Loader;
-const Platform = options.Platform;
+const Target = options.Target;
 const JSAst = bun.JSAst;
 const JSParser = bun.js_parser;
 const JSPrinter = bun.js_printer;
@@ -47,7 +47,7 @@ pub const JSBundler = struct {
     const OwnedString = bun.MutableString;
 
     pub const Config = struct {
-        target: options.Platform = options.Platform.browser,
+        target: Target = Target.browser,
         entry_points: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         hot: bool = false,
         define: bun.StringMap = bun.StringMap.init(bun.default_allocator, true),
@@ -84,7 +84,7 @@ pub const JSBundler = struct {
             errdefer this.deinit(allocator);
             errdefer if (plugins.*) |plugin| plugin.deinit();
 
-            if (try config.getOptionalEnum(globalThis, "target", options.Platform)) |target| {
+            if (try config.getOptionalEnum(globalThis, "target", options.Target)) |target| {
                 this.target = target;
             }
 
@@ -414,7 +414,7 @@ pub const JSBundler = struct {
             importer_source_index: ?u32 = null,
             import_record_index: u32 = 0,
             range: logger.Range = logger.Range.None,
-            original_platform: options.Platform,
+            original_target: Target,
         };
 
         pub fn create(
@@ -424,7 +424,7 @@ pub const JSBundler = struct {
                     importer_source_index: u32,
                     import_record_index: u32,
                     source_file: []const u8 = "",
-                    original_platform: options.Platform,
+                    original_target: Target,
                     record: *const bun.ImportRecord,
                 },
             },
@@ -441,7 +441,7 @@ pub const JSBundler = struct {
                         .importer_source_index = file.importer_source_index,
                         .import_record_index = file.import_record_index,
                         .range = file.record.range,
-                        .original_platform = file.original_platform,
+                        .original_target = file.original_target,
                     },
                 },
                 .completion = completion,

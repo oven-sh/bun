@@ -74,7 +74,7 @@ describe("bundler", () => {
     external: ["external"],
     mode: "transform",
     minifySyntax: true,
-    platform: "bun",
+    target: "bun",
     run: { file: "/entry.ts" },
   });
   itBundled("edgecase/TemplateStringIssue622", {
@@ -86,7 +86,7 @@ describe("bundler", () => {
       `,
     },
     capture: ["`\\\\?`", "hello`\\\\?`"],
-    platform: "bun",
+    target: "bun",
   });
   itBundled("edgecase/StringNullBytes", {
     files: {
@@ -122,7 +122,7 @@ describe("bundler", () => {
         capture(process.env.NODE_ENV === 'development');
       `,
     },
-    platform: "browser",
+    target: "browser",
     capture: ['"development"', "false", "true"],
     env: {
       // undefined will ensure this variable is not passed to the bundler
@@ -137,7 +137,7 @@ describe("bundler", () => {
         capture(process.env.NODE_ENV === 'development');
       `,
     },
-    platform: "browser",
+    target: "browser",
     capture: ['"development"', "false", "true"],
     env: {
       NODE_ENV: "development",
@@ -151,7 +151,7 @@ describe("bundler", () => {
         capture(process.env.NODE_ENV === 'development');
       `,
     },
-    platform: "browser",
+    target: "browser",
     capture: ['"production"', "true", "false"],
     env: {
       NODE_ENV: "production",
@@ -172,7 +172,7 @@ describe("bundler", () => {
         capture(process?.env.NODE_ENV === 'development');
       `,
     },
-    platform: "browser",
+    target: "browser",
     capture: ['"development"', "false", "true", '"development"', "false", "true", '"development"', "false", "true"],
     env: {
       NODE_ENV: "development",
@@ -184,7 +184,7 @@ describe("bundler", () => {
         capture(process.env.ARBITRARY);
       `,
     },
-    platform: "browser",
+    target: "browser",
     capture: ["process.env.ARBITRARY"],
     env: {
       ARBITRARY: "secret environment stuff!",

@@ -860,7 +860,7 @@ describe("bundler", () => {
         require.resolve(v ? y ? 'a' : 'b' : c)
       `,
     },
-    platform: "node",
+    target: "node",
     format: "cjs",
     // esbuild seems to not need externals for require.resolve, but it should be specified
     external: ["a", "b", "c"],
@@ -929,7 +929,7 @@ describe("bundler", () => {
         await import('./out/b');
       `,
     },
-    entryNames: "[name].[ext]",
+    entryNaming: "[name].[ext]",
     entryPoints: ["/a.js", "/b.js"],
     external: ["a", "b", "c"],
     run: [
@@ -1037,7 +1037,7 @@ describe("bundler", () => {
         capture(req)
       `,
     },
-    platform: "neutral",
+    target: "neutral",
     onAfterBundle(api) {
       const varName = api.captureFile("/out.js")[0];
       const assignmentValue = api.readFile("/out.js").match(new RegExp(`${varName} = (.*);`))![1];
@@ -1056,7 +1056,7 @@ describe("bundler", () => {
         })()
       `,
     },
-    platform: "neutral",
+    target: "neutral",
     onAfterBundle(api) {
       const varName = api.captureFile("/out.js")[0];
       const assignmentValue = api.readFile("/out.js").match(new RegExp(`${varName} = (.*);`))![1];
@@ -1111,7 +1111,7 @@ describe("bundler", () => {
         } catch (e) {}
       `,
     },
-    platform: "neutral",
+    target: "neutral",
     onAfterBundle(api) {
       const varName = api.captureFile("/out.js")[0];
       const assignmentValue = api.readFile("/out.js").match(new RegExp(`${varName} = (.*);`))![1];
@@ -1128,7 +1128,7 @@ describe("bundler", () => {
         delete require.extensions['.json']
       `,
     },
-    platform: "node",
+    target: "node",
     format: "cjs",
     onAfterBundle(api) {
       api.prependFile(
@@ -1273,7 +1273,7 @@ describe("bundler", () => {
     files: {
       "/entry.js": `console.log(require('fs'))`,
     },
-    platform: "browser",
+    target: "browser",
     run: {
       stdout: "[Function]",
     },
@@ -1283,7 +1283,7 @@ describe("bundler", () => {
       "/entry.js": `console.log('existsSync' in require('fs'))`,
     },
     format: "cjs",
-    platform: "node",
+    target: "node",
     run: {
       stdout: "true",
     },
@@ -1294,7 +1294,7 @@ describe("bundler", () => {
     },
     minifyWhitespace: true,
     format: "cjs",
-    platform: "node",
+    target: "node",
     run: {
       stdout: "true",
     },
@@ -1312,7 +1312,7 @@ describe("bundler", () => {
     run: {
       stdout: "[Function] undefined undefined",
     },
-    platform: "browser",
+    target: "browser",
   });
   itBundled("default/ImportFSNodeCommonJS", {
     files: {
@@ -1324,7 +1324,7 @@ describe("bundler", () => {
         console.log('writeFileSync' in fs, readFileSync, 'writeFileSync' in defaultValue)
       `,
     },
-    platform: "node",
+    target: "node",
     format: "cjs",
     run: {
       stdout: "true [Function: readFileSync] true",
@@ -1340,7 +1340,7 @@ describe("bundler", () => {
         console.log('writeFileSync' in fs, readFileSync, 'writeFileSync' in defaultValue)
       `,
     },
-    platform: "node",
+    target: "node",
     run: {
       stdout: "true [Function: readFileSync] true",
     },
@@ -1352,7 +1352,7 @@ describe("bundler", () => {
         export {readFileSync} from 'fs'
       `,
     },
-    platform: "browser",
+    target: "browser",
     run: {
       file: "out.js",
     },
@@ -1372,7 +1372,7 @@ describe("bundler", () => {
         assert(module.readFileSync === fs.readFileSync, 'export {readFileSync} from "fs"; works')
       `,
     },
-    platform: "node",
+    target: "node",
     run: {
       file: "/test.js",
     },
@@ -1396,7 +1396,7 @@ describe("bundler", () => {
         assert(module.rfs === fs.readFileSync, 'export {rfs} works')
       `,
     },
-    platform: "node",
+    target: "node",
     run: {
       file: "/test.js",
     },
@@ -1420,7 +1420,7 @@ describe("bundler", () => {
         assert(mod.foo === 123, 'exports.foo')
       `,
     },
-    platform: "node",
+    target: "node",
     run: {
       file: "/test.js",
     },
@@ -1436,7 +1436,7 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
-    platform: "node",
+    target: "node",
     run: {
       file: "/test.js",
     },
@@ -1452,7 +1452,7 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    platform: "node",
+    target: "node",
     run: {
       file: "/test.js",
     },
@@ -2302,7 +2302,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/AutoExternalNode", {
-    notImplemented: true,
+    // notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         // These URLs should be external automatically
@@ -2317,7 +2317,7 @@ describe("bundler", () => {
         import "node:what-is-this";
       `,
     },
-    platform: "node",
+    target: "node",
     treeShaking: true,
     onAfterBundle(api) {
       const file = api.readFile("/out.js");
@@ -2348,7 +2348,7 @@ describe("bundler", () => {
         import "bun:what-is-this";
       `,
     },
-    platform: "bun",
+    target: "bun",
     onAfterBundle(api) {
       const file = api.readFile("/out.js");
       const imports = new Bun.Transpiler().scanImports(file);
@@ -2605,7 +2605,7 @@ describe("bundler", () => {
       `,
     },
     inject: ["/shims.js"],
-    platform: "node",
+    target: "node",
     run: {
       stdout: "function",
     },
@@ -3786,7 +3786,7 @@ describe("bundler", () => {
       `,
       "/present-file.js": ``,
     },
-    platform: "node",
+    target: "node",
     format: "cjs",
     external: ["external-pkg", "@scope/external-pkg", "{{root}}/external-file"],
   });
@@ -5198,7 +5198,7 @@ describe("bundler", () => {
       "/node_modules/second-path/index.js": `module.exports = 567`,
     },
     external: ["*"],
-    platform: "browser",
+    target: "browser",
     format: "esm",
     outfile: "/out.mjs",
     run: {
@@ -5225,7 +5225,7 @@ describe("bundler", () => {
     files: RequireShimSubstitutionBrowser.options.files,
     runtimeFiles: RequireShimSubstitutionBrowser.options.runtimeFiles,
     external: ["*"],
-    platform: "node",
+    target: "node",
     format: "esm",
     outfile: "/out.mjs",
     run: {
@@ -5285,7 +5285,7 @@ describe("bundler", () => {
       "/node_modules/fs/index.js": `console.log('include this too')`,
       "/node_modules/fs/promises.js": `throw 'DO NOT INCLUDE THIS'`,
     },
-    platform: "node",
+    target: "node",
   });
   itBundled("default/EntryNamesNoSlashAfterDir", {
     // GENERATED
@@ -5296,7 +5296,7 @@ describe("bundler", () => {
     },
     entryPoints: ["/src/app1/main.ts", "/src/app2/main.ts", "/src/app3/main.ts"],
     outputPaths: ["/out/app1-main.js", "/out/app2-main.js", "/out/app3-main.js"],
-    entryNames: "[dir]-[name].[ext]",
+    entryNaming: "[dir]-[name].[ext]",
   });
   // itBundled("default/EntryNamesNonPortableCharacter", {
   //   // GENERATED
@@ -5324,7 +5324,7 @@ describe("bundler", () => {
   //   entryPoints: ["/src/entries/entry1.js", "/src/entries/entry2.js"],
   //   outbase: "/src",
   //   splitting: true,
-  //   entryNames: "main/[ext]/[name]-[hash].[ext]",
+  //   entryNaming: "main/[ext]/[name]-[hash].[ext]",
   // });
   itBundled("default/MinifyIdentifiersImportPathFrequencyAnalysis", {
     files: {

@@ -52,7 +52,7 @@ describe("bundler", () => {
         console.log(typeof readFileSync);
       `,
     },
-    platform: "browser",
+    target: "browser",
     run: {
       stdout: "function\nfunction\nundefined",
     },
@@ -137,7 +137,7 @@ describe("bundler", () => {
         console.log('zlib           :', scan(zlib))
       `,
     },
-    platform: "browser",
+    target: "browser",
     onAfterBundle(api) {
       assert(!api.readFile("/out.js").includes("\0"), "bundle should not contain null bytes");
       const file = api.readFile("/out.js");
@@ -189,7 +189,7 @@ describe("bundler", () => {
     files: {
       "/entry.js": NodePolyfills.options.files["/entry.js"],
     },
-    platform: "browser",
+    target: "browser",
     external: Object.keys(nodePolyfillList),
     onAfterBundle(api) {
       const file = api.readFile("/out.js");
@@ -233,7 +233,7 @@ describe("bundler", () => {
           ${nonErroringBunModules.map((x, i) => `console.log("${x.padEnd(12, " ")}:", scan(bun_${i}));`).join("\n")}
         `,
     },
-    platform: "browser",
+    target: "browser",
     onAfterBundle(api) {
       assert(!api.readFile("/out.js").includes("\0"), "bundle should not contain null bytes");
       const file = api.readFile("/out.js");
@@ -257,7 +257,7 @@ describe("bundler", () => {
           .join("\n")}
       `,
     },
-    platform: "browser",
+    target: "browser",
     bundleErrors: {
       "/entry.js": Object.keys(bunModules)
         .filter(x => bunModules[x] === "error")
@@ -269,7 +269,7 @@ describe("bundler", () => {
   itBundled("browser/BunPolyfillExternal", {
     skipOnEsbuild: true,
     files: ImportBunError.options.files,
-    platform: "browser",
+    target: "browser",
     external: Object.keys(bunModules),
     onAfterBundle(api) {
       const file = api.readFile("/out.js");

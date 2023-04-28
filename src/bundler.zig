@@ -549,7 +549,7 @@ pub const Bundler = struct {
             return;
         }
 
-        if (this.options.platform == .bun_macro) {
+        if (this.options.target == .bun_macro) {
             this.options.env.behavior = .prefix;
             this.options.env.prefix = "BUN_";
         }
@@ -565,7 +565,7 @@ pub const Bundler = struct {
         defer js_ast.Stmt.Data.Store.reset();
 
         if (this.options.framework) |framework| {
-            if (this.options.platform.isClient()) {
+            if (this.options.target.isClient()) {
                 try this.options.loadDefines(this.allocator, this.env, &framework.client.env);
             } else {
                 try this.options.loadDefines(this.allocator, this.env, &framework.server.env);
@@ -607,7 +607,7 @@ pub const Bundler = struct {
                 }
 
                 if (this.options.areDefinesUnset()) {
-                    if (this.options.platform.isClient()) {
+                    if (this.options.target.isClient()) {
                         this.options.env = framework.client.env;
                     } else {
                         this.options.env = framework.server.env;
@@ -872,7 +872,7 @@ pub const Bundler = struct {
                     return BuildResolveResultPair{ .written = 0, .input_fd = result.input_fd, .empty = true };
                 }
 
-                if (bundler.options.platform.isBun()) {
+                if (bundler.options.target.isBun()) {
                     try bundler.linker.link(file_path, &result, origin, import_path_format, false, true);
                     return BuildResolveResultPair{
                         .written = switch (result.ast.exports_kind) {
@@ -989,7 +989,7 @@ pub const Bundler = struct {
                 ) orelse {
                     return null;
                 };
-                if (!bundler.options.platform.isBun())
+                if (!bundler.options.target.isBun())
                     try bundler.linker.link(
                         file_path,
                         &result,
@@ -1008,7 +1008,7 @@ pub const Bundler = struct {
                         true,
                     );
 
-                output_file.size = switch (bundler.options.platform) {
+                output_file.size = switch (bundler.options.target) {
                     .neutral, .browser, .node => try bundler.print(
                         result,
                         js_printer.FileWriter,
@@ -1150,7 +1150,7 @@ pub const Bundler = struct {
                     .require_ref = ast.require_ref,
                     .css_import_behavior = bundler.options.cssImportBehavior(),
                     .source_map_handler = source_map_context,
-                    .rewrite_require_resolve = bundler.options.platform != .node,
+                    .rewrite_require_resolve = bundler.options.target != .node,
                     .minify_whitespace = bundler.options.minify_whitespace,
                     .minify_syntax = bundler.options.minify_syntax,
                     .minify_identifiers = bundler.options.minify_identifiers,
@@ -1172,7 +1172,7 @@ pub const Bundler = struct {
                     .require_ref = ast.require_ref,
                     .source_map_handler = source_map_context,
                     .css_import_behavior = bundler.options.cssImportBehavior(),
-                    .rewrite_require_resolve = bundler.options.platform != .node,
+                    .rewrite_require_resolve = bundler.options.target != .node,
                     .minify_whitespace = bundler.options.minify_whitespace,
                     .minify_syntax = bundler.options.minify_syntax,
                     .minify_identifiers = bundler.options.minify_identifiers,
@@ -1180,7 +1180,7 @@ pub const Bundler = struct {
                 },
                 enable_source_map,
             ),
-            .esm_ascii => switch (bundler.options.platform.isBun()) {
+            .esm_ascii => switch (bundler.options.target.isBun()) {
                 inline else => |is_bun| try js_printer.printAst(
                     Writer,
                     writer,
@@ -1376,18 +1376,18 @@ pub const Bundler = struct {
                     };
                 }
 
-                const platform = bundler.options.platform;
+                const target = bundler.options.target;
 
                 var jsx = this_parse.jsx;
                 jsx.parse = loader.isJSX();
 
                 var opts = js_parser.Parser.Options.init(jsx, loader);
                 opts.enable_legacy_bundling = false;
-                opts.legacy_transform_require_to_import = bundler.options.allow_runtime and !bundler.options.platform.isBun();
+                opts.legacy_transform_require_to_import = bundler.options.allow_runtime and !bundler.options.target.isBun();
                 opts.features.allow_runtime = bundler.options.allow_runtime;
                 opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
-                opts.features.should_fold_typescript_constant_expressions = loader.isTypeScript() or platform.isBun() or bundler.options.inlining;
-                opts.features.dynamic_require = platform.isBun();
+                opts.features.should_fold_typescript_constant_expressions = loader.isTypeScript() or target.isBun() or bundler.options.inlining;
+                opts.features.dynamic_require = target.isBun();
                 opts.transform_only = bundler.options.transform_only;
 
                 // @bun annotation
@@ -1403,7 +1403,7 @@ pub const Bundler = struct {
                 // or you're running in SSR
                 // or the file is a node_module
                 opts.features.hot_module_reloading = bundler.options.hot_module_reloading and
-                    platform.isNotBun() and
+                    target.isNotBun() and
                     (!opts.can_import_from_bundle or
                     (opts.can_import_from_bundle and !path.isNodeModule()));
                 opts.features.react_fast_refresh = opts.features.hot_module_reloading and
@@ -1411,8 +1411,8 @@ pub const Bundler = struct {
                     bundler.options.jsx.supports_fast_refresh;
                 opts.filepath_hash_for_hmr = file_hash orelse 0;
                 opts.features.auto_import_jsx = bundler.options.auto_import_jsx;
-                opts.warn_about_unbundled_modules = platform.isNotBun();
-                opts.features.jsx_optimization_inline = opts.features.allow_runtime and (bundler.options.jsx_optimization_inline orelse (platform.isBun() and jsx.parse and
+                opts.warn_about_unbundled_modules = target.isNotBun();
+                opts.features.jsx_optimization_inline = opts.features.allow_runtime and (bundler.options.jsx_optimization_inline orelse (target.isBun() and jsx.parse and
                     !jsx.development)) and
                     (jsx.runtime == .automatic or jsx.runtime == .classic);
 
@@ -1432,12 +1432,12 @@ pub const Bundler = struct {
 
                 opts.macro_context = &bundler.macro_context.?;
                 if (comptime !JSC.is_bindgen) {
-                    if (platform != .bun_macro) {
+                    if (target != .bun_macro) {
                         opts.macro_context.javascript_object = this_parse.macro_js_ctx;
                     }
                 }
 
-                opts.features.is_macro_runtime = platform == .bun_macro;
+                opts.features.is_macro_runtime = target == .bun_macro;
                 opts.features.replace_exports = this_parse.replace_exports;
 
                 return switch ((bundler.resolver.caches.js.parse(
@@ -1530,7 +1530,7 @@ pub const Bundler = struct {
                 };
             },
             .wasm => {
-                if (bundler.options.platform.isBun()) {
+                if (bundler.options.target.isBun()) {
                     if (!source.isWebAssembly()) {
                         bundler.log.addErrorFmt(
                             null,

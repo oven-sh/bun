@@ -549,7 +549,7 @@ describe("bundler", () => {
     },
     outdir: "/out",
     splitting: true,
-    chunkNames: "[dir]/[name]-[hash].[ext]",
+    chunkNaming: "[dir]/[name]-[hash].[ext]",
     onAfterBundle(api) {
       assert(
         readdirSync(api.outdir + "/output-path/should-contain/this-text").length === 1,
@@ -569,7 +569,7 @@ describe("bundler", () => {
     outdir: "/out",
     entryPoints: ["/src/index.js"],
     splitting: true,
-    platform: "browser",
+    target: "browser",
     runtimeFiles: {
       "/test.js": /* js */ `
         import { A, B } from './out/index.js'

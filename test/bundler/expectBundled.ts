@@ -75,13 +75,13 @@ export interface BundlerTestInput {
 
   // bundler options
   alias?: Record<string, string>;
-  assetNames?: string;
+  assetNaming?: string;
   banner?: string;
   define?: Record<string, string | number>;
   /** Default is "[name].[ext]" */
-  entryNames?: string;
+  entryNaming?: string;
   /** Default is "[name]-[hash].[ext]" */
-  chunkNames?: string;
+  chunkNaming?: string;
   extensionOrder?: string[];
   /** Replaces "{{root}}" with the file root */
   external?: string[];
@@ -102,7 +102,7 @@ export interface BundlerTestInput {
   /** Defaults to `/out` */
   outdir?: string;
   /** Defaults to "browser". "bun" is set to "node" when using esbuild. */
-  platform?: "bun" | "node" | "neutral" | "browser";
+  target?: "bun" | "node" | "neutral" | "browser";
   publicPath?: string;
   keepNames?: boolean;
   legalComments?: "none" | "inline" | "eof" | "linked" | "external";
@@ -262,13 +262,13 @@ function expectBundled(
     backend,
     assertNotPresent,
     capture,
-    assetNames,
-    chunkNames,
+    assetNaming,
+    chunkNaming,
     cjs2esm,
     dce,
     dceKeepMarkerCount,
     define,
-    entryNames,
+    entryNaming,
     entryPoints,
     entryPointsRaw,
     env,
@@ -293,7 +293,7 @@ function expectBundled(
     outdir,
     outfile,
     outputPaths,
-    platform,
+    target,
     plugins,
     publicPath,
     run,
@@ -322,7 +322,7 @@ function expectBundled(
 
   // Resolve defaults for options and some related things
   mode ??= "bundle";
-  platform ??= "browser";
+  target ??= "browser";
   format ??= "esm";
   entryPoints ??= entryPointsRaw ? [] : [Object.keys(files)[0]];
   if (run === true) run = {};
@@ -334,8 +334,8 @@ function expectBundled(
   if (!ESBUILD && format !== "esm") {
     throw new Error("formats besides esm not implemented in bun build");
   }
-  if (!ESBUILD && platform === "neutral") {
-    throw new Error("platform=neutral not implemented in bun build");
+  if (!ESBUILD && target === "neutral") {
+    throw new Error("target=neutral not implemented in bun build");
   }
   if (!ESBUILD && metafile) {
     throw new Error("metafile not implemented in bun build");
@@ -413,8 +413,8 @@ function expectBundled(
     }
 
     if (outdir) {
-      entryNames ??= "[name].[ext]";
-      chunkNames ??= "[name]-[hash].[ext]";
+      entryNaming ??= "[name].[ext]";
+      chunkNaming ??= "[name]-[hash].[ext]";
     }
 
     // Option validation
@@ -469,7 +469,7 @@ function expectBundled(
               ...(entryPointsRaw ?? []),
               mode === "bundle" ? [outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`] : [],
               define && Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
-              `--platform=${platform}`,
+              `--target=${target}`,
               external && external.map(x => ["--external", x]),
               minifyIdentifiers && `--minify-identifiers`,
               minifySyntax && `--minify-syntax`,
@@ -483,9 +483,9 @@ function expectBundled(
               jsx.importSource && ["--jsx-import-source", jsx.importSource],
               // metafile && `--manifest=${metafile}`,
               // sourceMap && `--sourcemap${sourceMap !== true ? `=${sourceMap}` : ""}`,
-              entryNames && entryNames !== "[name].[ext]" && [`--entry-naming`, entryNames],
-              chunkNames && chunkNames !== "[name]-[hash].[ext]" && [`--chunk-naming`, chunkNames],
-              assetNames && assetNames !== "[name]-[hash].[ext]" && [`--asset-naming`, chunkNames],
+              entryNaming && entryNaming !== "[name].[ext]" && [`--entry-naming`, entryNaming],
+              chunkNaming && chunkNaming !== "[name]-[hash].[ext]" && [`--chunk-naming`, chunkNaming],
+              assetNaming && assetNaming !== "[name]-[hash].[ext]" && [`--asset-naming`, chunkNaming],
               // `--format=${format}`,
               // legalComments && `--legal-comments=${legalComments}`,
               splitting && `--splitting`,
@@ -502,7 +502,7 @@ function expectBundled(
               mode === "bundle" && "--bundle",
               outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
               `--format=${format}`,
-              `--platform=${platform === "bun" ? "node" : platform}`,
+              `--platform=${target === "bun" ? "node" : target}`,
               minifyIdentifiers && `--minify-identifiers`,
               minifySyntax && `--minify-syntax`,
               minifyWhitespace && `--minify-whitespace`,
@@ -515,13 +515,13 @@ function expectBundled(
               jsx.factory && `--jsx-factory=${jsx.factory}`,
               jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
               env?.NODE_ENV !== "production" && `--jsx-dev`,
-              entryNames && entryNames !== "[name].[ext]" && `--entry-names=${entryNames.replace(/\.\[ext]$/, "")}`,
-              chunkNames &&
-                chunkNames !== "[name]-[hash].[ext]" &&
-                `--chunk-names=${chunkNames.replace(/\.\[ext]$/, "")}`,
-              assetNames &&
-                assetNames !== "[name]-[hash].[ext]" &&
-                `--asset-names=${assetNames.replace(/\.\[ext]$/, "")}`,
+              entryNaming && entryNaming !== "[name].[ext]" && `--entry-names=${entryNaming.replace(/\.\[ext]$/, "")}`,
+              chunkNaming &&
+                chunkNaming !== "[name]-[hash].[ext]" &&
+                `--chunk-names=${chunkNaming.replace(/\.\[ext]$/, "")}`,
+              assetNaming &&
+                assetNaming !== "[name]-[hash].[ext]" &&
+                `--asset-names=${assetNaming.replace(/\.\[ext]$/, "")}`,
               metafile && `--metafile=${metafile}`,
               sourceMap && `--sourcemap${sourceMap !== true ? `=${sourceMap}` : ""}`,
               banner && `--banner:js=${banner}`,
@@ -762,16 +762,16 @@ function expectBundled(
             syntax: minifySyntax,
           },
           naming: {
-            entry: useOutFile ? path.basename(outfile!) : entryNames,
-            chunk: chunkNames,
-            asset: assetNames,
+            entry: useOutFile ? path.basename(outfile!) : entryNaming,
+            chunk: chunkNaming,
+            asset: assetNaming,
           },
           plugins: pluginArray,
           treeShaking,
           outdir: buildOutDir,
           sourcemap: sourceMap === true ? "external" : sourceMap || "none",
           splitting,
-          target: platform === "neutral" ? "browser" : platform,
+          target: target === "neutral" ? "browser" : target,
           publicPath,
         } as BuildConfig;
 
@@ -902,7 +902,7 @@ for (const blob of build.outputs) {
       }
     } else {
       // entryNames makes it so we cannot predict the output file
-      if (!entryNames || entryNames === "[name].[ext]") {
+      if (!entryNaming || entryNaming === "[name].[ext]") {
         for (const fullpath of outputPaths) {
           if (!existsSync(fullpath)) {
             throw new Error("Bundle was not written to disk: " + fullpath);

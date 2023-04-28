@@ -101,7 +101,7 @@ describe("bundler", () => {
       "/b/test.svg": `<svg></svg>`,
     },
     outdir: "/out",
-    assetNames: "assets/[name]-[hash].[ext]",
+    assetNaming: "assets/[name]-[hash].[ext]",
     loader: {
       ".svg": "file",
     },
@@ -337,7 +337,7 @@ describe("bundler", () => {
       "/src/images/image.png": `x`,
     },
     outbase: "/src",
-    assetNames: "[dir]/[name]-[hash]",
+    assetNaming: "[dir]/[name]-[hash]",
     outdir: "/out",
     outputPaths: ["/out/entries/entry.js"],
     loader: {
@@ -359,7 +359,7 @@ describe("bundler", () => {
       "/src/uploads/file.txt": `y`,
     },
     outbase: "/src",
-    assetNames: "[ext]/[name]-[hash]",
+    assetNaming: "[ext]/[name]-[hash]",
   });
   itBundled("loader/FileRelativePathAssetNamesCSS", {
     // GENERATED
@@ -372,7 +372,7 @@ describe("bundler", () => {
       "/src/images/image.png": `x`,
     },
     outbase: "/src",
-    assetNames: "[dir]/[name]-[hash]",
+    assetNaming: "[dir]/[name]-[hash]",
   });
   itBundled("loader/FilePublicPathJS", {
     // GENERATED
@@ -410,7 +410,7 @@ describe("bundler", () => {
     },
     outbase: "/src",
     publicPath: "https://example.com",
-    assetNames: "[dir]/[name]-[hash]",
+    assetNaming: "[dir]/[name]-[hash]",
   });
   itBundled("loader/FilePublicPathAssetNamesCSS", {
     // GENERATED
@@ -424,7 +424,7 @@ describe("bundler", () => {
     },
     outbase: "/src",
     publicPath: "https://example.com",
-    assetNames: "[dir]/[name]-[hash]",
+    assetNaming: "[dir]/[name]-[hash]",
   });
   itBundled("loader/FileOneSourceTwoDifferentOutputPathsJS", {
     // GENERATED

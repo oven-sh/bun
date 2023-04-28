@@ -711,21 +711,6 @@ declare module "bun" {
     ) => number | bigint;
   }
 
-  export type Platform =
-    /**
-     * When building for bun.js
-     */
-    | "bun"
-    /**
-     * When building for the web
-     */
-    | "browser"
-    /**
-     * When building for node.js
-     */
-    | "node"
-    | "neutral";
-
   export type JavaScriptLoader = "jsx" | "js" | "ts" | "tsx";
 
   /**
@@ -776,7 +761,7 @@ declare module "bun" {
 
     /**  What platform are we targeting? This may affect how import and/or require is used */
     /**  @example "browser" */
-    platform?: Platform;
+    target?: Target;
 
     /**
      *  TSConfig.json file as stringified JSON or an object

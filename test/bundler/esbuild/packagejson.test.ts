@@ -417,7 +417,7 @@ describe("bundler", () => {
         }
       `,
     },
-    platform: "browser",
+    target: "browser",
     run: {
       stdout: "345",
     },
@@ -451,7 +451,7 @@ describe("bundler", () => {
         }
       `,
     },
-    platform: "node",
+    target: "node",
     run: {
       stdout: "123",
     },
@@ -493,7 +493,7 @@ describe("bundler", () => {
         }
       `,
     },
-    platform: "browser",
+    target: "browser",
     run: {
       stdout: "456",
     },
@@ -535,7 +535,7 @@ describe("bundler", () => {
         }
       `,
     },
-    platform: "node",
+    target: "node",
     run: {
       stdout: "123",
     },
@@ -981,7 +981,7 @@ describe("bundler", () => {
         }
       `,
     },
-    platform: "neutral",
+    target: "neutral",
     /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: ERROR: Could not resolve "demo-pkg"
   Users/user/project/node_modules/demo-pkg/package.json: NOTE: The "main" field here was ignored. Main fields must be configured explicitly when using the "neutral" platform.
   NOTE: You can mark the path "demo-pkg" as external to exclude it from the bundle, which will remove this error.
@@ -1010,7 +1010,7 @@ describe("bundler", () => {
         }
       `,
     },
-    platform: "neutral",
+    target: "neutral",
     mainFields: ["hello"],
     run: {
       stdout: "123",
@@ -1264,7 +1264,7 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg/node.js": `console.log('FAILURE')`,
       "/Users/user/project/node_modules/pkg/browser.js": `console.log('SUCCESS')`,
     },
-    platform: "browser",
+    target: "browser",
     outfile: "/Users/user/project/out.js",
     run: {
       stdout: "SUCCESS",
@@ -1286,7 +1286,7 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg/browser.js": `console.log('FAILURE')`,
       "/Users/user/project/node_modules/pkg/node.js": `console.log('SUCCESS')`,
     },
-    platform: "node",
+    target: "node",
     outfile: "/Users/user/project/out.js",
     run: {
       stdout: "SUCCESS",
@@ -1309,7 +1309,7 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg/default.js": `console.log('SUCCESS')`,
     },
     outfile: "/Users/user/project/out.js",
-    platform: "neutral",
+    target: "neutral",
     run: {
       stdout: "SUCCESS",
     },

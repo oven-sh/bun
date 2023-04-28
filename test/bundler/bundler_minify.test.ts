@@ -52,7 +52,7 @@ describe("bundler", () => {
       "!1",
     ],
     minifySyntax: true,
-    platform: "bun",
+    target: "bun",
   });
   itBundled("minify/FunctionExpressionRemoveName", {
     notImplemented: true,
@@ -67,7 +67,7 @@ describe("bundler", () => {
     capture: ["function(", "function(", "function e("],
     minifySyntax: true,
     minifyIdentifiers: true,
-    platform: "bun",
+    target: "bun",
   });
   itBundled("minify/PrivateIdentifiersNameCollision", {
     files: {

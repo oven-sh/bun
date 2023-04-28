@@ -570,7 +570,7 @@ pub const Resolver = struct {
             .node_module_bundle = opts.node_modules_bundle,
             .log = log,
             .extension_order = opts.extension_order,
-            .care_about_browser_field = opts.platform.isWebLike(),
+            .care_about_browser_field = opts.target.isWebLike(),
         };
     }
 
@@ -3170,7 +3170,7 @@ pub const Resolver = struct {
                 const main_field_values = pkg_json.main_fields;
                 const main_field_keys = r.opts.main_fields;
                 // TODO: check this works right. Not sure this will really work.
-                const auto_main = r.opts.main_fields.ptr == options.Platform.DefaultMainFields.get(r.opts.platform).ptr;
+                const auto_main = r.opts.main_fields.ptr == options.Target.DefaultMainFields.get(r.opts.target).ptr;
 
                 if (r.debug_logs) |*debug| {
                     debug.addNoteFmt("Searching for main fields in \"{s}\"", .{pkg_json.source.path.text});

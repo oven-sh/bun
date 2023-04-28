@@ -354,6 +354,7 @@ pub const MatchResult = struct {
     package_json: ?*PackageJSON = null,
     diff_case: ?Fs.FileSystem.Entry.Lookup.DifferentCase = null,
     dir_info: ?*DirInfo = null,
+    module_type: options.ModuleType = .unknown,
 
     pub const Union = union(enum) {
         not_found: void,
@@ -1157,6 +1158,7 @@ pub const Resolver = struct {
                                         .dirname_fd = _result.dirname_fd,
                                         .package_json = pkg,
                                         .jsx = r.opts.jsx,
+                                        .module_type = _result.module_type,
                                     };
                                     check_relative = false;
                                     check_package = false;
@@ -1307,6 +1309,7 @@ pub const Resolver = struct {
                     result.diff_case = res.diff_case;
                     result.is_from_node_modules = result.is_from_node_modules or res.is_node_module;
                     result.jsx = r.opts.jsx;
+                    result.module_type = res.module_type;
 
                     if (res.path_pair.primary.is_disabled and res.path_pair.secondary == null) {
                         return .{ .success = result };
@@ -1331,6 +1334,7 @@ pub const Resolver = struct {
                                             result.file_fd = remapped.file_fd;
                                             result.package_json = remapped.package_json;
                                             result.diff_case = remapped.diff_case;
+                                            result.module_type = remapped.module_type;
 
                                             result.is_from_node_modules = result.is_from_node_modules or remapped.is_node_module;
                                             return .{ .success = result };
@@ -1532,14 +1536,15 @@ pub const Resolver = struct {
                             if (package_json.exports) |exports_map| {
 
                                 // The condition set is determined by the kind of import
-
-                                const esmodule = ESModule{
+                                var module_type = options.ModuleType.unknown;
+                                var esmodule = ESModule{
                                     .conditions = switch (kind) {
                                         ast.ImportKind.require, ast.ImportKind.require_resolve => r.opts.conditions.require,
                                         else => r.opts.conditions.import,
                                     },
                                     .allocator = r.allocator,
                                     .debug_logs = if (r.debug_logs) |*debug| debug else null,
+                                    .module_type = &module_type,
                                 };
 
                                 // Resolve against the path "/", then join it with the absolute
@@ -1554,6 +1559,7 @@ pub const Resolver = struct {
                                     if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath)) |result| {
                                         var result_copy = result;
                                         result_copy.is_node_module = true;
+                                        result_copy.module_type = module_type;
                                         return .{ .success = result_copy };
                                     }
                                 }
@@ -1578,7 +1584,10 @@ pub const Resolver = struct {
                                 if (strings.eqlComptime(extname, ".js") and esm.subpath.len > 3) {
                                     const esm_resolution = esmodule.resolve("/", esm.subpath[0 .. esm.subpath.len - 3], exports_map.root);
                                     if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath)) |result| {
-                                        return .{ .success = result };
+                                        var result_copy = result;
+                                        result_copy.is_node_module = true;
+                                        result_copy.module_type = module_type;
+                                        return .{ .success = result_copy };
                                     }
                                 }
 

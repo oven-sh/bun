@@ -1361,4 +1361,72 @@ pub fn threadlocalAllocator() std.mem.Allocator {
     return default_allocator;
 }
 
+pub fn Ref(comptime T: type) type {
+    return struct {
+        ref_count: u32,
+        allocator: std.mem.Allocator,
+        value: T,
+
+        pub fn init(value: T, allocator: std.mem.Allocator) !*@This() {
+            var this = try allocator.create(@This());
+            this.allocator = allocator;
+            this.ref_count = 1;
+            this.value = value;
+            return this;
+        }
+
+        pub fn ref(this: *@This()) *@This() {
+            this.ref_count += 1;
+            return this;
+        }
+
+        pub fn unref(this: *@This()) ?*@This() {
+            this.ref_count -= 1;
+            if (this.ref_count == 0) {
+                if (@hasDecl(T, "deinit")) {
+                    this.value.deinit();
+                }
+                this.allocator.destroy(this);
+                return null;
+            }
+            return this;
+        }
+    };
+}
+
+pub fn HiveRef(comptime T: type, comptime capacity: u16) type {
+    return struct {
+        const HiveAllocator = HiveArray(@This(), capacity).Fallback;
+
+        ref_count: u32,
+        allocator: *HiveAllocator,
+        value: T,
+
+        pub fn init(value: T, allocator: *HiveAllocator) !*@This() {
+            var this = try allocator.tryGet();
+            this.allocator = allocator;
+            this.ref_count = 1;
+            this.value = value;
+            return this;
+        }
+
+        pub fn ref(this: *@This()) *@This() {
+            this.ref_count += 1;
+            return this;
+        }
+
+        pub fn unref(this: *@This()) ?*@This() {
+            this.ref_count -= 1;
+            if (this.ref_count == 0) {
+                if (@hasDecl(T, "deinit")) {
+                    this.value.deinit();
+                }
+                this.allocator.put(this);
+                return null;
+            }
+            return this;
+        }
+    };
+}
+
 pub const MaxHeapAllocator = @import("./max_heap_allocator.zig").MaxHeapAllocator;

@@ -760,11 +760,6 @@ pub const Fetch = struct {
 
         fn toBodyValue(this: *FetchTasklet) Body.Value {
             var response_buffer = this.response_buffer.list;
-            const response = Body.Value{
-                .InternalBlob = .{
-                    .bytes = response_buffer.toManaged(bun.default_allocator),
-                },
-            };
             this.response_buffer = .{
                 .allocator = default_allocator,
                 .list = .{
@@ -778,6 +773,13 @@ pub const Fetch = struct {
             //     defer response_buffer.deinit(bun.default_allocator);
             //     return .{ .InlineBlob = inline_blob };
             // }
+
+            const response = Body.Value{
+                .InternalBlob = .{
+                    .bytes = response_buffer.toManaged(bun.default_allocator),
+                },
+            };
+
             return response;
         }
 
@@ -1016,7 +1018,7 @@ pub const Fetch = struct {
                             return JSC.JSValue.jsUndefined().asObjectRef();
                         }
                     } else {
-                        body = request.body.useAsAnyBlob();
+                        body = request.body.value.useAsAnyBlob();
                     }
 
                     if (options.get(ctx, "timeout")) |timeout_value| {
@@ -1095,7 +1097,7 @@ pub const Fetch = struct {
                     }
                     headers = Headers.from(head, bun.default_allocator) catch unreachable;
                 }
-                body = request.body.useAsAnyBlob();
+                body = request.body.value.useAsAnyBlob();
                 // no proxy only url
                 url = ZigURL.parse(getAllocator(ctx).dupe(u8, request.url) catch unreachable);
                 url_proxy_buffer = url.href;

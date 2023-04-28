@@ -231,7 +231,7 @@ await result;
 ```
 
 ```bash#CLI
-$ bunx build --entrypoints ./index.ts
+$ bun build --entrypoints ./index.ts
 # the bundle will be printed to stdout
 # <bundled code>
 ```
@@ -255,16 +255,16 @@ result;
 ```
 
 ```bash#CLI
-$ bunx build --entrypoints ./index.ts --outdir ./out
+$ bun build --entrypoints ./index.ts --outdir ./out
 # the bundle will be printed to stdout
 # ...
 ```
 
 {% /codetabs %}
 
-When specified:
+When `outdir` is specified:
 
-- The JavaScript API will write the generated bundles to the appropriate location in `outdir`. The result of the `Bun.build` call will contain `BunFile` instances corresponding to the new files.
+- The JavaScript API will write the generated bundles to the appropriate location in `outdir`. The result of the `Bun.build()` call will contain `BunFile` instances corresponding to the new files.
 
   ```ts
   const result = await Bun.build({
@@ -294,7 +294,7 @@ await Bun.build({
 ```
 
 ```bash#CLI
-$ bunx build --entrypoints ./index.ts --outdir ./out --target browser
+$ bun build --entrypoints ./index.ts --outdir ./out --target browser
 ```
 
 {% /codetabs %}

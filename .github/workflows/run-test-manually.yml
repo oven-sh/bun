@@ -37,4 +37,4 @@ jobs:
           bun install
           bun install --cwd test/bun.js
           bun install --cwd test/bun.js/third-party/body-parser-test
-          bun run scripts/bun-test.ts test/ --isolated
+          bunx ts-node --esm scripts/bun-test.ts --isolated test/

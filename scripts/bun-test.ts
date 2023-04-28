@@ -1,5 +1,6 @@
-import { readdirSync, writeSync, fsyncSync, appendFileSync } from "node:fs";
 import { join, basename } from "node:path";
+import { readdirSync, writeSync, fsyncSync, appendFileSync } from "node:fs";
+import { spawn } from "node:child_process";
 
 export { parseTest, runTest, formatTest };
 
@@ -206,7 +207,7 @@ function parseInfo(line: string): TestInfo | undefined {
   return {
     name,
     version,
-    revision: Bun.revision.startsWith(revision) ? Bun.revision : revision,
+    revision: "Bun" in globalThis && Bun.revision.startsWith(revision) ? Bun.revision : revision,
   };
 }
 
@@ -393,24 +394,31 @@ async function* runTest(options: RunTestOptions): AsyncGenerator<RunTestResult, 
     }
   }
   const runSingleTest = async (args: string[]) => {
-    const runner = Bun.spawn({
+    const runner = spawn("bun", ["test", ...args], {
       cwd,
-      cmd: ["bun", "test", ...args],
       env: {
         ...process.env,
         "FORCE_COLOR": "1",
       },
-      stdout: "pipe",
-      stderr: "pipe",
+      stdio: "pipe",
     });
-    const exitCode = await Promise.race([
-      runner.exited,
-      Bun.sleep(timeout).then(() => {
-        runner.kill();
-        return null;
-      }),
-    ]);
-    const [stdout, stderr] = await Promise.all([readStream(runner.stdout), readStream(runner.stderr)]);
+    let stderr = "";
+    let stdout = "";
+    const exitCode = await new Promise<number | null>(resolve => {
+      runner.stdout.on("data", (data: Buffer) => {
+        stdout += data.toString("utf-8");
+      });
+      runner.stderr.on("data", (data: Buffer) => {
+        stderr += data.toString("utf-8");
+      });
+      runner.on("error", ({ name, message }) => {
+        stderr += `${name}: ${message}`;
+        resolve(null);
+      });
+      runner.on("exit", exitCode => {
+        resolve(exitCode);
+      });
+    });
     const lines = stderr.split("\n").map(stripAnsi);
     const result = parseTest(lines, { cwd, paths });
     return {
@@ -539,7 +547,7 @@ ${tests}`;
 }
 
 function printTest(result: RunTestResult): void {
-  const isAction = !!process.env["GITHUB_ACTIONS"] || true;
+  const isAction = !!process.env["GITHUB_ACTIONS"];
   const isGroup = result.files.length === 1;
   if (isGroup) {
     const { file, status } = result.files[0];
@@ -628,6 +636,6 @@ async function main() {
   process.exit(0);
 }
 
-if (import.meta.main) {
+if (import.meta.main || import.meta.url === `file://${process.argv[1]}`) {
   await main();
 }

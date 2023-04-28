@@ -401,6 +401,7 @@ async function* runTest(options: RunTestOptions): AsyncGenerator<RunTestResult, 
         "FORCE_COLOR": "1",
       },
       stdio: "pipe",
+      timeout,
     });
     let stderr = "";
     let stdout = "";

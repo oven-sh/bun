@@ -330,6 +330,13 @@ pub const LineColumnOffset = struct {
                 .value => this.value.advance(input),
             }
         }
+
+        pub fn reset(this: *Optional) void {
+            switch (this.*) {
+                .null => {},
+                .value => this.value = .{},
+            }
+        }
     };
 
     pub fn add(this: *LineColumnOffset, b: LineColumnOffset) void {

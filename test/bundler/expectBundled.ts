@@ -483,9 +483,9 @@ function expectBundled(
               jsx.importSource && ["--jsx-import-source", jsx.importSource],
               // metafile && `--manifest=${metafile}`,
               // sourceMap && `--sourcemap${sourceMap !== true ? `=${sourceMap}` : ""}`,
-              entryNames && entryNames !== "[name].[ext]" && [`--entry-names`, entryNames],
-              chunkNames && chunkNames !== "[name]-[hash].[ext]" && [`--chunk-names`, chunkNames],
-              assetNames && assetNames !== "[name]-[hash].[ext]" && [`--asset-names`, chunkNames],
+              entryNames && entryNames !== "[name].[ext]" && [`--entry-naming`, entryNames],
+              chunkNames && chunkNames !== "[name]-[hash].[ext]" && [`--chunk-naming`, chunkNames],
+              assetNames && assetNames !== "[name]-[hash].[ext]" && [`--asset-naming`, chunkNames],
               // `--format=${format}`,
               // legalComments && `--legal-comments=${legalComments}`,
               splitting && `--splitting`,
@@ -762,8 +762,9 @@ function expectBundled(
             syntax: minifySyntax,
           },
           naming: {
-            entrypoint: useOutFile ? path.basename(outfile!) : entryNames,
+            entry: useOutFile ? path.basename(outfile!) : entryNames,
             chunk: chunkNames,
+            asset: assetNames,
           },
           plugins: pluginArray,
           treeShaking,
@@ -778,18 +779,18 @@ function expectBundled(
           if (_referenceFn) {
             const x = _referenceFn.toString().replace(/^\s*expect\(.*$/gm, "// $&");
             const debugFile = `import path from 'path';
-  import assert from 'assert';
-  const {plugins} = (${x})({ root: ${JSON.stringify(root)} });
-  const options = ${JSON.stringify({ ...buildConfig, plugins: undefined }, null, 2)};
-  options.plugins = typeof plugins === "function" ? [{ name: "plugin", setup: plugins }] : plugins;
-  const build = await Bun.build(options);
-  if (build.logs) {
-    throw build.logs;
-  }
-  for (const blob of build.outputs) {
-    await Bun.write(path.join(options.outdir, blob.path), blob.result);
-  }
-  `;
+import assert from 'assert';
+const {plugins} = (${x})({ root: ${JSON.stringify(root)} });
+const options = ${JSON.stringify({ ...buildConfig, plugins: undefined }, null, 2)};
+options.plugins = typeof plugins === "function" ? [{ name: "plugin", setup: plugins }] : plugins;
+const build = await Bun.build(options);
+if (build.logs) {
+  throw build.logs;
+}
+for (const blob of build.outputs) {
+  await Bun.write(path.join(options.outdir, blob.path), blob.result);
+}
+`;
             writeFileSync(path.join(root, "run.js"), debugFile);
           } else {
             console.log("TODO: generate run.js, currently only works if options are wrapped in a function");

@@ -814,8 +814,8 @@ pub const BundleV2 = struct {
                 const key = unique_key_for_additional_files[index];
                 if (key.len > 0) {
                     var template = PathTemplate.asset;
-                    if (this.bundler.options.asset_names.len > 0)
-                        template.data = this.bundler.options.asset_names;
+                    if (this.bundler.options.asset_naming.len > 0)
+                        template.data = this.bundler.options.asset_naming;
                     const source = &sources[index];
                     var pathname = source.path.name;
                     // TODO: outbase
@@ -1311,9 +1311,9 @@ pub const BundleV2 = struct {
         );
         bundler.options.jsx = config.jsx;
 
-        bundler.options.entry_names = config.names.entry_point.data;
-        bundler.options.chunk_names = config.names.chunk.data;
-        bundler.options.asset_names = config.names.asset.data;
+        bundler.options.entry_naming = config.names.entry_point.data;
+        bundler.options.chunk_naming = config.names.chunk.data;
+        bundler.options.asset_naming = config.names.asset.data;
 
         bundler.options.public_path = config.public_path.list.items;
 
@@ -3388,16 +3388,16 @@ const LinkerContext = struct {
 
             if (chunk.entry_point.is_entry_point) {
                 chunk.template = PathTemplate.file;
-                if (this.resolver.opts.entry_names.len > 0)
-                    chunk.template.data = this.resolver.opts.entry_names;
+                if (this.resolver.opts.entry_naming.len > 0)
+                    chunk.template.data = this.resolver.opts.entry_naming;
                 const pathname = Fs.PathName.init(this.graph.entry_points.items(.output_path)[chunk.entry_point.entry_point_id].slice());
                 chunk.template.placeholder.name = pathname.base;
                 chunk.template.placeholder.ext = "js";
                 chunk.template.placeholder.dir = pathname.dir;
             } else {
                 chunk.template = PathTemplate.chunk;
-                if (this.resolver.opts.chunk_names.len > 0)
-                    chunk.template.data = this.resolver.opts.chunk_names;
+                if (this.resolver.opts.chunk_naming.len > 0)
+                    chunk.template.data = this.resolver.opts.chunk_naming;
             }
         }
 

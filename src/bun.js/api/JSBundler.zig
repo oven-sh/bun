@@ -175,7 +175,7 @@ pub const JSBundler = struct {
                         this.names.entry_point.data = this.names.owned_entry_point.list.items;
                     }
                 } else if (naming.isObject()) {
-                    if (try naming.getOptional(globalThis, "entrypoint", ZigString.Slice)) |slice| {
+                    if (try naming.getOptional(globalThis, "entry", ZigString.Slice)) |slice| {
                         defer slice.deinit();
                         this.names.owned_entry_point.appendSliceExact(slice.slice()) catch unreachable;
                         this.names.entry_point.data = this.names.owned_entry_point.list.items;

@@ -974,7 +974,7 @@ declare module "bun" {
       | string
       | {
           chunk?: string;
-          entrypoint?: string;
+          entry?: string;
           asset?: string;
         }; // | string;
     // root?: string; // project root

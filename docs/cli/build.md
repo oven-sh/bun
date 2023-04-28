@@ -704,12 +704,12 @@ Customizes the generated file names. Defaults to `./[dir]/[name].[ext]`.
 await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
-  naming: "./[dir]/[name].[ext]", // default
+  naming: "[dir]/[name].[ext]", // default
 })
 ```
 
 ```bash#CLI
-n/a
+$ bun build ./index.tsx --outdir ./out --entry-naming [dir]/[name].[ext]
 ```
 
 {% /codetabs %}
@@ -784,7 +784,7 @@ await Bun.build({
 ```
 
 ```bash#CLI
-$ bun build ./index.tsx --outdir ./out --naming [name]-[hash].[ext]
+$ bun build ./index.tsx --outdir ./out --entry-naming [name]-[hash].[ext]
 ```
 
 {% /codetabs %}
@@ -809,7 +809,7 @@ await Bun.build({
   outdir: './out',
   naming: {
     // default values
-    entrypoint: '[dir]/[name].[ext]',
+    entry: '[dir]/[name].[ext]',
     chunk: '[name]-[hash].[ext]',
     asset: '[name]-[hash].[ext]',
   },
@@ -817,7 +817,7 @@ await Bun.build({
 ```
 
 ```bash#CLI
-n/a
+$ bun build ./index.tsx --outdir ./out --entry-naming "[dir]/[name].[ext]" --chunk-naming "[name]-[hash].[ext]" --asset-naming "[name]-[hash].[ext]"
 ```
 
 {% /codetabs %}
@@ -980,7 +980,7 @@ await Bun.build({
   manifest?: boolean; // default false
   external?: string[];
   naming?: string | {
-    entrypoint?: string; // default '[dir]/[name].[ext]'
+    entry?: string; // default '[dir]/[name].[ext]'
     chunk?: string; // default '[name]-[hash].[ext]'
     asset?: string; // default '[name]-[hash].[ext]'
   };

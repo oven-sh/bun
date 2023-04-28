@@ -207,9 +207,9 @@ pub const Arguments = struct {
     const build_only_params = [_]ParamType{
         clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'inline', 'external', or 'none'") catch unreachable,
         clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
-        clap.parseParam("--entry-names <STR>              Pattern to use for entry point filenames") catch unreachable,
-        clap.parseParam("--chunk-names <STR>              Pattern to use for chunk filenames") catch unreachable,
-        clap.parseParam("--asset-names <STR>              Pattern to use for asset filenames") catch unreachable,
+        clap.parseParam("--entry-naming <STR>              Pattern to use for entry point filenames") catch unreachable,
+        clap.parseParam("--chunk-naming <STR>              Pattern to use for chunk filenames") catch unreachable,
+        clap.parseParam("--asset-naming <STR>              Pattern to use for asset filenames") catch unreachable,
         clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
         clap.parseParam("--server-components              Enable React Server Components (experimental)") catch unreachable,
         clap.parseParam("--splitting                      Split up code!") catch unreachable,
@@ -502,16 +502,16 @@ pub const Arguments = struct {
                 ctx.bundler_options.code_splitting = true;
             }
 
-            if (args.option("--entry-names")) |entry_names| {
-                ctx.bundler_options.entry_names = try strings.concat(allocator, &.{ "./", entry_names });
+            if (args.option("--entry-naming")) |entry_naming| {
+                ctx.bundler_options.entry_naming = try strings.concat(allocator, &.{ "./", entry_naming });
             }
 
-            if (args.option("--chunk-names")) |chunk_names| {
-                ctx.bundler_options.asset_names = try strings.concat(allocator, &.{ "./", chunk_names });
+            if (args.option("--chunk-naming")) |chunk_naming| {
+                ctx.bundler_options.chunk_naming = try strings.concat(allocator, &.{ "./", chunk_naming });
             }
 
-            if (args.option("--asset-names")) |asset_names| {
-                ctx.bundler_options.asset_names = try strings.concat(allocator, &.{ "./", asset_names });
+            if (args.option("--asset-naming")) |asset_naming| {
+                ctx.bundler_options.asset_naming = try strings.concat(allocator, &.{ "./", asset_naming });
             }
 
             if (comptime FeatureFlags.react_server_components) {
@@ -932,9 +932,9 @@ pub const Command = struct {
         pub const BundlerOptions = struct {
             outdir: []const u8 = "",
             outfile: []const u8 = "",
-            entry_names: []const u8 = "./[name].[ext]",
-            chunk_names: []const u8 = "./[name]-[hash].[ext]",
-            asset_names: []const u8 = "./[name]-[hash].[ext]",
+            entry_naming: []const u8 = "./[name].[ext]",
+            chunk_naming: []const u8 = "./[name]-[hash].[ext]",
+            asset_naming: []const u8 = "./[name]-[hash].[ext]",
             react_server_components: bool = false,
             code_splitting: bool = false,
             transform_only: bool = false,

@@ -1,6 +1,6 @@
 import { join, basename } from "node:path";
 import { readdirSync, writeSync, fsyncSync, appendFileSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 export { parseTest, runTest, formatTest };
 
@@ -31,6 +31,8 @@ export type TestInfo = {
   name: string;
   version: string;
   revision: string;
+  os: string;
+  arch: string;
 };
 
 export type TestFile = {
@@ -57,7 +59,7 @@ export type TestErrorStack = {
 export type TestStatus = "pass" | "fail" | "skip";
 
 export type Test = {
-  name: string[];
+  name: string;
   status: TestStatus;
   errors?: TestError[];
 };
@@ -73,11 +75,15 @@ export type TestSummary = {
 
 function parseTest(lines: string[], options?: ParseTestOptions): ParseTestResult {
   let i = 0;
-  const done = () => i >= lines.length;
-  const peek = () => lines[i++];
-  function find<V>(cb: (line: string) => V | undefined): V | undefined {
-    while (!done()) {
-      const line = peek();
+  const isDone = () => {
+    return i >= lines.length;
+  };
+  const readLine = () => {
+    return lines[i++];
+  };
+  function readUntil<V>(cb: (line: string) => V | undefined): V | undefined {
+    while (!isDone()) {
+      const line = readLine();
       const result = cb(line);
       if (result) {
         return result;
@@ -85,7 +91,7 @@ function parseTest(lines: string[], options?: ParseTestOptions): ParseTestResult
     }
   }
   const { cwd, paths = cwd ? Array.from(listFiles(cwd, "")) : [] } = options ?? {};
-  const info = find(parseInfo);
+  const info = readUntil(parseInfo);
   if (!info) {
     throw new Error("No tests found");
   }
@@ -116,8 +122,8 @@ function parseTest(lines: string[], options?: ParseTestOptions): ParseTestResult
       errorStart = undefined;
     }
   };
-  while (!done()) {
-    const line = peek();
+  while (!isDone()) {
+    const line = readLine();
     if (error) {
       const newStack = parseStack(line, cwd);
       if (newStack) {
@@ -198,16 +204,30 @@ function parseTest(lines: string[], options?: ParseTestOptions): ParseTestResult
   };
 }
 
+function getRevision(): string {
+  if ("Bun" in globalThis) {
+    return Bun.revision;
+  }
+  const { stdout } = spawnSync("bun", ["get-revision.js"], {
+    cwd: new URL(".", import.meta.url),
+    stdio: "pipe",
+    encoding: "utf-8",
+  });
+  return stdout.trim();
+}
+
 function parseInfo(line: string): TestInfo | undefined {
   const match = /^(bun (?:wip)?test) v([0-9\.]+) \(([0-9a-z]+)\)$/.exec(line);
   if (!match) {
     return undefined;
   }
-  const [, name, version, revision] = match;
+  const [, name, version, sha] = match;
   return {
     name,
     version,
-    revision: "Bun" in globalThis && Bun.revision.startsWith(revision) ? Bun.revision : revision,
+    revision: getRevision(),
+    os: process.platform,
+    arch: process.arch,
   };
 }
 
@@ -245,7 +265,7 @@ function parseStatus(line: string): Test | undefined {
   }
   const [, icon, name] = match;
   return {
-    name: name.split(" > "),
+    name,
     status: icon === "✓" ? "pass" : icon === "✗" ? "fail" : "skip",
   };
 }
@@ -330,15 +350,6 @@ function stripAnsi(string: string): string {
   return string.replace(/\x1b\[[0-9;]*m/g, "");
 }
 
-async function readStream(stream?: ReadableStream): Promise<string> {
-  let result = "";
-  const decoder = new TextDecoder();
-  for await (const chunk of stream ?? []) {
-    result += decoder.decode(chunk);
-  }
-  return result;
-}
-
 function print(buffer: string | Uint8Array) {
   if (typeof buffer === "string") {
     buffer = new TextEncoder().encode(buffer);
@@ -363,6 +374,29 @@ function print(buffer: string | Uint8Array) {
       throw error;
     }
   }
+}
+
+// FIXME: there is a bug that causes annotations to be duplicated
+const seen = new Set<string>();
+
+function annotate(type: string, arg?: string, args?: Record<string, unknown>): void {
+  let line = `::${type}`;
+  if (args) {
+    line += " ";
+    line += Object.entries(args)
+      .map(([key, value]) => `${key}=${value}`)
+      .join(",");
+  }
+  line += "::";
+  if (arg) {
+    line += arg;
+  }
+  line = line.replace(/\n/g, "%0A");
+  if (seen.has(line)) {
+    return;
+  }
+  seen.add(line);
+  print(`\n${line}\n`);
 }
 
 async function* runTest(options: RunTestOptions): AsyncGenerator<RunTestResult, ParseTestResult> {
@@ -462,10 +496,12 @@ async function* runTest(options: RunTestOptions): AsyncGenerator<RunTestResult, 
 }
 
 export type FormatTestOptions = {
+  debug?: boolean;
   baseUrl?: string;
 };
 
 function formatTest(result: ParseTestResult, options?: FormatTestOptions): string {
+  const { debug, baseUrl } = options ?? {};
   const count = (n: number, label?: string) => {
     return n ? (label ? `${n} ${label}` : `${n}`) : "";
   };
@@ -473,8 +509,8 @@ function formatTest(result: ParseTestResult, options?: FormatTestOptions): strin
     return `\`\`\`${lang ?? ""}\n${content}\n\`\`\`\n`;
   };
   const link = (title: string, href?: string) => {
-    if (href && options?.baseUrl) {
-      href = `${new URL(href, options.baseUrl)}`;
+    if (href && baseUrl) {
+      href = `${new URL(href, baseUrl)}`;
     }
     return href ? `[${title}](${href})` : title;
   };
@@ -492,6 +528,7 @@ function formatTest(result: ParseTestResult, options?: FormatTestOptions): strin
   const files = table(
     ["File", "Status", "Pass", "Fail", "Skip", "Tests", "Duration"],
     result.files
+      .filter(({ status }) => debug || status !== "pass")
       .sort((a, b) => {
         if (a.status === b.status) {
           return a.file.localeCompare(b.file);
@@ -508,7 +545,7 @@ function formatTest(result: ParseTestResult, options?: FormatTestOptions): strin
         count(summary.duration, "ms"),
       ]),
   );
-  const tests = result.files
+  const errors = result.files
     .filter(({ status }) => status === "fail")
     .sort((a, b) => a.file.localeCompare(b.file))
     .flatMap(({ file, tests }) => {
@@ -517,15 +554,15 @@ function formatTest(result: ParseTestResult, options?: FormatTestOptions): strin
         ...tests
           .filter(({ status }) => status === "fail")
           .map(({ name, errors }) => {
-            let content = " > " + name.join(" > ") + "\n\n";
+            let content = header(3, name);
             if (errors) {
               content += errors
                 .map(({ name, message, stack }) => {
                   let preview = code(`${name}: ${message}`, "diff");
-                  if (stack?.length && options?.baseUrl) {
+                  if (stack?.length && baseUrl) {
                     const { file, line } = stack[0];
-                    if (!file.includes(":") && !file.startsWith("/")) {
-                      const { href } = new URL(`${file}?plain=1#L${Math.max(1, line - 5)}-L${line}`, options.baseUrl);
+                    if (!is3rdParty(file)) {
+                      const { href } = new URL(`${file}?plain=1#L${Math.max(1, line - 5)}-L${line}`, baseUrl);
                       preview += `\n${href}\n`;
                     }
                   }
@@ -543,19 +580,23 @@ function formatTest(result: ParseTestResult, options?: FormatTestOptions): strin
   return `${header(1, "Files")}
 ${files}
 
-${header(1, "Tests")}
-${tests}`;
+${header(1, "Errors")}
+${errors}`;
+}
+
+function is3rdParty(file?: string): boolean {
+  return !file || file.startsWith("/") || file.includes(":") || file.includes("..") || file.includes("node_modules/");
 }
 
 function printTest(result: RunTestResult): void {
-  const isAction = !!process.env["GITHUB_ACTIONS"];
-  const isGroup = result.files.length === 1;
-  if (isGroup) {
+  const isAction = process.env["GITHUB_ACTIONS"] === "true";
+  const isSingle = result.files.length === 1;
+  if (isSingle) {
     const { file, status } = result.files[0];
     if (isAction) {
-      print(`::group::${status.toUpperCase()} - ${file}\n`);
+      annotate("group", `${status.toUpperCase()} - ${file}`);
     } else {
-      print(`${file}:\n`);
+      print(`\n${file}:\n`);
     }
   }
   print(result.stderr);
@@ -563,29 +604,25 @@ function printTest(result: RunTestResult): void {
   if (!isAction) {
     return;
   }
-  if (isGroup) {
-    print(`::endgroup::\n`);
-  }
-  for (const file of result.files) {
-    if (file.status !== "fail") {
-      continue;
-    }
-    for (const test of file.tests) {
-      if (test.status !== "fail") {
-        continue;
-      }
-      if (!test.errors?.length || !test.errors[0].stack?.length) {
-        continue;
-      }
-      const error = test.errors[0];
-      const stack = error.stack![0];
-      if (stack.file.startsWith("/") || stack.file.includes(":")) {
-        continue;
-      }
-      const title = `${test.name.join(" > ")}`;
-      const description = `${error.name}: ${error.message}`.replace(/\n/g, "%0A");
-      print(`::error file=${stack.file},line=${stack.line},title=${title}::${description}\n`);
-    }
+  result.files
+    .filter(({ status }) => status === "fail")
+    .flatMap(({ tests }) => tests)
+    .filter(({ status }) => status === "fail")
+    .flatMap(({ name: title, errors }) =>
+      errors?.forEach(({ name, message, stack }) => {
+        const { file, line } = stack?.[0] ?? {};
+        if (is3rdParty(file)) {
+          return;
+        }
+        annotate("error", `${name}: ${message}`, {
+          file,
+          line,
+          title,
+        });
+      }),
+    );
+  if (isSingle) {
+    annotate("endgroup");
   }
 }
 
@@ -624,19 +661,21 @@ async function main() {
   if (!summaryPath) {
     return;
   }
+  const sha = process.env["GITHUB_SHA"] ?? result.info.revision;
+  const repo = process.env["GITHUB_REPOSITORY"] ?? "oven-sh/bun";
+  const serverUrl = process.env["GITHUB_SERVER_URL"] ?? "https://github.com";
   const summary = formatTest(result, {
-    baseUrl:
-      process.env["GITHUB_SERVER_URL"] +
-      "/" +
-      process.env["GITHUB_REPOSITORY"] +
-      "/blob/" +
-      process.env["GITHUB_SHA"] +
-      "/",
+    debug: process.env["ACTIONS_STEP_DEBUG"] === "true",
+    baseUrl: `${serverUrl}/${repo}/blob/${sha}/`,
   });
   appendFileSync(summaryPath, summary, "utf-8");
   process.exit(0);
 }
 
-if (import.meta.main || import.meta.url === `file://${process.argv[1]}`) {
+function isMain() {
+  return import.meta.main || import.meta.url === `file://${process.argv[1]}`;
+}
+
+if (isMain()) {
   await main();
 }

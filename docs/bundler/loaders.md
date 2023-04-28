@@ -149,23 +149,27 @@ export default "Hello, world!";
 
 **WebAssembly loader**. Default for `.wasm`.
 
-WebAssembly files can be directly imported. The file is read and returned as a `WebAssembly.Module`.
+In the runtime, WebAssembly files can be directly imported. The file is read and returned as a `WebAssembly.Module`.
 
 ```ts
 import wasm from "./module.wasm";
 console.log(wasm); // => WebAssembly.Module
 ```
 
+In the bundler, `.wasm` files are handled using the [`file`](#file) loader.
+
 ### `napi`
 
 **Native addon loader**. Default for `.node`.
+
+In the runtime, native addons can be directly imported.
 
 ```ts
 import addon from "./addon.node";
 console.log(addon);
 ```
 
-Native addons can be directly imported. The file is copied into the `outdir` as-is, and the import is resolved as a relative path pointing to the copied file.
+In the bundler, `.node` files are handled using the [`file`](#file) loader.
 
 ### `file`
 

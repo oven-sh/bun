@@ -8,7 +8,6 @@ var { describe, test, expect } = testForFile(import.meta.path);
 
 describe("bundler", () => {
   itBundled("loader/LoaderJSONCommonJSAndES6", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         const x_json = require('./x.json')
@@ -32,7 +31,6 @@ describe("bundler", () => {
   });
 
   itBundled("loader/LoaderJSONSharedWithMultipleEntriesESBuildIssue413", {
-    // GENERATED
     files: {
       "/a.js": /* js */ `
         import data from './data.json'
@@ -62,28 +60,33 @@ describe("bundler", () => {
       },
     ],
   });
-  if (!RUN_UNCHECKED_TESTS) return;
   itBundled("loader/LoaderFile", {
-    // GENERATED
     files: {
       "/entry.js": `console.log(require('./test.svg'))`,
       "/test.svg": `<svg></svg>`,
     },
-    outdir: "/out/",
+    outdir: "/out",
+    loader: {
+      // ".svg": "file",
+    },
+    run: {
+      stdout: /\.\/test-.*\.svg/,
+    },
   });
   itBundled("loader/LoaderFileMultipleNoCollision", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
-        console.log(
-          require('./a/test.txt'),
-          require('./b/test.txt'),
-        )
+        console.log(require('./a/test.svg'))
+        console.log(require('./b/test.svg'))
       `,
-      "/a/test.txt": `test`,
-      "/b/test.txt": `test`,
+      "/a/test.svg": `<svg></svg>`,
+      "/b/test.svg": `<svg></svg>`,
     },
-    outfile: "/dist/out.js",
+    outdir: "/out",
+    assetNames: "assets/[name].[ext]",
+    run: {
+      stdout: /\.\/test-.*\.svg \.\/test-.*\.svg/,
+    },
   });
   itBundled("loader/JSXSyntaxInJSWithJSXLoader", {
     // GENERATED

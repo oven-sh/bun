@@ -250,4 +250,29 @@ describe("bundler", () => {
       stdout: "1",
     },
   });
+  itBundled("edgecase/ValidLoaderSeenAsInvalid", {
+    files: {
+      "/entry.js": /* js */ `console.log(1)`,
+    },
+    outdir: "/out",
+    loader: {
+      ".a": "file", // segfaults
+      ".b": "text", // InvalidLoader
+      ".c": "toml", // InvalidLoader
+      ".d": "json",
+      ".e": "js",
+      ".f": "ts",
+      ".g": "jsx",
+      ".h": "tsx",
+    },
+  });
+  itBundled("edgecase/InvalidLoaderSegfault", {
+    files: {
+      "/entry.js": /* js */ `console.log(1)`,
+    },
+    outdir: "/out",
+    loader: {
+      ".cool": "wtf",
+    },
+  });
 });

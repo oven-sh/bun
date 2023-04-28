@@ -214,7 +214,7 @@ export interface BundlerTestRunOptions {
   /** Pass args to bun itself (before the filename) */
   bunArgs?: string[];
   /** match exact stdout */
-  stdout?: string;
+  stdout?: string | RegExp;
   /** partial match stdout (toContain()) */
   partialStdout?: string;
   /** match exact error message, example "ReferenceError: Can't find variable: bar" */
@@ -262,6 +262,7 @@ function expectBundled(
     backend,
     assertNotPresent,
     capture,
+    assetNames,
     chunkNames,
     cjs2esm,
     dce,
@@ -357,9 +358,6 @@ function expectBundled(
   if (!ESBUILD && mainFields) {
     throw new Error("mainFields not implemented in bun build");
   }
-  if (!ESBUILD && loader) {
-    throw new Error("loader not implemented in bun build");
-  }
   if (!ESBUILD && sourceMap) {
     throw new Error("sourceMap not implemented in bun build");
   }
@@ -368,9 +366,6 @@ function expectBundled(
   }
   if (!ESBUILD && inject) {
     throw new Error("inject not implemented in bun build");
-  }
-  if (!ESBUILD && chunkNames) {
-    throw new Error("chunkNames is not implemented in bun build");
   }
   if (ESBUILD && skipOnEsbuild) {
     return testRef(id, opts);
@@ -482,6 +477,7 @@ function expectBundled(
               // sourceMap && `--sourcemap${sourceMap !== true ? `=${sourceMap}` : ""}`,
               entryNames && entryNames !== "[name].[ext]" && [`--entry-names`, entryNames],
               chunkNames && chunkNames !== "[name]-[hash].[ext]" && [`--chunk-names`, chunkNames],
+              assetNames && assetNames !== "[name]-[hash].[ext]" && [`--asset-names`, chunkNames],
               // `--format=${format}`,
               // legalComments && `--legal-comments=${legalComments}`,
               splitting && `--splitting`,
@@ -489,7 +485,7 @@ function expectBundled(
               // outbase && `--outbase=${outbase}`,
               // keepNames && `--keep-names`,
               // mainFields && `--main-fields=${mainFields}`,
-              // loader && Object.entries(loader).map(([k, v]) => ["--loader", `${k}=${v}`]),
+              loader && Object.entries(loader).map(([k, v]) => ["--loader", `${k}:${v}`]),
               publicPath && `--public-path=${publicPath}`,
               mode === "transform" && "--transform",
             ]
@@ -1025,7 +1021,7 @@ function expectBundled(
         if (file) {
           file = path.join(root, file);
         } else if (entryPaths.length === 1) {
-          file = outfile;
+          file = outfile ?? outputPaths[0];
         } else {
           throw new Error(prefix + "run.file is required when there is more than one entrypoint.");
         }
@@ -1099,14 +1095,24 @@ function expectBundled(
 
         if (run.stdout !== undefined) {
           const result = stdout!.toString("utf-8").trim();
-          const expected = dedent(run.stdout).trim();
-          if (expected !== result) {
-            console.log(`runtime failed file=${file}`);
-            console.log(`reference stdout:`);
-            console.log(result);
-            console.log(`---`);
+          if (typeof run.stdout === "string") {
+            const expected = dedent(run.stdout).trim();
+            if (expected !== result) {
+              console.log(`runtime failed file=${file}`);
+              console.log(`reference stdout:`);
+              console.log(result);
+              console.log(`---`);
+            }
+            expect(result).toBe(expected);
+          } else {
+            if (!run.stdout.test(result)) {
+              console.log(`runtime failed file=${file}`);
+              console.log(`reference stdout:`);
+              console.log(result);
+              console.log(`---`);
+            }
+            expect(result).toMatch(run.stdout);
           }
-          expect(result).toBe(expected);
         }
 
         if (run.partialStdout !== undefined) {

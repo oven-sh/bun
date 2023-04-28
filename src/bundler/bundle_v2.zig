@@ -8244,37 +8244,60 @@ const LinkerContext = struct {
         } else {
             // In-memory build
             for (chunks) |*chunk| {
-                const code_result = chunk.intermediate_output.code(
+                const _code_result = if (c.options.source_maps != .none) chunk.intermediate_output.codeWithSourceMapShifts(
                     null,
                     c.parse_graph,
                     c.resolver.opts.public_path,
                     chunk,
                     chunks,
-                ) catch @panic("Failed to allocate memory for output file");
+                ) else chunk.intermediate_output.code(
+                    null,
+                    c.parse_graph,
+                    c.resolver.opts.public_path,
+                    chunk,
+                    chunks,
+                );
+
+                var code_result = _code_result catch @panic("Failed to allocate memory for output file");
 
                 switch (c.options.source_maps) {
                     .external => {
-                        var output_source_map = chunk.output_source_map.finalize(c.allocator, code_result.shifts) catch @panic("Failed to allocator memory for external source map");
+                        var output_source_map = chunk.output_source_map.finalize(bun.default_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
+                        var source_map_final_rel_path = default_allocator.alloc(u8, chunk.final_rel_path.len + ".map".len) catch unreachable;
+                        bun.copy(u8, source_map_final_rel_path, chunk.final_rel_path);
+                        bun.copy(u8, source_map_final_rel_path[chunk.final_rel_path.len..], ".map");
+
+                        output_files.appendAssumeCapacity(options.OutputFile.initBuf(
+                            output_source_map,
+                            Chunk.IntermediateOutput.allocatorForSize(output_source_map.len),
+                            source_map_final_rel_path,
+                            .file,
+                        ));
+                    },
+                    .@"inline" => {
+                        var output_source_map = chunk.output_source_map.finalize(c.allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
                         const encode_len = base64.encodeLen(output_source_map);
 
                         const source_map_start = "//# sourceMappingURL=data:application/json;base64,";
                         const total_len = code_result.buffer.len + source_map_start.len + encode_len + 1;
-                        _ = total_len;
-                        // var buf = std.ArrayList(u8).initCapacity(Chunk.Intermediat)
+                        var buf = std.ArrayList(u8).initCapacity(Chunk.IntermediateOutput.allocatorForSize(total_len), total_len) catch @panic("Failed to allocate memory for output file with inline source map");
 
+                        buf.appendSliceAssumeCapacity(code_result.buffer);
+                        buf.appendSliceAssumeCapacity(source_map_start);
+
+                        buf.items.len += encode_len;
+                        _ = base64.encode(buf.items[buf.items.len - encode_len ..], output_source_map);
+
+                        buf.appendAssumeCapacity('\n');
+                        Chunk.IntermediateOutput.allocatorForSize(code_result.buffer.len).free(code_result.buffer);
+                        code_result.buffer = buf.items;
                     },
-                    .@"inline" => {},
                     .none => {},
                 }
 
-                if (c.options.source_maps == .external) {
-                    var output_source_map = chunk;
-                    _ = output_source_map;
-                }
-
                 output_files.appendAssumeCapacity(options.OutputFile.initBuf(
-                    buffer,
-                    Chunk.IntermediateOutput.allocatorForSize(buffer.len),
+                    code_result.buffer,
+                    Chunk.IntermediateOutput.allocatorForSize(code_result.buffer.len),
                     // clone for main thread
                     bun.default_allocator.dupe(u8, chunk.final_rel_path) catch unreachable,
                     // TODO: remove this field
@@ -8356,7 +8379,7 @@ const LinkerContext = struct {
 
         var pathbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-        for (chunks, output_files.items) |*chunk, *output_file| {
+        for (chunks) |*chunk| {
             defer max_heap_allocator.reset();
 
             var rel_path = chunk.final_rel_path;
@@ -8376,13 +8399,56 @@ const LinkerContext = struct {
                 }
             }
 
-            const buffer = chunk.intermediate_output.code(
+            const _code_result = if (c.options.source_maps != .none) chunk.intermediate_output.codeWithSourceMapShifts(
                 code_allocator,
                 c.parse_graph,
                 c.resolver.opts.public_path,
                 chunk,
                 chunks,
-            ) catch @panic("Failed to allocate memory for output chunk");
+            ) else chunk.intermediate_output.code(
+                code_allocator,
+                c.parse_graph,
+                c.resolver.opts.public_path,
+                chunk,
+                chunks,
+            );
+
+            var code_result = _code_result catch @panic("Failed to allocate memory for output chunk");
+
+            switch (c.options.source_maps) {
+                .external => {
+                    var output_source_map = chunk.output_source_map.finalize(bun.default_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
+                    var source_map_final_rel_path = default_allocator.alloc(u8, chunk.final_rel_path.len + ".map".len) catch unreachable;
+                    bun.copy(u8, source_map_final_rel_path, chunk.final_rel_path);
+                    bun.copy(u8, source_map_final_rel_path[chunk.final_rel_path.len..], ".map");
+
+                    output_files.appendAssumeCapacity(options.OutputFile.initBuf(
+                        output_source_map,
+                        Chunk.IntermediateOutput.allocatorForSize(output_source_map.len),
+                        source_map_final_rel_path,
+                        .file,
+                    ));
+                },
+                .@"inline" => {
+                    var output_source_map = chunk.output_source_map.finalize(c.allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
+                    const encode_len = base64.encodeLen(output_source_map);
+
+                    const source_map_start = "//# sourceMappingURL=data:application/json;base64,";
+                    const total_len = code_result.buffer.len + source_map_start.len + encode_len + 1;
+                    var buf = std.ArrayList(u8).initCapacity(Chunk.IntermediateOutput.allocatorForSize(total_len), total_len) catch @panic("Failed to allocate memory for output file with inline source map");
+
+                    buf.appendSliceAssumeCapacity(code_result.buffer);
+                    buf.appendSliceAssumeCapacity(source_map_start);
+
+                    buf.items.len += encode_len;
+                    _ = base64.encode(buf.items[buf.items.len - encode_len ..], output_source_map);
+
+                    buf.appendAssumeCapacity('\n');
+                    Chunk.IntermediateOutput.allocatorForSize(code_result.buffer.len).free(code_result.buffer);
+                    code_result.buffer = buf.items;
+                },
+                .none => {},
+            }
 
             switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
                 &pathbuf,
@@ -8390,10 +8456,10 @@ const LinkerContext = struct {
                     .data = JSC.Node.StringOrBuffer{
                         .buffer = JSC.Buffer{
                             .buffer = .{
-                                .ptr = @constCast(buffer.ptr),
+                                .ptr = @constCast(code_result.buffer.ptr),
                                 // TODO: handle > 4 GB files
-                                .len = @truncate(u32, buffer.len),
-                                .byte_len = @truncate(u32, buffer.len),
+                                .len = @truncate(u32, code_result.buffer.len),
+                                .byte_len = @truncate(u32, code_result.buffer.len),
                             },
                         },
                     },
@@ -8416,14 +8482,14 @@ const LinkerContext = struct {
                 .result => {},
             }
 
-            output_file.* = options.OutputFile{
+            output_files.appendAssumeCapacity(options.OutputFile{
                 .input = Fs.Path.init(chunk.final_rel_path),
                 .loader = .js,
-                .size = @truncate(u32, buffer.len),
+                .size = @truncate(u32, code_result.buffer.len),
                 .value = .{
                     .saved = .{},
                 },
-            };
+            });
         }
 
         if (react_client_components_manifest.len > 0) {
@@ -9890,7 +9956,16 @@ pub const Chunk = struct {
             shifts: []sourcemap.SourceMapShifts,
         };
 
-        pub fn codeWithSourceMapShifts(this: IntermediateOutput, chunk: *Chunk, chunks: []Chunk) !CodeResult {
+        pub fn codeWithSourceMapShifts(
+            this: IntermediateOutput,
+            allocator_to_use: ?std.mem.Allocator,
+            graph: *const Graph,
+            import_prefix: []const u8,
+            chunk: *Chunk,
+            chunks: []Chunk,
+        ) !CodeResult {
+            const additional_files = graph.input_files.items(.additional_files);
+            const unique_key_for_additional_files = graph.input_files.items(.unique_key_for_additional_file);
             switch (this) {
                 .pieces => |*pieces| {
                     var shift = sourcemap.SourceMapShifts{
@@ -9898,7 +9973,7 @@ pub const Chunk = struct {
                         .before = .{},
                     };
 
-                    var shifts = try std.ArrayList(sourcemap.SourceMapShifts).initCapacity(allocatorForSize(pieces.len + 1), pieces.len + 1);
+                    var shifts = try std.ArrayList(sourcemap.SourceMapShifts).initCapacity(bun.default_allocator, pieces.len + 1);
                     shifts.appendAssumeCapacity(shift);
 
                     var count: usize = 0;
@@ -9910,17 +9985,35 @@ pub const Chunk = struct {
 
                     for (pieces.slice()) |piece| {
                         count += piece.data_len;
-                        if (piece.index.kind != .none) {
-                            const file_path = chunks[piece.index.index].final_rel_path;
-                            count += if (from_chunk_dir.len == 0) file_path.len else bun.path.relative(from_chunk_dir, file_path).len;
+
+                        switch (piece.index.kind) {
+                            .chunk, .asset => {
+                                const index = piece.index.index;
+                                const file_path = switch (piece.index.kind) {
+                                    .asset => graph.additional_output_files.items[additional_files[index].last().?.output_file].input.text,
+                                    .chunk => chunks[index].final_rel_path,
+                                    else => unreachable,
+                                };
+
+                                const cheap_normalizer = cheapPrefixNormalizer(
+                                    import_prefix,
+                                    if (from_chunk_dir.len == 0)
+                                        file_path
+                                    else
+                                        bun.path.relative(from_chunk_dir, file_path),
+                                );
+                                count += cheap_normalizer[0].len + cheap_normalizer[1].len;
+                            },
+                            .none => {},
                         }
                     }
 
-                    var total_buf = try allocatorForSize(count).alloc(u8, count);
+                    var total_buf = try (allocator_to_use orelse allocatorForSize(count)).alloc(u8, count);
                     var remain = total_buf;
 
                     for (pieces.slice()) |piece| {
                         const data = piece.data();
+
                         var data_offset = sourcemap.LineColumnOffset{};
                         data_offset.advance(data);
                         shift.before.add(data_offset);
@@ -9930,28 +10023,49 @@ pub const Chunk = struct {
                             @memcpy(remain.ptr, data.ptr, data.len);
 
                         remain = remain[data.len..];
-                        const index = piece.index.index;
 
-                        if (piece.index.kind != .none) {
-                            const piece_chunk = chunks[index];
-                            shift.before.advance(piece_chunk.unique_key);
+                        switch (piece.index.kind) {
+                            .asset, .chunk => {
+                                const index = piece.index.index;
+                                const file_path = brk: {
+                                    switch (piece.index.kind) {
+                                        .asset => {
+                                            shift.before.advance(unique_key_for_additional_files[index]);
+                                            const file = graph.additional_output_files.items[additional_files[index].last().?.output_file];
+                                            break :brk file.input.text;
+                                        },
+                                        .chunk => {
+                                            const piece_chunk = chunks[index];
+                                            shift.before.advance(piece_chunk.unique_key);
+                                            break :brk piece_chunk.final_rel_path;
+                                        },
+                                        else => unreachable,
+                                    }
+                                };
 
-                            const file_path = piece_chunk.final_rel_path;
-                            const relative_path = if (from_chunk_dir.len > 0)
-                                bun.path.relative(from_chunk_dir, file_path)
-                            else
-                                file_path;
+                                const cheap_normalizer = cheapPrefixNormalizer(
+                                    import_prefix,
+                                    if (from_chunk_dir.len == 0)
+                                        file_path
+                                    else
+                                        bun.path.relative(from_chunk_dir, file_path),
+                                );
 
-                            shift.after.advance(relative_path);
+                                if (cheap_normalizer[0].len > 0) {
+                                    @memcpy(remain.ptr, cheap_normalizer[0].ptr, cheap_normalizer[0].len);
+                                    remain = remain[cheap_normalizer[0].len..];
+                                    shift.after.advance(cheap_normalizer[0]);
+                                }
 
-                            if (relative_path.len > 0)
-                                @memcpy(remain.ptr, relative_path.ptr, relative_path.len);
+                                if (cheap_normalizer[1].len > 0) {
+                                    @memcpy(remain.ptr, cheap_normalizer[1].ptr, cheap_normalizer[1].len);
+                                    remain = remain[cheap_normalizer[1].len..];
+                                    shift.after.advance(cheap_normalizer[1]);
+                                }
 
-                            remain = remain[relative_path.len..];
-
-                            shift.before.advance(piece_chunk.unique_key);
-                            shift.after.advance(relative_path);
-                            shifts.appendAssumeCapacity(shift);
+                                shifts.appendAssumeCapacity(shift);
+                            },
+                            .none => {},
                         }
                     }
 
@@ -9967,7 +10081,7 @@ pub const Chunk = struct {
                     // TODO: make this safe
                     var joiny = joiner_;
                     return .{
-                        .buffer = try joiny.done(allocatorForSize(joiny.len)),
+                        .buffer = try joiny.done((allocator_to_use orelse allocatorForSize(joiny.len))),
                         .shifts = &[_]sourcemap.SourceMapShifts{},
                     };
                 },
@@ -9985,7 +10099,7 @@ pub const Chunk = struct {
             import_prefix: []const u8,
             chunk: *Chunk,
             chunks: []Chunk,
-        ) ![]const u8 {
+        ) !CodeResult {
             const additional_files = graph.input_files.items(.additional_files);
             switch (this) {
                 .pieces => |*pieces| {
@@ -10074,7 +10188,14 @@ pub const Chunk = struct {
                 .joiner => |joiner_| {
                     // TODO: make this safe
                     var joiny = joiner_;
-                    return joiny.done((allocator_to_use orelse allocatorForSize(joiny.len)));
+                    return .{
+                        .buffer = try joiny.done((allocator_to_use orelse allocatorForSize(joiny.len))),
+                        .shifts = &[_]sourcemap.SourceMapShifts{},
+                    };
+                },
+                .empty => return .{
+                    .buffer = "",
+                    .shifts = &[_]sourcemap.SourceMapShifts{},
                 },
             }
         }

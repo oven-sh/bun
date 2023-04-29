@@ -55,4 +55,4 @@ jobs:
         run: |
           bun install
           bun install --cwd test
-          bun x ts-node --esm scripts/bun-test.ts ${{ github.event.inputs.path }} --isolated --timeout=${{ github.event.inputs.timeout }}
+          bun x ts-node --esm .github/test-runner.ts ${{ github.event.inputs.path }} --isolated --timeout=${{ github.event.inputs.timeout }}

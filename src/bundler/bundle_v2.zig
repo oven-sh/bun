@@ -9045,8 +9045,11 @@ const LinkerContext = struct {
             .imports = &named_imports,
         };
         named_imports.sort(sorter);
-
-        for (named_imports.keys(), named_imports.values()) |ref, named_import| {
+        const nested_named_imports = c.graph.ast.items(.nested_named_imports);
+        const named_import_len = named_imports.count();
+        for (0..named_import_len) |named_import_i| {
+            const ref = named_imports.keys()[named_import_i];
+            const named_import = named_imports.values()[named_import_i];
             // Re-use memory for the cycle detector
             c.cycle_detector.clearRetainingCapacity();
 
@@ -9078,6 +9081,36 @@ const LinkerContext = struct {
                             },
                         },
                     ) catch unreachable;
+
+                    if (nested_named_imports[source_index].get(import_ref)) |nested| {
+                        for (nested.slice()) |nested_import| {
+                            if (c.graph.meta.items(.resolved_exports)[result.source_index].get(nested_import.alias)) |matching_export| {
+                                var named_import_entry = named_imports.getOrPut(nested_import.ref) catch unreachable;
+                                if (!named_import_entry.found_existing) {
+                                    named_import_entry.value_ptr.* = js_ast.NamedImport{
+                                        .alias = nested_import.alias,
+                                        .import_record_index = named_import.import_record_index,
+                                        .namespace_ref = import_ref,
+                                    };
+
+                                    imports_to_bind.put(
+                                        c.allocator,
+                                        nested_import.ref,
+                                        .{
+                                            .data = matching_export.data,
+                                        },
+                                    ) catch unreachable;
+                                }
+                            } else if (c.graph.symbols.get(nested_import.ref)) |nested_symbol| {
+                                nested_symbol.namespace_alias = js_ast.G.NamespaceAlias{
+                                    .namespace_ref = import_ref,
+                                    .alias = nested_import.alias,
+                                };
+                            }
+
+                            // }
+                        }
+                    }
                 },
                 .namespace => {
                     c.graph.symbols.get(import_ref).?.namespace_alias = js_ast.G.NamespaceAlias{
@@ -9217,6 +9250,7 @@ const LinkerContext = struct {
                             continue :next_export;
                         }
                     }
+
                     const ref = entry.value_ptr.ref;
                     var resolved = resolved_exports.getOrPut(this.allocator, entry.key_ptr.*) catch unreachable;
                     if (!resolved.found_existing) {
@@ -9384,6 +9418,9 @@ const LinkerContext = struct {
             for (this.export_star_records[source_index]) |id| {
                 const records: []const ImportRecord = this.import_records[id].slice();
                 for (records) |record| {
+                    // ignore external export * from
+                    if (record.source_index.isInvalid()) continue;
+
                     // This file has dynamic exports if the exported imports are from a file
                     // that either has dynamic exports directly or transitively by itself
                     // having an export star from a file with dynamic exports.

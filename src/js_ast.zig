@@ -5210,12 +5210,12 @@ pub const S = struct {
         pub fn canBeMovedAround(self: ExportDefault) bool {
             return switch (self.value) {
                 .expr => |e| switch (e.data) {
-                    .e_class => |class| class.extends == null,
+                    .e_class => |class| class.canClassBeMoved(),
                     .e_arrow, .e_function => true,
                     else => e.canBeConstValue(),
                 },
                 .stmt => |s| switch (s.data) {
-                    .s_class => |class| class.class.extends == null,
+                    .s_class => |class| class.class.canClassBeMoved(),
                     .s_function => true,
                     else => false,
                 },
@@ -5719,6 +5719,7 @@ pub const Ast = struct {
     // since we already have to traverse the AST then anyway and the parser pass
     // is conveniently fully parallelized.
     named_imports: NamedImports = NamedImports.init(bun.failing_allocator),
+    nested_named_imports: NestedNamedImports = NestedNamedImports.init(bun.failing_allocator),
     named_exports: NamedExports = NamedExports.init(bun.failing_allocator),
     export_star_import_records: []u32 = &([_]u32{}),
 
@@ -5740,7 +5741,13 @@ pub const Ast = struct {
     };
     pub const CommonJSNamedExports = bun.StringArrayHashMapUnmanaged(CommonJSNamedExport);
 
-    pub const NamedImports = std.ArrayHashMap(Ref, NamedImport, RefHashCtx, true);
+    pub const NestedNamedImport = struct {
+        alias: string,
+        ref: Ref,
+    };
+
+    pub const NamedImports = std.ArrayHashMap(Ref, NamedImport, RefHashCtx, false);
+    pub const NestedNamedImports = std.ArrayHashMap(Ref, BabyList(NestedNamedImport), RefHashCtx, false);
     pub const NamedExports = bun.StringArrayHashMap(NamedExport);
     pub const ConstValuesMap = std.ArrayHashMapUnmanaged(Ref, Expr, RefHashCtx, false);
 
@@ -9288,7 +9295,7 @@ pub const Macro = struct {
                                 this.caller.loc,
                                 this.allocator,
                                 "cannot coerce {s} to Bun's AST. Please return a valid macro using the JSX syntax",
-                                .{@tagName(value.jsType())},
+                                .{@tagName(value.jsTypeLoose())},
                             ) catch unreachable;
                             break :brk error.MacroFailed;
                         },
@@ -9320,7 +9327,7 @@ pub const Macro = struct {
                             var blob_: ?JSC.WebCore.Blob = null;
                             var mime_type: ?HTTP.MimeType = null;
 
-                            if (value.jsType() == .DOMWrapper) {
+                            if (value.jsTypeLoose() == .DOMWrapper) {
                                 if (value.as(JSC.WebCore.Response)) |resp| {
                                     mime_type = HTTP.MimeType.init(resp.mimeType(null));
                                     blob_ = resp.body.use();
@@ -9535,7 +9542,7 @@ pub const Macro = struct {
                         this.caller.loc,
                         this.allocator,
                         "cannot coerce {s} to Bun's AST. Please return a valid macro using the JSX syntax",
-                        .{@tagName(value.jsType())},
+                        .{@tagName(value.jsTypeLoose())},
                     ) catch unreachable;
                     return error.MacroFailed;
                 }

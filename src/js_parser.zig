@@ -2904,6 +2904,7 @@ pub const Parser = struct {
         var before = ListManaged(js_ast.Part).init(p.allocator);
         var after = ListManaged(js_ast.Part).init(p.allocator);
         var parts = ListManaged(js_ast.Part).init(p.allocator);
+
         defer {
             after.deinit();
             before.deinit();
@@ -2919,6 +2920,7 @@ pub const Parser = struct {
         if (!p.options.tree_shaking) {
             try p.appendPart(&parts, stmts);
         } else {
+
             // When tree shaking is enabled, each top-level statement is potentially a separate part.
             for (stmts) |stmt| {
                 switch (stmt.data) {
@@ -4811,6 +4813,7 @@ fn NewParser_(
         import_items_for_namespace: std.AutoHashMapUnmanaged(Ref, ImportItemForNamespaceMap) = .{},
         is_import_item: RefMap = .{},
         named_imports: NamedImportsType,
+        nested_named_imports: js_ast.Ast.NestedNamedImports,
         named_exports: js_ast.Ast.NamedExports,
         import_namespace_cc_map: Map(ImportNamespaceCallOrConstruct, bool) = .{},
 
@@ -17396,6 +17399,71 @@ fn NewParser_(
                         }
                     }
                 },
+                .e_import_identifier => |id| {
+
+                    // Rewrite property accesses on explicit namespace imports as an identifier.
+                    // This lets us replace them easily in the printer to rebind them to
+                    // something else without paying the cost of a whole-tree traversal during
+                    // module linking just to rewrite these EDot expressions.
+                    if (p.options.bundle and js_lexer.isLatin1Identifier([]const u8, name)) {
+                        var import_items_for_namespace_entry = p.import_items_for_namespace.getOrPut(p.allocator, id.ref) catch unreachable;
+                        if (!import_items_for_namespace_entry.found_existing) {
+                            import_items_for_namespace_entry.value_ptr.* = ImportItemForNamespaceMap.init(p.allocator);
+                        }
+                        var import_items = import_items_for_namespace_entry.value_ptr;
+                        const ref = (import_items.get(name) orelse brk: {
+                            const generated_name = std.fmt.allocPrint(p.allocator, "{s}_{s}", .{ p.loadNameFromRef(id.ref), name }) catch unreachable;
+                            // Generate a new import item symbol in the module scope
+                            const new_item = LocRef{
+                                .loc = name_loc,
+                                .ref = p.newSymbol(.import, generated_name) catch unreachable,
+                            };
+                            p.module_scope.generated.push(p.allocator, new_item.ref.?) catch unreachable;
+
+                            import_items.put(name, new_item) catch unreachable;
+                            p.is_import_item.put(p.allocator, new_item.ref.?, {}) catch unreachable;
+
+                            var symbol = &p.symbols.items[new_item.ref.?.innerIndex()];
+
+                            // Mark this as generated in case it's missing. We don't want to
+                            // generate errors for missing import items that are automatically
+                            // generated.
+                            symbol.import_item_status = .generated;
+
+                            var nested_entry = p.nested_named_imports.getOrPutValue(
+                                id.ref,
+                                .{},
+                            ) catch unreachable;
+                            nested_entry.value_ptr.push(p.allocator, .{
+                                .ref = new_item.ref.?,
+                                .alias = name,
+                            }) catch unreachable;
+
+                            break :brk new_item;
+                        }).ref.?;
+
+                        // Undo the usage count for the namespace itself. This is used later
+                        // to detect whether the namespace symbol has ever been "captured"
+                        // or whether it has just been used to read properties off of.
+                        //
+                        // The benefit of doing this is that if both this module and the
+                        // imported module end up in the same module group and the namespace
+                        // symbol has never been captured, then we don't need to generate
+                        // any code for the namespace at all.
+                        p.ignoreUsage(id.ref);
+
+                        // Track how many times we've referenced this symbol
+                        p.recordUsage(ref);
+
+                        return p.handleIdentifier(
+                            name_loc,
+                            E.Identifier{ .ref = ref },
+                            name,
+                            identifier_opts,
+                        );
+                    }
+                },
+
                 .e_string => |str| {
                     if (p.options.features.minify_syntax) {
                         // minify "long-string".length to 11
@@ -21182,6 +21250,7 @@ fn NewParser_(
                 .approximate_newline_count = p.lexer.approximate_newline_count,
                 .exports_kind = exports_kind,
                 .named_imports = p.named_imports,
+                .nested_named_imports = p.nested_named_imports,
                 .named_exports = p.named_exports,
                 .import_keyword = p.esm_import_keyword,
                 .export_keyword = p.esm_export_keyword,
@@ -21254,6 +21323,7 @@ fn NewParser_(
                 .define = define,
                 .import_records = undefined,
                 .named_imports = undefined,
+                .nested_named_imports = undefined,
                 .named_exports = js_ast.Ast.NamedExports.init(allocator),
                 .log = log,
                 .allocator = allocator,
@@ -21286,6 +21356,7 @@ fn NewParser_(
             if (comptime !only_scan_imports_and_do_not_visit) {
                 this.import_records = @TypeOf(this.import_records).init(allocator);
                 this.named_imports = NamedImportsType.init(allocator);
+                this.nested_named_imports = js_ast.Ast.NestedNamedImports.init(allocator);
             }
 
             this.to_expr_wrapper_namespace = Binding2ExprWrapper.Namespace.init(this);

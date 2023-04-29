@@ -6173,8 +6173,7 @@ const LinkerContext = struct {
             }
 
             quote_buf = try js_printer.quoteForJSON(item.path.pretty, quote_buf, false);
-            j.push(quote_buf.list.items);
-            quote_buf.reset();
+            j.push(quote_buf.toOwnedSlice());
         }
 
         j.push("]");
@@ -6186,8 +6185,7 @@ const LinkerContext = struct {
             }
 
             quote_buf = try js_printer.quoteForJSON(item.contents, quote_buf, false);
-            j.push(quote_buf.list.items);
-            quote_buf.reset();
+            j.push(quote_buf.toOwnedSlice());
         }
         j.push("]");
 
@@ -8218,7 +8216,7 @@ const LinkerContext = struct {
                         ));
                     },
                     .@"inline" => {
-                        var output_source_map = chunk.output_source_map.finalize(c.allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
+                        var output_source_map = chunk.output_source_map.finalize(bun.default_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
                         const encode_len = base64.encodeLen(output_source_map);
 
                         const source_map_start = "//# sourceMappingURL=data:application/json;base64,";
@@ -8373,12 +8371,12 @@ const LinkerContext = struct {
                     ));
                 },
                 .@"inline" => {
-                    var output_source_map = chunk.output_source_map.finalize(c.allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
+                    var output_source_map = chunk.output_source_map.finalize(bun.default_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
                     const encode_len = base64.encodeLen(output_source_map);
 
                     const source_map_start = "//# sourceMappingURL=data:application/json;base64,";
                     const total_len = code_result.buffer.len + source_map_start.len + encode_len + 1;
-                    var buf = std.ArrayList(u8).initCapacity(Chunk.IntermediateOutput.allocatorForSize(total_len), total_len) catch @panic("Failed to allocate memory for output file with inline source map");
+                    var buf = std.ArrayList(u8).initCapacity(bun.default_allocator, total_len) catch @panic("Failed to allocate memory for output file with inline source map");
 
                     buf.appendSliceAssumeCapacity(code_result.buffer);
                     buf.appendSliceAssumeCapacity(source_map_start);
@@ -8387,7 +8385,6 @@ const LinkerContext = struct {
                     _ = base64.encode(buf.items[buf.items.len - encode_len ..], output_source_map);
 
                     buf.appendAssumeCapacity('\n');
-                    Chunk.IntermediateOutput.allocatorForSize(code_result.buffer.len).free(code_result.buffer);
                     code_result.buffer = buf.items;
                 },
                 .none => {},

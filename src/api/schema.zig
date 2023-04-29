@@ -808,10 +808,13 @@ pub const Api = struct {
         _none,
         /// browser
         browser,
+
         /// node
         node,
+
         /// bun
         bun,
+
         /// bun_macro
         bun_macro,
 

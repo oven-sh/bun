@@ -534,7 +534,7 @@ export interface TransformOptions {
   external?: string[];
   loaders?: LoaderMap;
   main_fields?: string[];
-  platform?: Platform;
+  target?: Target;
   serve?: boolean;
   extension_order?: string[];
   generate_node_module_bundle?: boolean;

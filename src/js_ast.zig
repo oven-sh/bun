@@ -5730,7 +5730,7 @@ pub const Ast = struct {
     redirect_import_record_index: ?u32 = null,
 
     /// Only populated when bundling
-    platform: bun.options.Platform = .browser,
+    target: bun.options.Target = .browser,
 
     const_values: ConstValuesMap = .{},
 
@@ -9698,7 +9698,7 @@ pub const UseDirective = enum {
         return .none;
     }
 
-    pub fn platform(this: UseDirective, default: bun.options.Platform) bun.options.Platform {
+    pub fn target(this: UseDirective, default: bun.options.Target) bun.options.Target {
         return switch (this) {
             .none => default,
             .@"use client" => .browser,
@@ -9921,4 +9921,3 @@ pub const GlobalStoreHandle = struct {
 // Stmt               | 192
 // STry               | 384
 // -- ESBuild bit sizes
-

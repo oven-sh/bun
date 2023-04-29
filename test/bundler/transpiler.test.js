@@ -2969,4 +2969,12 @@ console.log(foo, array);
       expectPrinted_('const x = "``" + ``;', 'const x = "``"');
     });
   });
+
+  it("scan on empty file does not segfault", () => {
+    new Bun.Transpiler().scan("");
+  });
+
+  it("scanImports on empty file does not segfault", () => {
+    new Bun.Transpiler().scanImports("");
+  });
 });

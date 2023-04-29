@@ -708,7 +708,7 @@ pub const PackageJSON = struct {
             }
 
             // Read the "browser" property, but only when targeting the browser
-            if (r.opts.platform.supportsBrowserField()) {
+            if (r.opts.target.supportsBrowserField()) {
                 // We both want the ability to have the option of CJS vs. ESM and the
                 // option of having node vs. browser. The way to do this is to use the
                 // object literal form of the "browser" field like this:

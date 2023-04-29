@@ -804,7 +804,7 @@ pub const Api = struct {
         }
     };
 
-    pub const Platform = enum(u8) {
+    pub const Target = enum(u8) {
         _none,
         /// browser
         browser,
@@ -1723,8 +1723,8 @@ pub const Api = struct {
         /// main_fields
         main_fields: []const []const u8,
 
-        /// platform
-        platform: ?Platform = null,
+        /// target
+        target: ?Target = null,
 
         /// serve
         serve: ?bool = null,
@@ -1814,7 +1814,7 @@ pub const Api = struct {
                         this.main_fields = try reader.readArray([]const u8);
                     },
                     15 => {
-                        this.platform = try reader.readValue(Platform);
+                        this.target = try reader.readValue(Target);
                     },
                     16 => {
                         this.serve = try reader.readValue(bool);
@@ -1917,9 +1917,9 @@ pub const Api = struct {
                 try writer.writeFieldID(14);
                 try writer.writeArray([]const u8, main_fields);
             }
-            if (this.platform) |platform| {
+            if (this.target) |target| {
                 try writer.writeFieldID(15);
-                try writer.writeEnum(platform);
+                try writer.writeEnum(target);
             }
             if (this.serve) |serve| {
                 try writer.writeFieldID(16);

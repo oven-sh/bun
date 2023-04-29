@@ -5762,7 +5762,7 @@ pub fn printJSON(
 
 pub fn print(
     allocator: std.mem.Allocator,
-    platform: options.Platform,
+    target: options.Target,
     opts: Options,
     import_records: []const ImportRecord,
     parts: []const js_ast.Part,
@@ -5774,7 +5774,7 @@ pub fn print(
     return printWithWriter(
         *BufferPrinter,
         &buffer_printer,
-        platform,
+        target,
         opts,
         import_records,
         parts,
@@ -5785,17 +5785,17 @@ pub fn print(
 pub fn printWithWriter(
     comptime Writer: type,
     _writer: Writer,
-    platform: options.Platform,
+    target: options.Target,
     opts: Options,
     import_records: []const ImportRecord,
     parts: []const js_ast.Part,
     renamer: bun.renamer.Renamer,
 ) PrintResult {
-    return switch (platform.isBun()) {
-        inline else => |is_bun_platform| printWithWriterAndPlatform(
+    return switch (target.isBun()) {
+        inline else => |is_bun| printWithWriterAndPlatform(
             Writer,
             _writer,
-            is_bun_platform,
+            is_bun,
             opts,
             import_records,
             parts,
@@ -5808,7 +5808,7 @@ pub fn printWithWriter(
 pub fn printWithWriterAndPlatform(
     comptime Writer: type,
     _writer: Writer,
-    comptime is_bun_platform: bool,
+    comptime is_bun: bool,
     opts: Options,
     import_records: []const ImportRecord,
     parts: []const js_ast.Part,
@@ -5818,7 +5818,7 @@ pub fn printWithWriterAndPlatform(
         false,
         Writer,
         false,
-        is_bun_platform,
+        is_bun,
         false,
         false,
     );

@@ -221,6 +221,19 @@ function runSetupFunction(setup) {
     validate(filterObject, callback, onResolvePlugins);
   }
 
+  function onStart(callback) {
+    // builtin generator thinks the // in the link is a comment and removes it
+    @throwTypeError("On-start callbacks are not implemented yet. See https:/\/github.com/oven-sh/bun/issues/2771");
+  }
+
+  function onEnd(callback) {
+    @throwTypeError("On-end callbacks are not implemented yet. See https:/\/github.com/oven-sh/bun/issues/2771");
+  }
+
+  function onDispose(callback) {
+    @throwTypeError("On-dispose callbacks are not implemented yet. See https:/\/github.com/oven-sh/bun/issues/2771");
+  }
+
   const processSetupResult = () => {
     var anyOnLoad = false,
       anyOnResolve = false;
@@ -250,7 +263,7 @@ function runSetupFunction(setup) {
           if (!existing) {
             onResolveObject.@set(namespace, callbacks);
           } else {
-            onResolveObject.@set(existing.concat(callbacks));
+            onResolveObject.@set(namespace, existing.concat(callbacks));
           }
         }
       }
@@ -267,7 +280,7 @@ function runSetupFunction(setup) {
           if (!existing) {
             onLoadObject.@set(namespace, callbacks);
           } else {
-            onLoadObject.@set(existing.concat(callbacks));
+            onLoadObject.@set(namespace, existing.concat(callbacks));
           }
         }
       }
@@ -277,8 +290,11 @@ function runSetupFunction(setup) {
   };
 
   var setupResult = setup({
+    onDispose,
+    onEnd,
     onLoad,
     onResolve,
+    onStart,
   });
 
   if (setupResult && @isPromise(setupResult)) {

@@ -711,21 +711,6 @@ declare module "bun" {
     ) => number | bigint;
   }
 
-  export type Platform =
-    /**
-     * When building for bun.js
-     */
-    | "bun"
-    /**
-     * When building for the web
-     */
-    | "browser"
-    /**
-     * When building for node.js
-     */
-    | "node"
-    | "neutral";
-
   export type JavaScriptLoader = "jsx" | "js" | "ts" | "tsx";
 
   /**
@@ -776,7 +761,7 @@ declare module "bun" {
 
     /**  What platform are we targeting? This may affect how import and/or require is used */
     /**  @example "browser" */
-    platform?: Platform;
+    target?: Target;
 
     /**
      *  TSConfig.json file as stringified JSON or an object
@@ -974,7 +959,7 @@ declare module "bun" {
       | string
       | {
           chunk?: string;
-          entrypoint?: string;
+          entry?: string;
           asset?: string;
         }; // | string;
     // root?: string; // project root
@@ -1000,7 +985,7 @@ declare module "bun" {
     outputs: Array<{ path: string; result: T }>;
   };
 
-  function build(config: BuildConfig): BuildResult<Blob>;
+  function build(config: BuildConfig): Promise<BuildResult<Blob>>;
 
   /**
    * **0** means the message was **dropped**

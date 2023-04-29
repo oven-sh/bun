@@ -32,7 +32,7 @@ const TSConfigJSON = @import("../../resolver/tsconfig_json.zig").TSConfigJSON;
 const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
 const logger = bun.logger;
 const Loader = options.Loader;
-const Platform = options.Platform;
+const Target = options.Target;
 const JSAst = bun.JSAst;
 const Transpiler = @This();
 const JSParser = bun.js_parser;
@@ -54,7 +54,7 @@ buffer_writer: ?JSPrinter.BufferWriter = null,
 const default_transform_options: Api.TransformOptions = brk: {
     var opts = std.mem.zeroes(Api.TransformOptions);
     opts.disable_hmr = true;
-    opts.platform = Api.Platform.browser;
+    opts.target = Api.Target.browser;
     opts.serve = false;
     break :brk opts;
 };
@@ -427,9 +427,9 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         }
     }
 
-    if (object.get(globalThis, "platform")) |platform| {
-        if (Platform.fromJS(globalThis, platform, exception)) |resolved| {
-            transpiler.transform.platform = resolved.toAPI();
+    if (object.get(globalThis, "target")) |target| {
+        if (Target.fromJS(globalThis, target, exception)) |resolved| {
+            transpiler.transform.target = resolved.toAPI();
         }
 
         if (exception.* != null) {
@@ -471,7 +471,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
     }
 
     transpiler.runtime.allow_runtime = false;
-    transpiler.runtime.dynamic_require = switch (transpiler.transform.platform orelse .browser) {
+    transpiler.runtime.dynamic_require = switch (transpiler.transform.target orelse .browser) {
         .bun, .bun_macro => true,
         else => false,
     };

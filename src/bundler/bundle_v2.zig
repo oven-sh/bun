@@ -411,7 +411,7 @@ pub const BundleV2 = struct {
     pub fn runResolver(
         this: *BundleV2,
         import_record: bun.JSC.API.JSBundler.Resolve.MiniImportRecord,
-        platform: options.Platform,
+        target: options.Target,
     ) void {
         var resolve_result = this.bundler.resolver.resolve(
             Fs.PathName.init(import_record.source_file).dirWithTrailingSlash(),
@@ -441,7 +441,7 @@ pub const BundleV2 = struct {
 
                     if (!handles_import_errors) {
                         if (isPackagePath(import_record.specifier)) {
-                            if (platform.isWebLike() and options.ExternalModules.isNodeBuiltin(path_to_use)) {
+                            if (target.isWebLike() and options.ExternalModules.isNodeBuiltin(path_to_use)) {
                                 addError(
                                     this.bundler.log,
                                     source,
@@ -548,7 +548,7 @@ pub const BundleV2 = struct {
             task.jsx = this.bundler.options.jsx;
             task.task.node.next = null;
             task.tree_shaking = this.linker.options.tree_shaking;
-            task.known_platform = import_record.original_platform;
+            task.known_target = import_record.original_target;
 
             _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .Monotonic);
 
@@ -630,8 +630,8 @@ pub const BundleV2 = struct {
         heap: ?ThreadlocalArena,
     ) !*BundleV2 {
         var generator = try allocator.create(BundleV2);
-        bundler.options.mark_builtins_as_external = bundler.options.platform.isBun() or bundler.options.platform == .node;
-        bundler.resolver.opts.mark_builtins_as_external = bundler.options.platform.isBun() or bundler.options.platform == .node;
+        bundler.options.mark_builtins_as_external = bundler.options.target.isBun() or bundler.options.target == .node;
+        bundler.resolver.opts.mark_builtins_as_external = bundler.options.target.isBun() or bundler.options.target == .node;
 
         var this = generator;
         generator.* = BundleV2{
@@ -814,8 +814,8 @@ pub const BundleV2 = struct {
                 const key = unique_key_for_additional_files[index];
                 if (key.len > 0) {
                     var template = PathTemplate.asset;
-                    if (this.bundler.options.asset_names.len > 0)
-                        template.data = this.bundler.options.asset_names;
+                    if (this.bundler.options.asset_naming.len > 0)
+                        template.data = this.bundler.options.asset_naming;
                     const source = &sources[index];
                     var pathname = source.path.name;
                     // TODO: outbase
@@ -1116,7 +1116,7 @@ pub const BundleV2 = struct {
                 //
                 // The file could be on disk.
                 if (strings.eqlComptime(resolve.import_record.namespace, "file")) {
-                    this.runResolver(resolve.import_record, resolve.import_record.original_platform);
+                    this.runResolver(resolve.import_record, resolve.import_record.original_target);
                     return;
                 }
 
@@ -1190,7 +1190,7 @@ pub const BundleV2 = struct {
                             .module_type = .unknown,
                             .loader = loader,
                             .tree_shaking = this.linker.options.tree_shaking,
-                            .known_platform = resolve.import_record.original_platform,
+                            .known_target = resolve.import_record.original_target,
                         };
                         task.task.node.next = null;
 
@@ -1299,7 +1299,7 @@ pub const BundleV2 = struct {
             Api.TransformOptions{
                 .define = if (config.define.count() > 0) config.define.toAPI() else null,
                 .entry_points = config.entry_points.keys(),
-                .platform = config.target.toAPI(),
+                .target = config.target.toAPI(),
                 .absolute_working_dir = if (config.dir.list.items.len > 0) config.dir.toOwnedSliceLeaky() else null,
                 .inject = &.{},
                 .external = config.external.keys(),
@@ -1311,9 +1311,9 @@ pub const BundleV2 = struct {
         );
         bundler.options.jsx = config.jsx;
 
-        bundler.options.entry_names = config.names.entry_point.data;
-        bundler.options.chunk_names = config.names.chunk.data;
-        bundler.options.asset_names = config.names.asset.data;
+        bundler.options.entry_naming = config.names.entry_point.data;
+        bundler.options.chunk_naming = config.names.chunk.data;
+        bundler.options.asset_naming = config.names.asset.data;
 
         bundler.options.public_path = config.public_path.list.items;
 
@@ -1437,7 +1437,7 @@ pub const BundleV2 = struct {
         import_record: *const ImportRecord,
         source_file: []const u8,
         import_record_index: u32,
-        original_platform: ?options.Platform,
+        original_target: ?options.Target,
     ) bool {
         if (this.plugins) |plugins| {
             if (plugins.hasAnyMatches(&import_record.path, false)) {
@@ -1456,7 +1456,7 @@ pub const BundleV2 = struct {
                             .source_file = source_file,
                             .import_record_index = import_record_index,
                             .importer_source_index = source_index,
-                            .original_platform = original_platform orelse this.bundler.options.platform,
+                            .original_target = original_target orelse this.bundler.options.target,
                         },
                     },
                     this.completion.?,
@@ -1707,7 +1707,7 @@ pub const ParseTask = struct {
     source_index: Index = Index.invalid,
     task: ThreadPoolLib.Task = .{ .callback = &callback },
     tree_shaking: bool = false,
-    known_platform: ?options.Platform = null,
+    known_target: ?options.Target = null,
     module_type: options.ModuleType = .unknown,
     ctx: *BundleV2,
 
@@ -1997,7 +1997,7 @@ pub const ParseTask = struct {
         };
 
         const source_dir = file_path.sourceDir();
-        const platform = use_directive.platform(task.known_platform orelse bundler.options.platform);
+        const target = use_directive.target(task.known_target orelse bundler.options.target);
 
         var resolve_queue = ResolveQueue.init(bun.default_allocator);
         // TODO: server ESM condition
@@ -2008,12 +2008,12 @@ pub const ParseTask = struct {
         opts.legacy_transform_require_to_import = false;
         opts.can_import_from_bundle = false;
         opts.features.allow_runtime = !source.index.isRuntime();
-        opts.features.dynamic_require = platform.isBun();
+        opts.features.dynamic_require = target.isBun();
         opts.warn_about_unbundled_modules = false;
         opts.macro_context = &this.data.macro_context;
         opts.bundle = true;
         opts.features.top_level_await = true;
-        opts.features.jsx_optimization_inline = platform.isBun() and (bundler.options.jsx_optimization_inline orelse !task.jsx.development);
+        opts.features.jsx_optimization_inline = target.isBun() and (bundler.options.jsx_optimization_inline orelse !task.jsx.development);
         opts.features.auto_import_jsx = task.jsx.parse and bundler.options.auto_import_jsx;
         opts.features.trim_unused_imports = loader.isTypeScript() or (bundler.options.trim_unused_imports orelse false);
         opts.features.inlining = bundler.options.minify_syntax;
@@ -2034,7 +2034,7 @@ pub const ParseTask = struct {
         else
             try getEmptyAST(log, bundler, opts, allocator, source);
 
-        ast.platform = platform;
+        ast.target = target;
         if (ast.parts.len <= 1) {
             task.side_effects = _resolver.SideEffects.no_side_effects__empty_ast;
         }
@@ -2066,7 +2066,7 @@ pub const ParseTask = struct {
                 continue;
             }
 
-            if (platform.isBun()) {
+            if (target.isBun()) {
                 if (JSC.HardcodedModule.Aliases.get(import_record.path.text)) |replacement| {
                     import_record.path.text = replacement.path;
                     import_record.tag = replacement.tag;
@@ -2110,7 +2110,7 @@ pub const ParseTask = struct {
                 }
             }
 
-            if (this.ctx.enqueueOnResolvePluginIfNeeded(source.index.get(), import_record, source.path.text, @truncate(u32, i), platform)) {
+            if (this.ctx.enqueueOnResolvePluginIfNeeded(source.index.get(), import_record, source.path.text, @truncate(u32, i), target)) {
                 continue;
             }
 
@@ -2128,7 +2128,7 @@ pub const ParseTask = struct {
                         if (!import_record.handles_import_errors) {
                             last_error = err;
                             if (isPackagePath(import_record.path.text)) {
-                                if (platform.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
+                                if (target.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
                                     try addError(
                                         log,
                                         &source,
@@ -2220,9 +2220,9 @@ pub const ParseTask = struct {
             resolve_task.secondary_path_for_commonjs_interop = secondary_path_to_copy;
 
             if (use_directive != .none) {
-                resolve_task.known_platform = platform;
-            } else if (task.known_platform) |known_platform| {
-                resolve_task.known_platform = known_platform;
+                resolve_task.known_target = target;
+            } else if (task.known_target) |known_target| {
+                resolve_task.known_target = known_target;
             }
 
             resolve_task.jsx.development = task.jsx.development;
@@ -2244,7 +2244,7 @@ pub const ParseTask = struct {
         std.debug.assert(use_directive == .none or bundler.options.react_server_components);
 
         step.* = .resolve;
-        ast.platform = platform;
+        ast.target = target;
 
         return Result.Success{
             .ast = ast,
@@ -3389,16 +3389,16 @@ const LinkerContext = struct {
 
             if (chunk.entry_point.is_entry_point) {
                 chunk.template = PathTemplate.file;
-                if (this.resolver.opts.entry_names.len > 0)
-                    chunk.template.data = this.resolver.opts.entry_names;
+                if (this.resolver.opts.entry_naming.len > 0)
+                    chunk.template.data = this.resolver.opts.entry_naming;
                 const pathname = Fs.PathName.init(this.graph.entry_points.items(.output_path)[chunk.entry_point.entry_point_id].slice());
                 chunk.template.placeholder.name = pathname.base;
                 chunk.template.placeholder.ext = "js";
                 chunk.template.placeholder.dir = pathname.dir;
             } else {
                 chunk.template = PathTemplate.chunk;
-                if (this.resolver.opts.chunk_names.len > 0)
-                    chunk.template.data = this.resolver.opts.chunk_names;
+                if (this.resolver.opts.chunk_naming.len > 0)
+                    chunk.template.data = this.resolver.opts.chunk_naming;
             }
         }
 
@@ -5872,7 +5872,7 @@ const LinkerContext = struct {
 
             cross_chunk_prefix = js_printer.print(
                 allocator,
-                c.resolver.opts.platform,
+                c.resolver.opts.target,
                 print_options,
                 cross_chunk_import_records.slice(),
                 &[_]js_ast.Part{
@@ -5882,7 +5882,7 @@ const LinkerContext = struct {
             ).result.code;
             cross_chunk_suffix = js_printer.print(
                 allocator,
-                c.resolver.opts.platform,
+                c.resolver.opts.target,
                 print_options,
                 &.{},
                 &[_]js_ast.Part{
@@ -5935,7 +5935,7 @@ const LinkerContext = struct {
             }
         }
 
-        if (chunk.entry_point.is_entry_point and ctx.c.graph.ast.items(.platform)[chunk.entry_point.source_index].isBun()) {
+        if (chunk.entry_point.is_entry_point and ctx.c.graph.ast.items(.target)[chunk.entry_point.source_index].isBun()) {
             j.push("// @bun\n");
         }
 
@@ -6488,7 +6488,7 @@ const LinkerContext = struct {
             .javascript = .{
                 .result = js_printer.print(
                     allocator,
-                    c.resolver.opts.platform,
+                    c.resolver.opts.target,
                     print_options,
                     ast.import_records.slice(),
                     &[_]js_ast.Part{
@@ -7758,7 +7758,7 @@ const LinkerContext = struct {
         return js_printer.printWithWriter(
             *js_printer.BufferPrinter,
             &printer,
-            ast.platform,
+            ast.target,
             print_options,
             ast.import_records.slice(),
             parts_to_print,

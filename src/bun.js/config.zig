@@ -42,6 +42,6 @@ pub fn configureTransformOptionsForBunVM(allocator: std.mem.Allocator, _args: Ap
 
 pub fn configureTransformOptionsForBun(_: std.mem.Allocator, _args: Api.TransformOptions) !Api.TransformOptions {
     var args = _args;
-    args.platform = Api.Platform.bun;
+    args.target = Api.Target.bun;
     return args;
 }

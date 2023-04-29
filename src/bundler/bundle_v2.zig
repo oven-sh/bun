@@ -6155,8 +6155,6 @@ const LinkerContext = struct {
             items.appendAssumeCapacity(file.source);
         }
 
-        var quote_buf = try MutableString.init(worker.allocator, items.items[0].path.pretty.len);
-        defer quote_buf.deinit();
         var source_index_to_sources_index = std.AutoHashMap(u32, u32).init(worker.allocator);
         defer source_index_to_sources_index.deinit();
         var next_source_index: u32 = 0;
@@ -6172,8 +6170,9 @@ const LinkerContext = struct {
                 item.path.pretty = rel_path;
             }
 
+            var quote_buf = try MutableString.init(worker.allocator, item.path.pretty.len);
             quote_buf = try js_printer.quoteForJSON(item.path.pretty, quote_buf, false);
-            j.push(quote_buf.toOwnedSlice());
+            j.push(quote_buf.list.items);
         }
 
         j.push("]");
@@ -6184,8 +6183,9 @@ const LinkerContext = struct {
                 j.push(", ");
             }
 
+            var quote_buf = try MutableString.init(worker.allocator, item.path.pretty.len);
             quote_buf = try js_printer.quoteForJSON(item.contents, quote_buf, false);
-            j.push(quote_buf.toOwnedSlice());
+            j.push(quote_buf.list.items);
         }
         j.push("]");
 

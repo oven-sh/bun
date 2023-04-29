@@ -42,7 +42,7 @@ public:
     };
 
 public:
-    bool anyMatchesCrossThread(const ZigString* namespaceStr, const ZigString* path, bool isOnLoad);
+    bool anyMatchesCrossThread(JSC::VM&, const ZigString* namespaceStr, const ZigString* path, bool isOnLoad);
     void tombstone() { tombstoned = true; }
 
     BundlerPlugin(void* config, BunPluginTarget target)

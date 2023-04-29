@@ -170,43 +170,28 @@ pub const String = extern struct {
             5 => String{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], 0, 0, 0 } },
             6 => String{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], 0, 0 } },
             7 => String{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], in[6], 0 } },
-            max_inline_len =>
-            // If they use the final bit, then it's a big string.
-            // This should only happen for non-ascii strings that are exactly 8 bytes.
-            // so that's an edge-case
-            if ((in[max_inline_len - 1]) >= 128)
-                @bitCast(String, (@as(
-                    u64,
-                    0,
-                ) | @as(
-                    u64,
-                    @truncate(
-                        max_addressable_space,
-                        @bitCast(
-                            u64,
-                            Pointer.init(buf, in),
-                        ),
-                    ),
-                )) | 1 << 63)
+            else => if (in.len == max_inline_len and in[max_inline_len - 1] < 128)
+                // If they use the final bit, then it's a big string.
+                // This should only happen for non-ascii strings that are exactly 8 bytes.
+                // so that's an edge-case
+                String{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], in[6], in[7] } }
             else
-                String{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], in[6], in[7] } },
-
-            else => @bitCast(
-                String,
-                (@as(
-                    u64,
-                    0,
-                ) | @as(
-                    u64,
-                    @truncate(
-                        max_addressable_space,
-                        @bitCast(
-                            u64,
-                            Pointer.init(buf, in),
+                @bitCast(
+                    String,
+                    (@as(
+                        u64,
+                        0,
+                    ) | @as(
+                        u64,
+                        @truncate(
+                            max_addressable_space,
+                            @bitCast(
+                                u64,
+                                Pointer.init(buf, in),
+                            ),
                         ),
-                    ),
-                )) | 1 << 63,
-            ),
+                    )) | 1 << 63,
+                ),
         };
     }
 
@@ -1131,13 +1116,14 @@ pub const Version = extern struct {
     }
 
     fn parseVersionNumber(input: string) u32 {
-        // max decimal u32 is 4294967295
-        var bytes: [10]u8 = undefined;
+        var bytes: [std.fmt.comptimePrint("{}", .{@as(u32, std.math.maxInt(u32))}).len]u8 = undefined;
         var byte_i: u8 = 0;
 
         std.debug.assert(input[0] != '.');
+        var cur = input;
+        while (cur.len > 0 and cur[0] == '0') cur = cur[1..];
 
-        for (input) |char| {
+        for (cur) |char| {
             switch (char) {
                 'X', 'x', '*' => return 0,
                 '0'...'9' => {

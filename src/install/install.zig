@@ -2359,7 +2359,7 @@ pub const PackageManager = struct {
                 .value = .{
                     .npm = .{
                         .version = find_result.version,
-                        .url = find_result.package.tarball_url.value,
+                        .url = if (find_result.tarball_override) |url| String.init(this.lockfile.dependency_overrides.string_buffer, url) else find_result.package.tarball_url.value,
                     },
                 },
             },
@@ -2379,8 +2379,7 @@ pub const PackageManager = struct {
             this.lockfile,
             this.log,
             manifest,
-            find_result.version,
-            find_result.package,
+            find_result,
             manifest.string_buf,
             Features.npm,
         ));
@@ -2401,7 +2400,7 @@ pub const PackageManager = struct {
                         this.lockfile.str(&name),
                         package.resolution.value.npm.version,
                     ),
-                    manifest.str(&find_result.package.tarball_url),
+                    find_result.tarball_override orelse manifest.str(&find_result.package.tarball_url),
                     dependency_id,
                     package,
                 ) orelse unreachable,
@@ -2518,12 +2517,22 @@ pub const PackageManager = struct {
         switch (version.tag) {
             .npm, .dist_tag => {
                 // Resolve the version from the loaded NPM manifest
-                const manifest = this.manifests.getPtr(name_hash) orelse return null; // manifest might still be downloading. This feels unreliable.
-                const find_result: Npm.PackageManifest.FindResult = switch (version.tag) {
+                const manifest: *Npm.PackageManifest = this.manifests.getPtr(name_hash) orelse return null; // manifest might still be downloading. This feels unreliable.
+                const pkg_override = this.lockfile.dependency_overrides.getOverride(.{
+                    .name = this.lockfile.str(&name),
+                    .version = this.lockfile.str(&version.literal),
+                    .name_hash = name_hash,
+                });
+
+                const find_result: Npm.PackageManifest.FindResult = (if (pkg_override) |override| blk: {
+                    var version_query = manifest.findByVersion(override.version);
+                    if (version_query) |*found_version| found_version.tarball_override = override.url;
+                    break :blk version_query;
+                } else switch (version.tag) {
                     .dist_tag => manifest.findByDistTag(this.lockfile.str(&version.value.dist_tag.tag)),
                     .npm => manifest.findBestVersion(version.value.npm.version),
                     else => unreachable,
-                } orelse return if (behavior.isPeer()) null else switch (version.tag) {
+                }) orelse return if (behavior.isPeer()) null else switch (version.tag) {
                     .npm => error.NoMatchingVersion,
                     .dist_tag => error.DistTagNotFound,
                     else => unreachable,
@@ -2973,52 +2982,48 @@ pub const PackageManager = struct {
                                                 try this.manifests.put(this.allocator, manifest.pkg.name.hash, manifest);
                                             }
 
+                                            const override_opt = this.lockfile.dependency_overrides.getOverride(.{
+                                                .name = name_str,
+                                                .version = this.lockfile.str(&version.literal),
+                                                .name_hash = name_hash,
+                                            });
+
+                                            const exact_version_opt: ?Semver.Version = if (override_opt) |override|
+                                                override.version
+                                            else if (dependency.version.tag == .npm and
+                                                dependency.version.value.npm.version.isExact())
+                                                dependency.version.value.npm.version.toVersion()
+                                            else
+                                                null;
+
                                             // If it's an exact package version already living in the cache
                                             // We can skip the network request, even if it's beyond the caching period
+                                            if (exact_version_opt) |exact_version| {
+                                                if (manifest.findByVersion(exact_version)) |find_result_| {
+                                                    var find_result = find_result_;
+                                                    if (override_opt) |override| find_result.tarball_override = override.url;
 
-                                            if (dependency.version.tag == .npm) {
-                                                if (dependency.version.value.npm.version.isExact()) {
-                                                    if (manifest.findByVersion(dependency.version.value.npm.version.head.head.range.left.version)) |find_result| {
-                                                        if (this.getOrPutResolvedPackageWithFindResult(
-                                                            name_hash,
-                                                            name,
-                                                            version,
-                                                            id,
-                                                            dependency.behavior,
-                                                            &manifest,
-                                                            find_result,
-                                                            successFn,
-                                                        ) catch null) |new_resolve_result| {
-                                                            resolve_result_ = new_resolve_result;
-                                                            _ = this.network_dedupe_map.remove(task_id);
-                                                            continue :retry_with_new_resolve_result;
-                                                        }
-                                                    }
-                                                } else if (this.lockfile.dependency_overrides.getOverrides(
-                                                    name_str,
-                                                    this.lockfile.str(&version.literal),
-                                                )) |override_version| {
-                                                    if (manifest.findByVersion(override_version)) |find_result| {
-                                                        if (this.getOrPutResolvedPackageWithFindResult(
-                                                            name_hash,
-                                                            name,
-                                                            version,
-                                                            id,
-                                                            dependency.behavior,
-                                                            &manifest,
-                                                            find_result,
-                                                            successFn,
-                                                        ) catch null) |new_resolve_result| {
-                                                            resolve_result_ = new_resolve_result;
-                                                            _ = this.network_dedupe_map.remove(task_id);
-                                                            continue :retry_with_new_resolve_result;
-                                                        }
+                                                    if (this.getOrPutResolvedPackageWithFindResult(
+                                                        name_hash,
+                                                        name,
+                                                        version,
+                                                        id,
+                                                        dependency.behavior,
+                                                        &manifest,
+                                                        find_result,
+                                                        successFn,
+                                                    ) catch null) |new_resolve_result| {
+                                                        resolve_result_ = new_resolve_result;
+                                                        _ = this.network_dedupe_map.remove(task_id);
+                                                        continue :retry_with_new_resolve_result;
                                                     }
                                                 }
                                             }
 
                                             // Was it recent enough to just load it without the network call?
-                                            if (this.options.enable.manifest_cache_control and manifest.pkg.public_max_age > this.timestamp_for_manifest_cache_control) {
+                                            if (this.options.enable.manifest_cache_control and
+                                                manifest.pkg.public_max_age > this.timestamp_for_manifest_cache_control)
+                                            {
                                                 _ = this.network_dedupe_map.remove(task_id);
                                                 continue :retry_from_manifests_ptr;
                                             }

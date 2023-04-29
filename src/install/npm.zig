@@ -684,6 +684,7 @@ pub const PackageManifest = struct {
     pub const FindResult = struct {
         version: Semver.Version,
         package: *const PackageVersion,
+        tarball_override: ?string = null,
     };
 
     pub fn findByString(this: *const PackageManifest, version: string) ?FindResult {

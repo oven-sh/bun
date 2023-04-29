@@ -61,6 +61,10 @@ pub const URL = struct {
         return strings.eqlComptime(this.protocol, "http");
     }
 
+    pub inline fn isUnix(this: *const URL) bool {
+        return strings.includes(this.protocol, "unix");
+    }
+
     pub fn displayHostname(this: *const URL) string {
         if (this.hostname.len > 0) {
             return this.hostname;
@@ -116,6 +120,7 @@ pub const URL = struct {
     }
 
     pub fn hasValidPort(this: *const URL) bool {
+        if (this.isUnix()) return true;
         return (this.getPort() orelse 0) > 1;
     }
 
@@ -1707,6 +1712,16 @@ test "URL - parse" {
     try expectString("", url.port);
     try expectString("/src/index", url.path);
     try expectString("/src/index", url.pathname);
+
+    url = URL.parse("unix:///src.sock/index");
+    try expectString("unix", url.protocol);
+    try expectString("", url.username);
+    try expectString("", url.password);
+    try expectString("/src.sock", url.host);
+    try expectString("/src.sock", url.hostname);
+    try expectString("", url.port);
+    try expectString("/index", url.path);
+    try expectString("/index", url.pathname);
 
     try expectString("", url.hash);
     try expectString("", url.search);

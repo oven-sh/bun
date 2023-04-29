@@ -444,7 +444,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             return null;
         }
 
-        pub fn connect(this: *@This(), client: *HTTPClient, hostname_: []const u8, port: u16) !HTTPSocket {
+        pub fn connect(this: *@This(), client: *HTTPClient, hostname_: []const u8, port: ?u16) !HTTPSocket {
             const hostname = if (FeatureFlags.hardcode_localhost_to_127_0_0_1 and strings.eqlComptime(hostname_, "localhost"))
                 "127.0.0.1"
             else
@@ -464,15 +464,27 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 }
             }
 
-            if (HTTPSocket.connectAnon(
-                hostname,
-                port,
-                this.us_socket_context,
-                undefined,
-            )) |socket| {
-                client.allow_retry = false;
-                socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
-                return socket;
+            if (port) {
+                if (HTTPSocket.connectAnon(
+                    hostname,
+                    port,
+                    this.us_socket_context,
+                    undefined,
+                )) |socket| {
+                    client.allow_retry = false;
+                    socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
+                    return socket;
+                }
+            } else {
+                if (HTTPSocket.connectUnixAnon(
+                    hostname,
+                    this.us_socket_context,
+                    undefined,
+                )) |socket| {
+                    client.allow_retry = false;
+                    socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
+                    return socket;
+                }
             }
 
             return error.FailedToOpenSocket;
@@ -553,7 +565,8 @@ pub const HTTPThread = struct {
         if (client.http_proxy) |url| {
             return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
         }
-        return try this.context(is_ssl).connect(client, client.url.hostname, client.url.getPortAuto());
+        const maybePort = if (client.url.isUnix()) undefined else client.url.getPortAuto();
+        return try this.context(is_ssl).connect(client, client.url.hostname, maybePort);
     }
 
     pub fn context(this: *@This(), comptime is_ssl: bool) *NewHTTPContext(is_ssl) {

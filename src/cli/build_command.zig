@@ -73,12 +73,8 @@ pub const BuildCommand = struct {
             return;
         }
 
-        var abs_output_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var root_dir = if (ctx.bundler_options.outdir.len > 0) try std.fs.cwd().makeOpenPathIterable(ctx.bundler_options.outdir, .{}) else try std.fs.cwd().makeOpenPathIterable(".", .{});
-        var abs_output_dir = try std.os.getFdPath(root_dir.dir.fd, &abs_output_dir_buf);
-
-        this_bundler.options.output_dir = abs_output_dir;
-        this_bundler.resolver.opts.output_dir = abs_output_dir;
+        this_bundler.options.output_dir = ctx.bundler_options.outdir;
+        this_bundler.resolver.opts.output_dir = ctx.bundler_options.outdir;
 
         this_bundler.options.react_server_components = ctx.bundler_options.react_server_components;
         this_bundler.resolver.opts.react_server_components = ctx.bundler_options.react_server_components;
@@ -186,6 +182,7 @@ pub const BuildCommand = struct {
                     }
 
                     var root_path = output_dir;
+                    const root_dir = try std.fs.cwd().makeOpenPathIterable(root_path, .{});
                     if (root_path.len == 0 and ctx.args.entry_points.len == 1) root_path = std.fs.path.dirname(ctx.args.entry_points[0]) orelse ".";
                     var all_paths = try ctx.allocator.alloc([]const u8, output_files.len);
                     var max_path_len: usize = 0;

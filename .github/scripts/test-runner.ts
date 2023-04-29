@@ -1,3 +1,6 @@
+// Dear reader
+//
+// The existence of this file is temporary, a hack.
 import { join, basename } from "node:path";
 import { readdirSync, writeSync, fsyncSync, appendFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";

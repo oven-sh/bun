@@ -34,6 +34,13 @@
 //   data structures related to `BSSMap`. This still leaks memory, but not very
 //   much since it only allocates the first time around.
 //
+//
+// In development, it is strongly recommended to use either a debug build of
+// mimalloc or Valgrind to help catch memory issues
+// To use a debug build of mimalloc:
+//
+//     make mimalloc-debug
+//
 const Bundler = bun.Bundler;
 const bun = @import("root").bun;
 const from = bun.from;
@@ -304,6 +311,9 @@ pub const BundleV2 = struct {
     bun_watcher: ?*Watcher.Watcher = null,
     plugins: ?*JSC.API.JSBundler.Plugin = null,
     completion: ?*JSBundleCompletionTask = null,
+
+    // There is a race condition where an onResolve plugin may schedule a task on the bundle thread before it's parsing task completes
+    resolve_tasks_waiting_for_import_source_index: std.AutoArrayHashMapUnmanaged(Index.Int, BabyList(struct { to_source_index: Index, import_record_index: u32 })) = .{},
 
     /// Allocations not tracked by a threadlocal heap
     free_list: std.ArrayList(string) = std.ArrayList(string).init(bun.default_allocator),
@@ -1037,6 +1047,11 @@ pub const BundleV2 = struct {
     ) void {
         debug("onLoad: ({d}, {s})", .{ load.source_index.get(), @tagName(load.value) });
         defer load.deinit();
+        defer {
+            if (comptime FeatureFlags.help_catch_memory_issues) {
+                this.graph.heap.gc(true);
+            }
+        }
 
         switch (load.value.consume()) {
             .no_match => {
@@ -1088,6 +1103,12 @@ pub const BundleV2 = struct {
         defer resolve.deinit();
         defer this.graph.resolve_pending -= 1;
         debug("onResolve: ({s}:{s}, {s})", .{ resolve.import_record.namespace, resolve.import_record.specifier, @tagName(resolve.value) });
+
+        defer {
+            if (comptime FeatureFlags.help_catch_memory_issues) {
+                this.graph.heap.gc(true);
+            }
+        }
 
         switch (resolve.value.consume()) {
             .no_match => {
@@ -1191,8 +1212,23 @@ pub const BundleV2 = struct {
 
                 if (out_source_index) |source_index| {
                     if (resolve.import_record.importer_source_index) |importer| {
-                        var import_record: *ImportRecord = &this.graph.ast.items(.import_records)[importer].slice()[resolve.import_record.import_record_index];
-                        import_record.source_index = source_index;
+                        var source_import_records = &this.graph.ast.items(.import_records)[importer];
+                        if (source_import_records.len <= resolve.import_record.import_record_index) {
+                            var entry = this.resolve_tasks_waiting_for_import_source_index.getOrPut(this.graph.allocator, importer) catch unreachable;
+                            if (!entry.found_existing) {
+                                entry.value_ptr.* = .{};
+                            }
+                            entry.value_ptr.push(
+                                this.graph.allocator,
+                                .{
+                                    .to_source_index = source_index,
+                                    .import_record_index = resolve.import_record.import_record_index,
+                                },
+                            ) catch unreachable;
+                        } else {
+                            var import_record: *ImportRecord = &source_import_records.slice()[resolve.import_record.import_record_index];
+                            import_record.source_index = source_index;
+                        }
                     }
                 }
             },
@@ -1592,6 +1628,15 @@ pub const BundleV2 = struct {
                 }
 
                 var import_records = result.ast.import_records.clone(this.graph.allocator) catch unreachable;
+
+                if (this.resolve_tasks_waiting_for_import_source_index.fetchSwapRemove(result.source.index.get())) |pending_entry| {
+                    for (pending_entry.value.slice()) |to_assign| {
+                        import_records.slice()[to_assign.import_record_index].source_index = to_assign.to_source_index;
+                    }
+                    var list = pending_entry.value.list();
+                    list.deinit(this.graph.allocator);
+                }
+
                 for (import_records.slice(), 0..) |*record, i| {
                     if (graph.path_to_source_index_map.get(wyhash(0, record.path.text))) |source_index| {
                         record.source_index.value = source_index;

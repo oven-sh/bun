@@ -1,3 +1,39 @@
+// This is Bun's JavaScript/TypeScript bundler
+//
+// A lot of the implementation is based on the Go implementation of esbuild. Thank you Evan Wallace.
+//
+// # Memory management
+//
+// Zig is not a managed language, so we have to be careful about memory management.
+// Manually freeing memory is error-prone and tedious, but garbage collection
+// is slow and reference counting incurs a performance penalty.
+//
+// Bun's bundler relies on mimalloc's threadlocal heaps as arena allocators.
+//
+// When a new thread is spawned for a bundling job, it is given a threadlocal
+// heap and all allocations are done on that heap. When the job is done, the
+// threadlocal heap is destroyed and all memory is freed.
+//
+// There are a few careful gotchas to keep in mind:
+//
+// - A threadlocal heap cannot allocate memory on a different thread than the one that
+//  created it. You will get a segfault if you try to do that.
+//
+// - Since the heaps are destroyed at the end of bundling, any globally shared
+//   references to data must NOT be allocated on a threadlocal heap.
+//
+//   For example, package.json and tsconfig.json read from the filesystem must be
+//   use the global allocator (bun.default_allocator) because bun's directory
+//   entry cache and module resolution cache are globally shared across all
+//   threads.
+//
+//   Additionally, `LinkerContext`'s allocator is also threadlocal.
+//
+// - Globally allocated data must be in a cache & reused, or we will create an infinite
+//   memory leak over time. To do that, we have a DirnameStore, FilenameStore, and the other
+//   data structures related to `BSSMap`. This still leaks memory, but not very
+//   much since it only allocates the first time around.
+//
 const Bundler = bun.Bundler;
 const bun = @import("root").bun;
 const from = bun.from;
@@ -84,14 +120,8 @@ const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 
 pub const ThreadPool = struct {
     pool: *ThreadPoolLib = undefined,
-    // Hardcode 512 as max number of threads for now.
     workers_assignments: std.AutoArrayHashMap(std.Thread.Id, *Worker) = std.AutoArrayHashMap(std.Thread.Id, *Worker).init(bun.default_allocator),
     workers_assignments_lock: bun.Lock = bun.Lock.init(),
-    cpu_count: u32 = 0,
-    started_workers: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
-    stopped_workers: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
-    completed_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
-    pending_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
 
     v2: *BundleV2 = undefined,
 
@@ -104,27 +134,26 @@ pub const ThreadPool = struct {
     pub fn start(this: *ThreadPool, v2: *BundleV2, existing_thread_pool: ?*ThreadPoolLib) !void {
         this.v2 = v2;
 
-        this.cpu_count = @truncate(u32, @max(std.Thread.getCpuCount() catch 2, 2));
-
-        if (v2.bundler.env.map.get("GOMAXPROCS")) |max_procs| {
-            if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count| {
-                this.cpu_count = cpu_count;
-            } else |_| {}
-        }
-
-        this.cpu_count = @max(@min(this.cpu_count, @truncate(u32, 128 - 1)), 2);
-
         if (existing_thread_pool) |pool| {
             this.pool = pool;
         } else {
+            var cpu_count = @truncate(u32, @max(std.Thread.getCpuCount() catch 2, 2));
+
+            if (v2.bundler.env.map.get("GOMAXPROCS")) |max_procs| {
+                if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count_| {
+                    cpu_count = cpu_count_;
+                } else |_| {}
+            }
+
+            cpu_count = @max(@min(cpu_count, @truncate(u32, 128 - 1)), 2);
             this.pool = try v2.graph.allocator.create(ThreadPoolLib);
             this.pool.* = ThreadPoolLib.init(.{
-                .max_threads = this.cpu_count,
+                .max_threads = cpu_count,
             });
+            debug("{d} workers", .{cpu_count});
         }
-        this.pool.setThreadContext(this);
 
-        debug("allocated {d} workers", .{this.cpu_count});
+        this.pool.setThreadContext(this);
     }
 
     pub fn getWorker(this: *ThreadPool, id: std.Thread.Id) *Worker {
@@ -153,7 +182,11 @@ pub const ThreadPool = struct {
 
     pub const Worker = struct {
         heap: ThreadlocalArena = ThreadlocalArena{},
+
+        /// Thread-local memory allocator
+        /// All allocations are freed in `deinit` at the very end of bundling.
         allocator: std.mem.Allocator,
+
         ctx: *BundleV2,
 
         data: WorkerData = undefined,
@@ -166,6 +199,7 @@ pub const ThreadPool = struct {
         deinit_task: ThreadPoolLib.Task = .{ .callback = deinitCallback },
 
         pub fn deinitCallback(task: *ThreadPoolLib.Task) void {
+            debug("Worker.deinit()", .{});
             var this = @fieldParentPtr(Worker, "deinit_task", task);
             this.deinit();
         }
@@ -245,6 +279,7 @@ pub const ThreadPool = struct {
             const CacheSet = @import("../cache.zig");
 
             this.data.bundler.resolver.caches = CacheSet.Set.init(this.allocator);
+            debug("Worker.create()", .{});
         }
 
         pub fn run(this: *Worker, ctx: *BundleV2) void {

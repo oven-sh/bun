@@ -1352,7 +1352,7 @@ pub fn verifyResolutions(this: *Lockfile, local_features: Features, remote_featu
                     remote_features,
             )) continue;
             if (log_level != .silent) {
-                if (failed_dep.name.isEmpty()) {
+                if (failed_dep.name.isEmpty() or strings.eql(failed_dep.name.slice(string_buf), failed_dep.version.literal.slice(string_buf))) {
                     Output.prettyErrorln(
                         "<r><red>error<r><d>:<r> <b>{}<r><d> failed to resolve<r>\n",
                         .{

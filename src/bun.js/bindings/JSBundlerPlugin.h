@@ -7,46 +7,29 @@
 #include "JavaScriptCore/RegularExpression.h"
 #include "helpers.h"
 #include <JavaScriptCore/Yarr.h>
+#include <JavaScriptCore/Strong.h>
 
 namespace Bun {
 
 using namespace JSC;
 
-class JSBundlerPlugin final : public WTF::RefCounted<JSBundlerPlugin> {
+class BundlerPlugin final {
 public:
-    WTF_MAKE_ISO_ALLOCATED(JSBundlerPlugin);
-    static JSBundlerPlugin* create(JSC::JSGlobalObject* globalObject, BunPluginTarget target, void* config = nullptr);
-
-    // This is a list of pairs of regexps and functions to match against
-    class Group {
-
+    class NamespaceList final {
     public:
-        Vector<Yarr::RegularExpression> filters = {};
-        Vector<JSC::Strong<JSC::JSFunction>> callbacks = {};
-
-        void append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSFunction* func);
-        JSFunction* find(String& path);
-        void clear()
-        {
-            filters.clear();
-            callbacks.clear();
-        }
-    };
-
-    class Base {
-    public:
-        Group fileNamespace = {};
+        Vector<Yarr::RegularExpression> fileNamespace = {};
         Vector<String> namespaces = {};
-        Vector<Group> groups = {};
+        Vector<Vector<Yarr::RegularExpression>> groups = {};
         BunPluginTarget target { BunPluginTargetBun };
 
-        Group* group(const String& namespaceStr)
+        Vector<Yarr::RegularExpression>* group(const String& namespaceStr)
         {
             if (namespaceStr.isEmpty()) {
                 return &fileNamespace;
             }
 
-            for (size_t i = 0; i < namespaces.size(); i++) {
+            size_t length = namespaces.size();
+            for (size_t i = 0; i < length; i++) {
                 if (namespaces[i] == namespaceStr) {
                     return &groups[i];
                 }
@@ -55,49 +38,24 @@ public:
             return nullptr;
         }
 
-        void append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSFunction* func, String& namespaceString);
-    };
-
-    class OnLoad final : public Base {
-
-    public:
-        OnLoad()
-            : Base()
-        {
-        }
-
-        EncodedJSValue run(const ZigString* namespaceString, const ZigString* path, void* context);
-    };
-
-    class OnResolve final : public Base {
-
-    public:
-        OnResolve()
-            : Base()
-        {
-        }
-
-        EncodedJSValue run(const ZigString* namespaceString, const ZigString* path, const ZigString* importer, void* context);
+        void append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString);
     };
 
 public:
-    bool anyMatchesCrossThread(const ZigString* namespaceStr, const ZigString* path, bool isOnLoad);
+    bool anyMatchesCrossThread(JSC::VM&, const ZigString* namespaceStr, const ZigString* path, bool isOnLoad);
     void tombstone() { tombstoned = true; }
 
-    JSBundlerPlugin(BunPluginTarget target, void* config)
+    BundlerPlugin(void* config, BunPluginTarget target)
     {
         this->target = target;
         this->config = config;
     }
 
-    OnLoad onLoad = {};
-    OnResolve onResolve = {};
+    NamespaceList onLoad = {};
+    NamespaceList onResolve = {};
     BunPluginTarget target { BunPluginTargetBrowser };
     void* config { nullptr };
     bool tombstoned { false };
-
-    using RefCounted::deref;
-    using RefCounted::ref;
 };
 
 } // namespace Zig

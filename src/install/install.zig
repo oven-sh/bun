@@ -2469,8 +2469,9 @@ pub const PackageManager = struct {
             std.debug.assert(buffers.resolutions.items[dependency_id] == invalid_package_id);
         }
         buffers.resolutions.items[dependency_id] = package_id;
+        const string_buf = buffers.string_bytes.items;
         var dep = &buffers.dependencies.items[dependency_id];
-        if (dep.name.isEmpty()) {
+        if (dep.name.isEmpty() or strings.eql(dep.name.slice(string_buf), dep.version.literal.slice(string_buf))) {
             dep.name = this.lockfile.packages.items(.name)[package_id];
             dep.name_hash = this.lockfile.packages.items(.name_hash)[package_id];
         }
@@ -2484,8 +2485,9 @@ pub const PackageManager = struct {
             std.debug.assert(buffers.resolutions.items[dependency_id] == invalid_package_id);
         }
         buffers.resolutions.items[dependency_id] = package_id;
+        const string_buf = buffers.string_bytes.items;
         var dep = &buffers.dependencies.items[dependency_id];
-        if (dep.name.isEmpty()) {
+        if (dep.name.isEmpty() or strings.eql(dep.name.slice(string_buf), dep.version.literal.slice(string_buf))) {
             dep.name = this.lockfile.packages.items(.name)[package_id];
             dep.name_hash = this.lockfile.packages.items(.name_hash)[package_id];
         }
@@ -4771,10 +4773,15 @@ pub const PackageManager = struct {
             ast_modifier: {
                 // Try to use the existing spot in the dependencies list if possible
                 for (updates) |*update| {
-                    outer: for (dependency_lists_to_check) |list| {
+                    for (dependency_lists_to_check) |list| {
                         if (current_package_json.asProperty(list)) |query| {
                             if (query.expr.data == .e_object) {
-                                if (query.expr.asProperty(update.name)) |value| {
+                                if (query.expr.asProperty(
+                                    if (update.is_aliased)
+                                        update.name
+                                    else
+                                        update.version.literal.slice(update.version_buf),
+                                )) |value| {
                                     if (value.expr.data == .e_string) {
                                         if (!update.resolved_name.isEmpty() and strings.eql(list, dependency_list)) {
                                             replacing += 1;
@@ -4783,7 +4790,7 @@ pub const PackageManager = struct {
                                             remaining -= 1;
                                         }
                                     }
-                                    break :outer;
+                                    break;
                                 }
                             }
                         }
@@ -4811,7 +4818,13 @@ pub const PackageManager = struct {
                     var k: usize = 0;
                     while (k < new_dependencies.len) : (k += 1) {
                         if (new_dependencies[k].key) |key| {
-                            if (key.data.e_string.eql(string, update.name)) {
+                            if (key.data.e_string.eql(
+                                string,
+                                if (update.is_aliased)
+                                    update.name
+                                else
+                                    update.version.literal.slice(update.version_buf),
+                            )) {
                                 if (update.resolved_name.isEmpty()) {
                                     // This actually is a duplicate
                                     // like "react" appearing in both "dependencies" and "optionalDependencies"
@@ -4832,8 +4845,10 @@ pub const PackageManager = struct {
                             new_dependencies[k].key = try JSAst.Expr.init(
                                 JSAst.E.String,
                                 JSAst.E.String{
-                                    .data = try allocator.dupe(u8, if (update.is_aliased or update.resolved_name.isEmpty())
+                                    .data = try allocator.dupe(u8, if (update.is_aliased)
                                         update.name
+                                    else if (update.resolved_name.isEmpty())
+                                        update.version.literal.slice(update.version_buf)
                                     else
                                         update.resolved_name.slice(update.version_buf)),
                                 },

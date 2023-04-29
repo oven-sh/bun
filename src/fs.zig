@@ -1211,6 +1211,18 @@ pub const Path = struct {
     is_disabled: bool = false,
     is_symlink: bool = false,
 
+    pub fn hashKey(this: *const Path) u64 {
+        if (this.namespace.len == 0 or strings.eqlComptime(this.namespace, "file")) {
+            return bun.hash(this.text);
+        }
+
+        var hasher = std.hash.Wyhash.init(0);
+        hasher.update(this.namespace);
+        hasher.update("::::::::");
+        hasher.update(this.text);
+        return hasher.final();
+    }
+
     pub fn packageName(this: *const Path) ?string {
         var name_to_use = this.pretty;
         if (strings.lastIndexOf(this.text, std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str)) |node_modules| {

@@ -648,7 +648,7 @@ pub const VirtualMachine = struct {
             this.macro_event_loop.concurrent_tasks = .{};
         }
 
-        this.bundler.options.platform = .bun_macro;
+        this.bundler.options.target = .bun_macro;
         this.bundler.resolver.caches.fs.use_alternate_source_cache = true;
         this.macro_mode = true;
         this.event_loop = &this.macro_event_loop;
@@ -656,7 +656,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn disableMacroMode(this: *VirtualMachine) void {
-        this.bundler.options.platform = .bun;
+        this.bundler.options.target = .bun;
         this.bundler.resolver.caches.fs.use_alternate_source_cache = false;
         this.macro_mode = false;
         this.event_loop = &this.regular_event_loop;

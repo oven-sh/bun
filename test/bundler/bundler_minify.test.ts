@@ -1,6 +1,6 @@
 import assert from "assert";
 import dedent from "dedent";
-import { bundlerTest, expectBundled, itBundled, testForFile } from "./expectBundled";
+import { itBundled, testForFile } from "./expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 describe("bundler", () => {
@@ -52,8 +52,7 @@ describe("bundler", () => {
       "!1",
     ],
     minifySyntax: true,
-    platform: "bun",
-    minifySyntax: true,
+    target: "bun",
   });
   itBundled("minify/FunctionExpressionRemoveName", {
     notImplemented: true,
@@ -68,7 +67,7 @@ describe("bundler", () => {
     capture: ["function(", "function(", "function e("],
     minifySyntax: true,
     minifyIdentifiers: true,
-    platform: "bun",
+    target: "bun",
   });
   itBundled("minify/PrivateIdentifiersNameCollision", {
     files: {
@@ -123,5 +122,16 @@ describe("bundler", () => {
       const code = api.readFile("/out.js");
       assert([...code.matchAll(/var /g)].length === 1, "expected only 1 variable declaration statement");
     },
+  });
+  itBundled("minify/InlineArraySpread", {
+    files: {
+      "/entry.js": /* js */ `
+        capture([1, 2, ...[3, 4], 5, 6, ...[7, ...[...[...[...[8, 9]]]]], 10, ...[...[...[...[...[...[...[11]]]]]]]]);
+        capture([1, 2, ...[3, 4], 5, 6, ...[7, [...[...[...[8, 9]]]]], 10, ...[...[...[...[...[...[...11]]]]]]]);
+      `,
+    },
+    capture: ["[1,2,3,4,5,6,7,8,9,10,11]", "[1,2,3,4,5,6,7,[8,9],10,...11]"],
+    minifySyntax: true,
+    minifyWhitespace: true,
   });
 });

@@ -711,21 +711,6 @@ declare module "bun" {
     ) => number | bigint;
   }
 
-  export type Platform =
-    /**
-     * When building for bun.js
-     */
-    | "bun"
-    /**
-     * When building for the web
-     */
-    | "browser"
-    /**
-     * When building for node.js
-     */
-    | "node"
-    | "neutral";
-
   export type JavaScriptLoader = "jsx" | "js" | "ts" | "tsx";
 
   /**
@@ -750,7 +735,7 @@ declare module "bun" {
       paths?: Record<string, string[]>;
       baseUrl?: string;
       /** "preserve" is not supported yet */
-      jsx?: "preserve" | "react" | "react-jsx" | "react-jsxdev" | "react-native";
+      jsx?: "preserve" | "react" | "react-jsx" | "react-jsxdev";
       jsxFactory?: string;
       jsxFragmentFactory?: string;
       jsxImportSource?: string;
@@ -776,7 +761,7 @@ declare module "bun" {
 
     /**  What platform are we targeting? This may affect how import and/or require is used */
     /**  @example "browser" */
-    platform?: Platform;
+    target?: Target;
 
     /**
      *  TSConfig.json file as stringified JSON or an object
@@ -961,6 +946,46 @@ declare module "bun" {
       | "internal"
       | "entry-point";
   }
+
+  type ModuleFormat = "esm"; // later: "cjs", "iife"
+
+  interface BuildConfig {
+    entrypoints: string[]; // list of file path
+    outdir?: string; // output directory
+    target?: Target; // default: "browser"
+    // format?: ModuleFormat; // later: "cjs", "iife"
+
+    naming?:
+      | string
+      | {
+          chunk?: string;
+          entry?: string;
+          asset?: string;
+        }; // | string;
+    // root?: string; // project root
+    splitting?: boolean; // default true, enable code splitting
+    plugins?: BunPlugin[];
+    // manifest?: boolean; // whether to return manifest
+    external?: Array<string>;
+    publicPath?: string;
+    // origin?: string; // e.g. http://mydomain.com
+    // loaders?: { [k in string]: Loader };
+    // sourcemap?: "none" | "inline" | "external"; // default: "none"
+    minify?:
+      | boolean
+      | {
+          whitespace?: boolean;
+          syntax?: boolean;
+          identifiers?: boolean;
+        };
+    // treeshaking?: boolean;
+  }
+
+  type BuildResult<T = Blob> = {
+    outputs: Array<{ path: string; result: T }>;
+  };
+
+  function build(config: BuildConfig): Promise<BuildResult<Blob>>;
 
   /**
    * **0** means the message was **dropped**
@@ -2164,7 +2189,12 @@ declare module "bun" {
     update(input: StringOrBuffer, inputEncoding?: CryptoEncoding): CryptoHasher;
 
     /**
-     * Finalize the hash
+     * Perform a deep copy of the hasher
+     */
+    copy(): CryptoHasher;
+
+    /**
+     * Finalize the hash. Resets the CryptoHasher so it can be reused.
      *
      * @param encoding `DigestEncoding` to return the hash in. If none is provided, it will return a `Uint8Array`.
      */
@@ -2470,7 +2500,7 @@ declare module "bun" {
    */
   export function gunzipSync(data: Uint8Array): Uint8Array;
 
-  export type PluginTarget =
+  export type Target =
     /**
      * The default environment when using `bun run` or `bun` to load a script
      */
@@ -2483,6 +2513,7 @@ declare module "bun" {
      * The plugin will be applied to browser builds
      */
     | "browser";
+  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml";
 
   interface PluginConstraints {
     /**
@@ -2525,7 +2556,7 @@ declare module "bun" {
      *
      * "css" will be added in a future version of Bun.
      */
-    loader: "js" | "jsx" | "ts" | "tsx" | "json" | "toml";
+    loader: Loader;
   }
 
   interface OnLoadResultObject {
@@ -2637,7 +2668,7 @@ declare module "bun" {
     /**
      * The current target environment
      */
-    target: PluginTarget;
+    target: Target;
   }
 
   interface BunPlugin {
@@ -2658,7 +2689,7 @@ declare module "bun" {
      *
      * If unspecified, it is assumed that the plugin is compatible with the default target.
      */
-    target?: PluginTarget;
+    target?: Target;
     /**
      * A function that will be called when the plugin is loaded.
      *

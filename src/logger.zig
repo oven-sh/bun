@@ -403,7 +403,12 @@ pub const Msg = struct {
 
     pub fn fromJS(allocator: std.mem.Allocator, globalObject: *bun.JSC.JSGlobalObject, file: string, err: bun.JSC.JSValue) !Msg {
         var zig_exception_holder: bun.JSC.ZigException.Holder = bun.JSC.ZigException.Holder.init();
-        err.toZigException(globalObject, zig_exception_holder.zigException());
+        if (err.toError()) |value| {
+            value.toZigException(globalObject, zig_exception_holder.zigException());
+        } else {
+            zig_exception_holder.zig_exception.message = JSC.ZigString.fromUTF8(err.toSlice(globalObject, allocator).slice());
+        }
+
         return Msg{
             .data = .{
                 .text = zig_exception_holder.zigException().message.toSliceClone(allocator).slice(),
@@ -813,7 +818,7 @@ pub const Log = struct {
 
     inline fn _addResolveErrorWithLevel(
         log: *Log,
-        source: *const Source,
+        source: ?*const Source,
         r: Range,
         allocator: std.mem.Allocator,
         comptime fmt: string,
@@ -865,7 +870,7 @@ pub const Log = struct {
 
     inline fn _addResolveError(
         log: *Log,
-        source: *const Source,
+        source: ?*const Source,
         r: Range,
         allocator: std.mem.Allocator,
         comptime fmt: string,
@@ -879,7 +884,7 @@ pub const Log = struct {
 
     inline fn _addResolveWarn(
         log: *Log,
-        source: *const Source,
+        source: ?*const Source,
         r: Range,
         allocator: std.mem.Allocator,
         comptime fmt: string,
@@ -893,7 +898,7 @@ pub const Log = struct {
 
     pub fn addResolveError(
         log: *Log,
-        source: *const Source,
+        source: ?*const Source,
         r: Range,
         allocator: std.mem.Allocator,
         comptime fmt: string,
@@ -907,7 +912,7 @@ pub const Log = struct {
 
     pub fn addResolveErrorWithTextDupe(
         log: *Log,
-        source: *const Source,
+        source: ?*const Source,
         r: Range,
         allocator: std.mem.Allocator,
         comptime fmt: string,
@@ -920,7 +925,7 @@ pub const Log = struct {
 
     pub fn addResolveErrorWithTextDupeMaybeWarn(
         log: *Log,
-        source: *const Source,
+        source: ?*const Source,
         r: Range,
         allocator: std.mem.Allocator,
         comptime fmt: string,

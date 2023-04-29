@@ -1,5 +1,5 @@
 import assert from "assert";
-import { RUN_UNCHECKED_TESTS, itBundled, testForFile } from "../expectBundled";
+import { itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:
@@ -1470,7 +1470,6 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/ThisInsideFunctionTSNoBundleUseDefineForClassFields", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         function foo(x = this) { return [x, this]; }

@@ -58,7 +58,7 @@ pub const Cli = struct {
         Command.start(allocator, log) catch |err| {
             switch (err) {
                 error.MissingEntryPoint => {
-                    Output.prettyErrorln("<r><red>MissingEntryPoint<r> what do you want to bundle?\n\n<d>Example:\n\n<r>  <b><cyan>bun bun --use next<r>\n\n  <b><cyan>bun bun ./src/index.ts ./src/file2.ts<r>\n", .{});
+                    Output.prettyErrorln("<r><red>MissingEntryPoint<r> what do you want to build?\n\n<d>Example:\n\n<r>  <b><cyan>bun build ./src/index.ts<r>\n\n  <b><cyan>bun build --minify --outdir=out ./index.jsx ./lib/worker.ts<r>\n", .{});
                     Global.exit(1);
                 },
                 else => {
@@ -82,11 +82,11 @@ const LoaderMatcher = strings.ExactSizeMatcher(4);
 const ColonListType = @import("./cli/colon_list_type.zig").ColonListType;
 pub const LoaderColonList = ColonListType(Api.Loader, Arguments.loader_resolver);
 pub const DefineColonList = ColonListType(string, Arguments.noop_resolver);
-fn invalidPlatform(diag: *clap.Diagnostic, _platform: []const u8) noreturn {
+fn invalidTarget(diag: *clap.Diagnostic, _target: []const u8) noreturn {
     @setCold(true);
-    diag.name.long = "--platform";
-    diag.arg = _platform;
-    diag.report(Output.errorWriter(), error.InvalidPlatform) catch {};
+    diag.name.long = "--target";
+    diag.arg = _target;
+    diag.report(Output.errorWriter(), error.InvalidTarget) catch {};
     std.process.exit(1);
 }
 pub const Arguments = struct {
@@ -144,31 +144,31 @@ pub const Arguments = struct {
     pub const ParamType = clap.Param(clap.Help);
 
     const shared_public_params = [_]ParamType{
+        clap.parseParam("-h, --help                        Display this help and exit.") catch unreachable,
         clap.parseParam("-b, --bun                         Force a script or package to use Bun.js instead of Node.js (via symlinking node)") catch unreachable,
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
-        clap.parseParam("-c, --config <PATH>?               Config file to load bun from (e.g. -c bunfig.toml") catch unreachable,
-        clap.parseParam("--extension-order <STR>...        defaults to: .tsx,.ts,.jsx,.js,.json ") catch unreachable,
+        clap.parseParam("-c, --config <PATH>?              Config file to load bun from (e.g. -c bunfig.toml") catch unreachable,
+        clap.parseParam("--extension-order <STR>...        Defaults to: .tsx,.ts,.jsx,.js,.json ") catch unreachable,
         clap.parseParam("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
         clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments") catch unreachable,
         clap.parseParam("--jsx-import-source <STR>         Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: \"react\"") catch unreachable,
         clap.parseParam("--jsx-production                  Use jsx instead of jsxDEV (default) for the automatic runtime") catch unreachable,
         clap.parseParam("--jsx-runtime <STR>               \"automatic\" (default) or \"classic\"") catch unreachable,
         clap.parseParam("-r, --preload <STR>...            Import a module before other modules are loaded") catch unreachable,
-        clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --platform dependent") catch unreachable,
-        clap.parseParam("--no-summary                     Don't print a summary (when generating .bun") catch unreachable,
-        clap.parseParam("-v, --version                    Print version and exit") catch unreachable,
-        clap.parseParam("--platform <STR>                  \"bun\" or \"browser\" or \"node\", used when building or bundling") catch unreachable,
+        clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --target dependent") catch unreachable,
+        clap.parseParam("--no-summary                      Don't print a summary (when generating .bun)") catch unreachable,
+        clap.parseParam("-v, --version                     Print version and exit") catch unreachable,
         clap.parseParam("--tsconfig-override <STR>         Load tsconfig from path instead of cwd/tsconfig.json") catch unreachable,
         clap.parseParam("-d, --define <STR>...             Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON.") catch unreachable,
         clap.parseParam("-e, --external <STR>...           Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
-        clap.parseParam("-h, --help                        Display this help and exit.              ") catch unreachable,
-        clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: jsx, js, json, tsx, ts, css") catch unreachable,
+        clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: js, jsx, ts, tsx, json, toml, text, file, wasm, napi") catch unreachable,
         clap.parseParam("-u, --origin <STR>                Rewrite import URLs to start with --origin. Default: \"\"") catch unreachable,
         clap.parseParam("-p, --port <STR>                  Port to serve bun's dev server on. Default: \"3000\"") catch unreachable,
         clap.parseParam("--minify                          Minify (experimental)") catch unreachable,
         clap.parseParam("--minify-syntax                   Minify syntax and inline data (experimental)") catch unreachable,
         clap.parseParam("--minify-whitespace               Minify whitespace (experimental)") catch unreachable,
         clap.parseParam("--minify-identifiers              Minify identifiers") catch unreachable,
+        clap.parseParam("--target <STR>                    The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
         clap.parseParam("<POS>...                          ") catch unreachable,
     };
 
@@ -205,13 +205,17 @@ pub const Arguments = struct {
     pub const params = public_params ++ debug_params;
 
     const build_only_params = [_]ParamType{
-        clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'inline', 'external', or 'none'") catch unreachable,
         clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
-        clap.parseParam("--entry-names <STR>              Pattern to use for entry point filenames") catch unreachable,
         clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
-        clap.parseParam("--server-components        Enable React Server Components (experimental)") catch unreachable,
-        clap.parseParam("--splitting                      Split up code!") catch unreachable,
-        clap.parseParam("--transform                      Do not bundle") catch unreachable,
+        clap.parseParam("--splitting                      Enable code splitting") catch unreachable,
+        // clap.parseParam("--manifest <STR>                 Write JSON manifest") catch unreachable,
+        // clap.parseParam("--public-path <STR>              A prefix to be appended to any import paths in bundled code") catch unreachable,
+        clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'inline', 'external', or 'none'") catch unreachable,
+        clap.parseParam("--entry-naming <STR>             Customize entry point filenames. Defaults to \"[dir]/[name].[ext]\"") catch unreachable,
+        clap.parseParam("--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
+        clap.parseParam("--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
+        clap.parseParam("--server-components              Enable React Server Components (experimental)") catch unreachable,
+        clap.parseParam("--transform                      Single file transform, do not bundle") catch unreachable,
     };
 
     // TODO: update test completions
@@ -500,8 +504,16 @@ pub const Arguments = struct {
                 ctx.bundler_options.code_splitting = true;
             }
 
-            if (args.option("--entry-names")) |entry_names| {
-                ctx.bundler_options.entry_names = entry_names;
+            if (args.option("--entry-naming")) |entry_naming| {
+                ctx.bundler_options.entry_naming = try strings.concat(allocator, &.{ "./", entry_naming });
+            }
+
+            if (args.option("--chunk-naming")) |chunk_naming| {
+                ctx.bundler_options.chunk_naming = try strings.concat(allocator, &.{ "./", chunk_naming });
+            }
+
+            if (args.option("--asset-naming")) |asset_naming| {
+                ctx.bundler_options.asset_naming = try strings.concat(allocator, &.{ "./", asset_naming });
             }
 
             if (comptime FeatureFlags.react_server_components) {
@@ -668,18 +680,18 @@ pub const Arguments = struct {
             else => {},
         }
 
-        const PlatformMatcher = strings.ExactSizeMatcher(8);
+        const TargetMatcher = strings.ExactSizeMatcher(8);
 
-        if (args.option("--platform")) |_platform| {
-            opts.platform = opts.platform orelse switch (PlatformMatcher.match(_platform)) {
-                PlatformMatcher.case("browser") => Api.Platform.browser,
-                PlatformMatcher.case("node") => Api.Platform.node,
-                PlatformMatcher.case("macro") => if (cmd == .BuildCommand) Api.Platform.bun_macro else Api.Platform.bun,
-                PlatformMatcher.case("bun") => Api.Platform.bun,
-                else => invalidPlatform(&diag, _platform),
+        if (args.option("--target")) |_target| {
+            opts.target = opts.target orelse switch (TargetMatcher.match(_target)) {
+                TargetMatcher.case("browser") => Api.Target.browser,
+                TargetMatcher.case("node") => Api.Target.node,
+                TargetMatcher.case("macro") => if (cmd == .BuildCommand) Api.Target.bun_macro else Api.Target.bun,
+                TargetMatcher.case("bun") => Api.Target.bun,
+                else => invalidTarget(&diag, _target),
             };
 
-            ctx.debug.run_in_bun = opts.platform.? == .bun;
+            ctx.debug.run_in_bun = opts.target.? == .bun;
         }
 
         ctx.debug.run_in_bun = args.flag("--bun") or ctx.debug.run_in_bun;
@@ -922,7 +934,9 @@ pub const Command = struct {
         pub const BundlerOptions = struct {
             outdir: []const u8 = "",
             outfile: []const u8 = "",
-            entry_names: []const u8 = "./[name].[ext]",
+            entry_naming: []const u8 = "./[name].[ext]",
+            chunk_naming: []const u8 = "./[name]-[hash].[ext]",
+            asset_naming: []const u8 = "./[name]-[hash].[ext]",
             react_server_components: bool = false,
             code_splitting: bool = false,
             transform_only: bool = false,

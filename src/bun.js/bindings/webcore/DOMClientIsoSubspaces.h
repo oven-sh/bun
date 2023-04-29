@@ -31,6 +31,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCallSite;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiExternal;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForRequireResolveFunction;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBundlerPlugin;
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     /* --- bun --- */
 

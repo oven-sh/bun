@@ -1,6 +1,6 @@
 import assert from "assert";
 import dedent from "dedent";
-import { bundlerTest, expectBundled, itBundled, testForFile } from "./expectBundled";
+import { itBundled, testForFile } from "./expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 describe("bundler", () => {
@@ -161,7 +161,7 @@ describe("bundler", () => {
       `,
     },
     cjs2esm: {
-      exclude: ["/node_modules/lib/index.js"],
+      unhandled: ["/node_modules/lib/index.js"],
     },
     run: {
       stdout: "development",

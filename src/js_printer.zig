@@ -5762,7 +5762,7 @@ pub fn printJSON(
 
 pub fn print(
     allocator: std.mem.Allocator,
-    platform: options.Platform,
+    target: options.Target,
     opts: Options,
     import_records: []const ImportRecord,
     parts: []const js_ast.Part,
@@ -5774,7 +5774,7 @@ pub fn print(
     return printWithWriter(
         *BufferPrinter,
         &buffer_printer,
-        platform,
+        target,
         opts,
         import_records,
         parts,
@@ -5785,17 +5785,17 @@ pub fn print(
 pub fn printWithWriter(
     comptime Writer: type,
     _writer: Writer,
-    platform: options.Platform,
+    target: options.Target,
     opts: Options,
     import_records: []const ImportRecord,
     parts: []const js_ast.Part,
     renamer: bun.renamer.Renamer,
 ) PrintResult {
-    return switch (platform.isBun()) {
-        inline else => |is_bun_platform| printWithWriterAndPlatform(
+    return switch (target.isBun()) {
+        inline else => |is_bun| printWithWriterAndPlatform(
             Writer,
             _writer,
-            is_bun_platform,
+            is_bun,
             opts,
             import_records,
             parts,
@@ -5808,7 +5808,7 @@ pub fn printWithWriter(
 pub fn printWithWriterAndPlatform(
     comptime Writer: type,
     _writer: Writer,
-    comptime is_bun_platform: bool,
+    comptime is_bun: bool,
     opts: Options,
     import_records: []const ImportRecord,
     parts: []const js_ast.Part,
@@ -5818,7 +5818,7 @@ pub fn printWithWriterAndPlatform(
         false,
         Writer,
         false,
-        is_bun_platform,
+        is_bun,
         false,
         false,
     );
@@ -5989,9 +5989,8 @@ pub fn printCommonJSThreaded(
         defer lock.unlock();
         lock.lock();
         result.off = @truncate(u32, try getPos(getter));
-        if (comptime Environment.isMac or Environment.isLinux) {
-            // Don't bother preallocate the file if it's less than 1 KB. Preallocating is potentially two syscalls
-            if (printer.writer.written > 1024) {
+        if (comptime Environment.isLinux) {
+            if (printer.writer.written > C.preallocate_length) {
                 // on mac, it's relative to current position in file handle
                 // on linux, it's absolute
                 try C.preallocate_file(

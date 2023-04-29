@@ -430,6 +430,8 @@ pub const JSBundler = struct {
             },
             completion: *bun.BundleV2.JSBundleCompletionTask,
         ) Resolve {
+            completion.ref();
+
             return Resolve{
                 .import_record = switch (from) {
                     .MiniImportRecord => from.MiniImportRecord,
@@ -543,8 +545,8 @@ pub const JSBundler = struct {
             if (path_value.isEmptyOrUndefinedOrNull() or namespace_value.isEmptyOrUndefinedOrNull()) {
                 this.value = .{ .no_match = {} };
             } else {
-                const path = path_value.toSliceClone(completion.globalThis) orelse @panic("Unexpected: path is not a string");
-                const namespace = namespace_value.toSliceClone(completion.globalThis) orelse @panic("Unexpected: namespace is not a string");
+                const path = path_value.toSliceCloneWithAllocator(completion.globalThis, bun.default_allocator) orelse @panic("Unexpected: path is not a string");
+                const namespace = namespace_value.toSliceCloneWithAllocator(completion.globalThis, bun.default_allocator) orelse @panic("Unexpected: namespace is not a string");
                 this.value = .{
                     .success = .{
                         .path = path.slice(),
@@ -585,6 +587,7 @@ pub const JSBundler = struct {
             default_loader: options.Loader,
             path: Fs.Path,
         ) Load {
+            completion.ref();
             return Load{
                 .source_index = source_index,
                 .default_loader = default_loader,

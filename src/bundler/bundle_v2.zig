@@ -398,7 +398,7 @@ pub const BundleV2 = struct {
 
     fn isDone(ptr: *anyopaque) bool {
         var this = bun.cast(*const BundleV2, ptr);
-        return this.graph.parse_pending == 0 and this.graph.resolve_pending == 0;
+        return @atomicLoad(usize, &this.graph.parse_pending, .Monotonic) == 0 and @atomicLoad(usize, &this.graph.resolve_pending, .Monotonic) == 0;
     }
 
     pub fn waitForParse(this: *BundleV2) void {
@@ -550,7 +550,7 @@ pub const BundleV2 = struct {
             task.tree_shaking = this.linker.options.tree_shaking;
             task.known_platform = import_record.original_platform;
 
-            this.graph.parse_pending += 1;
+            _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .Monotonic);
 
             // Handle onLoad plugins
             if (!this.enqueueOnLoadPluginIfNeeded(task)) {
@@ -583,7 +583,7 @@ pub const BundleV2 = struct {
         if (entry.found_existing) {
             return null;
         }
-        this.graph.parse_pending += 1;
+        _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .Monotonic);
         const source_index = Index.source(this.graph.input_files.len);
         if (path.pretty.ptr == path.text.ptr) {
             // TODO: outbase
@@ -703,7 +703,7 @@ pub const BundleV2 = struct {
             };
             runtime_parse_task.tree_shaking = true;
             runtime_parse_task.loader = .js;
-            this.graph.parse_pending += 1;
+            _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .Monotonic);
             batch.push(ThreadPoolLib.Batch.from(&runtime_parse_task.task));
         }
 
@@ -1071,7 +1071,7 @@ pub const BundleV2 = struct {
                 }) catch {};
 
                 // An error ocurred, prevent spinning the event loop forever
-                this.graph.parse_pending -= 1;
+                _ = @atomicRmw(usize, &this.graph.parse_pending, .Sub, 1, .Monotonic);
             },
             .success => |code| {
                 this.graph.input_files.items(.loader)[load.source_index.get()] = code.loader;
@@ -1090,7 +1090,7 @@ pub const BundleV2 = struct {
                 this.bundler.log.warnings += @as(usize, @boolToInt(err.kind == .warn));
 
                 // An error ocurred, prevent spinning the event loop forever
-                this.graph.parse_pending -= 1;
+                _ = @atomicRmw(usize, &this.graph.parse_pending, .Sub, 1, .Monotonic);
             },
             .pending, .consumed => unreachable,
         }
@@ -1101,7 +1101,7 @@ pub const BundleV2 = struct {
         this: *BundleV2,
     ) void {
         defer resolve.deinit();
-        defer this.graph.resolve_pending -= 1;
+        defer _ = @atomicRmw(usize, &this.graph.resolve_pending, .Sub, 1, .Monotonic);
         debug("onResolve: ({s}:{s}, {s})", .{ resolve.import_record.namespace, resolve.import_record.specifier, @tagName(resolve.value) });
 
         defer {
@@ -1145,8 +1145,6 @@ pub const BundleV2 = struct {
             .success => |result| {
                 var out_source_index: ?Index = null;
                 if (!result.external) {
-                    this.free_list.appendSlice(&.{ result.namespace, result.path }) catch {};
-
                     var path = Fs.Path.init(result.path);
                     if (path.namespace.len == 0 or strings.eqlComptime(path.namespace, "file")) {
                         path.namespace = "file";
@@ -1156,6 +1154,8 @@ pub const BundleV2 = struct {
 
                     var existing = this.graph.path_to_source_index_map.getOrPut(this.graph.allocator, path.hashKey()) catch unreachable;
                     if (!existing.found_existing) {
+                        this.free_list.appendSlice(&.{ result.namespace, result.path }) catch {};
+
                         // We need to parse this
                         const source_index = Index.init(@intCast(u32, this.graph.ast.len));
                         existing.value_ptr.* = source_index.get();
@@ -1173,7 +1173,7 @@ pub const BundleV2 = struct {
                             .loader = loader,
                             .side_effects = _resolver.SideEffects.has_side_effects,
                         }) catch unreachable;
-                        var task = this.graph.allocator.create(ParseTask) catch unreachable;
+                        var task = bun.default_allocator.create(ParseTask) catch unreachable;
                         task.* = ParseTask{
                             .ctx = this,
                             .path = path,
@@ -1194,7 +1194,7 @@ pub const BundleV2 = struct {
                         };
                         task.task.node.next = null;
 
-                        this.graph.parse_pending += 1;
+                        _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .Monotonic);
 
                         // Handle onLoad plugins
                         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
@@ -1497,13 +1497,15 @@ pub const BundleV2 = struct {
         defer bun.default_allocator.destroy(parse_result);
 
         var graph = &this.graph;
-        var batch = ThreadPoolLib.Batch{};
+
         var diff: isize = -1;
 
-        defer graph.parse_pending = if (diff > 0)
-            graph.parse_pending + @intCast(usize, diff)
-        else
-            graph.parse_pending - @intCast(usize, -diff);
+        defer {
+            if (diff > 0)
+                _ = @atomicRmw(usize, &graph.parse_pending, .Add, @intCast(usize, diff), .Monotonic)
+            else
+                _ = @atomicRmw(usize, &graph.parse_pending, .Sub, @intCast(usize, -diff), .Monotonic);
+        }
 
         switch (parse_result.value) {
             .empty => |empty_result| {
@@ -1614,7 +1616,8 @@ pub const BundleV2 = struct {
                             continue;
                         }
 
-                        batch.push(ThreadPoolLib.Batch.from(&new_task.task));
+                        // schedule as early as possible
+                        graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&new_task.task));
                     } else {
                         const loader = value.loader orelse graph.input_files.items(.source)[existing.value_ptr.*].path.loader(&this.bundler.options.loaders) orelse options.Loader.file;
                         if (loader.shouldCopyForBundling()) {
@@ -1664,8 +1667,6 @@ pub const BundleV2 = struct {
                         },
                     ) catch unreachable;
                 }
-                // schedule as early as possible
-                graph.pool.pool.schedule(batch);
             },
             .err => |*err| {
                 if (comptime Environment.allow_assert) {
@@ -8106,7 +8107,7 @@ const LinkerContext = struct {
             }
 
             output_file.* = options.OutputFile{
-                .input = Fs.Path.init(chunk.final_rel_path),
+                .input = Fs.Path.init(bun.default_allocator.dupe(u8, chunk.final_rel_path) catch unreachable),
                 .loader = .js,
                 .size = @truncate(u32, buffer.len),
                 .value = .{
@@ -8149,7 +8150,7 @@ const LinkerContext = struct {
             }
 
             output_files.appendAssumeCapacity(options.OutputFile{
-                .input = Fs.Path.init(components_manifest_path),
+                .input = Fs.Path.init(bun.default_allocator.dupe(u8, components_manifest_path) catch unreachable),
                 .loader = .file,
                 .size = @truncate(u32, react_client_components_manifest.len),
                 .value = .{

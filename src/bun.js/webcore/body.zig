@@ -45,7 +45,7 @@ const StringJoiner = @import("../../string_joiner.zig");
 const uws = @import("root").bun.uws;
 
 const Blob = JSC.WebCore.Blob;
-const InlineBlob = JSC.WebCore.InlineBlob;
+// const InlineBlob = JSC.WebCore.InlineBlob;
 const AnyBlob = JSC.WebCore.AnyBlob;
 const InternalBlob = JSC.WebCore.InternalBlob;
 const Response = JSC.WebCore.Response;
@@ -100,6 +100,7 @@ pub const Body = struct {
             try formatter.writeIndent(Writer, writer);
             try this.value.Blob.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
         } else if (this.value == .InternalBlob) {
+            // } else if (this.value == .InternalBlob or this.value == .InlineBlob) {
             try formatter.printComma(Writer, writer, enable_ansi_colors);
             try writer.writeAll("\n");
             try formatter.writeIndent(Writer, writer);
@@ -737,11 +738,12 @@ pub const Body = struct {
                 },
                 // .InlineBlob => {
                 //     const cloned = this.InlineBlob.bytes;
+                //     // keep same behavior as InternalBlob but clone the data
                 //     const new_blob = Blob.create(
                 //         cloned[0..this.InlineBlob.len],
                 //         bun.default_allocator,
                 //         JSC.VirtualMachine.get().global,
-                //         this.InlineBlob.was_string,
+                //         false,
                 //     );
 
                 //     this.* = .{ .Used = {} };
@@ -855,7 +857,6 @@ pub const Body = struct {
                 JSC.C.JSValueUnprotect(VirtualMachine.get().global, this.Error.asObjectRef());
             }
         }
-
         pub fn clone(this: *Value, globalThis: *JSC.JSGlobalObject) Value {
             if (this.* == .InternalBlob) {
                 var internal_blob = this.InternalBlob;

@@ -119,7 +119,7 @@ _bun_completions() {
         --jsx-runtime)
             COMPREPLY=( $(compgen -W "automatic classic" -- "${cur_word}") );
             return;;
-        --platform)
+        --target)
             COMPREPLY=( $(compgen -W "browser node bun" -- "${cur_word}") );
             return;;
         -l|--loader)

@@ -711,7 +711,7 @@ pub const Blob = struct {
             }
 
             if (data.as(Request)) |request| {
-                switch (request.body) {
+                switch (request.body.value) {
                     // .InlineBlob,
                     .InternalBlob,
                     .Used,
@@ -719,13 +719,13 @@ pub const Blob = struct {
                     .Blob,
                     .Null,
                     => {
-                        break :brk request.body.use();
+                        break :brk request.body.value.use();
                     },
                     .Error => {
                         destination_blob.detach();
-                        const err = request.body.Error;
+                        const err = request.body.value.Error;
                         JSC.C.JSValueUnprotect(ctx, err.asObjectRef());
-                        _ = request.body.use();
+                        _ = request.body.value.use();
                         return JSC.JSPromise.rejectedPromiseValue(ctx.ptr(), err).asObjectRef();
                     },
                     .Locked => {
@@ -737,8 +737,8 @@ pub const Blob = struct {
                             .promise = promise,
                         };
 
-                        request.body.Locked.task = task;
-                        request.body.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
+                        request.body.value.Locked.task = task;
+                        request.body.value.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
 
                         return promise.asValue(ctx.ptr()).asObjectRef();
                     },
@@ -3436,6 +3436,9 @@ pub const AnyBlob = union(enum) {
         switch (this.*) {
             .Blob => return this.Blob.toString(global, lifetime),
             // .InlineBlob => {
+            //     if (this.InlineBlob.len == 0) {
+            //         return ZigString.Empty.toValue(global);
+            //     }
             //     const owned = this.InlineBlob.toStringOwned(global);
             //     this.* = .{ .InlineBlob = .{ .len = 0 } };
             //     return owned;
@@ -3457,7 +3460,7 @@ pub const AnyBlob = union(enum) {
             .Blob => return this.Blob.toArrayBuffer(global, lifetime),
             // .InlineBlob => {
             //     if (this.InlineBlob.len == 0) {
-            //         return JSC.ArrayBuffer.empty.toJS(global, null);
+            //         return JSC.ArrayBuffer.create(global, "", .ArrayBuffer);
             //     }
             //     var bytes = this.InlineBlob.sliceConst();
             //     this.InlineBlob.len = 0;

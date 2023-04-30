@@ -417,7 +417,7 @@ describe("bundler", () => {
         }
       `,
     },
-    platform: "browser",
+    target: "browser",
     run: {
       stdout: "345",
     },
@@ -451,7 +451,7 @@ describe("bundler", () => {
         }
       `,
     },
-    platform: "node",
+    target: "node",
     run: {
       stdout: "123",
     },
@@ -493,7 +493,7 @@ describe("bundler", () => {
         }
       `,
     },
-    platform: "browser",
+    target: "browser",
     run: {
       stdout: "456",
     },
@@ -535,7 +535,7 @@ describe("bundler", () => {
         }
       `,
     },
-    platform: "node",
+    target: "node",
     run: {
       stdout: "123",
     },
@@ -957,65 +957,6 @@ describe("bundler", () => {
       stdout: "b",
     },
   });
-  itBundled("packagejson/NeutralNoDefaultMainFields", {
-    notImplemented: true,
-    files: {
-      "/Users/user/project/src/entry.js": /* js */ `
-        import fn from 'demo-pkg'
-        console.log(fn())
-      `,
-      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
-        {
-          "main": "./main.js",
-          "module": "./main.esm.js"
-        }
-      `,
-      "/Users/user/project/node_modules/demo-pkg/main.js": /* js */ `
-        module.exports = function() {
-          return 123
-        }
-      `,
-      "/Users/user/project/node_modules/demo-pkg/main.esm.js": /* js */ `
-        export default function() {
-          return 123
-        }
-      `,
-    },
-    platform: "neutral",
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: ERROR: Could not resolve "demo-pkg"
-  Users/user/project/node_modules/demo-pkg/package.json: NOTE: The "main" field here was ignored. Main fields must be configured explicitly when using the "neutral" platform.
-  NOTE: You can mark the path "demo-pkg" as external to exclude it from the bundle, which will remove this error.
-  `, */
-  });
-  itBundled("packagejson/NeutralExplicitMainFields", {
-    files: {
-      "/Users/user/project/src/entry.js": /* js */ `
-        import fn from 'demo-pkg'
-        console.log(fn())
-      `,
-      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
-        {
-          "hello": "./main.js",
-          "module": "./main.esm.js"
-        }
-      `,
-      "/Users/user/project/node_modules/demo-pkg/main.js": /* js */ `
-        module.exports = function() {
-          return 123
-        }
-      `,
-      "/Users/user/project/node_modules/demo-pkg/main.esm.js": /* js */ `
-        export default function() {
-          return 234
-        }
-      `,
-    },
-    platform: "neutral",
-    mainFields: ["hello"],
-    run: {
-      stdout: "123",
-    },
-  });
   itBundled("packagejson/ExportsErrorInvalidModuleSpecifier", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
@@ -1264,7 +1205,7 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg/node.js": `console.log('FAILURE')`,
       "/Users/user/project/node_modules/pkg/browser.js": `console.log('SUCCESS')`,
     },
-    platform: "browser",
+    target: "browser",
     outfile: "/Users/user/project/out.js",
     run: {
       stdout: "SUCCESS",
@@ -1286,30 +1227,8 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg/browser.js": `console.log('FAILURE')`,
       "/Users/user/project/node_modules/pkg/node.js": `console.log('SUCCESS')`,
     },
-    platform: "node",
+    target: "node",
     outfile: "/Users/user/project/out.js",
-    run: {
-      stdout: "SUCCESS",
-    },
-  });
-  itBundled("packagejson/ExportsNeutral", {
-    files: {
-      "/Users/user/project/src/entry.js": `import 'pkg'`,
-      "/Users/user/project/node_modules/pkg/package.json": /* json */ `
-        {
-          "exports": {
-            "node": "./node.js",
-            "browser": "./browser.js",
-            "default": "./default.js"
-          }
-        }
-      `,
-      "/Users/user/project/node_modules/pkg/node.js": `console.log('FAILURE')`,
-      "/Users/user/project/node_modules/pkg/browser.js": `console.log('FAILURE')`,
-      "/Users/user/project/node_modules/pkg/default.js": `console.log('SUCCESS')`,
-    },
-    outfile: "/Users/user/project/out.js",
-    platform: "neutral",
     run: {
       stdout: "SUCCESS",
     },

@@ -68,13 +68,19 @@ it("should add existing package", async () => {
     " 1 packages installed",
   ]);
   expect(await exited).toBe(0);
-  expect(await file(join(package_dir, "package.json")).json()).toEqual({
-    name: "bar",
-    version: "0.0.2",
-    dependencies: {
-      foo: `file:${add_path}`,
-    },
-  });
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(
+    JSON.stringify(
+      {
+        name: "bar",
+        version: "0.0.2",
+        dependencies: {
+          foo: `file:${add_path}`,
+        },
+      },
+      null,
+      2,
+    ),
+  );
 });
 
 it("should reject missing package", async () => {
@@ -105,10 +111,12 @@ it("should reject missing package", async () => {
   const out = await new Response(stdout).text();
   expect(out).toBe("");
   expect(await exited).toBe(1);
-  expect(await file(join(package_dir, "package.json")).json()).toEqual({
-    name: "bar",
-    version: "0.0.2",
-  });
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(
+    JSON.stringify({
+      name: "bar",
+      version: "0.0.2",
+    }),
+  );
 });
 
 it("should reject invalid path without segfault", async () => {
@@ -146,10 +154,12 @@ it("should reject invalid path without segfault", async () => {
   const out = await new Response(stdout).text();
   expect(out).toBe("");
   expect(await exited).toBe(1);
-  expect(await file(join(package_dir, "package.json")).json()).toEqual({
-    name: "bar",
-    version: "0.0.2",
-  });
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(
+    JSON.stringify({
+      name: "bar",
+      version: "0.0.2",
+    }),
+  );
 });
 
 it("should handle semver-like names", async () => {
@@ -277,13 +287,19 @@ it("should add dependency with capital letters", async () => {
     name: "bar",
     version: "0.0.2",
   });
-  expect(await file(join(package_dir, "package.json")).json()).toEqual({
-    name: "foo",
-    version: "0.0.1",
-    dependencies: {
-      BaR: "^0.0.2",
-    },
-  });
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(
+    JSON.stringify(
+      {
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          BaR: "^0.0.2",
+        },
+      },
+      null,
+      2,
+    ),
+  );
   await access(join(package_dir, "bun.lockb"));
 });
 
@@ -340,13 +356,19 @@ it("should add dependency with specified semver", async () => {
       "baz-run": "index.js",
     },
   });
-  expect(await file(join(package_dir, "package.json")).json()).toEqual({
-    name: "foo",
-    version: "0.0.1",
-    dependencies: {
-      baz: "~0.0.2",
-    },
-  });
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(
+    JSON.stringify(
+      {
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          baz: "~0.0.2",
+        },
+      },
+      null,
+      2,
+    ),
+  );
   await access(join(package_dir, "bun.lockb"));
 });
 
@@ -404,13 +426,19 @@ it("should add dependency (GitHub)", async () => {
   const package_json = await file(join(package_dir, "node_modules", "uglify-js", "package.json")).json();
   expect(package_json.name).toBe("uglify-js");
   expect(package_json.version).toBe("3.14.1");
-  expect(await file(join(package_dir, "package.json")).json()).toEqual({
-    name: "foo",
-    version: "0.0.1",
-    dependencies: {
-      "uglify-js": "mishoo/UglifyJS#v3.14.1",
-    },
-  });
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(
+    JSON.stringify(
+      {
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          "uglify-js": "mishoo/UglifyJS#v3.14.1",
+        },
+      },
+      null,
+      2,
+    ),
+  );
   await access(join(package_dir, "bun.lockb"));
 });
 
@@ -478,14 +506,21 @@ it("should add dependency alongside workspaces", async () => {
       "baz-run": "index.js",
     },
   });
-  expect(await file(join(package_dir, "package.json")).json()).toEqual({
-    name: "foo",
-    version: "0.0.1",
-    workspaces: ["packages/*"],
-    dependencies: {
-      baz: "^0.0.3",
-    },
-  });
+  //TODO: format array literals in JSON correctly
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(
+    JSON.stringify(
+      {
+        name: "foo",
+        version: "0.0.1",
+        workspaces: ["packages/*"],
+        dependencies: {
+          baz: "^0.0.3",
+        },
+      },
+      null,
+      2,
+    ).replace(/(\[)\s+|\s+(\])/g, "$1$2"),
+  );
   await access(join(package_dir, "bun.lockb"));
 });
 
@@ -542,13 +577,19 @@ it("should add aliased dependency (npm)", async () => {
       "baz-run": "index.js",
     },
   });
-  expect(await file(join(package_dir, "package.json")).json()).toEqual({
-    name: "foo",
-    version: "0.0.1",
-    dependencies: {
-      bar: "npm:baz@~0.0.2",
-    },
-  });
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(
+    JSON.stringify(
+      {
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          bar: "npm:baz@~0.0.2",
+        },
+      },
+      null,
+      2,
+    ),
+  );
   await access(join(package_dir, "bun.lockb"));
 });
 
@@ -615,13 +656,19 @@ it("should add aliased dependency (GitHub)", async () => {
   const package_json = await file(join(package_dir, "node_modules", "uglify", "package.json")).json();
   expect(package_json.name).toBe("uglify-js");
   expect(package_json.version).toBe("3.14.1");
-  expect(await file(join(package_dir, "package.json")).json()).toEqual({
-    name: "foo",
-    version: "0.0.1",
-    dependencies: {
-      uglify: "mishoo/UglifyJS#v3.14.1",
-    },
-  });
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(
+    JSON.stringify(
+      {
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          uglify: "mishoo/UglifyJS#v3.14.1",
+        },
+      },
+      null,
+      2,
+    ),
+  );
   await access(join(package_dir, "bun.lockb"));
 });
 
@@ -672,13 +719,20 @@ it("should let you add the same package twice", async () => {
       "baz-run": "index.js",
     },
   });
-  expect(await file(join(package_dir, "package.json")).json()).toEqual({
-    name: "Foo",
-    version: "0.0.1",
-    dependencies: {
-      baz: "0.0.3",
-    },
-  });
+  //TODO: fix JSON formatting
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(
+    JSON.stringify(
+      {
+        name: "Foo",
+        version: "0.0.1",
+        dependencies: {
+          baz: "0.0.3",
+        },
+      },
+      null,
+      2,
+    ).replace(/\r?\n\s*/g, " "),
+  );
   await access(join(package_dir, "bun.lockb"));
   // re-add as dev
   urls.length = 0;
@@ -711,13 +765,20 @@ it("should let you add the same package twice", async () => {
       "baz-run": "index.js",
     },
   });
-  expect(await file(join(package_dir, "package.json")).json()).toEqual({
-    name: "Foo",
-    version: "0.0.1",
-    dependencies: {
-      baz: "^0.0.3",
-    },
-  });
+  //TODO: fix JSON formatting
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(
+    JSON.stringify(
+      {
+        name: "Foo",
+        version: "0.0.1",
+        dependencies: {
+          baz: "^0.0.3",
+        },
+      },
+      null,
+      2,
+    ).replace(/\r?\n\s*/g, " "),
+  );
   await access(join(package_dir, "bun.lockb"));
 });
 
@@ -773,13 +834,19 @@ it("should install version tagged with `latest` by default", async () => {
       "baz-run": "index.js",
     },
   });
-  expect(await file(join(package_dir, "package.json")).json()).toEqual({
-    name: "foo",
-    version: "0.0.1",
-    dependencies: {
-      baz: "^0.0.3",
-    },
-  });
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(
+    JSON.stringify(
+      {
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          baz: "^0.0.3",
+        },
+      },
+      null,
+      2,
+    ),
+  );
   await access(join(package_dir, "bun.lockb"));
   // re-install with updated `package.json`
   await rm(join(package_dir, "node_modules"), { force: true, recursive: true });
@@ -817,13 +884,19 @@ it("should install version tagged with `latest` by default", async () => {
       "baz-run": "index.js",
     },
   });
-  expect(await file(join(package_dir, "package.json")).json()).toEqual({
-    name: "foo",
-    version: "0.0.1",
-    dependencies: {
-      baz: "^0.0.3",
-    },
-  });
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(
+    JSON.stringify(
+      {
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          baz: "^0.0.3",
+        },
+      },
+      null,
+      2,
+    ),
+  );
   await access(join(package_dir, "bun.lockb"));
 });
 
@@ -867,13 +940,6 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
   expect(await exited1).toBe(0);
   expect(urls.sort()).toEqual([]);
   expect(requested).toBe(0);
-  expect(await file(join(package_dir, "package.json")).json()).toEqual({
-    name: "foo",
-    version: "0.0.1",
-    dependencies: {
-      "uglify-js": "bun@github.com:mishoo/UglifyJS.git",
-    },
-  });
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify-js"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["uglifyjs"]);
   expect(await readlink(join(package_dir, "node_modules", ".bin", "uglifyjs"))).toBe(
@@ -896,6 +962,19 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
   ]);
   const package_json = await file(join(package_dir, "node_modules", "uglify-js", "package.json")).json();
   expect(package_json.name).toBe("uglify-js");
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(
+    JSON.stringify(
+      {
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          "uglify-js": "bun@github.com:mishoo/UglifyJS.git",
+        },
+      },
+      null,
+      2,
+    ),
+  );
   await access(join(package_dir, "bun.lockb"));
   const {
     stdout: stdout2,
@@ -1041,4 +1120,234 @@ it("should prefer dependencies over peerDependencies of the same name", async ()
       "baz-run": "index.js",
     },
   });
+});
+
+it("should add dependency without duplication", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+  const {
+    stdout: stdout1,
+    stderr: stderr1,
+    exited: exited1,
+  } = spawn({
+    cmd: [bunExe(), "add", "bar"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr1).toBeDefined();
+  const err1 = await new Response(stderr1).text();
+  expect(err1).toContain("Saved lockfile");
+  expect(stdout1).toBeDefined();
+  const out1 = await new Response(stdout1).text();
+  expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " installed bar@0.0.2",
+    "",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited1).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(
+    JSON.stringify(
+      {
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          bar: "^0.0.2",
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  await access(join(package_dir, "bun.lockb"));
+  // repeat installation
+  urls.length = 0;
+  const {
+    stdout: stdout2,
+    stderr: stderr2,
+    exited: exited2,
+  } = spawn({
+    cmd: [bunExe(), "add", "bar"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr2).toBeDefined();
+  const err2 = await new Response(stderr2).text();
+  expect(err2).toContain("Saved lockfile");
+  expect(stdout2).toBeDefined();
+  const out2 = await new Response(stdout2).text();
+  expect(out2.replace(/\s*\[[0-9\.]+m?s\] done\s*$/, "").split(/\r?\n/)).toEqual(["", " installed bar@0.0.2"]);
+  expect(await exited2).toBe(0);
+  expect(urls.sort()).toEqual([]);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(
+    JSON.stringify(
+      {
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          bar: "^0.0.2",
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should add dependency without duplication (GitHub)", async () => {
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+  const {
+    stdout: stdout1,
+    stderr: stderr1,
+    exited: exited1,
+  } = spawn({
+    cmd: [bunExe(), "add", "mishoo/UglifyJS#v3.14.1"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr1).toBeDefined();
+  const err1 = await new Response(stderr1).text();
+  expect(err1).toContain("Saved lockfile");
+  expect(stdout1).toBeDefined();
+  const out1 = await new Response(stdout1).text();
+  expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " installed uglify-js@github:mishoo/UglifyJS#e219a9a with binaries:",
+    "  - uglifyjs",
+    "",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited1).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify-js"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["uglifyjs"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".cache"))).toEqual(["@GH@mishoo-UglifyJS-e219a9a"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "uglify-js"))).toEqual([
+    ".bun-tag",
+    ".gitattributes",
+    ".github",
+    ".gitignore",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "README.md",
+    "bin",
+    "lib",
+    "package.json",
+    "test",
+    "tools",
+  ]);
+  const package_json1 = await file(join(package_dir, "node_modules", "uglify-js", "package.json")).json();
+  expect(package_json1.name).toBe("uglify-js");
+  expect(package_json1.version).toBe("3.14.1");
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(
+    JSON.stringify(
+      {
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          "uglify-js": "mishoo/UglifyJS#v3.14.1",
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  await access(join(package_dir, "bun.lockb"));
+  // repeat installation
+  const {
+    stdout: stdout2,
+    stderr: stderr2,
+    exited: exited2,
+  } = spawn({
+    cmd: [bunExe(), "add", "mishoo/UglifyJS#v3.14.1"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr2).toBeDefined();
+  const err2 = await new Response(stderr2).text();
+  expect(err2).toContain("Saved lockfile");
+  expect(stdout2).toBeDefined();
+  const out2 = await new Response(stdout2).text();
+  expect(out2.replace(/\s*\[[0-9\.]+m?s\] done\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " installed uglify-js@github:mishoo/UglifyJS#e219a9a with binaries:",
+    "  - uglifyjs",
+  ]);
+  expect(await exited2).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify-js"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["uglifyjs"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".cache"))).toEqual(["@GH@mishoo-UglifyJS-e219a9a"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "uglify-js"))).toEqual([
+    ".bun-tag",
+    ".gitattributes",
+    ".github",
+    ".gitignore",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "README.md",
+    "bin",
+    "lib",
+    "package.json",
+    "test",
+    "tools",
+  ]);
+  const package_json2 = await file(join(package_dir, "node_modules", "uglify-js", "package.json")).json();
+  expect(package_json2.name).toBe("uglify-js");
+  expect(package_json2.version).toBe("3.14.1");
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(
+    JSON.stringify(
+      {
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          "uglify-js": "mishoo/UglifyJS#v3.14.1",
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  await access(join(package_dir, "bun.lockb"));
 });

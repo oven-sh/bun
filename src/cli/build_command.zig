@@ -44,18 +44,27 @@ pub const BuildCommand = struct {
         estimated_input_lines_of_code_ = 0;
 
         var this_bundler = try bundler.Bundler.init(allocator, log, ctx.args, null, null);
-        this_bundler.options.entry_names = ctx.bundler_options.entry_names;
-        this_bundler.resolver.opts.entry_names = ctx.bundler_options.entry_names;
 
         this_bundler.options.source_map = options.SourceMapOption.fromApi(ctx.args.source_map);
         this_bundler.resolver.opts.source_map = options.SourceMapOption.fromApi(ctx.args.source_map);
 
         if (this_bundler.options.source_map == .external and ctx.bundler_options.outdir.len == 0) {
-            try Output.errorWriter().print("error: cannot use an external source map without an output path\n", .{});
-            Output.flush();
+            Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use an external source map without --outdir", .{});
             Global.exit(1);
             return;
         }
+        this_bundler.options.entry_naming = ctx.bundler_options.entry_naming;
+        this_bundler.options.chunk_naming = ctx.bundler_options.chunk_naming;
+        this_bundler.options.asset_naming = ctx.bundler_options.asset_naming;
+        this_bundler.resolver.opts.entry_naming = ctx.bundler_options.entry_naming;
+        this_bundler.resolver.opts.chunk_naming = ctx.bundler_options.chunk_naming;
+        this_bundler.resolver.opts.asset_naming = ctx.bundler_options.asset_naming;
+        this_bundler.options.output_dir = ctx.bundler_options.outdir;
+        this_bundler.resolver.opts.output_dir = ctx.bundler_options.outdir;
+        this_bundler.options.react_server_components = ctx.bundler_options.react_server_components;
+        this_bundler.resolver.opts.react_server_components = ctx.bundler_options.react_server_components;
+        this_bundler.options.code_splitting = ctx.bundler_options.code_splitting;
+        this_bundler.resolver.opts.code_splitting = ctx.bundler_options.code_splitting;
 
         this_bundler.options.minify_syntax = ctx.bundler_options.minify_syntax;
         this_bundler.resolver.opts.minify_syntax = ctx.bundler_options.minify_syntax;
@@ -67,8 +76,7 @@ pub const BuildCommand = struct {
         this_bundler.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
 
         if (this_bundler.options.entry_points.len > 1 and ctx.bundler_options.outdir.len == 0) {
-            try Output.errorWriter().print("error: cannot bundle multiple entry points without an output path\n", .{});
-            Output.flush();
+            Output.prettyErrorln("error: to use multiple entry points, specify --outdir", .{});
             Global.exit(1);
             return;
         }
@@ -108,12 +116,6 @@ pub const BuildCommand = struct {
 
         if (ctx.debug.dump_environment_variables) {
             this_bundler.dumpEnvironmentVariables();
-            return;
-        }
-
-        if (ctx.debug.dump_limits) {
-            fs.FileSystem.printLimits();
-            Global.exit(0);
             return;
         }
 

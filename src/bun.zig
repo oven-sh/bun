@@ -40,6 +40,41 @@ pub const fmt = struct {
         };
     }
 
+    pub fn EnumTagListFormatter(comptime Enum: type, comptime Separator: @Type(.EnumLiteral)) type {
+        return struct {
+            pretty: bool = true,
+            const output = brk: {
+                var text: []const u8 = "";
+                const names = std.meta.fieldNames(Enum);
+                inline for (names, 0..) |name, i| {
+                    if (Separator == .list) {
+                        if (i > 0) {
+                            if (i + 1 == names.len) {
+                                text = text ++ ", or ";
+                            } else {
+                                text = text ++ ", ";
+                            }
+                        }
+
+                        text = text ++ "\"" ++ name ++ "\"";
+                    } else if (Separator == .dash) {
+                        text = text ++ "\n-  " ++ name;
+                    } else {
+                        @compileError("Unknown separator type: must be .dash or .list");
+                    }
+                }
+                break :brk text;
+            };
+            pub fn format(_: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+                try writer.writeAll(output);
+            }
+        };
+    }
+
+    pub fn enumTagList(comptime Enum: type, comptime separator: @Type(.EnumLiteral)) EnumTagListFormatter(Enum, separator) {
+        return EnumTagListFormatter(Enum, separator){};
+    }
+
     pub fn formatIp(address: std.net.Address, into: []u8) ![]u8 {
         // std.net.Address.format includes `:<port>` and square brackets (IPv6)
         //  while Node does neither.  This uses format then strips these to bring
@@ -1359,6 +1394,74 @@ pub fn threadlocalAllocator() std.mem.Allocator {
     }
 
     return default_allocator;
+}
+
+pub fn Ref(comptime T: type) type {
+    return struct {
+        ref_count: u32,
+        allocator: std.mem.Allocator,
+        value: T,
+
+        pub fn init(value: T, allocator: std.mem.Allocator) !*@This() {
+            var this = try allocator.create(@This());
+            this.allocator = allocator;
+            this.ref_count = 1;
+            this.value = value;
+            return this;
+        }
+
+        pub fn ref(this: *@This()) *@This() {
+            this.ref_count += 1;
+            return this;
+        }
+
+        pub fn unref(this: *@This()) ?*@This() {
+            this.ref_count -= 1;
+            if (this.ref_count == 0) {
+                if (@hasDecl(T, "deinit")) {
+                    this.value.deinit();
+                }
+                this.allocator.destroy(this);
+                return null;
+            }
+            return this;
+        }
+    };
+}
+
+pub fn HiveRef(comptime T: type, comptime capacity: u16) type {
+    return struct {
+        const HiveAllocator = HiveArray(@This(), capacity).Fallback;
+
+        ref_count: u32,
+        allocator: *HiveAllocator,
+        value: T,
+
+        pub fn init(value: T, allocator: *HiveAllocator) !*@This() {
+            var this = try allocator.tryGet();
+            this.allocator = allocator;
+            this.ref_count = 1;
+            this.value = value;
+            return this;
+        }
+
+        pub fn ref(this: *@This()) *@This() {
+            this.ref_count += 1;
+            return this;
+        }
+
+        pub fn unref(this: *@This()) ?*@This() {
+            this.ref_count -= 1;
+            if (this.ref_count == 0) {
+                if (@hasDecl(T, "deinit")) {
+                    this.value.deinit();
+                }
+                this.allocator.put(this);
+                return null;
+            }
+            return this;
+        }
+    };
 }
 
 pub const MaxHeapAllocator = @import("./max_heap_allocator.zig").MaxHeapAllocator;

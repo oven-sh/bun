@@ -135,13 +135,13 @@ export const ResolveModeKeys: {
   4: "bundle";
   bundle: "bundle";
 };
-export const enum Platform {
+export const enum Target {
   browser = 1,
   node = 2,
   bun = 3,
   bun_macro = 4,
 }
-export const PlatformKeys: {
+export const TargetKeys: {
   1: "browser";
   browser: "browser";
   2: "node";
@@ -534,7 +534,7 @@ export interface TransformOptions {
   external?: string[];
   loaders?: LoaderMap;
   main_fields?: string[];
-  platform?: Platform;
+  target?: Target;
   serve?: boolean;
   extension_order?: string[];
   generate_node_module_bundle?: boolean;

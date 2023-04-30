@@ -3868,8 +3868,8 @@ fn NewPrinter(
 
                     if (comptime is_bun_platform) {
                         if (import_record.do_commonjs_transform_in_printer) {
-                            assert(s.items.len > 0);
-
+                            if (s.items.len == 0)
+                                return;
                             p.print("var {");
                             var symbol_counter: u32 = p.symbol_counter;
 
@@ -5778,7 +5778,7 @@ pub fn printJSON(
 
 pub fn print(
     allocator: std.mem.Allocator,
-    platform: options.Platform,
+    target: options.Target,
     ast: Ast,
     source: *const logger.Source,
     opts: Options,
@@ -5793,7 +5793,7 @@ pub fn print(
     return printWithWriter(
         *BufferPrinter,
         &buffer_printer,
-        platform,
+        target,
         ast,
         source,
         opts,
@@ -5807,7 +5807,7 @@ pub fn print(
 pub fn printWithWriter(
     comptime Writer: type,
     _writer: Writer,
-    platform: options.Platform,
+    target: options.Target,
     ast: Ast,
     source: *const logger.Source,
     opts: Options,
@@ -5816,11 +5816,11 @@ pub fn printWithWriter(
     renamer: bun.renamer.Renamer,
     comptime generate_source_maps: bool,
 ) PrintResult {
-    return switch (platform.isBun()) {
-        inline else => |is_bun_platform| printWithWriterAndPlatform(
+    return switch (target.isBun()) {
+        inline else => |is_bun| printWithWriterAndPlatform(
             Writer,
             _writer,
-            is_bun_platform,
+            is_bun,
             ast,
             source,
             opts,

@@ -396,6 +396,8 @@ pub const PackageJSONVersionChecker = struct {
 
     // Although we technically could use a leaky toUTF8 function, this will come in handy in the future
     fn jsonEqlComptime(json_str: string, comptime str: string) bool {
+        inline for (str) |c| if (c >= 0x80) @compileError(std.fmt.comptimePrint("can only match against ascii characters, got: {}", .{str}));
+
         return switch (std.math.order(json_str.len, str.len)) {
             .lt => false,
             .eq => strings.eqlComptimeIgnoreLen(json_str, str),
@@ -417,8 +419,7 @@ pub const PackageJSONVersionChecker = struct {
     }
 
     // Although we technically could use a leaky toUTF8 function, this will come in handy in the future
-    fn jsonWriteBytes(writer_: anytype, data: string) !void {
-        var writer = writer_;
+    fn jsonWriteBytes(writer: anytype, data: string) !void {
         var cur = data;
         while (strings.indexOfAnyComptime(cur, "\\")) |i| {
             _ = try writer.write(cur[0..i]);
@@ -432,7 +433,7 @@ pub const PackageJSONVersionChecker = struct {
                 'r' => 0x0D,
                 'u' => blk: {
                     cur = cur[1..];
-                    if (cur.len < 4 or !strings.hasPrefixComptimeIgnoreLen(cur, "00"))
+                    if (cur.len < 4 or !strings.hasPrefixComptimeIgnoreLen(cur, "00") or cur[2] >= '8')
                         return error.@"Invalid escaped byte in `name` or `version` field of package.json";
 
                     cur = cur["00".len..];

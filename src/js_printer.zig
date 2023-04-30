@@ -5879,14 +5879,18 @@ pub fn printWithWriterAndPlatform(
         }
     }
 
-    const source_map = if (generate_source_maps) printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()) else null;
-
     printer.writer.done() catch |err|
         return .{ .err = err };
 
+    const written = printer.writer.ctx.getWritten();
+    const source_map: ?SourceMap.Chunk = if (generate_source_maps and written.len > 0)
+        printer.source_map_builder.generateChunk(written)
+    else
+        null;
+
     return .{
         .result = .{
-            .code = writer.ctx.getWritten(),
+            .code = written,
             .source_map = source_map,
         },
     };

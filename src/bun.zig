@@ -59,6 +59,8 @@ pub const fmt = struct {
                         text = text ++ "\"" ++ name ++ "\"";
                     } else if (Separator == .dash) {
                         text = text ++ "\n-  " ++ name;
+                    } else {
+                        @compileError("Unknown separator type: must be .dash or .list");
                     }
                 }
                 break :brk text;

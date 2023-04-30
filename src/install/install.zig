@@ -4818,6 +4818,21 @@ pub const PackageManager = struct {
                     var k: usize = 0;
                     while (k < new_dependencies.len) : (k += 1) {
                         if (new_dependencies[k].key) |key| {
+                            if (!update.is_aliased and !update.resolved_name.isEmpty() and key.data.e_string.eql(
+                                string,
+                                update.resolved_name.slice(update.version_buf),
+                            )) {
+                                // This actually is a duplicate which we did not
+                                // pick up before dependency resolution.
+                                // For this case, we'll just swap remove it.
+                                if (new_dependencies.len > 1) {
+                                    new_dependencies[k] = new_dependencies[new_dependencies.len - 1];
+                                    new_dependencies = new_dependencies[0 .. new_dependencies.len - 1];
+                                } else {
+                                    new_dependencies = &[_]G.Property{};
+                                }
+                                continue;
+                            }
                             if (key.data.e_string.eql(
                                 string,
                                 if (update.is_aliased)
@@ -4826,8 +4841,8 @@ pub const PackageManager = struct {
                                     update.version.literal.slice(update.version_buf),
                             )) {
                                 if (update.resolved_name.isEmpty()) {
-                                    // This actually is a duplicate
-                                    // like "react" appearing in both "dependencies" and "optionalDependencies"
+                                    // This actually is a duplicate like "react"
+                                    // appearing in both "dependencies" and "optionalDependencies".
                                     // For this case, we'll just swap remove it
                                     if (new_dependencies.len > 1) {
                                         new_dependencies[k] = new_dependencies[new_dependencies.len - 1];
@@ -4864,7 +4879,7 @@ pub const PackageManager = struct {
                                 logger.Loc.Empty,
                             ).clone(allocator);
                             update.e_string = new_dependencies[k].value.?.data.e_string;
-                            continue :outer;
+                            if (update.is_aliased) continue :outer;
                         }
                     }
                 }

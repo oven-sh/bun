@@ -214,16 +214,18 @@ it(`should allow termination at valid locations`, async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls, {}));
   await makeBasicPackageJSON();
-  const arr = new Array(test_yarn_source.length);
+  const { length } = test_yarn_source;
+  const arr = new Array(length);
 
-  for (let i = 0; ++i <= test_yarn_source.length; ) {
-    const slice = test_yarn_source.slice(0, i);
+  for (let i = 0; i < length; i++) {
+    const slice = test_yarn_source.slice(0, i + 1);
     await writeFile(join(package_dir, "yarn.lock"), slice);
     const { exited } = await command("install");
     const x = await exited;
-    expect(x === 0 || x === 1).toBe(true);
-    arr[i - 1] = x;
+    arr[i] = x;
   }
+  
+  expect(arr).toEqual(valid_start_and_end_states);
 
   // For manual auditing:
 

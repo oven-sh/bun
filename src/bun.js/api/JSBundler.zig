@@ -32,7 +32,7 @@ const TSConfigJSON = @import("../../resolver/tsconfig_json.zig").TSConfigJSON;
 const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
 const logger = bun.logger;
 const Loader = options.Loader;
-const Platform = options.Platform;
+const Target = options.Target;
 const JSAst = bun.JSAst;
 const JSParser = bun.js_parser;
 const JSPrinter = bun.js_printer;
@@ -47,7 +47,7 @@ pub const JSBundler = struct {
     const OwnedString = bun.MutableString;
 
     pub const Config = struct {
-        target: options.Platform = options.Platform.browser,
+        target: Target = Target.browser,
         entry_points: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         hot: bool = false,
         define: bun.StringMap = bun.StringMap.init(bun.default_allocator, true),
@@ -84,7 +84,7 @@ pub const JSBundler = struct {
             errdefer this.deinit(allocator);
             errdefer if (plugins.*) |plugin| plugin.deinit();
 
-            if (try config.getOptionalEnum(globalThis, "target", options.Platform)) |target| {
+            if (try config.getOptionalEnum(globalThis, "target", options.Target)) |target| {
                 this.target = target;
             }
 
@@ -167,23 +167,34 @@ pub const JSBundler = struct {
                 this.public_path.appendSliceExact(slice.slice()) catch unreachable;
             }
 
-            if (try config.getObject(globalThis, "naming")) |naming| {
-                if (try naming.getOptional(globalThis, "entrypoint", ZigString.Slice)) |slice| {
-                    defer slice.deinit();
-                    this.names.owned_entry_point.appendSliceExact(slice.slice()) catch unreachable;
-                    this.names.entry_point.data = this.names.owned_entry_point.list.items;
-                }
+            if (config.getTruthy(globalThis, "naming")) |naming| {
+                if (naming.isString()) {
+                    if (try config.getOptional(globalThis, "naming", ZigString.Slice)) |slice| {
+                        defer slice.deinit();
+                        this.names.owned_entry_point.appendSliceExact(slice.slice()) catch unreachable;
+                        this.names.entry_point.data = this.names.owned_entry_point.list.items;
+                    }
+                } else if (naming.isObject()) {
+                    if (try naming.getOptional(globalThis, "entry", ZigString.Slice)) |slice| {
+                        defer slice.deinit();
+                        this.names.owned_entry_point.appendSliceExact(slice.slice()) catch unreachable;
+                        this.names.entry_point.data = this.names.owned_entry_point.list.items;
+                    }
 
-                if (try naming.getOptional(globalThis, "chunk", ZigString.Slice)) |slice| {
-                    defer slice.deinit();
-                    this.names.owned_chunk.appendSliceExact(slice.slice()) catch unreachable;
-                    this.names.chunk.data = this.names.owned_chunk.list.items;
-                }
+                    if (try naming.getOptional(globalThis, "chunk", ZigString.Slice)) |slice| {
+                        defer slice.deinit();
+                        this.names.owned_chunk.appendSliceExact(slice.slice()) catch unreachable;
+                        this.names.chunk.data = this.names.owned_chunk.list.items;
+                    }
 
-                if (try naming.getOptional(globalThis, "asset", ZigString.Slice)) |slice| {
-                    defer slice.deinit();
-                    this.names.owned_asset.appendSliceExact(slice.slice()) catch unreachable;
-                    this.names.asset.data = this.names.owned_asset.list.items;
+                    if (try naming.getOptional(globalThis, "asset", ZigString.Slice)) |slice| {
+                        defer slice.deinit();
+                        this.names.owned_asset.appendSliceExact(slice.slice()) catch unreachable;
+                        this.names.asset.data = this.names.owned_asset.list.items;
+                    }
+                } else {
+                    globalThis.throwInvalidArguments("Expected naming to be a string or an object", .{});
+                    return error.JSException;
                 }
             }
 
@@ -403,7 +414,7 @@ pub const JSBundler = struct {
             importer_source_index: ?u32 = null,
             import_record_index: u32 = 0,
             range: logger.Range = logger.Range.None,
-            original_platform: options.Platform,
+            original_target: Target,
         };
 
         pub fn create(
@@ -413,12 +424,14 @@ pub const JSBundler = struct {
                     importer_source_index: u32,
                     import_record_index: u32,
                     source_file: []const u8 = "",
-                    original_platform: options.Platform,
+                    original_target: Target,
                     record: *const bun.ImportRecord,
                 },
             },
             completion: *bun.BundleV2.JSBundleCompletionTask,
         ) Resolve {
+            completion.ref();
+
             return Resolve{
                 .import_record = switch (from) {
                     .MiniImportRecord => from.MiniImportRecord,
@@ -430,7 +443,7 @@ pub const JSBundler = struct {
                         .importer_source_index = file.importer_source_index,
                         .import_record_index = file.import_record_index,
                         .range = file.record.range,
-                        .original_platform = file.original_platform,
+                        .original_target = file.original_target,
                     },
                 },
                 .completion = completion,
@@ -532,8 +545,8 @@ pub const JSBundler = struct {
             if (path_value.isEmptyOrUndefinedOrNull() or namespace_value.isEmptyOrUndefinedOrNull()) {
                 this.value = .{ .no_match = {} };
             } else {
-                const path = path_value.toSliceClone(completion.globalThis) orelse @panic("Unexpected: path is not a string");
-                const namespace = namespace_value.toSliceClone(completion.globalThis) orelse @panic("Unexpected: namespace is not a string");
+                const path = path_value.toSliceCloneWithAllocator(completion.globalThis, bun.default_allocator) orelse @panic("Unexpected: path is not a string");
+                const namespace = namespace_value.toSliceCloneWithAllocator(completion.globalThis, bun.default_allocator) orelse @panic("Unexpected: namespace is not a string");
                 this.value = .{
                     .success = .{
                         .path = path.slice(),
@@ -574,6 +587,7 @@ pub const JSBundler = struct {
             default_loader: options.Loader,
             path: Fs.Path,
         ) Load {
+            completion.ref();
             return Load{
                 .source_index = source_index,
                 .default_loader = default_loader,

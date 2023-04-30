@@ -10,6 +10,7 @@
     _napi_call_threadsafe_function;
     _napi_cancel_async_work;
     _napi_check_object_type_tag;
+    _napi_close_callback_scope;
     _napi_close_escapable_handle_scope;
     _napi_close_handle_scope;
     _napi_coerce_to_bool;
@@ -55,6 +56,7 @@
     _napi_detach_arraybuffer;
     _napi_escape_handle;
     _napi_fatal_error;
+    _napi_fatal_exception;
     _napi_get_all_property_names;
     _napi_get_and_clear_last_exception;
     _napi_get_array_length;
@@ -66,6 +68,7 @@
     _napi_get_date_value;
     _napi_get_element;
     _napi_get_global;
+    _napi_get_instance_data;
     _napi_get_last_error_info;
     _napi_get_named_property;
     _napi_get_new_target;
@@ -81,6 +84,7 @@
     _napi_get_uv_event_loop;
     _napi_get_value_bigint_int64;
     _napi_get_value_bigint_uint64;
+    _napi_get_value_bigint_words;
     _napi_get_value_bool;
     _napi_get_value_double;
     _napi_get_value_external;
@@ -126,6 +130,7 @@
     _napi_resolve_deferred;
     _napi_run_script;
     _napi_set_element;
+    _napi_set_instance_data;
     _napi_set_named_property;
     _napi_set_property;
     _napi_strict_equals;

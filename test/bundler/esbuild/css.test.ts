@@ -484,7 +484,7 @@ var { describe, test, expect } = testForFile(import.meta.path);
 //     },
 //     metafile: true,
 //     entryPoints: ["/foo/entry.js", "/bar/entry.js"],
-//     entryNames: "[ext]/[hash]",
+//     entryNaming: "[ext]/[hash]",
 //     outdir: "/",
 //   });
 //   itBundled("css/DeduplicateRules", {

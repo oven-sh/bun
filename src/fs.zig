@@ -1191,6 +1191,10 @@ pub const PathName = struct {
             dir = &([_]u8{});
         }
 
+        if (base.len > 1 and base[base.len - 1] == '/') {
+            base = base[0 .. base.len - 1];
+        }
+
         return PathName{
             .dir = dir,
             .base = base,

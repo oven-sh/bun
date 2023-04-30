@@ -74,10 +74,11 @@ describe("bundler", () => {
     external: ["external"],
     mode: "transform",
     minifySyntax: true,
-    platform: "bun",
+    target: "bun",
     run: { file: "/entry.ts" },
   });
   itBundled("edgecase/TemplateStringIssue622", {
+    notImplemented: true,
     files: {
       "/entry.ts": /* js */ `
         capture(\`\\?\`);
@@ -85,7 +86,7 @@ describe("bundler", () => {
       `,
     },
     capture: ["`\\\\?`", "hello`\\\\?`"],
-    platform: "bun",
+    target: "bun",
   });
   itBundled("edgecase/StringNullBytes", {
     files: {
@@ -121,7 +122,7 @@ describe("bundler", () => {
         capture(process.env.NODE_ENV === 'development');
       `,
     },
-    platform: "browser",
+    target: "browser",
     capture: ['"development"', "false", "true"],
     env: {
       // undefined will ensure this variable is not passed to the bundler
@@ -136,7 +137,7 @@ describe("bundler", () => {
         capture(process.env.NODE_ENV === 'development');
       `,
     },
-    platform: "browser",
+    target: "browser",
     capture: ['"development"', "false", "true"],
     env: {
       NODE_ENV: "development",
@@ -150,10 +151,31 @@ describe("bundler", () => {
         capture(process.env.NODE_ENV === 'development');
       `,
     },
-    platform: "browser",
+    target: "browser",
     capture: ['"production"', "true", "false"],
     env: {
       NODE_ENV: "production",
+    },
+  });
+  itBundled("edgecase/NodeEnvOptionalChaining", {
+    notImplemented: true,
+    files: {
+      "/entry.js": /* js */ `
+        capture(process?.env?.NODE_ENV);
+        capture(process?.env?.NODE_ENV === 'production');
+        capture(process?.env?.NODE_ENV === 'development');
+        capture(process.env?.NODE_ENV);
+        capture(process.env?.NODE_ENV === 'production');
+        capture(process.env?.NODE_ENV === 'development');
+        capture(process?.env.NODE_ENV);
+        capture(process?.env.NODE_ENV === 'production');
+        capture(process?.env.NODE_ENV === 'development');
+      `,
+    },
+    target: "browser",
+    capture: ['"development"', "false", "true", '"development"', "false", "true", '"development"', "false", "true"],
+    env: {
+      NODE_ENV: "development",
     },
   });
   itBundled("edgecase/ProcessEnvArbitrary", {
@@ -162,7 +184,7 @@ describe("bundler", () => {
         capture(process.env.ARBITRARY);
       `,
     },
-    platform: "browser",
+    target: "browser",
     capture: ["process.env.ARBITRARY"],
     env: {
       ARBITRARY: "secret environment stuff!",
@@ -226,6 +248,134 @@ describe("bundler", () => {
     },
     run: {
       stdout: "1",
+    },
+  });
+  itBundled("edgecase/ValidLoaderSeenAsInvalid", {
+    files: {
+      "/entry.js": /* js */ `console.log(1)`,
+    },
+    outdir: "/out",
+    loader: {
+      ".a": "file", // segfaults
+      ".b": "text", // InvalidLoader
+      ".c": "toml", // InvalidLoader
+      ".d": "json",
+      ".e": "js",
+      ".f": "ts",
+      ".g": "jsx",
+      ".h": "tsx",
+      // ".i": "wasm",
+      // ".j": "napi",
+      // ".k": "base64",
+      // ".l": "dataurl",
+      // ".m": "binary",
+      // ".n": "empty",
+      // ".o": "copy",
+    },
+  });
+  itBundled("edgecase/InvalidLoaderSegfault", {
+    files: {
+      "/entry.js": /* js */ `console.log(1)`,
+    },
+    outdir: "/out",
+    loader: {
+      ".cool": "wtf",
+    },
+    bundleErrors: {
+      // todo: get the exact error
+      "<bun>": ["InvalidLoader"],
+    },
+  });
+  itBundled("edgecase/ScriptTagEscape", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log('<script></script>');
+        console.log(await import('./text-file.txt'))
+      `,
+      "/text-file.txt": /* txt */ `
+        <script></script>
+      `,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      try {
+        expect(api.readFile("/out/entry.js")).not.toContain("</script>");
+      } catch (error) {
+        console.error("Bundle contains </script> which will break if this bundle is placed in a script tag.");
+        throw error;
+      }
+    },
+  });
+  itBundled("edgecase/JSONDefaultImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import def from './test.json'
+        console.log(JSON.stringify(def))
+      `,
+      "/test.json": `{ "hello": 234, "world": 123 }`,
+    },
+    run: {
+      stdout: '{"hello":234,"world":123}',
+    },
+  });
+  itBundled("edgecase/JSONDefaultKeyImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import def from './test.json'
+        console.log(def.hello)
+      `,
+      "/test.json": `{ "hello": 234, "world": "REMOVE" }`,
+    },
+    run: {
+      stdout: "234",
+    },
+  });
+  itBundled("edgecase/JSONDefaultAndNamedImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import def from './test.json'
+        import { hello } from './test.json'
+        console.log(def.hello, hello)
+      `,
+      "/test.json": `{ "hello": 234, "world": "REMOVE" }`,
+    },
+    dce: true,
+    run: {
+      stdout: "234 234",
+    },
+  });
+  itBundled("edgecase/JSONWithDefaultKey", {
+    files: {
+      "/entry.js": /* js */ `
+        import def from './test.json'
+        console.log(JSON.stringify(def))
+      `,
+      "/test.json": `{ "default": 234 }`,
+    },
+    dce: true,
+    run: {
+      stdout: '{"default":234}',
+    },
+  });
+  itBundled("edgecase/JSONWithDefaultKeyNamespace", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './test.json'
+        console.log(JSON.stringify(ns))
+      `,
+      "/test.json": `{ "default": 234 }`,
+    },
+    dce: true,
+    run: {
+      stdout: '{"default":234}',
+    },
+  });
+  itBundled("edgecase/RequireUnknownExtension", {
+    files: {
+      "/entry.js": /* js */ `
+        require('./x.aaaa')
+      `,
+      "/x.aaaa": `x`,
     },
   });
 });

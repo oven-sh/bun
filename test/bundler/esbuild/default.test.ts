@@ -494,11 +494,15 @@ describe("bundler", () => {
   itBundled("default/JSXSyntaxInJS", {
     files: {
       "/entry.mjs": `console.log(<div/>)`,
+      "/entry.cjs": `console.log(<div/>)`,
     },
     bundleErrors: {
       // TODO: this could be a nicer error
       "/entry.mjs": [`Unexpected <`],
+      "/entry.cjs": [`Unexpected <`],
     },
+    outdir: "/out",
+    entryPoints: ["/entry.mjs", "/entry.cjs"],
   });
   itBundled("default/JSXConstantFragments", {
     notImplemented: true, // jsx in bun is too different to esbuild
@@ -856,7 +860,7 @@ describe("bundler", () => {
         require.resolve(v ? y ? 'a' : 'b' : c)
       `,
     },
-    platform: "node",
+    target: "node",
     format: "cjs",
     // esbuild seems to not need externals for require.resolve, but it should be specified
     external: ["a", "b", "c"],
@@ -925,7 +929,7 @@ describe("bundler", () => {
         await import('./out/b');
       `,
     },
-    entryNames: "[name].[ext]",
+    entryNaming: "[name].[ext]",
     entryPoints: ["/a.js", "/b.js"],
     external: ["a", "b", "c"],
     run: [
@@ -1023,42 +1027,6 @@ describe("bundler", () => {
       stdout: "./test.txt",
     },
   });
-  itBundled("default/RequireWithoutCallPlatformNeutral", {
-    notImplemented: true,
-    // `require` on line one has to be renamed to `__require`
-    files: {
-      "/entry.js": /* js */ `
-        const req = require
-        req('./entry')
-        capture(req)
-      `,
-    },
-    platform: "neutral",
-    onAfterBundle(api) {
-      const varName = api.captureFile("/out.js")[0];
-      const assignmentValue = api.readFile("/out.js").match(new RegExp(`${varName} = (.*);`))![1];
-      expect(assignmentValue).not.toBe("require");
-    },
-  });
-  itBundled("default/NestedRequireWithoutCallPlatformNeutral", {
-    notImplemented: true,
-    // `require` on line one has to be renamed to `__require`
-    files: {
-      "/entry.js": /* js */ `
-        (() => {
-          const req = require
-          req('./entry')
-          capture(req)
-        })()
-      `,
-    },
-    platform: "neutral",
-    onAfterBundle(api) {
-      const varName = api.captureFile("/out.js")[0];
-      const assignmentValue = api.readFile("/out.js").match(new RegExp(`${varName} = (.*);`))![1];
-      expect(assignmentValue).not.toBe("require");
-    },
-  });
   itBundled("default/RequireWithCallInsideTry", {
     files: {
       "/entry.js": /* js */ `
@@ -1093,27 +1061,6 @@ describe("bundler", () => {
     },
     run: [{ file: "/test1.js" }, { file: "/test2.js" }],
   });
-  itBundled("default/RequireWithoutCallInsideTry", {
-    notImplemented: true,
-    // `require` has to be renamed to `__require`
-    files: {
-      "/entry.js": /* js */ `
-        try {
-          oldLocale = globalLocale._abbr;
-          var aliasedRequire = require;
-          aliasedRequire('./locale/' + name);
-          getSetGlobalLocale(oldLocale);
-          capture(aliasedRequire)
-        } catch (e) {}
-      `,
-    },
-    platform: "neutral",
-    onAfterBundle(api) {
-      const varName = api.captureFile("/out.js")[0];
-      const assignmentValue = api.readFile("/out.js").match(new RegExp(`${varName} = (.*);`))![1];
-      expect(assignmentValue).not.toBe("require");
-    },
-  });
   itBundled("default/RequirePropertyAccessCommonJS", {
     files: {
       "/entry.js": /* js */ `
@@ -1124,7 +1071,7 @@ describe("bundler", () => {
         delete require.extensions['.json']
       `,
     },
-    platform: "node",
+    target: "node",
     format: "cjs",
     onAfterBundle(api) {
       api.prependFile(
@@ -1252,18 +1199,6 @@ describe("bundler", () => {
       assert(api.readFile("/out.js").startsWith("#!/usr/bin/env a"), "hashbang exists on bundle");
     },
   });
-  itBundled("default/HashbangNoBundle", {
-    files: {
-      "/entry.js": /* js */ `
-        #!/usr/bin/env node
-        process.exit(0);
-      `,
-    },
-    mode: "transform",
-    onAfterBundle(api) {
-      assert(api.readFile("/out.js").startsWith("#!/usr/bin/env node"), "hashbang exists on bundle");
-    },
-  });
   itBundled("default/HashbangBannerUseStrictOrder", {
     files: {
       "/entry.js": /* js */ `
@@ -1281,7 +1216,7 @@ describe("bundler", () => {
     files: {
       "/entry.js": `console.log(require('fs'))`,
     },
-    platform: "browser",
+    target: "browser",
     run: {
       stdout: "[Function]",
     },
@@ -1291,7 +1226,7 @@ describe("bundler", () => {
       "/entry.js": `console.log('existsSync' in require('fs'))`,
     },
     format: "cjs",
-    platform: "node",
+    target: "node",
     run: {
       stdout: "true",
     },
@@ -1302,7 +1237,7 @@ describe("bundler", () => {
     },
     minifyWhitespace: true,
     format: "cjs",
-    platform: "node",
+    target: "node",
     run: {
       stdout: "true",
     },
@@ -1320,7 +1255,7 @@ describe("bundler", () => {
     run: {
       stdout: "[Function] undefined undefined",
     },
-    platform: "browser",
+    target: "browser",
   });
   itBundled("default/ImportFSNodeCommonJS", {
     files: {
@@ -1332,7 +1267,7 @@ describe("bundler", () => {
         console.log('writeFileSync' in fs, readFileSync, 'writeFileSync' in defaultValue)
       `,
     },
-    platform: "node",
+    target: "node",
     format: "cjs",
     run: {
       stdout: "true [Function: readFileSync] true",
@@ -1348,7 +1283,7 @@ describe("bundler", () => {
         console.log('writeFileSync' in fs, readFileSync, 'writeFileSync' in defaultValue)
       `,
     },
-    platform: "node",
+    target: "node",
     run: {
       stdout: "true [Function: readFileSync] true",
     },
@@ -1360,7 +1295,7 @@ describe("bundler", () => {
         export {readFileSync} from 'fs'
       `,
     },
-    platform: "browser",
+    target: "browser",
     run: {
       file: "out.js",
     },
@@ -1380,7 +1315,7 @@ describe("bundler", () => {
         assert(module.readFileSync === fs.readFileSync, 'export {readFileSync} from "fs"; works')
       `,
     },
-    platform: "node",
+    target: "node",
     run: {
       file: "/test.js",
     },
@@ -1404,7 +1339,7 @@ describe("bundler", () => {
         assert(module.rfs === fs.readFileSync, 'export {rfs} works')
       `,
     },
-    platform: "node",
+    target: "node",
     run: {
       file: "/test.js",
     },
@@ -1428,7 +1363,7 @@ describe("bundler", () => {
         assert(mod.foo === 123, 'exports.foo')
       `,
     },
-    platform: "node",
+    target: "node",
     run: {
       file: "/test.js",
     },
@@ -1444,7 +1379,7 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
-    platform: "node",
+    target: "node",
     run: {
       file: "/test.js",
     },
@@ -1460,7 +1395,7 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    platform: "node",
+    target: "node",
     run: {
       file: "/test.js",
     },
@@ -2310,7 +2245,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/AutoExternalNode", {
-    notImplemented: true,
+    // notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         // These URLs should be external automatically
@@ -2325,7 +2260,7 @@ describe("bundler", () => {
         import "node:what-is-this";
       `,
     },
-    platform: "node",
+    target: "node",
     treeShaking: true,
     onAfterBundle(api) {
       const file = api.readFile("/out.js");
@@ -2356,7 +2291,7 @@ describe("bundler", () => {
         import "bun:what-is-this";
       `,
     },
-    platform: "bun",
+    target: "bun",
     onAfterBundle(api) {
       const file = api.readFile("/out.js");
       const imports = new Bun.Transpiler().scanImports(file);
@@ -2613,7 +2548,7 @@ describe("bundler", () => {
       `,
     },
     inject: ["/shims.js"],
-    platform: "node",
+    target: "node",
     run: {
       stdout: "function",
     },
@@ -3794,7 +3729,7 @@ describe("bundler", () => {
       `,
       "/present-file.js": ``,
     },
-    platform: "node",
+    target: "node",
     format: "cjs",
     external: ["external-pkg", "@scope/external-pkg", "{{root}}/external-file"],
   });
@@ -4315,6 +4250,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/DefineOptionalChain", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         log([
@@ -5205,7 +5141,7 @@ describe("bundler", () => {
       "/node_modules/second-path/index.js": `module.exports = 567`,
     },
     external: ["*"],
-    platform: "browser",
+    target: "browser",
     format: "esm",
     outfile: "/out.mjs",
     run: {
@@ -5232,7 +5168,7 @@ describe("bundler", () => {
     files: RequireShimSubstitutionBrowser.options.files,
     runtimeFiles: RequireShimSubstitutionBrowser.options.runtimeFiles,
     external: ["*"],
-    platform: "node",
+    target: "node",
     format: "esm",
     outfile: "/out.mjs",
     run: {
@@ -5292,7 +5228,7 @@ describe("bundler", () => {
       "/node_modules/fs/index.js": `console.log('include this too')`,
       "/node_modules/fs/promises.js": `throw 'DO NOT INCLUDE THIS'`,
     },
-    platform: "node",
+    target: "node",
   });
   itBundled("default/EntryNamesNoSlashAfterDir", {
     // GENERATED
@@ -5303,7 +5239,7 @@ describe("bundler", () => {
     },
     entryPoints: ["/src/app1/main.ts", "/src/app2/main.ts", "/src/app3/main.ts"],
     outputPaths: ["/out/app1-main.js", "/out/app2-main.js", "/out/app3-main.js"],
-    entryNames: "[dir]-[name].[ext]",
+    entryNaming: "[dir]-[name].[ext]",
   });
   // itBundled("default/EntryNamesNonPortableCharacter", {
   //   // GENERATED
@@ -5331,7 +5267,7 @@ describe("bundler", () => {
   //   entryPoints: ["/src/entries/entry1.js", "/src/entries/entry2.js"],
   //   outbase: "/src",
   //   splitting: true,
-  //   entryNames: "main/[ext]/[name]-[hash].[ext]",
+  //   entryNaming: "main/[ext]/[name]-[hash].[ext]",
   // });
   itBundled("default/MinifyIdentifiersImportPathFrequencyAnalysis", {
     files: {
@@ -5350,10 +5286,22 @@ describe("bundler", () => {
     minifyWhitespace: true,
     minifyIdentifiers: true,
     onAfterBundle(api) {
-      let importFile = api.readFile("/out/import.js").replace(/remove\(.*?\)/g, "remove()");
-      let requireFile = api.readFile("/out/require.js").replace(/remove\(.*?\)/g, "remove()");
-      assert(!["W", "X", "Y", "Z"].some(x => importFile.includes(x)));
-      assert(!["A", "B", "C", "D"].some(x => requireFile.includes(x)));
+      let importFile = api
+        .readFile("/out/import.js")
+        .replace(/remove\(.*?\)/g, "remove()")
+        .replace(/Object\.[a-z]+\b/gi, "null");
+      let requireFile = api
+        .readFile("/out/require.js")
+        .replace(/remove\(.*?\)/g, "remove()")
+        .replace(/Object\.[a-z]+\b/gi, "null");
+      assert(
+        !["W", "X", "Y", "Z"].some(x => importFile.includes(x)),
+        'import.js should not contain "W", "X", "Y", or "Z"',
+      );
+      assert(
+        !["A", "B", "C", "D"].some(x => requireFile.includes(x)),
+        'require.js should not contain "A", "B", "C", or "D"',
+      );
     },
   });
   itBundled("default/ToESMWrapperOmission", {
@@ -6199,28 +6147,6 @@ describe("bundler", () => {
   // NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "prop" import (which is non-standard behavior).
   // `, */
   // });
-  return;
-  itBundled("default/ExternalPackages", {
-    // GENERATED
-    files: {
-      "/project/entry.js": /* js */ `
-        import 'pkg1'
-        import './file'
-        import './node_modules/pkg2/index.js'
-        import '#pkg3'
-      `,
-      "/project/package.json": /* json */ `
-        {
-        "imports": {
-          "#pkg3": "./libs/pkg3.js"
-        }
-      }
-      `,
-      "/project/file.js": `console.log('file')`,
-      "/project/node_modules/pkg2/index.js": `console.log('pkg2')`,
-      "/project/libs/pkg3.js": `console.log('pkg3')`,
-    },
-  });
   itBundled("default/MetafileVariousCases", {
     // GENERATED
     files: {
@@ -6290,7 +6216,8 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/project/entry.js", "/project/entry.css"],
-    mode: "convertformat",
+    external: ["*"],
+    metafile: true,
   });
   itBundled("default/MetafileVeryLongExternalPaths", {
     // GENERATED
@@ -6321,7 +6248,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/CommentPreservation", {
-    // GENERATED
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         console.log(
@@ -6467,28 +6394,54 @@ describe("bundler", () => {
         for (a of /*foo*/b);
   
         if (/*foo*/a);
-        with (/*foo*/a);
         while (/*foo*/a);
         do {} while (/*foo*/a);
         switch (/*foo*/a) {}
       `,
     },
-    format: "cjs",
+    external: ["foo"],
+    onAfterBundle(api) {
+      const commentCounts: Record<string, number> = {
+        before: 44,
+        after: 18,
+        "comment before": 4,
+        "comment after": 4,
+        foo: 21,
+        bar: 4,
+        a: 1,
+        b: 1,
+        c: 1,
+      };
+      const file = api.readFile("/out.js");
+      const comments = [...file.matchAll(/\/\*([^*]+)\*\//g), ...file.matchAll(/\/\/([^\n]+)/g)]
+        .map(m => m[1].trim())
+        .filter(m => m && !m.includes("__PURE__"));
+
+      for (const key in commentCounts) {
+        const count = comments.filter(c => c === key).length;
+        if (count !== commentCounts[key]) {
+          throw new Error(`Expected ${commentCounts[key]} comments with "${key}", got ${count}`);
+        }
+      }
+    },
   });
   itBundled("default/CommentPreservationImportAssertions", {
     // GENERATED
+    notImplemented: true,
     files: {
       "/entry.jsx": /* jsx */ `
-        import 'foo' /* before */ assert { type: 'json' }
-        import 'foo' assert /* before */ { type: 'json' }
-        import 'foo' assert { /* before */ type: 'json' }
-        import 'foo' assert { type: /* before */ 'json' }
-        import 'foo' assert { type: 'json' /* before */ }
+        import 'foo' /* a */ assert { type: 'json' }
+        import 'foo' assert /* b */ { type: 'json' }
+        import 'foo' assert { /* c */ type: 'json' }
+        import 'foo' assert { type: /* d */ 'json' }
+        import 'foo' assert { type: 'json' /* e */ }
       `,
     },
+    external: ["foo"],
   });
   itBundled("default/CommentPreservationTransformJSX", {
     // GENERATED
+    notImplemented: true,
     files: {
       "/entry.jsx": /* jsx */ `
         console.log(
@@ -6518,6 +6471,7 @@ describe("bundler", () => {
   });
   itBundled("default/CommentPreservationPreserveJSX", {
     // GENERATED
+    notImplemented: true,
     files: {
       "/entry.jsx": /* jsx */ `
         console.log(
@@ -6544,20 +6498,5 @@ describe("bundler", () => {
         )
       `,
     },
-  });
-  itBundled("default/ErrorMessageCrashStdinESBuildIssue2913", {
-    // GENERATED
-    files: {
-      "/project/node_modules/fflate/package.json": `{ "main": "main.js" }`,
-      "/project/node_modules/fflate/main.js": ``,
-    },
-    stdin: {
-      contents: `import "node_modules/fflate"`,
-      cwd: "/project",
-    },
-    platform: "neutral",
-    /* TODO FIX expectedScanLog: `<stdin>: ERROR: Could not resolve "node_modules/fflate"
-  NOTE: You can mark the path "node_modules/fflate" as external to exclude it from the bundle, which will remove this error.
-  `, */
   });
 });

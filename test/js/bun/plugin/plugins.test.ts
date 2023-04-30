@@ -307,15 +307,10 @@ describe("errors", () => {
   });
 
   it("async transpiler errors work", async () => {
-    try {
+    expect(async () => {
       globalThis.asyncOnLoad = `const x: string = -NaNAn../!!;`;
       await import("async:fail");
       throw -1;
-    } catch (e: any) {
-      if (e === -1) {
-        throw new Error("Expected error");
-      }
-      expect(e.message.length > 0).toBe(true);
-    }
+    }).toThrow('Cannot find package "');
   });
 });

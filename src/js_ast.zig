@@ -765,6 +765,44 @@ pub const G = struct {
         close_brace_loc: logger.Loc = logger.Loc.Empty,
         properties: []Property = &([_]Property{}),
         has_decorators: bool = false,
+
+        pub fn canBeMoved(this: *const Class) bool {
+            if (this.extends != null)
+                return false;
+
+            if (this.has_decorators) {
+                return false;
+            }
+
+            for (this.properties) |property| {
+                if (property.kind == .class_static_block)
+                    return false;
+
+                const flags = property.flags;
+                if (flags.contains(.is_computed) or flags.contains(.is_spread)) {
+                    return false;
+                }
+
+                if (property.kind == .normal) {
+                    if (flags.contains(.is_static)) {
+                        for ([2]?Expr{ property.value, property.initializer }) |val_| {
+                            if (val_) |val| {
+                                switch (val.data) {
+                                    .e_arrow, .e_function => {},
+                                    else => {
+                                        if (!val.canBeConstValue()) {
+                                            return false;
+                                        }
+                                    },
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            return true;
+        }
     };
 
     // invalid shadowing if left as Comment
@@ -5207,15 +5245,15 @@ pub const S = struct {
         default_name: LocRef, // value may be a SFunction or SClass
         value: StmtOrExpr,
 
-        pub fn canBeMovedAround(self: ExportDefault) bool {
+        pub fn canBeMoved(self: *const ExportDefault) bool {
             return switch (self.value) {
                 .expr => |e| switch (e.data) {
-                    .e_class => |class| class.extends == null,
+                    .e_class => |class| class.canBeMoved(),
                     .e_arrow, .e_function => true,
                     else => e.canBeConstValue(),
                 },
                 .stmt => |s| switch (s.data) {
-                    .s_class => |class| class.class.extends == null,
+                    .s_class => |class| class.class.canBeMoved(),
                     .s_function => true,
                     else => false,
                 },
@@ -5730,7 +5768,7 @@ pub const Ast = struct {
     redirect_import_record_index: ?u32 = null,
 
     /// Only populated when bundling
-    platform: bun.options.Platform = .browser,
+    target: bun.options.Target = .browser,
 
     const_values: ConstValuesMap = .{},
 
@@ -9326,7 +9364,7 @@ pub const Macro = struct {
                                     blob_ = resp.body.use();
                                 } else if (value.as(JSC.WebCore.Request)) |resp| {
                                     mime_type = HTTP.MimeType.init(resp.mimeType());
-                                    blob_ = resp.body.use();
+                                    blob_ = resp.body.value.use();
                                 } else if (value.as(JSC.WebCore.Blob)) |resp| {
                                     blob_ = resp.*;
                                     blob_.?.allocator = null;
@@ -9698,7 +9736,7 @@ pub const UseDirective = enum {
         return .none;
     }
 
-    pub fn platform(this: UseDirective, default: bun.options.Platform) bun.options.Platform {
+    pub fn target(this: UseDirective, default: bun.options.Target) bun.options.Target {
         return switch (this) {
             .none => default,
             .@"use client" => .browser,
@@ -9921,4 +9959,3 @@ pub const GlobalStoreHandle = struct {
 // Stmt               | 192
 // STry               | 384
 // -- ESBuild bit sizes
-

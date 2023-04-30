@@ -425,6 +425,152 @@ describe("bundler", () => {
       onAfterBundle(api) {},
     };
   });
+  itBundled("plugin/TwoPluginBug", ({ root }) => {
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          import { foo } from "plugin1";
+          console.log(foo);
+        `,
+      },
+      plugins: [
+        {
+          name: "1",
+          setup(builder) {
+            builder.onResolve({ filter: /plugin1/ }, args => {
+              return {
+                path: "plugin1",
+                namespace: "plugin1",
+              };
+            });
+            builder.onLoad({ filter: /plugin1/, namespace: "plugin1" }, args => {
+              return {
+                contents: "export * from 'plugin2';",
+                loader: "js",
+              };
+            });
+          },
+        },
+        {
+          name: "2",
+          setup(builder) {
+            builder.onResolve({ filter: /plugin2/ }, args => {
+              return {
+                path: "plugin2",
+                namespace: "plugin2",
+              };
+            });
+            builder.onLoad({ filter: /plugin2/, namespace: "plugin2" }, args => {
+              return {
+                contents: "export const foo = 'foo';",
+                loader: "js",
+              };
+            });
+          },
+        },
+      ],
+      run: {
+        stdout: "foo",
+      },
+    };
+  });
+  itBundled("plugin/LoadCalledOnce", ({ root }) => {
+    let resolveCount = 0;
+    let loadCount = 0;
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          import { foo } from "plugin:first";
+          import { foo as foo2 } from "plugin:second";
+          import { foo as foo3 } from "plugin:third";
+          console.log(foo === foo2, foo === foo3);
+        `,
+      },
+      plugins: [
+        {
+          name: "1",
+          setup(builder) {
+            builder.onResolve({ filter: /^plugin:/ }, args => {
+              resolveCount++;
+              return {
+                path: "plugin",
+                namespace: "plugin",
+              };
+            });
+            builder.onLoad({ filter: /^plugin$/, namespace: "plugin" }, args => {
+              loadCount++;
+              return {
+                contents: "export const foo = { };",
+                loader: "js",
+              };
+            });
+          },
+        },
+      ],
+      run: {
+        stdout: "true true",
+      },
+      onAfterBundle(api) {
+        expect(resolveCount).toBe(3);
+        expect(loadCount).toBe(1);
+      },
+    };
+  });
+  itBundled("plugin/ResolveManySegfault", ({ root }) => {
+    let resolveCount = 0;
+    let loadCount = 0;
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          import { foo as foo1 } from "plugin:100";
+          console.log(foo1);
+        `,
+      },
+      plugins: [
+        {
+          name: "1",
+          setup(builder) {
+            builder.onResolve({ filter: /^plugin:/ }, args => {
+              resolveCount++;
+              return {
+                path: args.path,
+                namespace: "plugin",
+              };
+            });
+            builder.onLoad({ filter: /^plugin:/, namespace: "plugin" }, args => {
+              loadCount++;
+              const number = parseInt(args.path.replace("plugin:", ""));
+              if (number > 1) {
+                const numberOfImports = number > 100 ? 100 : number;
+                const imports = Array.from({ length: numberOfImports })
+                  .map((_, i) => `import { foo as foo${i} } from "plugin:${number - i - 1}";`)
+                  .join("\n");
+                const exports = `export const foo = ${Array.from({ length: numberOfImports })
+                  .map((_, i) => `foo${i}`)
+                  .join(" + ")};`;
+                return {
+                  contents: `${imports}\n${exports}`,
+                  loader: "js",
+                };
+              } else {
+                return {
+                  contents: `export const foo = 1;`,
+                  loader: "js",
+                };
+              }
+            });
+          },
+        },
+      ],
+      run: {
+        stdout: "101 102",
+      },
+      onAfterBundle(api) {
+        expect(resolveCount).toBe(103);
+        expect(loadCount).toBe(102);
+      },
+    };
+  });
 });
 
 // TODO: add async on resolve stuff

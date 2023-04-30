@@ -22,7 +22,7 @@
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
-
+#include <JavaScriptCore/YarrMatchingContextHolder.h>
 namespace Bun {
 
 #define WRAP_BUNDLER_PLUGIN(argName) jsNumber(bitwise_cast<double>(reinterpret_cast<uintptr_t>(argName)))
@@ -52,13 +52,12 @@ void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, Stri
         filter->flags().contains(Yarr::Flags::IgnoreCase) ? Yarr::TextCaseSensitivity::TextCaseInsensitive : Yarr::TextCaseSensitivity::TextCaseInsensitive,
         filter->multiline() ? Yarr::MultilineMode::MultilineEnabled : Yarr::MultilineMode::MultilineDisabled,
         filter->eitherUnicode() ? Yarr::UnicodeMode::UnicodeAwareMode : Yarr::UnicodeMode::UnicodeUnawareMode);
-
     nsGroup->append(WTFMove(regex));
 }
 
-bool BundlerPlugin::anyMatchesCrossThread(const ZigString* namespaceStr, const ZigString* path, bool isOnLoad)
+bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, const ZigString* namespaceStr, const ZigString* path, bool isOnLoad)
 {
-
+    constexpr bool usesPatternContextBuffer = false;
     if (isOnLoad) {
         if (this->onLoad.fileNamespace.isEmpty() && this->onLoad.namespaces.isEmpty())
             return false;
@@ -75,6 +74,7 @@ bool BundlerPlugin::anyMatchesCrossThread(const ZigString* namespaceStr, const Z
         auto pathString = Zig::toString(*path);
 
         for (auto& filter : filters) {
+            Yarr::MatchingContextHolder regExpContext(vm, usesPatternContextBuffer, nullptr, Yarr::MatchFrom::CompilerThread);
             if (filter.match(pathString) > -1) {
                 return true;
             }
@@ -96,6 +96,7 @@ bool BundlerPlugin::anyMatchesCrossThread(const ZigString* namespaceStr, const Z
         auto& filters = *group;
 
         for (auto& filter : filters) {
+            Yarr::MatchingContextHolder regExpContext(vm, usesPatternContextBuffer, nullptr, Yarr::MatchFrom::CompilerThread);
             if (filter.match(pathString) > -1) {
                 return true;
             }
@@ -276,7 +277,7 @@ void JSBundlerPlugin::finishCreation(JSC::VM& vm)
 
 extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* pluginObject, const ZigString* namespaceString, const ZigString* path, bool isOnLoad)
 {
-    return pluginObject->plugin.anyMatchesCrossThread(namespaceString, path, isOnLoad);
+    return pluginObject->plugin.anyMatchesCrossThread(pluginObject->vm(), namespaceString, path, isOnLoad);
 }
 
 extern "C" void JSBundlerPlugin__matchOnLoad(JSC::JSGlobalObject* globalObject, Bun::JSBundlerPlugin* plugin, const ZigString* namespaceString, const ZigString* path, void* context, uint8_t defaultLoaderId)

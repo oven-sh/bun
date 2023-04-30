@@ -1,3 +1,46 @@
+// This is Bun's JavaScript/TypeScript bundler
+//
+// A lot of the implementation is based on the Go implementation of esbuild. Thank you Evan Wallace.
+//
+// # Memory management
+//
+// Zig is not a managed language, so we have to be careful about memory management.
+// Manually freeing memory is error-prone and tedious, but garbage collection
+// is slow and reference counting incurs a performance penalty.
+//
+// Bun's bundler relies on mimalloc's threadlocal heaps as arena allocators.
+//
+// When a new thread is spawned for a bundling job, it is given a threadlocal
+// heap and all allocations are done on that heap. When the job is done, the
+// threadlocal heap is destroyed and all memory is freed.
+//
+// There are a few careful gotchas to keep in mind:
+//
+// - A threadlocal heap cannot allocate memory on a different thread than the one that
+//  created it. You will get a segfault if you try to do that.
+//
+// - Since the heaps are destroyed at the end of bundling, any globally shared
+//   references to data must NOT be allocated on a threadlocal heap.
+//
+//   For example, package.json and tsconfig.json read from the filesystem must be
+//   use the global allocator (bun.default_allocator) because bun's directory
+//   entry cache and module resolution cache are globally shared across all
+//   threads.
+//
+//   Additionally, `LinkerContext`'s allocator is also threadlocal.
+//
+// - Globally allocated data must be in a cache & reused, or we will create an infinite
+//   memory leak over time. To do that, we have a DirnameStore, FilenameStore, and the other
+//   data structures related to `BSSMap`. This still leaks memory, but not very
+//   much since it only allocates the first time around.
+//
+//
+// In development, it is strongly recommended to use either a debug build of
+// mimalloc or Valgrind to help catch memory issues
+// To use a debug build of mimalloc:
+//
+//     make mimalloc-debug
+//
 const Bundler = bun.Bundler;
 const bun = @import("root").bun;
 const from = bun.from;
@@ -84,14 +127,8 @@ const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 
 pub const ThreadPool = struct {
     pool: *ThreadPoolLib = undefined,
-    // Hardcode 512 as max number of threads for now.
     workers_assignments: std.AutoArrayHashMap(std.Thread.Id, *Worker) = std.AutoArrayHashMap(std.Thread.Id, *Worker).init(bun.default_allocator),
     workers_assignments_lock: bun.Lock = bun.Lock.init(),
-    cpu_count: u32 = 0,
-    started_workers: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
-    stopped_workers: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
-    completed_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
-    pending_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
 
     v2: *BundleV2 = undefined,
 
@@ -104,27 +141,26 @@ pub const ThreadPool = struct {
     pub fn start(this: *ThreadPool, v2: *BundleV2, existing_thread_pool: ?*ThreadPoolLib) !void {
         this.v2 = v2;
 
-        this.cpu_count = @truncate(u32, @max(std.Thread.getCpuCount() catch 2, 2));
-
-        if (v2.bundler.env.map.get("GOMAXPROCS")) |max_procs| {
-            if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count| {
-                this.cpu_count = cpu_count;
-            } else |_| {}
-        }
-
-        this.cpu_count = @max(@min(this.cpu_count, @truncate(u32, 128 - 1)), 2);
-
         if (existing_thread_pool) |pool| {
             this.pool = pool;
         } else {
+            var cpu_count = @truncate(u32, @max(std.Thread.getCpuCount() catch 2, 2));
+
+            if (v2.bundler.env.map.get("GOMAXPROCS")) |max_procs| {
+                if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count_| {
+                    cpu_count = cpu_count_;
+                } else |_| {}
+            }
+
+            cpu_count = @max(@min(cpu_count, @truncate(u32, 128 - 1)), 2);
             this.pool = try v2.graph.allocator.create(ThreadPoolLib);
             this.pool.* = ThreadPoolLib.init(.{
-                .max_threads = this.cpu_count,
+                .max_threads = cpu_count,
             });
+            debug("{d} workers", .{cpu_count});
         }
-        this.pool.setThreadContext(this);
 
-        debug("allocated {d} workers", .{this.cpu_count});
+        this.pool.setThreadContext(this);
     }
 
     pub fn getWorker(this: *ThreadPool, id: std.Thread.Id) *Worker {
@@ -153,7 +189,11 @@ pub const ThreadPool = struct {
 
     pub const Worker = struct {
         heap: ThreadlocalArena = ThreadlocalArena{},
+
+        /// Thread-local memory allocator
+        /// All allocations are freed in `deinit` at the very end of bundling.
         allocator: std.mem.Allocator,
+
         ctx: *BundleV2,
 
         data: WorkerData = undefined,
@@ -166,6 +206,7 @@ pub const ThreadPool = struct {
         deinit_task: ThreadPoolLib.Task = .{ .callback = deinitCallback },
 
         pub fn deinitCallback(task: *ThreadPoolLib.Task) void {
+            debug("Worker.deinit()", .{});
             var this = @fieldParentPtr(Worker, "deinit_task", task);
             this.deinit();
         }
@@ -245,6 +286,7 @@ pub const ThreadPool = struct {
             const CacheSet = @import("../cache.zig");
 
             this.data.bundler.resolver.caches = CacheSet.Set.init(this.allocator);
+            debug("Worker.create()", .{});
         }
 
         pub fn run(this: *Worker, ctx: *BundleV2) void {
@@ -269,6 +311,9 @@ pub const BundleV2 = struct {
     bun_watcher: ?*Watcher.Watcher = null,
     plugins: ?*JSC.API.JSBundler.Plugin = null,
     completion: ?*JSBundleCompletionTask = null,
+
+    // There is a race condition where an onResolve plugin may schedule a task on the bundle thread before it's parsing task completes
+    resolve_tasks_waiting_for_import_source_index: std.AutoArrayHashMapUnmanaged(Index.Int, BabyList(struct { to_source_index: Index, import_record_index: u32 })) = .{},
 
     /// Allocations not tracked by a threadlocal heap
     free_list: std.ArrayList(string) = std.ArrayList(string).init(bun.default_allocator),
@@ -353,7 +398,7 @@ pub const BundleV2 = struct {
 
     fn isDone(ptr: *anyopaque) bool {
         var this = bun.cast(*const BundleV2, ptr);
-        return this.graph.parse_pending == 0 and this.graph.resolve_pending == 0;
+        return @atomicLoad(usize, &this.graph.parse_pending, .Monotonic) == 0 and @atomicLoad(usize, &this.graph.resolve_pending, .Monotonic) == 0;
     }
 
     pub fn waitForParse(this: *BundleV2) void {
@@ -366,7 +411,7 @@ pub const BundleV2 = struct {
     pub fn runResolver(
         this: *BundleV2,
         import_record: bun.JSC.API.JSBundler.Resolve.MiniImportRecord,
-        platform: options.Platform,
+        target: options.Target,
     ) void {
         var resolve_result = this.bundler.resolver.resolve(
             Fs.PathName.init(import_record.source_file).dirWithTrailingSlash(),
@@ -396,7 +441,7 @@ pub const BundleV2 = struct {
 
                     if (!handles_import_errors) {
                         if (isPackagePath(import_record.specifier)) {
-                            if (platform.isWebLike() and options.ExternalModules.isNodeBuiltin(path_to_use)) {
+                            if (target.isWebLike() and options.ExternalModules.isNodeBuiltin(path_to_use)) {
                                 addError(
                                     this.bundler.log,
                                     source,
@@ -503,9 +548,9 @@ pub const BundleV2 = struct {
             task.jsx = this.bundler.options.jsx;
             task.task.node.next = null;
             task.tree_shaking = this.linker.options.tree_shaking;
-            task.known_platform = import_record.original_platform;
+            task.known_target = import_record.original_target;
 
-            this.graph.parse_pending += 1;
+            _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .Monotonic);
 
             // Handle onLoad plugins
             if (!this.enqueueOnLoadPluginIfNeeded(task)) {
@@ -538,7 +583,7 @@ pub const BundleV2 = struct {
         if (entry.found_existing) {
             return null;
         }
-        this.graph.parse_pending += 1;
+        _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .Monotonic);
         const source_index = Index.source(this.graph.input_files.len);
         if (path.pretty.ptr == path.text.ptr) {
             // TODO: outbase
@@ -585,8 +630,8 @@ pub const BundleV2 = struct {
         heap: ?ThreadlocalArena,
     ) !*BundleV2 {
         var generator = try allocator.create(BundleV2);
-        bundler.options.mark_builtins_as_external = bundler.options.platform.isBun() or bundler.options.platform == .node;
-        bundler.resolver.opts.mark_builtins_as_external = bundler.options.platform.isBun() or bundler.options.platform == .node;
+        bundler.options.mark_builtins_as_external = bundler.options.target.isBun() or bundler.options.target == .node;
+        bundler.resolver.opts.mark_builtins_as_external = bundler.options.target.isBun() or bundler.options.target == .node;
 
         var this = generator;
         generator.* = BundleV2{
@@ -658,7 +703,7 @@ pub const BundleV2 = struct {
             };
             runtime_parse_task.tree_shaking = true;
             runtime_parse_task.loader = .js;
-            this.graph.parse_pending += 1;
+            _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .Monotonic);
             batch.push(ThreadPoolLib.Batch.from(&runtime_parse_task.task));
         }
 
@@ -769,8 +814,8 @@ pub const BundleV2 = struct {
                 const key = unique_key_for_additional_files[index];
                 if (key.len > 0) {
                     var template = PathTemplate.asset;
-                    if (this.bundler.options.asset_names.len > 0)
-                        template.data = this.bundler.options.asset_names;
+                    if (this.bundler.options.asset_naming.len > 0)
+                        template.data = this.bundler.options.asset_naming;
                     const source = &sources[index];
                     var pathname = source.path.name;
                     // TODO: outbase
@@ -941,7 +986,13 @@ pub const BundleV2 = struct {
                         obj.put(
                             globalThis,
                             JSC.ZigString.static("result"),
-                            output_file.toJS(globalThis),
+                            output_file.toJS(
+                                if (output_file.value == .saved)
+                                    bun.default_allocator.dupe(u8, output_file.input.text) catch unreachable
+                                else
+                                    "",
+                                globalThis,
+                            ),
                         );
                         output_files_js.putIndex(globalThis, @intCast(u32, i), obj);
                     }
@@ -996,6 +1047,11 @@ pub const BundleV2 = struct {
     ) void {
         debug("onLoad: ({d}, {s})", .{ load.source_index.get(), @tagName(load.value) });
         defer load.deinit();
+        defer {
+            if (comptime FeatureFlags.help_catch_memory_issues) {
+                this.graph.heap.gc(true);
+            }
+        }
 
         switch (load.value.consume()) {
             .no_match => {
@@ -1015,7 +1071,7 @@ pub const BundleV2 = struct {
                 }) catch {};
 
                 // An error ocurred, prevent spinning the event loop forever
-                this.graph.parse_pending -= 1;
+                _ = @atomicRmw(usize, &this.graph.parse_pending, .Sub, 1, .Monotonic);
             },
             .success => |code| {
                 this.graph.input_files.items(.loader)[load.source_index.get()] = code.loader;
@@ -1034,7 +1090,7 @@ pub const BundleV2 = struct {
                 this.bundler.log.warnings += @as(usize, @boolToInt(err.kind == .warn));
 
                 // An error ocurred, prevent spinning the event loop forever
-                this.graph.parse_pending -= 1;
+                _ = @atomicRmw(usize, &this.graph.parse_pending, .Sub, 1, .Monotonic);
             },
             .pending, .consumed => unreachable,
         }
@@ -1045,8 +1101,14 @@ pub const BundleV2 = struct {
         this: *BundleV2,
     ) void {
         defer resolve.deinit();
-        defer this.graph.resolve_pending -= 1;
+        defer _ = @atomicRmw(usize, &this.graph.resolve_pending, .Sub, 1, .Monotonic);
         debug("onResolve: ({s}:{s}, {s})", .{ resolve.import_record.namespace, resolve.import_record.specifier, @tagName(resolve.value) });
+
+        defer {
+            if (comptime FeatureFlags.help_catch_memory_issues) {
+                this.graph.heap.gc(true);
+            }
+        }
 
         switch (resolve.value.consume()) {
             .no_match => {
@@ -1054,7 +1116,7 @@ pub const BundleV2 = struct {
                 //
                 // The file could be on disk.
                 if (strings.eqlComptime(resolve.import_record.namespace, "file")) {
-                    this.runResolver(resolve.import_record, resolve.import_record.original_platform);
+                    this.runResolver(resolve.import_record, resolve.import_record.original_target);
                     return;
                 }
 
@@ -1083,10 +1145,8 @@ pub const BundleV2 = struct {
             .success => |result| {
                 var out_source_index: ?Index = null;
                 if (!result.external) {
-                    this.free_list.appendSlice(&.{ result.namespace, result.path }) catch {};
-
                     var path = Fs.Path.init(result.path);
-                    if (path.namespace.len == 0 or strings.eqlComptime(path.namespace, "file")) {
+                    if (result.namespace.len == 0 or strings.eqlComptime(result.namespace, "file")) {
                         path.namespace = "file";
                     } else {
                         path.namespace = result.namespace;
@@ -1094,6 +1154,8 @@ pub const BundleV2 = struct {
 
                     var existing = this.graph.path_to_source_index_map.getOrPut(this.graph.allocator, path.hashKey()) catch unreachable;
                     if (!existing.found_existing) {
+                        this.free_list.appendSlice(&.{ result.namespace, result.path }) catch {};
+
                         // We need to parse this
                         const source_index = Index.init(@intCast(u32, this.graph.ast.len));
                         existing.value_ptr.* = source_index.get();
@@ -1111,7 +1173,7 @@ pub const BundleV2 = struct {
                             .loader = loader,
                             .side_effects = _resolver.SideEffects.has_side_effects,
                         }) catch unreachable;
-                        var task = this.graph.allocator.create(ParseTask) catch unreachable;
+                        var task = bun.default_allocator.create(ParseTask) catch unreachable;
                         task.* = ParseTask{
                             .ctx = this,
                             .path = path,
@@ -1128,11 +1190,11 @@ pub const BundleV2 = struct {
                             .module_type = .unknown,
                             .loader = loader,
                             .tree_shaking = this.linker.options.tree_shaking,
-                            .known_platform = resolve.import_record.original_platform,
+                            .known_target = resolve.import_record.original_target,
                         };
                         task.task.node.next = null;
 
-                        this.graph.parse_pending += 1;
+                        _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .Monotonic);
 
                         // Handle onLoad plugins
                         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
@@ -1150,8 +1212,23 @@ pub const BundleV2 = struct {
 
                 if (out_source_index) |source_index| {
                     if (resolve.import_record.importer_source_index) |importer| {
-                        var import_record: *ImportRecord = &this.graph.ast.items(.import_records)[importer].slice()[resolve.import_record.import_record_index];
-                        import_record.source_index = source_index;
+                        var source_import_records = &this.graph.ast.items(.import_records)[importer];
+                        if (source_import_records.len <= resolve.import_record.import_record_index) {
+                            var entry = this.resolve_tasks_waiting_for_import_source_index.getOrPut(this.graph.allocator, importer) catch unreachable;
+                            if (!entry.found_existing) {
+                                entry.value_ptr.* = .{};
+                            }
+                            entry.value_ptr.push(
+                                this.graph.allocator,
+                                .{
+                                    .to_source_index = source_index,
+                                    .import_record_index = resolve.import_record.import_record_index,
+                                },
+                            ) catch unreachable;
+                        } else {
+                            var import_record: *ImportRecord = &source_import_records.slice()[resolve.import_record.import_record_index];
+                            import_record.source_index = source_index;
+                        }
                     }
                 }
             },
@@ -1222,7 +1299,7 @@ pub const BundleV2 = struct {
             Api.TransformOptions{
                 .define = if (config.define.count() > 0) config.define.toAPI() else null,
                 .entry_points = config.entry_points.keys(),
-                .platform = config.target.toAPI(),
+                .target = config.target.toAPI(),
                 .absolute_working_dir = if (config.dir.list.items.len > 0) config.dir.toOwnedSliceLeaky() else null,
                 .inject = &.{},
                 .external = config.external.keys(),
@@ -1234,9 +1311,9 @@ pub const BundleV2 = struct {
         );
         bundler.options.jsx = config.jsx;
 
-        bundler.options.entry_names = config.names.entry_point.data;
-        bundler.options.chunk_names = config.names.chunk.data;
-        bundler.options.asset_names = config.names.asset.data;
+        bundler.options.entry_naming = config.names.entry_point.data;
+        bundler.options.chunk_naming = config.names.chunk.data;
+        bundler.options.asset_naming = config.names.asset.data;
 
         bundler.options.public_path = config.public_path.list.items;
 
@@ -1360,7 +1437,7 @@ pub const BundleV2 = struct {
         import_record: *const ImportRecord,
         source_file: []const u8,
         import_record_index: u32,
-        original_platform: ?options.Platform,
+        original_target: ?options.Target,
     ) bool {
         if (this.plugins) |plugins| {
             if (plugins.hasAnyMatches(&import_record.path, false)) {
@@ -1379,7 +1456,7 @@ pub const BundleV2 = struct {
                             .source_file = source_file,
                             .import_record_index = import_record_index,
                             .importer_source_index = source_index,
-                            .original_platform = original_platform orelse this.bundler.options.platform,
+                            .original_target = original_target orelse this.bundler.options.target,
                         },
                     },
                     this.completion.?,
@@ -1420,13 +1497,15 @@ pub const BundleV2 = struct {
         defer bun.default_allocator.destroy(parse_result);
 
         var graph = &this.graph;
-        var batch = ThreadPoolLib.Batch{};
+
         var diff: isize = -1;
 
-        defer graph.parse_pending = if (diff > 0)
-            graph.parse_pending + @intCast(usize, diff)
-        else
-            graph.parse_pending - @intCast(usize, -diff);
+        defer {
+            if (diff > 0)
+                _ = @atomicRmw(usize, &graph.parse_pending, .Add, @intCast(usize, diff), .Monotonic)
+            else
+                _ = @atomicRmw(usize, &graph.parse_pending, .Sub, @intCast(usize, -diff), .Monotonic);
+        }
 
         switch (parse_result.value) {
             .empty => |empty_result| {
@@ -1537,7 +1616,8 @@ pub const BundleV2 = struct {
                             continue;
                         }
 
-                        batch.push(ThreadPoolLib.Batch.from(&new_task.task));
+                        // schedule as early as possible
+                        graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&new_task.task));
                     } else {
                         const loader = value.loader orelse graph.input_files.items(.source)[existing.value_ptr.*].path.loader(&this.bundler.options.loaders) orelse options.Loader.file;
                         if (loader.shouldCopyForBundling()) {
@@ -1551,6 +1631,15 @@ pub const BundleV2 = struct {
                 }
 
                 var import_records = result.ast.import_records.clone(this.graph.allocator) catch unreachable;
+
+                if (this.resolve_tasks_waiting_for_import_source_index.fetchSwapRemove(result.source.index.get())) |pending_entry| {
+                    for (pending_entry.value.slice()) |to_assign| {
+                        import_records.slice()[to_assign.import_record_index].source_index = to_assign.to_source_index;
+                    }
+                    var list = pending_entry.value.list();
+                    list.deinit(this.graph.allocator);
+                }
+
                 for (import_records.slice(), 0..) |*record, i| {
                     if (graph.path_to_source_index_map.get(wyhash(0, record.path.text))) |source_index| {
                         record.source_index.value = source_index;
@@ -1578,8 +1667,6 @@ pub const BundleV2 = struct {
                         },
                     ) catch unreachable;
                 }
-                // schedule as early as possible
-                graph.pool.pool.schedule(batch);
             },
             .err => |*err| {
                 if (comptime Environment.allow_assert) {
@@ -1620,7 +1707,7 @@ pub const ParseTask = struct {
     source_index: Index = Index.invalid,
     task: ThreadPoolLib.Task = .{ .callback = &callback },
     tree_shaking: bool = false,
-    known_platform: ?options.Platform = null,
+    known_target: ?options.Target = null,
     module_type: options.ModuleType = .unknown,
     ctx: *BundleV2,
 
@@ -1858,7 +1945,7 @@ pub const ParseTask = struct {
                     switch (err) {
                         error.FileNotFound => {
                             log.addErrorFmt(
-                                &Logger.Source.initEmptyFile(file_path.text),
+                                &Logger.Source.initEmptyFile(log.msgs.allocator.dupe(u8, file_path.text) catch unreachable),
                                 Logger.Loc.Empty,
                                 allocator,
                                 "File not found {}",
@@ -1867,7 +1954,7 @@ pub const ParseTask = struct {
                         },
                         else => {
                             log.addErrorFmt(
-                                &Logger.Source.initEmptyFile(file_path.text),
+                                &Logger.Source.initEmptyFile(log.msgs.allocator.dupe(u8, file_path.text) catch unreachable),
                                 Logger.Loc.Empty,
                                 allocator,
                                 "{s} reading file: {}",
@@ -1910,7 +1997,7 @@ pub const ParseTask = struct {
         };
 
         const source_dir = file_path.sourceDir();
-        const platform = use_directive.platform(task.known_platform orelse bundler.options.platform);
+        const target = use_directive.target(task.known_target orelse bundler.options.target);
 
         var resolve_queue = ResolveQueue.init(bun.default_allocator);
         // TODO: server ESM condition
@@ -1921,12 +2008,12 @@ pub const ParseTask = struct {
         opts.legacy_transform_require_to_import = false;
         opts.can_import_from_bundle = false;
         opts.features.allow_runtime = !source.index.isRuntime();
-        opts.features.dynamic_require = platform.isBun();
+        opts.features.dynamic_require = target.isBun();
         opts.warn_about_unbundled_modules = false;
         opts.macro_context = &this.data.macro_context;
         opts.bundle = true;
         opts.features.top_level_await = true;
-        opts.features.jsx_optimization_inline = platform.isBun() and (bundler.options.jsx_optimization_inline orelse !task.jsx.development);
+        opts.features.jsx_optimization_inline = target.isBun() and (bundler.options.jsx_optimization_inline orelse !task.jsx.development);
         opts.features.auto_import_jsx = task.jsx.parse and bundler.options.auto_import_jsx;
         opts.features.trim_unused_imports = loader.isTypeScript() or (bundler.options.trim_unused_imports orelse false);
         opts.features.inlining = bundler.options.minify_syntax;
@@ -1947,7 +2034,7 @@ pub const ParseTask = struct {
         else
             try getEmptyAST(log, bundler, opts, allocator, source);
 
-        ast.platform = platform;
+        ast.target = target;
         if (ast.parts.len <= 1) {
             task.side_effects = _resolver.SideEffects.no_side_effects__empty_ast;
         }
@@ -1979,7 +2066,7 @@ pub const ParseTask = struct {
                 continue;
             }
 
-            if (platform.isBun()) {
+            if (target.isBun()) {
                 if (JSC.HardcodedModule.Aliases.get(import_record.path.text)) |replacement| {
                     import_record.path.text = replacement.path;
                     import_record.tag = replacement.tag;
@@ -2023,7 +2110,7 @@ pub const ParseTask = struct {
                 }
             }
 
-            if (this.ctx.enqueueOnResolvePluginIfNeeded(source.index.get(), import_record, source.path.text, @truncate(u32, i), platform)) {
+            if (this.ctx.enqueueOnResolvePluginIfNeeded(source.index.get(), import_record, source.path.text, @truncate(u32, i), target)) {
                 continue;
             }
 
@@ -2041,7 +2128,7 @@ pub const ParseTask = struct {
                         if (!import_record.handles_import_errors) {
                             last_error = err;
                             if (isPackagePath(import_record.path.text)) {
-                                if (platform.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
+                                if (target.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
                                     try addError(
                                         log,
                                         &source,
@@ -2133,9 +2220,9 @@ pub const ParseTask = struct {
             resolve_task.secondary_path_for_commonjs_interop = secondary_path_to_copy;
 
             if (use_directive != .none) {
-                resolve_task.known_platform = platform;
-            } else if (task.known_platform) |known_platform| {
-                resolve_task.known_platform = known_platform;
+                resolve_task.known_target = target;
+            } else if (task.known_target) |known_target| {
+                resolve_task.known_target = known_target;
             }
 
             resolve_task.jsx.development = task.jsx.development;
@@ -2157,7 +2244,7 @@ pub const ParseTask = struct {
         std.debug.assert(use_directive == .none or bundler.options.react_server_components);
 
         step.* = .resolve;
-        ast.platform = platform;
+        ast.target = target;
 
         return Result.Success{
             .ast = ast,
@@ -3302,16 +3389,16 @@ const LinkerContext = struct {
 
             if (chunk.entry_point.is_entry_point) {
                 chunk.template = PathTemplate.file;
-                if (this.resolver.opts.entry_names.len > 0)
-                    chunk.template.data = this.resolver.opts.entry_names;
+                if (this.resolver.opts.entry_naming.len > 0)
+                    chunk.template.data = this.resolver.opts.entry_naming;
                 const pathname = Fs.PathName.init(this.graph.entry_points.items(.output_path)[chunk.entry_point.entry_point_id].slice());
                 chunk.template.placeholder.name = pathname.base;
                 chunk.template.placeholder.ext = "js";
                 chunk.template.placeholder.dir = pathname.dir;
             } else {
                 chunk.template = PathTemplate.chunk;
-                if (this.resolver.opts.chunk_names.len > 0)
-                    chunk.template.data = this.resolver.opts.chunk_names;
+                if (this.resolver.opts.chunk_naming.len > 0)
+                    chunk.template.data = this.resolver.opts.chunk_naming;
             }
         }
 
@@ -5785,7 +5872,7 @@ const LinkerContext = struct {
 
             cross_chunk_prefix = js_printer.print(
                 allocator,
-                c.resolver.opts.platform,
+                c.resolver.opts.target,
                 print_options,
                 cross_chunk_import_records.slice(),
                 &[_]js_ast.Part{
@@ -5795,7 +5882,7 @@ const LinkerContext = struct {
             ).result.code;
             cross_chunk_suffix = js_printer.print(
                 allocator,
-                c.resolver.opts.platform,
+                c.resolver.opts.target,
                 print_options,
                 &.{},
                 &[_]js_ast.Part{
@@ -5848,7 +5935,7 @@ const LinkerContext = struct {
             }
         }
 
-        if (chunk.entry_point.is_entry_point and ctx.c.graph.ast.items(.platform)[chunk.entry_point.source_index].isBun()) {
+        if (chunk.entry_point.is_entry_point and ctx.c.graph.ast.items(.target)[chunk.entry_point.source_index].isBun()) {
             j.push("// @bun\n");
         }
 
@@ -6401,7 +6488,7 @@ const LinkerContext = struct {
             .javascript = .{
                 .result = js_printer.print(
                     allocator,
-                    c.resolver.opts.platform,
+                    c.resolver.opts.target,
                     print_options,
                     ast.import_records.slice(),
                     &[_]js_ast.Part{
@@ -7671,7 +7758,7 @@ const LinkerContext = struct {
         return js_printer.printWithWriter(
             *js_printer.BufferPrinter,
             &printer,
-            ast.platform,
+            ast.target,
             print_options,
             ast.import_records.slice(),
             parts_to_print,
@@ -8020,7 +8107,7 @@ const LinkerContext = struct {
             }
 
             output_file.* = options.OutputFile{
-                .input = Fs.Path.init(chunk.final_rel_path),
+                .input = Fs.Path.init(bun.default_allocator.dupe(u8, chunk.final_rel_path) catch unreachable),
                 .loader = .js,
                 .size = @truncate(u32, buffer.len),
                 .value = .{
@@ -8063,7 +8150,7 @@ const LinkerContext = struct {
             }
 
             output_files.appendAssumeCapacity(options.OutputFile{
-                .input = Fs.Path.init(components_manifest_path),
+                .input = Fs.Path.init(bun.default_allocator.dupe(u8, components_manifest_path) catch unreachable),
                 .loader = .file,
                 .size = @truncate(u32, react_client_components_manifest.len),
                 .value = .{

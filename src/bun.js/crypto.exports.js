@@ -1182,7 +1182,9 @@ var require_browser2 = __commonJS({
       }
 
       copy() {
-        return new CryptoHasher(this.#algorithm);
+        const copy = new Hash(this.#algorithm);
+        copy.#hasher = this.#hasher.copy();
+        return copy;
       }
     }
 

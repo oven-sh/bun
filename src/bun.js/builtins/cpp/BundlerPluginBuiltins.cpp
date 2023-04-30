@@ -192,7 +192,7 @@ const char* const s_bundlerPluginRunOnResolvePluginsCode =
 const JSC::ConstructAbility s_bundlerPluginRunSetupFunctionCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_bundlerPluginRunSetupFunctionCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_bundlerPluginRunSetupFunctionCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_bundlerPluginRunSetupFunctionCodeLength = 3262;
+const int s_bundlerPluginRunSetupFunctionCodeLength = 3795;
 static const JSC::Intrinsic s_bundlerPluginRunSetupFunctionCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_bundlerPluginRunSetupFunctionCode =
     "(function (setup) {\n" \
@@ -223,7 +223,7 @@ const char* const s_bundlerPluginRunSetupFunctionCode =
     "      @throwTypeError(\"namespace must be a string\");\n" \
     "    }\n" \
     "\n" \
-    "    if (namespace?.length ?? 0) {\n" \
+    "    if ((namespace?.length ?? 0) === 0) {\n" \
     "      namespace = \"file\";\n" \
     "    }\n" \
     "\n" \
@@ -232,6 +232,7 @@ const char* const s_bundlerPluginRunSetupFunctionCode =
     "    }\n" \
     "\n" \
     "    var callbacks = map.@get(namespace);\n" \
+    "\n" \
     "\n" \
     "    if (!callbacks) {\n" \
     "      map.@set(namespace, [[filter, callback]]);\n" \
@@ -246,6 +247,19 @@ const char* const s_bundlerPluginRunSetupFunctionCode =
     "\n" \
     "  function onResolve(filterObject, callback) {\n" \
     "    validate(filterObject, callback, onResolvePlugins);\n" \
+    "  }\n" \
+    "\n" \
+    "  function onStart(callback) {\n" \
+    "    //\n" \
+    "    @throwTypeError(\"On-start callbacks are not implemented yet. See https:/\\/github.com/oven-sh/bun/issues/2771\");\n" \
+    "  }\n" \
+    "\n" \
+    "  function onEnd(callback) {\n" \
+    "    @throwTypeError(\"On-end callbacks are not implemented yet. See https:/\\/github.com/oven-sh/bun/issues/2771\");\n" \
+    "  }\n" \
+    "\n" \
+    "  function onDispose(callback) {\n" \
+    "    @throwTypeError(\"On-dispose callbacks are not implemented yet. See https:/\\/github.com/oven-sh/bun/issues/2771\");\n" \
     "  }\n" \
     "\n" \
     "  const processSetupResult = () => {\n" \
@@ -277,7 +291,7 @@ const char* const s_bundlerPluginRunSetupFunctionCode =
     "          if (!existing) {\n" \
     "            onResolveObject.@set(namespace, callbacks);\n" \
     "          } else {\n" \
-    "            onResolveObject.@set(existing.concat(callbacks));\n" \
+    "            onResolveObject.@set(namespace, existing.concat(callbacks));\n" \
     "          }\n" \
     "        }\n" \
     "      }\n" \
@@ -294,7 +308,7 @@ const char* const s_bundlerPluginRunSetupFunctionCode =
     "          if (!existing) {\n" \
     "            onLoadObject.@set(namespace, callbacks);\n" \
     "          } else {\n" \
-    "            onLoadObject.@set(existing.concat(callbacks));\n" \
+    "            onLoadObject.@set(namespace, existing.concat(callbacks));\n" \
     "          }\n" \
     "        }\n" \
     "      }\n" \
@@ -304,8 +318,11 @@ const char* const s_bundlerPluginRunSetupFunctionCode =
     "  };\n" \
     "\n" \
     "  var setupResult = setup({\n" \
+    "    onDispose,\n" \
+    "    onEnd,\n" \
     "    onLoad,\n" \
     "    onResolve,\n" \
+    "    onStart,\n" \
     "  });\n" \
     "\n" \
     "  if (setupResult && @isPromise(setupResult)) {\n" \

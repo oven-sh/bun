@@ -263,6 +263,10 @@ pub const JavaScript = struct {
         log: *logger.Log,
         source: *const logger.Source,
     ) anyerror!void {
+        if (strings.trim(source.contents, "\n\t\r ").len == 0) {
+            return;
+        }
+
         var temp_log = logger.Log.init(allocator);
         defer temp_log.appendToMaybeRecycled(log, source) catch {};
 

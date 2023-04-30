@@ -31,14 +31,34 @@ pub fn ColonListType(comptime t: type, comptime value_resolver: anytype) type {
                     return error.InvalidSeparator;
                 }
 
+                if (comptime t == bun.Schema.Api.Loader) {
+                    if (str[0..midpoint].len > 0 and str[0] != '.') {
+                        Output.prettyErrorln("<r><red>error<r><d>:<r> <b>file extension must start with a '.'<r> <d>(while mapping loader {s})<r>", .{bun.fmt.quote(str)});
+                        Global.exit(1);
+                    }
+                }
+
                 self.keys[i] = str[0..midpoint];
-                self.values[i] = try value_resolver(str[midpoint + 1 .. str.len]);
+                self.values[i] = value_resolver(str[midpoint + 1 .. str.len]) catch |err| {
+                    if (err == error.InvalidLoader) {
+                        Output.prettyErrorln("<r><red>error<r><d>:<r> <b>invalid loader {}<r>, expected one of:{}", .{ bun.fmt.quote(str[midpoint + 1 .. str.len]), bun.fmt.enumTagList(bun.options.Loader, .dash) });
+                        Global.exit(1);
+                    }
+                    return err;
+                };
             }
         }
 
         pub fn resolve(allocator: std.mem.Allocator, input: []const string) !@This() {
             var list = try init(allocator, input.len);
-            try list.load(input);
+            list.load(input) catch |err| {
+                if (err == error.InvalidSeparator) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> expected \":\" separator", .{});
+                    Global.exit(1);
+                }
+
+                return err;
+            };
             return list;
         }
     };

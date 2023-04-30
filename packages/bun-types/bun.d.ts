@@ -711,21 +711,6 @@ declare module "bun" {
     ) => number | bigint;
   }
 
-  export type Platform =
-    /**
-     * When building for bun.js
-     */
-    | "bun"
-    /**
-     * When building for the web
-     */
-    | "browser"
-    /**
-     * When building for node.js
-     */
-    | "node"
-    | "neutral";
-
   export type JavaScriptLoader = "jsx" | "js" | "ts" | "tsx";
 
   /**
@@ -776,7 +761,7 @@ declare module "bun" {
 
     /**  What platform are we targeting? This may affect how import and/or require is used */
     /**  @example "browser" */
-    platform?: Platform;
+    target?: Target;
 
     /**
      *  TSConfig.json file as stringified JSON or an object
@@ -966,23 +951,23 @@ declare module "bun" {
 
   interface BuildConfig {
     entrypoints: string[]; // list of file path
-    target?: Target; // default: "browser"
-    // module?: ModuleFormat; // later: "cjs", "iife"
     outdir?: string; // output directory
+    target?: Target; // default: "browser"
+    // format?: ModuleFormat; // later: "cjs", "iife"
 
-    naming?: {
-      chunk?: string;
-      entrypoint?: string;
-      asset?: string;
-    }; // | string;
+    naming?:
+      | string
+      | {
+          chunk?: string;
+          entry?: string;
+          asset?: string;
+        }; // | string;
     // root?: string; // project root
-    // transform?: boolean; // default: false, transform instead of bundling
     splitting?: boolean; // default true, enable code splitting
-    bundling?: boolean; // default true, enable bundling
     plugins?: BunPlugin[];
     // manifest?: boolean; // whether to return manifest
     external?: Array<string>;
-    publicPath: string;
+    publicPath?: string;
     // origin?: string; // e.g. http://mydomain.com
     // loaders?: { [k in string]: Loader };
     // sourcemap?: "none" | "inline" | "external"; // default: "none"
@@ -1000,7 +985,7 @@ declare module "bun" {
     outputs: Array<{ path: string; result: T }>;
   };
 
-  function build(config: BuildConfig): BuildResult<Blob>;
+  function build(config: BuildConfig): Promise<BuildResult<Blob>>;
 
   /**
    * **0** means the message was **dropped**
@@ -2204,7 +2189,12 @@ declare module "bun" {
     update(input: StringOrBuffer, inputEncoding?: CryptoEncoding): CryptoHasher;
 
     /**
-     * Finalize the hash
+     * Perform a deep copy of the hasher
+     */
+    copy(): CryptoHasher;
+
+    /**
+     * Finalize the hash. Resets the CryptoHasher so it can be reused.
      *
      * @param encoding `DigestEncoding` to return the hash in. If none is provided, it will return a `Uint8Array`.
      */

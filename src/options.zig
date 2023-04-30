@@ -770,12 +770,14 @@ pub const Loader = enum(u8) {
             .ts => .ts,
             .tsx => .tsx,
             .css => .css,
+            .file => .file,
             .json => .json,
             .toml => .toml,
             .wasm => .wasm,
             .napi => .napi,
+            .base64 => .base64,
+            .dataurl => .dataurl,
             .text => .text,
-            else => .file,
         };
     }
 
@@ -786,10 +788,13 @@ pub const Loader = enum(u8) {
             .ts => .ts,
             .tsx => .tsx,
             .css => .css,
+            .file => .file,
             .json => .json,
             .toml => .toml,
             .wasm => .wasm,
             .napi => .napi,
+            .base64 => .base64,
+            .dataurl => .dataurl,
             .text => .text,
             else => .file,
         };
@@ -1217,41 +1222,8 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
     var input_loaders = _loaders orelse std.mem.zeroes(Api.LoaderMap);
     var loader_values = try allocator.alloc(Loader, input_loaders.loaders.len);
 
-    if (target.isBun()) {
-        for (loader_values, 0..) |_, i| {
-            const loader = switch (input_loaders.loaders[i]) {
-                .jsx => Loader.jsx,
-                .js => Loader.js,
-                .ts => Loader.ts,
-                .css => Loader.css,
-                .tsx => Loader.tsx,
-                .json => Loader.json,
-                .toml => Loader.toml,
-                .wasm => Loader.wasm,
-                .napi => Loader.napi,
-                .text => Loader.text,
-                else => unreachable,
-            };
-
-            loader_values[i] = loader;
-        }
-    } else {
-        for (loader_values, 0..) |_, i| {
-            const loader = switch (input_loaders.loaders[i]) {
-                .jsx => Loader.jsx,
-                .js => Loader.js,
-                .ts => Loader.ts,
-                .css => Loader.css,
-                .tsx => Loader.tsx,
-                .json => Loader.json,
-                .toml => Loader.toml,
-                .wasm => Loader.wasm,
-                .text => Loader.text,
-                else => unreachable,
-            };
-
-            loader_values[i] = loader;
-        }
+    for (loader_values, input_loaders.loaders) |*loader, input| {
+        loader.* = Loader.fromAPI(input);
     }
 
     var loaders = try stringHashMapFromArrays(

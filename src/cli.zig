@@ -91,19 +91,8 @@ fn invalidTarget(diag: *clap.Diagnostic, _target: []const u8) noreturn {
 }
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
-        const Matcher = strings.ExactSizeMatcher(4);
-        switch (Matcher.match(in)) {
-            Matcher.case("jsx") => return Api.Loader.jsx,
-            Matcher.case("js") => return Api.Loader.js,
-            Matcher.case("ts") => return Api.Loader.ts,
-            Matcher.case("tsx") => return Api.Loader.tsx,
-            Matcher.case("css") => return Api.Loader.css,
-            Matcher.case("file") => return Api.Loader.file,
-            Matcher.case("json") => return Api.Loader.json,
-            else => {
-                return error.InvalidLoader;
-            },
-        }
+        const option_loader = options.Loader.fromString(in) orelse return error.InvalidLoader;
+        return option_loader.toAPI();
     }
 
     pub fn noop_resolver(in: string) !string {

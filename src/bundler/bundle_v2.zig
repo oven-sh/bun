@@ -1945,7 +1945,7 @@ pub const ParseTask = struct {
                     switch (err) {
                         error.FileNotFound => {
                             log.addErrorFmt(
-                                &Logger.Source.initEmptyFile(file_path.text),
+                                &Logger.Source.initEmptyFile(log.msgs.allocator.dupe(u8, file_path.text) catch unreachable),
                                 Logger.Loc.Empty,
                                 allocator,
                                 "File not found {}",
@@ -1954,7 +1954,7 @@ pub const ParseTask = struct {
                         },
                         else => {
                             log.addErrorFmt(
-                                &Logger.Source.initEmptyFile(file_path.text),
+                                &Logger.Source.initEmptyFile(log.msgs.allocator.dupe(u8, file_path.text) catch unreachable),
                                 Logger.Loc.Empty,
                                 allocator,
                                 "{s} reading file: {}",

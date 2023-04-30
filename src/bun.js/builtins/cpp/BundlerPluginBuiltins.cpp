@@ -192,7 +192,7 @@ const char* const s_bundlerPluginRunOnResolvePluginsCode =
 const JSC::ConstructAbility s_bundlerPluginRunSetupFunctionCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_bundlerPluginRunSetupFunctionCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_bundlerPluginRunSetupFunctionCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_bundlerPluginRunSetupFunctionCodeLength = 3786;
+const int s_bundlerPluginRunSetupFunctionCodeLength = 3795;
 static const JSC::Intrinsic s_bundlerPluginRunSetupFunctionCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_bundlerPluginRunSetupFunctionCode =
     "(function (setup) {\n" \
@@ -223,7 +223,7 @@ const char* const s_bundlerPluginRunSetupFunctionCode =
     "      @throwTypeError(\"namespace must be a string\");\n" \
     "    }\n" \
     "\n" \
-    "    if (namespace?.length ?? 0) {\n" \
+    "    if ((namespace?.length ?? 0) === 0) {\n" \
     "      namespace = \"file\";\n" \
     "    }\n" \
     "\n" \
@@ -232,6 +232,7 @@ const char* const s_bundlerPluginRunSetupFunctionCode =
     "    }\n" \
     "\n" \
     "    var callbacks = map.@get(namespace);\n" \
+    "\n" \
     "\n" \
     "    if (!callbacks) {\n" \
     "      map.@set(namespace, [[filter, callback]]);\n" \

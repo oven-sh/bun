@@ -196,7 +196,7 @@ function runSetupFunction(setup) {
       @throwTypeError("namespace must be a string");
     }
 
-    if (namespace?.length ?? 0) {
+    if ((namespace?.length ?? 0) === 0) {
       namespace = "file";
     }
 

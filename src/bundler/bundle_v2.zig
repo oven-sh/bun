@@ -1146,7 +1146,7 @@ pub const BundleV2 = struct {
                 var out_source_index: ?Index = null;
                 if (!result.external) {
                     var path = Fs.Path.init(result.path);
-                    if (path.namespace.len == 0 or strings.eqlComptime(path.namespace, "file")) {
+                    if (result.namespace.len == 0 or strings.eqlComptime(result.namespace, "file")) {
                         path.namespace = "file";
                     } else {
                         path.namespace = result.namespace;

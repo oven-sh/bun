@@ -528,7 +528,7 @@ pub const Options = struct {
 
     // If we're writing out a source map, this table of line start indices lets
     // us do binary search on to figure out what line a given AST node came from
-    // line_offset_tables: []LineOffsetTable
+    line_offset_tables: ?SourceMap.LineOffsetTable.List = null,
 
     pub inline fn unindent(self: *Options) void {
         self.indent -|= 1;
@@ -2754,7 +2754,8 @@ fn NewPrinter(
                     }
                 },
                 .e_unary => |e| {
-                    const entry: Op = Op.Table.get(e.op);
+                    // 4.00 ms  eums.EnumIndexer(src.js_ast.Op.Code).indexOf
+                    const entry: *const Op = Op.Table.getPtrConst(e.op);
                     const wrap = level.gte(entry.level);
 
                     if (wrap) {
@@ -2785,8 +2786,11 @@ fn NewPrinter(
                     }
                 },
                 .e_binary => |e| {
-                    const entry: Op = Op.Table.get(e.op);
-                    var wrap = level.gte(entry.level) or (e.op == Op.Code.bin_in and flags.contains(.forbid_in));
+                    // 4.00 ms  enums.EnumIndexer(src.js_ast.Op.Code).indexOf
+                    const entry: *const Op = Op.Table.getPtrConst(e.op);
+                    const e_level = entry.level;
+
+                    var wrap = level.gte(e_level) or (e.op == Op.Code.bin_in and flags.contains(.forbid_in));
 
                     // Destructuring assignments must be parenthesized
                     const n = p.writer.written;
@@ -2804,15 +2808,15 @@ fn NewPrinter(
                         flags.insert(.forbid_in);
                     }
 
-                    var left_level = entry.level.sub(1);
-                    var right_level = entry.level.sub(1);
+                    var left_level = e_level.sub(1);
+                    var right_level = e_level.sub(1);
 
                     if (e.op.isRightAssociative()) {
-                        left_level = entry.level;
+                        left_level = e_level;
                     }
 
                     if (e.op.isLeftAssociative()) {
-                        right_level = entry.level;
+                        right_level = e_level;
                     }
 
                     switch (e.op) {
@@ -5166,7 +5170,7 @@ fn NewPrinter(
 
             imported_module_ids_list.clearRetainingCapacity();
 
-            return Printer{
+            var printer = Printer{
                 .import_records = import_records,
                 .options = opts,
                 .writer = writer,
@@ -5174,6 +5178,16 @@ fn NewPrinter(
                 .renamer = renamer,
                 .source_map_builder = source_map_builder,
             };
+            if (comptime generate_source_map) {
+                // This seems silly to cache but the .items() function apparently costs 1ms according to Instruments.
+                printer.source_map_builder.line_offset_table_byte_offset_list =
+                    printer
+                    .source_map_builder
+                    .line_offset_tables
+                    .items(.byte_offset_to_start_of_line);
+            }
+
+            return printer;
         }
     };
 }
@@ -5593,7 +5607,7 @@ pub fn getSourceMapBuilder(
         ),
         .cover_lines_without_mappings = true,
         .prepend_count = is_bun_platform,
-        .line_offset_tables = SourceMap.LineOffsetTable.generate(
+        .line_offset_tables = opts.line_offset_tables orelse SourceMap.LineOffsetTable.generate(
             opts.allocator,
             source.contents,
             @intCast(
@@ -5883,10 +5897,12 @@ pub fn printWithWriterAndPlatform(
         return .{ .err = err };
 
     const written = printer.writer.ctx.getWritten();
-    const source_map: ?SourceMap.Chunk = if (generate_source_maps and written.len > 0)
-        printer.source_map_builder.generateChunk(written)
-    else
-        null;
+    const source_map: ?SourceMap.Chunk = if (generate_source_maps and written.len > 0) brk: {
+        const chunk = printer.source_map_builder.generateChunk(written);
+        if (chunk.should_ignore)
+            break :brk null;
+        break :brk chunk;
+    } else null;
 
     return .{
         .result = .{

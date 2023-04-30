@@ -441,9 +441,10 @@ pub const SourceMapPieces = struct {
         var j = Joiner{};
 
         j.push(this.prefix.items);
+        const mappings = this.mappings.items;
 
-        while (current < this.mappings.items.len) {
-            if (this.mappings.items[current] == ';') {
+        while (current < mappings.len) {
+            if (mappings[current] == ';') {
                 generated.lines += 1;
                 generated.columns = 0;
                 prev_shift_column_delta = 0;
@@ -453,24 +454,24 @@ pub const SourceMapPieces = struct {
 
             var potential_end_of_run = current;
 
-            var decode_result = decodeVLQ(this.mappings.items, current);
+            var decode_result = decodeVLQ(mappings, current);
             generated.columns += decode_result.value;
             current = decode_result.start;
 
             var potential_start_of_run = current;
 
-            current = decodeVLQ(this.mappings.items, current).start;
-            current = decodeVLQ(this.mappings.items, current).start;
-            current = decodeVLQ(this.mappings.items, current).start;
+            current = decodeVLQ(mappings, current).start;
+            current = decodeVLQ(mappings, current).start;
+            current = decodeVLQ(mappings, current).start;
 
-            if (current < this.mappings.items.len) {
-                var c = this.mappings.items[current];
+            if (current < mappings.len) {
+                var c = mappings[current];
                 if (c != ',' and c != ';') {
-                    current = decodeVLQ(this.mappings.items, current).start;
+                    current = decodeVLQ(mappings, current).start;
                 }
             }
 
-            if (current < this.mappings.items.len and this.mappings.items[current] == ',') {
+            if (current < mappings.len and mappings[current] == ',') {
                 current += 1;
             }
 
@@ -489,7 +490,7 @@ pub const SourceMapPieces = struct {
                 continue;
             }
 
-            j.push(this.mappings.items[start_of_run..potential_end_of_run]);
+            j.push(mappings[start_of_run..potential_end_of_run]);
 
             std.debug.assert(shift.before.lines == shift.after.lines);
 
@@ -501,7 +502,7 @@ pub const SourceMapPieces = struct {
             start_of_run = potential_start_of_run;
         }
 
-        j.push(this.mappings.items[start_of_run..]);
+        j.push(mappings[start_of_run..]);
         j.push(this.suffix.items);
 
         return try j.done(allocator);
@@ -748,18 +749,14 @@ pub const LineOffsetTable = struct {
 
     pub const List = std.MultiArrayList(LineOffsetTable);
 
-    pub fn findLine(list: List, loc: Logger.Loc) i32 {
-        const byte_offsets_to_start_of_line = list.items(.byte_offset_to_start_of_line);
-        var original_line: u32 = 0;
-        if (loc.start <= -1) {
-            return 0;
-        }
-
-        const loc_start = @intCast(u32, loc.start);
+    pub fn findLine(byte_offsets_to_start_of_line: []const u32, loc: Logger.Loc) i32 {
+        std.debug.assert(loc.start > -1); // checked by caller
+        var original_line: usize = 0;
+        const loc_start = @intCast(usize, loc.start);
 
         {
-            var count = @truncate(u32, byte_offsets_to_start_of_line.len);
-            var i: u32 = 0;
+            var count = @truncate(usize, byte_offsets_to_start_of_line.len);
+            var i: usize = 0;
             while (count > 0) {
                 const step = count / 2;
                 i = original_line + step;
@@ -1125,6 +1122,8 @@ pub const Chunk = struct {
             prev_loc: Logger.Loc = Logger.Loc.Empty,
             has_prev_state: bool = false,
 
+            line_offset_table_byte_offset_list: []const u32 = &.{},
+
             // This is a workaround for a bug in the popular "source-map" library:
             // https://github.com/mozilla/source-map/issues/261. The library will
             // sometimes return null when querying a source map unless every line
@@ -1141,7 +1140,7 @@ pub const Chunk = struct {
 
             pub const SourceMapper = SourceMapFormat(SourceMapFormatType);
 
-            pub fn generateChunk(b: *ThisBuilder, output: []const u8) Chunk {
+            pub noinline fn generateChunk(b: *ThisBuilder, output: []const u8) Chunk {
                 b.updateGeneratedLineAndColumn(output);
                 if (b.prepend_count) {
                     b.source_map.getBuffer().list.items[0..8].* = @bitCast([8]u8, b.source_map.getBuffer().list.items.len);
@@ -1152,7 +1151,7 @@ pub const Chunk = struct {
                     .mappings_count = b.source_map.getCount(),
                     .end_state = b.prev_state,
                     .final_generated_column = b.generated_column,
-                    .should_ignore = !b.source_map.shouldIgnore(),
+                    .should_ignore = b.source_map.shouldIgnore(),
                 };
             }
 
@@ -1254,7 +1253,7 @@ pub const Chunk = struct {
 
                 b.prev_loc = loc;
                 const list = b.line_offset_tables;
-                const original_line = LineOffsetTable.findLine(list, loc);
+                const original_line = LineOffsetTable.findLine(b.line_offset_table_byte_offset_list, loc);
                 const line = list.get(@intCast(usize, @max(original_line, 0)));
 
                 // Use the line to compute the column

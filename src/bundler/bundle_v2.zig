@@ -208,6 +208,9 @@ pub const ThreadPool = struct {
 
         deinit_task: ThreadPoolLib.Task = .{ .callback = deinitCallback },
 
+        temporary_arena: std.heap.ArenaAllocator = undefined,
+        stmt_list: LinkerContext.StmtList = undefined,
+
         pub fn deinitCallback(task: *ThreadPoolLib.Task) void {
             debug("Worker.deinit()", .{});
             var this = @fieldParentPtr(Worker, "deinit_task", task);
@@ -285,6 +288,8 @@ pub const ThreadPool = struct {
             this.data.bundler.linker.resolver = &this.data.bundler.resolver;
             this.data.bundler.macro_context = js_ast.Macro.MacroContext.init(&this.data.bundler);
             this.data.macro_context = this.data.bundler.macro_context.?;
+            this.temporary_arena = std.heap.ArenaAllocator.init(this.allocator);
+            this.stmt_list = LinkerContext.StmtList.init(this.allocator);
 
             const CacheSet = @import("../cache.zig");
 
@@ -5587,22 +5592,13 @@ const LinkerContext = struct {
         wg: *sync.WaitGroup,
         c: *LinkerContext,
         chunks: []Chunk,
+        chunk: *Chunk,
     };
     fn generateChunkJS(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) void {
         defer ctx.wg.finish();
         const worker = ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", ctx.c));
         defer worker.unget();
-        generateChunkJS_(ctx, worker, chunk, chunk_index) catch |err| Output.panic("TODO: handle error: {s}", .{@errorName(err)});
-    }
-
-    // This version generates the renamer for the chunk too
-    // We have both to avoid extra thread switching overhead
-    fn generateChunkJSWithRenamer(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) void {
-        defer ctx.wg.finish();
-        const worker = ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", ctx.c));
-        defer worker.unget();
-        generateJSRenamer_(ctx, worker, chunk, chunk_index);
-        generateChunkJS_(ctx, worker, chunk, chunk_index) catch |err| Output.panic("TODO: handle error: {s}", .{@errorName(err)});
+        postProcessJSChunk(ctx, worker, chunk, chunk_index) catch |err| Output.panic("TODO: handle error: {s}", .{@errorName(err)});
     }
 
     // TODO: investigate if we need to parallelize this function
@@ -5871,89 +5867,72 @@ const LinkerContext = struct {
         ) catch @panic("TODO: handle error");
     }
 
-    fn generateChunkJS_(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chunk: *Chunk, chunk_index: usize) !void {
-        _ = chunk_index;
+    fn generateCompileResultForJSChunk(task: *ThreadPoolLib.Task) void {
+        const part_range: *const PendingPartRange = @fieldParentPtr(PendingPartRange, "task", task);
+        const ctx = part_range.ctx;
+        defer ctx.wg.finish();
+        var worker = ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", ctx.c));
+        defer worker.unget();
+        ctx.chunk.compile_results_for_chunk[part_range.i] = generateCompileResultForJSChunk_(worker, ctx.c, ctx.chunk, part_range.part_range);
+    }
 
-        const allocator = worker.allocator;
-        const c = ctx.c;
-        std.debug.assert(chunk.content == .javascript);
-
-        var repr = &chunk.content.javascript;
+    fn generateCompileResultForJSChunk_(worker: *ThreadPool.Worker, c: *LinkerContext, chunk: *Chunk, part_range: PartRange) CompileResult {
+        var arena = &worker.temporary_arena;
+        var buffer_writer = js_printer.BufferWriter.init(worker.allocator) catch unreachable;
+        defer _ = arena.reset(.retain_capacity);
+        worker.stmt_list.reset();
 
         var runtime_scope: *Scope = &c.graph.ast.items(.module_scope)[c.graph.files.items(.input_file)[Index.runtime.value].get()];
-        const ast = c.graph.ast.get(chunk.entry_point.source_index);
         var runtime_members = &runtime_scope.members;
         const toCommonJSRef = c.graph.symbols.follow(runtime_members.get("__toCommonJS").?.ref);
         const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
         const runtimeRequireRef = c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
+        const result = c.generateCodeForFileInChunkJS(
+            &buffer_writer,
+            chunk.renamer,
+            chunk,
+            part_range,
+            toCommonJSRef,
+            toESMRef,
+            runtimeRequireRef,
+            &worker.stmt_list,
+            worker.allocator,
+            arena.allocator(),
+        );
+
+        return .{
+            .javascript = .{
+                .result = result,
+                .source_index = part_range.source_index.get(),
+            },
+        };
+    }
+
+    // This runs after we've already populated the compile results
+    fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chunk: *Chunk, chunk_index: usize) !void {
+        _ = chunk_index;
+        const allocator = worker.allocator;
+        const c = ctx.c;
+        std.debug.assert(chunk.content == .javascript);
+
         js_ast.Expr.Data.Store.create(bun.default_allocator);
         js_ast.Stmt.Data.Store.create(bun.default_allocator);
 
-        var r = chunk.renamer;
-        defer r.deinit(bun.default_allocator);
-        const part_ranges = repr.parts_in_chunk_in_order;
-        var stmts = StmtList.init(allocator);
-        defer stmts.deinit();
+        defer chunk.renamer.deinit(bun.default_allocator);
 
         var arena = std.heap.ArenaAllocator.init(allocator);
         defer arena.deinit();
-        var compile_results = std.ArrayList(CompileResult).initCapacity(allocator, part_ranges.len) catch unreachable;
-        {
-            defer _ = arena.reset(.retain_capacity);
-
-            var buffer_writer = js_printer.BufferWriter.init(allocator) catch unreachable;
-
-            for (part_ranges, 0..) |part_range, i| {
-                if (i > 0) _ = arena.reset(.retain_capacity);
-                const result = c.generateCodeForFileInChunkJS(
-                    &buffer_writer,
-                    r,
-                    chunk,
-                    part_range,
-                    toCommonJSRef,
-                    toESMRef,
-                    runtimeRequireRef,
-                    &stmts,
-                    allocator,
-                    arena.allocator(),
-                );
-
-                if (i < part_ranges.len - 1) {
-                    compile_results.appendAssumeCapacity(
-                        // we reuse the memory buffer up until the final chunk to minimize reallocations
-                        .{
-                            .javascript = .{
-                                .result = result.clone(allocator) catch unreachable,
-                                .source_index = part_range.source_index.get(),
-                            },
-                        },
-                    );
-                } else {
-                    if (comptime Environment.allow_assert) {
-                        if (result == .result) {
-                            if (buffer_writer.buffer.list.capacity > result.result.code.len) {
-                                // add a 0 to make it easier to view the code in a debugger
-                                // but only if room
-                                buffer_writer.buffer.list.items.ptr[result.result.code.len] = 0;
-                            }
-                        }
-                    }
-
-                    // the final chunk owns the memory buffer
-                    compile_results.appendAssumeCapacity(.{
-                        .javascript = .{
-                            .result = result.clone(allocator) catch unreachable,
-                            .source_index = part_range.source_index.get(),
-                        },
-                    });
-                }
-            }
-        }
 
         // Also generate the cross-chunk binding code
         var cross_chunk_prefix: []u8 = &.{};
         var cross_chunk_suffix: []u8 = &.{};
+
+        var runtime_scope: *Scope = &c.graph.ast.items(.module_scope)[c.graph.files.items(.input_file)[Index.runtime.value].get()];
+        var runtime_members = &runtime_scope.members;
+        const toCommonJSRef = c.graph.symbols.follow(runtime_members.get("__toCommonJS").?.ref);
+        const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
+        const runtimeRequireRef = c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
         {
             const indent: usize = 0;
@@ -5983,6 +5962,8 @@ const LinkerContext = struct {
                 );
             }
 
+            const ast = c.graph.ast.get(chunk.entry_point.source_index);
+
             cross_chunk_prefix = js_printer.print(
                 allocator,
                 c.resolver.opts.target,
@@ -5993,7 +5974,7 @@ const LinkerContext = struct {
                 &[_]js_ast.Part{
                     .{ .stmts = chunk.content.javascript.cross_chunk_prefix_stmts.slice() },
                 },
-                r,
+                chunk.renamer,
                 false,
             ).result.code;
             cross_chunk_suffix = js_printer.print(
@@ -6006,7 +5987,7 @@ const LinkerContext = struct {
                 &[_]js_ast.Part{
                     .{ .stmts = chunk.content.javascript.cross_chunk_suffix_stmts.slice() },
                 },
-                r,
+                chunk.renamer,
                 false,
             ).result.code;
         }
@@ -6020,7 +6001,7 @@ const LinkerContext = struct {
                     chunk.entry_point.source_index,
                     allocator,
                     arena.allocator(),
-                    r,
+                    chunk.renamer,
                 );
             }
 
@@ -6074,11 +6055,13 @@ const LinkerContext = struct {
         // Concatenate the generated JavaScript chunks together
 
         var prev_filename_comment: Index.Int = 0;
+        const compile_results = chunk.compile_results_for_chunk;
         var compile_results_for_source_map = std.MultiArrayList(CompileResultForSourceMap){};
-        compile_results_for_source_map.ensureUnusedCapacity(allocator, compile_results.items.len) catch unreachable;
+
+        compile_results_for_source_map.ensureUnusedCapacity(allocator, compile_results.len) catch unreachable;
 
         const sources: []const Logger.Source = c.parse_graph.input_files.items(.source);
-        for (@as([]CompileResult, compile_results.items)) |compile_result| {
+        for (@as([]CompileResult, compile_results)) |compile_result| {
             const source_index = compile_result.sourceIndex();
             const is_runtime = source_index == Index.runtime.value;
 
@@ -6773,7 +6756,7 @@ const LinkerContext = struct {
         };
     }
 
-    const StmtList = struct {
+    pub const StmtList = struct {
         inside_wrapper_prefix: std.ArrayList(Stmt),
         outside_wrapper_prefix: std.ArrayList(Stmt),
         inside_wrapper_suffix: std.ArrayList(Stmt),
@@ -8044,6 +8027,13 @@ const LinkerContext = struct {
         }
     }
 
+    const PendingPartRange = struct {
+        part_range: PartRange,
+        task: ThreadPoolLib.Task,
+        ctx: *GenerateChunkCtx,
+        i: u32 = 0,
+    };
+
     fn requireOrImportMetaForSource(
         c: *LinkerContext,
         source_index: Index.Int,
@@ -8065,58 +8055,78 @@ const LinkerContext = struct {
     };
 
     pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk) !std.ArrayList(options.OutputFile) {
-        switch (c.options.source_maps) {
-            .none => {
-                {
-                    debug("START Generating {d} chunks in parallel", .{chunks.len});
-                    defer debug(" DONE Generating {d} chunks in parallel", .{chunks.len});
-                    var wait_group = try c.allocator.create(sync.WaitGroup);
-                    wait_group.init();
-                    defer {
-                        wait_group.deinit();
-                        c.allocator.destroy(wait_group);
-                    }
-                    wait_group.counter = @truncate(u32, chunks.len);
-                    var ctx = GenerateChunkCtx{ .wg = wait_group, .c = c, .chunks = chunks };
-                    try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, ctx, generateChunkJSWithRenamer, chunks);
-                }
-            },
-            else => {
-                {
-                    debug("START Generating {d} renamers in parallel", .{chunks.len});
-                    defer debug(" DONE Generating {d} renamers in parallel", .{chunks.len});
-                    var wait_group = try c.allocator.create(sync.WaitGroup);
-                    wait_group.init();
-                    defer {
-                        wait_group.deinit();
-                        c.allocator.destroy(wait_group);
-                    }
-                    wait_group.counter = @truncate(u32, chunks.len);
-                    var ctx = GenerateChunkCtx{ .wg = wait_group, .c = c, .chunks = chunks };
-                    try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, ctx, generateJSRenamer, chunks);
+        {
+            debug("  START Generating {d} renamers in parallel", .{chunks.len});
+            defer debug("  DONE Generating {d} renamers in parallel", .{chunks.len});
+            var wait_group = try c.allocator.create(sync.WaitGroup);
+            wait_group.init();
+            defer {
+                wait_group.deinit();
+                c.allocator.destroy(wait_group);
+            }
+            wait_group.counter = @truncate(u32, chunks.len);
+            var ctx = GenerateChunkCtx{ .chunk = &chunks[0], .wg = wait_group, .c = c, .chunks = chunks };
+            try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, ctx, generateJSRenamer, chunks);
+        }
+
+        {
+            debug(" START waiting for {d} source maps", .{chunks.len});
+            defer debug("  DONE waiting for {d} source maps", .{chunks.len});
+            c.source_maps.wait_group.wait();
+            c.allocator.free(c.source_maps.tasks);
+            c.source_maps.tasks.len = 0;
+        }
+        {
+            var chunk_contexts = c.allocator.alloc(GenerateChunkCtx, chunks.len) catch unreachable;
+            defer c.allocator.free(chunk_contexts);
+            var wait_group = try c.allocator.create(sync.WaitGroup);
+            wait_group.init();
+            defer {
+                wait_group.deinit();
+                c.allocator.destroy(wait_group);
+            }
+            {
+                var total_count: usize = 0;
+                for (chunks, chunk_contexts) |*chunk, *chunk_ctx| {
+                    chunk_ctx.* = .{ .wg = wait_group, .c = c, .chunks = chunks, .chunk = chunk };
+                    total_count += chunk.content.javascript.parts_in_chunk_in_order.len;
+                    chunk.compile_results_for_chunk = c.allocator.alloc(CompileResult, chunk.content.javascript.parts_in_chunk_in_order.len) catch unreachable;
                 }
 
-                {
-                    debug("START waiting for {d} source maps", .{chunks.len});
-                    defer debug(" START waiting for {d} source maps", .{chunks.len});
-                    c.source_maps.wait_group.wait();
-                    c.allocator.free(c.source_maps.tasks);
-                    c.source_maps.tasks.len = 0;
-                }
-                {
-                    debug("START Generating {d} chunks in parallel", .{chunks.len});
-                    defer debug(" DONE Generating {d} chunks in parallel", .{chunks.len});
-                    var wait_group = try c.allocator.create(sync.WaitGroup);
-                    wait_group.init();
-                    defer {
-                        wait_group.deinit();
-                        c.allocator.destroy(wait_group);
+                debug(" START waiting for {d} compiling part ranges", .{total_count});
+                defer debug("  DONE waiting for {d} compiling part ranges", .{total_count});
+                var combined_part_ranges = c.allocator.alloc(PendingPartRange, total_count) catch unreachable;
+                defer c.allocator.free(combined_part_ranges);
+                var remaining_part_ranges = combined_part_ranges;
+                var batch = ThreadPoolLib.Batch{};
+                for (chunks, chunk_contexts) |*chunk, *chunk_ctx| {
+                    for (chunk.content.javascript.parts_in_chunk_in_order, 0..) |part_range, i| {
+                        remaining_part_ranges[0] = .{
+                            .part_range = part_range,
+                            .i = @truncate(u32, i),
+                            .task = ThreadPoolLib.Task{
+                                .callback = &generateCompileResultForJSChunk,
+                            },
+                            .ctx = chunk_ctx,
+                        };
+                        batch.push(ThreadPoolLib.Batch.from(&remaining_part_ranges[0].task));
+
+                        remaining_part_ranges = remaining_part_ranges[1..];
                     }
-                    wait_group.counter = @truncate(u32, chunks.len);
-                    var ctx = GenerateChunkCtx{ .wg = wait_group, .c = c, .chunks = chunks };
-                    try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, ctx, generateChunkJS, chunks);
                 }
-            },
+                wait_group.counter = @truncate(u32, total_count);
+                c.parse_graph.pool.pool.schedule(batch);
+                wait_group.wait();
+            }
+
+            {
+                debug(" START waiting for {d} postprocess chunks", .{chunks.len});
+                defer debug("  DONE waiting for {d} postprocess chunks", .{chunks.len});
+                wait_group.init();
+                wait_group.counter = @truncate(u32, chunks.len);
+
+                try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, chunk_contexts[0], generateChunkJS, chunks);
+            }
         }
 
         // TODO: enforceNoCyclicChunkImports()
@@ -9978,6 +9988,8 @@ pub const Chunk = struct {
     isolated_hash: u64 = std.math.maxInt(u64),
 
     renamer: renamer.Renamer = undefined,
+
+    compile_results_for_chunk: []CompileResult = &.{},
 
     pub inline fn isEntryPoint(this: *const Chunk) bool {
         return this.entry_point.is_entry_point;

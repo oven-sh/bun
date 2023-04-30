@@ -17,13 +17,13 @@ import { html } from "@stricjs/arrow/utils";
 export function render() {
   html`<p>Hi</p>`;
 };
+
+export const path = "/";
 ```
 ```ts#index.ts
 import { PageRouter } from "@stricjs/arrow";
 
-new PageRouter()
-    .static("/", "App.ts")
-    .serve();
+new PageRouter().serve();
 ```
 
 {% /codetabs %}

@@ -3967,7 +3967,8 @@ const LinkerContext = struct {
                                 // returns a promise, so the imported file must be a CommonJS module
                                 if (exports_kind[other_file] == .esm) {
                                     flags[other_file].wrap = .esm;
-                                } else if (!force_cjs_to_esm[other_file]) {
+                                } else {
+                                    // even if force_cjs_to_esm[other_file]) is true, we need to wrap
                                     flags[other_file].wrap = .cjs;
                                     exports_kind[other_file] = .cjs;
                                 }
@@ -10183,7 +10184,7 @@ pub const Chunk = struct {
                     }
 
                     std.debug.assert(remain.len == 0);
-                    std.debug.assert(total_buf.len == count);
+                    std.debug.assert(total_buf.len == count + debug_id_len);
 
                     return .{
                         .buffer = total_buf,

@@ -4385,7 +4385,7 @@ const LinkerContext = struct {
                         }
                     }
 
-                    this.graph.symbols.merge(ref, import.data.import_ref);
+                    _ = this.graph.symbols.merge(ref, import.data.import_ref);
                 }
 
                 // If this is an entry point, depend on all exports so they are included

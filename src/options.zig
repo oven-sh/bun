@@ -867,9 +867,9 @@ pub const ESMConditions = struct {
         var import_condition_map = ConditionsMap.init(allocator);
         var require_condition_map = ConditionsMap.init(allocator);
 
-        try default_condition_amp.ensureTotalCapacity(defaults.len + 1);
-        try import_condition_map.ensureTotalCapacity(defaults.len + 1);
-        try require_condition_map.ensureTotalCapacity(defaults.len + 1);
+        try default_condition_amp.ensureTotalCapacity(defaults.len + 2);
+        try import_condition_map.ensureTotalCapacity(defaults.len + 2);
+        try require_condition_map.ensureTotalCapacity(defaults.len + 2);
 
         import_condition_map.putAssumeCapacity("import", {});
         require_condition_map.putAssumeCapacity("require", {});

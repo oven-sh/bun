@@ -6193,22 +6193,24 @@ const LinkerContext = struct {
 
         // TODO: meta contents
 
+        chunk.isolated_hash = c.generateIsolatedHash(chunk);
+        chunk.is_executable = is_executable;
+
         if (c.options.source_maps != .none) {
             const can_have_shifts = chunk.intermediate_output == .pieces;
             chunk.output_source_map = try c.generateSourceMapForChunk(
+                chunk.isolated_hash,
                 worker,
                 compile_results_for_source_map,
                 c.resolver.opts.output_dir,
                 can_have_shifts,
             );
         }
-
-        chunk.isolated_hash = c.generateIsolatedHash(chunk);
-        chunk.is_executable = is_executable;
     }
 
     pub fn generateSourceMapForChunk(
         c: *LinkerContext,
+        isolated_hash: u64,
         worker: *ThreadPool.Worker,
         results: std.MultiArrayList(CompileResultForSourceMap),
         chunk_abs_dir: string,
@@ -6312,7 +6314,14 @@ const LinkerContext = struct {
         }
         const mapping_end = j.len;
 
-        j.push("\",\n  \"names\": []\n}");
+        if (comptime FeatureFlags.source_map_debug_id) {
+            j.push("\",\n  \"debugId\": \"");
+            j.push(try std.fmt.allocPrint(worker.allocator, "{}", .{bun.sourcemap.DebugIDFormatter{ .id = isolated_hash }}));
+            j.push("\",\n  \"names\": []\n}");
+        } else {
+            j.push("\",\n  \"names\": []\n}");
+        }
+
         const done = try j.done(worker.allocator);
 
         var pieces = sourcemap.SourceMapPieces.init(worker.allocator);
@@ -10067,8 +10076,6 @@ pub const Chunk = struct {
                     shifts.appendAssumeCapacity(shift);
 
                     var count: usize = 0;
-                    var file_path_buf: [4096]u8 = undefined;
-                    _ = file_path_buf;
                     var from_chunk_dir = std.fs.path.dirname(chunk.final_rel_path) orelse "";
                     if (strings.eqlComptime(from_chunk_dir, "."))
                         from_chunk_dir = "";
@@ -10098,7 +10105,12 @@ pub const Chunk = struct {
                         }
                     }
 
-                    var total_buf = try (allocator_to_use orelse allocatorForSize(count)).alloc(u8, count);
+                    const debug_id_len = if (comptime FeatureFlags.source_map_debug_id)
+                        std.fmt.count("\n//# debugId={}\n", .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }})
+                    else
+                        0;
+
+                    var total_buf = try (allocator_to_use orelse allocatorForSize(count)).alloc(u8, count + debug_id_len);
                     var remain = total_buf;
 
                     for (pieces.slice()) |piece| {
@@ -10159,6 +10171,15 @@ pub const Chunk = struct {
                         }
                     }
 
+                    if (comptime FeatureFlags.source_map_debug_id) {
+                        // This comment must go before the //# sourceMappingURL comment
+                        remain = remain[(std.fmt.bufPrint(
+                            remain,
+                            "\n//# debugId={}\n",
+                            .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }},
+                        ) catch unreachable).len..];
+                    }
+
                     std.debug.assert(remain.len == 0);
                     std.debug.assert(total_buf.len == count);
 
@@ -10170,6 +10191,16 @@ pub const Chunk = struct {
                 .joiner => |joiner_| {
                     // TODO: make this safe
                     var joiny = joiner_;
+
+                    if (comptime FeatureFlags.source_map_debug_id) {
+                        // This comment must go before the //# sourceMappingURL comment
+                        joiny.push(std.fmt.allocPrint(
+                            graph.allocator,
+                            "\n//# debugId={}\n",
+                            .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }},
+                        ) catch unreachable);
+                    }
+
                     return .{
                         .buffer = try joiny.done((allocator_to_use orelse allocatorForSize(joiny.len))),
                         .shifts = &[_]sourcemap.SourceMapShifts{},

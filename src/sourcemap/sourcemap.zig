@@ -1292,3 +1292,29 @@ pub const Chunk = struct {
 
     pub const Builder = NewBuilder(VLQSourceMap);
 };
+
+/// https://sentry.engineering/blog/the-case-for-debug-ids
+/// https://github.com/mitsuhiko/source-map-rfc/blob/proposals/debug-id/proposals/debug-id.md
+/// https://github.com/source-map/source-map-rfc/pull/20
+pub const DebugIDFormatter = struct {
+    id: u64 = 0,
+
+    pub fn format(self: DebugIDFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        // The RFC asks for a UUID
+        // We are not generating a UUID, our hash is a 64-bit integer
+        // So we just print it like a UUID
+        // pretty sure this number is always 16 bytes
+        const formatter = bun.fmt.hexIntUpper(self.id);
+        const expected_length = "85314830023F4CF1A267535F4E37BB17".len;
+        var buf: [expected_length]u8 = undefined;
+
+        const wrote = std.fmt.bufPrint(&buf, "{}", .{formatter}) catch unreachable;
+        @memset(
+            buf[wrote.len..].ptr,
+            // fill the remaining with B
+            'B',
+            buf.len - wrote.len,
+        );
+        try writer.writeAll(&buf);
+    }
+};

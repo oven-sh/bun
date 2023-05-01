@@ -558,15 +558,17 @@ function formatTest(result: ParseTestResult, options?: FormatTestOptions): strin
           .filter(({ status }) => status === "fail")
           .map(({ name, errors }) => {
             let content = header(3, name);
+            let hasLink = false;
             if (errors) {
               content += errors
                 .map(({ name, message, stack }) => {
                   let preview = code(`${name}: ${message}`, "diff");
                   if (stack?.length && baseUrl) {
                     const { file, line } = stack[0];
-                    if (!is3rdParty(file)) {
-                      const { href } = new URL(`${file}?plain=1#L${Math.max(1, line - 5)}-L${line}`, baseUrl);
-                      preview += `\n${href}\n`;
+                    if (!is3rdParty(file) && !hasLink) {
+                      const { href } = new URL(`${file}?plain=1#L${line}`, baseUrl);
+                      content = link(content, href);
+                      hasLink = true;
                     }
                   }
                   return preview;

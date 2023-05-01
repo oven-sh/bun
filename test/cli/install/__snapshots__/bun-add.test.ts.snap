@@ -30,3 +30,10 @@ baz@^0.0.3:
   resolved "localhost/baz-0.0.3.tgz"
 "
 `;
+
+exports[`should add aliased dependency (GitHub) 1`] = `
+"uglify@mishoo/UglifyJS#v3.14.1:
+  version "3.14.1"
+  resolved "github:mishoo/UglifyJS#e219a9a"
+"
+`;

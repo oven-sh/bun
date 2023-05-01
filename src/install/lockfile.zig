@@ -1594,12 +1594,16 @@ pub const Package = extern struct {
     }
 
     const NameAlphabetizer = struct {
-        names: []const String,
+        dependencies_buffer: []const Dependency,
+        inverse_dependencies: []const PackageID,
         buf: []const u8,
         resolutions: []const Resolution,
 
         pub fn isAlphabetical(ctx: NameAlphabetizer, lhs: PackageID, rhs: PackageID) bool {
-            return switch (ctx.names[lhs].order(&ctx.names[rhs], ctx.buf, ctx.buf)) {
+            const lhs_name = ctx.dependencies_buffer[ctx.inverse_dependencies[lhs - 1]].name.slice(ctx.buf);
+            const rhs_name = ctx.dependencies_buffer[ctx.inverse_dependencies[rhs - 1]].name.slice(ctx.buf);
+
+            return switch (std.mem.order(u8, lhs_name, rhs_name)) {
                 .eq => ctx.resolutions[lhs].order(&ctx.resolutions[rhs], ctx.buf, ctx.buf) == .lt,
                 .lt => true,
                 .gt => false,
@@ -3632,12 +3636,26 @@ fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaHash 
             string_builder.fmtCount("{s}@{}\n", .{ names[i].slice(bytes), resolutions[i].fmt(bytes) });
         }
     }
+    const dependencies_buffer: []Dependency = this.buffers.dependencies.items;
+    const inverse_dependencies = try this.allocator.alloc(PackageID, names.len - 1);
+    defer this.allocator.free(inverse_dependencies);
+
+    {
+        const resolutions_buffer = this.buffers.resolutions.items;
+        var k = @intCast(u32, resolutions_buffer.len);
+        while (k > 0) {
+            k -= 1;
+            const x = resolutions_buffer[k] - 1;
+            if (x < inverse_dependencies.len) inverse_dependencies[x] = k;
+        }
+    }
 
     std.sort.sort(
         PackageID,
         alphabetized_names,
         Lockfile.Package.NameAlphabetizer{
-            .names = names,
+            .dependencies_buffer = dependencies_buffer,
+            .inverse_dependencies = inverse_dependencies,
             .buf = bytes,
             .resolutions = resolutions,
         },
@@ -4427,9 +4445,20 @@ pub const Yarn = struct {
         const all_requested_versions_ = try allocator.alloc(Dependency.Version, resolutions_buffer.len);
         defer allocator.free(all_requested_versions_);
         var all_requested_versions = all_requested_versions_;
-        const package_count = @truncate(PackageID, names.len);
+        const package_count = @intCast(PackageID, names.len);
         const alphabetized_names = try allocator.alloc(PackageID, package_count - 1);
         defer allocator.free(alphabetized_names);
+        const inverse_dependencies = try allocator.alloc(PackageID, package_count - 1);
+        defer allocator.free(inverse_dependencies);
+
+        {
+            var k = @intCast(u32, resolutions_buffer.len);
+            while (k > 0) {
+                k -= 1;
+                const x = resolutions_buffer[k] - 1;
+                if (x < inverse_dependencies.len) inverse_dependencies[x] = k;
+            }
+        }
 
         const string_buf = this.lockfile.buffers.string_bytes.items;
         var max_titles: usize = 0;
@@ -4466,7 +4495,8 @@ pub const Yarn = struct {
             PackageID,
             alphabetized_names,
             Lockfile.Package.NameAlphabetizer{
-                .names = names,
+                .dependencies_buffer = dependencies_buffer,
+                .inverse_dependencies = inverse_dependencies,
                 .buf = string_buf,
                 .resolutions = resolved,
             },
@@ -4489,7 +4519,8 @@ pub const Yarn = struct {
 
         // When printing, we start at 1
         for (alphabetized_names) |i| {
-            const name = names[i].slice(string_buf);
+            const name = dependencies_buffer[inverse_dependencies[i - 1]].name.slice(string_buf);
+
             const resolution = resolved[i];
             const meta = metas[i];
             const dependencies: []const Dependency = dependency_lists[i].get(dependencies_buffer);

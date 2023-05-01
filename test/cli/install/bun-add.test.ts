@@ -442,7 +442,7 @@ it("should add aliased dependency (GitHub)", async () => {
       version: "0.0.1",
     }),
   );
-  const { out, err, exited } = await command ("add", "uglify@mishoo/UglifyJS#v3.14.1");
+  const { out, err, exited } = await command ("add", "uglify@mishoo/UglifyJS#v3.14.1", "-y");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     " installed uglify@github:mishoo/UglifyJS#e219a9a with binaries:",
@@ -491,6 +491,7 @@ it("should add aliased dependency (GitHub)", async () => {
     },
   });
   await access(join(package_dir, "bun.lockb"));
+  expect(await getYarnLockContents()).toMatchSnapshot();
 });
 
 it("should let you add the same package twice", async () => {

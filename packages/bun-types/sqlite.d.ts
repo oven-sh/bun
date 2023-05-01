@@ -363,6 +363,90 @@ declare module "bun:sqlite" {
        */
       exclusive: (...args: any) => void;
     };
+
+    /**
+     *
+     * Save the database to an in-memory {@link Buffer} object.
+     *
+     * Internally, this calls `sqlite3_serialize`.
+     *
+     * @param name Name to save the database as @default "main"
+     * @returns Buffer containing the serialized database
+     */
+    serialize(name?: string): Buffer;
+
+    /**
+     *
+     * Load a serialized SQLite3 database
+     *
+     * Internally, this calls `sqlite3_deserialize`.
+     *
+     * @param serialized Data to load
+     * @returns `Database` instance
+     *
+     * @example
+     * ```ts
+     * test("supports serialize/deserialize", () => {
+     *     const db = Database.open(":memory:");
+     *     db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
+     *     db.exec('INSERT INTO test (name) VALUES ("Hello")');
+     *     db.exec('INSERT INTO test (name) VALUES ("World")');
+     *
+     *     const input = db.serialize();
+     *     const db2 = new Database(input);
+     *
+     *     const stmt = db2.prepare("SELECT * FROM test");
+     *     expect(JSON.stringify(stmt.get())).toBe(
+     *       JSON.stringify({
+     *         id: 1,
+     *         name: "Hello",
+     *       }),
+     *     );
+     *
+     *     expect(JSON.stringify(stmt.all())).toBe(
+     *       JSON.stringify([
+     *         {
+     *           id: 1,
+     *           name: "Hello",
+     *         },
+     *         {
+     *           id: 2,
+     *           name: "World",
+     *         },
+     *       ]),
+     *     );
+     *     db2.exec("insert into test (name) values ('foo')");
+     *     expect(JSON.stringify(stmt.all())).toBe(
+     *       JSON.stringify([
+     *         {
+     *           id: 1,
+     *           name: "Hello",
+     *         },
+     *         {
+     *           id: 2,
+     *           name: "World",
+     *         },
+     *         {
+     *           id: 3,
+     *           name: "foo",
+     *         },
+     *       ]),
+     *     );
+     *
+     *     const db3 = Database.deserialize(input, true);
+     *     try {
+     *       db3.exec("insert into test (name) values ('foo')");
+     *       throw new Error("Expected error");
+     *     } catch (e) {
+     *       expect(e.message).toBe("attempt to write a readonly database");
+     *     }
+     * });
+     * ```
+     */
+    static deserialize(
+      serialized: TypedArray | ArrayBufferLike,
+      isReadOnly?: boolean,
+    ): Database;
   }
 
   /**

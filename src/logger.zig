@@ -211,6 +211,19 @@ pub const Data = struct {
         allocator.free(d.text);
     }
 
+    pub fn cloneLineText(this: Data, should: bool, allocator: std.mem.Allocator) !Data {
+        if (!should or this.location == null or this.location.?.line_text == null)
+            return this;
+
+        var new_line_text = try allocator.dupe(u8, this.location.?.line_text.?);
+        var new_location = this.location.?;
+        new_location.line_text = new_line_text;
+        return Data{
+            .text = this.text,
+            .location = new_location,
+        };
+    }
+
     pub fn clone(this: Data, allocator: std.mem.Allocator) !Data {
         return Data{
             .text = if (this.text.len > 0) try allocator.dupe(u8, this.text) else "",
@@ -600,6 +613,8 @@ pub const Log = struct {
     msgs: ArrayList(Msg),
     level: Level = if (Environment.isDebug) Level.info else Level.warn,
 
+    clone_line_text: bool = false,
+
     pub inline fn hasErrors(this: *const Log) bool {
         return this.errors > 0;
     }
@@ -955,7 +970,7 @@ pub const Log = struct {
         log.errors += 1;
         try log.addMsg(.{
             .kind = .err,
-            .data = rangeData(source, r, allocPrint(allocator, text, args) catch unreachable),
+            .data = try rangeData(source, r, allocPrint(allocator, text, args) catch unreachable).cloneLineText(log.clone_line_text, log.msgs.allocator),
         });
     }
 
@@ -964,7 +979,7 @@ pub const Log = struct {
         log.errors += 1;
         try log.addMsg(.{
             .kind = .err,
-            .data = rangeData(source, r, allocPrint(allocator, text, args) catch unreachable),
+            .data = try rangeData(source, r, allocPrint(allocator, text, args) catch unreachable).cloneLineText(log.clone_line_text, log.msgs.allocator),
             .notes = notes,
         });
     }
@@ -974,7 +989,7 @@ pub const Log = struct {
         log.errors += 1;
         try log.addMsg(.{
             .kind = .err,
-            .data = rangeData(source, Range{ .loc = l }, allocPrint(allocator, text, args) catch unreachable),
+            .data = try rangeData(source, Range{ .loc = l }, allocPrint(allocator, text, args) catch unreachable).cloneLineText(log.clone_line_text, log.msgs.allocator),
         });
     }
 
@@ -984,7 +999,7 @@ pub const Log = struct {
         log.warnings += 1;
         try log.addMsg(.{
             .kind = .warn,
-            .data = rangeData(source, r, text),
+            .data = try rangeData(source, r, text).cloneLineText(log.clone_line_text, log.msgs.allocator),
         });
     }
 
@@ -994,7 +1009,7 @@ pub const Log = struct {
         log.warnings += 1;
         try log.addMsg(.{
             .kind = .warn,
-            .data = rangeData(source, Range{ .loc = l }, allocPrint(allocator, text, args) catch unreachable),
+            .data = try rangeData(source, Range{ .loc = l }, allocPrint(allocator, text, args) catch unreachable).cloneLineText(log.clone_line_text, log.msgs.allocator),
         });
     }
 
@@ -1004,7 +1019,7 @@ pub const Log = struct {
         log.warnings += 1;
         try log.addMsg(.{
             .kind = .warn,
-            .data = rangeData(source, r, allocPrint(allocator, text, args) catch unreachable),
+            .data = try rangeData(source, r, allocPrint(allocator, text, args) catch unreachable).cloneLineText(log.clone_line_text, log.msgs.allocator),
         });
     }
 

@@ -687,6 +687,8 @@ pub const BundleV2 = struct {
             thread_pool,
         );
 
+        generator.linker.log.clone_line_text = true;
+
         return generator;
     }
 

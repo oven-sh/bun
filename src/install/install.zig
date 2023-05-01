@@ -848,66 +848,57 @@ const PackageInstall = struct {
 
     // 1. verify that .bun-tag exists (was it installed from bun?)
     // 2. check .bun-tag against the resolved version
-    fn verifyGitResolution(this: *PackageInstall, repo: *const Repository, buf: []const u8) bool {
-        var allocator = this.allocator;
+    fn verifyBunTagExists(this: *PackageInstall, resolved: Repository.GitSHA, buf: []const u8) bool {
+        const dest_dir_subpath_buf = this.destination_dir_subpath_buf;
+        const dest_dir_subpath_len = this.destination_dir_subpath.len;
+        const end_pos = dest_dir_subpath_len + std.fs.path.sep_str.len + ".bun-tag".len;
 
-        var total: usize = 0;
-        var read: usize = 0;
-
-        bun.copy(u8, this.destination_dir_subpath_buf[this.destination_dir_subpath.len..], std.fs.path.sep_str ++ ".bun-tag");
-        this.destination_dir_subpath_buf[this.destination_dir_subpath.len + std.fs.path.sep_str.len + ".bun-tag".len] = 0;
-        const bun_tag_path: [:0]u8 = this.destination_dir_subpath_buf[0 .. this.destination_dir_subpath.len + std.fs.path.sep_str.len + ".bun-tag".len :0];
-        defer this.destination_dir_subpath_buf[this.destination_dir_subpath.len] = 0;
-        const bun_tag_file = this.destination_dir.dir.openFileZ(bun_tag_path, .{ .mode = .read_only }) catch return false;
+        const bun_tag_file = (if (1 + end_pos >= dest_dir_subpath_buf.len) blk: {
+            var dir = this.destination_dir.dir.openDirZ(
+                dest_dir_subpath_buf[0..dest_dir_subpath_len :0],
+                .{},
+                false,
+            ) catch return false;
+            defer dir.close();
+            break :blk dir.openFileZ(std.fs.path.sep_str ++ ".bun-tag", .{});
+        } else blk: {
+            bun.copy(u8, dest_dir_subpath_buf[dest_dir_subpath_len..], std.fs.path.sep_str ++ ".bun-tag");
+            dest_dir_subpath_buf[end_pos] = 0;
+            const bun_tag_path: [:0]u8 = dest_dir_subpath_buf[0..end_pos :0];
+            defer dest_dir_subpath_buf[dest_dir_subpath_len] = 0;
+            break :blk this.destination_dir.dir.openFileZ(bun_tag_path, .{ .mode = .read_only });
+        }) catch return false;
         defer bun_tag_file.close();
 
-        var body_pool = Npm.Registry.BodyPool.get(allocator);
-        var mutable: MutableString = body_pool.data;
-        defer {
-            body_pool.data = mutable;
-            Npm.Registry.BodyPool.release(body_pool);
-        }
-
-        mutable.reset();
-
-        mutable.list.expandToCapacity();
-
-        // this file is pretty small
-        read = bun_tag_file.read(mutable.list.items[total..]) catch return false;
-        var remain = mutable.list.items[@min(total, read)..];
-        if (read > 0 and remain.len < 1024) {
-            mutable.growBy(4096) catch return false;
-            mutable.list.expandToCapacity();
-        }
-
-        // never read more than 2048 bytes. it should never be 2048 bytes.
-        while (read > 0 and total < 2048) : (read = bun_tag_file.read(remain) catch return false) {
-            total += read;
-
-            mutable.list.expandToCapacity();
-            remain = mutable.list.items[total..];
-
-            if (remain.len < 1024) {
-                mutable.growBy(4096) catch return false;
-            }
-            mutable.list.expandToCapacity();
-            remain = mutable.list.items[total..];
-        }
-
-        mutable.list.expandToCapacity();
-
-        return strings.eqlLong(repo.resolved.slice(buf), mutable.list.items[0..total], true);
+        const body_pool = Npm.Registry.BodyPool.get(this.allocator);
+        defer Npm.Registry.BodyPool.release(body_pool);
+        body_pool.data.readFile(bun_tag_file, 0) catch return false;
+        return strings.eqlLong(resolved.slice(buf), body_pool.data.list.items, true);
     }
 
+    // TODO: Add bun-tags to other stuff?
     pub fn verify(
         this: *PackageInstall,
         resolution: *const Resolution,
         buf: []const u8,
     ) bool {
         return switch (resolution.tag) {
-            .git => this.verifyGitResolution(&resolution.value.git, buf),
-            .github => this.verifyGitResolution(&resolution.value.github, buf),
-            else => this.verifyPackageJSONNameAndVersion(),
+            .npm => this.verifyPackageJSONNameAndVersion(),
+
+            .git => this.verifyBunTagExists(resolution.value.git.resolved, buf),
+            .github => this.verifyBunTagExists(resolution.value.github.resolved, buf),
+            .gitlab => this.verifyBunTagExists(resolution.value.gitlab.resolved, buf),
+
+            else => false,
+
+            // .folder => this.verifyBunTagExists(resolution.value.folder, buf),
+            // .local_tarball => this.verifyBunTagExists(resolution.value.local_tarball, buf),
+            // .symlink => this.verifyBunTagExists(resolution.value.symlink, buf),
+            // .workspace => this.verifyBunTagExists(resolution.value.workspace, buf),
+            // .remote_tarball => this.verifyBunTagExists(resolution.value.remote_tarball, buf),
+            // .single_file_module => this.verifyBunTagExists(resolution.value.single_file_module, buf),
+            // .uninitialized, .root => unreachable,
+            // _ => unreachable,
         };
     }
 
@@ -918,6 +909,7 @@ const PackageInstall = struct {
 
         pub fn check(self: *Self, name: string) void {
             if (self.failed) return;
+
             if (name.len > self.chars_to_match.len) {
                 self.failed = true;
                 return;
@@ -2764,7 +2756,7 @@ pub const PackageManager = struct {
         return &task.threadpool_task;
     }
 
-    pub fn writeYarnLock(this: *PackageManager) !void {
+    pub fn writeYarnLock(this: *PackageManager, absolute_working_dir: string) !void {
         var printer = Lockfile.Printer{
             .lockfile = this.lockfile,
             .options = this.options,
@@ -2793,7 +2785,7 @@ pub const PackageManager = struct {
             .unbuffered_writer = file_writer,
         };
         var writer = buffered_writer.writer();
-        try Lockfile.Yarn.print(&printer, @TypeOf(writer), writer);
+        try Lockfile.Yarn.print(&printer, absolute_working_dir, @TypeOf(writer), writer);
         try buffered_writer.flush();
 
         _ = C.fchmod(
@@ -3521,7 +3513,7 @@ pub const PackageManager = struct {
                     if (comptime log_level != .silent) {
                         const string_buf = manager.lockfile.buffers.string_bytes.items;
                         Output.prettyErrorln("<r><red>error:<r> expected package.json in <b>{any}<r> to be a JSON file: {s}\n", .{
-                            resolution.fmtURL(&manager.options, string_buf),
+                            resolution.fmtURL(string_buf),
                             @errorName(err),
                         });
                     }
@@ -3559,7 +3551,7 @@ pub const PackageManager = struct {
                     if (comptime log_level != .silent) {
                         const string_buf = manager.lockfile.buffers.string_bytes.items;
                         Output.prettyErrorln("<r><red>error:<r> expected package.json in <b>{any}<r> to be a JSON file: {s}\n", .{
-                            resolution.fmtURL(&manager.options, string_buf),
+                            resolution.fmtURL(string_buf),
                             @errorName(err),
                         });
                     }
@@ -7584,7 +7576,9 @@ pub const PackageManager = struct {
                 Output.flush();
             }
 
-            try manager.writeYarnLock();
+            const absolute_working_dir = ctx.args.absolute_working_dir orelse try std.process.getCwdAlloc(manager.allocator);
+            defer if (ctx.args.absolute_working_dir == null) manager.allocator.free(absolute_working_dir);
+            try manager.writeYarnLock(absolute_working_dir);
             if (comptime log_level.showProgress()) {
                 node.completeOne();
                 manager.progress.refresh();

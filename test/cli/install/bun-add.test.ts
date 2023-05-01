@@ -2,7 +2,7 @@ import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { bunExe, bunEnv as env } from "harness";
 import { access, mkdir, mkdtemp, readlink, realpath, rm, writeFile } from "fs/promises";
-import { join, relative } from "path";
+import { basename, join, relative } from "path";
 import { tmpdir } from "os";
 import {
   dummyAfterAll,
@@ -10,11 +10,15 @@ import {
   dummyBeforeAll,
   dummyBeforeEach,
   dummyRegistry,
+  makeBasicPackageJSON,
   package_dir,
   readdirSorted,
   requested,
   root_url,
   setHandler,
+  external_command,
+  command,
+  getYarnLockContents,
 } from "./dummy.registry";
 
 beforeAll(dummyBeforeAll);
@@ -47,19 +51,8 @@ it("should add existing package", async () => {
     }),
   );
   const add_path = relative(package_dir, add_dir);
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", `file:${add_path}`],
-    cwd: package_dir,
-    stdout: null,
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
-  expect(stderr).toBeDefined();
-  const err = await new Response(stderr).text();
-  expect(err.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun add", " Saved lockfile", ""]);
-  expect(stdout).toBeDefined();
-  const out = await new Response(stdout).text();
+  const { out, err, exited } = await command("add", `file:${add_path}`, "-y");
+  expect(err.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun add", " Saved lockfile", " Saved yarn.lock", ""]);
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     ` installed foo@${add_path}`,
@@ -75,6 +68,8 @@ it("should add existing package", async () => {
       foo: `file:${add_path}`,
     },
   });
+
+  expect((await getYarnLockContents()).replace(basename(add_dir), "")).toMatchSnapshot();
 });
 
 it("should reject missing package", async () => {
@@ -171,19 +166,9 @@ it("should handle semver-like names", async () => {
       version: "0.0.1",
     }),
   );
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", "1.2.3"],
-    cwd: package_dir,
-    stdout: null,
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
-  expect(stderr).toBeDefined();
-  const err = await new Response(stderr).text();
+  const { out, err, exited } = await command("add", "1.2.3");
   expect(err.split(/\r?\n/)).toContain('error: package "1.2.3" not found localhost/1.2.3 404');
-  expect(stdout).toBeDefined();
-  expect(await new Response(stdout).text()).toBe("");
+  expect(out).toBe("");
   expect(await exited).toBe(1);
   expect(urls.sort()).toEqual([`${root_url}/1.2.3`]);
   expect(requested).toBe(1);
@@ -248,19 +233,8 @@ it("should add dependency with capital letters", async () => {
       version: "0.0.1",
     }),
   );
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", "BaR"],
-    cwd: package_dir,
-    stdout: null,
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
-  expect(stderr).toBeDefined();
-  const err = await new Response(stderr).text();
+  const { out, err, exited } = await command("add", "BaR", "-y");
   expect(err).toContain("Saved lockfile");
-  expect(stdout).toBeDefined();
-  const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     " installed BaR@0.0.2",
@@ -285,6 +259,7 @@ it("should add dependency with capital letters", async () => {
     },
   });
   await access(join(package_dir, "bun.lockb"));
+  expect(await getYarnLockContents()).toMatchSnapshot();
 });
 
 it("should add dependency with specified semver", async () => {
@@ -305,19 +280,8 @@ it("should add dependency with specified semver", async () => {
       version: "0.0.1",
     }),
   );
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", "baz@~0.0.2"],
-    cwd: package_dir,
-    stdout: null,
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
-  expect(stderr).toBeDefined();
-  const err = await new Response(stderr).text();
+  const { out, err, exited } = await command("add", "baz@~0.0.2", "-y");
   expect(err).toContain("Saved lockfile");
-  expect(stdout).toBeDefined();
-  const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     " installed baz@0.0.3 with binaries:",
@@ -348,6 +312,7 @@ it("should add dependency with specified semver", async () => {
     },
   });
   await access(join(package_dir, "bun.lockb"));
+  expect(await getYarnLockContents()).toMatchSnapshot();
 });
 
 it("should add dependency alongside workspaces", async () => {
@@ -377,19 +342,8 @@ it("should add dependency alongside workspaces", async () => {
       version: "0.0.2",
     }),
   );
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", "baz"],
-    cwd: package_dir,
-    stdout: null,
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
-  expect(stderr).toBeDefined();
-  const err = await new Response(stderr).text();
+  const { out, err, exited } = await command("add", "baz", "-y");
   expect(err).toContain("Saved lockfile");
-  expect(stdout).toBeDefined();
-  const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@workspace:packages/bar",
     "",
@@ -423,6 +377,7 @@ it("should add dependency alongside workspaces", async () => {
     },
   });
   await access(join(package_dir, "bun.lockb"));
+  expect(await getYarnLockContents()).toMatchSnapshot();
 });
 
 it("should add aliased dependency (npm)", async () => {
@@ -443,19 +398,8 @@ it("should add aliased dependency (npm)", async () => {
       version: "0.0.1",
     }),
   );
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", "bar@npm:baz@~0.0.2"],
-    cwd: package_dir,
-    stdout: null,
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
-  expect(stderr).toBeDefined();
-  const err = await new Response(stderr).text();
+  const { out, err, exited } = await command("add", "bar@npm:baz@~0.0.2");
   expect(err).toContain("Saved lockfile");
-  expect(stdout).toBeDefined();
-  const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     " installed bar@0.0.3 with binaries:",
@@ -498,19 +442,7 @@ it("should add aliased dependency (GitHub)", async () => {
       version: "0.0.1",
     }),
   );
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", "uglify@mishoo/UglifyJS#v3.14.1"],
-    cwd: package_dir,
-    stdout: null,
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
-  expect(stderr).toBeDefined();
-  const err = await new Response(stderr).text();
-  expect(err).toContain("Saved lockfile");
-  expect(stdout).toBeDefined();
-  const out = await new Response(stdout).text();
+  const { out, err, exited } = await command ("add", "uglify@mishoo/UglifyJS#v3.14.1");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     " installed uglify@github:mishoo/UglifyJS#e219a9a with binaries:",

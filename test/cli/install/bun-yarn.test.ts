@@ -2,7 +2,7 @@ import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { bunExe, bunEnv as env } from "harness";
 import { access, mkdir, mkdtemp, open, readdir, readlink, realpath, rm, writeFile } from "fs/promises";
-import { join, relative } from "path";
+import { join, resolve } from "path";
 import { tmpdir } from "os";
 import {
   dummyAfterAll,
@@ -15,6 +15,11 @@ import {
   requested,
   root_url,
   setHandler,
+  external_command,
+  command,
+  getPackageJSONContents,
+  getYarnLockContents,
+  makeBasicPackageJSON,
 } from "./dummy.registry";
 
 beforeAll(dummyBeforeAll);
@@ -31,26 +36,6 @@ afterEach(async () => {
   await rm(add_dir, { force: true, recursive: true });
   await dummyAfterEach();
 });
-
-async function command(...args: Array<string>) {
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), ...args],
-    cwd: package_dir,
-    stdout: null,
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
-  expect(stderr).toBeDefined();
-  const err = await new Response(stderr).text();
-  expect(stdout).toBeDefined();
-  const out = await new Response(stdout).text();
-  return { err, out, exited };
-}
-
-const getPackageJSONContents = () => file(join(package_dir, "package.json")).text();
-const getYarnLockContents = () => file(join(package_dir, "yarn.lock")).text().then(s => s.replaceAll(root_url, "localhost"));
-const makeBasicPackageJSON = (dependencies = {}, devDependencies = {}) => writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.0", dependencies, devDependencies }));
 
 it("should wrap package title names that begin with true or false in quotes.", async () => {
   for (const [pkg_name, pkg_ver] of [
@@ -235,4 +220,12 @@ it(`should allow termination at valid locations`, async () => {
   //   console.log(arr.slice(i, i + width).join(""));
   //   console.log()
   // }
+})
+
+it(`should properly print local tarballs in yarn.lock`, async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, {}));
+  await makeBasicPackageJSON();
+  await command("add", resolve("./resources/true-0.0.4.tgz"), "-y");
+  expect(await getYarnLockContents()).toMatchSnapshot();
 })

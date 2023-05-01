@@ -1,0 +1,32 @@
+// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`should add existing package 1`] = `
+""foo@file:../":
+  version "0.0.1"
+"
+`;
+
+exports[`should add dependency with capital letters 1`] = `
+"BaR@^0.0.2:
+  version "0.0.2"
+  resolved "localhost/BaR-0.0.2.tgz"
+"
+`;
+
+exports[`should add dependency with specified semver 1`] = `
+"baz@~0.0.2:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz"
+"
+`;
+
+exports[`should add dependency alongside workspaces 1`] = `
+"bar@packages/bar:
+  version "0.0.2"
+  resolved "workspace:packages/bar"
+
+baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz"
+"
+`;

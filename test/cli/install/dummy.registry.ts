@@ -3,7 +3,7 @@
  *
  *  PACKAGE_DIR_TO_USE=(realpath .) bun test/cli/install/dummy.registry.ts
  */
-import { file, Server } from "bun";
+import { file, Server, spawn } from "bun";
 import { mkdtempSync, realpathSync } from "fs";
 
 let expect: typeof import("bun:test")["expect"];
@@ -11,6 +11,7 @@ let expect: typeof import("bun:test")["expect"];
 import { mkdtemp, readdir, realpath, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { basename, join } from "path";
+import { bunExe, bunEnv as env } from "harness";
 
 export function tmpdirSync(pattern: string) {
   return mkdtempSync(join(realpathSync(tmpdir()), pattern));
@@ -30,6 +31,31 @@ let testCounter = 0;
 export let package_dir: string;
 export let requested: number;
 export let root_url: string;
+
+export async function external_command(...args: Array<string>) {
+  const { stdout, stderr, exited } = spawn({
+    cmd: [...args],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  return { err, out, exited };
+}
+
+export async function command(...args: Array<string>) {
+  return external_command(bunExe(), ...args);
+}
+
+export const getYarnLockContents = () => file(join(package_dir, "yarn.lock")).text()
+  // 180 is for the extended Bun header, 83 is for the typical yarn header
+  .then(s => s.slice(s[84] === '#' ? 180: 83).replaceAll(root_url, "localhost"));
+export const makeBasicPackageJSON = (dependencies = {}, devDependencies = {}) => writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.0", dependencies, devDependencies }));
 
 export function dummyRegistry(urls: string[], info: any = { "0.0.2": {} }) {
   const _handler: Handler = async request => {

@@ -14,13 +14,13 @@ const String = Semver.String;
 const std = @import("std");
 const string = @import("../string_types.zig").string;
 const strings = @import("../string_immutable.zig");
-const GitSHA = String;
 
 threadlocal var final_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var folder_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var json_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
 pub const Repository = extern struct {
+    pub const GitSHA = String;
     owner: String = .{},
     repo: String = .{},
     committish: GitSHA = .{},

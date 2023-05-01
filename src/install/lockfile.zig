@@ -862,6 +862,7 @@ pub const Printer = struct {
         allocator: Allocator,
         log: *logger.Log,
         lockfile_path_: string,
+        absolute_working_dir: string,
         format: Format,
     ) !void {
         @setCold(true);
@@ -921,13 +922,14 @@ pub const Printer = struct {
         }
 
         var writer = Output.writer();
-        try printWithLockfile(allocator, lockfile, format, @TypeOf(writer), writer);
+        try printWithLockfile(allocator, lockfile, absolute_working_dir, format, @TypeOf(writer), writer);
         Output.flush();
     }
 
     pub fn printWithLockfile(
         allocator: Allocator,
         lockfile: *Lockfile,
+        absolute_working_dir: string,
         format: Format,
         comptime Writer: type,
         writer: Writer,
@@ -963,9 +965,7 @@ pub const Printer = struct {
         };
 
         switch (format) {
-            .yarn => {
-                try Yarn.print(&printer, Writer, writer);
-            },
+            .yarn => try Yarn.print(&printer, absolute_working_dir, Writer, writer),
         }
     }
 
@@ -3744,9 +3744,10 @@ pub const DependencyOverrides = struct {
         pub fn eql(self: @This(), key: name_and_version, other: string, idx: if (USE_ARRAY_HASH_MAP) usize else void) bool {
             _ = self;
             _ = idx;
-            if (Environment.allow_assert) std.debug.assert(other[key.name.len] == '@');
-            return std.hash_map.eqlString(key.name, other[0..key.name.len]) and
+            const is_equal = std.hash_map.eqlString(key.name, other[0..key.name.len]) and
                 std.hash_map.eqlString(key.version, other[key.name.len + 1 ..]);
+            if (Environment.allow_assert and is_equal) std.debug.assert(other[key.name.len] == '@');
+            return is_equal;
         }
     };
 
@@ -4395,6 +4396,7 @@ pub const Yarn = struct {
 
     pub fn print(
         this: *Printer,
+        absolute_working_dir: string,
         comptime Writer: type,
         writer: Writer,
     ) !void {
@@ -4418,7 +4420,7 @@ pub const Yarn = struct {
         const dependency_lists = slice.items(.dependencies);
 
         const resolutions_buffer = this.lockfile.buffers.resolutions.items;
-        const dependencies_buffer = this.lockfile.buffers.dependencies.items;
+        const dependencies_buffer: []Dependency = this.lockfile.buffers.dependencies.items;
         const allocator = this.lockfile.allocator;
         const RequestedVersion = std.HashMap(PackageID, []Dependency.Version, IdentityContext(PackageID), 80);
         var requested_versions = RequestedVersion.init(allocator);
@@ -4491,7 +4493,7 @@ pub const Yarn = struct {
             const resolution = resolved[i];
             const meta = metas[i];
             const dependencies: []const Dependency = dependency_lists[i].get(dependencies_buffer);
-            const resolved_version_formatter = resolution.fmt(string_buf);
+            const resolved_version_formatter = resolution.fmtYarnResolution(allocator, string_buf, absolute_working_dir, .version);
 
             // This prints:
             // "@babel/core@7.9.0":
@@ -4504,12 +4506,20 @@ pub const Yarn = struct {
                 const sorting_buffer_writer = body_pool.data.list.writer(allocator);
                 const titles_slices = global_titles_slices[0..dependency_versions.len];
 
-                for (dependency_versions, titles_slices) |dependency_version, *title_slice| {
-                    const needs_replacing = dependency_version.tag == .dist_tag or dependency_version.literal.isEmpty();
+                for (dependency_versions, titles_slices) |dependency_version_, *title_slice| {
+                    const dependency_version: Dependency.Version = dependency_version_;
+                    const needs_replacing = switch (dependency_version.tag) {
+                        .dist_tag, .tarball => true,
+                        else => dependency_version.literal.isEmpty(),
+                    };
 
                     title_slice.* = if (!needs_replacing) dependency_version.literal.slice(string_buf) else blk: {
                         const old_len = body_pool.data.list.items.len;
-                        try std.fmt.format(sorting_buffer_writer, "^{any}", .{resolved_version_formatter});
+                        switch (dependency_version.tag) {
+                            .npm, .dist_tag => try sorting_buffer_writer.writeByte('^'),
+                            else => {},
+                        }
+                        try std.fmt.format(sorting_buffer_writer, "{any}", .{resolved_version_formatter});
                         break :blk body_pool.data.list.items[old_len..];
                     };
                 }
@@ -4628,8 +4638,7 @@ pub const Yarn = struct {
             switch (resolution.tag) {
                 .folder => {},
                 else => {
-                    const url_formatter = resolution.fmtURL(&this.options, string_buf);
-
+                    const url_formatter = resolution.fmtYarnResolution(allocator, string_buf, absolute_working_dir, .url);
                     try writer.writeAll(" " ** 2 ++ "resolved ");
                     const needs_quote = try fmtNeedsQuote(format, .{url_formatter});
                     if (needs_quote) try writer.writeByte('"');

@@ -310,18 +310,13 @@ pub const Arguments = struct {
             config_buf[config_path_.len] = 0;
             config_path = config_buf[0..config_path_.len :0];
         } else {
-            if (ctx.args.absolute_working_dir == null) {
-                var secondbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var cwd = std.os.getcwd(&secondbuf) catch return;
-                ctx.args.absolute_working_dir = try allocator.dupe(u8, cwd);
-            }
-            var parts = [_]string{ ctx.args.absolute_working_dir.?, config_path_ };
-            config_path_ = resolve_path.joinAbsStringBuf(
-                ctx.args.absolute_working_dir.?,
-                &config_buf,
-                &parts,
-                .auto,
-            );
+            const absolute_working_dir = ctx.args.absolute_working_dir orelse blk: {
+                const cwd = try std.process.getCwdAlloc(allocator);
+                ctx.args.absolute_working_dir = cwd;
+                break :blk cwd;
+            };
+            var parts = [_]string{ absolute_working_dir, config_path_ };
+            config_path_ = resolve_path.joinAbsStringBuf(absolute_working_dir, &config_buf, &parts, .auto);
             config_buf[config_path_.len] = 0;
             config_path = config_buf[0..config_path_.len :0];
         }
@@ -361,19 +356,14 @@ pub const Arguments = struct {
             printVersionAndExit();
         }
 
-        var cwd: []u8 = undefined;
-        if (args.option("--cwd")) |cwd_| {
-            cwd = brk: {
-                var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const out = std.os.realpath(cwd_, &outbuf) catch |err| {
-                    Output.prettyErrorln("error resolving --cwd: {s}", .{@errorName(err)});
-                    Global.exit(1);
-                };
-                break :brk try allocator.dupe(u8, out);
+        var cwd: []u8 = if (args.option("--cwd")) |cwd_| brk: {
+            var outbuf: [fs.MAX_PATH_BYTES]u8 = undefined;
+            const out = std.os.realpath(cwd_, &outbuf) catch |err| {
+                Output.prettyErrorln("error resolving --cwd: {s}", .{@errorName(err)});
+                Global.exit(1);
             };
-        } else {
-            cwd = try std.process.getCwdAlloc(allocator);
-        }
+            break :brk try allocator.dupe(u8, out);
+        } else try std.process.getCwdAlloc(allocator);
 
         if (cmd == .TestCommand) {
             ctx.test_options.update_snapshots = args.flag("--update-snapshots");
@@ -1343,6 +1333,7 @@ pub const Command = struct {
                             ctx.allocator,
                             ctx.log,
                             ctx.args.entry_points[0],
+                            ctx.args.absolute_working_dir.?,
                             .yarn,
                         );
 

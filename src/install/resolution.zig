@@ -3,6 +3,8 @@ const Semver = @import("./semver.zig");
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
 const std = @import("std");
+const bun = @import("root").bun;
+const Environment = bun.Environment;
 const Repository = @import("./repository.zig").Repository;
 const string = @import("../string_types.zig").string;
 const ExtractTarball = @import("./extract_tarball.zig");
@@ -115,8 +117,23 @@ pub const Resolution = extern struct {
         return Formatter{ .resolution = this, .buf = buf };
     }
 
-    pub fn fmtURL(this: *const Resolution, options: *const PackageManager.Options, buf: []const u8) URLFormatter {
-        return URLFormatter{ .resolution = this, .buf = buf, .options = options };
+    pub fn fmtURL(this: *const Resolution, buf: []const u8) URLFormatter {
+        return URLFormatter{ .resolution = this, .buf = buf };
+    }
+
+    pub fn fmtYarnResolution(
+        this: *const Resolution,
+        allocator: std.mem.Allocator,
+        buf: []const u8,
+        absolute_working_dir: []const u8,
+        comptime npm_format_kind: @typeInfo(@TypeOf(YarnResolutionFormatter)).Fn.params[0].type.?,
+    ) YarnResolutionFormatter(npm_format_kind) {
+        return YarnResolutionFormatter(npm_format_kind){
+            .resolution = this,
+            .buf = buf,
+            .absolute_working_dir = absolute_working_dir,
+            .allocator = allocator,
+        };
     }
 
     pub fn eql(
@@ -181,8 +198,6 @@ pub const Resolution = extern struct {
 
     pub const URLFormatter = struct {
         resolution: *const Resolution,
-        options: *const PackageManager.Options,
-
         buf: []const u8,
 
         pub fn format(formatter: URLFormatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
@@ -201,6 +216,47 @@ pub const Resolution = extern struct {
             }
         }
     };
+
+    pub fn YarnResolutionFormatter(comptime npm_format_kind: enum { url, version }) type {
+        return struct {
+            allocator: std.mem.Allocator,
+            resolution: *const Resolution,
+            buf: []const u8,
+            absolute_working_dir: []const u8,
+
+            const Self = @This();
+
+            pub fn format(formatter: Self, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+                switch (formatter.resolution.tag) {
+                    .npm => switch (npm_format_kind) {
+                        .url => try writer.writeAll(formatter.resolution.value.npm.url.slice(formatter.buf)),
+                        .version => try formatter.resolution.value.npm.version.fmt(formatter.buf).format(layout, opts, writer),
+                    },
+                    .local_tarball => {
+                        const slice = formatter.resolution.value.local_tarball.slice(formatter.buf);
+                        if (std.fs.path.isAbsolute(slice)) {
+                            if (std.fs.path.relative(formatter.allocator, formatter.absolute_working_dir, slice)) |relative_path| {
+                                defer formatter.allocator.free(relative_path);
+                                try writer.writeAll("file:");
+                                try writer.writeAll(relative_path);
+                                return;
+                            } else |_| {}
+                        }
+                        try writer.writeAll(slice);
+                    },
+                    .folder => try writer.writeAll(formatter.resolution.value.folder.slice(formatter.buf)),
+                    .remote_tarball => try writer.writeAll(formatter.resolution.value.remote_tarball.slice(formatter.buf)),
+                    .git => try formatter.resolution.value.git.formatAs("git+", formatter.buf, layout, opts, writer),
+                    .github => try formatter.resolution.value.github.formatAs("github:", formatter.buf, layout, opts, writer),
+                    .gitlab => try formatter.resolution.value.gitlab.formatAs("gitlab:", formatter.buf, layout, opts, writer),
+                    .workspace => try std.fmt.format(writer, "workspace:{s}", .{formatter.resolution.value.workspace.slice(formatter.buf)}),
+                    .symlink => try std.fmt.format(writer, "link:{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
+                    .single_file_module => try std.fmt.format(writer, "module:{s}", .{formatter.resolution.value.single_file_module.slice(formatter.buf)}),
+                    else => {},
+                }
+            }
+        };
+    }
 
     pub const Formatter = struct {
         resolution: *const Resolution,

@@ -381,21 +381,21 @@ describe("bundler", () => {
   itBundled("edgecase/PackageJSONDefaultConditionRequire", {
     files: {
       "/entry.js": /* js */ `
-        const react = require('react')
-        console.log(react)
+        const boop = require('boop')
+        console.log(boop)
       `,
-      "/node_modules/react/package.json": /* json */ `
+      "/node_modules/boop/package.json": /* json */ `
         {
-          "name": "react",
+          "name": "boop",
           "exports": {
             ".": {
-              "react-server": "./ignore.js",
-              "default": "./react.js",
+              "boop-server": "./ignore.js",
+              "default": "./boop.js",
             }
           }
         }
       `,
-      "/node_modules/react/react.js": /* js */ `
+      "/node_modules/boop/boop.js": /* js */ `
         module.exports = 123
       `,
     },

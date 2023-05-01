@@ -4376,12 +4376,12 @@ const LinkerContext = struct {
                             // file containing the import and the file containing the imported symbol
                             part.dependencies.appendSliceAssumeCapacity(import.re_exports.slice());
                         }
-
-                        // Merge these symbols so they will share the same name
-                        const merged = this.graph.symbols.merge(ref, import.data.import_ref);
-                        import_ref.* = merged;
-                        needs_reindex = needs_reindex or !merged.eql(ref);
                     }
+
+                    // Merge these symbols so they will share the same name
+                    const merged = this.graph.symbols.merge(import.data.import_ref, ref);
+                    import_ref.* = merged;
+                    needs_reindex = needs_reindex or !merged.eql(ref);
                 }
 
                 if (needs_reindex)

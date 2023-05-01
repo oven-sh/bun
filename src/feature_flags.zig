@@ -161,3 +161,8 @@ pub const help_catch_memory_issues = @import("root").bun.Environment.allow_asser
 pub const unwrap_commonjs_to_esm = true;
 
 pub const boundary_based_chunking = true;
+
+/// https://sentry.engineering/blog/the-case-for-debug-ids
+/// https://github.com/mitsuhiko/source-map-rfc/blob/proposals/debug-id/proposals/debug-id.md
+/// https://github.com/source-map/source-map-rfc/pull/20
+pub const source_map_debug_id = true;

@@ -9565,9 +9565,11 @@ fn NewParser_(
                     try p.lexer.next();
                     var stmtOpts = ParseStatementOptions{};
                     const stmts = try p.parseStmtsUpTo(.t_close_brace, &stmtOpts);
+                    const close_brace_loc = p.lexer.loc();
                     try p.lexer.next();
                     return p.s(S.Block{
                         .stmts = stmts,
+                        .close_brace_loc = close_brace_loc,
                     }, loc);
                 },
 
@@ -10649,7 +10651,7 @@ fn NewParser_(
             return p.s(S.Enum{
                 .name = name,
                 .arg = arg_ref,
-                .values = try values.toOwnedSlice(),
+                .values = values.items,
                 .is_export = opts.is_export,
             }, loc);
         }
@@ -10974,7 +10976,7 @@ fn NewParser_(
                 }
             }
 
-            return try stmts.toOwnedSlice();
+            return stmts.items;
         }
 
         fn markStrictModeFeature(p: *P, feature: StrictModeFeature, r: logger.Range, detail: string) !void {
@@ -12371,7 +12373,7 @@ fn NewParser_(
                 .ts_decorators = ExprNodeList.init(class_opts.ts_decorators),
                 .class_keyword = class_keyword,
                 .body_loc = body_loc,
-                .properties = try properties.toOwnedSlice(),
+                .properties = properties.items,
                 .has_decorators = has_decorators or class_opts.ts_decorators.len > 0,
             };
         }
@@ -12430,7 +12432,7 @@ fn NewParser_(
 
             p.allow_in = oldAllowIn;
 
-            return try parts.toOwnedSlice();
+            return parts.items;
         }
 
         // This assumes the caller has already checked for TStringLiteral or TNoSubstitutionTemplateLiteral
@@ -14452,7 +14454,7 @@ fn NewParser_(
             }
 
             if (partStmts.items.len > 0) {
-                const _stmts = try partStmts.toOwnedSlice();
+                const _stmts = partStmts.items;
 
                 // -- hoist_bun_plugin --
                 if (_stmts.len == 1 and p.options.features.hoist_bun_plugin and !p.bun_plugin.ref.isNull()) {
@@ -14729,7 +14731,7 @@ fn NewParser_(
             var stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, body.stmts);
             var temp_opts = PrependTempRefsOpts{ .kind = StmtsKind.fn_body, .fn_body_loc = body.loc };
             p.visitStmtsAndPrependTempRefs(&stmts, &temp_opts) catch unreachable;
-            func.body = G.FnBody{ .stmts = stmts.toOwnedSlice() catch @panic("TODO"), .loc = body.loc };
+            func.body = G.FnBody{ .stmts = stmts.items, .loc = body.loc };
 
             p.popScope();
             p.popScope();
@@ -16521,7 +16523,7 @@ fn NewParser_(
                     var temp_opts = PrependTempRefsOpts{ .kind = StmtsKind.fn_body };
                     p.visitStmtsAndPrependTempRefs(&stmts_list, &temp_opts) catch unreachable;
                     p.allocator.free(e_.body.stmts);
-                    e_.body.stmts = stmts_list.toOwnedSlice() catch @panic("TODO");
+                    e_.body.stmts = stmts_list.items;
                     p.popScope();
                     p.popScope();
 
@@ -17652,7 +17654,7 @@ fn NewParser_(
 
                             var items = try List(js_ast.ClauseItem).initCapacity(p.allocator, 1);
                             items.appendAssumeCapacity(js_ast.ClauseItem{ .alias = alias.original_name, .original_name = alias.original_name, .alias_loc = alias.loc, .name = LocRef{ .loc = alias.loc, .ref = data.namespace_ref } });
-                            stmts.appendAssumeCapacity(p.s(S.ExportClause{ .items = items.toOwnedSlice(p.allocator) catch @panic("TODO"), .is_single_line = true }, stmt.loc));
+                            stmts.appendAssumeCapacity(p.s(S.ExportClause{ .items = items.items, .is_single_line = true }, stmt.loc));
                             return;
                         }
                     }
@@ -18016,7 +18018,7 @@ fn NewParser_(
                         const kind = if (std.meta.eql(p.loop_body, stmt.data)) StmtsKind.loop_body else StmtsKind.none;
                         var _stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, data.stmts);
                         p.visitStmts(&_stmts, kind) catch unreachable;
-                        data.stmts = _stmts.toOwnedSlice() catch @panic("TODO");
+                        data.stmts = _stmts.items;
                         p.popScope();
                     }
 
@@ -18216,7 +18218,7 @@ fn NewParser_(
                         p.fn_or_arrow_data_visit.try_body_count += 1;
                         p.visitStmts(&_stmts, StmtsKind.none) catch unreachable;
                         p.fn_or_arrow_data_visit.try_body_count -= 1;
-                        data.body = _stmts.toOwnedSlice() catch @panic("TODO");
+                        data.body = _stmts.items;
                     }
                     p.popScope();
 
@@ -18228,7 +18230,7 @@ fn NewParser_(
                             }
                             var _stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, catch_.body);
                             p.visitStmts(&_stmts, StmtsKind.none) catch unreachable;
-                            catch_.body = _stmts.toOwnedSlice() catch @panic("TODO");
+                            catch_.body = _stmts.items;
                         }
                         p.popScope();
                     }
@@ -18238,7 +18240,7 @@ fn NewParser_(
                         {
                             var _stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, finally.stmts);
                             p.visitStmts(&_stmts, StmtsKind.none) catch unreachable;
-                            finally.stmts = _stmts.toOwnedSlice() catch @panic("TODO");
+                            finally.stmts = _stmts.items;
                         }
                         p.popScope();
                     }
@@ -18262,7 +18264,7 @@ fn NewParser_(
                             }
                             var _stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, case.body);
                             p.visitStmts(&_stmts, StmtsKind.none) catch unreachable;
-                            data.cases[i].body = _stmts.toOwnedSlice() catch @panic("TODO");
+                            data.cases[i].body = _stmts.items;
                         }
                     }
                     // TODO: duplicate case checker
@@ -18497,7 +18499,7 @@ fn NewParser_(
                         data.name.loc,
                         data.name.ref.?,
                         data.arg,
-                        try value_stmts.toOwnedSlice(),
+                        value_stmts.items,
                     );
                     return;
                 },
@@ -19708,8 +19710,8 @@ fn NewParser_(
                                 }
                             }
 
-                            class.properties = class_body.toOwnedSlice() catch unreachable;
-                            constructor.func.body.stmts = stmts.toOwnedSlice() catch unreachable;
+                            class.properties = class_body.items;
+                            constructor.func.body.stmts = stmts.items;
                         }
                     }
                 }

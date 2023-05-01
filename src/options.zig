@@ -1370,7 +1370,7 @@ pub const BundleOptions = struct {
     conditions: ESMConditions = undefined,
     tree_shaking: bool = false,
     code_splitting: bool = false,
-    sourcemap: SourceMapOption = SourceMapOption.none,
+    source_map: SourceMapOption = SourceMapOption.none,
 
     disable_transpilation: bool = false,
 
@@ -1667,7 +1667,7 @@ pub const BundleOptions = struct {
             if (opts.framework == null)
                 opts.env.behavior = .load_all;
 
-            opts.sourcemap = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode.external);
+            opts.source_map = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode.external);
 
             opts.resolve_mode = .lazy;
 
@@ -1809,7 +1809,7 @@ pub const BundleOptions = struct {
 
             opts.serve = true;
         } else {
-            opts.sourcemap = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode._none);
+            opts.source_map = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode._none);
         }
 
         opts.tree_shaking = opts.serve or opts.target.isBun() or opts.production or is_generating_bundle;

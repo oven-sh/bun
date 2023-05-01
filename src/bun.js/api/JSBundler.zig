@@ -62,7 +62,7 @@ pub const JSBundler = struct {
         names: Names = .{},
         label: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         external: bun.StringSet = bun.StringSet.init(bun.default_allocator),
-        sourcemap: options.SourceMapOption = .none,
+        source_map: options.SourceMapOption = .none,
         public_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);

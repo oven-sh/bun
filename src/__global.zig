@@ -61,6 +61,7 @@ pub fn setThreadName(name: StringTypes.stringZ) void {
     }
 }
 
+/// Flushes stdout and stderr and exits with the given code.
 pub fn exit(code: u8) noreturn {
     Output.flush();
     std.os.exit(code);

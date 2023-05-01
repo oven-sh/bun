@@ -664,6 +664,8 @@ pub const BundleV2 = struct {
         generator.bundler.resolver.allocator = generator.graph.allocator;
         generator.bundler.linker.allocator = generator.graph.allocator;
         generator.bundler.log.msgs.allocator = generator.graph.allocator;
+        generator.bundler.log.clone_line_text = true;
+
         generator.linker.resolver = &generator.bundler.resolver;
         generator.linker.graph.code_splitting = bundler.options.code_splitting;
         generator.graph.code_splitting = bundler.options.code_splitting;
@@ -686,8 +688,6 @@ pub const BundleV2 = struct {
             this,
             thread_pool,
         );
-
-        generator.linker.log.clone_line_text = true;
 
         return generator;
     }

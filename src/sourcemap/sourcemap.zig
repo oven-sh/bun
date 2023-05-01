@@ -15,6 +15,7 @@ const Joiner = @import("../string_joiner.zig");
 const JSPrinter = bun.js_printer;
 const URL = bun.URL;
 const FileSystem = bun.fs.FileSystem;
+const Index = @import("../ast/base.zig").Index;
 
 const SourceMap = @This();
 
@@ -32,17 +33,21 @@ pub const SourceMapState = struct {
     source_index: i32 = 0,
     original_line: i32 = 0,
     original_column: i32 = 0,
+    original_name: u32 = 0,
+    has_original_name: bool = false,
 };
 
 sources: [][]const u8 = &[_][]u8{},
 sources_content: [][]SourceContent,
 mapping: Mapping.List = .{},
+names: std.ArrayList(string),
 allocator: std.mem.Allocator,
 
 pub const Mapping = struct {
     generated: LineColumnOffset,
     original: LineColumnOffset,
     source_index: i32,
+    original_name: Index = Index.invalid,
 
     pub const List = std.MultiArrayList(Mapping);
 
@@ -64,6 +69,10 @@ pub const Mapping = struct {
 
     pub inline fn originalColumn(mapping: Mapping) i32 {
         return mapping.original.columns;
+    }
+
+    pub inline fn originalName(mapping: Mapping) Index {
+        return mapping.original_name;
     }
 
     pub fn find(mappings: Mapping.List, line: i32, column: i32) ?Mapping {
@@ -518,19 +527,19 @@ pub const SourceMapPieces = struct {
 // After all chunks are computed, they are joined together in a second pass.
 // This rewrites the first mapping in each chunk to be relative to the end
 // state of the previous chunk.
-pub fn appendSourceMapChunk(j: *Joiner, allocator: std.mem.Allocator, prev_end_state_: SourceMapState, start_state_: SourceMapState, source_map_: bun.string) !void {
-    var prev_end_state = prev_end_state_;
-    var start_state = start_state_;
+pub fn appendSourceMapChunk(j: *Joiner, allocator: std.mem.Allocator, _prev_end_state: SourceMapState, _start_state: SourceMapState, _buffer: MappingsBuffer) !void {
+    var prev_end_state = _prev_end_state;
+    var start_state = _start_state;
     // Handle line breaks in between this mapping and the previous one
     if (start_state.generated_line > 0) {
         j.append(try strings.repeatingAlloc(allocator, @intCast(usize, start_state.generated_line), ';'), 0, allocator);
         prev_end_state.generated_column = 0;
     }
 
-    var source_map = source_map_;
-    if (strings.indexOfNotChar(source_map, ';')) |semicolons| {
-        j.append(source_map[0..semicolons], 0, null);
-        source_map = source_map[semicolons..];
+    var buffer = _buffer.data.list.items;
+    if (strings.indexOfNotChar(buffer, ';')) |semicolons| {
+        j.append(buffer[0..semicolons], 0, null);
+        buffer = buffer[semicolons..];
         prev_end_state.generated_column = 0;
         start_state.generated_column = 0;
     }
@@ -539,16 +548,16 @@ pub fn appendSourceMapChunk(j: *Joiner, allocator: std.mem.Allocator, prev_end_s
     // for the start of the original file (the printer always generates one for
     // the start of the file).
     var i: usize = 0;
-    const generated_column_ = decodeVLQ(source_map, 0);
+    const generated_column_ = decodeVLQ(buffer, 0);
     i = generated_column_.start;
-    const source_index_ = decodeVLQ(source_map, i);
+    const source_index_ = decodeVLQ(buffer, i);
     i = source_index_.start;
-    const original_line_ = decodeVLQ(source_map, i);
+    const original_line_ = decodeVLQ(buffer, i);
     i = original_line_.start;
-    const original_column_ = decodeVLQ(source_map, i);
+    const original_column_ = decodeVLQ(buffer, i);
     i = original_column_.start;
 
-    source_map = source_map[i..];
+    buffer = buffer[i..];
 
     // Rewrite the first mapping to be relative to the end state of the previous
     // chunk. We now know what the end state is because we're in the second pass
@@ -557,15 +566,29 @@ pub fn appendSourceMapChunk(j: *Joiner, allocator: std.mem.Allocator, prev_end_s
     start_state.generated_column += generated_column_.value;
     start_state.original_line += original_line_.value;
     start_state.original_column += original_column_.value;
+    prev_end_state.has_original_name = false;
 
     j.append(
-        appendMappingToBuffer(MutableString.initEmpty(allocator), j.lastByte(), prev_end_state, start_state).list.items,
+        appendMappingToBuffer(MutableString.initEmpty(allocator), j.lastByte(), prev_end_state, start_state).buffer.list.items,
         0,
         allocator,
     );
 
+    // Next, if there's an original name, we need to rewrite that as well to be
+    // relative to that of the previous chunk
+    if (_buffer.first_name_offset.isValid()) {
+        const before = _buffer.first_name_offset.get();
+        var name_decode_res = decodeVLQ(buffer, before);
+        name_decode_res.value += @intCast(i32, start_state.original_name - prev_end_state.original_name);
+        j.push(buffer[0..before]);
+        const encode_name_res = encodeVLQWithLookupTable(name_decode_res.value);
+        j.push(encode_name_res.bytes[0..encode_name_res.len]);
+        j.push(buffer[name_decode_res.start..]);
+        return;
+    }
+
     // Then append everything after that without modification.
-    j.push(source_map);
+    j.push(buffer);
 }
 
 const vlq_lookup_table: [256]VLQ = brk: {
@@ -939,7 +962,12 @@ pub fn appendSourceMappingURLRemote(
     try writer.writeAll(".map");
 }
 
-pub fn appendMappingToBuffer(buffer_: MutableString, last_byte: u8, prev_state: SourceMapState, current_state: SourceMapState) MutableString {
+pub const AppendMappingToBufferResult = struct {
+    buffer: MutableString,
+    name_offset: Index,
+};
+
+pub fn appendMappingToBuffer(buffer_: MutableString, last_byte: u8, prev_state: SourceMapState, current_state: SourceMapState) AppendMappingToBufferResult {
     var buffer = buffer_;
     const needs_comma = last_byte != 0 and last_byte != ';' and last_byte != '"';
 
@@ -971,11 +999,26 @@ pub fn appendMappingToBuffer(buffer_: MutableString, last_byte: u8, prev_state: 
         buffer.appendAssumeCapacity(vlq[i].bytes[0..vlq[i].len]);
     }
 
-    return buffer;
+    var name_offset = Index.invalid;
+    if (current_state.has_original_name) {
+        name_offset = Index.init(buffer.list.items.len);
+        const name_vlq = encodeVLQWithLookupTable(@intCast(i32, current_state.original_name - prev_state.original_name));
+        buffer.append(name_vlq.bytes[0..name_vlq.len]) catch unreachable;
+    }
+
+    return .{
+        .buffer = buffer,
+        .name_offset = name_offset,
+    };
 }
 
+pub const MappingsBuffer = struct {
+    data: MutableString,
+    first_name_offset: Index = Index.invalid,
+};
+
 pub const Chunk = struct {
-    buffer: MutableString,
+    buffer: MappingsBuffer,
 
     mappings_count: usize = 0,
 
@@ -1013,7 +1056,7 @@ pub const Chunk = struct {
         }
 
         output.growIfNeeded(
-            filename.len + 2 + (source.contents.len * @as(usize, @boolToInt(include_sources_contents))) + chunk.buffer.list.items.len + 32 + 39 + 29 + 22 + 20,
+            filename.len + 2 + (source.contents.len * @as(usize, @boolToInt(include_sources_contents))) + chunk.buffer.data.list.items.len + 32 + 39 + 29 + 22 + 20,
         ) catch unreachable;
         try output.append("{\n  \"version\":3,\n  \"sources\": [");
 
@@ -1025,7 +1068,7 @@ pub const Chunk = struct {
         }
 
         try output.append("],\n  \"mappings\": ");
-        output = try JSPrinter.quoteForJSON(chunk.buffer.list.items, output, ascii_only);
+        output = try JSPrinter.quoteForJSON(chunk.buffer.data.list.items, output, ascii_only);
         try output.append(", \"names\": []\n}");
 
         return output;
@@ -1044,15 +1087,15 @@ pub const Chunk = struct {
                 try this.ctx.appendLineSeparator();
             }
 
-            pub inline fn append(this: *Format, current_state: SourceMapState, prev_state: SourceMapState) anyerror!void {
-                try this.ctx.append(current_state, prev_state);
+            pub inline fn append(this: *Format, current_state: SourceMapState, prev_state: *SourceMapState, first_name_offset: *Index) anyerror!void {
+                try this.ctx.append(current_state, prev_state, first_name_offset);
             }
 
             pub inline fn shouldIgnore(this: Format) bool {
                 return this.ctx.shouldIgnore();
             }
 
-            pub inline fn getBuffer(this: Format) MutableString {
+            pub inline fn getBuffer(this: Format) MappingsBuffer {
                 return this.ctx.getBuffer();
             }
 
@@ -1063,7 +1106,7 @@ pub const Chunk = struct {
     }
 
     pub const VLQSourceMap = struct {
-        data: MutableString,
+        buffer: MappingsBuffer,
         count: usize = 0,
         offset: usize = 0,
 
@@ -1071,38 +1114,49 @@ pub const Chunk = struct {
 
         pub fn init(allocator: std.mem.Allocator, prepend_count: bool) VLQSourceMap {
             var map = VLQSourceMap{
-                .data = MutableString.initEmpty(allocator),
+                .buffer = MappingsBuffer{
+                    .data = MutableString.initEmpty(allocator),
+                },
             };
 
             // For bun.js, we store the number of mappings and how many bytes the final list is at the beginning of the array
             if (prepend_count) {
                 map.offset = 16;
-                map.data.append(&[16]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }) catch unreachable;
+                map.buffer.data.append(&[16]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }) catch unreachable;
             }
 
             return map;
         }
 
         pub fn appendLineSeparator(this: *VLQSourceMap) anyerror!void {
-            try this.data.appendChar(';');
+            try this.buffer.data.appendChar(';');
         }
 
-        pub fn append(this: *VLQSourceMap, current_state: SourceMapState, prev_state: SourceMapState) anyerror!void {
-            const last_byte: u8 = if (this.data.list.items.len > this.offset)
-                this.data.list.items[this.data.list.items.len - 1]
+        pub fn append(this: *VLQSourceMap, current_state: SourceMapState, prev_state: *SourceMapState, first_name_offset: *Index) anyerror!void {
+            const last_byte: u8 = if (this.buffer.data.list.items.len > this.offset)
+                this.buffer.data.list.items[this.buffer.data.list.items.len - 1]
             else
                 0;
 
-            this.data = appendMappingToBuffer(this.data, last_byte, prev_state, current_state);
+            const append_res = appendMappingToBuffer(this.buffer.data, last_byte, prev_state.*, current_state);
+            this.buffer.data = append_res.buffer;
             this.count += 1;
+
+            const prev_original_name = prev_state.original_name;
+            prev_state.* = current_state;
+            if (!current_state.has_original_name) {
+                prev_state.original_name = prev_original_name;
+            } else if (!first_name_offset.isValid()) {
+                first_name_offset.set(append_res.name_offset.get());
+            }
         }
 
         pub fn shouldIgnore(this: VLQSourceMap) bool {
             return this.count == 0;
         }
 
-        pub fn getBuffer(this: VLQSourceMap) MutableString {
-            return this.data;
+        pub fn getBuffer(this: VLQSourceMap) MappingsBuffer {
+            return this.buffer;
         }
 
         pub fn getCount(this: VLQSourceMap) usize {
@@ -1110,17 +1164,23 @@ pub const Chunk = struct {
         }
     };
 
-    pub fn NewBuilder(comptime SourceMapFormatType: type) type {
+    pub fn NewBuilder(comptime SourceMapFormatType: type, comptime allocator: std.mem.Allocator, comptime ascii_only: bool) type {
         return struct {
             const ThisBuilder = @This();
             input_source_map: ?*SourceMap = null,
             source_map: SourceMapper,
+            names_map: bun.StringHashMap(Index) = bun.StringHashMap(Index).init(allocator),
+            quoted_names: std.ArrayList(string) = std.ArrayList(string).init(allocator),
             line_offset_tables: LineOffsetTable.List = .{},
             prev_state: SourceMapState = SourceMapState{},
+            prev_original_name: string = "",
+            prev_generated_len: usize = 0,
+            first_name_offset: Index = Index.invalid,
             last_generated_update: u32 = 0,
             generated_column: i32 = 0,
             prev_loc: Logger.Loc = Logger.Loc.Empty,
             has_prev_state: bool = false,
+            allocator: std.mem.Allocator = allocator,
 
             line_offset_table_byte_offset_list: []const u32 = &.{},
 
@@ -1143,8 +1203,8 @@ pub const Chunk = struct {
             pub noinline fn generateChunk(b: *ThisBuilder, output: []const u8) Chunk {
                 b.updateGeneratedLineAndColumn(output);
                 if (b.prepend_count) {
-                    b.source_map.getBuffer().list.items[0..8].* = @bitCast([8]u8, b.source_map.getBuffer().list.items.len);
-                    b.source_map.getBuffer().list.items[8..16].* = @bitCast([8]u8, b.source_map.getCount());
+                    b.source_map.getBuffer().data.list.items[0..8].* = @bitCast([8]u8, b.source_map.getBuffer().data.list.items.len);
+                    b.source_map.getBuffer().data.list.items[8..16].* = @bitCast([8]u8, b.source_map.getCount());
                 }
                 return Chunk{
                     .buffer = b.source_map.getBuffer(),
@@ -1223,35 +1283,56 @@ pub const Chunk = struct {
                 b.last_generated_update = @truncate(u32, output.len);
             }
 
-            pub fn appendMapping(b: *ThisBuilder, current_state_: SourceMapState) void {
-                var current_state = current_state_;
+            pub fn appendMapping(b: *ThisBuilder, _original_name: string, _current_state: SourceMapState) void {
+                var current_state = _current_state;
+                var original_name = _original_name;
                 // If the input file had a source map, map all the way back to the original
                 if (b.input_source_map) |input| {
                     if (input.find(current_state.original_line, current_state.original_column)) |mapping| {
                         current_state.source_index = mapping.sourceIndex();
                         current_state.original_line = mapping.originalLine();
                         current_state.original_column = mapping.originalColumn();
+
+                        if (mapping.original_name.isValid()) {
+                            original_name = input.names.items[mapping.original_name.get()];
+                        }
                     }
+                }
+
+                if (original_name.len > 0) {
+                    var res = b.names_map.getOrPut(original_name) catch unreachable;
+                    if (!res.found_existing) {
+                        const i = b.quoted_names.items.len;
+                        var quote_buf = MutableString.init(b.allocator, original_name.len) catch unreachable;
+                        quote_buf = JSPrinter.quoteForJSON(original_name, quote_buf, ascii_only) catch unreachable;
+                        b.quoted_names.append(quote_buf.toOwnedSliceLeaky()) catch unreachable;
+                        res.value_ptr.* = Index.init(i);
+                    }
+
+                    current_state.original_name = res.value_ptr.get();
+                    current_state.has_original_name = true;
                 }
 
                 b.appendMappingWithoutRemapping(current_state);
             }
 
             pub fn appendMappingWithoutRemapping(b: *ThisBuilder, current_state: SourceMapState) void {
-                b.source_map.append(current_state, b.prev_state) catch unreachable;
-                b.prev_state = current_state;
+                b.source_map.append(current_state, &b.prev_state, &b.first_name_offset) catch unreachable;
                 b.has_prev_state = true;
             }
 
-            pub fn addSourceMapping(b: *ThisBuilder, loc: Logger.Loc, output: []const u8) void {
+            pub fn addSourceMapping(b: *ThisBuilder, loc: Logger.Loc, original_name: string, output: string) void {
                 if (
                 // exclude generated code from source
                 b.prev_loc.eql(loc) or
                     // don't insert mappings for same location twice
-                    loc.start == Logger.Loc.Empty.start)
+                    loc.start == Logger.Loc.Empty.start or strings.eqlLong(b.prev_original_name, original_name, true) or b.prev_generated_len == output.len)
                     return;
 
                 b.prev_loc = loc;
+                b.prev_generated_len = output.len;
+                b.prev_original_name = original_name;
+
                 const list = b.line_offset_tables;
                 const original_line = LineOffsetTable.findLine(b.line_offset_table_byte_offset_list, loc);
                 const line = list.get(@intCast(usize, @max(original_line, 0)));
@@ -1276,7 +1357,7 @@ pub const Chunk = struct {
                     });
                 }
 
-                b.appendMapping(.{
+                b.appendMapping(original_name, .{
                     .generated_line = b.prev_state.generated_line,
                     .generated_column = b.generated_column,
                     .source_index = b.prev_state.source_index,
@@ -1290,7 +1371,7 @@ pub const Chunk = struct {
         };
     }
 
-    pub const Builder = NewBuilder(VLQSourceMap);
+    pub const Builder = NewBuilder(VLQSourceMap, bun.default_allocator, false);
 };
 
 /// https://sentry.engineering/blog/the-case-for-debug-ids

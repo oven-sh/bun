@@ -1178,21 +1178,22 @@ fn NewPrinter(
                 return;
             }
 
-            printer.source_map_builder.addSourceMapping(location, printer.writer.slice());
+            printer.source_map_builder.addSourceMapping(location, "", printer.writer.slice());
         }
 
-        // pub inline fn addSourceMappingForName(printer: *Printer, location: logger.Loc, name: string, ref: Ref) void {
-        //     _ = location;
-        //     if (comptime !generate_source_map) {
-        //         return;
-        //     }
+        pub inline fn addSourceMappingForName(printer: *Printer, location: logger.Loc, name: string, ref: Ref) void {
+            if (comptime !generate_source_map) {
+                return;
+            }
 
-        //     if (printer.symbols().get(printer.symbols().follow(ref))) |symbol| {
-        //         if (!strings.eqlLong(symbol.original_name, name)) {
-        //             printer.source_map_builder.addSourceMapping()
-        //         }
-        //     }
-        // }
+            if (printer.symbols().get(printer.symbols().follow(ref))) |symbol| {
+                if (!strings.eqlLong(symbol.original_name, name, true)) {
+                    printer.source_map_builder.addSourceMapping(location, symbol.original_name, printer.writer.slice());
+                } else {
+                    printer.source_map_builder.addSourceMapping(location, "", printer.writer.slice());
+                }
+            }
+        }
 
         pub fn printSymbol(p: *Printer, ref: Ref) void {
             std.debug.assert(!ref.isNull());
@@ -3362,9 +3363,10 @@ fn NewPrinter(
             switch (binding.data) {
                 .b_missing => {},
                 .b_identifier => |b| {
+                    const name = p.renamer.nameForSymbol(b.ref);
                     p.printSpaceBeforeIdentifier();
-                    p.addSourceMapping(binding.loc);
-                    p.printSymbol(b.ref);
+                    p.addSourceMappingForName(binding.loc, name, b.ref);
+                    p.printIdentifier(name);
                 },
                 .b_array => |b| {
                     p.print("[");
@@ -3459,7 +3461,8 @@ fn NewPrinter(
                                                 // Use a shorthand property if the names are the same
                                                 switch (property.value.data) {
                                                     .b_identifier => |id| {
-                                                        if (str.eql(string, p.renamer.nameForSymbol(id.ref))) {
+                                                        const name = p.renamer.nameForSymbol(id.ref);
+                                                        if (str.eql(string, name)) {
                                                             p.maybePrintDefaultBindingValue(property);
                                                             continue;
                                                         }

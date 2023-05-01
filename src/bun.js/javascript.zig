@@ -193,7 +193,7 @@ pub const SavedSourceMap = struct {
 
     pub const SourceMapHandler = js_printer.SourceMapHandler.For(SavedSourceMap, onSourceMapChunk);
 
-    pub fn putMappings(this: *SavedSourceMap, source: logger.Source, mappings: MutableString) !void {
+    pub fn putMappings(this: *SavedSourceMap, source: logger.Source, mappings: SourceMap.MappingsBuffer) !void {
         var entry = try this.map.getOrPut(std.hash.Wyhash.hash(0, source.path.text));
         if (entry.found_existing) {
             var value = Value.from(entry.value_ptr.*);
@@ -207,7 +207,7 @@ pub const SavedSourceMap = struct {
             }
         }
 
-        entry.value_ptr.* = Value.init(bun.cast(*SavedMappings, mappings.list.items.ptr)).ptr();
+        entry.value_ptr.* = Value.init(bun.cast(*SavedMappings, mappings.data.list.items.ptr)).ptr();
     }
 
     pub fn get(this: *SavedSourceMap, path: string) ?MappingList {

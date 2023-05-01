@@ -6303,7 +6303,7 @@ const LinkerContext = struct {
                 start_state.generated_column += prev_column_offset;
             }
 
-            try sourcemap.appendSourceMapChunk(&j, worker.allocator, prev_end_state, start_state, chunk.buffer.list.items);
+            try sourcemap.appendSourceMapChunk(&j, c.allocator, prev_end_state, start_state, chunk.buffer);
 
             prev_end_state = chunk.end_state;
             prev_end_state.source_index = source_index;

@@ -52,6 +52,7 @@ export async function command(...args: Array<string>) {
   return external_command(bunExe(), ...args);
 }
 
+export const getPackageJSONContents = () => file(join(package_dir, "package.json")).text();
 export const getYarnLockContents = () => file(join(package_dir, "yarn.lock")).text()
   // 180 is for the extended Bun header, 83 is for the typical yarn header
   .then(s => s.slice(s[84] === '#' ? 180: 83).replaceAll(root_url, "localhost"));

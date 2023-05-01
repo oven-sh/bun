@@ -881,6 +881,8 @@ pub const ESMConditions = struct {
         }
 
         default_condition_amp.putAssumeCapacity("default", {});
+        import_condition_map.putAssumeCapacity("default", {});
+        require_condition_map.putAssumeCapacity("default", {});
 
         return ESMConditions{
             .default = default_condition_amp,

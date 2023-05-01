@@ -1704,7 +1704,6 @@ pub const PackageManager = struct {
         version_buf: []const u8,
         version: *const Dependency.Version,
         behavior: Dependency.Behavior,
-        is_main: bool,
     ) DependencyToEnqueue {
         const str_buf = this.lockfile.buffers.string_bytes.items;
         for (this.lockfile.buffers.dependencies.items, 0..) |dependency, dependency_id| {
@@ -1740,29 +1739,15 @@ pub const PackageManager = struct {
         this.lockfile.buffers.dependencies.append(this.allocator, cloned_dependency) catch unreachable;
         this.lockfile.buffers.resolutions.append(this.allocator, invalid_package_id) catch unreachable;
         if (comptime Environment.allow_assert) std.debug.assert(this.lockfile.buffers.dependencies.items.len == this.lockfile.buffers.resolutions.items.len);
-        if (is_main) {
-            this.enqueueDependencyWithMainAndSuccessFn(
-                index,
-                &cloned_dependency,
-                invalid_package_id,
-                true,
-                assignRootResolution,
-                failRootResolution,
-            ) catch |err| {
-                return .{ .failure = err };
-            };
-        } else {
-            this.enqueueDependencyWithMainAndSuccessFn(
-                index,
-                &cloned_dependency,
-                invalid_package_id,
-                false,
-                assignRootResolution,
-                failRootResolution,
-            ) catch |err| {
-                return .{ .failure = err };
-            };
-        }
+        this.enqueueDependencyWithMainAndSuccessFn(
+            index,
+            &cloned_dependency,
+            invalid_package_id,
+            assignRootResolution,
+            failRootResolution,
+        ) catch |err| {
+            return .{ .failure = err };
+        };
 
         const resolution_id = this.lockfile.buffers.resolutions.items[index];
 
@@ -2302,11 +2287,11 @@ pub const PackageManager = struct {
                 };
                 switch (FolderResolution.getOrPut(.{ .cache_folder = npm_package_path }, dependency, ".", this)) {
                     .new_package_id => |id| {
-                        this.enqueueDependencyList(this.lockfile.packages.items(.dependencies)[id], false);
+                        this.enqueueDependencyList(this.lockfile.packages.items(.dependencies)[id]);
                         return id;
                     },
                     .package_id => |id| {
-                        this.enqueueDependencyList(this.lockfile.packages.items(.dependencies)[id], false);
+                        this.enqueueDependencyList(this.lockfile.packages.items(.dependencies)[id]);
                         return id;
                     },
                     .err => |err| {
@@ -2800,13 +2785,11 @@ pub const PackageManager = struct {
         /// This must be a *const to prevent UB
         dependency: *const Dependency,
         resolution: PackageID,
-        comptime is_main: bool,
     ) !void {
         return this.enqueueDependencyWithMainAndSuccessFn(
             id,
             dependency,
             resolution,
-            is_main,
             assignResolution,
             null,
         );
@@ -2814,13 +2797,12 @@ pub const PackageManager = struct {
 
     /// Q: "What do we do with a dependency in a package.json?"
     /// A: "We enqueue it!"
-    pub fn enqueueDependencyWithMainAndSuccessFn(
+    fn enqueueDependencyWithMainAndSuccessFn(
         this: *PackageManager,
         id: DependencyID,
         /// This must be a *const to prevent UB
         dependency: *const Dependency,
         resolution: PackageID,
-        comptime is_main: bool,
         comptime successFn: SuccessFn,
         comptime failFn: ?FailFn,
     ) !void {
@@ -2832,16 +2814,6 @@ pub const PackageManager = struct {
         };
         const version = dependency.version;
         var loaded_manifest: ?Npm.PackageManifest = null;
-
-        if (comptime !is_main) {
-            // it might really be main
-            if (!this.isRootDependency(id))
-                if (!dependency.behavior.isEnabled(switch (dependency.version.tag) {
-                    .dist_tag, .folder, .npm => this.options.remote_package_features,
-                    else => .{},
-                }))
-                    return;
-        }
 
         switch (dependency.version.tag) {
             .dist_tag, .folder, .npm => {
@@ -3286,7 +3258,6 @@ pub const PackageManager = struct {
                     i,
                     &dependency,
                     lockfile.buffers.resolutions.items[i],
-                    false,
                 ) catch {};
             }
         }
@@ -3321,26 +3292,22 @@ pub const PackageManager = struct {
     pub fn enqueueDependencyList(
         this: *PackageManager,
         dependencies_list: Lockfile.DependencySlice,
-        comptime is_main: bool,
     ) void {
         this.task_queue.ensureUnusedCapacity(this.allocator, dependencies_list.len) catch unreachable;
-        var lockfile = this.lockfile;
+        const lockfile = this.lockfile;
 
         // Step 1. Go through main dependencies
-        {
-            var i = dependencies_list.off;
-            const end = dependencies_list.off +| dependencies_list.len;
-            // we have to be very careful with pointers here
-            while (i < end) : (i += 1) {
-                const dependency = lockfile.buffers.dependencies.items[i];
-                const resolution = lockfile.buffers.resolutions.items[i];
-                this.enqueueDependencyWithMain(
-                    i,
-                    &dependency,
-                    resolution,
-                    is_main,
-                ) catch {};
-            }
+        var i = dependencies_list.off;
+        const end = dependencies_list.off +| dependencies_list.len;
+        // we have to be very careful with pointers here
+        while (i < end) : (i += 1) {
+            const dependency = lockfile.buffers.dependencies.items[i];
+            const resolution = lockfile.buffers.resolutions.items[i];
+            this.enqueueDependencyWithMain(
+                i,
+                &dependency,
+                resolution,
+            ) catch {};
         }
 
         this.drainDependencyList();
@@ -3366,10 +3333,8 @@ pub const PackageManager = struct {
                     dependency_id,
                     &dependency,
                     resolution,
-                    false,
                 );
             },
-
             .root_dependency => |dependency_id| {
                 const dependency = this.lockfile.buffers.dependencies.items[dependency_id];
                 const resolution = this.lockfile.buffers.resolutions.items[dependency_id];
@@ -3378,11 +3343,9 @@ pub const PackageManager = struct {
                     dependency_id,
                     &dependency,
                     resolution,
-                    true,
                     assignRootResolution,
                     failRootResolution,
                 );
-
                 if (any_root) |ptr| {
                     const new_resolution_id = this.lockfile.buffers.resolutions.items[dependency_id];
                     if (new_resolution_id != resolution) {
@@ -7349,7 +7312,6 @@ pub const PackageManager = struct {
                                         dependency_i,
                                         &dependency,
                                         manager.lockfile.buffers.resolutions.items[dependency_i],
-                                        true,
                                     );
                                 }
                             }
@@ -7387,7 +7349,7 @@ pub const PackageManager = struct {
                 _ = manager.getCacheDirectory();
                 _ = manager.getTemporaryDirectory();
             }
-            manager.enqueueDependencyList(root.dependencies, true);
+            manager.enqueueDependencyList(root.dependencies);
         } else {
             // Anything that needs to be downloaded from an update needs to be scheduled here
             manager.drainDependencyList();

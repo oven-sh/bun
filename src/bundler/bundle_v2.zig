@@ -3899,6 +3899,7 @@ const LinkerContext = struct {
             var exports_refs: []Ref = this.graph.ast.items(.exports_ref);
             var module_refs: []Ref = this.graph.ast.items(.module_ref);
             var lazy_exports: []bool = this.graph.ast.items(.has_lazy_export);
+            var force_cjs_to_esm: []bool = this.graph.ast.items(.force_cjs_to_esm);
             var symbols = &this.graph.symbols;
             defer this.graph.symbols = symbols.*;
 
@@ -3943,7 +3944,7 @@ const LinkerContext = struct {
                             // In that case the module *is* considered a CommonJS module because
                             // the namespace object must be created.
                             if ((record.contains_import_star or record.contains_default_alias) and
-                                !lazy_exports[other_file] and
+                                !lazy_exports[other_file] and !force_cjs_to_esm[other_file] and
                                 exports_kind[other_file] == .none)
                             {
                                 exports_kind[other_file] = .cjs;
@@ -3955,7 +3956,7 @@ const LinkerContext = struct {
                         {
                             if (other_kind == .esm) {
                                 flags[other_file].wrap = .esm;
-                            } else {
+                            } else if (!force_cjs_to_esm[other_file]) {
                                 flags[other_file].wrap = .cjs;
                                 exports_kind[other_file] = .cjs;
                             }
@@ -3966,7 +3967,7 @@ const LinkerContext = struct {
                                 // returns a promise, so the imported file must be a CommonJS module
                                 if (exports_kind[other_file] == .esm) {
                                     flags[other_file].wrap = .esm;
-                                } else {
+                                } else if (!force_cjs_to_esm[other_file]) {
                                     flags[other_file].wrap = .cjs;
                                     exports_kind[other_file] = .cjs;
                                 }
@@ -4346,10 +4347,14 @@ const LinkerContext = struct {
 
                 var parts: []js_ast.Part = parts_list[id].slice();
                 var needs_reindex = false;
-                for (imports_to_bind.keys(), imports_to_bind.values()) |*import_ref, import| {
+                _ = needs_reindex;
+
+                for (0..imports_to_bind.count()) |i| {
+                    const ref = imports_to_bind.keys()[i];
+                    const import = imports_to_bind.values()[i];
+
                     const import_source_index = import.data.source_index.get();
                     const import_id = import_source_index;
-                    const ref = import_ref.*;
 
                     if (named_imports[id].get(ref)) |named_import| {
                         for (named_import.local_parts_with_uses.slice()) |part_index| {
@@ -4380,14 +4385,8 @@ const LinkerContext = struct {
                         }
                     }
 
-                    // Merge these symbols so they will share the same name
-                    const merged = this.graph.symbols.merge(import.data.import_ref, ref);
-                    import_ref.* = merged;
-                    needs_reindex = needs_reindex or !merged.eql(ref);
+                    this.graph.symbols.merge(ref, import.data.import_ref);
                 }
-
-                if (needs_reindex)
-                    imports_to_bind.reIndex(this.allocator) catch unreachable;
 
                 // If this is an entry point, depend on all exports so they are included
                 if (is_entry_point) {
@@ -9366,7 +9365,8 @@ const LinkerContext = struct {
         const id = tracker.source_index.get();
         var named_imports: *JSAst.NamedImports = &c.graph.ast.items(.named_imports)[id];
         var import_records = c.graph.ast.items(.import_records)[id];
-        const exports_kind: []js_ast.ExportsKind = c.graph.ast.items(.exports_kind);
+        const exports_kind: []const js_ast.ExportsKind = c.graph.ast.items(.exports_kind);
+        const force_cjs_to_esm: []const bool = c.graph.ast.items(.force_cjs_to_esm);
 
         const named_import: js_ast.NamedImport = named_imports.get(tracker.import_ref) orelse
             // TODO: investigate if this is a bug
@@ -9463,7 +9463,7 @@ const LinkerContext = struct {
         }
 
         // Is this a file with dynamic exports?
-        const is_commonjs_to_esm = other_kind == .esm_with_dynamic_fallback_from_cjs;
+        const is_commonjs_to_esm = force_cjs_to_esm[other_id];
         if (other_kind == .esm_with_dynamic_fallback or is_commonjs_to_esm) {
             return .{
                 .value = .{

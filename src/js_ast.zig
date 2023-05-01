@@ -5724,6 +5724,8 @@ pub const Ast = struct {
     uses_exports_ref: bool = false,
     uses_module_ref: bool = false,
     uses_require_ref: bool = false,
+
+    force_cjs_to_esm: bool = false,
     exports_kind: ExportsKind = ExportsKind.none,
 
     bundle_export_ref: ?Ref = null,

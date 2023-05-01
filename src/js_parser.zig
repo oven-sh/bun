@@ -3338,7 +3338,7 @@ pub const Parser = struct {
             }
         }
 
-        if ((exports_kind == .esm and p.commonjs_named_exports.count() > 0) or p.unwrap_all_requires) {
+        if (exports_kind == .esm and p.commonjs_named_exports.count() > 0 and !p.unwrap_all_requires) {
             exports_kind = .esm_with_dynamic_fallback_from_cjs;
         }
 
@@ -21214,6 +21214,7 @@ fn NewParser_(
                 else
                     p.require_ref,
 
+                .force_cjs_to_esm = p.unwrap_all_requires or exports_kind == .esm_with_dynamic_fallback_from_cjs,
                 .uses_module_ref = (p.symbols.items[p.module_ref.innerIndex()].use_count_estimate > 0),
                 .uses_exports_ref = (p.symbols.items[p.exports_ref.innerIndex()].use_count_estimate > 0),
                 .uses_require_ref = if (p.runtime_imports.__require != null)

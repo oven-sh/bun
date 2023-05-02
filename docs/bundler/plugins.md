@@ -175,13 +175,13 @@ In this case we're using `"object"`—a special loader (intended for use by plug
 ---
 
 - `js`
-- `.js` `.mjs` `.cjs`
+- `.mjs` `.cjs`
 - Transpile to JavaScript files
 
 ---
 
 - `jsx`
-- `.jsx`
+- `.js` `.jsx`
 - Transform JSX then transpile
 
 ---
@@ -210,8 +210,20 @@ In this case we're using `"object"`—a special loader (intended for use by plug
 
 ---
 
+- `napi`
+- `.node`
+- Import a native Node.js addon
+
+---
+
+- `wasm`
+- `.wasm`
+- Import a native Node.js addon
+
+---
+
 - `object`
-- —
+- n/s
 - A special loader intended for plugins that converts a plain JavaScript object to an equivalent ES module. Each key in the object corresponds to a named export.
 
 {% /callout %}

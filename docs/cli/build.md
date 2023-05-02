@@ -4,7 +4,7 @@
 
 Bun's fast native bundler is now in beta. It can be used via the `bun build` CLI command or the `Bun.build()` JavaScript API.
 
-{% codetabs %}
+{% codetabs group="a" %}
 
 ```ts#JavaScript
 await Bun.build({
@@ -55,7 +55,7 @@ Here, `index.tsx` is the "entrypoint" to our application. Commonly, this will be
 
 To create our bundle:
 
-{% codetabs %}
+{% codetabs group="a" %}
 
 ```ts#JavaScript
 await Bun.build({
@@ -176,6 +176,11 @@ Like the Bun runtime, the bundler supports an array of file types out of the box
   console.log(contents); // => "Hello, world!"
   ```
 
+---
+
+- `.node` `.wasm`
+- These files are supported by the Bun runtime, but during bundling they are treated as [assets](#assets).
+
 {% /table %}
 
 ### Assets
@@ -184,19 +189,14 @@ If the bundler encounters an import with an unrecognized extension, it treats th
 
 {% codetabs %}
 
-```ts#Build file
-await Bun.build({
-  entrypoints: ['./index.ts'],
-  outdir: './out'
-})
-```
-
 ```ts#Input
+// bundle entrypoint
 import logo from "./logo.svg";
 console.log(logo);
 ```
 
 ```ts#Output
+// bundled output
 var logo = "./logo-ab237dfe.svg";
 console.log(logo);
 ```
@@ -219,7 +219,7 @@ The behavior described in this table can be overridden with [plugins](/docs/bund
 
 **Required.** An array of paths corresponding to the entrypoints of our application. One bundle will be generated for each entrypoint.
 
-{% codetabs %}
+{% codetabs group="a" %}
 
 ```ts#JavaScript
 const result = await Bun.build({
@@ -242,7 +242,7 @@ $ bun build --entrypoints ./index.ts
 
 The directory where output files will be written.
 
-{% codetabs %}
+{% codetabs group="a" %}
 
 ```ts#JavaScript
 const result = await Bun.build({
@@ -283,7 +283,7 @@ When `outdir` is specified:
 
 The intended execution environment for the bundle.
 
-{% codetabs %}
+{% codetabs group="a" %}
 
 ```ts#JavaScript
 await Bun.build({
@@ -350,7 +350,7 @@ $ bun build ./index.tsx --outdir ./out --format esm
 
 Whether to enable bundling.
 
-{% codetabs %}
+{% codetabs group="a" %}
 
 ```ts#JavaScript
 await Bun.build({
@@ -369,7 +369,7 @@ $ bun build ./index.tsx --outdir ./out
 
 Set to `false` to disable bundling. Instead, files will be transpiled and individually written to `outdir`.
 
-{% codetabs %}
+{% codetabs group="a" %}
 
 ```ts#JavaScript
 await Bun.build({
@@ -389,7 +389,7 @@ $ bun build ./index.tsx --outdir ./out --no-bundling
 
 Whether to enable code splitting.
 
-{% codetabs %}
+{% codetabs group="a" %}
 
 ```ts#JavaScript
 await Bun.build({
@@ -425,7 +425,7 @@ export const shared = 'shared';
 
 To bundle `entry-a.ts` and `entry-b.ts` with code-splitting enabled:
 
-{% codetabs %}
+{% codetabs group="a" %}
 
 ```ts#JavaScript
 await Bun.build({
@@ -461,7 +461,7 @@ The generated `chunk-2fce6291bf86559d.js` file contains the shared code. To avoi
 
 A list of plugins to use during bundling.
 
-{% codetabs %}
+{% codetabs group="a" %}
 
 ```ts#JavaScript
 await Bun.build({
@@ -544,7 +544,7 @@ By design, the manifest is a simple JSON object that can easily be serialized or
 
 Specifies the type of sourcemap to generate.
 
-{% codetabs %}
+{% codetabs group="a" %}
 
 ```ts#JavaScript
 await Bun.build({
@@ -570,7 +570,13 @@ $ bun build ./index.tsx --outdir ./out --sourcemap=inline
 ---
 
 - `"inline"`
-- A sourcemap is generated and appended to the end of the generated bundle as a base64 payload inside a `//# sourceMappingURL=` comment.
+- A sourcemap is generated and appended to the end of the generated bundle as a base64 payload.
+
+  ```ts
+  // <bundled code here>
+
+  //# sourceMappingURL=data:application/json;base64,<encoded sourcemap here>
+  ```
 
 ---
 
@@ -578,6 +584,20 @@ $ bun build ./index.tsx --outdir ./out --sourcemap=inline
 - A separate `*.js.map` file is created alongside each `*.js` bundle.
 
 {% /table %}
+
+{% callout %}
+
+Generated bundles contain a [debug id](https://sentry.engineering/blog/the-case-for-debug-ids) that can be used to associate a bundle with its corresponding sourcemap. This `debugId` is added as a comment at the bottom of the file.
+
+```ts
+// <generated bundle code>
+
+//# debugId=<DEBUG ID>
+```
+
+The associated `*.js.map` sourcemap will be a JSON file containing an equivalent `debugId` property.
+
+{% /callout %}
 
 ### `minify`
 
@@ -589,7 +609,7 @@ When targeting `bun`, identifiers will be minified by default.
 
 To enable all minification options:
 
-{% codetabs %}
+{% codetabs group="a" %}
 
 ```ts#JavaScript
 await Bun.build({
@@ -607,7 +627,7 @@ $ bun build ./index.tsx --outdir ./out --minify
 
 To granularly enable certain minifications:
 
-{% codetabs %}
+{% codetabs group="a" %}
 
 ```ts#JavaScript
 await Bun.build({
@@ -635,7 +655,7 @@ boolean; -->
 
 A list of import paths to consider _external_. Defaults to `[]`.
 
-{% codetabs %}
+{% codetabs group="a" %}
 
 ```ts#JavaScript
 await Bun.build({
@@ -665,7 +685,7 @@ console.log(_.upperCase(value));
 
 Normally, bundling `index.tsx` would generate a bundle containing the entire source code of the `"zod"` package. If instead, we want to leave the `import` statement as-is, we can mark it as external:
 
-{% codetabs %}
+{% codetabs group="a" %}
 
 ```ts#JavaScript
 await Bun.build({
@@ -698,7 +718,7 @@ console.log(_.upperCase(value));
 
 Customizes the generated file names. Defaults to `./[dir]/[name].[ext]`.
 
-{% codetabs %}
+{% codetabs group="a" %}
 
 ```ts#JavaScript
 await Bun.build({
@@ -773,7 +793,7 @@ For example:
 
 We can combine these tokens to create a template string. For instance, to include the hash in the generated bundle names:
 
-{% codetabs %}
+{% codetabs group="a" %}
 
 ```ts#JavaScript
 await Bun.build({
@@ -801,7 +821,7 @@ This build would result in the following file structure:
 
 When a `string` is provided for the `naming` field, it is used only for bundles _that correspond to entrypoints_. The names of [chunks](#splitting) and copied assets are not affected. Using the JavaScript API, separate template strings can be specified for each type of generated file.
 
-{% codetabs %}
+{% codetabs group="a" %}
 
 ```ts#JavaScript
 await Bun.build({
@@ -826,7 +846,7 @@ $ bun build ./index.tsx --outdir ./out --entry-naming "[dir]/[name].[ext]" --chu
 
 The root directory of the project.
 
-{% codetabs %}
+{% codetabs group="a" %}
 
 ```ts#JavaScript
 await Bun.build({
@@ -853,7 +873,7 @@ If unspecified, it is computed to be the first common ancestor of all entrypoint
 
 We can build both entrypoints in the `pages` directory:
 
-{% codetabs %}
+{% codetabs group="a" %}
 
 ```ts#JavaScript
 await Bun.build({
@@ -884,7 +904,7 @@ Since the `pages` directory is the first common ancestor of the entrypoint files
 
 This behavior can be overridden by specifying the `root` option:
 
-{% codetabs %}
+{% codetabs group="a" %}
 
 ```ts#JavaScript
 await Bun.build({
@@ -945,7 +965,7 @@ console.log(logo);
 
 Setting `publicPath` will prefix all file paths with the specified value.
 
-{% codetabs %}
+{% codetabs group="a" %}
 
 ```ts#JavaScript
 await Bun.build({

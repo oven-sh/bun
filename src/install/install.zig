@@ -7381,7 +7381,7 @@ pub const PackageManager = struct {
             }
 
             try manager.lockfile.loadOverridesFromNonBunLockfile(ctx.allocator);
-            manager.enqueueDependencyList(root.dependencies, true);
+            manager.enqueueDependencyList(root.dependencies);
         } else {
             // Anything that needs to be downloaded from an update needs to be scheduled here
             manager.drainDependencyList();

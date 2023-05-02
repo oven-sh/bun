@@ -2865,8 +2865,10 @@ void GlobalObject::finishCreation(VM& vm)
         [](LazyClassStructure::Initializer& init) {
             auto prototype = VMModuleScript::createPrototype(init.vm, init.global);
             auto* structure = VMModuleScript::createStructure(init.vm, init.global, prototype);
+            auto* constructorStructure = VMModuleScriptConstructor::createStructure(
+                init.vm, init.global, init.global->m_functionPrototype.get());
             auto* constructor = VMModuleScriptConstructor::create(
-                init.vm, init.global, VMModuleScriptConstructor::createStructure(init.vm, init.global, init.global->m_functionPrototype.get()));
+                init.vm, init.global, constructorStructure, prototype);
             init.setPrototype(prototype);
             init.setStructure(structure);
             init.setConstructor(constructor);

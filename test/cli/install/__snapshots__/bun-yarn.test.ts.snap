@@ -3,36 +3,31 @@
 exports[`should wrap package title names that begin with true or false in quotes. 1`] = `
 ""true@^0.0.4":
   version "0.0.4"
-  resolved "localhost/true-0.0.4.tgz"
-"
+  resolved "localhost/true-0.0.4.tgz""
 `;
 
 exports[`should wrap package title names that begin with true or false in quotes. 2`] = `
 ""false@^0.0.4":
   version "0.0.4"
-  resolved "localhost/false-0.0.4.tgz"
-"
+  resolved "localhost/false-0.0.4.tgz""
 `;
 
 exports[`should wrap package title names that begin with true or false in quotes. 3`] = `
 ""falsetto@^0.2.5":
   version "0.2.5"
-  resolved "localhost/falsetto-0.2.5.tgz"
-"
+  resolved "localhost/falsetto-0.2.5.tgz""
 `;
 
 exports[`should wrap package title names that begin with true or false in quotes. 4`] = `
 ""true-case-path@^2.2.1":
   version "2.2.1"
-  resolved "localhost/true-case-path-2.2.1.tgz"
-"
+  resolved "localhost/true-case-path-2.2.1.tgz""
 `;
 
 exports[`should grab the file specified in the yarn.lock file when no other lockfile is present 1`] = `
 "emoji-turkey@^1.2.0:
   version "1.2.1"
-  resolved "https://registry.npmjs.org/emoji-turkey/-/emoji-turkey-1.2.1.tgz"
-"
+  resolved "https://registry.npmjs.org/emoji-turkey/-/emoji-turkey-1.2.1.tgz""
 `;
 
 exports[`should grab the file specified in the yarn.lock file when no other lockfile is present 2`] = `"{"name":"foo","version":"0.0.0","dependencies":{"emoji-turkey":"^1.2.0"},"devDependencies":{}}"`;
@@ -40,8 +35,7 @@ exports[`should grab the file specified in the yarn.lock file when no other lock
 exports[`should work for files with long prerelease versions with version numbers in the filename 1`] = `
 "test_pkg_with_prerelease@^0.0.0-massively-long-prerelease-tag:
   version "0.0.0-massively-long-prerelease-tag"
-  resolved "https://registry.yarnpkg.com/test_pkg_with_prerelease/-/test_pkg_with_prerelease-0.0.0-massively-long-prerelease-tag.tgz#1c35e8548bda8b57df0fa3a8e2d19adc2df871b7"
-"
+  resolved "https://registry.yarnpkg.com/test_pkg_with_prerelease/-/test_pkg_with_prerelease-0.0.0-massively-long-prerelease-tag.tgz#1c35e8548bda8b57df0fa3a8e2d19adc2df871b7""
 `;
 
 exports[`should work for files with long prerelease versions with version numbers in the filename 2`] = `"{"name":"foo","version":"0.0.0","dependencies":{"test_pkg_with_prerelease":"^0.0.0-massively-long-prerelease-tag"},"devDependencies":{}}"`;
@@ -49,8 +43,7 @@ exports[`should work for files with long prerelease versions with version number
 exports[`should work for files with long prerelease versions with no version number in the filename 1`] = `
 ""test_pkg_with_prerelease_2@https://github.com/Validark/Validark/raw/master/test_pkg_with_prerelease_2_.tgz":
   version "0.0.1-massively-long-prerelease-tag"
-  resolved "https://github.com/Validark/Validark/raw/master/test_pkg_with_prerelease_2_.tgz"
-"
+  resolved "https://github.com/Validark/Validark/raw/master/test_pkg_with_prerelease_2_.tgz""
 `;
 
 exports[`should work for files with long prerelease versions with no version number in the filename 2`] = `"{"name":"foo","version":"0.0.0","dependencies":{"test_pkg_with_prerelease_2":"https://github.com/Validark/Validark/raw/master/test_pkg_with_prerelease_2_.tgz"},"devDependencies":{}}"`;
@@ -58,8 +51,7 @@ exports[`should work for files with long prerelease versions with no version num
 exports[`should work for files with long prerelease versions with no version number in the filename not in a lockfile 1`] = `
 ""test_pkg_with_prerelease_2@https://github.com/Validark/Validark/raw/master/test_pkg_with_prerelease_2_.tgz":
   version "0.0.1-massively-long-prerelease-tag"
-  resolved "https://github.com/Validark/Validark/raw/master/test_pkg_with_prerelease_2_.tgz"
-"
+  resolved "https://github.com/Validark/Validark/raw/master/test_pkg_with_prerelease_2_.tgz""
 `;
 
 exports[`should work for files with long prerelease versions with no version number in the filename not in a lockfile 2`] = `"{ "dependencies": { "test_pkg_with_prerelease_2": "https://github.com/Validark/Validark/raw/master/test_pkg_with_prerelease_2_.tgz" } }"`;
@@ -67,6 +59,5 @@ exports[`should work for files with long prerelease versions with no version num
 exports[`should properly print local tarballs in yarn.lock 1`] = `
 ""true@file:../../home/validark/bun/test/cli/install/resources/true-0.0.4.tgz":
   version "0.0.4"
-  resolved "file:../../home/validark/bun/test/cli/install/resources/true-0.0.4.tgz"
-"
+  resolved "file:../../home/validark/bun/test/cli/install/resources/true-0.0.4.tgz""
 `;

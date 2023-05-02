@@ -55,7 +55,7 @@ export async function command(...args: Array<string>) {
 export const getPackageJSONContents = () => file(join(package_dir, "package.json")).text();
 export const getYarnLockContents = () => file(join(package_dir, "yarn.lock")).text()
   // 180 is for the extended Bun header, 83 is for the typical yarn header
-  .then(s => s.slice(s[84] === '#' ? 180: 83).replaceAll(root_url, "localhost"));
+  .then(s => s.slice(s[84] === '#' ? 180: 83).replaceAll(root_url, "localhost").trim());
 export const makeBasicPackageJSON = (dependencies = {}, devDependencies = {}) => writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.0", dependencies, devDependencies }));
 
 export function dummyRegistry(urls: string[], info: any = { "0.0.2": {} }) {

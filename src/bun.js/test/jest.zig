@@ -2543,7 +2543,7 @@ pub const Expect = struct {
                 error.FailedToMakeSnapshotDirectory => globalObject.throw("Failed to make snapshot directory for test file: {s}", .{test_file_path}),
                 error.FailedToWriteSnapshotFile => globalObject.throw("Failed write to snapshot file: {s}", .{test_file_path}),
                 error.ParseError => globalObject.throw("Failed to parse snapshot file for: {s}", .{test_file_path}),
-                else => globalObject.throw("Failed to snapshot value: {any}", .{value.toFmt(globalObject, &formatter)}),
+                else => globalObject.throw("Failed to snapshot value: {any}, err: {any}", .{ value.toFmt(globalObject, &formatter), err }),
             }
             return .zero;
         };

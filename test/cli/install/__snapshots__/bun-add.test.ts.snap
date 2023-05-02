@@ -2,22 +2,19 @@
 
 exports[`should add existing package 1`] = `
 ""foo@file:../":
-  version "0.0.1"
-"
+  version "0.0.1""
 `;
 
 exports[`should add dependency with capital letters 1`] = `
 "BaR@^0.0.2:
   version "0.0.2"
-  resolved "localhost/BaR-0.0.2.tgz"
-"
+  resolved "localhost/BaR-0.0.2.tgz""
 `;
 
 exports[`should add dependency with specified semver 1`] = `
 "baz@~0.0.2:
   version "0.0.3"
-  resolved "localhost/baz-0.0.3.tgz"
-"
+  resolved "localhost/baz-0.0.3.tgz""
 `;
 
 exports[`should add dependency alongside workspaces 1`] = `
@@ -27,13 +24,471 @@ exports[`should add dependency alongside workspaces 1`] = `
 
 baz@^0.0.3:
   version "0.0.3"
-  resolved "localhost/baz-0.0.3.tgz"
-"
+  resolved "localhost/baz-0.0.3.tgz""
 `;
 
 exports[`should add aliased dependency (GitHub) 1`] = `
 "uglify@mishoo/UglifyJS#v3.14.1:
   version "3.14.1"
-  resolved "github:mishoo/UglifyJS#e219a9a"
-"
+  resolved "github:mishoo/UglifyJS#e219a9a""
+`;
+
+exports[`should let you add the same package twice 1`] = `
+"baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should install version tagged with `latest` by default 1`] = `
+"baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should handle Git URL in dependencies (SCP-style) 1`] = `
+""uglify-js@bun@github.com:mishoo/UglifyJS.git":
+  version "3.17.4"
+  resolved "git+ssh://bun@github.com:mishoo/UglifyJS.git#f0ca9cfbe65efc919149e7cd74cedd186d6413ee""
+`;
+
+exports[`should add dependency with capital letters 1`] = `
+"BaR@^0.0.2:
+  version "0.0.2"
+  resolved "localhost/BaR-0.0.2.tgz""
+`;
+
+exports[`should add dependency with specified semver 1`] = `
+"baz@~0.0.2:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should add dependency alongside workspaces 1`] = `
+"bar@packages/bar:
+  version "0.0.2"
+  resolved "workspace:packages/bar"
+
+baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should add aliased dependency (GitHub) 1`] = `
+"uglify@mishoo/UglifyJS#v3.14.1:
+  version "3.14.1"
+  resolved "github:mishoo/UglifyJS#e219a9a""
+`;
+
+exports[`should let you add the same package twice 1`] = `
+"baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should install version tagged with `latest` by default 1`] = `
+"baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should handle Git URL in dependencies (SCP-style) 1`] = `
+""uglify-js@bun@github.com:mishoo/UglifyJS.git":
+  version "3.17.4"
+  resolved "git+ssh://bun@github.com:mishoo/UglifyJS.git#f0ca9cfbe65efc919149e7cd74cedd186d6413ee""
+`;
+
+exports[`should add dependency with capital letters 1`] = `
+"BaR@^0.0.2:
+  version "0.0.2"
+  resolved "localhost/BaR-0.0.2.tgz""
+`;
+
+exports[`should add dependency with specified semver 1`] = `
+"baz@~0.0.2:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should add dependency alongside workspaces 1`] = `
+"bar@packages/bar:
+  version "0.0.2"
+  resolved "workspace:packages/bar"
+
+baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should add aliased dependency (GitHub) 1`] = `
+"uglify@mishoo/UglifyJS#v3.14.1:
+  version "3.14.1"
+  resolved "github:mishoo/UglifyJS#e219a9a""
+`;
+
+exports[`should let you add the same package twice 1`] = `
+"baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should install version tagged with `latest` by default 1`] = `
+"baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should handle Git URL in dependencies (SCP-style) 1`] = `
+""uglify-js@bun@github.com:mishoo/UglifyJS.git":
+  version "3.17.4"
+  resolved "git+ssh://bun@github.com:mishoo/UglifyJS.git#f0ca9cfbe65efc919149e7cd74cedd186d6413ee""
+`;
+
+exports[`should add dependency with capital letters 1`] = `
+"BaR@^0.0.2:
+  version "0.0.2"
+  resolved "localhost/BaR-0.0.2.tgz""
+`;
+
+exports[`should add dependency with specified semver 1`] = `
+"baz@~0.0.2:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should add dependency alongside workspaces 1`] = `
+"bar@packages/bar:
+  version "0.0.2"
+  resolved "workspace:packages/bar"
+
+baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should add aliased dependency (GitHub) 1`] = `
+"uglify@mishoo/UglifyJS#v3.14.1:
+  version "3.14.1"
+  resolved "github:mishoo/UglifyJS#e219a9a""
+`;
+
+exports[`should let you add the same package twice 1`] = `
+"baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should install version tagged with `latest` by default 1`] = `
+"baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should handle Git URL in dependencies (SCP-style) 1`] = `
+""uglify-js@bun@github.com:mishoo/UglifyJS.git":
+  version "3.17.4"
+  resolved "git+ssh://bun@github.com:mishoo/UglifyJS.git#f0ca9cfbe65efc919149e7cd74cedd186d6413ee""
+`;
+
+exports[`should add dependency with capital letters 1`] = `
+"BaR@^0.0.2:
+  version "0.0.2"
+  resolved "localhost/BaR-0.0.2.tgz""
+`;
+
+exports[`should add dependency with specified semver 1`] = `
+"baz@~0.0.2:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should add dependency alongside workspaces 1`] = `
+"bar@packages/bar:
+  version "0.0.2"
+  resolved "workspace:packages/bar"
+
+baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should add aliased dependency (GitHub) 1`] = `
+"uglify@mishoo/UglifyJS#v3.14.1:
+  version "3.14.1"
+  resolved "github:mishoo/UglifyJS#e219a9a""
+`;
+
+exports[`should let you add the same package twice 1`] = `
+"baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should install version tagged with `latest` by default 1`] = `
+"baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should handle Git URL in dependencies (SCP-style) 1`] = `
+""uglify-js@bun@github.com:mishoo/UglifyJS.git":
+  version "3.17.4"
+  resolved "git+ssh://bun@github.com:mishoo/UglifyJS.git#f0ca9cfbe65efc919149e7cd74cedd186d6413ee""
+`;
+
+exports[`should add dependency with capital letters 1`] = `
+"BaR@^0.0.2:
+  version "0.0.2"
+  resolved "localhost/BaR-0.0.2.tgz""
+`;
+
+exports[`should add dependency with specified semver 1`] = `
+"baz@~0.0.2:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should add dependency alongside workspaces 1`] = `
+"bar@packages/bar:
+  version "0.0.2"
+  resolved "workspace:packages/bar"
+
+baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should add aliased dependency (GitHub) 1`] = `
+"uglify@mishoo/UglifyJS#v3.14.1:
+  version "3.14.1"
+  resolved "github:mishoo/UglifyJS#e219a9a""
+`;
+
+exports[`should let you add the same package twice 1`] = `
+"baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should install version tagged with `latest` by default 1`] = `
+"baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should handle Git URL in dependencies (SCP-style) 1`] = `
+""uglify-js@bun@github.com:mishoo/UglifyJS.git":
+  version "3.17.4"
+  resolved "git+ssh://bun@github.com:mishoo/UglifyJS.git#f0ca9cfbe65efc919149e7cd74cedd186d6413ee""
+`;
+
+exports[`should add dependency with capital letters 1`] = `
+"BaR@^0.0.2:
+  version "0.0.2"
+  resolved "localhost/BaR-0.0.2.tgz""
+`;
+
+exports[`should add dependency with specified semver 1`] = `
+"baz@~0.0.2:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should add dependency alongside workspaces 1`] = `
+"bar@packages/bar:
+  version "0.0.2"
+  resolved "workspace:packages/bar"
+
+baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should add aliased dependency (GitHub) 1`] = `
+"uglify@mishoo/UglifyJS#v3.14.1:
+  version "3.14.1"
+  resolved "github:mishoo/UglifyJS#e219a9a""
+`;
+
+exports[`should let you add the same package twice 1`] = `
+"baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should install version tagged with `latest` by default 1`] = `
+"baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should handle Git URL in dependencies (SCP-style) 1`] = `
+""uglify-js@bun@github.com:mishoo/UglifyJS.git":
+  version "3.17.4"
+  resolved "git+ssh://bun@github.com:mishoo/UglifyJS.git#f0ca9cfbe65efc919149e7cd74cedd186d6413ee""
+`;
+
+exports[`should add dependency with capital letters 1`] = `
+"BaR@^0.0.2:
+  version "0.0.2"
+  resolved "localhost/BaR-0.0.2.tgz""
+`;
+
+exports[`should add dependency with specified semver 1`] = `
+"baz@~0.0.2:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should add dependency alongside workspaces 1`] = `
+"bar@packages/bar:
+  version "0.0.2"
+  resolved "workspace:packages/bar"
+
+baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should add aliased dependency (GitHub) 1`] = `
+"uglify@mishoo/UglifyJS#v3.14.1:
+  version "3.14.1"
+  resolved "github:mishoo/UglifyJS#e219a9a""
+`;
+
+exports[`should let you add the same package twice 1`] = `
+"baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should install version tagged with `latest` by default 1`] = `
+"baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should handle Git URL in dependencies (SCP-style) 1`] = `
+""uglify-js@bun@github.com:mishoo/UglifyJS.git":
+  version "3.17.4"
+  resolved "git+ssh://bun@github.com:mishoo/UglifyJS.git#f0ca9cfbe65efc919149e7cd74cedd186d6413ee""
+`;
+
+exports[`should add dependency with capital letters 1`] = `
+"BaR@^0.0.2:
+  version "0.0.2"
+  resolved "localhost/BaR-0.0.2.tgz""
+`;
+
+exports[`should add dependency with specified semver 1`] = `
+"baz@~0.0.2:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should add dependency alongside workspaces 1`] = `
+"bar@packages/bar:
+  version "0.0.2"
+  resolved "workspace:packages/bar"
+
+baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should add aliased dependency (GitHub) 1`] = `
+"uglify@mishoo/UglifyJS#v3.14.1:
+  version "3.14.1"
+  resolved "github:mishoo/UglifyJS#e219a9a""
+`;
+
+exports[`should let you add the same package twice 1`] = `
+"baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should install version tagged with `latest` by default 1`] = `
+"baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should handle Git URL in dependencies (SCP-style) 1`] = `
+""uglify-js@bun@github.com:mishoo/UglifyJS.git":
+  version "3.17.4"
+  resolved "git+ssh://bun@github.com:mishoo/UglifyJS.git#f0ca9cfbe65efc919149e7cd74cedd186d6413ee""
+`;
+
+exports[`should add dependency with capital letters 1`] = `
+"BaR@^0.0.2:
+  version "0.0.2"
+  resolved "localhost/BaR-0.0.2.tgz""
+`;
+
+exports[`should add dependency with specified semver 1`] = `
+"baz@~0.0.2:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should add dependency alongside workspaces 1`] = `
+"bar@packages/bar:
+  version "0.0.2"
+  resolved "workspace:packages/bar"
+
+baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should add aliased dependency (GitHub) 1`] = `
+"uglify@mishoo/UglifyJS#v3.14.1:
+  version "3.14.1"
+  resolved "github:mishoo/UglifyJS#e219a9a""
+`;
+
+exports[`should let you add the same package twice 1`] = `
+"baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should install version tagged with `latest` by default 1`] = `
+"baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should handle Git URL in dependencies (SCP-style) 1`] = `
+""uglify-js@bun@github.com:mishoo/UglifyJS.git":
+  version "3.17.4"
+  resolved "git+ssh://bun@github.com:mishoo/UglifyJS.git#f0ca9cfbe65efc919149e7cd74cedd186d6413ee""
+`;
+
+exports[`should add dependency with capital letters 1`] = `
+"BaR@^0.0.2:
+  version "0.0.2"
+  resolved "localhost/BaR-0.0.2.tgz""
+`;
+
+exports[`should add dependency with specified semver 1`] = `
+"baz@~0.0.2:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should add dependency alongside workspaces 1`] = `
+"bar@packages/bar:
+  version "0.0.2"
+  resolved "workspace:packages/bar"
+
+baz@^0.0.3:
+  version "0.0.3"
+  resolved "localhost/baz-0.0.3.tgz""
+`;
+
+exports[`should add aliased dependency (GitHub) 1`] = `
+"uglify@mishoo/UglifyJS#v3.14.1:
+  version "3.14.1"
+  resolved "github:mishoo/UglifyJS#e219a9a""
 `;

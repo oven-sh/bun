@@ -9,6 +9,7 @@ import {
   dummyBeforeAll,
   dummyBeforeEach,
   dummyRegistry,
+  getYarnLockContents,
   package_dir,
   readdirSorted,
   requested,

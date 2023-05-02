@@ -69,10 +69,10 @@ pub const Renamer = union(enum) {
         };
     }
 
-    pub fn deinit(renamer: Renamer) void {
+    pub fn deinit(renamer: Renamer, allocator: std.mem.Allocator) void {
         switch (renamer) {
             .NumberRenamer => |r| r.deinit(),
-            .MinifyRenamer => |r| r.deinit(),
+            .MinifyRenamer => |r| r.deinit(allocator),
             else => {},
         }
     }
@@ -170,8 +170,13 @@ pub const MinifyRenamer = struct {
         return renamer;
     }
 
-    pub fn deinit(this: *MinifyRenamer) void {
-        _ = this;
+    pub fn deinit(this: *MinifyRenamer, allocator: std.mem.Allocator) void {
+        for (&this.slots.values) |*val| {
+            val.deinit();
+        }
+        this.reserved_names.deinit(allocator);
+        this.top_level_symbol_to_slot.deinit(allocator);
+        allocator.destroy(this);
     }
 
     pub fn toRenamer(this: *MinifyRenamer) Renamer {
@@ -323,7 +328,7 @@ pub const MinifyRenamer = struct {
                         }
                     },
                     .label => {
-                        while (JSLexer.Keywords.get(name_buf.items)) |_| {
+                        while (JSLexer.Keywords.has(name_buf.items)) {
                             try name_minifier.numberToMinifiedName(&name_buf, next_name);
                             next_name += 1;
                         }

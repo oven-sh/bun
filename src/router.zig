@@ -963,7 +963,7 @@ pub const Test = struct {
 
         var opts = Options.BundleOptions{
             .resolve_mode = .lazy,
-            .platform = .browser,
+            .target = .browser,
             .loaders = undefined,
             .define = undefined,
             .log = &logger,
@@ -1020,7 +1020,7 @@ pub const Test = struct {
 
         var opts = Options.BundleOptions{
             .resolve_mode = .lazy,
-            .platform = .browser,
+            .target = .browser,
             .loaders = undefined,
             .define = undefined,
             .log = &logger,

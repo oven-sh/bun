@@ -112,7 +112,7 @@ pub const ExternalModules = struct {
         cwd: string,
         externals: []const string,
         log: *logger.Log,
-        platform: Platform,
+        target: Target,
     ) ExternalModules {
         var result = ExternalModules{
             .node_modules = std.BufSet.init(allocator),
@@ -120,7 +120,7 @@ pub const ExternalModules = struct {
             .patterns = default_wildcard_patterns[0..],
         };
 
-        switch (platform) {
+        switch (target) {
             .node => {
                 // TODO: fix this stupid copy
                 result.node_modules.hash_map.ensureTotalCapacity(NodeBuiltinPatterns.len) catch unreachable;
@@ -377,42 +377,37 @@ pub const ModuleType = enum {
     });
 };
 
-pub const Platform = enum {
-    neutral,
+pub const Target = enum {
     browser,
     bun,
     bun_macro,
     node,
 
     pub const Map = ComptimeStringMap(
-        Platform,
+        Target,
         .{
             .{
-                "neutral",
-                Platform.neutral,
-            },
-            .{
                 "browser",
-                Platform.browser,
+                Target.browser,
             },
             .{
                 "bun",
-                Platform.bun,
+                Target.bun,
             },
             .{
                 "bun_macro",
-                Platform.bun_macro,
+                Target.bun_macro,
             },
             .{
                 "node",
-                Platform.node,
+                Target.node,
             },
         },
     );
 
-    pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Platform {
+    pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Target {
         if (!value.jsType().isStringLike()) {
-            JSC.throwInvalidArguments("platform must be a string", .{}, global, exception);
+            JSC.throwInvalidArguments("target must be a string", .{}, global, exception);
 
             return null;
         }
@@ -424,60 +419,58 @@ pub const Platform = enum {
         const Eight = strings.ExactSizeMatcher(8);
 
         return switch (Eight.match(slice)) {
-            Eight.case("deno"), Eight.case("browser") => Platform.browser,
-            Eight.case("bun") => Platform.bun,
-            Eight.case("macro") => Platform.bun_macro,
-            Eight.case("node") => Platform.node,
-            Eight.case("neutral") => Platform.neutral,
+            Eight.case("deno"), Eight.case("browser") => Target.browser,
+            Eight.case("bun") => Target.bun,
+            Eight.case("macro") => Target.bun_macro,
+            Eight.case("node") => Target.node,
             else => {
-                JSC.throwInvalidArguments("platform must be one of: deno, browser, bun, macro, node, neutral", .{}, global, exception);
+                JSC.throwInvalidArguments("target must be one of: deno, browser, bun, macro, node", .{}, global, exception);
 
                 return null;
             },
         };
     }
 
-    pub fn toAPI(this: Platform) Api.Platform {
+    pub fn toAPI(this: Target) Api.Target {
         return switch (this) {
             .node => .node,
             .browser => .browser,
             .bun => .bun,
             .bun_macro => .bun_macro,
-            else => ._none,
         };
     }
 
-    pub inline fn isServerSide(this: Platform) bool {
+    pub inline fn isServerSide(this: Target) bool {
         return switch (this) {
             .bun_macro, .node, .bun => true,
             else => false,
         };
     }
 
-    pub inline fn isBun(this: Platform) bool {
+    pub inline fn isBun(this: Target) bool {
         return switch (this) {
             .bun_macro, .bun => true,
             else => false,
         };
     }
 
-    pub inline fn isNotBun(this: Platform) bool {
+    pub inline fn isNotBun(this: Target) bool {
         return switch (this) {
             .bun_macro, .bun => false,
             else => true,
         };
     }
 
-    pub inline fn isClient(this: Platform) bool {
+    pub inline fn isClient(this: Target) bool {
         return switch (this) {
             .bun_macro, .bun => false,
             else => true,
         };
     }
 
-    pub inline fn supportsBrowserField(this: Platform) bool {
+    pub inline fn supportsBrowserField(this: Target) bool {
         return switch (this) {
-            .neutral, .browser => true,
+            .browser => true,
             else => false,
         };
     }
@@ -485,17 +478,16 @@ pub const Platform = enum {
     const browser_define_value_true = "true";
     const browser_define_value_false = "false";
 
-    pub inline fn processBrowserDefineValue(this: Platform) ?string {
+    pub inline fn processBrowserDefineValue(this: Target) ?string {
         return switch (this) {
             .browser => browser_define_value_true,
             .bun_macro, .bun, .node => browser_define_value_false,
-            else => null,
         };
     }
 
-    pub inline fn isWebLike(platform: Platform) bool {
-        return switch (platform) {
-            .neutral, .browser => true,
+    pub inline fn isWebLike(target: Target) bool {
+        return switch (target) {
+            .browser => true,
             else => false,
         };
     }
@@ -512,13 +504,13 @@ pub const Platform = enum {
         };
     };
 
-    pub fn outExtensions(platform: Platform, allocator: std.mem.Allocator) bun.StringHashMap(string) {
+    pub fn outExtensions(target: Target, allocator: std.mem.Allocator) bun.StringHashMap(string) {
         var exts = bun.StringHashMap(string).init(allocator);
 
         const js = Extensions.Out.JavaScript[0];
         const mjs = Extensions.Out.JavaScript[1];
 
-        if (platform == .node) {
+        if (target == .node) {
             exts.ensureTotalCapacity(Extensions.In.JavaScript.len * 2) catch unreachable;
             for (Extensions.In.JavaScript) |ext| {
                 exts.put(ext, mjs) catch unreachable;
@@ -535,8 +527,8 @@ pub const Platform = enum {
         return exts;
     }
 
-    pub fn from(plat: ?api.Api.Platform) Platform {
-        return switch (plat orelse api.Api.Platform._none) {
+    pub fn from(plat: ?api.Api.Target) Target {
+        return switch (plat orelse api.Api.Target._none) {
             .node => .node,
             .browser => .browser,
             .bun => .bun,
@@ -555,8 +547,8 @@ pub const Platform = enum {
         // Older packages might use jsnext:main in place of module
         "jsnext:main",
     };
-    pub const DefaultMainFields: std.EnumArray(Platform, []const string) = brk: {
-        var array = std.EnumArray(Platform, []const string).initUndefined();
+    pub const DefaultMainFields: std.EnumArray(Target, []const string) = brk: {
+        var array = std.EnumArray(Target, []const string).initUndefined();
 
         // Note that this means if a package specifies "module" and "main", the ES6
         // module will not be selected. This means tree shaking will not work when
@@ -572,7 +564,7 @@ pub const Platform = enum {
         // This is unfortunate but it's a problem on the side of those packages.
         // They won't work correctly with other popular bundlers (with node as a target) anyway.
         var list = [_]string{ MAIN_FIELD_NAMES[2], MAIN_FIELD_NAMES[1] };
-        array.set(Platform.node, &list);
+        array.set(Target.node, &list);
 
         // Note that this means if a package specifies "main", "module", and
         // "browser" then "browser" will win out over "module". This is the
@@ -584,24 +576,23 @@ pub const Platform = enum {
         var listc = [_]string{ MAIN_FIELD_NAMES[0], MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[3], MAIN_FIELD_NAMES[2] };
         var listd = [_]string{ MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[2], MAIN_FIELD_NAMES[3] };
 
-        array.set(Platform.browser, &listc);
-        array.set(Platform.bun, &listd);
-        array.set(Platform.bun_macro, &listd);
+        array.set(Target.browser, &listc);
+        array.set(Target.bun, &listd);
+        array.set(Target.bun_macro, &listd);
 
         // Original comment:
-        // The neutral platform is for people that don't want esbuild to try to
+        // The neutral target is for people that don't want esbuild to try to
         // pick good defaults for their platform. In that case, the list of main
         // fields is empty by default. You must explicitly configure it yourself.
-
-        array.set(Platform.neutral, &listc);
+        // array.set(Target.neutral, &listc);
 
         break :brk array;
     };
 
-    pub const DefaultConditions: std.EnumArray(Platform, []const string) = brk: {
-        var array = std.EnumArray(Platform, []const string).initUndefined();
+    pub const DefaultConditions: std.EnumArray(Target, []const string) = brk: {
+        var array = std.EnumArray(Target, []const string).initUndefined();
 
-        array.set(Platform.node, &[_]string{
+        array.set(Target.node, &[_]string{
             "node",
             "module",
         });
@@ -610,9 +601,9 @@ pub const Platform = enum {
             "browser",
             "module",
         };
-        array.set(Platform.browser, &listc);
+        array.set(Target.browser, &listc);
         array.set(
-            Platform.bun,
+            Target.bun,
             &[_]string{
                 "bun",
                 "worker",
@@ -623,7 +614,7 @@ pub const Platform = enum {
             },
         );
         array.set(
-            Platform.bun_macro,
+            Target.bun_macro,
             &[_]string{
                 "bun",
                 "worker",
@@ -633,20 +624,19 @@ pub const Platform = enum {
                 "browser",
             },
         );
-        // array.set(Platform.bun_macro, [_]string{ "bun_macro", "browser", "default", },);
+        // array.set(Target.bun_macro, [_]string{ "bun_macro", "browser", "default", },);
 
         // Original comment:
-        // The neutral platform is for people that don't want esbuild to try to
+        // The neutral target is for people that don't want esbuild to try to
         // pick good defaults for their platform. In that case, the list of main
         // fields is empty by default. You must explicitly configure it yourself.
-
-        array.set(Platform.neutral, &listc);
+        // array.set(Target.neutral, &listc);
 
         break :brk array;
     };
 };
 
-pub const Loader = enum {
+pub const Loader = enum(u8) {
     jsx,
     js,
     ts,
@@ -660,6 +650,16 @@ pub const Loader = enum {
     base64,
     dataurl,
     text,
+
+    pub fn shouldCopyForBundling(this: Loader) bool {
+        return switch (this) {
+            .file,
+            // TODO: CSS
+            .css,
+            => true,
+            else => false,
+        };
+    }
 
     pub fn toMimeType(this: Loader) bun.HTTP.MimeType {
         return switch (this) {
@@ -770,12 +770,14 @@ pub const Loader = enum {
             .ts => .ts,
             .tsx => .tsx,
             .css => .css,
+            .file => .file,
             .json => .json,
             .toml => .toml,
             .wasm => .wasm,
             .napi => .napi,
+            .base64 => .base64,
+            .dataurl => .dataurl,
             .text => .text,
-            else => .file,
         };
     }
 
@@ -786,10 +788,13 @@ pub const Loader = enum {
             .ts => .ts,
             .tsx => .tsx,
             .css => .css,
+            .file => .file,
             .json => .json,
             .toml => .toml,
             .wasm => .wasm,
             .napi => .napi,
+            .base64 => .base64,
+            .dataurl => .dataurl,
             .text => .text,
             else => .file,
         };
@@ -862,9 +867,9 @@ pub const ESMConditions = struct {
         var import_condition_map = ConditionsMap.init(allocator);
         var require_condition_map = ConditionsMap.init(allocator);
 
-        try default_condition_amp.ensureTotalCapacity(defaults.len + 1);
-        try import_condition_map.ensureTotalCapacity(defaults.len + 1);
-        try require_condition_map.ensureTotalCapacity(defaults.len + 1);
+        try default_condition_amp.ensureTotalCapacity(defaults.len + 2);
+        try import_condition_map.ensureTotalCapacity(defaults.len + 2);
+        try require_condition_map.ensureTotalCapacity(defaults.len + 2);
 
         import_condition_map.putAssumeCapacity("import", {});
         require_condition_map.putAssumeCapacity("require", {});
@@ -876,6 +881,8 @@ pub const ESMConditions = struct {
         }
 
         default_condition_amp.putAssumeCapacity("default", {});
+        import_condition_map.putAssumeCapacity("default", {});
+        require_condition_map.putAssumeCapacity("default", {});
 
         return ESMConditions{
             .default = default_condition_amp,
@@ -955,7 +962,7 @@ pub const JSX = struct {
                 &pragma.import_source.development,
                 &[_]string{
                     pragma.package_name,
-                    "jsx-dev-runtime",
+                    "/jsx-dev-runtime",
                 },
                 &.{
                     Defaults.ImportSourceDev,
@@ -967,7 +974,7 @@ pub const JSX = struct {
                 &pragma.import_source.production,
                 &[_]string{
                     pragma.package_name,
-                    "jsx-runtime",
+                    "/jsx-runtime",
                 },
                 &.{
                     Defaults.ImportSource,
@@ -1083,8 +1090,7 @@ pub const DefaultUserDefines = struct {
         pub const Key = "process.env.NODE_ENV";
         pub const Value = "\"development\"";
     };
-
-    pub const PlatformDefine = struct {
+    pub const ProcessBrowserDefine = struct {
         pub const Key = "process.browser";
         pub const Value = []string{ "false", "true" };
     };
@@ -1095,7 +1101,7 @@ pub fn definesFromTransformOptions(
     log: *logger.Log,
     _input_define: ?Api.StringMap,
     hmr: bool,
-    platform: Platform,
+    target: Target,
     loader: ?*DotEnv.Loader,
     framework_env: ?*const Env,
     NODE_ENV: ?string,
@@ -1138,36 +1144,38 @@ pub fn definesFromTransformOptions(
         }
     }
 
-    if (NODE_ENV) |node_env| {
-        if (node_env.len > 0) {
-            var quoted_node_env: string = "";
-            if ((strings.startsWithChar(node_env, '"') and strings.endsWithChar(node_env, '"')) or
-                (strings.startsWithChar(node_env, '\'') and strings.endsWithChar(node_env, '\'')))
-            {
-                quoted_node_env = node_env;
-            } else {
+    var quoted_node_env: string = brk: {
+        if (NODE_ENV) |node_env| {
+            if (node_env.len > 0) {
+                if ((strings.startsWithChar(node_env, '"') and strings.endsWithChar(node_env, '"')) or
+                    (strings.startsWithChar(node_env, '\'') and strings.endsWithChar(node_env, '\'')))
+                {
+                    break :brk node_env;
+                }
+
                 // avoid allocating if we can
                 if (strings.eqlComptime(node_env, "production")) {
-                    quoted_node_env = "\"production\"";
+                    break :brk "\"production\"";
                 } else if (strings.eqlComptime(node_env, "development")) {
-                    quoted_node_env = "\"development\"";
+                    break :brk "\"development\"";
                 } else if (strings.eqlComptime(node_env, "test")) {
-                    quoted_node_env = "\"test\"";
+                    break :brk "\"test\"";
                 } else {
-                    quoted_node_env = try std.fmt.allocPrint(allocator, "\"{s}\"", .{node_env});
+                    break :brk try std.fmt.allocPrint(allocator, "\"{s}\"", .{node_env});
                 }
             }
-
-            _ = try user_defines.getOrPutValue(
-                "process.env.NODE_ENV",
-                quoted_node_env,
-            );
-            _ = try user_defines.getOrPutValue(
-                "process.env.BUN_ENV",
-                quoted_node_env,
-            );
         }
-    }
+        break :brk "\"development\"";
+    };
+
+    _ = try user_defines.getOrPutValue(
+        "process.env.NODE_ENV",
+        quoted_node_env,
+    );
+    _ = try user_defines.getOrPutValue(
+        "process.env.BUN_ENV",
+        quoted_node_env,
+    );
 
     if (hmr) {
         try user_defines.put(DefaultUserDefines.HotModuleReloading.Key, DefaultUserDefines.HotModuleReloading.Value);
@@ -1175,11 +1183,11 @@ pub fn definesFromTransformOptions(
 
     // Automatically set `process.browser` to `true` for browsers and false for node+js
     // This enables some extra dead code elimination
-    if (platform.processBrowserDefineValue()) |value| {
-        _ = try user_defines.getOrPutValue(DefaultUserDefines.PlatformDefine.Key, value);
+    if (target.processBrowserDefineValue()) |value| {
+        _ = try user_defines.getOrPutValue(DefaultUserDefines.ProcessBrowserDefine.Key, value);
     }
 
-    if (platform.isBun()) {
+    if (target.isBun()) {
         if (!user_defines.contains("window")) {
             _ = try environment_defines.getOrPutValue("window", .{
                 .valueless = true,
@@ -1212,45 +1220,12 @@ const default_loader_ext = [_]string{
     ".txt",  ".text",
 };
 
-pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.LoaderMap, platform: Platform) !bun.StringArrayHashMap(Loader) {
+pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.LoaderMap, target: Target) !bun.StringArrayHashMap(Loader) {
     var input_loaders = _loaders orelse std.mem.zeroes(Api.LoaderMap);
     var loader_values = try allocator.alloc(Loader, input_loaders.loaders.len);
 
-    if (platform.isBun()) {
-        for (loader_values, 0..) |_, i| {
-            const loader = switch (input_loaders.loaders[i]) {
-                .jsx => Loader.jsx,
-                .js => Loader.js,
-                .ts => Loader.ts,
-                .css => Loader.css,
-                .tsx => Loader.tsx,
-                .json => Loader.json,
-                .toml => Loader.toml,
-                .wasm => Loader.wasm,
-                .napi => Loader.napi,
-                .text => Loader.text,
-                else => unreachable,
-            };
-
-            loader_values[i] = loader;
-        }
-    } else {
-        for (loader_values, 0..) |_, i| {
-            const loader = switch (input_loaders.loaders[i]) {
-                .jsx => Loader.jsx,
-                .js => Loader.js,
-                .ts => Loader.ts,
-                .css => Loader.css,
-                .tsx => Loader.tsx,
-                .json => Loader.json,
-                .toml => Loader.toml,
-                .wasm => Loader.wasm,
-                .text => Loader.text,
-                else => unreachable,
-            };
-
-            loader_values[i] = loader;
-        }
+    for (loader_values, input_loaders.loaders) |*loader, input| {
+        loader.* = Loader.fromAPI(input);
     }
 
     var loaders = try stringHashMapFromArrays(
@@ -1264,7 +1239,7 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
         _ = try loaders.getOrPutValue(ext, defaultLoaders.get(ext).?);
     }
 
-    if (platform.isBun()) {
+    if (target.isBun()) {
         inline for (default_loader_ext_bun) |ext| {
             _ = try loaders.getOrPutValue(ext, defaultLoaders.get(ext).?);
         }
@@ -1369,12 +1344,15 @@ pub const BundleOptions = struct {
 
     resolve_mode: api.Api.ResolveMode,
     tsconfig_override: ?string = null,
-    platform: Platform = Platform.browser,
-    main_fields: []const string = Platform.DefaultMainFields.get(Platform.browser),
+    target: Target = Target.browser,
+    main_fields: []const string = Target.DefaultMainFields.get(Target.browser),
     log: *logger.Log,
     external: ExternalModules = ExternalModules{},
     entry_points: []const string,
-    entry_names: []const u8 = "",
+    entry_naming: []const u8 = "",
+    asset_naming: []const u8 = "",
+    chunk_naming: []const u8 = "",
+    public_path: []const u8 = "",
     extension_order: []const string = &Defaults.ExtensionOrder,
     esm_extension_order: []const string = &Defaults.ModuleExtensionOrder,
     out_extensions: bun.StringHashMap(string),
@@ -1394,7 +1372,7 @@ pub const BundleOptions = struct {
     conditions: ESMConditions = undefined,
     tree_shaking: bool = false,
     code_splitting: bool = false,
-    sourcemap: SourceMapOption = SourceMapOption.none,
+    source_map: SourceMapOption = SourceMapOption.none,
 
     disable_transpilation: bool = false,
 
@@ -1433,8 +1411,8 @@ pub const BundleOptions = struct {
     };
 
     pub inline fn cssImportBehavior(this: *const BundleOptions) Api.CssInJsBehavior {
-        switch (this.platform) {
-            .neutral, .browser => {
+        switch (this.target) {
+            .browser => {
                 if (this.framework) |framework| {
                     return framework.client_css_in_js;
                 }
@@ -1458,7 +1436,7 @@ pub const BundleOptions = struct {
             this.log,
             this.transform_options.define,
             this.transform_options.serve orelse false,
-            this.platform,
+            this.target,
             loader_,
             env,
             if (loader_) |e|
@@ -1527,9 +1505,9 @@ pub const BundleOptions = struct {
             .log = log,
             .resolve_mode = transform.resolve orelse .dev,
             .define = undefined,
-            .loaders = try loadersFromTransformOptions(allocator, transform.loaders, Platform.from(transform.platform)),
+            .loaders = try loadersFromTransformOptions(allocator, transform.loaders, Target.from(transform.target)),
             .output_dir = transform.output_dir orelse "out",
-            .platform = Platform.from(transform.platform),
+            .target = Target.from(transform.target),
             .write = transform.write orelse false,
             .external = undefined,
             .entry_points = transform.entry_points,
@@ -1553,12 +1531,12 @@ pub const BundleOptions = struct {
             opts.extension_order = transform.extension_order;
         }
 
-        if (transform.platform) |plat| {
-            opts.platform = Platform.from(plat);
-            opts.main_fields = Platform.DefaultMainFields.get(opts.platform);
+        if (transform.target) |t| {
+            opts.target = Target.from(t);
+            opts.main_fields = Target.DefaultMainFields.get(opts.target);
         }
 
-        opts.conditions = try ESMConditions.init(allocator, Platform.DefaultConditions.get(opts.platform));
+        opts.conditions = try ESMConditions.init(allocator, Target.DefaultConditions.get(opts.target));
 
         if (transform.serve orelse false) {
             // When we're serving, we need some kind of URL.
@@ -1583,7 +1561,7 @@ pub const BundleOptions = struct {
             }
         }
 
-        switch (opts.platform) {
+        switch (opts.target) {
             .node => {
                 opts.import_path_format = .relative;
                 opts.allow_runtime = false;
@@ -1682,8 +1660,8 @@ pub const BundleOptions = struct {
         if (opts.framework == null and is_generating_bundle)
             opts.env.behavior = .load_all;
 
-        opts.external = ExternalModules.init(allocator, &fs.fs, fs.top_level_dir, transform.external, log, opts.platform);
-        opts.out_extensions = opts.platform.outExtensions(allocator);
+        opts.external = ExternalModules.init(allocator, &fs.fs, fs.top_level_dir, transform.external, log, opts.target);
+        opts.out_extensions = opts.target.outExtensions(allocator);
 
         if (transform.serve orelse false) {
             opts.preserve_extensions = true;
@@ -1691,7 +1669,7 @@ pub const BundleOptions = struct {
             if (opts.framework == null)
                 opts.env.behavior = .load_all;
 
-            opts.sourcemap = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode.external);
+            opts.source_map = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode.external);
 
             opts.resolve_mode = .lazy;
 
@@ -1826,17 +1804,17 @@ pub const BundleOptions = struct {
             if (Environment.isWindows and opts.routes.static_dir_handle != null) {
                 opts.routes.static_dir_handle.?.close();
             }
-            opts.hot_module_reloading = opts.platform.isWebLike();
+            opts.hot_module_reloading = opts.target.isWebLike();
 
             if (transform.disable_hmr orelse false)
                 opts.hot_module_reloading = false;
 
             opts.serve = true;
         } else {
-            opts.sourcemap = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode._none);
+            opts.source_map = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode._none);
         }
 
-        opts.tree_shaking = opts.serve or opts.platform.isBun() or opts.production or is_generating_bundle;
+        opts.tree_shaking = opts.serve or opts.target.isBun() or opts.production or is_generating_bundle;
         opts.inlining = opts.tree_shaking;
         if (opts.inlining)
             opts.minify_syntax = true;
@@ -1850,7 +1828,7 @@ pub const BundleOptions = struct {
             opts.output_dir = try fs.getFdPath(opts.output_dir_handle.?.fd);
         }
 
-        opts.polyfill_node_globals = opts.platform != .node;
+        opts.polyfill_node_globals = opts.target != .node;
 
         Analytics.Features.framework = Analytics.Features.framework or opts.framework != null;
         Analytics.Features.filesystem_router = Analytics.Features.filesystem_router or opts.routes.routes_enabled;
@@ -1858,7 +1836,7 @@ pub const BundleOptions = struct {
         Analytics.Features.public_folder = Analytics.Features.public_folder or opts.routes.static_dir_enabled;
         Analytics.Features.bun_bun = Analytics.Features.bun_bun or transform.node_modules_bundle_path != null;
         Analytics.Features.bunjs = Analytics.Features.bunjs or transform.node_modules_bundle_path_server != null;
-        Analytics.Features.macros = Analytics.Features.macros or opts.platform == .bun_macro;
+        Analytics.Features.macros = Analytics.Features.macros or opts.target == .bun_macro;
         Analytics.Features.external = Analytics.Features.external or transform.external.len > 0;
         Analytics.Features.single_page_app_routing = Analytics.Features.single_page_app_routing or opts.routes.single_page_app_routing;
         return opts;
@@ -1895,8 +1873,8 @@ pub const TransformOptions = struct {
     resolve_paths: bool = false,
     tsconfig_override: ?string = null,
 
-    platform: Platform = Platform.browser,
-    main_fields: []string = Platform.DefaultMainFields.get(Platform.browser),
+    target: Target = Target.browser,
+    main_fields: []string = Target.DefaultMainFields.get(Target.browser),
 
     pub fn initUncached(allocator: std.mem.Allocator, entryPointName: string, code: string) !TransformOptions {
         assert(entryPointName.len > 0);
@@ -1927,7 +1905,7 @@ pub const TransformOptions = struct {
             .define = define,
             .loader = loader,
             .resolve_dir = entryPoint.path.name.dir,
-            .main_fields = Platform.DefaultMainFields.get(Platform.browser),
+            .main_fields = Target.DefaultMainFields.get(Target.browser),
             .jsx = if (Loader.isJSX(loader)) JSX.Pragma{} else null,
         };
     }
@@ -1945,7 +1923,7 @@ pub const OutputFile = struct {
     mtime: ?i128 = null,
 
     // Depending on:
-    // - The platform
+    // - The target
     // - The number of open file handles
     // - Whether or not a file of the same name exists
     // We may use a different system call
@@ -2001,14 +1979,42 @@ pub const OutputFile = struct {
             allocator: std.mem.Allocator,
             bytes: []const u8,
         },
-
+        saved: SavedFile,
         move: FileOperation,
         copy: FileOperation,
         noop: u0,
         pending: resolver.Result,
     };
 
-    pub const Kind = enum { move, copy, noop, buffer, pending };
+    pub const SavedFile = struct {
+        pub fn toJS(
+            globalThis: *JSC.JSGlobalObject,
+            path: []const u8,
+            byte_size: usize,
+        ) JSC.JSValue {
+            const mime_type = globalThis.bunVM().mimeType(path);
+            const store = JSC.WebCore.Blob.Store.initFile(
+                JSC.Node.PathOrFileDescriptor{
+                    .path = JSC.Node.PathLike{
+                        .string = JSC.PathString.init(path),
+                    },
+                },
+                mime_type,
+                bun.default_allocator,
+            ) catch unreachable;
+
+            var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
+            blob.* = JSC.WebCore.Blob.initWithStore(store, globalThis);
+            if (mime_type) |mime| {
+                blob.content_type = mime.value;
+            }
+            blob.size = @truncate(JSC.WebCore.Blob.SizeType, byte_size);
+            blob.allocator = bun.default_allocator;
+            return blob.toJS(globalThis);
+        }
+    };
+
+    pub const Kind = enum { move, copy, noop, buffer, pending, saved };
 
     pub fn initPending(loader: Loader, pending: resolver.Result) OutputFile {
         return .{
@@ -2079,6 +2085,7 @@ pub const OutputFile = struct {
 
     pub fn toJS(
         this: *OutputFile,
+        owned_pathname: []const u8,
         globalObject: *JSC.JSGlobalObject,
     ) bun.JSC.JSValue {
         return switch (this.value) {
@@ -2086,11 +2093,17 @@ pub const OutputFile = struct {
             .noop => JSC.JSValue.undefined,
             .move => this.value.move.toJS(globalObject, this.loader),
             .copy => this.value.copy.toJS(globalObject, this.loader),
+            .saved => SavedFile.toJS(globalObject, owned_pathname, this.size),
             .buffer => |buffer| brk: {
                 var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
                 blob.* = JSC.WebCore.Blob.init(@constCast(buffer.bytes), buffer.allocator, globalObject);
-                blob.store.?.mime_type = this.loader.toMimeType();
-                blob.content_type = blob.store.?.mime_type.value;
+                if (blob.store) |store| {
+                    store.mime_type = this.loader.toMimeType();
+                    blob.content_type = store.mime_type.value;
+                } else {
+                    blob.content_type = this.loader.toMimeType().value;
+                }
+
                 blob.allocator = bun.default_allocator;
                 const blob_jsvalue = blob.toJS(globalObject);
                 blob_jsvalue.ensureStillAlive();
@@ -2341,9 +2354,9 @@ pub const Framework = struct {
 
     pub const fallback_html: string = @embedFile("./fallback.html");
 
-    pub fn platformEntryPoint(this: *const Framework, platform: Platform) ?*const EntryPoint {
-        const entry: *const EntryPoint = switch (platform) {
-            .neutral, .browser => &this.client,
+    pub fn platformEntryPoint(this: *const Framework, target: Target) ?*const EntryPoint {
+        const entry: *const EntryPoint = switch (target) {
+            .browser => &this.client,
             .bun => &this.server,
             .node => return null,
         };
@@ -2566,6 +2579,10 @@ pub const PathTemplate = struct {
     data: string = "",
     placeholder: Placeholder = .{},
 
+    pub fn needs(this: *const PathTemplate, comptime field: std.meta.FieldEnum(Placeholder)) bool {
+        return strings.contains(this.data, comptime "[" ++ @tagName(field) ++ "]");
+    }
+
     pub fn format(self: PathTemplate, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         var remain = self.data;
         while (strings.indexOfChar(remain, '[')) |j| {
@@ -2644,6 +2661,11 @@ pub const PathTemplate = struct {
     };
 
     pub const file = PathTemplate{
+        .data = "./[name].[ext]",
+        .placeholder = .{},
+    };
+
+    pub const asset = PathTemplate{
         .data = "./[name]-[hash].[ext]",
         .placeholder = .{},
     };

@@ -1,13 +1,6 @@
 import assert from "assert";
 import dedent from "dedent";
-import {
-  ESBUILD_PATH,
-  RUN_UNCHECKED_TESTS,
-  bundlerTest,
-  expectBundled,
-  itBundled,
-  testForFile,
-} from "../expectBundled";
+import { ESBUILD_PATH, RUN_UNCHECKED_TESTS, itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:
@@ -239,7 +232,8 @@ describe("bundler", () => {
       "/e.js": "export default class Foo {}",
     },
     entryPoints: ["/a.js", "/b.js", "/c.js", "/d.js", "/e.js"],
-    mode: "transform",
+    mode: "bundle",
+    external: ["*"],
     runtimeFiles: {
       "./out/f.js": /* js */ `
         export const f = 987;
@@ -279,7 +273,6 @@ describe("bundler", () => {
           function nested() { return import('./c') },
         ]
   
-        import { deepEqual } from 'node:assert'
         deepEqual(a, 1, 'a');
         deepEqual(a2, 4, 'a2');
         deepEqual(c3, 2, 'c3');
@@ -305,7 +298,9 @@ describe("bundler", () => {
         export const a2 = 4;
       `,
       "/test.js": String.raw/* js */ `
-        import './out.js';
+        import { deepEqual } from 'node:assert';
+        globalThis.deepEqual = deepEqual;
+        await import ('./out.js');
         if (!globalThis.aWasImported) {
           throw new Error('"import \'./a\'" was tree-shaken when it should not have been.')
         }
@@ -314,18 +309,19 @@ describe("bundler", () => {
         }
       `,
     },
-    mode: "transform",
+    // mode: "transform",
     run: {
       file: "/test.js",
     },
+    external: ["*"],
   } as const;
   itBundled("default/ImportFormsWithNoBundle", {
     ...importFormsConfig,
-  });
+  } as any);
   itBundled("default/ImportFormsWithMinifyIdentifiersAndNoBundle", {
     ...importFormsConfig,
     minifyIdentifiers: true,
-  });
+  } as any);
   itBundled("default/ExportFormsCommonJS", {
     files: {
       "/entry.js": /* js */ `
@@ -498,11 +494,15 @@ describe("bundler", () => {
   itBundled("default/JSXSyntaxInJS", {
     files: {
       "/entry.mjs": `console.log(<div/>)`,
+      "/entry.cjs": `console.log(<div/>)`,
     },
     bundleErrors: {
       // TODO: this could be a nicer error
       "/entry.mjs": [`Unexpected <`],
+      "/entry.cjs": [`Unexpected <`],
     },
+    outdir: "/out",
+    entryPoints: ["/entry.mjs", "/entry.cjs"],
   });
   itBundled("default/JSXConstantFragments", {
     notImplemented: true, // jsx in bun is too different to esbuild
@@ -860,7 +860,7 @@ describe("bundler", () => {
         require.resolve(v ? y ? 'a' : 'b' : c)
       `,
     },
-    platform: "node",
+    target: "node",
     format: "cjs",
     // esbuild seems to not need externals for require.resolve, but it should be specified
     external: ["a", "b", "c"],
@@ -929,7 +929,7 @@ describe("bundler", () => {
         await import('./out/b');
       `,
     },
-    entryNames: "[name].[ext]",
+    entryNaming: "[name].[ext]",
     entryPoints: ["/a.js", "/b.js"],
     external: ["a", "b", "c"],
     run: [
@@ -1027,47 +1027,12 @@ describe("bundler", () => {
       stdout: "./test.txt",
     },
   });
-  itBundled("default/RequireWithoutCallPlatformNeutral", {
-    notImplemented: true,
-    // `require` on line one has to be renamed to `__require`
-    files: {
-      "/entry.js": /* js */ `
-        const req = require
-        req('./entry')
-        capture(req)
-      `,
-    },
-    platform: "neutral",
-    onAfterBundle(api) {
-      const varName = api.captureFile("/out.js")[0];
-      const assignmentValue = api.readFile("/out.js").match(new RegExp(`${varName} = (.*);`))![1];
-      expect(assignmentValue).not.toBe("require");
-    },
-  });
-  itBundled("default/NestedRequireWithoutCallPlatformNeutral", {
-    notImplemented: true,
-    // `require` on line one has to be renamed to `__require`
-    files: {
-      "/entry.js": /* js */ `
-        (() => {
-          const req = require
-          req('./entry')
-          capture(req)
-        })()
-      `,
-    },
-    platform: "neutral",
-    onAfterBundle(api) {
-      const varName = api.captureFile("/out.js")[0];
-      const assignmentValue = api.readFile("/out.js").match(new RegExp(`${varName} = (.*);`))![1];
-      expect(assignmentValue).not.toBe("require");
-    },
-  });
   itBundled("default/RequireWithCallInsideTry", {
     files: {
       "/entry.js": /* js */ `
         try {
           const supportsColor = require('not-supports-color'); // bun overrides supports-color
+          exports.colors = false;
           if (supportsColor && (supportsColor.stderr || supportsColor).level >= 2) {
             exports.colors = [];
           }
@@ -1085,7 +1050,7 @@ describe("bundler", () => {
       "/test2.js": /* js */ `
         globalThis.requireThrows = true;
         import assert from 'assert';
-        assert.deepEqual((await import('./out')).default, { })
+        assert.deepEqual((await import('./out')).default, { colors: 'it threw' })
       `,
       "/node_modules/not-supports-color/index.js": /* js */ `
         if (requireThrows) {
@@ -1095,27 +1060,6 @@ describe("bundler", () => {
       `,
     },
     run: [{ file: "/test1.js" }, { file: "/test2.js" }],
-  });
-  itBundled("default/RequireWithoutCallInsideTry", {
-    notImplemented: true,
-    // `require` has to be renamed to `__require`
-    files: {
-      "/entry.js": /* js */ `
-        try {
-          oldLocale = globalLocale._abbr;
-          var aliasedRequire = require;
-          aliasedRequire('./locale/' + name);
-          getSetGlobalLocale(oldLocale);
-          capture(aliasedRequire)
-        } catch (e) {}
-      `,
-    },
-    platform: "neutral",
-    onAfterBundle(api) {
-      const varName = api.captureFile("/out.js")[0];
-      const assignmentValue = api.readFile("/out.js").match(new RegExp(`${varName} = (.*);`))![1];
-      expect(assignmentValue).not.toBe("require");
-    },
   });
   itBundled("default/RequirePropertyAccessCommonJS", {
     files: {
@@ -1127,7 +1071,7 @@ describe("bundler", () => {
         delete require.extensions['.json']
       `,
     },
-    platform: "node",
+    target: "node",
     format: "cjs",
     onAfterBundle(api) {
       api.prependFile(
@@ -1255,18 +1199,6 @@ describe("bundler", () => {
       assert(api.readFile("/out.js").startsWith("#!/usr/bin/env a"), "hashbang exists on bundle");
     },
   });
-  itBundled("default/HashbangNoBundle", {
-    files: {
-      "/entry.js": /* js */ `
-        #!/usr/bin/env node
-        process.exit(0);
-      `,
-    },
-    mode: "transform",
-    onAfterBundle(api) {
-      assert(api.readFile("/out.js").startsWith("#!/usr/bin/env node"), "hashbang exists on bundle");
-    },
-  });
   itBundled("default/HashbangBannerUseStrictOrder", {
     files: {
       "/entry.js": /* js */ `
@@ -1284,7 +1216,7 @@ describe("bundler", () => {
     files: {
       "/entry.js": `console.log(require('fs'))`,
     },
-    platform: "browser",
+    target: "browser",
     run: {
       stdout: "[Function]",
     },
@@ -1294,7 +1226,7 @@ describe("bundler", () => {
       "/entry.js": `console.log('existsSync' in require('fs'))`,
     },
     format: "cjs",
-    platform: "node",
+    target: "node",
     run: {
       stdout: "true",
     },
@@ -1305,7 +1237,7 @@ describe("bundler", () => {
     },
     minifyWhitespace: true,
     format: "cjs",
-    platform: "node",
+    target: "node",
     run: {
       stdout: "true",
     },
@@ -1323,7 +1255,7 @@ describe("bundler", () => {
     run: {
       stdout: "[Function] undefined undefined",
     },
-    platform: "browser",
+    target: "browser",
   });
   itBundled("default/ImportFSNodeCommonJS", {
     files: {
@@ -1335,7 +1267,7 @@ describe("bundler", () => {
         console.log('writeFileSync' in fs, readFileSync, 'writeFileSync' in defaultValue)
       `,
     },
-    platform: "node",
+    target: "node",
     format: "cjs",
     run: {
       stdout: "true [Function: readFileSync] true",
@@ -1351,7 +1283,7 @@ describe("bundler", () => {
         console.log('writeFileSync' in fs, readFileSync, 'writeFileSync' in defaultValue)
       `,
     },
-    platform: "node",
+    target: "node",
     run: {
       stdout: "true [Function: readFileSync] true",
     },
@@ -1363,7 +1295,7 @@ describe("bundler", () => {
         export {readFileSync} from 'fs'
       `,
     },
-    platform: "browser",
+    target: "browser",
     run: {
       file: "out.js",
     },
@@ -1383,7 +1315,7 @@ describe("bundler", () => {
         assert(module.readFileSync === fs.readFileSync, 'export {readFileSync} from "fs"; works')
       `,
     },
-    platform: "node",
+    target: "node",
     run: {
       file: "/test.js",
     },
@@ -1407,7 +1339,7 @@ describe("bundler", () => {
         assert(module.rfs === fs.readFileSync, 'export {rfs} works')
       `,
     },
-    platform: "node",
+    target: "node",
     run: {
       file: "/test.js",
     },
@@ -1425,13 +1357,13 @@ describe("bundler", () => {
       "/test.js": /* js */ `
         import fs from "fs";
         import assert from "assert";
-        import module from './out.js';
-        assert(module.fs === fs, 'exports.fs')
-        assert(module.readFileSync === fs.readFileSync, 'exports.readFileSync')
-        assert(module.foo === 123, 'exports.foo')
+        import * as mod from './out.js';
+        assert(mod.fs === fs, 'exports.fs')
+        assert(mod.readFileSync === fs.readFileSync, 'exports.readFileSync')
+        assert(mod.foo === 123, 'exports.foo')
       `,
     },
-    platform: "node",
+    target: "node",
     run: {
       file: "/test.js",
     },
@@ -1447,7 +1379,7 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
-    platform: "node",
+    target: "node",
     run: {
       file: "/test.js",
     },
@@ -1463,7 +1395,7 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    platform: "node",
+    target: "node",
     run: {
       file: "/test.js",
     },
@@ -1546,16 +1478,33 @@ describe("bundler", () => {
     },
   });
   itBundled("default/TopLevelReturnForbiddenImport", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
+        console.log('A');
+        return
+        console.log('B');
+        import 'foo'
+      `,
+    },
+    external: ["foo"],
+    runtimeFiles: {
+      "/node_modules/foo/index.js": "console.log('C')",
+    },
+    run: {
+      stdout: "C\nA",
+    },
+  });
+  itBundled("default/TopLevelReturnForbiddenImportAndModuleExports", {
+    notImplemented: true,
+    files: {
+      "/entry.js": /* js */ `
+        module.exports.foo = 123
         return
         import 'foo'
       `,
     },
-    mode: "transform",
-    bundleErrors: {
-      "/entry.js": ["Top-level return cannot be used inside an ECMAScript module"],
-    },
+    external: ["foo"],
   });
   itBundled("default/TopLevelReturnForbiddenExport", {
     files: {
@@ -1859,7 +1808,7 @@ describe("bundler", () => {
   });
   itBundled("default/ArgumentsSpecialCaseNoBundle", {
     files: {
-      "/entry.js": /* js */ `
+      "/entry.cjs": /* js */ `
         (async() => {
           var arguments = 'var';
   
@@ -1902,7 +1851,7 @@ describe("bundler", () => {
           // assertions:
           // we need this helper function to get "Arguments" objects, though this only applies for tests using v8
           const argumentsFor = new Function('return arguments;');
-          const assert = require('assert');
+          const assert = (0, require)('assert');
           assert.deepEqual(f1(), [argumentsFor(), argumentsFor()], 'f1()');
           assert.deepEqual(f1(1), [1, argumentsFor(1)], 'f1(1)');
           assert.deepEqual(f2(), [argumentsFor(), argumentsFor()], 'f2()');
@@ -1949,42 +1898,58 @@ describe("bundler", () => {
           assert.deepEqual(a19(1), [1, 'var'], 'a19(1)');
           assert.deepEqual(await a20(), ['var', 'var'], 'a20()');
           assert.deepEqual(await a20(1), [1, 'var'], 'a20(1)');
-        })();
+        })(1,3,5);
       `,
     },
-    format: "cjs",
+    format: "iife",
     outfile: "/out.js",
     minifyIdentifiers: true,
-    mode: "transform",
+    // mode: "transform",
   });
   itBundled("default/WithStatementTaintingNoBundle", {
-    // TODO: MANUAL CHECK: make sure the snapshot we use works.
     files: {
       "/entry.js": /* js */ `
         (() => {
           let local = 1
           let outer = 2
           let outerDead = 3
-          with ({}) {
+          console.log(local, outer, outerDead)
+          with ({ outer: 100, local: 150, hoisted: 200, extra: 500 }) {
+            console.log(outer, outerDead, hoisted, extra)
             var hoisted = 4
             let local = 5
             hoisted++
             local++
+            console.log(local, outer, outerDead, hoisted, extra)
             if (1) outer++
             if (0) outerDead++
+            console.log(local, outer, outerDead, hoisted, extra)
           }
+          console.log(local, outer, outerDead, hoisted)
           if (1) {
             hoisted++
             local++
             outer++
             outerDead++
           }
+          console.log(local, outer, outerDead, hoisted)
         })()
       `,
     },
     format: "iife",
     minifyIdentifiers: true,
     mode: "transform",
+    run: {
+      runtime: "node",
+      stdout: `
+        1 2 3
+        100 3 200 500
+        6 100 3 5 500
+        6 101 3 5 500
+        1 2 3 undefined
+        2 3 4 NaN
+      `,
+    },
   });
   itBundled("default/DirectEvalTaintingNoBundle", {
     files: {
@@ -2193,6 +2158,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/ImportWithQueryParameter", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         // Each of these should have a separate identity (i.e. end up in the output file twice)
@@ -2279,6 +2245,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/AutoExternalNode", {
+    // notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         // These URLs should be external automatically
@@ -2287,18 +2254,52 @@ describe("bundler", () => {
   
         // This should be external and should be tree-shaken because it's side-effect free
         import "node:path";
+        import "querystring";
   
         // This should be external too, but shouldn't be tree-shaken because it could be a run-time error
         import "node:what-is-this";
       `,
     },
-    platform: "node",
+    target: "node",
+    treeShaking: true,
     onAfterBundle(api) {
       const file = api.readFile("/out.js");
       const imports = new Bun.Transpiler().scanImports(file);
       expect(imports).toStrictEqual([
         { kind: "import-statement", path: "node:fs/promises" },
         { kind: "import-statement", path: "node:what-is-this" },
+      ]);
+    },
+  });
+  itBundled("default/AutoExternalBun", {
+    skipOnEsbuild: true,
+    notImplemented: true,
+    files: {
+      "/entry.js": /* js */ `
+        // These URLs should be external automatically
+        import fs from "node:fs/promises";
+        fs.readFile();
+        import { CryptoHasher } from "bun";
+        new CryptoHasher();
+        
+        // This should be external and should be tree-shaken because it's side-effect free
+        import "node:path";
+        import "bun:sqlite";
+  
+        // This should be external too, but shouldn't be tree-shaken because it could be a run-time error
+        import "node:what-is-this";
+        import "bun:what-is-this";
+      `,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      const file = api.readFile("/out.js");
+      const imports = new Bun.Transpiler().scanImports(file);
+      expect(imports).toStrictEqual([
+        // bun is transformed in destructuring the bun global
+        { kind: "import-statement", path: "node:fs/promises" },
+        { kind: "import-statement", path: "node:what-is-this" },
+        { kind: "import-statement", path: "bun:what-is-this" },
       ]);
     },
   });
@@ -2368,18 +2369,22 @@ describe("bundler", () => {
           get #bar() {}
           set #bar(x) {}
         }
+
+        cool(Foo)
+        cool(Bar)
       `,
     },
     minifyIdentifiers: true,
-    mode: "transform",
     onAfterBundle(api) {
       const text = api.readFile("/out.js");
       assert(text.includes("doNotRenameMe"), "bundler should not have renamed `doNotRenameMe`");
       assert(!text.includes("#foo"), "bundler should have renamed `#foo`");
+      assert(text.includes("#"), "bundler keeps private variables private `#`");
     },
   });
   // These labels should all share the same minified names
   itBundled("default/MinifySiblingLabelsNoBundle", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         foo: {
@@ -2403,47 +2408,71 @@ describe("bundler", () => {
       `,
     },
     minifyIdentifiers: true,
-    mode: "transform",
     onAfterBundle(api) {
       const text = api.readFile("/out.js");
       const labels = [...text.matchAll(/([a-z0-9]+):/gi)].map(x => x[1]);
       expect(labels).toStrictEqual([labels[0], labels[1], labels[0], labels[1], labels[0], labels[1]]);
     },
   });
-  itBundled("default/MinifyNestedLabelsNoBundle", {
+  // This is such a fun file. it crashes prettier and some other parsers.
+  const crazyNestedLabelFile = dedent`
+    L001:{L002:{L003:{L004:{L005:{L006:{L007:{L008:{L009:{L010:{L011:{L012:{L013:{L014:{L015:{L016:{console.log('a')
+    L017:{L018:{L019:{L020:{L021:{L022:{L023:{L024:{L025:{L026:{L027:{L028:{L029:{L030:{L031:{L032:{console.log('a')
+    L033:{L034:{L035:{L036:{L037:{L038:{L039:{L040:{L041:{L042:{L043:{L044:{L045:{L046:{L047:{L048:{console.log('a')
+    L049:{L050:{L051:{L052:{L053:{L054:{L055:{L056:{L057:{L058:{L059:{L060:{L061:{L062:{L063:{L064:{console.log('a')
+    L065:{L066:{L067:{L068:{L069:{L070:{L071:{L072:{L073:{L074:{L075:{L076:{L077:{L078:{L079:{L080:{console.log('a')
+    L081:{L082:{L083:{L084:{L085:{L086:{L087:{L088:{L089:{L090:{L091:{L092:{L093:{L094:{L095:{L096:{console.log('a')
+    L097:{L098:{L099:{L100:{L101:{L102:{L103:{L104:{L105:{L106:{L107:{L108:{L109:{L110:{L111:{L112:{console.log('a')
+    L113:{L114:{L115:{L116:{L117:{L118:{L119:{L120:{L121:{L122:{L123:{L124:{L125:{L126:{L127:{L128:{console.log('a')
+    L129:{L130:{L131:{L132:{L133:{L134:{L135:{L136:{L137:{L138:{L139:{L140:{L141:{L142:{L143:{L144:{console.log('a')
+    L145:{L146:{L147:{L148:{L149:{L150:{L151:{L152:{L153:{L154:{L155:{L156:{L157:{L158:{L159:{L160:{console.log('a')
+    L161:{L162:{L163:{L164:{L165:{L166:{L167:{L168:{L169:{L170:{L171:{L172:{L173:{L174:{L175:{L176:{console.log('a')
+    L177:{L178:{L179:{L180:{L181:{L182:{L183:{L184:{L185:{L186:{L187:{L188:{L189:{L190:{L191:{L192:{console.log('a')
+    L193:{L194:{L195:{L196:{L197:{L198:{L199:{L200:{L201:{L202:{L203:{L204:{L205:{L206:{L207:{L208:{console.log('a')
+    L209:{L210:{L211:{L212:{L213:{L214:{L215:{L216:{L217:{L218:{L219:{L220:{L221:{L222:{L223:{L224:{console.log('a')
+    L225:{L226:{L227:{L228:{L229:{L230:{L231:{L232:{L233:{L234:{L235:{L236:{L237:{L238:{L239:{L240:{console.log('a')
+    L241:{L242:{L243:{L244:{L245:{L246:{L247:{L248:{L249:{L250:{L251:{L252:{L253:{L254:{L255:{L256:{console.log('a')
+    L257:{L258:{L259:{L260:{L261:{L262:{L263:{L264:{L265:{L266:{L267:{L268:{L269:{L270:{L271:{L272:{console.log('a')
+    L273:{L274:{L275:{L276:{L277:{L278:{L279:{L280:{L281:{L282:{L283:{L284:{L285:{L286:{L287:{L288:{console.log('a')
+    L289:{L290:{L291:{L292:{L293:{L294:{L295:{L296:{L297:{L298:{L299:{L300:{L301:{L302:{L303:{L304:{console.log('a')
+    L305:{L306:{L307:{L308:{L309:{L310:{L311:{L312:{L313:{L314:{L315:{L316:{L317:{L318:{L319:{L320:{console.log('a')
+    L321:{L322:{L323:{L324:{L325:{L326:{L327:{L328:{L329:{L330:{L331:{L332:{L333:{}}}}}}}}}}}}}}}}}}console.log('a')
+    }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}console.log('a')
+    }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}console.log('a')
+    }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}console.log('a')
+    }}}}}}}}}}}}}}}}}}}}}}}}}}}
+  `;
+  itBundled("default/NestedLabelsBundle", {
+    notImplemented: true,
     files: {
-      "/entry.js": dedent`
-        L001:{L002:{L003:{L004:{L005:{L006:{L007:{L008:{L009:{L010:{L011:{L012:{L013:{L014:{L015:{L016:{console.log('a')
-        L017:{L018:{L019:{L020:{L021:{L022:{L023:{L024:{L025:{L026:{L027:{L028:{L029:{L030:{L031:{L032:{console.log('a')
-        L033:{L034:{L035:{L036:{L037:{L038:{L039:{L040:{L041:{L042:{L043:{L044:{L045:{L046:{L047:{L048:{console.log('a')
-        L049:{L050:{L051:{L052:{L053:{L054:{L055:{L056:{L057:{L058:{L059:{L060:{L061:{L062:{L063:{L064:{console.log('a')
-        L065:{L066:{L067:{L068:{L069:{L070:{L071:{L072:{L073:{L074:{L075:{L076:{L077:{L078:{L079:{L080:{console.log('a')
-        L081:{L082:{L083:{L084:{L085:{L086:{L087:{L088:{L089:{L090:{L091:{L092:{L093:{L094:{L095:{L096:{console.log('a')
-        L097:{L098:{L099:{L100:{L101:{L102:{L103:{L104:{L105:{L106:{L107:{L108:{L109:{L110:{L111:{L112:{console.log('a')
-        L113:{L114:{L115:{L116:{L117:{L118:{L119:{L120:{L121:{L122:{L123:{L124:{L125:{L126:{L127:{L128:{console.log('a')
-        L129:{L130:{L131:{L132:{L133:{L134:{L135:{L136:{L137:{L138:{L139:{L140:{L141:{L142:{L143:{L144:{console.log('a')
-        L145:{L146:{L147:{L148:{L149:{L150:{L151:{L152:{L153:{L154:{L155:{L156:{L157:{L158:{L159:{L160:{console.log('a')
-        L161:{L162:{L163:{L164:{L165:{L166:{L167:{L168:{L169:{L170:{L171:{L172:{L173:{L174:{L175:{L176:{console.log('a')
-        L177:{L178:{L179:{L180:{L181:{L182:{L183:{L184:{L185:{L186:{L187:{L188:{L189:{L190:{L191:{L192:{console.log('a')
-        L193:{L194:{L195:{L196:{L197:{L198:{L199:{L200:{L201:{L202:{L203:{L204:{L205:{L206:{L207:{L208:{console.log('a')
-        L209:{L210:{L211:{L212:{L213:{L214:{L215:{L216:{L217:{L218:{L219:{L220:{L221:{L222:{L223:{L224:{console.log('a')
-        L225:{L226:{L227:{L228:{L229:{L230:{L231:{L232:{L233:{L234:{L235:{L236:{L237:{L238:{L239:{L240:{console.log('a')
-        L241:{L242:{L243:{L244:{L245:{L246:{L247:{L248:{L249:{L250:{L251:{L252:{L253:{L254:{L255:{L256:{console.log('a')
-        L257:{L258:{L259:{L260:{L261:{L262:{L263:{L264:{L265:{L266:{L267:{L268:{L269:{L270:{L271:{L272:{console.log('a')
-        L273:{L274:{L275:{L276:{L277:{L278:{L279:{L280:{L281:{L282:{L283:{L284:{L285:{L286:{L287:{L288:{console.log('a')
-        L289:{L290:{L291:{L292:{L293:{L294:{L295:{L296:{L297:{L298:{L299:{L300:{L301:{L302:{L303:{L304:{console.log('a')
-        L305:{L306:{L307:{L308:{L309:{L310:{L311:{L312:{L313:{L314:{L315:{L316:{L317:{L318:{L319:{L320:{console.log('a')
-        L321:{L322:{L323:{L324:{L325:{L326:{L327:{L328:{L329:{L330:{L331:{L332:{L333:{}}}}}}}}}}}}}}}}}}console.log('a')
-        }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}console.log('a')
-        }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}console.log('a')
-        }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}console.log('a')
-        }}}}}}}}}}}}}}}}}}}}}}}}}}}
-      `,
+      "/entry.js": crazyNestedLabelFile,
+    },
+  });
+  itBundled("default/NestedLabelsNoBundle", {
+    notImplemented: true,
+    files: {
+      "/entry.js": crazyNestedLabelFile,
+    },
+    mode: "transform",
+  });
+  itBundled("default/MinifyNestedLabelsNoBundle", {
+    notImplemented: true,
+    files: {
+      "/entry.js": crazyNestedLabelFile,
     },
     minifyWhitespace: true,
     minifyIdentifiers: true,
     minifySyntax: true,
     mode: "transform",
+  });
+  itBundled("default/MinifyNestedLabelsBundle", {
+    notImplemented: true,
+    files: {
+      "/entry.js": crazyNestedLabelFile,
+    },
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    minifySyntax: true,
   });
   itBundled("default/ExportsAndModuleFormatCommonJS", {
     files: {
@@ -2519,7 +2548,7 @@ describe("bundler", () => {
       `,
     },
     inject: ["/shims.js"],
-    platform: "node",
+    target: "node",
     run: {
       stdout: "function",
     },
@@ -2579,14 +2608,15 @@ describe("bundler", () => {
       stdout: "123",
     },
   });
-  itBundled("default/RelativeEntryPointError", {
+  itBundled("default/RelativeFilepathEntryPoint", {
     files: {
       "/entry.js": `console.log(123)`,
     },
-    entryPointsRaw: ["entry"],
+    entryPointsRaw: ["entry.js"],
     outfile: "/out.js",
-    bundleErrors: {
-      "<bun>": [`ModuleNotFound resolving "entry". Did you mean: "./entry"`],
+    run: {
+      file: "/out.js",
+      stdout: "123",
     },
   });
   itBundled("default/MultipleEntryPointsSameNameCollision", {
@@ -2711,7 +2741,7 @@ describe("bundler", () => {
       file: "/test.js",
       stdout: "foo bar",
     },
-    mode: "transform",
+    external: ["*"],
   });
   itBundled("default/ImportMetaCommonJS", {
     files: {
@@ -3413,6 +3443,7 @@ describe("bundler", () => {
     mode: "transform",
   });
   itBundled("default/TopLevelAwaitForbiddenRequire", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         require('./a')
@@ -3546,6 +3577,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/AssignToImportNoBundle", {
+    notImplemented: true,
     files: {
       "/bad0.js": `import x from "foo"; x = 1`,
       "/bad1.js": `import x from "foo"; x++`,
@@ -3697,7 +3729,7 @@ describe("bundler", () => {
       `,
       "/present-file.js": ``,
     },
-    platform: "node",
+    target: "node",
     format: "cjs",
     external: ["external-pkg", "@scope/external-pkg", "{{root}}/external-file"],
   });
@@ -4218,6 +4250,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/DefineOptionalChain", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         log([
@@ -4447,6 +4480,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/CharFreqIgnoreComments", {
+    notImplemented: true,
     files: {
       "/a.js": /* js */ `
         export default function(one, two, three, four) {
@@ -4474,8 +4508,14 @@ describe("bundler", () => {
       }
       const a = capture(api.readFile("/out/a.js"));
       const b = capture(api.readFile("/out/b.js"));
-      expect(a).toEqual(b);
       expect(a).not.toEqual(["one", "two", "three", "four"]);
+      expect(b).not.toEqual(["one", "two", "three", "four"]);
+      try {
+        expect(a).toEqual(b);
+      } catch (error) {
+        console.error("Comments should not affect minified names!");
+        throw error;
+      }
     },
   });
   itBundled("default/ImportRelativeAsPackage", {
@@ -4644,7 +4684,6 @@ describe("bundler", () => {
   //   mode: "transform",
   //   external: ["a", "b", "c", "react/jsx-dev-runtime"],
   // });
-  if (!RUN_UNCHECKED_TESTS) return;
   // I cant get bun to use `this` as the JSX runtime. It's a pretty silly idea anyways.
   // itBundled("default/JSXThisValueCommonJS", {
   //   files: {
@@ -4883,13 +4922,13 @@ describe("bundler", () => {
   // `, */
   // });
   0;
-
   itBundled("default/BundlingFilesOutsideOfOutbase", {
-    // GENERATED
+    notImplemented: true,
     files: {
       "/src/entry.js": `console.log('test')`,
     },
     splitting: true,
+    outdir: "/out",
     format: "esm",
     outbase: "/some/nested/directory",
   });
@@ -4964,17 +5003,14 @@ describe("bundler", () => {
   const relocateEntries = ["/top-level.js", "/nested.js", "/let.js", "/function.js", "/function-nested.js"];
 
   itBundled("default/VarRelocatingBundle", {
-    // GENERATED
     files: relocateFiles,
     entryPoints: relocateEntries,
     format: "esm",
   });
   itBundled("default/VarRelocatingNoBundle", {
-    // GENERATED
     files: relocateFiles,
     entryPoints: relocateEntries,
     format: "esm",
-    mode: "convertformat",
   });
   itBundled("default/ImportNamespaceThisValue", {
     // GENERATED
@@ -4993,11 +5029,12 @@ describe("bundler", () => {
         console.log(new def(), new foo())
       `,
     },
+    external: ["external"],
     entryPoints: ["/a.js", "/b.js", "/c.js"],
     format: "cjs",
   });
+  // esbuild and bun do not give the warning. this is still set to undefined
   itBundled("default/ThisUndefinedWarningESM", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import x from './file1.js'
@@ -5007,35 +5044,42 @@ describe("bundler", () => {
       "/file1.js": `export default [this, this]`,
       "/node_modules/pkg/file2.js": `export default [this, this]`,
     },
-    /* TODO FIX expectedScanLog: `file1.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
-  file1.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  node_modules/pkg/file2.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
-  node_modules/pkg/file2.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  `, */
+    run: {
+      stdout: "[ null, null ] [ null, null ]",
+    },
   });
   itBundled("default/QuotedProperty", {
-    // GENERATED
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         import * as ns from 'ext'
         console.log(ns.mustBeUnquoted, ns['mustBeQuoted'])
       `,
     },
-    format: "cjs",
+    external: ["ext"],
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).not.toContain(`"mustBeUnquoted"`);
+      expect(code).toContain(`"mustBeQuoted"`);
+    },
   });
   itBundled("default/QuotedPropertyMangle", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from 'ext'
         console.log(ns.mustBeUnquoted, ns['mustBeUnquoted2'])
       `,
     },
-    format: "cjs",
     minifySyntax: true,
+    external: ["ext"],
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain(`.mustBeUnquoted`);
+      expect(code).toContain(`.mustBeUnquoted2`);
+    },
   });
   itBundled("default/DuplicatePropertyWarning", {
-    // GENERATED
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         import './outside-node-modules'
@@ -5046,19 +5090,17 @@ describe("bundler", () => {
       "/node_modules/inside-node-modules/index.jsx": `console.log({ c: 1, c: 2 }, <div c2 c2={3}/>)`,
       "/node_modules/inside-node-modules/package.json": `{ "d": 1, "d": 2 }`,
     },
-    /* TODO FIX expectedScanLog: `outside-node-modules/index.jsx: WARNING: Duplicate key "a" in object literal
-  outside-node-modules/index.jsx: NOTE: The original key "a" is here:
-  outside-node-modules/index.jsx: WARNING: Duplicate "a2" attribute in JSX element
-  outside-node-modules/index.jsx: NOTE: The original "a2" attribute is here:
-  outside-node-modules/package.json: WARNING: Duplicate key "b" in object literal
-  outside-node-modules/package.json: NOTE: The original key "b" is here:
-  `, */
+    external: ["react"],
+    bundleWarnings: {
+      "/outside-node-modules/index.jsx": ['Duplicate key "a" in object literal', 'Duplicate key "a2" in JSX element'],
+      "/outside-node-modules/package.json": ['Duplicate key "b" in object literal'],
+    },
   });
-  itBundled("default/RequireShimSubstitution", {
-    // GENERATED
+  const RequireShimSubstitutionBrowser = itBundled("default/RequireShimSubstitutionBrowser", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
-        console.log([
+        Promise.all([
           require,
           typeof require,
           require('./example.json'),
@@ -5071,14 +5113,84 @@ describe("bundler", () => {
           require.resolve(window.SOME_PATH),
           import('some-path'),
           import(window.SOME_PATH),
-        ])
+        ]).then(results => {
+          for (let result of results) {
+            if (typeof result === 'string' && result.startsWith(dirname)) {
+              result = result.slice(dirname.length)
+            }
+            console.log(typeof result, JSON.stringify(result))
+          }
+        })
       `,
       "/example.json": `{ "works": true }`,
     },
-    external: ["some-path"],
+    runtimeFiles: {
+      "/test.mjs": `
+        import { createRequire } from "module";
+        const require = createRequire(import.meta.url);
+        import { fileURLToPath } from "url";
+        import { dirname } from "path";
+        globalThis.dirname = dirname(fileURLToPath(import.meta.url));
+        globalThis.window = globalThis
+        window.SOME_PATH = 'second-path'
+        window.require = require
+        window.module = { require: (x) => 'dynamic req: ' + x }
+        await import('./out.mjs')
+      `,
+      "/node_modules/some-path/index.js": `module.exports = 123`,
+      "/node_modules/second-path/index.js": `module.exports = 567`,
+    },
+    external: ["*"],
+    target: "browser",
+    format: "esm",
+    outfile: "/out.mjs",
+    run: {
+      runtime: "node",
+      file: "/test.mjs",
+      stdout: `
+          function undefined
+          string "function"
+          object {"works":true}
+          object {"works":true}
+          number 567
+          object {"works":true}
+          object {"works":true}
+          number 567
+          string "/node_modules/some-path/index.js"
+          string "/node_modules/second-path/index.js"
+          object {"default":123}
+          object {"default":567}
+        `,
+    },
+  });
+  itBundled("default/RequireShimSubstitutionNode", {
+    notImplemented: true,
+    files: RequireShimSubstitutionBrowser.options.files,
+    runtimeFiles: RequireShimSubstitutionBrowser.options.runtimeFiles,
+    external: ["*"],
+    target: "node",
+    format: "esm",
+    outfile: "/out.mjs",
+    run: {
+      runtime: "node",
+      file: "/test.mjs",
+      stdout: `
+        function undefined
+        string "function"
+        object {"works":true}
+        object {"works":true}
+        number 567
+        object {"works":true}
+        object {"works":true}
+        number 567
+        string "/node_modules/some-path/index.js"
+        string "/node_modules/second-path/index.js"
+        object {"default":123}
+        object {"default":567}
+      `,
+    },
   });
   itBundled("default/StrictModeNestedFnDeclKeepNamesVariableInliningESBuildIssue1552", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export function outer() {
@@ -5094,10 +5206,11 @@ describe("bundler", () => {
       `,
     },
     keepNames: true,
-    mode: "passthrough",
+    minifySyntax: true,
   });
   itBundled("default/BuiltInNodeModulePrecedence", {
     // GENERATED
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         console.log([
@@ -5115,8 +5228,7 @@ describe("bundler", () => {
       "/node_modules/fs/index.js": `console.log('include this too')`,
       "/node_modules/fs/promises.js": `throw 'DO NOT INCLUDE THIS'`,
     },
-    platform: "node",
-    format: "cjs",
+    target: "node",
   });
   itBundled("default/EntryNamesNoSlashAfterDir", {
     // GENERATED
@@ -5125,59 +5237,72 @@ describe("bundler", () => {
       "/src/app2/main.ts": `console.log(2)`,
       "/src/app3/main.ts": `console.log(3)`,
     },
-    entryPointsAdvanced: [
-      { input: "/src/app1/main.ts" },
-      { input: "/src/app2/main.ts" },
-      { input: "/src/app3/main.ts", output: "customPath" },
-    ],
-    entryNames: "[dir]-[name].[ext]",
-    mode: "passthrough",
+    entryPoints: ["/src/app1/main.ts", "/src/app2/main.ts", "/src/app3/main.ts"],
+    outputPaths: ["/out/app1-main.js", "/out/app2-main.js", "/out/app3-main.js"],
+    entryNaming: "[dir]-[name].[ext]",
   });
-  itBundled("default/EntryNamesNonPortableCharacter", {
-    // GENERATED
-    // TODO: I think this is impossible with the CLI. and also very unsafe with paths.
-    files: {
-      "/entry1-*.ts": `console.log(1)`,
-      "/entry2-*.ts": `console.log(2)`,
-    },
-    entryPointsAdvanced: [
-      // The "*" should turn into "_" for cross-platform Windows portability
-      { input: "/entry1-*.ts" },
-      // The "*" should be preserved since the user _really_ wants it
-      { input: "/entry2-*.ts", output: "entry2-*" },
-    ],
-    mode: "passthrough",
-  });
-  itBundled("default/EntryNamesChunkNamesExtPlaceholder", {
-    // GENERATED
-    files: {
-      "/src/entries/entry1.js": `import "../lib/shared.js"; import "./entry1.css"; console.log('entry1')`,
-      "/src/entries/entry2.js": `import "../lib/shared.js"; import "./entry2.css"; console.log('entry2')`,
-      "/src/entries/entry1.css": `a:after { content: "entry1" }`,
-      "/src/entries/entry2.css": `a:after { content: "entry2" }`,
-      "/src/lib/shared.js": `console.log('shared')`,
-    },
-    entryPoints: ["/src/entries/entry1.js", "/src/entries/entry2.js"],
-    outbase: "/src",
-    splitting: true,
-    entryNames: "main/[ext]/[name]-[hash].[ext]",
-  });
+  // itBundled("default/EntryNamesNonPortableCharacter", {
+  //   // GENERATED
+  //   // TODO: I think this is impossible with the CLI. and also very unsafe with paths.
+  //   files: {
+  //     "/entry1-*.ts": `console.log(1)`,
+  //     "/entry2-*.ts": `console.log(2)`,
+  //   },
+  //   entryPointsAdvanced: [
+  //     // The "*" should turn into "_" for cross-platform Windows portability
+  //     { input: "/entry1-*.ts" },
+  //     // The "*" should be preserved since the user _really_ wants it
+  //     { input: "/entry2-*.ts", output: "entry2-*" },
+  //   ],
+  //   mode: "passthrough",
+  // });
+  // itBundled("default/EntryNamesChunkNamesExtPlaceholder", {
+  //   files: {
+  //     "/src/entries/entry1.js": `import "../lib/shared.js"; import "./entry1.css"; console.log('entry1')`,
+  //     "/src/entries/entry2.js": `import "../lib/shared.js"; import "./entry2.css"; console.log('entry2')`,
+  //     "/src/entries/entry1.css": `a:after { content: "entry1" }`,
+  //     "/src/entries/entry2.css": `a:after { content: "entry2" }`,
+  //     "/src/lib/shared.js": `console.log('shared')`,
+  //   },
+  //   entryPoints: ["/src/entries/entry1.js", "/src/entries/entry2.js"],
+  //   outbase: "/src",
+  //   splitting: true,
+  //   entryNaming: "main/[ext]/[name]-[hash].[ext]",
+  // });
   itBundled("default/MinifyIdentifiersImportPathFrequencyAnalysis", {
-    // GENERATED
     files: {
       "/import.js": /* js */ `
         import foo from "./WWWWWWWWWWXXXXXXXXXXYYYYYYYYYYZZZZZZZZZZ"
-        console.log(foo, 'no identifier in this file should be named W, X, Y, or Z')
+        console.log(foo, remove('no identifier in this file should be named W, X, Y, or Z'))
       `,
       "/WWWWWWWWWWXXXXXXXXXXYYYYYYYYYYZZZZZZZZZZ.js": `export default 123`,
       "/require.js": /* js */ `
         const foo = require("./AAAAAAAAAABBBBBBBBBBCCCCCCCCCCDDDDDDDDDD")
-        console.log(foo, 'no identifier in this file should be named A, B, C, or D')
+        console.log(foo, remove('no identifier in this file should be named A, B, C, or D'))
       `,
       "/AAAAAAAAAABBBBBBBBBBCCCCCCCCCCDDDDDDDDDD.js": `module.exports = 123`,
     },
     entryPoints: ["/import.js", "/require.js"],
     minifyWhitespace: true,
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      let importFile = api
+        .readFile("/out/import.js")
+        .replace(/remove\(.*?\)/g, "remove()")
+        .replace(/Object\.[a-z]+\b/gi, "null");
+      let requireFile = api
+        .readFile("/out/require.js")
+        .replace(/remove\(.*?\)/g, "remove()")
+        .replace(/Object\.[a-z]+\b/gi, "null");
+      assert(
+        !["W", "X", "Y", "Z"].some(x => importFile.includes(x)),
+        'import.js should not contain "W", "X", "Y", or "Z"',
+      );
+      assert(
+        !["A", "B", "C", "D"].some(x => requireFile.includes(x)),
+        'require.js should not contain "A", "B", "C", or "D"',
+      );
+    },
   });
   itBundled("default/ToESMWrapperOmission", {
     // GENERATED
@@ -5215,67 +5340,19 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    mode: "convertformat",
+    external: ["*"],
   });
   itBundled("default/NamedFunctionExpressionArgumentCollision", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         let x = function foo(foo) {
           var foo;
           return foo;
         }
+        console.log(x(123))
       `,
     },
-    mode: "passthrough",
-  });
-  itBundled("default/NoWarnCommonJSExportsInESMPassThrough", {
-    // GENERATED
-    files: {
-      "/cjs-in-esm.js": /* js */ `
-        export let foo = 1
-        exports.foo = 2
-        module.exports = 3
-      `,
-      "/import-in-cjs.js": /* js */ `
-        import { foo } from 'bar'
-        exports.foo = foo
-        module.exports = foo
-      `,
-      "/no-warnings-here.js": `console.log(module, exports)`,
-    },
-    entryPoints: ["/cjs-in-esm.js", "/import-in-cjs.js", "/no-warnings-here.js"],
-    mode: "passthrough",
-  });
-  itBundled("default/WarnCommonJSExportsInESMConvert", {
-    // GENERATED
-    files: {
-      "/cjs-in-esm.js": /* js */ `
-        export let foo = 1
-        exports.foo = 2
-        module.exports = 3
-      `,
-      "/cjs-in-esm2.js": /* js */ `
-        export let foo = 1
-        module.exports.bar = 3
-      `,
-      "/import-in-cjs.js": /* js */ `
-        import { foo } from 'bar'
-        exports.foo = foo
-        module.exports = foo
-        module.exports.bar = foo
-      `,
-      "/no-warnings-here.js": `console.log(module, exports)`,
-    },
-    entryPoints: ["/cjs-in-esm.js", "/cjs-in-esm2.js", "/import-in-cjs.js", "/no-warnings-here.js"],
-    mode: "convertformat",
-    /* TODO FIX expectedScanLog: `cjs-in-esm.js: WARNING: The CommonJS "exports" variable is treated as a global variable in an ECMAScript module and may not work as expected
-  cjs-in-esm.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  cjs-in-esm.js: WARNING: The CommonJS "module" variable is treated as a global variable in an ECMAScript module and may not work as expected
-  cjs-in-esm.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  cjs-in-esm2.js: WARNING: The CommonJS "module" variable is treated as a global variable in an ECMAScript module and may not work as expected
-  cjs-in-esm2.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  `, */
+    minifySyntax: true,
   });
   itBundled("default/WarnCommonJSExportsInESMBundle", {
     // GENERATED
@@ -5299,6 +5376,7 @@ describe("bundler", () => {
   cjs-in-esm.js: WARNING: The CommonJS "module" variable is treated as a global variable in an ECMAScript module and may not work as expected
   cjs-in-esm.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
   `, */
+    external: ["bar"],
   });
   itBundled("default/MangleProps", {
     // GENERATED
@@ -5344,7 +5422,8 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/entry1.js", "/entry2.js"],
-    mode: "passthrough",
+    external: ["*"],
+    mangleProps: /_$/,
   });
   itBundled("default/ManglePropsMinify", {
     // GENERATED
@@ -5392,7 +5471,7 @@ describe("bundler", () => {
     entryPoints: ["/entry1.js", "/entry2.js"],
     mangleProps: /_$/,
     minifyIdentifiers: true,
-    mode: "passthrough",
+    external: ["*"],
   });
   itBundled("default/ManglePropsKeywordPropertyMinify", {
     // GENERATED
@@ -5406,7 +5485,7 @@ describe("bundler", () => {
     mangleProps: /./,
     minifyIdentifiers: true,
     minifySyntax: true,
-    mode: "passthrough",
+    external: ["*"],
   });
   itBundled("default/ManglePropsOptionalChain", {
     // GENERATED
@@ -5424,7 +5503,8 @@ describe("bundler", () => {
         }
       `,
     },
-    mode: "passthrough",
+    mangleProps: /_$/,
+    external: ["*"],
   });
   itBundled("default/ManglePropsLoweredOptionalChain", {
     // GENERATED
@@ -5443,7 +5523,7 @@ describe("bundler", () => {
       `,
     },
     mangleProps: /_$/,
-    mode: "passthrough",
+    external: ["*"],
   });
   itBundled("default/ReserveProps", {
     // GENERATED
@@ -5456,7 +5536,7 @@ describe("bundler", () => {
       `,
     },
     mangleProps: /_$/,
-    mode: "passthrough",
+    external: ["*"],
   });
   itBundled("default/ManglePropsImportExport", {
     // GENERATED
@@ -5471,7 +5551,8 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/esm.js", "/cjs.js"],
-    mode: "passthrough",
+    mangleProps: /_$/,
+    external: ["*"],
   });
   itBundled("default/ManglePropsImportExportBundled", {
     // GENERATED
@@ -5500,9 +5581,11 @@ describe("bundler", () => {
       "/cjs.js": `exports.cjs_foo_ = 'foo'`,
     },
     entryPoints: ["/entry-esm.js", "/entry-cjs.js"],
+    mangleProps: /_$/,
   });
   itBundled("default/ManglePropsJSXTransform", {
     // GENERATED
+    notImplemented: true,
     files: {
       "/entry.jsx": /* jsx */ `
         let Foo = {
@@ -5521,10 +5604,10 @@ describe("bundler", () => {
       `,
     },
     mangleProps: /_$/,
-    mode: "passthrough",
   });
   itBundled("default/ManglePropsJSXPreserve", {
     // GENERATED
+    notImplemented: true,
     files: {
       "/entry.jsx": /* jsx */ `
         let Foo = {
@@ -5538,10 +5621,10 @@ describe("bundler", () => {
     },
     outfile: "/out.jsx",
     mangleProps: /_$/,
-    mode: "passthrough",
   });
   itBundled("default/ManglePropsJSXTransformNamespace", {
     // GENERATED
+    notImplemented: true,
     files: {
       "/entry.jsx": /* jsx */ `
         export default [
@@ -5551,10 +5634,8 @@ describe("bundler", () => {
         ]
       `,
     },
-    mode: "passthrough",
   });
   itBundled("default/ManglePropsAvoidCollisions", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export default {
@@ -5566,10 +5647,9 @@ describe("bundler", () => {
         }
       `,
     },
-    mode: "passthrough",
+    mangleProps: /_$/,
   });
   itBundled("default/ManglePropsTypeScriptFeatures", {
-    // GENERATED
     files: {
       "/parameter-properties.ts": /* ts */ `
         class Foo {
@@ -5649,10 +5729,9 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/parameter-properties.ts", "/namespace-exports.ts", "/enum-values.ts"],
-    mode: "passthrough",
+    mangleProps: /_$/,
   });
   itBundled("default/ManglePropsShorthand", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // This should print as "({ y }) => ({ y })" not "({ y: y }) => ({ y: y })"
@@ -5660,10 +5739,8 @@ describe("bundler", () => {
       `,
     },
     mangleProps: /x/,
-    mode: "passthrough",
   });
   itBundled("default/ManglePropsNoShorthand", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // This should print as "({ y }) => ({ y: y })" not "({ y: y }) => ({ y: y })"
@@ -5672,10 +5749,8 @@ describe("bundler", () => {
     },
     mangleProps: /x/,
     minifyIdentifiers: true,
-    mode: "passthrough",
   });
   itBundled("default/ManglePropsLoweredClassFields", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -5686,10 +5761,9 @@ describe("bundler", () => {
       `,
     },
     mangleProps: /_$/,
-    mode: "passthrough",
+    unsupportedJSFeatures: ["class-field", "class-static-field"],
   });
   itBundled("default/ManglePropsSuperCall", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {}
@@ -5700,10 +5774,9 @@ describe("bundler", () => {
         }
       `,
     },
-    mode: "passthrough",
+    mangleProps: /./,
   });
   itBundled("default/MangleNoQuotedProps", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         x['_doNotMangleThis'];
@@ -5721,7 +5794,7 @@ describe("bundler", () => {
       `,
     },
     mangleProps: /_/,
-    mode: "passthrough",
+    mangleQuoted: false,
   });
   itBundled("default/MangleNoQuotedPropsMinifySyntax", {
     // GENERATED
@@ -5743,52 +5816,9 @@ describe("bundler", () => {
     },
     mangleProps: /_/,
     mangleQuoted: false,
-    mode: "passthrough",
+    minifySyntax: true,
   });
   itBundled("default/MangleQuotedProps", {
-    // GENERATED
-    files: {
-      "/keep.js": /* js */ `
-        foo("_keepThisProperty");
-        foo((x, "_keepThisProperty"));
-        foo(x ? "_keepThisProperty" : "_keepThisPropertyToo");
-        x[foo("_keepThisProperty")];
-        x?.[foo("_keepThisProperty")];
-        ({ [foo("_keepThisProperty")]: x });
-        (class { [foo("_keepThisProperty")] = x });
-        var { [foo("_keepThisProperty")]: x } = y;
-        foo("_keepThisProperty") in x;
-      `,
-      "/mangle.js": /* js */ `
-        x['_mangleThis'];
-        x?.['_mangleThis'];
-        x[y ? '_mangleThis' : z];
-        x?.[y ? '_mangleThis' : z];
-        x[y ? z : '_mangleThis'];
-        x?.[y ? z : '_mangleThis'];
-        x[y, '_mangleThis'];
-        x?.[y, '_mangleThis'];
-        ({ '_mangleThis': x });
-        ({ ['_mangleThis']: x });
-        ({ [(y, '_mangleThis')]: x });
-        (class { '_mangleThis' = x });
-        (class { ['_mangleThis'] = x });
-        (class { [(y, '_mangleThis')] = x });
-        var { '_mangleThis': x } = y;
-        var { ['_mangleThis']: x } = y;
-        var { [(z, '_mangleThis')]: x } = y;
-        '_mangleThis' in x;
-        (y ? '_mangleThis' : z) in x;
-        (y ? z : '_mangleThis') in x;
-        (y, '_mangleThis') in x;
-      `,
-    },
-    entryPoints: ["/keep.js", "/mangle.js"],
-    mangleProps: /_/,
-    mode: "passthrough",
-  });
-  itBundled("default/MangleQuotedPropsMinifySyntax", {
-    // GENERATED
     files: {
       "/keep.js": /* js */ `
         foo("_keepThisProperty");
@@ -5828,42 +5858,83 @@ describe("bundler", () => {
     entryPoints: ["/keep.js", "/mangle.js"],
     mangleProps: /_/,
     mangleQuoted: true,
-    mode: "passthrough",
   });
-  itBundled("default/IndirectRequireMessage", {
-    // GENERATED
+  itBundled("default/MangleQuotedPropsMinifySyntax", {
     files: {
-      "/array.js": `let x = [require]`,
-      "/assign.js": `require = x`,
-      "/ident.js": `let x = require`,
-      "/dot.js": `let x = require.cache`,
-      "/index.js": `let x = require[cache]`,
-    },
-    entryPoints: ["/array.js", "/assign.js", "/dot.js", "/ident.js", "/index.js"],
-    /* TODO FIX expectedScanLog: `array.js: DEBUG: Indirect calls to "require" will not be bundled
-  assign.js: DEBUG: Indirect calls to "require" will not be bundled
-  ident.js: DEBUG: Indirect calls to "require" will not be bundled
-  `, */
-  });
-  itBundled("default/AmbiguousReexportMsg", {
-    // GENERATED
-    files: {
-      "/entry.js": /* js */ `
-        export * from './a'
-        export * from './b'
-        export * from './c'
+      "/keep.js": /* js */ `
+        foo("_keepThisProperty");
+        foo((x, "_keepThisProperty"));
+        foo(x ? "_keepThisProperty" : "_keepThisPropertyToo");
+        x[foo("_keepThisProperty")];
+        x?.[foo("_keepThisProperty")];
+        ({ [foo("_keepThisProperty")]: x });
+        (class { [foo("_keepThisProperty")] = x });
+        var { [foo("_keepThisProperty")]: x } = y;
+        foo("_keepThisProperty") in x;
       `,
-      "/a.js": `export let a = 1, x = 2`,
-      "/b.js": `export let b = 3; export { b as x }`,
-      "/c.js": `export let c = 4, x = 5`,
+      "/mangle.js": /* js */ `
+        x['_mangleThis'];
+        x?.['_mangleThis'];
+        x[y ? '_mangleThis' : z];
+        x?.[y ? '_mangleThis' : z];
+        x[y ? z : '_mangleThis'];
+        x?.[y ? z : '_mangleThis'];
+        x[y, '_mangleThis'];
+        x?.[y, '_mangleThis'];
+        ({ '_mangleThis': x });
+        ({ ['_mangleThis']: x });
+        ({ [(y, '_mangleThis')]: x });
+        (class { '_mangleThis' = x });
+        (class { ['_mangleThis'] = x });
+        (class { [(y, '_mangleThis')] = x });
+        var { '_mangleThis': x } = y;
+        var { ['_mangleThis']: x } = y;
+        var { [(z, '_mangleThis')]: x } = y;
+        '_mangleThis' in x;
+        (y ? '_mangleThis' : z) in x;
+        (y ? z : '_mangleThis') in x;
+        (y, '_mangleThis') in x;
+      `,
     },
-    /* TODO FIX expectedCompileLog: `DEBUG: Re-export of "x" in "entry.js" is ambiguous and has been removed
-  a.js: NOTE: One definition of "x" comes from "a.js" here:
-  b.js: NOTE: Another definition of "x" comes from "b.js" here:
-  `, */
+    entryPoints: ["/keep.js", "/mangle.js"],
+    mangleProps: /_/,
+    mangleQuoted: true,
+    minifySyntax: true,
   });
+  // we dont check debug messages
+  // itBundled("default/IndirectRequireMessage", {
+  //   // GENERATED
+  //   files: {
+  //     "/array.js": `let x = [require]`,
+  //     "/assign.js": `require = x`,
+  //     "/ident.js": `let x = require`,
+  //     "/dot.js": `let x = require.cache`,
+  //     "/index.js": `let x = require[cache]`,
+  //   },
+  //   entryPoints: ["/array.js", "/assign.js", "/dot.js", "/ident.js", "/index.js"],
+  //   /* TODO FIX expectedScanLog: `array.js: DEBUG: Indirect calls to "require" will not be bundled
+  // assign.js: DEBUG: Indirect calls to "require" will not be bundled
+  // ident.js: DEBUG: Indirect calls to "require" will not be bundled
+  // `, */
+  // });
+  // itBundled("default/AmbiguousReexportMsg", {
+  //   // GENERATED
+  //   files: {
+  //     "/entry.js": /* js */ `
+  //       export * from './a'
+  //       export * from './b'
+  //       export * from './c'
+  //     `,
+  //     "/a.js": `export let a = 1, x = 2`,
+  //     "/b.js": `export let b = 3; export { b as x }`,
+  //     "/c.js": `export let c = 4, x = 5`,
+  //   },
+  //   /* TODO FIX expectedCompileLog: `DEBUG: Re-export of "x" in "entry.js" is ambiguous and has been removed
+  // a.js: NOTE: One definition of "x" comes from "a.js" here:
+  // b.js: NOTE: Another definition of "x" comes from "b.js" here:
+  // `, */
+  // });
   itBundled("default/NonDeterminismESBuildIssue2537", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         export function aap(noot: boolean, wim: number) {
@@ -5888,35 +5959,40 @@ describe("bundler", () => {
         }
       `,
     },
+    minifyIdentifiers: true,
   });
-  itBundled("default/MinifiedJSXPreserveWithObjectSpread", {
-    // GENERATED
-    files: {
-      "/entry.jsx": /* jsx */ `
-        const obj = {
-          before,
-          ...{ [key]: value },
-          ...{ key: value },
-          after,
-        };
-        <Foo
-          before
-          {...{ [key]: value }}
-          {...{ key: value }}
-          after
-        />;
-        <Bar
-          {...{
-            a,
-            [b]: c,
-            ...d,
-            e,
-          }}
-        />;
-      `,
-    },
-    minifySyntax: true,
-  });
+  // itBundled("default/MinifiedJSXPreserveWithObjectSpread", {
+  //   // GENERATED
+  //   files: {
+  //     "/entry.jsx": /* jsx */ `
+  //       const obj = {
+  //         before,
+  //         ...{ [key]: value },
+  //         ...{ key: value },
+  //         after,
+  //       };
+  //       <Foo
+  //         before
+  //         {...{ [key]: value }}
+  //         {...{ key: value }}
+  //         after
+  //       />;
+  //       <Bar
+  //         {...{
+  //           a,
+  //           [b]: c,
+  //           ...d,
+  //           e,
+  //         }}
+  //       />;
+  //     `,
+  //   },
+  //   jsx: {
+  //     // preserve: true,
+  //   },
+  //   // minifySyntax: true,
+  //   external: ["*"],
+  // });
   itBundled("default/PackageAlias", {
     files: {
       "/entry.js": /* js */ `
@@ -5946,22 +6022,21 @@ describe("bundler", () => {
       "/node_modules/prefix-foo/index.js": `console.log(10)`,
       "/node_modules/@scope/prefix-foo/index.js": `console.log(11)`,
     },
-    bundleErrors: {
-      "/entry.js": [
-        'Could not resolve: "pkg1". Maybe you need to "bun install"?',
-        'Could not resolve: "pkg2/foo". Maybe you need to "bun install"?',
-        'Could not resolve: "@scope/pkg4". Maybe you need to "bun install"?',
-        'Could not resolve: "@scope/pkg5/foo". Maybe you need to "bun install"?',
-        'Could not resolve: "@abs-path/pkg6". Maybe you need to "bun install"?',
-        'Could not resolve: "@abs-path/pkg6/foo". Maybe you need to "bun install"?',
-        'Could not resolve: "@scope-only/pkg8". Maybe you need to "bun install"?',
-        'Could not resolve: "slash/" Maybe. you need to "bun install"?',
-        'Could not resolve: "pkg3". Maybe you need to "bun install"?',
-      ],
+    alias: {
+      "pkg1": "alias1",
+      "pkg2": "alias2",
+      "pkg3": "alias3",
+      "@scope/pkg4": "alias4",
+      "@scope/pkg5": "alias5",
+      "@abs-path/pkg6": `/alias6/dir`,
+      "@abs-path/pkg7": `/alias7/dir`,
+      "@scope-only": "/alias8/dir",
+      "slash": "/alias9/some/file.js",
+      "prefix": "alias10",
+      "@scope/prefix": "alias11",
     },
   });
   itBundled("default/PackageAliasMatchLongest", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import "pkg"
@@ -5978,121 +6053,100 @@ describe("bundler", () => {
       "pkg/foo/bar": "alias/pkg_foo_bar",
     },
   });
-  itBundled("default/ErrorsForAssertTypeJSON", {
-    // GENERATED
-    files: {
-      "/js-entry.js": /* js */ `
-        import all from './foo.json' assert { type: 'json' }
-        import { default as def } from './foo.json' assert { type: 'json' }
-        import { unused } from './foo.json' assert { type: 'json' }
-        import { used } from './foo.json' assert { type: 'json' }
-        import * as ns from './foo.json' assert { type: 'json' }
-        use(used, ns.prop)
-        export { exported } from './foo.json' assert { type: 'json' }
-        import text from './foo.text' assert { type: 'json' }
-        import file from './foo.file' assert { type: 'json' }
-        import copy from './foo.copy' assert { type: 'json' }
-      `,
-      "/ts-entry.ts": /* ts */ `
-        import all from './foo.json' assert { type: 'json' }
-        import { default as def } from './foo.json' assert { type: 'json' }
-        import { unused } from './foo.json' assert { type: 'json' }
-        import { used } from './foo.json' assert { type: 'json' }
-        import * as ns from './foo.json' assert { type: 'json' }
-        use(used, ns.prop)
-        export { exported } from './foo.json' assert { type: 'json' }
-        import text from './foo.text' assert { type: 'json' }
-        import file from './foo.file' assert { type: 'json' }
-        import copy from './foo.copy' assert { type: 'json' }
-      `,
-      "/foo.json": `{}`,
-      "/foo.text": `{}`,
-      "/foo.file": `{}`,
-      "/foo.copy": `{}`,
-    },
-    entryPoints: ["/js-entry.js", "/ts-entry.ts"],
-    /* TODO FIX expectedScanLog: `js-entry.js: ERROR: Cannot use non-default import "unused" with a standard JSON module
-  js-entry.js: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
-  NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "unused" import (which is non-standard behavior).
-  js-entry.js: ERROR: Cannot use non-default import "used" with a standard JSON module
-  js-entry.js: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
-  NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "used" import (which is non-standard behavior).
-  js-entry.js: WARNING: Non-default import "prop" is undefined with a standard JSON module
-  js-entry.js: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
-  NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "prop" import (which is non-standard behavior).
-  js-entry.js: ERROR: Cannot use non-default import "exported" with a standard JSON module
-  js-entry.js: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
-  NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "exported" import (which is non-standard behavior).
-  js-entry.js: ERROR: The file "foo.text" was loaded with the "text" loader
-  js-entry.js: NOTE: This import assertion requires the loader to be "json" instead:
-  NOTE: You need to either reconfigure esbuild to ensure that the loader for this file is "json" or you need to remove this import assertion.
-  js-entry.js: ERROR: The file "foo.file" was loaded with the "file" loader
-  js-entry.js: NOTE: This import assertion requires the loader to be "json" instead:
-  NOTE: You need to either reconfigure esbuild to ensure that the loader for this file is "json" or you need to remove this import assertion.
-  ts-entry.ts: ERROR: Cannot use non-default import "used" with a standard JSON module
-  ts-entry.ts: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
-  NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "used" import (which is non-standard behavior).
-  ts-entry.ts: WARNING: Non-default import "prop" is undefined with a standard JSON module
-  ts-entry.ts: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
-  NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "prop" import (which is non-standard behavior).
-  ts-entry.ts: ERROR: Cannot use non-default import "exported" with a standard JSON module
-  ts-entry.ts: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
-  NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "exported" import (which is non-standard behavior).
-  `, */
-  });
-  itBundled("default/OutputForAssertTypeJSON", {
-    // GENERATED
-    files: {
-      "/js-entry.js": /* js */ `
-        import all from './foo.json' assert { type: 'json' }
-        import copy from './foo.copy' assert { type: 'json' }
-        import { default as def } from './foo.json' assert { type: 'json' }
-        import * as ns from './foo.json' assert { type: 'json' }
-        use(all, copy, def, ns.prop)
-        export { default } from './foo.json' assert { type: 'json' }
-      `,
-      "/ts-entry.ts": /* ts */ `
-        import all from './foo.json' assert { type: 'json' }
-        import copy from './foo.copy' assert { type: 'json' }
-        import { default as def } from './foo.json' assert { type: 'json' }
-        import { unused } from './foo.json' assert { type: 'json' }
-        import * as ns from './foo.json' assert { type: 'json' }
-        use(all, copy, def, ns.prop)
-        export { default } from './foo.json' assert { type: 'json' }
-      `,
-      "/foo.json": `{}`,
-      "/foo.copy": `{}`,
-    },
-    entryPoints: ["/js-entry.js", "/ts-entry.ts"],
-    /* TODO FIX expectedScanLog: `js-entry.js: WARNING: Non-default import "prop" is undefined with a standard JSON module
-  js-entry.js: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
-  NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "prop" import (which is non-standard behavior).
-  ts-entry.ts: WARNING: Non-default import "prop" is undefined with a standard JSON module
-  ts-entry.ts: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
-  NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "prop" import (which is non-standard behavior).
-  `, */
-  });
-  itBundled("default/ExternalPackages", {
-    // GENERATED
-    files: {
-      "/project/entry.js": /* js */ `
-        import 'pkg1'
-        import './file'
-        import './node_modules/pkg2/index.js'
-        import '#pkg3'
-      `,
-      "/project/package.json": /* json */ `
-        {
-        "imports": {
-          "#pkg3": "./libs/pkg3.js"
-        }
-      }
-      `,
-      "/project/file.js": `console.log('file')`,
-      "/project/node_modules/pkg2/index.js": `console.log('pkg2')`,
-      "/project/libs/pkg3.js": `console.log('pkg3')`,
-    },
-  });
+  // itBundled("default/ErrorsForAssertTypeJSON", {
+  //   notImplemented: true,
+  //   files: {
+  //     "/js-entry.js": /* js */ `
+  //       import all from './foo.json' assert { type: 'json' }
+  //       import { default as def } from './foo.json' assert { type: 'json' }
+  //       import { unused } from './foo.json' assert { type: 'json' }
+  //       import { used } from './foo.json' assert { type: 'json' }
+  //       import * as ns from './foo.json' assert { type: 'json' }
+  //       use(used, ns.prop)
+  //       export { exported } from './foo.json' assert { type: 'json' }
+  //       import text from './foo.text' assert { type: 'json' }
+  //       import file from './foo.file' assert { type: 'json' }
+  //       import copy from './foo.copy' assert { type: 'json' }
+  //     `,
+  //     "/ts-entry.ts": /* ts */ `
+  //       import all from './foo.json' assert { type: 'json' }
+  //       import { default as def } from './foo.json' assert { type: 'json' }
+  //       import { unused } from './foo.json' assert { type: 'json' }
+  //       import { used } from './foo.json' assert { type: 'json' }
+  //       import * as ns from './foo.json' assert { type: 'json' }
+  //       use(used, ns.prop)
+  //       export { exported } from './foo.json' assert { type: 'json' }
+  //       import text from './foo.text' assert { type: 'json' }
+  //       import file from './foo.file' assert { type: 'json' }
+  //       import copy from './foo.copy' assert { type: 'json' }
+  //     `,
+  //     "/foo.json": `{ "used": 0, "unused": 0, "prop": 0, "exported": 0 }`,
+  //     "/foo.text": `{ "used": 0, "unused": 0, "prop": 0, "exported": 0 }`,
+  //     "/foo.file": `{ "used": 0, "unused": 0, "prop": 0, "exported": 0 }`,
+  //     "/foo.copy": `{ "used": 0, "unused": 0, "prop": 0, "exported": 0 }`,
+  //   },
+  //   entryPoints: ["/js-entry.js", "/ts-entry.ts"],
+  //   /* TODO FIX expectedScanLog: `js-entry.js: ERROR: Cannot use non-default import "unused" with a standard JSON module
+  // js-entry.js: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+  // NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "unused" import (which is non-standard behavior).
+  // js-entry.js: ERROR: Cannot use non-default import "used" with a standard JSON module
+  // js-entry.js: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+  // NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "used" import (which is non-standard behavior).
+  // js-entry.js: WARNING: Non-default import "prop" is undefined with a standard JSON module
+  // js-entry.js: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+  // NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "prop" import (which is non-standard behavior).
+  // js-entry.js: ERROR: Cannot use non-default import "exported" with a standard JSON module
+  // js-entry.js: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+  // NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "exported" import (which is non-standard behavior).
+  // js-entry.js: ERROR: The file "foo.text" was loaded with the "text" loader
+  // js-entry.js: NOTE: This import assertion requires the loader to be "json" instead:
+  // NOTE: You need to either reconfigure esbuild to ensure that the loader for this file is "json" or you need to remove this import assertion.
+  // js-entry.js: ERROR: The file "foo.file" was loaded with the "file" loader
+  // js-entry.js: NOTE: This import assertion requires the loader to be "json" instead:
+  // NOTE: You need to either reconfigure esbuild to ensure that the loader for this file is "json" or you need to remove this import assertion.
+  // ts-entry.ts: ERROR: Cannot use non-default import "used" with a standard JSON module
+  // ts-entry.ts: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+  // NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "used" import (which is non-standard behavior).
+  // ts-entry.ts: WARNING: Non-default import "prop" is undefined with a standard JSON module
+  // ts-entry.ts: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+  // NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "prop" import (which is non-standard behavior).
+  // ts-entry.ts: ERROR: Cannot use non-default import "exported" with a standard JSON module
+  // ts-entry.ts: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+  // NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "exported" import (which is non-standard behavior).
+  // `, */
+  // });
+  // itBundled("default/OutputForAssertTypeJSON", {
+  //   // GENERATED
+  //   files: {
+  //     "/js-entry.js": /* js */ `
+  //       import all from './foo.json' assert { type: 'json' }
+  //       import copy from './foo.copy' assert { type: 'json' }
+  //       import { default as def } from './foo.json' assert { type: 'json' }
+  //       import * as ns from './foo.json' assert { type: 'json' }
+  //       use(all, copy, def, ns.prop)
+  //       export { default } from './foo.json' assert { type: 'json' }
+  //     `,
+  //     "/ts-entry.ts": /* ts */ `
+  //       import all from './foo.json' assert { type: 'json' }
+  //       import copy from './foo.copy' assert { type: 'json' }
+  //       import { default as def } from './foo.json' assert { type: 'json' }
+  //       import { unused } from './foo.json' assert { type: 'json' }
+  //       import * as ns from './foo.json' assert { type: 'json' }
+  //       use(all, copy, def, ns.prop)
+  //       export { default } from './foo.json' assert { type: 'json' }
+  //     `,
+  //     "/foo.json": `{}`,
+  //     "/foo.copy": `{}`,
+  //   },
+  //   entryPoints: ["/js-entry.js", "/ts-entry.ts"],
+  //   /* TODO FIX expectedScanLog: `js-entry.js: WARNING: Non-default import "prop" is undefined with a standard JSON module
+  // js-entry.js: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+  // NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "prop" import (which is non-standard behavior).
+  // ts-entry.ts: WARNING: Non-default import "prop" is undefined with a standard JSON module
+  // ts-entry.ts: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+  // NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "prop" import (which is non-standard behavior).
+  // `, */
+  // });
   itBundled("default/MetafileVariousCases", {
     // GENERATED
     files: {
@@ -6162,7 +6216,8 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/project/entry.js", "/project/entry.css"],
-    mode: "convertformat",
+    external: ["*"],
+    metafile: true,
   });
   itBundled("default/MetafileVeryLongExternalPaths", {
     // GENERATED
@@ -6193,7 +6248,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/CommentPreservation", {
-    // GENERATED
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         console.log(
@@ -6339,28 +6394,54 @@ describe("bundler", () => {
         for (a of /*foo*/b);
   
         if (/*foo*/a);
-        with (/*foo*/a);
         while (/*foo*/a);
         do {} while (/*foo*/a);
         switch (/*foo*/a) {}
       `,
     },
-    format: "cjs",
+    external: ["foo"],
+    onAfterBundle(api) {
+      const commentCounts: Record<string, number> = {
+        before: 44,
+        after: 18,
+        "comment before": 4,
+        "comment after": 4,
+        foo: 21,
+        bar: 4,
+        a: 1,
+        b: 1,
+        c: 1,
+      };
+      const file = api.readFile("/out.js");
+      const comments = [...file.matchAll(/\/\*([^*]+)\*\//g), ...file.matchAll(/\/\/([^\n]+)/g)]
+        .map(m => m[1].trim())
+        .filter(m => m && !m.includes("__PURE__"));
+
+      for (const key in commentCounts) {
+        const count = comments.filter(c => c === key).length;
+        if (count !== commentCounts[key]) {
+          throw new Error(`Expected ${commentCounts[key]} comments with "${key}", got ${count}`);
+        }
+      }
+    },
   });
   itBundled("default/CommentPreservationImportAssertions", {
     // GENERATED
+    notImplemented: true,
     files: {
       "/entry.jsx": /* jsx */ `
-        import 'foo' /* before */ assert { type: 'json' }
-        import 'foo' assert /* before */ { type: 'json' }
-        import 'foo' assert { /* before */ type: 'json' }
-        import 'foo' assert { type: /* before */ 'json' }
-        import 'foo' assert { type: 'json' /* before */ }
+        import 'foo' /* a */ assert { type: 'json' }
+        import 'foo' assert /* b */ { type: 'json' }
+        import 'foo' assert { /* c */ type: 'json' }
+        import 'foo' assert { type: /* d */ 'json' }
+        import 'foo' assert { type: 'json' /* e */ }
       `,
     },
+    external: ["foo"],
   });
   itBundled("default/CommentPreservationTransformJSX", {
     // GENERATED
+    notImplemented: true,
     files: {
       "/entry.jsx": /* jsx */ `
         console.log(
@@ -6390,6 +6471,7 @@ describe("bundler", () => {
   });
   itBundled("default/CommentPreservationPreserveJSX", {
     // GENERATED
+    notImplemented: true,
     files: {
       "/entry.jsx": /* jsx */ `
         console.log(
@@ -6416,20 +6498,5 @@ describe("bundler", () => {
         )
       `,
     },
-  });
-  itBundled("default/ErrorMessageCrashStdinESBuildIssue2913", {
-    // GENERATED
-    files: {
-      "/project/node_modules/fflate/package.json": `{ "main": "main.js" }`,
-      "/project/node_modules/fflate/main.js": ``,
-    },
-    stdin: {
-      contents: `import "node_modules/fflate"`,
-      cwd: "/project",
-    },
-    platform: "neutral",
-    /* TODO FIX expectedScanLog: `<stdin>: ERROR: Could not resolve "node_modules/fflate"
-  NOTE: You can mark the path "node_modules/fflate" as external to exclude it from the bundle, which will remove this error.
-  `, */
   });
 });

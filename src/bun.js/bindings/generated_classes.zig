@@ -213,6 +213,8 @@ pub const JSCryptoHasher = struct {
         if (@TypeOf(CryptoHasher.getByteLength) != GetterType)
             @compileLog("Expected CryptoHasher.getByteLength to be a getter");
 
+        if (@TypeOf(CryptoHasher.copy) != CallbackType)
+            @compileLog("Expected CryptoHasher.copy to be a callback but received " ++ @typeName(@TypeOf(CryptoHasher.copy)));
         if (@TypeOf(CryptoHasher.digest) != CallbackType)
             @compileLog("Expected CryptoHasher.digest to be a callback but received " ++ @typeName(@TypeOf(CryptoHasher.digest)));
         if (@TypeOf(CryptoHasher.update) != CallbackType)
@@ -224,6 +226,7 @@ pub const JSCryptoHasher = struct {
             @compileLog("Expected CryptoHasher.hash to be a static callback");
         if (!JSC.is_bindgen) {
             @export(CryptoHasher.constructor, .{ .name = "CryptoHasherClass__construct" });
+            @export(CryptoHasher.copy, .{ .name = "CryptoHasherPrototype__copy" });
             @export(CryptoHasher.digest, .{ .name = "CryptoHasherPrototype__digest" });
             @export(CryptoHasher.finalize, .{ .name = "CryptoHasherClass__finalize" });
             @export(CryptoHasher.getAlgorithm, .{ .name = "CryptoHasherPrototype__getAlgorithm" });
@@ -467,6 +470,8 @@ pub const JSExpect = struct {
             @compileLog("Expected Expect.toBeCloseTo to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeCloseTo)));
         if (@TypeOf(Expect.toBeDefined) != CallbackType)
             @compileLog("Expected Expect.toBeDefined to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeDefined)));
+        if (@TypeOf(Expect.toBeEven) != CallbackType)
+            @compileLog("Expected Expect.toBeEven to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeEven)));
         if (@TypeOf(Expect.toBeFalsy) != CallbackType)
             @compileLog("Expected Expect.toBeFalsy to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeFalsy)));
         if (@TypeOf(Expect.toBeGreaterThan) != CallbackType)
@@ -483,6 +488,8 @@ pub const JSExpect = struct {
             @compileLog("Expected Expect.toBeNaN to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeNaN)));
         if (@TypeOf(Expect.toBeNull) != CallbackType)
             @compileLog("Expected Expect.toBeNull to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeNull)));
+        if (@TypeOf(Expect.toBeOdd) != CallbackType)
+            @compileLog("Expected Expect.toBeOdd to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeOdd)));
         if (@TypeOf(Expect.toBeTruthy) != CallbackType)
             @compileLog("Expected Expect.toBeTruthy to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeTruthy)));
         if (@TypeOf(Expect.toBeUndefined) != CallbackType)
@@ -583,6 +590,7 @@ pub const JSExpect = struct {
             @export(Expect.toBe, .{ .name = "ExpectPrototype__toBe" });
             @export(Expect.toBeCloseTo, .{ .name = "ExpectPrototype__toBeCloseTo" });
             @export(Expect.toBeDefined, .{ .name = "ExpectPrototype__toBeDefined" });
+            @export(Expect.toBeEven, .{ .name = "ExpectPrototype__toBeEven" });
             @export(Expect.toBeFalsy, .{ .name = "ExpectPrototype__toBeFalsy" });
             @export(Expect.toBeGreaterThan, .{ .name = "ExpectPrototype__toBeGreaterThan" });
             @export(Expect.toBeGreaterThanOrEqual, .{ .name = "ExpectPrototype__toBeGreaterThanOrEqual" });
@@ -591,6 +599,7 @@ pub const JSExpect = struct {
             @export(Expect.toBeLessThanOrEqual, .{ .name = "ExpectPrototype__toBeLessThanOrEqual" });
             @export(Expect.toBeNaN, .{ .name = "ExpectPrototype__toBeNaN" });
             @export(Expect.toBeNull, .{ .name = "ExpectPrototype__toBeNull" });
+            @export(Expect.toBeOdd, .{ .name = "ExpectPrototype__toBeOdd" });
             @export(Expect.toBeTruthy, .{ .name = "ExpectPrototype__toBeTruthy" });
             @export(Expect.toBeUndefined, .{ .name = "ExpectPrototype__toBeUndefined" });
             @export(Expect.toContain, .{ .name = "ExpectPrototype__toContain" });

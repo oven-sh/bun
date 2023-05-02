@@ -446,7 +446,7 @@ pub const ModuleLoader = struct {
                                 // we are only truly done if all the dependencies are done.
                                 const current_tasks = pm.total_tasks;
                                 // so if enqueuing all the dependencies produces no new tasks, we are done.
-                                pm.enqueueDependencyList(package.dependencies, false);
+                                pm.enqueueDependencyList(package.dependencies);
                                 if (current_tasks == pm.total_tasks) {
                                     tags[tag_i] = .done;
                                     done_count += 1;
@@ -849,7 +849,7 @@ pub const ModuleLoader = struct {
         ) void;
     };
 
-    pub export fn Bun__getDefaultLoader(global: *JSC.JSGlobalObject, str: *ZigString) Api.Loader {
+    pub export fn Bun__getDefaultLoader(global: *JSC.JSGlobalObject, str: *const ZigString) Api.Loader {
         var jsc_vm = global.bunVM();
         const filename = str.toSlice(jsc_vm.allocator);
         defer filename.deinit();
@@ -1468,8 +1468,8 @@ pub const ModuleLoader = struct {
     pub export fn Bun__transpileFile(
         jsc_vm: *VirtualMachine,
         globalObject: *JSC.JSGlobalObject,
-        specifier_ptr: *ZigString,
-        referrer: *ZigString,
+        specifier_ptr: *const ZigString,
+        referrer: *const ZigString,
         ret: *ErrorableResolvedSource,
         allow_promise: bool,
     ) ?*anyopaque {
@@ -1522,7 +1522,7 @@ pub const ModuleLoader = struct {
         return promise;
     }
 
-    export fn Bun__runVirtualModule(globalObject: *JSC.JSGlobalObject, specifier_ptr: *ZigString) JSValue {
+    export fn Bun__runVirtualModule(globalObject: *JSC.JSGlobalObject, specifier_ptr: *const ZigString) JSValue {
         JSC.markBinding(@src());
         if (globalObject.bunVM().plugin_runner == null) return JSValue.zero;
 
@@ -2084,8 +2084,8 @@ pub const ModuleLoader = struct {
 
     export fn Bun__transpileVirtualModule(
         globalObject: *JSC.JSGlobalObject,
-        specifier_ptr: *ZigString,
-        referrer_ptr: *ZigString,
+        specifier_ptr: *const ZigString,
+        referrer_ptr: *const ZigString,
         source_code: *ZigString,
         loader_: Api.Loader,
         ret: *ErrorableResolvedSource,

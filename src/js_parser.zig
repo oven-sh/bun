@@ -2803,7 +2803,7 @@ pub const Parser = struct {
             }
             break :brk .none;
         };
-        return .{ .ast = try p.toAST(parts, exports_kind, null) };
+        return .{ .ast = try p.toAST(parts, exports_kind, null, "") };
     }
 
     pub fn parse(self: *Parser) !js_ast.Result {
@@ -2986,21 +2986,33 @@ pub const Parser = struct {
                         // Move class export statements to the top of the file if we can
                         // This automatically resolves some cyclical import issues
                         // https://github.com/kysely-org/kysely/issues/412
-                        var list = if (!p.options.bundle and class.is_export and class.class.extends == null) &before else &parts;
+                        // TODO: this breaks code if they have any static variables or properties which reference anything from the parent scope
+                        // we need to fix it before we merge v0.6.0
+                        var list = if (!p.options.bundle and class.class.canBeMoved()) &before else &parts;
                         var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
                         sliced.items.len = 1;
                         sliced.items[0] = stmt;
-                        try p.appendPart(list, sliced.items);
+                        try p.appendPart(&parts, sliced.items);
+
+                        if (&parts != list) {
+                            before.append(parts.getLast()) catch unreachable;
+                            parts.items.len -= 1;
+                        }
                     },
                     .s_export_default => |value| {
                         // We move export default statements when we can
                         // This automatically resolves some cyclical import issues in packages like luxon
                         // https://github.com/oven-sh/bun/issues/1961
-                        var list = if (!p.options.bundle and value.canBeMovedAround()) &before else &parts;
+                        var list = if (!p.options.bundle and value.canBeMoved()) &before else &parts;
                         var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
                         sliced.items.len = 1;
                         sliced.items[0] = stmt;
-                        try p.appendPart(list, sliced.items);
+                        try p.appendPart(&parts, sliced.items);
+
+                        if (&parts != list) {
+                            before.append(parts.getLast()) catch unreachable;
+                            parts.items.len -= 1;
+                        }
                     },
 
                     else => {
@@ -4166,7 +4178,7 @@ pub const Parser = struct {
         // Pop the module scope to apply the "ContainsDirectEval" rules
         // p.popScope();
 
-        return js_ast.Result{ .ast = try p.toAST(parts_slice, exports_kind, wrapper_expr) };
+        return js_ast.Result{ .ast = try p.toAST(parts_slice, exports_kind, wrapper_expr, hashbang) };
     }
 
     pub fn init(_options: Options, log: *logger.Log, source: *const logger.Source, define: *Define, allocator: Allocator) !Parser {
@@ -4779,10 +4791,6 @@ fn NewParser_(
         // This variable is "ns2" not "ns1". It is only used during the second
         // "visit" pass.
         enclosing_namespace_arg_ref: ?Ref = null,
-
-        react_element_type: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
-        /// Symbol object
-        es6_symbol_global: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
 
         // TODO: remove all these
         jsx_runtime: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
@@ -6461,11 +6469,6 @@ fn NewParser_(
             switch (comptime jsx_transform_type) {
                 .react => {
                     if (!p.options.bundle) {
-                        if (p.options.features.jsx_optimization_inline) {
-                            p.react_element_type = p.declareGeneratedSymbol(.other, "REACT_ELEMENT_TYPE") catch unreachable;
-                            p.es6_symbol_global = p.declareGeneratedSymbol(.unbound, "Symbol") catch unreachable;
-                        }
-
                         p.jsx_fragment = p.declareGeneratedSymbol(.other, "Fragment") catch unreachable;
                         p.jsx_runtime = p.declareGeneratedSymbol(.other, "jsx") catch unreachable;
                         if (comptime FeatureFlags.support_jsxs_in_jsx_transform)
@@ -6561,8 +6564,6 @@ fn NewParser_(
                 return;
 
             if (p.options.features.jsx_optimization_inline) {
-                p.resolveGeneratedSymbol(&p.react_element_type);
-                p.resolveGeneratedSymbol(&p.es6_symbol_global);
                 if (p.runtime_imports.__merge) |*merge| {
                     p.resolveGeneratedSymbol(merge);
                 }
@@ -9564,9 +9565,11 @@ fn NewParser_(
                     try p.lexer.next();
                     var stmtOpts = ParseStatementOptions{};
                     const stmts = try p.parseStmtsUpTo(.t_close_brace, &stmtOpts);
+                    const close_brace_loc = p.lexer.loc();
                     try p.lexer.next();
                     return p.s(S.Block{
                         .stmts = stmts,
+                        .close_brace_loc = close_brace_loc,
                     }, loc);
                 },
 
@@ -10648,7 +10651,7 @@ fn NewParser_(
             return p.s(S.Enum{
                 .name = name,
                 .arg = arg_ref,
-                .values = try values.toOwnedSlice(),
+                .values = values.items,
                 .is_export = opts.is_export,
             }, loc);
         }
@@ -10973,7 +10976,7 @@ fn NewParser_(
                 }
             }
 
-            return try stmts.toOwnedSlice();
+            return stmts.items;
         }
 
         fn markStrictModeFeature(p: *P, feature: StrictModeFeature, r: logger.Range, detail: string) !void {
@@ -12315,7 +12318,7 @@ fn NewParser_(
             const scopeIndex = p.pushScopeForParsePass(.class_body, body_loc) catch unreachable;
 
             var opts = PropertyOpts{ .is_class = true, .allow_ts_decorators = class_opts.allow_ts_decorators, .class_has_extends = extends != null };
-            while (p.lexer.token != T.t_close_brace) {
+            while (!p.lexer.token.isCloseBraceOrEOF()) {
                 if (p.lexer.token == .t_semicolon) {
                     try p.lexer.next();
                     continue;
@@ -12370,7 +12373,7 @@ fn NewParser_(
                 .ts_decorators = ExprNodeList.init(class_opts.ts_decorators),
                 .class_keyword = class_keyword,
                 .body_loc = body_loc,
-                .properties = try properties.toOwnedSlice(),
+                .properties = properties.items,
                 .has_decorators = has_decorators or class_opts.ts_decorators.len > 0,
             };
         }
@@ -12429,7 +12432,7 @@ fn NewParser_(
 
             p.allow_in = oldAllowIn;
 
-            return try parts.toOwnedSlice();
+            return parts.items;
         }
 
         // This assumes the caller has already checked for TStringLiteral or TNoSubstitutionTemplateLiteral
@@ -14451,7 +14454,7 @@ fn NewParser_(
             }
 
             if (partStmts.items.len > 0) {
-                const _stmts = try partStmts.toOwnedSlice();
+                const _stmts = partStmts.items;
 
                 // -- hoist_bun_plugin --
                 if (_stmts.len == 1 and p.options.features.hoist_bun_plugin and !p.bun_plugin.ref.isNull()) {
@@ -14728,7 +14731,7 @@ fn NewParser_(
             var stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, body.stmts);
             var temp_opts = PrependTempRefsOpts{ .kind = StmtsKind.fn_body, .fn_body_loc = body.loc };
             p.visitStmtsAndPrependTempRefs(&stmts, &temp_opts) catch unreachable;
-            func.body = G.FnBody{ .stmts = stmts.toOwnedSlice() catch @panic("TODO"), .loc = body.loc };
+            func.body = G.FnBody{ .stmts = stmts.items, .loc = body.loc };
 
             p.popScope();
             p.popScope();
@@ -15104,8 +15107,6 @@ fn NewParser_(
                                         //     _owner: null
                                         // };
                                         //
-                                        if (!p.options.bundle)
-                                            p.recordUsage(p.react_element_type.ref);
                                         const key = if (e_.key) |key_| brk: {
                                             // key: void 0 === key ? null : "" + key,
                                             break :brk switch (key_.data) {
@@ -15180,16 +15181,7 @@ fn NewParser_(
                                             [_]G.Property{
                                             G.Property{
                                                 .key = Expr{ .data = Prefill.Data.@"$$typeof", .loc = tag.loc },
-                                                .value = if (p.options.bundle)
-                                                    p.runtimeIdentifier(tag.loc, "$$typeof")
-                                                else
-                                                    p.newExpr(
-                                                        E.Identifier{
-                                                            .ref = p.react_element_type.ref,
-                                                            .can_be_removed_if_unused = true,
-                                                        },
-                                                        tag.loc,
-                                                    ),
+                                                .value = p.runtimeIdentifier(tag.loc, "$$typeof"),
                                             },
                                             G.Property{
                                                 .key = Expr{ .data = Prefill.Data.type, .loc = tag.loc },
@@ -15629,11 +15621,6 @@ fn NewParser_(
                                     return e_.right;
                                 }
                             }
-
-                            // TODO:
-                            // "(1 && fn)()" => "fn()"
-                            // "(1 && this.fn)" => "this.fn"
-                            // "(1 && this.fn)()" => "(0, this.fn)()"
                         },
                         .bin_add => {
                             if (p.should_fold_typescript_constant_expressions) {
@@ -15670,8 +15657,12 @@ fn NewParser_(
                         .bin_rem => {
                             if (p.should_fold_typescript_constant_expressions) {
                                 if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                    // is this correct?
-                                    return p.newExpr(E.Number{ .value = std.math.mod(f64, vals[0], vals[1]) catch 0.0 }, expr.loc);
+                                    return p.newExpr(
+                                        // Use libc fmod here to be consistent with what JavaScriptCore does
+                                        // https://github.com/oven-sh/WebKit/blob/7a0b13626e5db69aa5a32d037431d381df5dfb61/Source/JavaScriptCore/runtime/MathCommon.cpp#L574-L597
+                                        E.Number{ .value = bun.C.fmod(vals[0], vals[1]) },
+                                        expr.loc,
+                                    );
                                 }
                             }
                         },
@@ -15909,7 +15900,10 @@ fn NewParser_(
                     // though this is a run-time error, we make it a compile-time error when
                     // bundling because scope hoisting means these will no longer be run-time
                     // errors.
-                    if ((in.assign_target != .none or is_delete_target) and @as(Expr.Tag, e_.target.data) == .e_identifier and p.symbols.items[e_.target.data.e_identifier.ref.innerIndex()].kind == .import) {
+                    if ((in.assign_target != .none or is_delete_target) and
+                        @as(Expr.Tag, e_.target.data) == .e_identifier and
+                        p.symbols.items[e_.target.data.e_identifier.ref.innerIndex()].kind == .import)
+                    {
                         const r = js_lexer.rangeOfIdentifier(p.source, e_.target.loc);
                         p.log.addRangeErrorFmt(
                             p.source,
@@ -15953,15 +15947,18 @@ fn NewParser_(
 
                             switch (e_.op) {
                                 .un_not => {
-                                    e_.value = SideEffects.simplifyBoolean(p, e_.value);
+                                    if (p.options.features.minify_syntax)
+                                        e_.value = SideEffects.simplifyBoolean(p, e_.value);
 
                                     const side_effects = SideEffects.toBoolean(e_.value.data);
                                     if (side_effects.ok) {
                                         return p.newExpr(E.Boolean{ .value = !side_effects.value }, expr.loc);
                                     }
 
-                                    if (e_.value.maybeSimplifyNot(p.allocator)) |exp| {
-                                        return exp;
+                                    if (p.options.features.minify_syntax) {
+                                        if (e_.value.maybeSimplifyNot(p.allocator)) |exp| {
+                                            return exp;
+                                        }
                                     }
                                 },
                                 .un_void => {
@@ -15997,28 +15994,30 @@ fn NewParser_(
                                 else => {},
                             }
 
-                            // "-(a, b)" => "a, -b"
-                            if (switch (e_.op) {
-                                .un_delete, .un_typeof => false,
-                                else => true,
-                            }) {
-                                switch (e_.value.data) {
-                                    .e_binary => |comma| {
-                                        if (comma.op == .bin_comma) {
-                                            return Expr.joinWithComma(
-                                                comma.left,
-                                                p.newExpr(
-                                                    E.Unary{
-                                                        .op = e_.op,
-                                                        .value = comma.right,
-                                                    },
-                                                    comma.right.loc,
-                                                ),
-                                                p.allocator,
-                                            );
-                                        }
-                                    },
-                                    else => {},
+                            if (p.options.features.minify_syntax) {
+                                // "-(a, b)" => "a, -b"
+                                if (switch (e_.op) {
+                                    .un_delete, .un_typeof => false,
+                                    else => true,
+                                }) {
+                                    switch (e_.value.data) {
+                                        .e_binary => |comma| {
+                                            if (comma.op == .bin_comma) {
+                                                return Expr.joinWithComma(
+                                                    comma.left,
+                                                    p.newExpr(
+                                                        E.Unary{
+                                                            .op = e_.op,
+                                                            .value = comma.right,
+                                                        },
+                                                        comma.right.loc,
+                                                    ),
+                                                    p.allocator,
+                                                );
+                                            }
+                                        },
+                                        else => {},
+                                    }
                                 }
                             }
                         },
@@ -16164,11 +16163,17 @@ fn NewParser_(
                         p.maybeCommaSpreadError(e_.comma_after_spread);
                     }
                     var items = e_.items.slice();
+                    var spread_item_count: usize = 0;
                     for (items) |*item| {
                         switch (item.data) {
                             .e_missing => {},
                             .e_spread => |spread| {
                                 spread.value = p.visitExprInOut(spread.value, ExprIn{ .assign_target = in.assign_target });
+
+                                spread_item_count += if (spread.value.data == .e_array)
+                                    @as(usize, spread.value.data.e_array.items.len)
+                                else
+                                    0;
                             },
                             .e_binary => |e2| {
                                 if (in.assign_target != .none and e2.op == .bin_assign) {
@@ -16191,6 +16196,11 @@ fn NewParser_(
                                 item.* = p.visitExprInOut(item.*, ExprIn{ .assign_target = in.assign_target });
                             },
                         }
+                    }
+
+                    // "[1, ...[2, 3], 4]" => "[1, 2, 3, 4]"
+                    if (p.options.features.minify_syntax and spread_item_count > 0 and in.assign_target == .none) {
+                        e_.items = e_.inlineSpreadOfArrayLiterals(p.allocator, spread_item_count) catch e_.items;
                     }
                 },
                 .e_object => |e_| {
@@ -16513,7 +16523,7 @@ fn NewParser_(
                     var temp_opts = PrependTempRefsOpts{ .kind = StmtsKind.fn_body };
                     p.visitStmtsAndPrependTempRefs(&stmts_list, &temp_opts) catch unreachable;
                     p.allocator.free(e_.body.stmts);
-                    e_.body.stmts = stmts_list.toOwnedSlice() catch @panic("TODO");
+                    e_.body.stmts = stmts_list.items;
                     p.popScope();
                     p.popScope();
 
@@ -17644,7 +17654,7 @@ fn NewParser_(
 
                             var items = try List(js_ast.ClauseItem).initCapacity(p.allocator, 1);
                             items.appendAssumeCapacity(js_ast.ClauseItem{ .alias = alias.original_name, .original_name = alias.original_name, .alias_loc = alias.loc, .name = LocRef{ .loc = alias.loc, .ref = data.namespace_ref } });
-                            stmts.appendAssumeCapacity(p.s(S.ExportClause{ .items = items.toOwnedSlice(p.allocator) catch @panic("TODO"), .is_single_line = true }, stmt.loc));
+                            stmts.appendAssumeCapacity(p.s(S.ExportClause{ .items = items.items, .is_single_line = true }, stmt.loc));
                             return;
                         }
                     }
@@ -18008,7 +18018,7 @@ fn NewParser_(
                         const kind = if (std.meta.eql(p.loop_body, stmt.data)) StmtsKind.loop_body else StmtsKind.none;
                         var _stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, data.stmts);
                         p.visitStmts(&_stmts, kind) catch unreachable;
-                        data.stmts = _stmts.toOwnedSlice() catch @panic("TODO");
+                        data.stmts = _stmts.items;
                         p.popScope();
                     }
 
@@ -18208,7 +18218,7 @@ fn NewParser_(
                         p.fn_or_arrow_data_visit.try_body_count += 1;
                         p.visitStmts(&_stmts, StmtsKind.none) catch unreachable;
                         p.fn_or_arrow_data_visit.try_body_count -= 1;
-                        data.body = _stmts.toOwnedSlice() catch @panic("TODO");
+                        data.body = _stmts.items;
                     }
                     p.popScope();
 
@@ -18220,7 +18230,7 @@ fn NewParser_(
                             }
                             var _stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, catch_.body);
                             p.visitStmts(&_stmts, StmtsKind.none) catch unreachable;
-                            catch_.body = _stmts.toOwnedSlice() catch @panic("TODO");
+                            catch_.body = _stmts.items;
                         }
                         p.popScope();
                     }
@@ -18230,7 +18240,7 @@ fn NewParser_(
                         {
                             var _stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, finally.stmts);
                             p.visitStmts(&_stmts, StmtsKind.none) catch unreachable;
-                            finally.stmts = _stmts.toOwnedSlice() catch @panic("TODO");
+                            finally.stmts = _stmts.items;
                         }
                         p.popScope();
                     }
@@ -18254,7 +18264,7 @@ fn NewParser_(
                             }
                             var _stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, case.body);
                             p.visitStmts(&_stmts, StmtsKind.none) catch unreachable;
-                            data.cases[i].body = _stmts.toOwnedSlice() catch @panic("TODO");
+                            data.cases[i].body = _stmts.items;
                         }
                     }
                     // TODO: duplicate case checker
@@ -18489,7 +18499,7 @@ fn NewParser_(
                         data.name.loc,
                         data.name.ref.?,
                         data.arg,
-                        try value_stmts.toOwnedSlice(),
+                        value_stmts.items,
                     );
                     return;
                 },
@@ -19172,6 +19182,9 @@ fn NewParser_(
 
                             constructor_function.?.func.body.stmts = constructor_stmts.items;
                         }
+
+                        // TODO: make sure "super()" comes before instance field initializers
+                        // https://github.com/evanw/esbuild/blob/e9413cc4f7ab87263ea244a999c6fa1f1e34dc65/internal/js_parser/js_parser_lower.go#L2742
                     }
 
                     var stmts_count: usize = 1 + static_members.items.len + instance_decorators.items.len + static_decorators.items.len;
@@ -19697,8 +19710,8 @@ fn NewParser_(
                                 }
                             }
 
-                            class.properties = class_body.toOwnedSlice() catch unreachable;
-                            constructor.func.body.stmts = stmts.toOwnedSlice() catch unreachable;
+                            class.properties = class_body.items;
+                            constructor.func.body.stmts = stmts.items;
                         }
                     }
                 }
@@ -20146,6 +20159,12 @@ fn NewParser_(
                         break;
                     }
 
+                    // don't merge super calls to ensure they are called before "this" is accessed
+                    if (stmt.isSuperCall()) {
+                        output.append(stmt) catch unreachable;
+                        continue;
+                    }
+
                     switch (stmt.data) {
                         .s_empty => continue,
 
@@ -20169,7 +20188,7 @@ fn NewParser_(
                             // Merge adjacent expression statements
                             if (output.items.len > 0) {
                                 var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_expr) {
+                                if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                     prev_stmt.data.s_expr.does_not_affect_tree_shaking = prev_stmt.data.s_expr.does_not_affect_tree_shaking and
                                         s_expr.does_not_affect_tree_shaking;
                                     prev_stmt.data.s_expr.value = prev_stmt.data.s_expr.value.joinWithComma(
@@ -20184,7 +20203,7 @@ fn NewParser_(
                             // Absorb a previous expression statement
                             if (output.items.len > 0) {
                                 var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_expr) {
+                                if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                     s_switch.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_switch.test_, p.allocator);
                                     output.items.len -= 1;
                                 }
@@ -20194,7 +20213,7 @@ fn NewParser_(
                             // Absorb a previous expression statement
                             if (output.items.len > 0) {
                                 var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_expr) {
+                                if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                     s_if.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_if.test_, p.allocator);
                                     output.items.len -= 1;
                                 }
@@ -20207,7 +20226,7 @@ fn NewParser_(
                             // Merge return statements with the previous expression statement
                             if (output.items.len > 0 and ret.value != null) {
                                 var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_expr) {
+                                if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                     ret.value = prev_stmt.data.s_expr.value.joinWithComma(ret.value.?, p.allocator);
                                     prev_stmt.* = stmt;
                                     continue;
@@ -20225,7 +20244,7 @@ fn NewParser_(
                             // Merge throw statements with the previous expression statement
                             if (output.items.len > 0) {
                                 var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_expr) {
+                                if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                     prev_stmt.* = p.s(S.Throw{
                                         .value = prev_stmt.data.s_expr.value.joinWithComma(
                                             stmt.data.s_throw.value,
@@ -20499,7 +20518,13 @@ fn NewParser_(
             p.log.addRangeError(p.source, logger.Range{ .loc = comma_after_spread, .len = 1 }, "Unexpected \",\" after rest pattern") catch unreachable;
         }
 
-        pub fn toAST(p: *P, _parts: []js_ast.Part, exports_kind: js_ast.ExportsKind, commonjs_wrapper_expr: ?Expr) !js_ast.Ast {
+        pub fn toAST(
+            p: *P,
+            _parts: []js_ast.Part,
+            exports_kind: js_ast.ExportsKind,
+            commonjs_wrapper_expr: ?Expr,
+            hashbang: []const u8,
+        ) !js_ast.Ast {
             const allocator = p.allocator;
             var parts = _parts;
 
@@ -21189,6 +21214,7 @@ fn NewParser_(
                 else
                     p.require_ref,
 
+                .force_cjs_to_esm = p.unwrap_all_requires or exports_kind == .esm_with_dynamic_fallback_from_cjs,
                 .uses_module_ref = (p.symbols.items[p.module_ref.innerIndex()].use_count_estimate > 0),
                 .uses_exports_ref = (p.symbols.items[p.exports_ref.innerIndex()].use_count_estimate > 0),
                 .uses_require_ref = if (p.runtime_imports.__require != null)
@@ -21198,6 +21224,8 @@ fn NewParser_(
                 // .top_Level_await_keyword = p.top_level_await_keyword,
                 .bun_plugin = p.bun_plugin,
                 .commonjs_named_exports = p.commonjs_named_exports,
+
+                .hashbang = hashbang,
 
                 // TODO:
                 // .const_values = p.const_values,

@@ -548,7 +548,7 @@ const ResolveModeKeys = {
   "dev": "dev",
   "bundle": "bundle",
 };
-const Platform = {
+const Target = {
   "1": 1,
   "2": 2,
   "3": 3,
@@ -558,7 +558,7 @@ const Platform = {
   "bun": 3,
   "bun_macro": 4,
 };
-const PlatformKeys = {
+const TargetKeys = {
   "1": "browser",
   "2": "node",
   "3": "bun",
@@ -1655,7 +1655,7 @@ function decodeTransformOptions(bb) {
         break;
 
       case 15:
-        result["platform"] = Platform[bb.readByte()];
+        result["target"] = Target[bb.readByte()];
         break;
 
       case 16:
@@ -1825,11 +1825,11 @@ function encodeTransformOptions(message, bb) {
     }
   }
 
-  var value = message["platform"];
+  var value = message["target"];
   if (value != null) {
     bb.writeByte(15);
-    var encoded = Platform[value];
-    if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "Platform"');
+    var encoded = Target[value];
+    if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "Target"');
     bb.writeByte(encoded);
   }
 
@@ -3321,8 +3321,8 @@ export { decodeFallbackMessageContainer };
 export { encodeFallbackMessageContainer };
 export { ResolveMode };
 export { ResolveModeKeys };
-export { Platform };
-export { PlatformKeys };
+export { Target };
+export { TargetKeys };
 export { CSSInJSBehavior };
 export { CSSInJSBehaviorKeys };
 export { JSXRuntime };

@@ -204,11 +204,24 @@ pub const Data = struct {
     text: string,
     location: ?Location = null,
     pub fn deinit(d: *Data, allocator: std.mem.Allocator) void {
-        if (d.location) |loc| {
+        if (d.location) |*loc| {
             loc.deinit(allocator);
         }
 
         allocator.free(d.text);
+    }
+
+    pub fn cloneLineText(this: Data, should: bool, allocator: std.mem.Allocator) !Data {
+        if (!should or this.location == null or this.location.?.line_text == null)
+            return this;
+
+        var new_line_text = try allocator.dupe(u8, this.location.?.line_text.?);
+        var new_location = this.location.?;
+        new_location.line_text = new_line_text;
+        return Data{
+            .text = this.text,
+            .location = new_location,
+        };
     }
 
     pub fn clone(this: Data, allocator: std.mem.Allocator) !Data {
@@ -401,6 +414,24 @@ pub const Msg = struct {
     metadata: Metadata = .{ .build = 0 },
     notes: ?[]Data = null,
 
+    pub fn fromJS(allocator: std.mem.Allocator, globalObject: *bun.JSC.JSGlobalObject, file: string, err: bun.JSC.JSValue) !Msg {
+        var zig_exception_holder: bun.JSC.ZigException.Holder = bun.JSC.ZigException.Holder.init();
+        if (err.toError()) |value| {
+            value.toZigException(globalObject, zig_exception_holder.zigException());
+        } else {
+            zig_exception_holder.zig_exception.message = JSC.ZigString.fromUTF8(err.toSlice(globalObject, allocator).slice());
+        }
+
+        return Msg{
+            .data = .{
+                .text = zig_exception_holder.zigException().message.toSliceClone(allocator).slice(),
+                .location = Location{
+                    .file = file,
+                },
+            },
+        };
+    }
+
     pub fn count(this: *const Msg, builder: *StringBuilder) void {
         this.data.count(builder);
         if (this.notes) |notes| {
@@ -490,7 +521,7 @@ pub const Msg = struct {
     pub fn deinit(msg: *Msg, allocator: std.mem.Allocator) void {
         msg.data.deinit(allocator);
         if (msg.notes) |notes| {
-            for (notes) |note| {
+            for (notes) |*note| {
                 note.deinit(allocator);
             }
         }
@@ -581,6 +612,8 @@ pub const Log = struct {
     errors: usize = 0,
     msgs: ArrayList(Msg),
     level: Level = if (Environment.isDebug) Level.info else Level.warn,
+
+    clone_line_text: bool = false,
 
     pub inline fn hasErrors(this: *const Log) bool {
         return this.errors > 0;
@@ -800,7 +833,7 @@ pub const Log = struct {
 
     inline fn _addResolveErrorWithLevel(
         log: *Log,
-        source: *const Source,
+        source: ?*const Source,
         r: Range,
         allocator: std.mem.Allocator,
         comptime fmt: string,
@@ -852,7 +885,7 @@ pub const Log = struct {
 
     inline fn _addResolveError(
         log: *Log,
-        source: *const Source,
+        source: ?*const Source,
         r: Range,
         allocator: std.mem.Allocator,
         comptime fmt: string,
@@ -866,7 +899,7 @@ pub const Log = struct {
 
     inline fn _addResolveWarn(
         log: *Log,
-        source: *const Source,
+        source: ?*const Source,
         r: Range,
         allocator: std.mem.Allocator,
         comptime fmt: string,
@@ -880,7 +913,7 @@ pub const Log = struct {
 
     pub fn addResolveError(
         log: *Log,
-        source: *const Source,
+        source: ?*const Source,
         r: Range,
         allocator: std.mem.Allocator,
         comptime fmt: string,
@@ -894,7 +927,7 @@ pub const Log = struct {
 
     pub fn addResolveErrorWithTextDupe(
         log: *Log,
-        source: *const Source,
+        source: ?*const Source,
         r: Range,
         allocator: std.mem.Allocator,
         comptime fmt: string,
@@ -907,7 +940,7 @@ pub const Log = struct {
 
     pub fn addResolveErrorWithTextDupeMaybeWarn(
         log: *Log,
-        source: *const Source,
+        source: ?*const Source,
         r: Range,
         allocator: std.mem.Allocator,
         comptime fmt: string,
@@ -937,7 +970,7 @@ pub const Log = struct {
         log.errors += 1;
         try log.addMsg(.{
             .kind = .err,
-            .data = rangeData(source, r, allocPrint(allocator, text, args) catch unreachable),
+            .data = try rangeData(source, r, allocPrint(allocator, text, args) catch unreachable).cloneLineText(log.clone_line_text, log.msgs.allocator),
         });
     }
 
@@ -946,7 +979,7 @@ pub const Log = struct {
         log.errors += 1;
         try log.addMsg(.{
             .kind = .err,
-            .data = rangeData(source, r, allocPrint(allocator, text, args) catch unreachable),
+            .data = try rangeData(source, r, allocPrint(allocator, text, args) catch unreachable).cloneLineText(log.clone_line_text, log.msgs.allocator),
             .notes = notes,
         });
     }
@@ -956,7 +989,7 @@ pub const Log = struct {
         log.errors += 1;
         try log.addMsg(.{
             .kind = .err,
-            .data = rangeData(source, Range{ .loc = l }, allocPrint(allocator, text, args) catch unreachable),
+            .data = try rangeData(source, Range{ .loc = l }, allocPrint(allocator, text, args) catch unreachable).cloneLineText(log.clone_line_text, log.msgs.allocator),
         });
     }
 
@@ -966,7 +999,7 @@ pub const Log = struct {
         log.warnings += 1;
         try log.addMsg(.{
             .kind = .warn,
-            .data = rangeData(source, r, text),
+            .data = try rangeData(source, r, text).cloneLineText(log.clone_line_text, log.msgs.allocator),
         });
     }
 
@@ -976,7 +1009,7 @@ pub const Log = struct {
         log.warnings += 1;
         try log.addMsg(.{
             .kind = .warn,
-            .data = rangeData(source, Range{ .loc = l }, allocPrint(allocator, text, args) catch unreachable),
+            .data = try rangeData(source, Range{ .loc = l }, allocPrint(allocator, text, args) catch unreachable).cloneLineText(log.clone_line_text, log.msgs.allocator),
         });
     }
 
@@ -986,7 +1019,7 @@ pub const Log = struct {
         log.warnings += 1;
         try log.addMsg(.{
             .kind = .warn,
-            .data = rangeData(source, r, allocPrint(allocator, text, args) catch unreachable),
+            .data = try rangeData(source, r, allocPrint(allocator, text, args) catch unreachable).cloneLineText(log.clone_line_text, log.msgs.allocator),
         });
     }
 

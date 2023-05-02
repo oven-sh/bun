@@ -73,6 +73,18 @@ describe("Bun.Transpiler", () => {
     ts.expectPrinted_("console.log(`\r\n\r\n\r\n`)", "console.log(`\n\n\n`);\n");
   });
 
+  it("doesn't hang indefinitely #2746", () => {
+    // this test passes by not hanging
+    expect(() =>
+      transpiler.transformSync(`
+    class Test {
+      test() {
+      
+    }
+    `),
+    ).toThrow();
+  });
+
   describe("property access inlining", () => {
     it("bails out with spread", () => {
       ts.expectPrinted_("const a = [...b][0];", "const a = [...b][0]");
@@ -2956,5 +2968,13 @@ console.log(foo, array);
       expectPrinted_('const x = `` + "``";', "const x = `\\`\\``");
       expectPrinted_('const x = "``" + ``;', 'const x = "``"');
     });
+  });
+
+  it("scan on empty file does not segfault", () => {
+    new Bun.Transpiler().scan("");
+  });
+
+  it("scanImports on empty file does not segfault", () => {
+    new Bun.Transpiler().scanImports("");
   });
 });

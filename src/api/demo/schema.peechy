@@ -107,7 +107,7 @@ smol ResolveMode {
   bundle = 4;
 }
 
-smol Platform {
+smol Target {
   browser = 1;
   node = 2;
   bun = 3;
@@ -326,7 +326,7 @@ message TransformOptions {
   LoaderMap loaders = 13;
 
   string[] main_fields = 14;
-  Platform platform = 15;
+  Target target = 15;
 
   bool serve = 16;
 

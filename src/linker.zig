@@ -172,7 +172,7 @@ pub const Linker = struct {
     }
 
     pub inline fn nodeModuleBundleImportPath(this: *const ThisLinker, origin: URL) string {
-        if (this.options.platform.isBun()) return "/node_modules.server.bun";
+        if (this.options.target.isBun()) return "/node_modules.server.bun";
 
         return std.fmt.allocPrint(this.allocator, "{s}://{}{s}", .{ origin.displayProtocol(), origin.displayHost(), this.options.node_modules_bundle.?.bundle.import_from_name }) catch unreachable;
     }
@@ -334,7 +334,7 @@ pub const Linker = struct {
                                 import_record.range.loc,
                                 if (is_bun)
                                     JSC.JSGlobalObject.BunPluginTarget.bun
-                                else if (linker.options.platform == .browser)
+                                else if (linker.options.target == .browser)
                                     JSC.JSGlobalObject.BunPluginTarget.browser
                                 else
                                     JSC.JSGlobalObject.BunPluginTarget.node,
@@ -731,12 +731,12 @@ pub const Linker = struct {
                                 had_resolve_errors = true;
 
                                 if (import_record.path.text.len > 0 and Resolver.isPackagePath(import_record.path.text)) {
-                                    if (linker.options.platform.isWebLike() and Options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
+                                    if (linker.options.target.isWebLike() and Options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
                                         try linker.log.addResolveError(
                                             &result.source,
                                             import_record.range,
                                             linker.allocator,
-                                            "Could not resolve: \"{s}\". Try setting --platform=\"node\" (after bun build exists)",
+                                            "Could not resolve: \"{s}\". Try setting --target=\"node\"",
                                             .{import_record.path.text},
                                             import_record.kind,
                                             err,
@@ -998,7 +998,7 @@ pub const Linker = struct {
 
         import_record.path = try linker.generateImportPath(
             source_dir,
-            if (path.is_symlink and import_path_format == .absolute_url and linker.options.platform.isNotBun()) path.pretty else path.text,
+            if (path.is_symlink and import_path_format == .absolute_url and linker.options.target.isNotBun()) path.pretty else path.text,
             loader == .file or loader == .wasm,
             path.namespace,
             origin,
@@ -1026,7 +1026,7 @@ pub const Linker = struct {
                 // it's more complicated
                 // loader plugins could be executed between when this is called and the import is evaluated
                 // but we want to preserve the semantics of "file" returning import paths for compatibiltiy with frontend frameworkss
-                if (!linker.options.platform.isBun()) {
+                if (!linker.options.target.isBun()) {
                     import_record.print_mode = .import_path;
                 }
             },

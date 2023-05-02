@@ -1206,6 +1206,8 @@ pub const Expect = struct {
             const expected_string = expected.toString(globalObject).toSlice(globalObject, default_allocator).slice();
             if (strings.contains(value_string, expected_string)) {
                 pass = true;
+            } else if (value_string.len == 0 and expected_string.len == 0) { // edge case two empty strings are true
+                pass = true;
             }
         } else {
             globalObject.throw("Received value must be an array type, or both received and expected values must be strings.", .{});
@@ -1769,6 +1771,79 @@ pub const Expect = struct {
         return .zero;
     }
 
+    pub fn toBeEven(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+
+        const thisValue = callFrame.this();
+
+        const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalObject.throw("toBeEven() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+        var pass = false;
+
+        if (value.isAnyInt()) {
+            const _value = value.toInt64();
+            pass = @mod(_value, 2) == 0;
+            if (_value == -0) { // negative zero is even
+                pass = true;
+            }
+        } else if (value.isBigInt() or value.isBigInt32()) {
+            const _value = value.toInt64();
+            pass = switch (_value == -0) { // negative zero is even
+                true => true,
+                else => _value & 1 == 0,
+            };
+        } else if (value.isNumber()) {
+            const _value = JSValue.asNumber(value);
+            if (@mod(_value, 1) == 0 and @mod(_value, 2) == 0) { // if the fraction is all zeros and even
+                pass = true;
+            } else {
+                pass = false;
+            }
+        } else {
+            pass = false;
+        }
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        const value_fmt = value.toFmt(globalObject, &formatter);
+        if (not) {
+            const received_line = "Received: <red>{any}<r>\n";
+            const fmt = comptime getSignature("toBeEven", "", true) ++ "\n\n" ++ received_line;
+            if (Output.enable_ansi_colors) {
+                globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
+                return .zero;
+            }
+
+            globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+            return .zero;
+        }
+
+        const received_line = "Received: <red>{any}<r>\n";
+        const fmt = comptime getSignature("toBeEven", "", false) ++ "\n\n" ++ received_line;
+        if (Output.enable_ansi_colors) {
+            globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
+            return .zero;
+        }
+
+        globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+        return .zero;
+    }
+
     pub fn toBeGreaterThan(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
         defer this.postMatch(globalObject);
 
@@ -2089,6 +2164,77 @@ pub const Expect = struct {
             globalObject.throw(comptime Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
             return .zero;
         }
+        return .zero;
+    }
+
+    pub fn toBeOdd(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+
+        const thisValue = callFrame.this();
+
+        const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalObject.throw("toBeOdd() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+        var pass = false;
+
+        if (value.isBigInt32()) {
+            pass = value.toInt32() & 1 == 1;
+        } else if (value.isBigInt()) {
+            pass = value.toInt64() & 1 == 1;
+        } else if (value.isInt32()) {
+            const _value = value.toInt32();
+            pass = @mod(_value, 2) == 1;
+        } else if (value.isAnyInt()) {
+            const _value = value.toInt64();
+            pass = @mod(_value, 2) == 1;
+        } else if (value.isNumber()) {
+            const _value = JSValue.asNumber(value);
+            if (@mod(_value, 1) == 0 and @mod(_value, 2) == 1) { // if the fraction is all zeros and odd
+                pass = true;
+            } else {
+                pass = false;
+            }
+        } else {
+            pass = false;
+        }
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        const value_fmt = value.toFmt(globalObject, &formatter);
+        if (not) {
+            const received_line = "Received: <red>{any}<r>\n";
+            const fmt = comptime getSignature("toBeOdd", "", true) ++ "\n\n" ++ received_line;
+            if (Output.enable_ansi_colors) {
+                globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
+                return .zero;
+            }
+
+            globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+            return .zero;
+        }
+
+        const received_line = "Received: <red>{any}<r>\n";
+        const fmt = comptime getSignature("toBeOdd", "", false) ++ "\n\n" ++ received_line;
+        if (Output.enable_ansi_colors) {
+            globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
+            return .zero;
+        }
+
+        globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
         return .zero;
     }
 

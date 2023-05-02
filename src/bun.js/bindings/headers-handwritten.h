@@ -119,17 +119,17 @@ const JSErrorCode JSErrorCodeStackOverflow = 253;
 const JSErrorCode JSErrorCodeUserErrorCode = 254;
 
 typedef uint8_t BunLoaderType;
-const BunLoaderType BunLoaderTypeNone = 0;
-const BunLoaderType BunLoaderTypeJSX = 1;
-const BunLoaderType BunLoaderTypeJS = 2;
-const BunLoaderType BunLoaderTypeTS = 3;
-const BunLoaderType BunLoaderTypeTSX = 4;
-const BunLoaderType BunLoaderTypeCSS = 5;
-const BunLoaderType BunLoaderTypeFILE = 6;
-const BunLoaderType BunLoaderTypeJSON = 7;
-const BunLoaderType BunLoaderTypeTOML = 8;
-const BunLoaderType BunLoaderTypeWASM = 9;
-const BunLoaderType BunLoaderTypeNAPI = 10;
+const BunLoaderType BunLoaderTypeNone = 254;
+const BunLoaderType BunLoaderTypeJSX = 0;
+const BunLoaderType BunLoaderTypeJS = 1;
+const BunLoaderType BunLoaderTypeTS = 2;
+const BunLoaderType BunLoaderTypeTSX = 3;
+const BunLoaderType BunLoaderTypeCSS = 4;
+const BunLoaderType BunLoaderTypeFILE = 5;
+const BunLoaderType BunLoaderTypeJSON = 6;
+const BunLoaderType BunLoaderTypeTOML = 7;
+const BunLoaderType BunLoaderTypeWASM = 8;
+const BunLoaderType BunLoaderTypeNAPI = 9;
 
 #pragma mark - Stream
 
@@ -220,21 +220,21 @@ extern "C" void Microtask__run_default(void* ptr, void* global);
 
 extern "C" bool Bun__transpileVirtualModule(
     JSC::JSGlobalObject* global,
-    ZigString* specifier,
-    ZigString* referrer,
+    const ZigString* specifier,
+    const ZigString* referrer,
     ZigString* sourceCode,
     BunLoaderType loader,
     ErrorableResolvedSource* result);
 
 extern "C" JSC::EncodedJSValue Bun__runVirtualModule(
     JSC::JSGlobalObject* global,
-    ZigString* specifier);
+    const ZigString* specifier);
 
 extern "C" void* Bun__transpileFile(
     void* bunVM,
     JSC::JSGlobalObject* global,
-    ZigString* specifier,
-    ZigString* referrer,
+    const ZigString* specifier,
+    const ZigString* referrer,
     ErrorableResolvedSource* result, bool allowPromise);
 
 extern "C" JSC::EncodedJSValue CallbackJob__onResolve(JSC::JSGlobalObject*, JSC::CallFrame*);
@@ -243,8 +243,8 @@ extern "C" JSC::EncodedJSValue CallbackJob__onReject(JSC::JSGlobalObject*, JSC::
 extern "C" bool Bun__fetchBuiltinModule(
     void* bunVM,
     JSC::JSGlobalObject* global,
-    ZigString* specifier,
-    ZigString* referrer,
+    const ZigString* specifier,
+    const ZigString* referrer,
     ErrorableResolvedSource* result);
 
 // Used in process.version

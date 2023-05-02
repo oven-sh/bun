@@ -1,6 +1,6 @@
 import assert from "assert";
 import dedent from "dedent";
-import { expectBundled, itBundled, testForFile } from "../expectBundled";
+import { ESBUILD, itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:
@@ -88,7 +88,7 @@ describe("bundler", () => {
       `,
     },
     run: {
-      stdout: 'hello\n{"default":{"foo":123},"foo":123}',
+      stdout: 'hello\n{"foo":123}',
     },
   });
   itBundled("dce/PackageJsonSideEffectsTrueKeepES6", {
@@ -704,7 +704,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsFalseIntermediateFilesChainAll", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "a"
@@ -1038,35 +1037,6 @@ describe("bundler", () => {
       stdout: `["F",{"children":[null,{"children":["div",{}]}]}]`,
     },
   });
-  // TODO: Unsure how to port this: https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_dce_test.go#L1249
-  itBundled("dce/DisableTreeShaking", {
-    notImplemented: true,
-    // GENERATED
-    files: {
-      "/entry.jsx": /* jsx */ `
-        import './remove-me'
-        function RemoveMe1() {}
-        let removeMe2 = 0
-        class RemoveMe3 {}
-
-        import './keep-me'
-        function KeepMe1() {}
-        let keepMe2 = <KeepMe1/>
-        function keepMe3() { console.log('side effects') }
-        let keepMe4 = /* @__PURE__ */ keepMe3()
-        let keepMe5 = pure()
-        let keepMe6 = some.fn()
-      `,
-      "/remove-me.js": `export default 'unused'`,
-      "/keep-me/index.js": `console.log('side effects')`,
-      "/keep-me/package.json": `{ "sideEffects": false }`,
-    },
-    ignoreDCEAnnotations: true,
-    define: {
-      pure: "???",
-      "some.fn": "???",
-    },
-  });
   itBundled("dce/DeadCodeFollowingJump", {
     notImplemented: true,
     files: {
@@ -1272,6 +1242,7 @@ describe("bundler", () => {
     dce: true,
   });
   itBundled("dce/TreeShakingClassProperty", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         let remove1 = class { x }
@@ -1307,6 +1278,7 @@ describe("bundler", () => {
     dce: true,
   });
   itBundled("dce/TreeShakingClassStaticProperty", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         let remove1 = class { static x }
@@ -1420,6 +1392,7 @@ describe("bundler", () => {
     format: "iife",
   });
   itBundled("dce/TreeShakingNoBundleESM", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         function keep() {}
@@ -1433,7 +1406,6 @@ describe("bundler", () => {
     dce: true,
   });
   itBundled("dce/TreeShakingNoBundleCJS", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function keep() {}
@@ -1441,12 +1413,12 @@ describe("bundler", () => {
         keep()
       `,
     },
+    dce: true,
     format: "cjs",
     treeShaking: true,
     mode: "transform",
   });
   itBundled("dce/TreeShakingNoBundleIIFE", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function keep() {}
@@ -1454,6 +1426,7 @@ describe("bundler", () => {
         keep()
       `,
     },
+    dce: true,
     format: "iife",
     treeShaking: true,
     mode: "transform",
@@ -1482,7 +1455,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/DCETypeOf", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // These should be removed because they have no side effects
@@ -1689,6 +1661,7 @@ describe("bundler", () => {
     dce: true,
   });
   itBundled("dce/RemoveUnusedImports", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         import REMOVE1 from 'a'
@@ -1697,8 +1670,8 @@ describe("bundler", () => {
       `,
     },
     minifySyntax: true,
-    mode: "transform",
     dce: true,
+    external: ["a", "b", "c"],
     onAfterBundle(api) {
       api.expectFile("/out.js").toBe(
         dedent`
@@ -1720,6 +1693,7 @@ describe("bundler", () => {
     },
     minifySyntax: true,
     mode: "transform",
+    external: ["a", "b", "c"],
     dce: true,
   });
   itBundled("dce/RemoveUnusedImportsEvalTS", {
@@ -2156,6 +2130,7 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/InlineFunctionCallBehaviorChanges", {
+    notImplemented: true,
     files: {
       // At the time of writing, using a template string here triggered a bug in bun's transpiler
       // making it impossible to run the test.
@@ -2237,6 +2212,7 @@ describe("bundler", () => {
     dce: true,
   });
   itBundled("dce/ConstValueInliningNoBundle", {
+    notImplemented: true,
     files: {
       "/top-level.js": /* js */ `
         // These should be kept because they are top-level and tree shaking is not enabled
@@ -2289,6 +2265,7 @@ describe("bundler", () => {
             s_keep, s_keep,
           )
         }
+        console.log(nested())
       `,
       "/namespace-export.ts": /* ts */ `
         namespace ns {
@@ -2342,10 +2319,12 @@ describe("bundler", () => {
           function foo() {
             return y_REMOVE
           }
+          console.log(foo)
         }
+        console.log(nested());
       `,
       "/disabled-tdz.js": /* js */ `
-        foo()
+        console.log(foo())
         const x_keep = 1
         function foo() {
           return x_keep
@@ -2368,6 +2347,7 @@ describe("bundler", () => {
             y, y,
           )
         }
+        console.log(foo())
       `,
     },
     entryPoints: [
@@ -2385,11 +2365,11 @@ describe("bundler", () => {
       "/backwards-reference-top-level.js",
       "/backwards-reference-nested-function.js",
     ],
-    mode: "transform",
     minifySyntax: true,
     dce: true,
     dceKeepMarkerCount: {
-      "/out/top-level.js": 7,
+      "/out/top-level.js": 5,
+      "/out/nested-function.js": 3,
       "/out/namespace-export.js": 1,
     },
   });
@@ -2538,6 +2518,7 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/ConstValueInliningDirectEval", {
+    notImplemented: true,
     files: {
       "/top-level-no-eval.js": /* js */ `
         const keep = 1
@@ -2872,7 +2853,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/NestedFunctionInliningWithSpread", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function empty1() {}

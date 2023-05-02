@@ -765,6 +765,44 @@ pub const G = struct {
         close_brace_loc: logger.Loc = logger.Loc.Empty,
         properties: []Property = &([_]Property{}),
         has_decorators: bool = false,
+
+        pub fn canBeMoved(this: *const Class) bool {
+            if (this.extends != null)
+                return false;
+
+            if (this.has_decorators) {
+                return false;
+            }
+
+            for (this.properties) |property| {
+                if (property.kind == .class_static_block)
+                    return false;
+
+                const flags = property.flags;
+                if (flags.contains(.is_computed) or flags.contains(.is_spread)) {
+                    return false;
+                }
+
+                if (property.kind == .normal) {
+                    if (flags.contains(.is_static)) {
+                        for ([2]?Expr{ property.value, property.initializer }) |val_| {
+                            if (val_) |val| {
+                                switch (val.data) {
+                                    .e_arrow, .e_function => {},
+                                    else => {
+                                        if (!val.canBeConstValue()) {
+                                            return false;
+                                        }
+                                    },
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            return true;
+        }
     };
 
     // invalid shadowing if left as Comment
@@ -1352,6 +1390,47 @@ pub const E = struct {
 
         pub inline fn slice(this: Array) []Expr {
             return this.items.slice();
+        }
+
+        pub fn inlineSpreadOfArrayLiterals(
+            this: *Array,
+            allocator: std.mem.Allocator,
+            estimated_count: usize,
+        ) !ExprNodeList {
+            var out = try allocator.alloc(
+                Expr,
+                // This over-allocates a little but it's fine
+                estimated_count + @as(usize, this.items.len),
+            );
+            var remain = out;
+            for (this.items.slice()) |item| {
+                switch (item.data) {
+                    .e_spread => |val| {
+                        if (val.value.data == .e_array) {
+                            for (val.value.data.e_array.items.slice()) |inner_item| {
+                                if (inner_item.data == .e_missing) {
+                                    remain[0] = Expr.init(E.Undefined, .{}, inner_item.loc);
+                                    remain = remain[1..];
+                                } else {
+                                    remain[0] = inner_item;
+                                    remain = remain[1..];
+                                }
+                            }
+
+                            // skip empty arrays
+                            // don't include the inlined spread.
+                            continue;
+                        }
+                        // non-arrays are kept in
+                    },
+                    else => {},
+                }
+
+                remain[0] = item;
+                remain = remain[1..];
+            }
+
+            return ExprNodeList.init(out[0 .. out.len - remain.len]);
         }
 
         pub fn toJS(this: @This(), ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
@@ -2509,6 +2588,10 @@ pub const Stmt = struct {
 
     pub fn isTypeScript(self: *Stmt) bool {
         return @as(Stmt.Tag, self.data) == .s_type_script;
+    }
+
+    pub fn isSuperCall(self: Stmt) bool {
+        return self.data == .s_expr and self.data.s_expr.value.data == .e_call and self.data.s_expr.value.data.e_call.target.data == .e_super;
     }
 
     pub fn empty() Stmt {
@@ -5115,7 +5198,11 @@ pub const EnumValue = struct {
 };
 
 pub const S = struct {
-    pub const Block = struct { stmts: StmtNodeList };
+    pub const Block = struct {
+        stmts: StmtNodeList,
+        close_brace_loc: logger.Loc = logger.Loc.Empty,
+    };
+
     pub const SExpr = struct {
         value: ExprNodeIndex,
 
@@ -5162,15 +5249,15 @@ pub const S = struct {
         default_name: LocRef, // value may be a SFunction or SClass
         value: StmtOrExpr,
 
-        pub fn canBeMovedAround(self: ExportDefault) bool {
+        pub fn canBeMoved(self: *const ExportDefault) bool {
             return switch (self.value) {
                 .expr => |e| switch (e.data) {
-                    .e_class => |class| class.extends == null,
+                    .e_class => |class| class.canBeMoved(),
                     .e_arrow, .e_function => true,
                     else => e.canBeConstValue(),
                 },
                 .stmt => |s| switch (s.data) {
-                    .s_class => |class| class.class.extends == null,
+                    .s_class => |class| class.class.canBeMoved(),
                     .s_function => true,
                     else => false,
                 },
@@ -5637,6 +5724,8 @@ pub const Ast = struct {
     uses_exports_ref: bool = false,
     uses_module_ref: bool = false,
     uses_require_ref: bool = false,
+
+    force_cjs_to_esm: bool = false,
     exports_kind: ExportsKind = ExportsKind.none,
 
     bundle_export_ref: ?Ref = null,
@@ -5651,7 +5740,7 @@ pub const Ast = struct {
     /// they can be manipulated efficiently without a full AST traversal
     import_records: ImportRecord.List = .{},
 
-    hashbang: ?string = null,
+    hashbang: string = "",
     directive: ?string = null,
     url_for_css: ?string = null,
     parts: Part.List = Part.List{},
@@ -5685,7 +5774,7 @@ pub const Ast = struct {
     redirect_import_record_index: ?u32 = null,
 
     /// Only populated when bundling
-    platform: bun.options.Platform = .browser,
+    target: bun.options.Target = .browser,
 
     const_values: ConstValuesMap = .{},
 
@@ -9281,7 +9370,7 @@ pub const Macro = struct {
                                     blob_ = resp.body.use();
                                 } else if (value.as(JSC.WebCore.Request)) |resp| {
                                     mime_type = HTTP.MimeType.init(resp.mimeType());
-                                    blob_ = resp.body.use();
+                                    blob_ = resp.body.value.use();
                                 } else if (value.as(JSC.WebCore.Blob)) |resp| {
                                     blob_ = resp.*;
                                     blob_.?.allocator = null;
@@ -9653,7 +9742,7 @@ pub const UseDirective = enum {
         return .none;
     }
 
-    pub fn platform(this: UseDirective, default: bun.options.Platform) bun.options.Platform {
+    pub fn target(this: UseDirective, default: bun.options.Target) bun.options.Target {
         return switch (this) {
             .none => default,
             .@"use client" => .browser,
@@ -9876,4 +9965,3 @@ pub const GlobalStoreHandle = struct {
 // Stmt               | 192
 // STry               | 384
 // -- ESBuild bit sizes
-

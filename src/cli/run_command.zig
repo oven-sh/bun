@@ -171,7 +171,7 @@ pub const RunCommand = struct {
                         }
 
                         if (strings.hasPrefixComptime(script[start..], "npx ")) {
-                            try copy_script.appendSlice("bunx" ++ " ");
+                            try copy_script.appendSlice(BUN_BIN_NAME ++ " x ");
                             entry_i += "npx ".len;
                             delimiter = 0;
                             continue;

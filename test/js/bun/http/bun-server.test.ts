@@ -60,11 +60,13 @@ describe("Server", () => {
   test("abort signal on server", async () => {
     {
       let signalOnServer = false;
+      const abortController = new AbortController();
       const server = Bun.serve({
         async fetch(req) {
           req.signal.addEventListener("abort", () => {
             signalOnServer = true;
           });
+          abortController.abort();
           await Bun.sleep(15);
           return new Response("Hello");
         },
@@ -72,7 +74,7 @@ describe("Server", () => {
       });
 
       try {
-        await fetch(`http://${server.hostname}:${server.port}`, { signal: AbortSignal.timeout(10) });
+        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
       } catch {}
       expect(signalOnServer).toBe(true);
       server.stop(true);
@@ -162,13 +164,10 @@ describe("Server", () => {
           return new Response(
             new ReadableStream({
               async pull(controller) {
-                console.trace("here");
                 abortController.abort();
 
                 const buffer = await Bun.file(import.meta.dir + "/fixture.html.gz").arrayBuffer();
-                console.trace("here");
                 controller.enqueue(buffer);
-                console.trace("here");
 
                 //wait to detect the connection abortion
                 await Bun.sleep(15);
@@ -188,15 +187,11 @@ describe("Server", () => {
       });
 
       try {
-        console.trace("here");
         await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
       } catch {}
       await Bun.sleep(10);
-      console.trace("here");
       expect(signalOnServer).toBe(true);
-      console.trace("here");
       server.stop(true);
-      console.trace("here");
     }
   });
 });

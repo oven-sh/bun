@@ -1167,29 +1167,20 @@ pub inline fn copyU16IntoU8(output_: []u8, comptime InputType: type, input_: Inp
     var output_ptr = output.ptr;
 
     if (comptime Environment.enableSIMD) {
-        const last_vector_ptr = input.ptr + (@min(input.len, output.len) & ~(group - 1));
+        const end_len = (@min(input.len, output.len) & ~(group - 1));
+        const last_vector_ptr = input.ptr + end_len;
         while (last_vector_ptr != input_ptr) {
             const input_vec1: @Vector(group, u16) = input_ptr[0..group].*;
-            output_ptr[0] = @truncate(u8, input_vec1[0]);
-            output_ptr[1] = @truncate(u8, input_vec1[1]);
-            output_ptr[2] = @truncate(u8, input_vec1[2]);
-            output_ptr[3] = @truncate(u8, input_vec1[3]);
-            output_ptr[4] = @truncate(u8, input_vec1[4]);
-            output_ptr[5] = @truncate(u8, input_vec1[5]);
-            output_ptr[6] = @truncate(u8, input_vec1[6]);
-            output_ptr[7] = @truncate(u8, input_vec1[7]);
-            output_ptr[8] = @truncate(u8, input_vec1[8]);
-            output_ptr[9] = @truncate(u8, input_vec1[9]);
-            output_ptr[10] = @truncate(u8, input_vec1[10]);
-            output_ptr[11] = @truncate(u8, input_vec1[11]);
-            output_ptr[12] = @truncate(u8, input_vec1[12]);
-            output_ptr[13] = @truncate(u8, input_vec1[13]);
-            output_ptr[14] = @truncate(u8, input_vec1[14]);
-            output_ptr[15] = @truncate(u8, input_vec1[15]);
+            inline for (0..group) |i| {
+                output_ptr[i] = @truncate(u8, input_vec1[i]);
+            }
 
             output_ptr += group;
             input_ptr += group;
         }
+
+        input.len -= end_len;
+        output.len -= end_len;
     }
 
     const last_input_ptr = input_ptr + @min(input.len, output.len);

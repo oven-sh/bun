@@ -1,4 +1,4 @@
-import { expectBundled, itBundled, testForFile } from "../expectBundled";
+import { itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:
@@ -484,7 +484,7 @@ var { describe, test, expect } = testForFile(import.meta.path);
 //     },
 //     metafile: true,
 //     entryPoints: ["/foo/entry.js", "/bar/entry.js"],
-//     entryNames: "[ext]/[hash]",
+//     entryNaming: "[ext]/[hash]",
 //     outdir: "/",
 //   });
 //   itBundled("css/DeduplicateRules", {

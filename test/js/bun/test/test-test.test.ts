@@ -1796,6 +1796,84 @@ test("toContain()", () => {
   expect([]).not.toContain([]);
 });
 
+test("toBeEven()", () => {
+  expect(1).not.toBeEven();
+  expect(2).toBeEven();
+  expect(3).not.toBeEven();
+  expect(3.1).not.toBeEven();
+  expect(2.1).not.toBeEven();
+  expect(4).toBeEven();
+  expect(5).not.toBeEven();
+  expect(6).toBeEven();
+  expect(0).toBeEven();
+  expect(-8).toBeEven();
+  expect(-0).toBeEven();
+  expect(NaN).not.toBeEven();
+  expect([]).not.toBeEven();
+  expect([1, 2]).not.toBeEven();
+  expect({}).not.toBeEven();
+  expect(() => {}).not.toBeEven();
+  expect("").not.toBeEven();
+  expect("string").not.toBeEven();
+  expect(undefined).not.toBeEven();
+  expect(Math.floor(Date.now() / 1000) * 2).toBeEven(); // Slight fuzz by using timestamp times 2
+  expect(Math.floor(Date.now() / 1000) * 4 - 1).not.toBeEven();
+  expect(4.0e1).toBeEven();
+  expect(6.2e1).toBeEven();
+  expect(6.3e1).not.toBeEven();
+  expect(6.33e1).not.toBeEven();
+  expect(3.3e-1).not.toBeEven(); //throw
+  expect(0.3).not.toBeEven(); //throw
+  expect(0.4).not.toBeEven();
+  expect(1).not.toBeEven();
+  expect(0).toBeEven();
+  expect(2.0).toBeEven();
+  expect(NaN).not.toBeEven();
+  expect(2n).toBeEven(); // BigInt at this time not supported in jest-extended
+  expect(3n).not.toBeEven();
+  expect(9007199254740990).toBeEven(); // manual typical max safe -1 // not int?
+  expect(9007199254740990n).toBeEven(); // manual typical max safe -1 as bigint
+  expect(Number.MAX_SAFE_INTEGER - 1).toBeEven(); // not int?
+  expect(Number.MAX_SAFE_INTEGER).not.toBeEven();
+  expect(BigInt(Number.MAX_SAFE_INTEGER) - 1n).toBeEven();
+  expect(BigInt(Number.MAX_SAFE_INTEGER)).not.toBeEven();
+  expect(BigInt(Number.MAX_VALUE - 1)).toBeEven();
+  expect(Number.MIN_SAFE_INTEGER + 1).toBeEven(); // not int?
+  expect(Number.MIN_SAFE_INTEGER).not.toBeEven();
+  expect(BigInt(Number.MIN_SAFE_INTEGER) + 1n).toBeEven();
+  expect(BigInt(Number.MIN_SAFE_INTEGER)).not.toBeEven();
+  expect(4 / Number.NEGATIVE_INFINITY).toBeEven(); // as in IEEE-754: + / -inf => neg zero
+  expect(5 / Number.NEGATIVE_INFINITY).toBeEven();
+  expect(-7 / Number.NEGATIVE_INFINITY).toBeEven(); // as in IEEE-754: - / -inf => zero
+  expect(-8 / Number.NEGATIVE_INFINITY).toBeEven();
+  expect(new WebAssembly.Global({ value: "i32", mutable: false }, 4).value).toBeEven();
+  expect(new WebAssembly.Global({ value: "i32", mutable: false }, 3).value).not.toBeEven();
+  expect(new WebAssembly.Global({ value: "i32", mutable: true }, 2).value).toBeEven();
+  expect(new WebAssembly.Global({ value: "i32", mutable: true }, 1).value).not.toBeEven();
+  expect(new WebAssembly.Global({ value: "i64", mutable: true }, -9223372036854775808n).value).toBeEven();
+  expect(new WebAssembly.Global({ value: "i64", mutable: false }, -9223372036854775808n).value).toBeEven();
+  expect(new WebAssembly.Global({ value: "i64", mutable: true }, 9223372036854775807n).value).not.toBeEven();
+  expect(new WebAssembly.Global({ value: "i64", mutable: false }, 9223372036854775807n).value).not.toBeEven();
+  expect(new WebAssembly.Global({ value: "f32", mutable: true }, 42.0).value).toBeEven();
+  expect(new WebAssembly.Global({ value: "f32", mutable: false }, 42.0).value).toBeEven();
+  expect(new WebAssembly.Global({ value: "f64", mutable: true }, 42.0).value).toBeEven();
+  expect(new WebAssembly.Global({ value: "f64", mutable: false }, 42.0).value).toBeEven();
+  expect(new WebAssembly.Global({ value: "f32", mutable: true }, 43.0).value).not.toBeEven();
+  expect(new WebAssembly.Global({ value: "f32", mutable: false }, 43.0).value).not.toBeEven();
+  expect(new WebAssembly.Global({ value: "f64", mutable: true }, 43.0).value).not.toBeEven();
+  expect(new WebAssembly.Global({ value: "f64", mutable: false }, 43.0).value).not.toBeEven();
+  expect(new WebAssembly.Global({ value: "f32", mutable: true }, 4.3).value).not.toBeEven();
+  expect(new WebAssembly.Global({ value: "f32", mutable: false }, 4.3).value).not.toBeEven();
+  expect(new WebAssembly.Global({ value: "f64", mutable: true }, 4.3).value).not.toBeEven();
+  expect(new WebAssembly.Global({ value: "f64", mutable: false }, 4.3).value).not.toBeEven();
+  // did not seem to support SIMD v128 type yet (which is not in W3C specs for JS but is a valid global type)
+  // FUTURE: expect(new WebAssembly.Global({value:'v128', mutable:false}, -170141183460469231731687303715884105728n).value).toBeEven();
+  // FUTURE: expect(new WebAssembly.Global({value:'v128', mutable:true}, -170141183460469231731687303715884105728n).value).toBeEven();
+  // FUTURE: expect(new WebAssembly.Global({value:'v128', mutable:true}, 170141183460469231731687303715884105727n).value).not.toBeEven();
+  // FUTURE: expect(new WebAssembly.Global({value:'v128', mutable:false}, 170141183460469231731687303715884105727n).value).not.toBeEven();
+  // FUTURE: with uintv128: expect(new WebAssembly.Global({value:'v128', mutable:false}, 340282366920938463463374607431768211456n).value).toThrow();
+});
+
 test("toBeTruthy()", () => {
   expect("test").toBeTruthy();
   expect(true).toBeTruthy();
@@ -1804,12 +1882,15 @@ test("toBeTruthy()", () => {
   expect([]).toBeTruthy();
   expect(() => {}).toBeTruthy();
   // expect(() => {}).not.toBeTruthy();
+  expect(0.5).toBeTruthy();
+  expect(new Map()).toBeTruthy();
 
   expect("").not.toBeTruthy();
   expect(0).not.toBeTruthy();
   expect(-0).not.toBeTruthy();
   expect(NaN).not.toBeTruthy();
   expect(0n).not.toBeTruthy();
+  expect(0.0e1).not.toBeTruthy();
   expect(false).not.toBeTruthy();
   expect(null).not.toBeTruthy();
   expect(undefined).not.toBeTruthy();
@@ -2308,6 +2389,84 @@ test("toBeLessThanOrEqual()", () => {
   expect(BigInt(Number.MAX_SAFE_INTEGER)).not.toBeLessThanOrEqual(1);
   expect(BigInt(Number.MAX_VALUE)).not.toBeLessThanOrEqual(1);
   expect(1).toBeLessThanOrEqual(BigInt(Number.MAX_SAFE_INTEGER));
+});
+
+test("toBeOdd()", () => {
+  expect(1).toBeOdd();
+  expect(2).not.toBeOdd();
+  expect(3).toBeOdd();
+  expect(3.1).not.toBeOdd();
+  expect(2.1).not.toBeOdd();
+  expect(4).not.toBeOdd();
+  expect(5).toBeOdd();
+  expect(6).not.toBeOdd();
+  expect(0).not.toBeOdd();
+  expect(-8).not.toBeOdd();
+  expect(-0).not.toBeOdd();
+  expect(NaN).not.toBeOdd();
+  expect([]).not.toBeOdd();
+  // SHOULD FAIL: expect([]).toBeOdd();
+  expect([1, 2]).not.toBeOdd();
+  expect({}).not.toBeOdd();
+  expect(() => {}).not.toBeOdd();
+  expect("").not.toBeOdd();
+  expect("string").not.toBeOdd();
+  expect(undefined).not.toBeOdd();
+  expect(Math.floor(Date.now() / 1000) * 2 - 1).toBeOdd(); // Slight fuzz by using timestamp times 2
+  expect(Math.floor(Date.now() / 1000) * 4 - 1).toBeOdd();
+  expect(4.0e1).not.toBeOdd();
+  expect(6.2e1).not.toBeOdd();
+  expect(6.3e1).toBeOdd();
+  expect(6.33e1).not.toBeOdd();
+  expect(3.2e-3).not.toBeOdd();
+  expect(0.3).not.toBeOdd();
+  expect(0.4).not.toBeOdd();
+  expect(1).toBeOdd();
+  expect(0).not.toBeOdd();
+  expect(2.0).not.toBeOdd();
+  expect(NaN).not.toBeOdd();
+  expect(2n).not.toBeOdd(); // BigInt at this time not supported in jest-extended
+  expect(3n).toBeOdd();
+  expect(9007199254740990).not.toBeOdd(); // manual typical max safe -1
+  expect(9007199254740991).toBeOdd();
+  expect(9007199254740990n).not.toBeOdd(); // manual typical max safe -1 as bigint
+  expect(9007199254740991n).toBeOdd();
+  expect(Number.MAX_SAFE_INTEGER - 1).not.toBeOdd();
+  expect(Number.MAX_SAFE_INTEGER).toBeOdd();
+  expect(BigInt(Number.MAX_SAFE_INTEGER) - 1n).not.toBeOdd();
+  expect(BigInt(Number.MAX_SAFE_INTEGER)).toBeOdd();
+  expect(Number.MIN_SAFE_INTEGER + 1).not.toBeOdd();
+  expect(Number.MIN_SAFE_INTEGER).toBeOdd();
+  expect(BigInt(Number.MIN_SAFE_INTEGER) + 1n).not.toBeOdd();
+  expect(BigInt(Number.MIN_SAFE_INTEGER)).toBeOdd();
+  expect(4 / Number.NEGATIVE_INFINITY).not.toBeOdd(); // in IEEE-754: + / -inf => neg zero
+  expect(5 / Number.NEGATIVE_INFINITY).not.toBeOdd();
+  expect(-7 / Number.NEGATIVE_INFINITY).not.toBeOdd(); // in IEEE-754: - / -inf => zero
+  expect(-8 / Number.NEGATIVE_INFINITY).not.toBeOdd();
+  expect(new WebAssembly.Global({ value: "i32", mutable: false }, 4).value).not.toBeOdd();
+  expect(new WebAssembly.Global({ value: "i32", mutable: false }, 3).value).toBeOdd();
+  expect(new WebAssembly.Global({ value: "i32", mutable: true }, 2).value).not.toBeOdd();
+  expect(new WebAssembly.Global({ value: "i32", mutable: true }, 1).value).toBeOdd();
+  expect(new WebAssembly.Global({ value: "i64", mutable: true }, -9223372036854775808n).value).not.toBeOdd();
+  expect(new WebAssembly.Global({ value: "i64", mutable: false }, -9223372036854775808n).value).not.toBeOdd();
+  expect(new WebAssembly.Global({ value: "i64", mutable: true }, 9223372036854775807n).value).toBeOdd();
+  expect(new WebAssembly.Global({ value: "i64", mutable: false }, 9223372036854775807n).value).toBeOdd();
+  expect(new WebAssembly.Global({ value: "f32", mutable: true }, 42.0).value).not.toBeOdd();
+  expect(new WebAssembly.Global({ value: "f32", mutable: false }, 42.0).value).not.toBeOdd();
+  expect(new WebAssembly.Global({ value: "f64", mutable: true }, 42.0).value).not.toBeOdd();
+  expect(new WebAssembly.Global({ value: "f64", mutable: false }, 42.0).value).not.toBeOdd();
+  expect(new WebAssembly.Global({ value: "f32", mutable: true }, 43.0).value).toBeOdd();
+  expect(new WebAssembly.Global({ value: "f32", mutable: false }, 43.0).value).toBeOdd();
+  expect(new WebAssembly.Global({ value: "f64", mutable: true }, 43.0).value).toBeOdd();
+  expect(new WebAssembly.Global({ value: "f64", mutable: false }, 43.0).value).toBeOdd();
+  expect(new WebAssembly.Global({ value: "f32", mutable: true }, 4.3).value).not.toBeOdd();
+  expect(new WebAssembly.Global({ value: "f32", mutable: false }, 4.3).value).not.toBeOdd();
+  expect(new WebAssembly.Global({ value: "f64", mutable: true }, 4.3).value).not.toBeOdd();
+  expect(new WebAssembly.Global({ value: "f64", mutable: false }, 4.3).value).not.toBeOdd();
+  // did not seem to support SIMD v128 type yet
+  // FUTURE: expect(new WebAssembly.Global({value:'v128', mutable:false}, 42).value).not.toBeOdd();
+  // FUTURE: expect(new WebAssembly.Global({value:'v128', mutable:true}, 42).value).not.toBeOdd();
+  // FUTURE: expect(new WebAssembly.Global({value:'v128', mutable:true}, 43).value).toBeOdd();
 });
 
 try {

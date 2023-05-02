@@ -5,7 +5,7 @@
  * Copyright (c) 2015, 2016 Canon Inc. All rights reserved.
  * Copyright (c) 2015, 2016, 2017 Canon Inc.
  * Copyright (c) 2016, 2020 Apple Inc. All rights reserved.
- * Copyright (c) 2022 Codeblog Corp. All rights reserved.
+ * Copyright (c) 2023 Codeblog Corp. All rights reserved.
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,6 +35,7 @@
 
 #pragma once
 
+#include "BundlerPluginBuiltins.h"
 #include "ByteLengthQueuingStrategyBuiltins.h"
 #include "ConsoleObjectBuiltins.h"
 #include "CountQueuingStrategyBuiltins.h"
@@ -65,6 +66,7 @@ class JSBuiltinFunctions {
 public:
     explicit JSBuiltinFunctions(JSC::VM& vm)
         : m_vm(vm)
+        , m_bundlerPluginBuiltins(m_vm)
         , m_byteLengthQueuingStrategyBuiltins(m_vm)
         , m_consoleObjectBuiltins(m_vm)
         , m_countQueuingStrategyBuiltins(m_vm)
@@ -95,6 +97,7 @@ public:
         m_writableStreamInternalsBuiltins.exportNames();
     }
 
+    BundlerPluginBuiltinsWrapper& bundlerPluginBuiltins() { return m_bundlerPluginBuiltins; }
     ByteLengthQueuingStrategyBuiltinsWrapper& byteLengthQueuingStrategyBuiltins() { return m_byteLengthQueuingStrategyBuiltins; }
     ConsoleObjectBuiltinsWrapper& consoleObjectBuiltins() { return m_consoleObjectBuiltins; }
     CountQueuingStrategyBuiltinsWrapper& countQueuingStrategyBuiltins() { return m_countQueuingStrategyBuiltins; }
@@ -120,6 +123,7 @@ public:
 
 private:
     JSC::VM& m_vm;
+    BundlerPluginBuiltinsWrapper m_bundlerPluginBuiltins;
     ByteLengthQueuingStrategyBuiltinsWrapper m_byteLengthQueuingStrategyBuiltins;
     ConsoleObjectBuiltinsWrapper m_consoleObjectBuiltins;
     CountQueuingStrategyBuiltinsWrapper m_countQueuingStrategyBuiltins;

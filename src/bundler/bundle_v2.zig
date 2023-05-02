@@ -8101,8 +8101,8 @@ const LinkerContext = struct {
 
     pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk) !std.ArrayList(options.OutputFile) {
         {
-            debug("  START Generating {d} renamers in parallel", .{chunks.len});
-            defer debug("  DONE Generating {d} renamers in parallel", .{chunks.len});
+            debug(" START {d} renamers", .{chunks.len});
+            defer debug("  DONE {d} renamers", .{chunks.len});
             var wait_group = try c.allocator.create(sync.WaitGroup);
             wait_group.init();
             defer {
@@ -8115,8 +8115,8 @@ const LinkerContext = struct {
         }
 
         {
-            debug(" START waiting for {d} source maps", .{chunks.len});
-            defer debug("  DONE waiting for {d} source maps", .{chunks.len});
+            debug(" START {d} source maps", .{chunks.len});
+            defer debug("  DONE {d} source maps", .{chunks.len});
             c.source_maps.wait_group.wait();
             c.allocator.free(c.source_maps.tasks);
             c.source_maps.tasks.len = 0;
@@ -8138,8 +8138,8 @@ const LinkerContext = struct {
                     chunk.compile_results_for_chunk = c.allocator.alloc(CompileResult, chunk.content.javascript.parts_in_chunk_in_order.len) catch unreachable;
                 }
 
-                debug(" START waiting for {d} compiling part ranges", .{total_count});
-                defer debug("  DONE waiting for {d} compiling part ranges", .{total_count});
+                debug(" START {d} compiling part ranges", .{total_count});
+                defer debug("  DONE {d} compiling part ranges", .{total_count});
                 var combined_part_ranges = c.allocator.alloc(PendingPartRange, total_count) catch unreachable;
                 defer c.allocator.free(combined_part_ranges);
                 var remaining_part_ranges = combined_part_ranges;
@@ -8165,8 +8165,8 @@ const LinkerContext = struct {
             }
 
             {
-                debug(" START waiting for {d} postprocess chunks", .{chunks.len});
-                defer debug("  DONE waiting for {d} postprocess chunks", .{chunks.len});
+                debug(" START {d} postprocess chunks", .{chunks.len});
+                defer debug("  DONE {d} postprocess chunks", .{chunks.len});
                 wait_group.init();
                 wait_group.counter = @truncate(u32, chunks.len);
 

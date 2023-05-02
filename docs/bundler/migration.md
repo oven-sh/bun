@@ -404,7 +404,7 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `--tree-shaking`
 - n/a
-- Always enabled
+- Always `true`
 
 ---
 
@@ -496,7 +496,7 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `color`
 - n/a
-- Always true
+- Always `true`
 
 ---
 

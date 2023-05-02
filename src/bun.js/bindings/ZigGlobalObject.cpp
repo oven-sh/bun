@@ -106,7 +106,7 @@
 #include "ReadableStreamBuiltins.h"
 #include "BunJSCModule.h"
 #include "ModuleLoader.h"
-#include "Script.h"
+#include "VMModuleScript.h"
 
 #include "ZigGeneratedClasses.h"
 #include "JavaScriptCore/DateInstance.h"
@@ -1301,7 +1301,7 @@ JSC:
 
         if (string == scriptString) {
             auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-            return JSC::JSValue::encode(zigGlobalObject->Script());
+            return JSC::JSValue::encode(zigGlobalObject->VMModuleScript());
         }
 
         if (UNLIKELY(string == noopString)) {
@@ -2861,12 +2861,12 @@ void GlobalObject::finishCreation(VM& vm)
             init.setStructure(Zig::JSFFIFunction::createStructure(init.vm, init.global, init.global->functionPrototype()));
         });
 
-    m_ScriptClassStructure.initLater(
+    m_VMModuleScriptClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
-            auto prototype = Script::createPrototype(init.vm, init.global);
-            auto* structure = Script::createStructure(init.vm, init.global, prototype);
-            auto* constructor = ScriptConstructor::create(
-                init.vm, init.global, ScriptConstructor::createStructure(init.vm, init.global, init.global->m_functionPrototype.get()));
+            auto prototype = VMModuleScript::createPrototype(init.vm, init.global);
+            auto* structure = VMModuleScript::createStructure(init.vm, init.global, prototype);
+            auto* constructor = VMModuleScriptConstructor::create(
+                init.vm, init.global, VMModuleScriptConstructor::createStructure(init.vm, init.global, init.global->m_functionPrototype.get()));
             init.setPrototype(prototype);
             init.setStructure(structure);
             init.setConstructor(constructor);
@@ -3674,7 +3674,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSStringDecoderClassStructure.visit(visitor);
     thisObject->m_NapiClassStructure.visit(visitor);
     thisObject->m_JSBufferClassStructure.visit(visitor);
-    thisObject->m_ScriptClassStructure.visit(visitor);
+    thisObject->m_VMModuleScriptClassStructure.visit(visitor);
 
     thisObject->m_pendingVirtualModuleResultStructure.visit(visitor);
     thisObject->m_performMicrotaskFunction.visit(visitor);

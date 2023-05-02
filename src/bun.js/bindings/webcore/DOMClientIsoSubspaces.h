@@ -32,7 +32,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiExternal;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForRequireResolveFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBundlerPlugin;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForScript;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForVMModuleScript;
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     /* --- bun --- */
 

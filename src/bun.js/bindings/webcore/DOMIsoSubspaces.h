@@ -32,7 +32,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForNapiExternal;
     std::unique_ptr<IsoSubspace> m_subspaceForRequireResolveFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForBundlerPlugin;
-    std::unique_ptr<IsoSubspace> m_subspaceForScript;
+    std::unique_ptr<IsoSubspace> m_subspaceForVMModuleScript;
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/
 

@@ -519,13 +519,19 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 ---
 
 - `entryNames`
-- `naming.entry`
-- Uses same templating syntax as esbuild, but `[ext]` must be included explicitly.
+- `naming` or `naming.entry`
+- Bun supports a `naming` key that can either be a string or an object. Uses same templating syntax as esbuild, but `[ext]` must be included explicitly.
 
   ```ts
   Bun.build({
     entrypoints: ["./index.tsx"],
+    // when string, this is equivalent to entryNames
+    naming: "[name].[ext]",
+
+    // granular naming options
     naming: {
+      entry: "[name].[ext]",
+      asset: "[name].[ext]",
       chunk: "[name].[ext]",
     },
   });

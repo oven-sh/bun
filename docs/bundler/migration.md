@@ -11,14 +11,15 @@ In the end,
 Bun and esbuild both provide a command-line interface.
 
 ```bash
-$ esbuild <entrypoint> --bundle --outdir=out --bundle
+$ esbuild <entrypoint> --outdir=out --bundle
 $ bun build <entrypoint> --outdir=out
 ```
 
 There are a few behavioral differences to note.
 
-- Bun _always bundles by default_. This is why the `--bundle` flag isn't necessary in the Bun example.
-- Bun's bundler does not include a built-in development server or file watcher. It's just a bundler. The bundler can be used in conjunction with `Bun.serve`, `--watch`, and other built-in Bun functionality to achieve the same effect. As such, all options relating to HTTP/file watching are not applicable.
+- **Bundling by default**. Bun _always bundles by default_. This is why the `--bundle` flag isn't necessary in the Bun example.
+- **It's just a bundler**. Bun's bundler does not include a built-in development server or file watcher. It's just a bundler. The bundler is intended for use in conjunction with `Bun.serve` and other runtime APIs to achieve the same effect. As such, all options relating to HTTP/file watching are not applicable.
+- **CLI flags**. In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Other flags like `--outdir <path>` do accept an argument; these flags can be written as `--outdir out` or `--outdir=out`. Some flags like `--define` can be specified several times: `--define foo=bar --define bar=baz`.
 
 {% table %}
 
@@ -34,25 +35,31 @@ There are a few behavioral differences to note.
 ---
 
 - `--define:K=V`
-- `--define:K=V`
-- No differences
+- `--define K=V`
+- Small syntax difference; no colon.
+
+  ```bash
+  $ esbuild --define:K=V
+  $ bun build --define K=V
+  ```
 
 ---
 
-- `--external`
-- `--external`
-- No differences
+- `--external:<pkg>`
+- `--external <pkg>`
+- Small syntax difference; no colon.
 
 ---
 
 - `--format`
-- `--module`
+- `--format`
+- Bun only supports `"esm"` currently but other module formats are planned. esbuild defaults to `"iife"`.
 
 ---
 
 - `--loader`
 - `--loader`
-- Slight syntactic difference for compatibility with `bun run`.
+- Small syntax difference.
 
   ```bash
   $ esbuild app.ts --bundle --loader:.svg=text
@@ -205,21 +212,20 @@ There are a few behavioral differences to note.
 ---
 
 - `--jsx`
-- n/a
-- Not supported
+- `--jsx-runtime`
+- Supports `"automatic"` (uses `jsx` transform) and `"classic"` (uses `React.createElement`)
 
 ---
 
 - `--jsx-dev`
 - n/a
-- Bun uses `jsxDEV` by default. Use `--jsx-production` to use `jsx`.
+- Bun uses `jsxDEV` by default. Set `NODE_ENV=production` to use the production `jsx` transform instead.
 
 ---
 
 - `--jsx-factory`
 - `--jsx-factory`
-
----
+- ***
 
 - `--jsx-fragment`
 - `--jsx-fragment`
@@ -250,13 +256,14 @@ There are a few behavioral differences to note.
 ---
 
 - `--legal-comments`
-- `--legal-comments`
+- n/a
+- Not supported
 
 ---
 
 - `--log-level`
 - n/a
-- Not supported. This can be set in `bunfig.toml`.
+- Not supported. This can be set in `bunfig.toml` as `logLevel`.
 
 ---
 
@@ -323,7 +330,7 @@ There are a few behavioral differences to note.
 ---
 
 - `--outbase`
-- n/a
+- `--root`
 - Not supported
 
 ---

@@ -80,7 +80,7 @@ For each file specified in `entrypoints`, Bun will generate a new bundle. This b
     └── index.js
 ```
 
-The contents of the `out/index.js` file looks something like this:
+The contents of `out/index.js` will look something like this:
 
 ```js#out/index.js
 // ...
@@ -550,12 +550,12 @@ Specifies the type of sourcemap to generate.
 await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
-  sourcemap: "inline", // default "none"
+  sourcemap: "external", // default "none"
 })
 ```
 
 ```bash#CLI
-$ bun build ./index.tsx --outdir ./out --sourcemap=inline
+$ bun build ./index.tsx --outdir ./out --sourcemap=external
 ```
 
 {% /codetabs %}
@@ -991,26 +991,69 @@ The output file would now look something like this.
 ## Reference
 
 ```ts
-await Bun.build({
+interface Bun {
+  build(options: BuildOptions): Promise<{
+    outputs: Array<{ path: string; result: Blob | BunFile }>;
+    manifest?: BuildManifest;
+  }>;
+}
+
+interface BuildOptions {
   entrypoints: string[]; // list of file path
   outdir?: string; // default to in-memory build
   target?: "browser" | "bun" | "node"; // default: "browser"
   splitting?: boolean; // default true
   plugins?: BunPlugin[];
+  loader?: { [k in string]: Loader };
   manifest?: boolean; // default false
   external?: string[];
-  naming?: string | {
-    entry?: string; // default '[dir]/[name].[ext]'
-    chunk?: string; // default '[name]-[hash].[ext]'
-    asset?: string; // default '[name]-[hash].[ext]'
-  };
+  sourcemap?: "none" | "inline" | "external"; // default: "none"
+  root?: string; // project root
+  naming?:
+    | string
+    | {
+        entry?: string; // default '[dir]/[name].[ext]'
+        chunk?: string; // default '[name]-[hash].[ext]'
+        asset?: string; // default '[name]-[hash].[ext]'
+      };
   publicPath?: string; // e.g. http://mydomain.com/
-  minify?: boolean | { // default false
-    identifiers?: boolean;
-    whitespace?: boolean;
-    syntax?: boolean;
+  minify?:
+    | boolean
+    | {
+        // default false
+        identifiers?: boolean;
+        whitespace?: boolean;
+        syntax?: boolean;
+      };
+}
+
+interface BuildManifest {
+  inputs: {
+    [path: string]: {
+      output: {
+        path: string;
+      };
+      imports: {
+        path: string;
+        kind: ImportKind;
+        external?: boolean;
+        asset?: boolean; // whether the import defaulted to "file" loader
+      }[];
+    };
   };
-});
+  outputs: {
+    [path: string]: {
+      type: "chunk" | "entry-point" | "asset";
+      inputs: { path: string }[];
+      imports: {
+        path: string;
+        kind: ImportKind;
+        external?: boolean;
+      }[];
+      exports: string[];
+    };
+  };
+}
 ```
 
 <!--

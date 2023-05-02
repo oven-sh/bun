@@ -999,28 +999,27 @@ interface Bun {
 }
 
 interface BuildOptions {
-  entrypoints: string[]; // list of file path
-  outdir?: string; // default to in-memory build
-  target?: "browser" | "bun" | "node"; // default: "browser"
-  splitting?: boolean; // default true
-  plugins?: BunPlugin[];
+  entrypoints: string[]; // required
+  outdir?: string; // default: no write (in-memory only)
+  target?: "browser" | "bun" | "node"; // "browser"
+  splitting?: boolean; // true
+  plugins?: BunPlugin[]; // []
   loader?: { [k in string]: Loader };
-  manifest?: boolean; // default false
-  external?: string[];
-  sourcemap?: "none" | "inline" | "external"; // default: "none"
-  root?: string; // project root
+  manifest?: boolean; // false
+  external?: string[]; // []
+  sourcemap?: "none" | "inline" | "external"; // "none"
+  root?: string; // computed from entrypoints
   naming?:
     | string
     | {
-        entry?: string; // default '[dir]/[name].[ext]'
-        chunk?: string; // default '[name]-[hash].[ext]'
-        asset?: string; // default '[name]-[hash].[ext]'
+        entry?: string; // '[dir]/[name].[ext]'
+        chunk?: string; // '[name]-[hash].[ext]'
+        asset?: string; // '[name]-[hash].[ext]'
       };
   publicPath?: string; // e.g. http://mydomain.com/
   minify?:
-    | boolean
+    | boolean // false
     | {
-        // default false
         identifiers?: boolean;
         whitespace?: boolean;
         syntax?: boolean;
@@ -1043,7 +1042,7 @@ interface BuildManifest {
   };
   outputs: {
     [path: string]: {
-      type: "chunk" | "entry-point" | "asset";
+      type: "chunk" | "entrypoint" | "asset";
       inputs: { path: string }[];
       imports: {
         path: string;
@@ -1055,11 +1054,3 @@ interface BuildManifest {
   };
 }
 ```
-
-<!--
-root?: string; // project root
-format?: "esm"; // later: "cjs", "iife"
-loader?: { [k in string]: Loader };
-sourcemap?: "none" | "inline" | "external"; // default: "none"
-treeshaking?: boolean;
--->

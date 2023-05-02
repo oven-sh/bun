@@ -1,12 +1,17 @@
 Bun's bundler API is inspired heavily by [esbuild](https://esbuild.github.io/). Migrating to Bun's bundler from esbuild should be relatively painless. This guide will briefly explain why you might consider migrating to Bun's bundler and provide a side-by-side API comparison reference for those who are already familiar with esbuild's API.
 
+There are a few behavioral differences to note.
+
+- **Bundling by default**. Bun _always bundles by default_. This is why the `--bundle` flag isn't necessary in the Bun example.
+- **It's just a bundler**. Bun's bundler does not include a built-in development server or file watcher. It's just a bundler. The bundler is intended for use in conjunction with `Bun.serve` and other runtime APIs to achieve the same effect. As such, all options relating to HTTP/file watching are not applicable.
+
 ## Performance
 
-This is the simplest reason to migrate to Bun's bundler. Bun borrowed heavily from esbuild's design while avoiding some architectural issues that limit its maximum performance. Plus, Bun's bundler takes full advantage of the extensive optimization work that's been done on Bun's internal JS/TS parser.
+This is the simplest reason to migrate to Bun's bundler. With an performance-minded API inspired by esbuild coupled with the extensively optimized Zig-based JS/TS parser, Bun's bundler is roughly 50% faster than esbuild on most benchmarks.
 
-In the end,
+IMAGE HERE
 
-## CLI
+## CLI API
 
 Bun and esbuild both provide a command-line interface.
 
@@ -15,11 +20,7 @@ $ esbuild <entrypoint> --outdir=out --bundle
 $ bun build <entrypoint> --outdir=out
 ```
 
-There are a few behavioral differences to note.
-
-- **Bundling by default**. Bun _always bundles by default_. This is why the `--bundle` flag isn't necessary in the Bun example.
-- **It's just a bundler**. Bun's bundler does not include a built-in development server or file watcher. It's just a bundler. The bundler is intended for use in conjunction with `Bun.serve` and other runtime APIs to achieve the same effect. As such, all options relating to HTTP/file watching are not applicable.
-- **CLI flags**. In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Other flags like `--outdir <path>` do accept an argument; these flags can be written as `--outdir out` or `--outdir=out`. Some flags like `--define` can be specified several times: `--define foo=bar --define bar=baz`.
+In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Other flags like `--outdir <path>` do accept an argument; these flags can be written as `--outdir out` or `--outdir=out`. Some flags like `--define` can be specified several times: `--define foo=bar --define bar=baz`.
 
 {% table %}
 
@@ -225,7 +226,8 @@ There are a few behavioral differences to note.
 
 - `--jsx-factory`
 - `--jsx-factory`
-- ***
+
+---
 
 - `--jsx-fragment`
 - `--jsx-fragment`
@@ -417,9 +419,444 @@ There are a few behavioral differences to note.
 
 {% /table %}
 
-## JS API
+## JavaScript API
 
-## Plugins
+{% table %}
+
+- `esbuild.build()`
+- `Bun.build()`
+
+---
+
+- `absWorkingDir`
+- n/a
+- Always set to `process.cwd()`
+
+---
+
+- `alias`
+- n/a
+- Not supported
+
+---
+
+- `allowOverwrite`
+- n/a
+- Always `true`
+
+---
+
+- `assetNames`
+- `naming.asset`
+- Uses same templating syntax as esbuild, but `[ext]` must be included explicitly.
+
+  ```ts
+  Bun.build({
+    entrypoints: ["./index.tsx"],
+    naming: {
+      asset: "[name].[ext]",
+    },
+  });
+  ```
+
+---
+
+- `banner`
+- n/a
+- Not supported
+
+---
+
+- `bundle`
+- n/a
+- Always `true`
+
+---
+
+- `charset`
+- n/a
+- Not supported
+
+---
+
+- `chunkNames`
+- `naming.chunk`
+- Uses same templating syntax as esbuild, but `[ext]` must be included explicitly.
+
+  ```ts
+  Bun.build({
+    entrypoints: ["./index.tsx"],
+    naming: {
+      chunk: "[name].[ext]",
+    },
+  });
+  ```
+
+---
+
+- `color`
+- n/a
+- Always true
+
+---
+
+- `conditions`
+- n/a
+- Not supported. Export conditions priority is determined by `target`.
+
+---
+
+- `define`
+- `define`
+- Not supported in JS API
+
+---
+
+- `drop`
+- n/a
+- Not supported
+
+---
+
+- `entryNames`
+- `naming.entry`
+- Uses same templating syntax as esbuild, but `[ext]` must be included explicitly.
+
+  ```ts
+  Bun.build({
+    entrypoints: ["./index.tsx"],
+    naming: {
+      chunk: "[name].[ext]",
+    },
+  });
+  ```
+
+---
+
+- `entryPoints`
+- `entrypoints`
+- Capitalization difference
+
+---
+
+- `external`
+- `external`
+- No differences
+
+---
+
+- `footer`
+- n/a
+- Not supported
+
+---
+
+- `format`
+- `format`
+- Only supports `"esm"` currently. Support for `"cjs"` and `"iife"` is planned.
+
+---
+
+- `globalName`
+- n/a
+- Not supported
+
+---
+
+- `ignoreAnnotations`
+- n/a
+- Not supported
+
+---
+
+- `inject`
+- n/a
+- Not supported
+
+---
+
+- `jsx`
+- `jsx`
+- Not supported in JS API, configure in `tsconfig.json`
+
+---
+
+- `jsxDev`
+- `jsxDev`
+- Not supported in JS API, configure in `tsconfig.json`
+
+---
+
+- `jsxFactory`
+- `jsxFactory`
+- Not supported in JS API, configure in `tsconfig.json`
+
+---
+
+- `jsxFragment`
+- `jsxFragment`
+- Not supported in JS API, configure in `tsconfig.json`
+
+---
+
+- `jsxImportSource`
+- `jsxImportSource`
+- Not supported in JS API, configure in `tsconfig.json`
+
+---
+
+- `jsxSideEffects`
+- `jsxSideEffects`
+- Not supported in JS API, configure in `tsconfig.json`
+
+---
+
+- `keepNames`
+- n/a
+- Not supported
+
+---
+
+- `legalComments`
+- n/a
+- Not supported
+
+---
+
+- `loader`
+- n/a
+- Not supported in JS API
+
+---
+
+- `logLevel`
+- n/a
+- Not supported
+
+---
+
+- `logLimit`
+- n/a
+- Not supported
+
+---
+
+- `logOverride`
+- n/a
+- Not supported
+
+---
+
+- `mainFields`
+- n/a
+- Not supported
+
+---
+
+- `mangleCache`
+- n/a
+- Not supported
+
+---
+
+- `mangleProps`
+- n/a
+- Not supported
+
+---
+
+- `mangleQuoted`
+- n/a
+- Not supported
+
+---
+
+- `metafile`
+- `manifest`
+- When `manifest` is `true`, the result of `Bun.build()` will contain a `manifest` property. The manifest is compatible with esbuild's metafile format.
+
+---
+
+- `minify`
+- `minify`
+- In Bun, `minify` can be a boolean or an object.
+
+  ```ts
+  Bun.build({
+    entrypoints: ['./index.tsx'],
+    // enable all minification
+    minify: true
+
+    // granular options
+    minify: {
+      identifiers: true,
+      syntax: true,
+      whitespace: true
+    }
+  })
+  ```
+
+---
+
+- `minifyIdentifiers`
+- `minify.identifiers`
+- Nested object syntax
+
+---
+
+- `minifySyntax`
+- `minify.syntax`
+- Nested object syntax
+
+---
+
+- `minifyWhitespace`
+- `minify.whitespace`
+- Nested object syntax
+
+---
+
+- `nodePaths`
+- n/a
+- Not supported
+
+---
+
+- `outExtension`
+- n/a
+- Not supported
+
+---
+
+- `outbase`
+- `root`
+- Different name
+
+---
+
+- `outdir`
+- `outdir`
+- No differences
+
+---
+
+- `outfile`
+- `outfile`
+- No differences
+
+---
+
+- `packages`
+- n/a
+- Not supported, use `external`
+
+---
+
+- `platform`
+- `target`
+- Supports `"bun"`, `"node"`, and `"browser"` (the default)
+
+---
+
+- `plugins`
+- `plugins`
+- Bun's plugin API is esbuild-compatible
+
+---
+
+- `preserveSymlinks`
+- n/a
+- Not supported
+
+---
+
+- `publicPath`
+- `publicPath`
+- No differences
+
+---
+
+- `pure`
+- n/a
+- Not supported
+
+---
+
+- `reserveProps`
+- n/a
+- Not supported
+
+---
+
+- `resolveExtensions`
+- n/a
+- Not supported
+
+---
+
+- `sourceRoot`
+- n/a
+- Not supported
+
+---
+
+- `sourcemap`
+- `sourcemap`
+- Supports `"inline"`, `"external"`, and `"none"`
+
+---
+
+- `sourcesContent`
+- n/a
+- Not supported
+
+---
+
+- `splitting`
+- `splitting`
+- No differences
+
+---
+
+- `stdin`
+- n/a
+- Not supported
+
+---
+
+- `supported`
+- n/a
+- Not supported
+
+---
+
+- `target`
+- n/a
+- No support for syntax downleveling
+
+---
+
+- `treeShaking`
+- n/a
+- Always `true`
+
+---
+
+- `tsconfig`
+- n/a
+- Not supported
+
+---
+
+- `write`
+- n/a
+- Set to `true` if `outdir`/`outfile` is set, otherwise `false`
+
+---
+
+{% /table %}
+
+## Plugin API
 
 Bun's plugin API is designed to be esbuild compatible. Bun doesn't support esbuild's entire plugin API surface, but the core functionality is implemented. Many third-party `esbuild` plugins will work out of the box with Bun.
 

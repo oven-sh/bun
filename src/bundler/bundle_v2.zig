@@ -327,6 +327,7 @@ pub const BundleV2 = struct {
     free_list: std.ArrayList(string) = std.ArrayList(string).init(bun.default_allocator),
 
     unique_key: u64 = 0,
+    dynamic_import_entry_points: std.AutoArrayHashMap(Index.Int, void) = undefined,
 
     const debug = Output.scoped(.Bundle, false);
 
@@ -341,14 +342,21 @@ pub const BundleV2 = struct {
             all_import_records: []ImportRecord.List,
             redirects: []?u32,
             redirect_map: PathToSourceIndexMap,
+            dynamic_import_entry_points: *std.AutoArrayHashMap(Index.Int, void),
 
             // Find all files reachable from all entry points. This order should be
             // deterministic given that the entry point order is deterministic, since the
             // returned order is the postorder of the graph traversal and import record
             // order within a given file is deterministic.
-            pub fn visit(v: *@This(), source_index: Index) void {
+            pub fn visit(v: *@This(), source_index: Index, was_dynamic_import: bool, comptime check_dynamic_imports: bool) void {
                 if (source_index.isInvalid()) return;
+
                 if (v.visited.isSet(source_index.get())) {
+                    if (comptime check_dynamic_imports) {
+                        if (was_dynamic_import) {
+                            v.dynamic_import_entry_points.put(source_index.get(), {}) catch unreachable;
+                        }
+                    }
                     return;
                 }
                 v.visited.set(source_index.get());
@@ -367,22 +375,29 @@ pub const BundleV2 = struct {
                                 import_record.path = other_import_record.path;
                             }
 
-                            v.visit(import_record.source_index);
+                            v.visit(import_record.source_index, check_dynamic_imports and import_record.kind == .dynamic, check_dynamic_imports);
                         }
                     }
 
                     // Redirects replace the source file with another file
                     if (v.redirects[source_index.get()]) |redirect_id| {
                         const redirect_source_index = v.all_import_records[source_index.get()].slice()[redirect_id].source_index.get();
-                        v.visit(Index.source(redirect_source_index));
+                        v.visit(Index.source(redirect_source_index), was_dynamic_import, check_dynamic_imports);
                         return;
                     }
                 }
 
                 // Each file must come after its dependencies
                 v.reachable.append(source_index) catch unreachable;
+                if (comptime check_dynamic_imports) {
+                    if (was_dynamic_import) {
+                        v.dynamic_import_entry_points.put(source_index.get(), {}) catch unreachable;
+                    }
+                }
             }
         };
+
+        this.dynamic_import_entry_points = std.AutoArrayHashMap(Index.Int, void).init(this.graph.allocator);
 
         var visitor = Visitor{
             .reachable = try std.ArrayList(Index).initCapacity(this.graph.allocator, this.graph.entry_points.items.len + 1),
@@ -390,11 +405,16 @@ pub const BundleV2 = struct {
             .redirects = this.graph.ast.items(.redirect_import_record_index),
             .all_import_records = this.graph.ast.items(.import_records),
             .redirect_map = this.graph.path_to_source_index_map,
+            .dynamic_import_entry_points = &this.dynamic_import_entry_points,
         };
         defer visitor.visited.deinit();
 
-        for (this.graph.entry_points.items) |entry_point| {
-            visitor.visit(entry_point);
+        switch (this.bundler.options.code_splitting) {
+            inline else => |check_dynamic_imports| {
+                for (this.graph.entry_points.items) |entry_point| {
+                    visitor.visit(entry_point, false, comptime check_dynamic_imports);
+                }
+            },
         }
 
         // if (comptime Environment.allow_assert) {
@@ -2532,8 +2552,6 @@ pub const Graph = struct {
 
     /// Stable source index mapping
     source_index_map: std.AutoArrayHashMapUnmanaged(Index.Int, Ref.Int) = .{},
-
-    /// Stable source index mapping
     path_to_source_index_map: PathToSourceIndexMap = .{},
 
     use_directive_entry_points: UseDirective.List = .{},
@@ -2872,6 +2890,7 @@ const LinkerGraph = struct {
         entry_points: []const Index,
         sources: []const Logger.Source,
         use_directive_entry_points: UseDirective.List,
+        dynamic_import_entry_points: []const Index.Int,
     ) !void {
         try this.files.ensureTotalCapacity(this.allocator, sources.len);
         this.files.zero();
@@ -2890,7 +2909,7 @@ const LinkerGraph = struct {
 
         // Setup entry points
         {
-            try this.entry_points.ensureTotalCapacity(this.allocator, entry_points.len + use_directive_entry_points.len);
+            try this.entry_points.ensureTotalCapacity(this.allocator, entry_points.len + use_directive_entry_points.len + dynamic_import_entry_points.len);
             this.entry_points.len = entry_points.len;
             var source_indices = this.entry_points.items(.source_index);
 
@@ -2908,6 +2927,24 @@ const LinkerGraph = struct {
                 entry_point_kinds[source.index.get()] = EntryPoint.Kind.user_specified;
                 path_string.* = bun.PathString.init(source.path.text);
                 source_index.* = source.index.get();
+            }
+
+            for (dynamic_import_entry_points) |id| {
+                std.debug.assert(this.code_splitting); // this should never be a thing without code splitting
+
+                if (entry_point_kinds[id] != .none) {
+                    // You could dynamic import a file that is already an entry point
+                    continue;
+                }
+
+                const source = &sources[id];
+                entry_point_kinds[id] = EntryPoint.Kind.dynamic_import;
+
+                this.entry_points.appendAssumeCapacity(.{
+                    .source_index = id,
+                    .output_path = bun.PathString.init(source.path.text),
+                    .output_path_was_auto_generated = true,
+                });
             }
 
             var import_records_list: []ImportRecord.List = this.ast.items(.import_records);
@@ -3257,7 +3294,8 @@ const LinkerContext = struct {
 
         const sources: []const Logger.Source = this.parse_graph.input_files.items(.source);
 
-        try this.graph.load(entry_points, sources, use_directive_entry_points);
+        try this.graph.load(entry_points, sources, use_directive_entry_points, bundle.dynamic_import_entry_points.keys());
+        bundle.dynamic_import_entry_points.deinit();
         this.wait_group.init();
         this.ambiguous_result_pool = std.ArrayList(MatchImport).init(this.allocator);
 
@@ -6186,10 +6224,6 @@ const LinkerContext = struct {
         chunk.intermediate_output = c.breakOutputIntoPieces(
             allocator,
             &j,
-
-            cross_chunk_prefix.len > 0 or
-                cross_chunk_suffix.len > 0 or
-                c.parse_graph.estimated_file_loader_count > 0,
             @truncate(u32, ctx.chunks.len),
         ) catch @panic("Unhandled out of memory error in breakOutputIntoPieces()");
 
@@ -9734,17 +9768,15 @@ const LinkerContext = struct {
         c: *LinkerContext,
         allocator: std.mem.Allocator,
         j: *bun.Joiner,
-        has_any_cross_chunk_code: bool,
         count: u32,
     ) !Chunk.IntermediateOutput {
-        // Optimization: If there can be no substitutions, just reuse the initial
-        // joiner that was used when generating the intermediate chunk output
-        // instead of creating another one and copying the whole file into it.
-        if (!has_any_cross_chunk_code) {
-            return Chunk.IntermediateOutput{
-                .joiner = j.*,
-            };
-        }
+        if (!j.contains(c.unique_key_prefix))
+            // There are like several cases that prohibit this from being checked more trivially, example:
+            // 1. dynamic imports
+            // 2. require()
+            // 3. require.resolve()
+            // 4. externals
+            return Chunk.IntermediateOutput{ .joiner = j.* };
 
         var pieces = try std.ArrayList(Chunk.OutputPiece).initCapacity(allocator, count);
         const complete_output = try j.done(allocator);

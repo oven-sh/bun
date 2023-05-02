@@ -17348,7 +17348,7 @@ fn NewParser_(
                         } else if (p.options.bundle and strings.eqlComptime(name, "id") and identifier_opts.assign_target == .none) {
                             // inline module.id
                             p.ignoreUsage(p.module_ref);
-                            return p.newExpr(E.String.init(p.source.path.text), name_loc);
+                            return p.newExpr(E.String.init(p.source.path.pretty), name_loc);
                         } else if (p.options.bundle and strings.eqlComptime(name, "filename") and identifier_opts.assign_target == .none) {
                             // inline module.filename
                             p.ignoreUsage(p.module_ref);

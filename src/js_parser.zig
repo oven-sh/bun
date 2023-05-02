@@ -20195,6 +20195,33 @@ fn NewParser_(
                                     p.allocator,
                                 );
                                 continue;
+                            } else if
+                            //
+                            // Input:
+                            //      var f;
+                            //      f = 123;
+                            // Output:
+                            //      var f = 123;
+                            //
+                            // This doesn't handle every case. Only the very simple one.
+                            (prev_stmt.data == .s_local and
+                                s_expr.value.data == .e_binary and
+                                prev_stmt.data.s_local.decls.len == 1 and
+                                s_expr.value.data.e_binary.op == .bin_assign)
+                            {
+                                var prev_local = prev_stmt.data.s_local;
+                                var bin_assign = s_expr.value.data.e_binary;
+
+                                if (bin_assign.left.data == .e_identifier) {
+                                    var decl = &prev_local.decls.slice()[0];
+                                    if (decl.binding.data == .b_identifier and
+                                        decl.binding.data.b_identifier.ref.eql(bin_assign.left.data.e_identifier.ref) and
+                                        (decl.value == null or decl.value.?.isPrimitiveLiteral()))
+                                    {
+                                        decl.value = bin_assign.right;
+                                        p.ignoreUsage(bin_assign.left.data.e_identifier.ref);
+                                        continue;
+                                    }
                                 }
                             }
                         }

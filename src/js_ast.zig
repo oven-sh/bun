@@ -4060,6 +4060,10 @@ pub const Expr = struct {
         }
     }
 
+    pub fn isPrimitiveLiteral(this: Expr) bool {
+        return @as(Tag, this.data).isPrimitiveLiteral();
+    }
+
     pub const Tag = enum(u6) {
         e_array,
         e_unary,

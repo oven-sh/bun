@@ -3014,7 +3014,6 @@ pub const Parser = struct {
                             parts.items.len -= 1;
                         }
                     },
-
                     else => {
                         var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
                         sliced.items.len = 1;
@@ -5074,7 +5073,6 @@ fn NewParser_(
                         }) catch unreachable;
                         p.import_items_for_namespace.put(p.allocator, namespace_ref, ImportItemForNamespaceMap.init(p.allocator)) catch unreachable;
                         p.ignoreUsage(p.require_ref);
-
                         return p.newExpr(
                             E.RequireString{
                                 .import_record_index = import_record_index,
@@ -20064,32 +20062,32 @@ fn NewParser_(
 
             var is_control_flow_dead = false;
 
-            // Inline single-use variable declarations where possible:
-            //
-            //   // Before
-            //   let x = fn();
-            //   return x.y();
-            //
-            //   // After
-            //   return fn().y();
-            //
-            // The declaration must not be exported. We can't just check for the
-            // "export" keyword because something might do "export {id};" later on.
-            // Instead we just ignore all top-level declarations for now. That means
-            // this optimization currently only applies in nested scopes.
-            //
-            // Ignore declarations if the scope is shadowed by a direct "eval" call.
-            // The eval'd code may indirectly reference this symbol and the actual
-            // use count may be greater than 1.
-            if (p.current_scope != p.module_scope and !p.current_scope.contains_direct_eval) {
-                var output = ListManaged(Stmt).initCapacity(p.allocator, stmts.items.len) catch unreachable;
+            var output = ListManaged(Stmt).initCapacity(p.allocator, stmts.items.len) catch unreachable;
 
-                for (stmts.items) |stmt| {
-                    if (is_control_flow_dead and !SideEffects.shouldKeepStmtInDeadControlFlow(stmt, p.allocator)) {
-                        // Strip unnecessary statements if the control flow is dead here
-                        continue;
-                    }
+            for (stmts.items) |stmt| {
+                if (is_control_flow_dead and !SideEffects.shouldKeepStmtInDeadControlFlow(stmt, p.allocator)) {
+                    // Strip unnecessary statements if the control flow is dead here
+                    continue;
+                }
 
+                // Inline single-use variable declarations where possible:
+                //
+                //   // Before
+                //   let x = fn();
+                //   return x.y();
+                //
+                //   // After
+                //   return fn().y();
+                //
+                // The declaration must not be exported. We can't just check for the
+                // "export" keyword because something might do "export {id};" later on.
+                // Instead we just ignore all top-level declarations for now. That means
+                // this optimization currently only applies in nested scopes.
+                //
+                // Ignore declarations if the scope is shadowed by a direct "eval" call.
+                // The eval'd code may indirectly reference this symbol and the actual
+                // use count may be greater than 1.
+                if (p.current_scope != p.module_scope and !p.current_scope.contains_direct_eval) {
                     // Keep inlining variables until a failure or until there are none left.
                     // That handles cases like this:
                     //
@@ -20158,114 +20156,116 @@ fn NewParser_(
                         }
                         break;
                     }
-
-                    // don't merge super calls to ensure they are called before "this" is accessed
-                    if (stmt.isSuperCall()) {
-                        output.append(stmt) catch unreachable;
-                        continue;
-                    }
-
-                    switch (stmt.data) {
-                        .s_empty => continue,
-
-                        // skip directives for now
-                        .s_directive => continue,
-
-                        .s_local => |local| {
-                            // Merge adjacent local statements
-                            if (output.items.len > 0) {
-                                var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_local and
-                                    local.canMergeWith(prev_stmt.data.s_local))
-                                {
-                                    prev_stmt.data.s_local.decls.append(p.allocator, local.decls.slice()) catch unreachable;
-                                    continue;
-                                }
-                            }
-                        },
-
-                        .s_expr => |s_expr| {
-                            // Merge adjacent expression statements
-                            if (output.items.len > 0) {
-                                var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
-                                    prev_stmt.data.s_expr.does_not_affect_tree_shaking = prev_stmt.data.s_expr.does_not_affect_tree_shaking and
-                                        s_expr.does_not_affect_tree_shaking;
-                                    prev_stmt.data.s_expr.value = prev_stmt.data.s_expr.value.joinWithComma(
-                                        s_expr.value,
-                                        p.allocator,
-                                    );
-                                    continue;
-                                }
-                            }
-                        },
-                        .s_switch => |s_switch| {
-                            // Absorb a previous expression statement
-                            if (output.items.len > 0) {
-                                var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
-                                    s_switch.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_switch.test_, p.allocator);
-                                    output.items.len -= 1;
-                                }
-                            }
-                        },
-                        .s_if => |s_if| {
-                            // Absorb a previous expression statement
-                            if (output.items.len > 0) {
-                                var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
-                                    s_if.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_if.test_, p.allocator);
-                                    output.items.len -= 1;
-                                }
-                            }
-
-                            // TODO: optimize jump
-                        },
-
-                        .s_return => |ret| {
-                            // Merge return statements with the previous expression statement
-                            if (output.items.len > 0 and ret.value != null) {
-                                var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
-                                    ret.value = prev_stmt.data.s_expr.value.joinWithComma(ret.value.?, p.allocator);
-                                    prev_stmt.* = stmt;
-                                    continue;
-                                }
-                            }
-
-                            is_control_flow_dead = true;
-                        },
-
-                        .s_break, .s_continue => {
-                            is_control_flow_dead = true;
-                        },
-
-                        .s_throw => {
-                            // Merge throw statements with the previous expression statement
-                            if (output.items.len > 0) {
-                                var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
-                                    prev_stmt.* = p.s(S.Throw{
-                                        .value = prev_stmt.data.s_expr.value.joinWithComma(
-                                            stmt.data.s_throw.value,
-                                            p.allocator,
-                                        ),
-                                    }, stmt.loc);
-                                    continue;
-                                }
-                            }
-
-                            is_control_flow_dead = true;
-                        },
-
-                        else => {},
-                    }
-
-                    output.append(stmt) catch unreachable;
                 }
-                stmts.deinit();
-                stmts.* = output;
+
+                // don't merge super calls to ensure they are called before "this" is accessed
+                if (stmt.isSuperCall()) {
+                    output.append(stmt) catch unreachable;
+                    continue;
+                }
+
+                switch (stmt.data) {
+                    .s_empty => continue,
+
+                    // skip directives for now
+                    .s_directive => continue,
+
+                    .s_local => |local| {
+                        // Merge adjacent local statements
+                        if (output.items.len > 0) {
+                            var prev_stmt = &output.items[output.items.len - 1];
+                            if (prev_stmt.data == .s_local and
+                                local.canMergeWith(prev_stmt.data.s_local))
+                            {
+                                prev_stmt.data.s_local.decls.append(p.allocator, local.decls.slice()) catch unreachable;
+                                continue;
+                            }
+                        }
+                    },
+
+                    .s_expr => |s_expr| {
+                        // Merge adjacent expression statements
+                        if (output.items.len > 0) {
+                            var prev_stmt = &output.items[output.items.len - 1];
+                            if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
+                                prev_stmt.data.s_expr.does_not_affect_tree_shaking = prev_stmt.data.s_expr.does_not_affect_tree_shaking and
+                                    s_expr.does_not_affect_tree_shaking;
+                                prev_stmt.data.s_expr.value = prev_stmt.data.s_expr.value.joinWithComma(
+                                    s_expr.value,
+                                    p.allocator,
+                                );
+                                continue;
+                                }
+                            }
+                        }
+                    },
+                    .s_switch => |s_switch| {
+                        // Absorb a previous expression statement
+                        if (output.items.len > 0) {
+                            var prev_stmt = &output.items[output.items.len - 1];
+                            if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
+                                s_switch.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_switch.test_, p.allocator);
+                                output.items.len -= 1;
+                            }
+                        }
+                    },
+                    .s_if => |s_if| {
+                        // Absorb a previous expression statement
+                        if (output.items.len > 0) {
+                            var prev_stmt = &output.items[output.items.len - 1];
+                            if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
+                                s_if.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_if.test_, p.allocator);
+                                output.items.len -= 1;
+                            }
+                        }
+
+                        // TODO: optimize jump
+                    },
+
+                    .s_return => |ret| {
+                        // Merge return statements with the previous expression statement
+                        if (output.items.len > 0 and ret.value != null) {
+                            var prev_stmt = &output.items[output.items.len - 1];
+                            if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
+                                ret.value = prev_stmt.data.s_expr.value.joinWithComma(ret.value.?, p.allocator);
+                                prev_stmt.* = stmt;
+                                continue;
+                            }
+                        }
+
+                        is_control_flow_dead = true;
+                    },
+
+                    .s_break, .s_continue => {
+                        is_control_flow_dead = true;
+                    },
+
+                    .s_throw => {
+                        // Merge throw statements with the previous expression statement
+                        if (output.items.len > 0) {
+                            var prev_stmt = &output.items[output.items.len - 1];
+                            if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
+                                prev_stmt.* = p.s(S.Throw{
+                                    .value = prev_stmt.data.s_expr.value.joinWithComma(
+                                        stmt.data.s_throw.value,
+                                        p.allocator,
+                                    ),
+                                }, stmt.loc);
+                                continue;
+                            }
+                        }
+
+                        is_control_flow_dead = true;
+                    },
+
+                    else => {},
+                }
+
+                output.append(stmt) catch unreachable;
             }
+
+            stmts.deinit();
+            stmts.* = output;
         }
 
         fn extractDeclsForBinding(binding: Binding, decls: *ListManaged(G.Decl)) !void {

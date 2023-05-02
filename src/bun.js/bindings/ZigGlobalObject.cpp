@@ -106,6 +106,7 @@
 #include "ReadableStreamBuiltins.h"
 #include "BunJSCModule.h"
 #include "ModuleLoader.h"
+#include "Script.h"
 
 #include "ZigGeneratedClasses.h"
 #include "JavaScriptCore/DateInstance.h"
@@ -1214,6 +1215,7 @@ JSC:
         static NeverDestroyed<const String> noopString(MAKE_STATIC_STRING_IMPL("noop"));
         static NeverDestroyed<const String> createImportMeta(MAKE_STATIC_STRING_IMPL("createImportMeta"));
         static NeverDestroyed<const String> masqueradesAsUndefined(MAKE_STATIC_STRING_IMPL("masqueradesAsUndefined"));
+        static NeverDestroyed<const String> scriptString(MAKE_STATIC_STRING_IMPL("node:vm:Script"));
 
         JSC::JSValue moduleName = callFrame->argument(0);
         if (moduleName.isNumber()) {
@@ -1295,6 +1297,12 @@ JSC:
 
         if (string == masqueradesAsUndefined) {
             return JSValue::encode(InternalFunction::createFunctionThatMasqueradesAsUndefined(vm, globalObject, 0, String(), functionCallNotImplemented));
+        }
+
+        if (string == scriptString) {
+            auto* prototype = Script::createPrototype(vm, globalObject);
+            auto* structure = ScriptConstructor::createStructure(vm, globalObject, globalObject->m_functionPrototype.get());
+            return JSC::JSValue::encode(ScriptConstructor::create(vm, globalObject, structure, prototype));
         }
 
         if (UNLIKELY(string == noopString)) {

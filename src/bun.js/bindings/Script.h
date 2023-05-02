@@ -16,7 +16,7 @@ class ScriptConstructor final : public JSC::InternalFunction {
 public:
     using Base = JSC::InternalFunction;
 
-    static ScriptConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSC::JSObject* prototype);
+    static ScriptConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure);
 
     DECLARE_EXPORT_INFO;
 
@@ -29,7 +29,7 @@ public:
 private:
     ScriptConstructor(JSC::VM& vm, JSC::Structure* structure);
 
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype);
+    void finishCreation(JSC::VM&);
 };
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(ScriptConstructor, InternalFunction);
 

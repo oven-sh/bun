@@ -38,7 +38,16 @@ static EncodedJSValue constructScript(JSGlobalObject* globalObject, CallFrame* c
     JSValue sourceArg = args.at(0);
     String source = sourceArg.isUndefined() ? emptyString() : sourceArg.toWTFString(globalObject);
 
-    Structure* structure = Script::createStructure(vm, globalObject, Script::createPrototype(vm, globalObject));
+    auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    Structure* structure = zigGlobalObject->ScriptStructure();
+    if (zigGlobalObject->Script() != newTarget) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSObject* targetObj = asObject(newTarget);
+        auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(getFunctionRealm(globalObject, targetObj));
+        RETURN_IF_EXCEPTION(scope, {});
+        structure = InternalFunction::createSubclassStructure(
+            globalObject, targetObj, functionGlobalObject->ScriptStructure());
+    }
     Script* script = Script::create(vm, globalObject, structure, source);
     return JSValue::encode(JSValue(script));
 }
@@ -84,8 +93,8 @@ public:
 
     static ScriptPrototype* create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
     {
-        ScriptPrototype* ptr = new (NotNull, allocateCell<ScriptPrototype>(vm)) ScriptPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm, globalObject);
+        ScriptPrototype* ptr = new (NotNull, allocateCell<ScriptPrototype>(vm)) ScriptPrototype(vm, structure);
+        ptr->finishCreation(vm);
         return ptr;
     }
 
@@ -101,12 +110,12 @@ public:
     }
 
 private:
-    ScriptPrototype(VM& vm, JSGlobalObject* globalObject, Structure* structure)
+    ScriptPrototype(VM& vm, Structure* structure)
         : Base(vm, structure)
     {
     }
 
-    void finishCreation(VM&, JSGlobalObject*);
+    void finishCreation(VM&);
 };
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(ScriptPrototype, ScriptPrototype::Base);
 
@@ -126,29 +135,20 @@ ScriptConstructor::ScriptConstructor(VM& vm, Structure* structure)
 {
 }
 
-ScriptConstructor* ScriptConstructor::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, JSObject* prototype)
+ScriptConstructor* ScriptConstructor::create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
 {
     ScriptConstructor* ptr = new (NotNull, allocateCell<ScriptConstructor>(vm)) ScriptConstructor(vm, structure);
-    ptr->finishCreation(vm, globalObject, prototype);
+    ptr->finishCreation(vm);
     return ptr;
 }
 
-void ScriptConstructor::finishCreation(VM& vm, JSGlobalObject* globalObject, JSObject* prototype)
+void ScriptConstructor::finishCreation(VM& vm)
 {
-    Base::finishCreation(vm);
+    Base::finishCreation(vm, 1, "Script"_s, PropertyAdditionMode::WithStructureTransition);
     ASSERT(inherits(info()));
-    initializeProperties(vm, globalObject, prototype);
 }
 
-void ScriptConstructor::initializeProperties(VM& vm, JSGlobalObject* globalObject, JSObject* prototype)
-{
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "Script"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
-}
-
-void ScriptPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
+void ScriptPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, Script::info(), scriptPrototypeTableValues, *this);

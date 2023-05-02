@@ -1300,9 +1300,8 @@ JSC:
         }
 
         if (string == scriptString) {
-            auto* prototype = Script::createPrototype(vm, globalObject);
-            auto* structure = ScriptConstructor::createStructure(vm, globalObject, globalObject->m_functionPrototype.get());
-            return JSC::JSValue::encode(ScriptConstructor::create(vm, globalObject, structure, prototype));
+            auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+            return JSC::JSValue::encode(zigGlobalObject->Script());
         }
 
         if (UNLIKELY(string == noopString)) {
@@ -2862,6 +2861,17 @@ void GlobalObject::finishCreation(VM& vm)
             init.setStructure(Zig::JSFFIFunction::createStructure(init.vm, init.global, init.global->functionPrototype()));
         });
 
+    m_ScriptClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto prototype = Script::createPrototype(init.vm, init.global);
+            auto* structure = Script::createStructure(init.vm, init.global, prototype);
+            auto* constructor = ScriptConstructor::create(
+                init.vm, init.global, ScriptConstructor::createStructure(init.vm, init.global, init.global->m_functionPrototype.get()));
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
+
     addBuiltinGlobals(vm);
 
 #if ENABLE(REMOTE_INSPECTOR)
@@ -3664,6 +3674,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSStringDecoderClassStructure.visit(visitor);
     thisObject->m_NapiClassStructure.visit(visitor);
     thisObject->m_JSBufferClassStructure.visit(visitor);
+    thisObject->m_ScriptClassStructure.visit(visitor);
 
     thisObject->m_pendingVirtualModuleResultStructure.visit(visitor);
     thisObject->m_performMicrotaskFunction.visit(visitor);

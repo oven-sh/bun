@@ -5590,14 +5590,19 @@ pub const Format = enum {
     cjs_ascii,
 };
 
+const GenerateSourceMap = enum {
+    disable,
+    lazy,
+    eager,
+};
 pub fn getSourceMapBuilder(
-    comptime generate_source_map: bool,
+    comptime generate_source_map: GenerateSourceMap,
     comptime is_bun_platform: bool,
     opts: Options,
     source: *const logger.Source,
     tree: *const Ast,
 ) SourceMap.Chunk.Builder {
-    if (comptime !generate_source_map)
+    if (comptime generate_source_map == .disable)
         return undefined;
 
     return .{
@@ -5606,15 +5611,19 @@ pub fn getSourceMapBuilder(
             is_bun_platform,
         ),
         .cover_lines_without_mappings = true,
-        .prepend_count = is_bun_platform,
-        .line_offset_tables = opts.line_offset_tables orelse SourceMap.LineOffsetTable.generate(
-            opts.allocator,
-            source.contents,
-            @intCast(
-                i32,
-                tree.approximate_newline_count,
-            ),
-        ),
+        .prepend_count = is_bun_platform and generate_source_map == .lazy,
+        .line_offset_tables = opts.line_offset_tables orelse brk: {
+            if (generate_source_map == .lazy) break :brk SourceMap.LineOffsetTable.generate(
+                opts.allocator,
+                source.contents,
+                @intCast(
+                    i32,
+                    tree.approximate_newline_count,
+                ),
+            );
+
+            break :brk SourceMap.LineOffsetTable.List{};
+        },
     };
 }
 
@@ -5718,7 +5727,7 @@ pub fn printAst(
         tree.import_records.slice(),
         opts,
         renamer,
-        getSourceMapBuilder(generate_source_map, ascii_only, opts, source, &tree),
+        getSourceMapBuilder(if (generate_source_map) .lazy else .disable, ascii_only, opts, source, &tree),
     );
     defer {
         imported_module_ids_list = printer.imported_module_ids;
@@ -5873,7 +5882,7 @@ pub fn printWithWriterAndPlatform(
         import_records,
         opts,
         renamer,
-        getSourceMapBuilder(generate_source_maps, is_bun_platform, opts, source, &ast),
+        getSourceMapBuilder(if (generate_source_maps) .eager else .disable, is_bun_platform, opts, source, &ast),
     );
     defer printer.temporary_bindings.deinit(bun.default_allocator);
     defer _writer.* = printer.writer.*;
@@ -5930,7 +5939,7 @@ pub fn printCommonJS(
         tree.import_records.slice(),
         opts,
         renamer.toRenamer(),
-        getSourceMapBuilder(generate_source_map, false, opts, source, &tree),
+        getSourceMapBuilder(if (generate_source_map) .lazy else .disable, false, opts, source, &tree),
     );
     defer {
         imported_module_ids_list = printer.imported_module_ids;

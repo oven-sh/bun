@@ -250,7 +250,7 @@ pub const MutableString = struct {
         return self.indexOfChar(char) != null;
     }
 
-    pub fn indexOfChar(self: *const MutableString, char: u8) ?usize {
+    pub fn indexOfChar(self: *const MutableString, char: u8) ?u32 {
         return strings.indexOfChar(self.list.items, char);
     }
 

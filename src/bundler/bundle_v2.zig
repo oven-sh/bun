@@ -6071,6 +6071,7 @@ const LinkerContext = struct {
                 j.push(hashbang);
                 j.push("\n");
                 line_offset.advance(hashbang);
+                line_offset.advance("\n");
                 newline_before_comment = true;
                 is_executable = true;
             }
@@ -6078,6 +6079,7 @@ const LinkerContext = struct {
 
         if (chunk.entry_point.is_entry_point and ctx.c.graph.ast.items(.target)[chunk.entry_point.source_index].isBun()) {
             j.push("// @bun\n");
+            line_offset.advance("// @bun\n");
         }
 
         // TODO: banner
@@ -6162,24 +6164,20 @@ const LinkerContext = struct {
                 line_offset.advance(compile_result.code());
                 j.append(compile_result.code(), 0, bun.default_allocator);
             } else {
+                const generated_offset = line_offset;
                 j.append(compile_result.code(), 0, bun.default_allocator);
 
-                var generated_offset = line_offset;
-                line_offset.reset();
-
-                if (c.options.source_maps != .none) {
-                    switch (compile_result.javascript.result) {
-                        .result => |res| {
-                            if (res.source_map) |source_map| {
-                                try compile_results_for_source_map.append(allocator, CompileResultForSourceMap{
-                                    .source_map_chunk = source_map,
-                                    .generated_offset = generated_offset.value,
-                                    .source_index = compile_result.sourceIndex(),
-                                });
-                            }
-                        },
-                        else => {},
+                if (compile_result.source_map_chunk()) |source_map_chunk| {
+                    line_offset.reset();
+                    if (c.options.source_maps != .none) {
+                        try compile_results_for_source_map.append(allocator, CompileResultForSourceMap{
+                            .source_map_chunk = source_map_chunk,
+                            .generated_offset = generated_offset.value,
+                            .source_index = compile_result.sourceIndex(),
+                        });
                     }
+                } else {
+                    line_offset.advance(compile_result.code());
                 }
             }
 
@@ -6199,7 +6197,6 @@ const LinkerContext = struct {
         if (cross_chunk_suffix.len > 0) {
             if (newline_before_comment) {
                 j.push("\n");
-                line_offset.advance("\n");
             }
 
             j.append(cross_chunk_suffix, 0, bun.default_allocator);
@@ -8564,12 +8561,12 @@ const LinkerContext = struct {
                     });
                 },
                 .@"inline" => {
-                    var output_source_map = chunk.output_source_map.finalize(sourcemap_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
+                    var output_source_map = chunk.output_source_map.finalize(default_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
                     const encode_len = base64.encodeLen(output_source_map);
 
                     const source_map_start = "//# sourceMappingURL=data:application/json;base64,";
                     const total_len = code_result.buffer.len + source_map_start.len + encode_len + 1;
-                    var buf = std.ArrayList(u8).initCapacity(sourcemap_allocator, total_len) catch @panic("Failed to allocate memory for output file with inline source map");
+                    var buf = std.ArrayList(u8).initCapacity(default_allocator, total_len) catch @panic("Failed to allocate memory for output file with inline source map");
 
                     buf.appendSliceAssumeCapacity(code_result.buffer);
                     buf.appendSliceAssumeCapacity(source_map_start);
@@ -10227,14 +10224,14 @@ pub const Chunk = struct {
                     // TODO: make this safe
                     var joiny = joiner_;
 
-                    if (comptime FeatureFlags.source_map_debug_id) {
-                        // This comment must go before the //# sourceMappingURL comment
-                        joiny.push(std.fmt.allocPrint(
-                            graph.allocator,
-                            "\n//# debugId={}\n",
-                            .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }},
-                        ) catch unreachable);
-                    }
+                    // if (comptime FeatureFlags.source_map_debug_id) {
+                    //     // This comment must go before the //# sourceMappingURL comment
+                    //     joiny.push(std.fmt.allocPrint(
+                    //         graph.allocator,
+                    //         "\n//# debugId={}\n",
+                    //         .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }},
+                    //     ) catch unreachable);
+                    // }
 
                     return .{
                         .buffer = try joiny.done((allocator_to_use orelse allocatorForSize(joiny.len))),
@@ -10498,6 +10495,15 @@ const CompileResult = union(enum) {
                 else => "",
             },
             // else => "",
+        };
+    }
+
+    pub fn source_map_chunk(this: *const CompileResult) ?sourcemap.Chunk {
+        return switch (this.*) {
+            .javascript => |r| switch (r.result) {
+                .result => |r2| r2.source_map,
+                else => null,
+            },
         };
     }
 

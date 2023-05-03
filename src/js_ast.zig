@@ -857,8 +857,8 @@ pub const G = struct {
     };
 
     pub const Fn = struct {
-        name: ?LocRef,
-        open_parens_loc: logger.Loc,
+        name: ?LocRef = null,
+        open_parens_loc: logger.Loc = logger.Loc.Empty,
         args: []Arg = &([_]Arg{}),
         // This was originally nullable, but doing so I believe caused a miscompilation
         // Specifically, the body was always null.

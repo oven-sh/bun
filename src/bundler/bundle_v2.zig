@@ -2533,6 +2533,11 @@ pub const JSMeta = struct {
         /// to detect when the fixed point has been reached.
         did_wrap_dependencies: bool = false,
 
+        /// When a converted CommonJS module is import() dynamically
+        /// We need ensure that the "default" export is set to the equivalent of module.exports
+        /// (unless a "default" export already exists)
+        needs_synthetic_default_export: bool = false,
+
         wrap: WrapKind = WrapKind.none,
     };
 };
@@ -2815,28 +2820,19 @@ const LinkerGraph = struct {
     ) !void {
         if (use_count == 0) return;
 
-        // Mark this symbol as used by this part
         var parts_list = g.ast.items(.parts)[source_index].slice();
         var part: *js_ast.Part = &parts_list[part_index];
-        var uses = part.symbol_uses;
-        var needs_reindex = false;
-        if (uses.capacity() < uses.count() + 1 and !uses.contains(ref)) {
-            var symbol_uses = js_ast.Part.SymbolUseMap{};
-            try symbol_uses.ensureTotalCapacity(g.allocator, uses.count() + 1);
-            symbol_uses.entries.len = uses.keys().len;
-            bun.copy(std.meta.Child(@TypeOf(symbol_uses.keys())), symbol_uses.keys(), uses.keys());
-            bun.copy(std.meta.Child(@TypeOf(symbol_uses.values())), symbol_uses.values(), uses.values());
-            needs_reindex = true;
-            uses = symbol_uses;
-        }
-        var entry = uses.getOrPut(g.allocator, ref) catch unreachable;
-        if (entry.found_existing) {
-            entry.value_ptr.count_estimate += use_count;
+
+        // Mark this symbol as used by this part
+
+        var uses = &part.symbol_uses;
+        var uses_entry = uses.getOrPut(g.allocator, ref) catch unreachable;
+
+        if (!uses_entry.found_existing) {
+            uses_entry.value_ptr.* = .{ .count_estimate = use_count };
         } else {
-            entry.value_ptr.* = .{ .count_estimate = use_count };
+            uses_entry.value_ptr.count_estimate += use_count;
         }
-        if (needs_reindex) uses.reIndex(g.allocator) catch unreachable;
-        part.symbol_uses = uses;
 
         const exports_ref = g.ast.items(.exports_ref)[source_index];
         const module_ref = g.ast.items(.module_ref)[source_index];
@@ -4253,7 +4249,7 @@ const LinkerContext = struct {
 
             var runtime_export_symbol_ref: Ref = Ref.None;
             var entry_point_kinds: []EntryPoint.Kind = this.graph.files.items(.entry_point_kind);
-            const flags: []const JSMeta.Flags = this.graph.meta.items(.flags);
+            var flags: []JSMeta.Flags = this.graph.meta.items(.flags);
             var ast_fields = this.graph.ast.slice();
 
             var wrapper_refs = ast_fields.items(.wrapper_ref);
@@ -4516,6 +4512,7 @@ const LinkerContext = struct {
                     for (part.import_record_indices.slice()) |import_record_index| {
                         var record = &import_records[import_record_index];
                         const kind = record.kind;
+                        const other_id = record.source_index.value;
 
                         // Don't follow external imports (this includes import() expressions)
                         if (!record.source_index.isValid() or this.isExternalDynamicImport(record, source_index)) {
@@ -4523,43 +4520,57 @@ const LinkerContext = struct {
                             if (kind == .require or !output_format.keepES6ImportExportSyntax() or
                                 (kind == .dynamic))
                             {
-                                // We should use "__require" instead of "require" if we're not
-                                // generating a CommonJS output file, since it won't exist otherwise
-                                if (shouldCallRuntimeRequire(output_format)) {
-                                    record.calls_runtime_require = true;
-                                    runtime_require_uses += 1;
-                                }
+                                if (record.source_index.isValid() and kind == .dynamic and force_cjs_to_esm[other_id]) {
+                                    // If the CommonJS module was converted to ESM
+                                    // and the developer `import("cjs_module")`, then
+                                    // they may have code that expects the default export to return the CommonJS module.exports object
+                                    // That module.exports object does not exist.
+                                    // We create a default object with getters for each statically-known export
+                                    // This is kind of similar to what Node.js does
+                                    // Once we track usages of the dynamic import, we can remove this.
+                                    if (!ast_fields.items(.named_exports)[other_id].contains("default"))
+                                        flags[other_id].needs_synthetic_default_export = true;
 
-                                // If this wasn't originally a "require()" call, then we may need
-                                // to wrap this in a call to the "__toESM" wrapper to convert from
-                                // CommonJS semantics to ESM semantics.
-                                //
-                                // Unfortunately this adds some additional code since the conversion
-                                // is somewhat complex. As an optimization, we can avoid this if the
-                                // following things are true:
-                                //
-                                // - The import is an ES module statement (e.g. not an "import()" expression)
-                                // - The ES module namespace object must not be captured
-                                // - The "default" and "__esModule" exports must not be accessed
-                                //
-                                if (kind != .require and
-                                    (kind != .stmt or
-                                    record.contains_import_star or
-                                    record.contains_default_alias or
-                                    record.contains_es_module_alias))
-                                {
-                                    record.wrap_with_to_esm = true;
-                                    to_esm_uses += 1;
+                                    continue;
+                                } else {
+
+                                    // We should use "__require" instead of "require" if we're not
+                                    // generating a CommonJS output file, since it won't exist otherwise
+                                    if (shouldCallRuntimeRequire(output_format)) {
+                                        record.calls_runtime_require = true;
+                                        runtime_require_uses += 1;
+                                    }
+
+                                    // If this wasn't originally a "require()" call, then we may need
+                                    // to wrap this in a call to the "__toESM" wrapper to convert from
+                                    // CommonJS semantics to ESM semantics.
+                                    //
+                                    // Unfortunately this adds some additional code since the conversion
+                                    // is somewhat complex. As an optimization, we can avoid this if the
+                                    // following things are true:
+                                    //
+                                    // - The import is an ES module statement (e.g. not an "import()" expression)
+                                    // - The ES module namespace object must not be captured
+                                    // - The "default" and "__esModule" exports must not be accessed
+                                    //
+                                    if (kind != .require and
+                                        (kind != .stmt or
+                                        record.contains_import_star or
+                                        record.contains_default_alias or
+                                        record.contains_es_module_alias))
+                                    {
+                                        record.wrap_with_to_esm = true;
+                                        to_esm_uses += 1;
+                                    }
                                 }
                             }
                             continue;
                         }
 
-                        const other_source_index = record.source_index.get();
-                        const other_id = other_source_index;
                         std.debug.assert(@intCast(usize, other_id) < this.graph.meta.len);
                         const other_flags = flags[other_id];
                         const other_export_kind = exports_kind[other_id];
+                        const other_source_index = other_id;
 
                         if (other_flags.wrap != .none) {
                             // Depend on the automatically-generated require wrapper symbol
@@ -4623,7 +4634,7 @@ const LinkerContext = struct {
                         }
                     }
 
-                    // If there's an ES6 import of a non-ES6 module, then we're going to need the
+                    // If there's an ES6 import of a CommonJS module, then we're going to need the
                     // "__toESM" symbol from the runtime to wrap the result of "require()"
                     this.graph.generateRuntimeSymbolImportAndUse(
                         source_index,
@@ -5026,8 +5037,7 @@ const LinkerContext = struct {
         defer local_dependencies.deinit();
         var parts = &c.graph.ast.items(.parts)[id];
         var parts_slice: []js_ast.Part = parts.slice();
-        var named_imports: js_ast.Ast.NamedImports = c.graph.ast.items(.named_imports)[id];
-        defer c.graph.ast.items(.named_imports)[id] = named_imports;
+        var named_imports: *js_ast.Ast.NamedImports = &c.graph.ast.items(.named_imports)[id];
         outer: for (parts_slice, 0..) |*part, part_index| {
 
             // TODO: inline const TypeScript enum here
@@ -5282,14 +5292,6 @@ const LinkerContext = struct {
                                 // The only internal symbol that wrapped CommonJS files export
                                 // is the wrapper itself.
                                 continue;
-                            } else if (symbol.kind == .other) {
-                                // TODO: figure out why we need to do this
-                                // Without this, we are unable to map the import to runtime symbols across chunks
-                                // which means we miss any runtime-imported symbol
-                                if (imports_to_bind.get(deps.symbols.follow(ref))) |import_data| {
-                                    ref = import_data.data.import_ref;
-                                    symbol = deps.symbols.getConst(ref).?;
-                                }
                             }
 
                             // If this is an ES6 import from a CommonJS file, it will become a
@@ -5359,57 +5361,7 @@ const LinkerContext = struct {
         }
     };
 
-    pub fn computeCrossChunkDependencies(c: *LinkerContext, chunks: []Chunk) !void {
-        if (!c.graph.code_splitting) {
-            // No need to compute cross-chunk dependencies if there can't be any
-            return;
-        }
-
-        var chunk_metas = try c.allocator.alloc(ChunkMeta, chunks.len);
-        for (chunk_metas) |*meta| {
-            // these must be global allocator
-            meta.* = .{
-                .imports = ChunkMeta.Map.init(bun.default_allocator),
-                .exports = ChunkMeta.Map.init(bun.default_allocator),
-                .dynamic_imports = std.AutoArrayHashMap(Index.Int, void).init(bun.default_allocator),
-            };
-        }
-        defer {
-            for (chunk_metas) |*meta| {
-                meta.imports.deinit();
-                meta.exports.deinit();
-                meta.dynamic_imports.deinit();
-            }
-            c.allocator.free(chunk_metas);
-        }
-
-        {
-            var cross_chunk_dependencies = c.allocator.create(CrossChunkDependencies) catch unreachable;
-            defer c.allocator.destroy(cross_chunk_dependencies);
-
-            cross_chunk_dependencies.* = .{
-                .chunks = chunks,
-                .chunk_meta = chunk_metas,
-                .parts = c.graph.ast.items(.parts),
-                .import_records = c.graph.ast.items(.import_records),
-                .flags = c.graph.meta.items(.flags),
-                .entry_point_chunk_indices = c.graph.files.items(.entry_point_chunk_index),
-                .imports_to_bind = c.graph.meta.items(.imports_to_bind),
-                .wrapper_refs = c.graph.ast.items(.wrapper_ref),
-                .sorted_and_filtered_export_aliases = c.graph.meta.items(.sorted_and_filtered_export_aliases),
-                .resolved_exports = c.graph.meta.items(.resolved_exports),
-                .ctx = c,
-                .symbols = &c.graph.symbols,
-            };
-
-            c.parse_graph.pool.pool.doPtr(
-                c.allocator,
-                &c.wait_group,
-                cross_chunk_dependencies,
-                CrossChunkDependencies.walk,
-                chunks,
-            ) catch unreachable;
-        }
+    fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chunk, chunk_metas: []ChunkMeta) !void {
 
         // Mark imported symbols as exported in the chunk from which they are declared
         for (chunks, chunk_metas, 0..) |*chunk, *chunk_meta, chunk_index| {
@@ -5440,6 +5392,8 @@ const LinkerContext = struct {
                             });
                         }
                         _ = chunk_metas[other_chunk_index].exports.getOrPut(import_ref) catch unreachable;
+                    } else {
+                        debug("{s} imports from itself (chunk {d})", .{ symbol.original_name, chunk_index });
                     }
                 }
             }
@@ -5571,13 +5525,11 @@ const LinkerContext = struct {
             debug("Generating cross-chunk imports", .{});
             var list = CrossChunkImport.List.init(c.allocator);
             defer list.deinit();
-
             for (chunks) |*chunk| {
                 if (chunk.content != .javascript) continue;
                 var repr = &chunk.content.javascript;
                 var cross_chunk_prefix_stmts = BabyList(js_ast.Stmt){};
 
-                list.clearRetainingCapacity();
                 CrossChunkImport.sortedCrossChunkImports(&list, chunks, &repr.imports_from_other_chunks) catch unreachable;
                 var cross_chunk_imports_input: []CrossChunkImport = list.items;
                 var cross_chunk_imports = chunk.cross_chunk_imports;
@@ -5626,6 +5578,61 @@ const LinkerContext = struct {
                 chunk.cross_chunk_imports = cross_chunk_imports;
             }
         }
+    }
+
+    pub fn computeCrossChunkDependencies(c: *LinkerContext, chunks: []Chunk) !void {
+        if (!c.graph.code_splitting) {
+            // No need to compute cross-chunk dependencies if there can't be any
+            return;
+        }
+
+        var chunk_metas = try c.allocator.alloc(ChunkMeta, chunks.len);
+        for (chunk_metas) |*meta| {
+            // these must be global allocator
+            meta.* = .{
+                .imports = ChunkMeta.Map.init(bun.default_allocator),
+                .exports = ChunkMeta.Map.init(bun.default_allocator),
+                .dynamic_imports = std.AutoArrayHashMap(Index.Int, void).init(bun.default_allocator),
+            };
+        }
+        defer {
+            for (chunk_metas) |*meta| {
+                meta.imports.deinit();
+                meta.exports.deinit();
+                meta.dynamic_imports.deinit();
+            }
+            c.allocator.free(chunk_metas);
+        }
+
+        {
+            var cross_chunk_dependencies = c.allocator.create(CrossChunkDependencies) catch unreachable;
+            defer c.allocator.destroy(cross_chunk_dependencies);
+
+            cross_chunk_dependencies.* = .{
+                .chunks = chunks,
+                .chunk_meta = chunk_metas,
+                .parts = c.graph.ast.items(.parts),
+                .import_records = c.graph.ast.items(.import_records),
+                .flags = c.graph.meta.items(.flags),
+                .entry_point_chunk_indices = c.graph.files.items(.entry_point_chunk_index),
+                .imports_to_bind = c.graph.meta.items(.imports_to_bind),
+                .wrapper_refs = c.graph.ast.items(.wrapper_ref),
+                .sorted_and_filtered_export_aliases = c.graph.meta.items(.sorted_and_filtered_export_aliases),
+                .resolved_exports = c.graph.meta.items(.resolved_exports),
+                .ctx = c,
+                .symbols = &c.graph.symbols,
+            };
+
+            c.parse_graph.pool.pool.doPtr(
+                c.allocator,
+                &c.wait_group,
+                cross_chunk_dependencies,
+                CrossChunkDependencies.walk,
+                chunks,
+            ) catch unreachable;
+        }
+
+        try computeCrossChunkDependenciesWithChunkMetas(c, chunks, chunk_metas);
     }
 
     const GenerateChunkCtx = struct {
@@ -6034,7 +6041,7 @@ const LinkerContext = struct {
 
         // Generate the exports for the entry point, if there are any
         const entry_point_tail = brk: {
-            if (chunk.isEntryPoint()) {
+            if (chunk.isEntryPoint() or c.graph.meta.items(.flags)[chunk.entry_point.source_index].needs_synthetic_default_export) {
                 break :brk c.generateEntryPointTailJS(
                     toCommonJSRef,
                     toESMRef,
@@ -6554,8 +6561,12 @@ const LinkerContext = struct {
                             var items = std.ArrayList(js_ast.ClauseItem).init(temp_allocator);
                             const cjs_export_copies = c.graph.meta.items(.cjs_export_copies)[source_index];
 
+                            var had_default_export = false;
+
                             for (sorted_and_filtered_export_aliases, 0..) |alias, i| {
                                 var resolved_export = resolved_exports.get(alias).?;
+
+                                had_default_export = had_default_export or strings.eqlComptime(alias, "default");
 
                                 // If this is an export of an import, reference the symbol that the import
                                 // was eventually resolved to. We need to do this because imports have
@@ -6690,6 +6701,78 @@ const LinkerContext = struct {
                                     Logger.Loc.Empty,
                                 ),
                             ) catch unreachable;
+
+                            if (flags.needs_synthetic_default_export and !had_default_export) {
+                                var properties = G.Property.List.initCapacity(allocator, items.items.len) catch unreachable;
+                                var getter_fn_body = allocator.alloc(Stmt, items.items.len) catch unreachable;
+                                var remain_getter_fn_body = getter_fn_body;
+                                for (items.items) |export_item| {
+                                    var fn_body = remain_getter_fn_body[0..1];
+                                    remain_getter_fn_body = remain_getter_fn_body[1..];
+                                    fn_body[0] = Stmt.alloc(
+                                        S.Return,
+                                        S.Return{
+                                            .value = Expr.init(
+                                                E.Identifier,
+                                                E.Identifier{
+                                                    .ref = export_item.name.ref.?,
+                                                },
+                                                export_item.name.loc,
+                                            ),
+                                        },
+                                        Logger.Loc.Empty,
+                                    );
+                                    properties.appendAssumeCapacity(
+                                        G.Property{
+                                            .key = Expr.init(
+                                                E.String,
+                                                E.String{
+                                                    .data = export_item.alias,
+                                                    .is_utf16 = false,
+                                                },
+                                                export_item.alias_loc,
+                                            ),
+                                            .value = Expr.init(
+                                                E.Function,
+                                                E.Function{
+                                                    .func = G.Fn{
+                                                        .body = G.FnBody{
+                                                            .loc = Logger.Loc.Empty,
+                                                            .stmts = fn_body,
+                                                        },
+                                                    },
+                                                },
+                                                export_item.alias_loc,
+                                            ),
+                                            .kind = G.Property.Kind.get,
+                                            .flags = js_ast.Flags.Property.init(.{
+                                                .is_method = true,
+                                            }),
+                                        },
+                                    );
+                                }
+                                stmts.append(
+                                    Stmt.alloc(
+                                        S.ExportDefault,
+                                        S.ExportDefault{
+                                            .default_name = .{
+                                                .ref = Ref.None,
+                                                .loc = Logger.Loc.Empty,
+                                            },
+                                            .value = .{
+                                                .expr = Expr.init(
+                                                    E.Object,
+                                                    E.Object{
+                                                        .properties = properties,
+                                                    },
+                                                    Logger.Loc.Empty,
+                                                ),
+                                            },
+                                        },
+                                        Logger.Loc.Empty,
+                                    ),
+                                ) catch unreachable;
+                            }
                         }
                     },
                 }
@@ -7615,6 +7698,7 @@ const LinkerContext = struct {
                     stmts.inside_wrapper_prefix.appendSlice(stmts.inside_wrapper_suffix.items) catch unreachable;
                 },
             }
+
             stmts.inside_wrapper_suffix.clearRetainingCapacity();
         }
 
@@ -9890,12 +9974,13 @@ const LinkerContext = struct {
             }
 
             const records = this.import_records[source_index].slice();
-            const kind = this.entry_point_kinds[source_index];
             for (this.export_star_records[source_index]) |id| {
                 const record = records[id];
+
                 // This file has dynamic exports if the exported imports are from a file
                 // that either has dynamic exports directly or transitively by itself
                 // having an export star from a file with dynamic exports.
+                const kind = this.entry_point_kinds[source_index];
                 if ((record.source_index.isInvalid() and (!kind.isEntryPoint() or !this.output_format.keepES6ImportExportSyntax())) or
                     (record.source_index.isValid() and record.source_index.get() != source_index and this.hasDynamicExportsDueToExportStar(record.source_index.get())))
                 {
@@ -9908,6 +9993,10 @@ const LinkerContext = struct {
         }
 
         pub fn wrap(this: *DependencyWrapper, source_index: Index.Int) void {
+            var flags = this.flags[source_index];
+
+            if (flags.did_wrap_dependencies) return;
+            flags.did_wrap_dependencies = true;
 
             // Never wrap the runtime file since it always comes first
             if (source_index == Index.runtime.get()) {
@@ -9915,10 +10004,6 @@ const LinkerContext = struct {
             }
 
             this.flags[source_index] = brk: {
-                var flags = this.flags[source_index];
-
-                if (flags.did_wrap_dependencies) return;
-                flags.did_wrap_dependencies = true;
 
                 // This module must be wrapped
                 if (flags.wrap == .none) {
@@ -10447,6 +10532,7 @@ pub const CrossChunkImport = struct {
             list.* = result;
         }
 
+        result.clearRetainingCapacity();
         try result.ensureTotalCapacity(imports_from_other_chunks.count());
 
         var import_items_list = imports_from_other_chunks.values();

@@ -9894,12 +9894,14 @@ const LinkerContext = struct {
                 // This file has dynamic exports if the exported imports are from a file
                 // that either has dynamic exports directly or transitively by itself
                 // having an export star from a file with dynamic exports.
-                const kind = this.entry_point_kinds[record.source_index.get()];
-                if ((record.source_index.get() >= this.import_records.len and (!kind.isEntryPoint() or !this.output_format.keepES6ImportExportSyntax())) or
-                    (record.source_index.get() < this.import_records.len and record.source_index.get() != source_index and this.hasDynamicExportsDueToExportStar(record.source_index.get())))
-                {
-                    this.exports_kind[source_index] = .esm_with_dynamic_fallback;
-                    return true;
+                if (record.source_index.isValid()) {
+                    const kind = this.entry_point_kinds[record.source_index.get()];
+                    if ((record.source_index.get() >= this.import_records.len and (!kind.isEntryPoint() or !this.output_format.keepES6ImportExportSyntax())) or
+                        (record.source_index.get() < this.import_records.len and record.source_index.get() != source_index and this.hasDynamicExportsDueToExportStar(record.source_index.get())))
+                    {
+                        this.exports_kind[source_index] = .esm_with_dynamic_fallback;
+                        return true;
+                    }
                 }
             }
 

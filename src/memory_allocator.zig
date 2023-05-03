@@ -78,8 +78,9 @@ const CAllocator = struct {
         return CAllocator.malloc_size(ptr);
     }
 
-    fn alloc(_: *anyopaque, len: usize, ptr_align: u8, _: usize) ?[*]u8 {
-        return alignedAlloc(len, ptr_align);
+    fn alloc(_: *anyopaque, len: usize, log2_align: u8, _: usize) ?[*]u8 {
+        const alignment = @as(usize, 1) << @intCast(Allocator.Log2Align, log2_align);
+        return alignedAlloc(len, alignment);
     }
 
     fn resize(_: *anyopaque, buf: []u8, _: u8, new_len: usize, _: usize) bool {

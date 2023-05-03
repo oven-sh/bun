@@ -4248,21 +4248,22 @@ const LinkerContext = struct {
         // parts that declare the export to all parts that use the import. Also
         // generate wrapper parts for wrapped files.
         {
-            const bufPrint = std.fmt.bufPrint;
-            _ = bufPrint;
-            var parts_list: []js_ast.Part.List = this.graph.ast.items(.parts);
-            var wrapper_refs = this.graph.ast.items(.wrapper_ref);
+
             // const needs_export_symbol_from_runtime: []const bool = this.graph.meta.items(.needs_export_symbol_from_runtime);
-            var imports_to_bind_list: []RefImportData = this.graph.meta.items(.imports_to_bind);
+
             var runtime_export_symbol_ref: Ref = Ref.None;
             var entry_point_kinds: []EntryPoint.Kind = this.graph.files.items(.entry_point_kind);
             const flags: []const JSMeta.Flags = this.graph.meta.items(.flags);
-            const exports_kind = this.graph.ast.items(.exports_kind);
-            const exports_refs = this.graph.ast.items(.exports_ref);
-            const module_refs = this.graph.ast.items(.module_ref);
-            const named_imports = this.graph.ast.items(.named_imports);
-            const import_records_list = this.graph.ast.items(.import_records);
-            const export_star_import_records = this.graph.ast.items(.export_star_import_records);
+            var ast_fields = this.graph.ast.slice();
+
+            var wrapper_refs = ast_fields.items(.wrapper_ref);
+            const exports_kind = ast_fields.items(.exports_kind);
+            const exports_refs = ast_fields.items(.exports_ref);
+            const module_refs = ast_fields.items(.module_ref);
+            const named_imports = ast_fields.items(.named_imports);
+            const import_records_list = ast_fields.items(.import_records);
+            const export_star_import_records = ast_fields.items(.export_star_import_records);
+            const force_cjs_to_esm = ast_fields.items(.force_cjs_to_esm);
             for (reachable) |source_index_| {
                 const source_index = source_index_.get();
                 const id = source_index;
@@ -4382,24 +4383,22 @@ const LinkerContext = struct {
                         Index.runtime,
                     ) catch unreachable;
                 }
+                var imports_to_bind_list: []RefImportData = this.graph.meta.items(.imports_to_bind);
+                var parts_list: []js_ast.Part.List = ast_fields.items(.parts);
 
                 var imports_to_bind = &imports_to_bind_list[id];
-
                 var parts: []js_ast.Part = parts_list[id].slice();
-                var needs_reindex = false;
-                _ = needs_reindex;
 
                 for (0..imports_to_bind.count()) |i| {
                     const ref = imports_to_bind.keys()[i];
                     const import = imports_to_bind.values()[i];
 
                     const import_source_index = import.data.source_index.get();
-                    const import_id = import_source_index;
 
                     if (named_imports[id].get(ref)) |named_import| {
                         for (named_import.local_parts_with_uses.slice()) |part_index| {
                             var part: *js_ast.Part = &parts[part_index];
-                            const parts_declaring_symbol: []u32 = this.graph.topLevelSymbolToParts(import_id, import.data.import_ref);
+                            const parts_declaring_symbol: []const u32 = this.graph.topLevelSymbolToParts(import_source_index, ref);
 
                             const total_len = parts_declaring_symbol.len + @as(usize, import.re_exports.len) + @as(usize, part.dependencies.len);
                             if (part.dependencies.cap < total_len) {
@@ -4585,7 +4584,7 @@ const LinkerContext = struct {
                             // This must be done for "require()" and "import()" expressions
                             // but does not need to be done for "import" statements since
                             // those just cause us to reference the exports directly.
-                            if (other_flags.wrap == .esm and record.kind != .stmt) {
+                            if (other_flags.wrap == .esm and kind != .stmt) {
                                 this.graph.generateSymbolImportAndUse(
                                     source_index,
                                     @intCast(u32, part_index),
@@ -4603,12 +4602,12 @@ const LinkerContext = struct {
                                 // code should see "__esModule". This is an extremely complex
                                 // and subtle set of bundler interop issues. See for example
                                 // https://github.com/evanw/esbuild/issues/1591.
-                                if (record.kind == .require) {
+                                if (kind == .require) {
                                     record.wrap_with_to_commonjs = true;
                                     to_common_js_uses += 1;
                                 }
                             }
-                        } else if (kind == .stmt and other_export_kind == .esm_with_dynamic_fallback) {
+                        } else if (kind == .stmt and other_export_kind.isESMWithDynamicFallback()) {
                             // This is an import of a module that has a dynamic export fallback
                             // object. In that case we need to depend on that object in case
                             // something ends up needing to use it later. This could potentially
@@ -4671,7 +4670,7 @@ const LinkerContext = struct {
                                 happens_at_runtime = true;
                             }
 
-                            if (other_export_kind == .esm_with_dynamic_fallback) {
+                            if (other_export_kind.isESMWithDynamicFallback()) {
                                 // This looks like "__reExport(exports_a, exports_b)". Make sure to
                                 // pull in the "exports_b" symbol into this export star. This matters
                                 // in code splitting situations where the "export_b" symbol might live
@@ -7250,7 +7249,7 @@ const LinkerContext = struct {
 
                             if (record.calls_runtime_re_export_fn) {
                                 const target: Expr = brk: {
-                                    if (c.graph.ast.items(.exports_kind)[source_index] == .esm_with_dynamic_fallback) {
+                                    if (c.graph.ast.items(.exports_kind)[source_index].isESMWithDynamicFallback()) {
                                         // Prefix this module with "__reExport(exports, otherExports, module.exports)"
                                         break :brk Expr.initIdentifier(c.graph.ast.items(.exports_ref)[source_index], stmt.loc);
                                     }
@@ -9500,7 +9499,7 @@ const LinkerContext = struct {
 
         // Is this a file with dynamic exports?
         const is_commonjs_to_esm = force_cjs_to_esm[other_id];
-        if (other_kind == .esm_with_dynamic_fallback or is_commonjs_to_esm) {
+        if (other_kind.isESMWithDynamicFallback() or is_commonjs_to_esm) {
             return .{
                 .value = .{
                     .source_index = Index.source(other_source_index),

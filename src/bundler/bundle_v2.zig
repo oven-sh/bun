@@ -10233,6 +10233,7 @@ pub const Chunk = struct {
 
                     const buffer = brk: {
                         if (comptime FeatureFlags.source_map_debug_id) {
+                            // This comment must go before the //# sourceMappingURL comment
                             const debug_id_fmt = std.fmt.allocPrint(
                                 graph.allocator,
                                 "\n//# debugId={}\n",

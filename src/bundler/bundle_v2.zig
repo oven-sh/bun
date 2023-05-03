@@ -8465,10 +8465,15 @@ const LinkerContext = struct {
 
         const code_allocator = max_heap_allocator.init(bun.default_allocator);
 
-        var max_heap_allocator_sourcemap: bun.MaxHeapAllocator = undefined;
-        defer max_heap_allocator_sourcemap.deinit();
+        var max_heap_allocator_source_map: bun.MaxHeapAllocator = undefined;
+        defer max_heap_allocator_source_map.deinit();
 
-        const sourcemap_allocator = max_heap_allocator_sourcemap.init(bun.default_allocator);
+        const source_map_allocator = max_heap_allocator_source_map.init(bun.default_allocator);
+
+        var max_heap_allocator_inline_source_map: bun.MaxHeapAllocator = undefined;
+        defer max_heap_allocator_inline_source_map.deinit();
+
+        const code_with_inline_source_map_allocator = max_heap_allocator_inline_source_map.init(bun.default_allocator);
 
         var pathbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
@@ -8513,7 +8518,7 @@ const LinkerContext = struct {
 
             switch (c.options.source_maps) {
                 .external => {
-                    var output_source_map = chunk.output_source_map.finalize(sourcemap_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
+                    var output_source_map = chunk.output_source_map.finalize(source_map_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
                     const source_map_final_rel_path = strings.concat(default_allocator, &.{
                         chunk.final_rel_path,
                         ".map",
@@ -8561,12 +8566,12 @@ const LinkerContext = struct {
                     });
                 },
                 .@"inline" => {
-                    var output_source_map = chunk.output_source_map.finalize(default_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
+                    var output_source_map = chunk.output_source_map.finalize(source_map_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
                     const encode_len = base64.encodeLen(output_source_map);
 
                     const source_map_start = "//# sourceMappingURL=data:application/json;base64,";
                     const total_len = code_result.buffer.len + source_map_start.len + encode_len + 1;
-                    var buf = std.ArrayList(u8).initCapacity(default_allocator, total_len) catch @panic("Failed to allocate memory for output file with inline source map");
+                    var buf = std.ArrayList(u8).initCapacity(code_with_inline_source_map_allocator, total_len) catch @panic("Failed to allocate memory for output file with inline source map");
 
                     buf.appendSliceAssumeCapacity(code_result.buffer);
                     buf.appendSliceAssumeCapacity(source_map_start);
@@ -10224,17 +10229,24 @@ pub const Chunk = struct {
                     // TODO: make this safe
                     var joiny = joiner_;
 
-                    // if (comptime FeatureFlags.source_map_debug_id) {
-                    //     // This comment must go before the //# sourceMappingURL comment
-                    //     joiny.push(std.fmt.allocPrint(
-                    //         graph.allocator,
-                    //         "\n//# debugId={}\n",
-                    //         .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }},
-                    //     ) catch unreachable);
-                    // }
+                    const allocator = allocator_to_use orelse allocatorForSize(joiny.len);
+
+                    const buffer = brk: {
+                        if (comptime FeatureFlags.source_map_debug_id) {
+                            const debug_id_fmt = std.fmt.allocPrint(
+                                graph.allocator,
+                                "\n//# debugId={}\n",
+                                .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }},
+                            ) catch unreachable;
+
+                            break :brk try joiny.doneWithEnd(allocator, debug_id_fmt);
+                        }
+
+                        break :brk try joiny.done(allocator);
+                    };
 
                     return .{
-                        .buffer = try joiny.done((allocator_to_use orelse allocatorForSize(joiny.len))),
+                        .buffer = buffer,
                         .shifts = &[_]sourcemap.SourceMapShifts{},
                     };
                 },

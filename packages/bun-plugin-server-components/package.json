@@ -1,5 +1,5 @@
 {
-  "name": "bun-plugin-yaml",
+  "name": "bun-plugin-server-components",
   "version": "0.0.1",
   "module": "index.ts",
   "type": "module",
@@ -20,10 +20,10 @@
     "modules.d.ts"
   ],
   "devDependencies": {
-    "@types/js-yaml": "^4.0.5",
-    "bun-types": "canary"
+    "@types/js-yaml": "^4.0.5"
   },
   "dependencies": {
+    "bun-types": "canary",
     "js-yaml": "^4.1.0"
   }
 }

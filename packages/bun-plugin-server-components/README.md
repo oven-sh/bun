@@ -1,11 +1,11 @@
-# `bun-plugin-yaml`
+# `bun-plugin-server-components`
 
-The official YAML plugin for Bun. Adds support for `.yml`/`.yaml` imports.
+The official Bun plugin for **server components**.
 
 ## Installation
 
 ```sh
-bun add bun-plugin-yaml -d
+bun add bun-plugin-server-components -d
 ```
 
 ## Bundler usage

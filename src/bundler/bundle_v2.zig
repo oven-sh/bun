@@ -611,7 +611,7 @@ pub const BundleV2 = struct {
 
         const loader = this.bundler.options.loaders.get(path.name.ext) orelse .file;
 
-        var entry = try this.graph.path_to_source_index_map.getOrPut(this.graph.allocator, hash orelse wyhash(0, path.text));
+        var entry = try this.graph.path_to_source_index_map.getOrPut(this.graph.allocator, hash orelse path.hashKey());
         if (entry.found_existing) {
             return null;
         }
@@ -1676,14 +1676,14 @@ pub const BundleV2 = struct {
                 }
 
                 for (import_records.slice(), 0..) |*record, i| {
-                    if (graph.path_to_source_index_map.get(wyhash(0, record.path.text))) |source_index| {
+                    if (graph.path_to_source_index_map.get(record.path.hashKey())) |source_index| {
                         record.source_index.value = source_index;
 
                         if (result.ast.redirect_import_record_index) |compare| {
                             if (compare == @truncate(u32, i)) {
                                 graph.path_to_source_index_map.put(
                                     graph.allocator,
-                                    bun.hash(result.source.path.text),
+                                    result.source.path.hashKey(),
                                     source_index,
                                 ) catch unreachable;
                             }
@@ -2220,7 +2220,7 @@ pub const ParseTask = struct {
                 continue;
             }
 
-            var resolve_entry = try resolve_queue.getOrPut(wyhash(0, path.text));
+            var resolve_entry = try resolve_queue.getOrPut(path.hashKey());
             if (resolve_entry.found_existing) {
                 import_record.path = resolve_entry.value_ptr.*.path;
 

@@ -9889,15 +9889,13 @@ const LinkerContext = struct {
                 return false;
             }
 
-            const records: []const ImportRecord = this.import_records[source_index].slice();
-            for (records) |record| {
-                // This file has dynamic exports if the exported imports are from a file
-                // that either has dynamic exports directly or transitively by itself
-                // having an export star from a file with dynamic exports.
+            const records = this.import_records[source_index].slice();
+            for (this.export_star_records[source_index]) |id| {
+                const record = records[id];
                 if (record.source_index.isValid()) {
                     const kind = this.entry_point_kinds[record.source_index.get()];
-                    if ((record.source_index.get() >= this.import_records.len and (!kind.isEntryPoint() or !this.output_format.keepES6ImportExportSyntax())) or
-                        (record.source_index.get() < this.import_records.len and record.source_index.get() != source_index and this.hasDynamicExportsDueToExportStar(record.source_index.get())))
+                    if ((record.source_index.isInvalid() and (!kind.isEntryPoint() or !this.output_format.keepES6ImportExportSyntax())) or
+                        (record.source_index.isValid() and record.source_index.get() != source_index and this.hasDynamicExportsDueToExportStar(record.source_index.get())))
                     {
                         this.exports_kind[source_index] = .esm_with_dynamic_fallback;
                         return true;

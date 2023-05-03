@@ -6,6 +6,8 @@
     "module": "esnext",
     "target": "esnext",
     "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "allowImportingTsExtensions": true,
     "strict": true,
     "downlevelIteration": true,
     "skipLibCheck": true,
@@ -16,5 +18,9 @@
     "types": [
       "bun-types" // add Bun global
     ]
-  }
+  },
+  "include": [
+    "**/*.ts",
+    "modules.d.ts"
+  ]
 }

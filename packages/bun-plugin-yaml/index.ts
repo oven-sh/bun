@@ -2,7 +2,7 @@ import { BunPlugin } from "bun";
 import { readFileSync } from "fs";
 import { load } from "js-yaml";
 
-export function YamlPlugin(): BunPlugin {
+function YamlPlugin(): BunPlugin {
   return {
     name: "bun-plugin-yaml",
     setup(builder) {
@@ -17,3 +17,5 @@ export function YamlPlugin(): BunPlugin {
     },
   };
 }
+
+export default YamlPlugin;

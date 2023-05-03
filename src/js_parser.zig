@@ -17373,6 +17373,7 @@ fn NewParser_(
                                     .other,
                                     std.fmt.allocPrint(p.allocator, "${any}", .{strings.fmtIdentifier(name)}) catch unreachable,
                                 ) catch unreachable;
+                                p.module_scope.generated.push(p.allocator, new_ref) catch unreachable;
                                 named_export_entry.value_ptr.* = .{
                                     .loc_ref = LocRef{
                                         .loc = name_loc,
@@ -17931,7 +17932,11 @@ fn NewParser_(
                                                 .binding = p.b(B.Identifier{ .ref = ref }, bin.left.loc),
                                                 .value = bin.right,
                                             };
-                                            p.recordDeclaredSymbol(ref) catch unreachable;
+                                            // we have to ensure these are known to be top-level
+                                            p.declared_symbols.append(p.allocator, .{
+                                                .ref = ref,
+                                                .is_top_level = true,
+                                            }) catch unreachable;
                                             p.esm_export_keyword.loc = stmt.loc;
                                             p.esm_export_keyword.len = 5;
                                             p.had_commonjs_named_exports_this_visit = true;

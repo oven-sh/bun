@@ -3991,7 +3991,7 @@ const LinkerContext = struct {
                         {
                             if (other_kind == .esm) {
                                 flags[other_file].wrap = .esm;
-                            } else {
+                            } else if (!force_cjs_to_esm[other_file]) {
                                 flags[other_file].wrap = .cjs;
                                 exports_kind[other_file] = .cjs;
                             }
@@ -4002,8 +4002,7 @@ const LinkerContext = struct {
                                 // returns a promise, so the imported file must be a CommonJS module
                                 if (exports_kind[other_file] == .esm) {
                                     flags[other_file].wrap = .esm;
-                                } else {
-                                    // even if force_cjs_to_esm[other_file]) is true, we need to wrap
+                                } else if (!force_cjs_to_esm[other_file]) {
                                     flags[other_file].wrap = .cjs;
                                     exports_kind[other_file] = .cjs;
                                 }
@@ -6041,7 +6040,7 @@ const LinkerContext = struct {
 
         // Generate the exports for the entry point, if there are any
         const entry_point_tail = brk: {
-            if (chunk.isEntryPoint() or c.graph.meta.items(.flags)[chunk.entry_point.source_index].needs_synthetic_default_export) {
+            if (chunk.isEntryPoint()) {
                 break :brk c.generateEntryPointTailJS(
                     toCommonJSRef,
                     toESMRef,

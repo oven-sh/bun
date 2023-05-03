@@ -2861,10 +2861,7 @@ const LinkerGraph = struct {
         // Pull in all parts that declare this symbol
         var dependencies = &part.dependencies;
         const part_ids = g.topLevelSymbolToParts(source_index_to_import_from.get(), ref);
-        try dependencies.ensureUnusedCapacity(g.allocator, part_ids.len);
-        const old_len = dependencies.len;
-        dependencies.len += @truncate(u32, part_ids.len);
-        var new_dependencies = dependencies.slice()[old_len..];
+        var new_dependencies = try dependencies.writableSlice(g.allocator, part_ids.len);
         for (part_ids, new_dependencies) |part_id, *dependency| {
             dependency.* = .{
                 .source_index = source_index_to_import_from,

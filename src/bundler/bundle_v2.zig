@@ -409,6 +409,10 @@ pub const BundleV2 = struct {
         };
         defer visitor.visited.deinit();
 
+        // If we don't include the runtime, __toESM or __toCommonJS will not get
+        // imported and weird things will happen
+        visitor.visit(Index.runtime, false, false);
+
         switch (this.bundler.options.code_splitting) {
             inline else => |check_dynamic_imports| {
                 for (this.graph.entry_points.items) |entry_point| {

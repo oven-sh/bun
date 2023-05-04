@@ -9110,8 +9110,8 @@ fn NewParser_(
                     const body_loc = p.lexer.loc();
                     try p.lexer.expect(.t_open_brace);
                     _ = try p.pushScopeForParsePass(.block, loc);
-                    var stmtOpts = ParseStatementOptions{};
-                    const body = try p.parseStmtsUpTo(.t_close_brace, &stmtOpts);
+                    var stmt_opts = ParseStatementOptions{};
+                    const body = try p.parseStmtsUpTo(.t_close_brace, &stmt_opts);
                     p.popScope();
                     try p.lexer.next();
 
@@ -9146,19 +9146,22 @@ fn NewParser_(
                                 },
                                 else => {},
                             }
-                            stmtOpts = ParseStatementOptions{};
-                            try p.declareBinding(kind, &value, &stmtOpts);
+                            try p.declareBinding(kind, &value, &stmt_opts);
                             binding = value;
                         }
 
+                        const catch_body_loc = p.lexer.loc();
                         try p.lexer.expect(.t_open_brace);
-                        stmtOpts = ParseStatementOptions{};
-                        const stmts = try p.parseStmtsUpTo(.t_close_brace, &stmtOpts);
+
+                        _ = try p.pushScopeForParsePass(.block, catch_body_loc);
+                        const stmts = try p.parseStmtsUpTo(.t_close_brace, &stmt_opts);
+                        p.popScope();
                         try p.lexer.next();
                         catch_ = js_ast.Catch{
                             .loc = catch_loc,
                             .binding = binding,
                             .body = stmts,
+                            .body_loc = catch_body_loc,
                         };
                         p.popScope();
                     }
@@ -9168,8 +9171,7 @@ fn NewParser_(
                         _ = try p.pushScopeForParsePass(.block, finally_loc);
                         try p.lexer.expect(.t_finally);
                         try p.lexer.expect(.t_open_brace);
-                        stmtOpts = ParseStatementOptions{};
-                        const stmts = try p.parseStmtsUpTo(.t_close_brace, &stmtOpts);
+                        const stmts = try p.parseStmtsUpTo(.t_close_brace, &stmt_opts);
                         try p.lexer.next();
                         finally = js_ast.Finally{ .loc = finally_loc, .stmts = stmts };
                         p.popScope();
@@ -18228,11 +18230,13 @@ fn NewParser_(
                     if (data.catch_) |*catch_| {
                         p.pushScopeForVisitPass(.block, catch_.loc) catch unreachable;
                         {
-                            if (catch_.binding != null) {
-                                p.visitBinding(catch_.binding.?, null);
+                            if (catch_.binding) |catch_binding| {
+                                p.visitBinding(catch_binding, null);
                             }
                             var _stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, catch_.body);
+                            p.pushScopeForVisitPass(.block, catch_.body_loc) catch unreachable;
                             p.visitStmts(&_stmts, StmtsKind.none) catch unreachable;
+                            p.popScope();
                             catch_.body = _stmts.items;
                         }
                         p.popScope();

@@ -1,0 +1,552 @@
+// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`runTests() can run all tests 1`] = `
+{
+  "exitCode": 0,
+  "files": [
+    {
+      "file": "path/to/example4.test.ts",
+      "status": "skip",
+      "summary": {
+        "duration": 0,
+        "fail": 0,
+        "files": 1,
+        "pass": 0,
+        "skip": 1,
+        "tests": 0,
+      },
+      "tests": [
+        {
+          "name": "this should skip",
+          "status": "skip",
+        },
+      ],
+    },
+  ],
+  "info": {
+    "arch": undefined,
+    "name": "bun test",
+    "os": undefined,
+    "revision": "",
+    "version": "",
+  },
+  "stderr": "",
+  "stdout": "",
+  "summary": {
+    "duration": 0,
+    "fail": 0,
+    "files": 1,
+    "pass": 0,
+    "skip": 1,
+    "tests": 0,
+  },
+}
+`;
+
+exports[`runTests() can run all tests 2`] = `
+{
+  "exitCode": 0,
+  "files": [
+    {
+      "file": "example2.spec.js",
+      "status": "pass",
+      "summary": {
+        "duration": 0,
+        "fail": 0,
+        "files": 1,
+        "pass": 1,
+        "skip": 0,
+        "tests": 1,
+      },
+      "tests": [
+        {
+          "name": "this should pass",
+          "status": "pass",
+        },
+      ],
+    },
+  ],
+  "info": {
+    "arch": undefined,
+    "name": "bun test",
+    "os": undefined,
+    "revision": "",
+    "version": "",
+  },
+  "stderr": "",
+  "stdout": "",
+  "summary": {
+    "duration": 0,
+    "fail": 0,
+    "files": 1,
+    "pass": 1,
+    "skip": 0,
+    "tests": 1,
+  },
+}
+`;
+
+exports[`runTests() can run all tests 3`] = `
+{
+  "exitCode": 1,
+  "files": [
+    {
+      "file": "example3.test.mjs",
+      "status": "fail",
+      "summary": {
+        "duration": 0,
+        "fail": 1,
+        "files": 1,
+        "pass": 0,
+        "skip": 0,
+        "tests": 1,
+      },
+      "tests": [
+        {
+          "errors": [
+            {
+              "message": "expect(received).toBe(expected)\n\nExpected: false\nReceived: true\n",
+              "name": "Error",
+              "preview": "1 | \n2 |       import { test, expect } from \"bun:test\";\n3 | \n4 |       test(\"this should fail\", () => {\n5 |         expect(true).toBe(false);\n            ^",
+              "stack": [
+                {
+                  "column": 8,
+                  "file": "example3.test.mjs",
+                  "function": undefined,
+                  "line": 5,
+                },
+              ],
+            },
+          ],
+          "name": "this should fail",
+          "status": "fail",
+        },
+      ],
+    },
+  ],
+  "info": {
+    "arch": undefined,
+    "name": "bun test",
+    "os": undefined,
+    "revision": "",
+    "version": "",
+  },
+  "stderr": "",
+  "stdout": "",
+  "summary": {
+    "duration": 0,
+    "fail": 1,
+    "files": 1,
+    "pass": 0,
+    "skip": 0,
+    "tests": 1,
+  },
+}
+`;
+
+exports[`runTests() can run all tests 4`] = `
+{
+  "exitCode": 0,
+  "files": [
+    {
+      "file": "example1.test.ts",
+      "status": "pass",
+      "summary": {
+        "duration": 0,
+        "fail": 0,
+        "files": 1,
+        "pass": 0,
+        "skip": 0,
+        "tests": 0,
+      },
+      "tests": [],
+    },
+  ],
+  "info": {
+    "arch": undefined,
+    "name": "bun test",
+    "os": undefined,
+    "revision": "",
+    "version": "",
+  },
+  "stderr": "",
+  "stdout": "",
+  "summary": {
+    "duration": 0,
+    "fail": 0,
+    "files": 1,
+    "pass": 0,
+    "skip": 0,
+    "tests": 0,
+  },
+}
+`;
+
+exports[`runTests() can run all tests 5`] = `
+{
+  "files": [
+    {
+      "file": "path/to/example4.test.ts",
+      "status": "skip",
+      "summary": {
+        "duration": 0,
+        "fail": 0,
+        "files": 1,
+        "pass": 0,
+        "skip": 1,
+        "tests": 0,
+      },
+      "tests": [
+        {
+          "name": "this should skip",
+          "status": "skip",
+        },
+      ],
+    },
+    {
+      "file": "example2.spec.js",
+      "status": "pass",
+      "summary": {
+        "duration": 0,
+        "fail": 0,
+        "files": 1,
+        "pass": 1,
+        "skip": 0,
+        "tests": 1,
+      },
+      "tests": [
+        {
+          "name": "this should pass",
+          "status": "pass",
+        },
+      ],
+    },
+    {
+      "file": "example3.test.mjs",
+      "status": "fail",
+      "summary": {
+        "duration": 0,
+        "fail": 1,
+        "files": 1,
+        "pass": 0,
+        "skip": 0,
+        "tests": 1,
+      },
+      "tests": [
+        {
+          "errors": [
+            {
+              "message": "expect(received).toBe(expected)\n\nExpected: false\nReceived: true\n",
+              "name": "Error",
+              "preview": "1 | \n2 |       import { test, expect } from \"bun:test\";\n3 | \n4 |       test(\"this should fail\", () => {\n5 |         expect(true).toBe(false);\n            ^",
+              "stack": [
+                {
+                  "column": 8,
+                  "file": "example3.test.mjs",
+                  "function": undefined,
+                  "line": 5,
+                },
+              ],
+            },
+          ],
+          "name": "this should fail",
+          "status": "fail",
+        },
+      ],
+    },
+    {
+      "file": "example1.test.ts",
+      "status": "pass",
+      "summary": {
+        "duration": 0,
+        "fail": 0,
+        "files": 1,
+        "pass": 0,
+        "skip": 0,
+        "tests": 0,
+      },
+      "tests": [],
+    },
+  ],
+  "info": {
+    "arch": undefined,
+    "name": "bun test",
+    "os": undefined,
+    "revision": "",
+    "version": "",
+  },
+  "summary": {
+    "duration": 0,
+    "fail": 1,
+    "files": 4,
+    "pass": 1,
+    "skip": 1,
+    "tests": 2,
+  },
+}
+`;
+
+exports[`runTest() can run a test 1`] = `
+{
+  "exitCode": 0,
+  "files": [
+    {
+      "file": "example2.test.ts",
+      "status": "pass",
+      "summary": {
+        "duration": 0,
+        "fail": 0,
+        "files": 1,
+        "pass": 1,
+        "skip": 0,
+        "tests": 1,
+      },
+      "tests": [
+        {
+          "name": "this should pass",
+          "status": "pass",
+        },
+      ],
+    },
+  ],
+  "info": {
+    "arch": undefined,
+    "name": "bun test",
+    "os": undefined,
+    "revision": "",
+    "version": "",
+  },
+  "stderr": "",
+  "stdout": "",
+  "summary": {
+    "duration": 0,
+    "fail": 0,
+    "files": 1,
+    "pass": 1,
+    "skip": 0,
+    "tests": 1,
+  },
+}
+`;
+
+exports[`runTest() can run a test with a symlink 1`] = `
+{
+  "exitCode": 1,
+  "files": [
+    {
+      "file": "example1.ts",
+      "status": "fail",
+      "summary": {
+        "duration": 0,
+        "fail": 1,
+        "files": 1,
+        "pass": 1,
+        "skip": 1,
+        "tests": 2,
+      },
+      "tests": [
+        {
+          "name": "this should pass",
+          "status": "pass",
+        },
+        {
+          "errors": [
+            {
+              "message": "expect(received).toBe(expected)\n\nExpected: false\nReceived: true\n",
+              "name": "Error",
+              "preview": "4 |       test(\"this should pass\", () => {\n5 |         expect(true).toBe(true);\n6 |       });\n7 | \n8 |       test(\"this should fail\", () => {\n9 |         expect(true).toBe(false);\n            ^",
+              "stack": [
+                {
+                  "column": 8,
+                  "file": "example1.ts",
+                  "function": undefined,
+                  "line": 9,
+                },
+              ],
+            },
+          ],
+          "name": "this should fail",
+          "status": "fail",
+        },
+        {
+          "name": "this should skip",
+          "status": "skip",
+        },
+      ],
+    },
+  ],
+  "info": {
+    "arch": undefined,
+    "name": "bun test",
+    "os": undefined,
+    "revision": "",
+    "version": "",
+  },
+  "stderr": "",
+  "stdout": "",
+  "summary": {
+    "duration": 0,
+    "fail": 1,
+    "files": 1,
+    "pass": 1,
+    "skip": 1,
+    "tests": 2,
+  },
+}
+`;
+
+exports[`runTest() can run a test with a preload 1`] = `
+{
+  "exitCode": 0,
+  "files": [
+    {
+      "file": "preload.test.ts",
+      "status": "pass",
+      "summary": {
+        "duration": 0,
+        "fail": 0,
+        "files": 1,
+        "pass": 1,
+        "skip": 0,
+        "tests": 1,
+      },
+      "tests": [
+        {
+          "name": "test should have preloaded",
+          "status": "pass",
+        },
+      ],
+    },
+  ],
+  "info": {
+    "arch": undefined,
+    "name": "bun test",
+    "os": undefined,
+    "revision": "",
+    "version": "",
+  },
+  "stderr": "",
+  "stdout": "",
+  "summary": {
+    "duration": 0,
+    "fail": 0,
+    "files": 1,
+    "pass": 1,
+    "skip": 0,
+    "tests": 1,
+  },
+}
+`;
+
+exports[`parseTest() can parse test results 1`] = `
+{
+  "files": [
+    {
+      "file": "example1.test.ts",
+      "status": "fail",
+      "summary": {
+        "duration": 0,
+        "fail": 1,
+        "files": 1,
+        "pass": 1,
+        "skip": 1,
+        "tests": 3,
+      },
+      "tests": [
+        {
+          "name": "this should pass",
+          "status": "pass",
+        },
+        {
+          "errors": [
+            {
+              "message": "expect(received).toBe(expected)\n\nExpected: false\nReceived: true\n",
+              "name": "Error",
+              "preview": "4 |       test(\"this should pass\", () => {\n5 |         expect(true).toBe(true);\n6 |       });\n7 | \n8 |       test(\"this should fail\", () => {\n9 |         expect(true).toBe(false);\n            ^",
+              "stack": [
+                {
+                  "column": 8,
+                  "file": "example1.test.ts",
+                  "function": undefined,
+                  "line": 9,
+                },
+              ],
+            },
+          ],
+          "name": "this should fail",
+          "status": "fail",
+        },
+        {
+          "name": "this should skip",
+          "status": "skip",
+        },
+      ],
+    },
+    {
+      "file": "example3.spec.tsx",
+      "status": "fail",
+      "summary": {
+        "duration": 0,
+        "fail": 1,
+        "files": 1,
+        "pass": 1,
+        "skip": 0,
+        "tests": 2,
+      },
+      "tests": [
+        {
+          "name": "tests > this should pass",
+          "status": "pass",
+        },
+        {
+          "errors": [
+            {
+              "message": "Oops!",
+              "name": "TypeError",
+              "preview": "10 |               throw new TypeError(\"Oops!\");\n                        ^",
+              "stack": [
+                {
+                  "column": 20,
+                  "file": "path/to/example3.spec.tsx",
+                  "function": undefined,
+                  "line": 10,
+                },
+              ],
+            },
+          ],
+          "name": "tests > this should fail",
+          "status": "fail",
+        },
+      ],
+    },
+    {
+      "file": "example2.test.js",
+      "status": "pass",
+      "summary": {
+        "duration": 0,
+        "fail": 0,
+        "files": 1,
+        "pass": 0,
+        "skip": 0,
+        "tests": 0,
+      },
+      "tests": [],
+    },
+  ],
+  "info": {
+    "arch": undefined,
+    "name": "bun test",
+    "os": undefined,
+    "revision": "",
+    "version": "",
+  },
+  "summary": {
+    "duration": 0,
+    "fail": 2,
+    "files": 3,
+    "pass": 2,
+    "skip": 1,
+    "tests": 4,
+  },
+}
+`;

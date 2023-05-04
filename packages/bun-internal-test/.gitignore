@@ -2,3 +2,4 @@
 .env
 node_modules
 failing-tests.txt
+packages/

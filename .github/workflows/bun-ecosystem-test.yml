@@ -35,9 +35,9 @@ jobs:
     steps:
       - id: checkout
         name: Checkout
-        uses: actions/checkout@v3
+        uses: Bhacaz/checkout-files@v2
         with:
-          submodules: false
+          files: packages/bun-internal-test
       - id: setup
         name: Setup
         uses: oven-sh/setup-bun@v1

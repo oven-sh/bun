@@ -161,7 +161,7 @@ function gitClone(pkg: Package): string {
   const { name, repository } = pkg;
   const path = resolve(`packages/${name}`);
   if (!existsSync(path)) {
-    const url = `git@github.com:${repository.github}.git`;
+    const url = `https://github.com:${repository.github}.git`;
     spawnSync("git", [
       "clone",
       "--single-branch",

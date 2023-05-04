@@ -1254,6 +1254,15 @@ export class ClientRequest extends OutgoingMessage {
   setSocketKeepAlive(enable = true, initialDelay = 0) {
     __DEBUG__ && debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setSocketKeepAlive is a no-op");
   }
+
+  setNoDelay(noDelay = true) {
+    __DEBUG__ && debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setNoDelay is a no-op");
+  }
+
+  setTimeout(timeout, callback) {
+    __DEBUG__ && debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setTimeout is a no-op");
+    return this;
+  }
 }
 
 function urlToHttpOptions(url) {

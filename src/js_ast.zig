@@ -5410,6 +5410,7 @@ pub const Catch = struct {
     loc: logger.Loc,
     binding: ?BindingNodeIndex = null,
     body: StmtNodeList,
+    body_loc: logger.Loc,
 };
 
 pub const Finally = struct {

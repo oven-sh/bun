@@ -4,14 +4,22 @@
     "lib": ["ESNext"],
     "module": "ESNext",
     "target": "ESNext",
-    "moduleResolution": "node",
-    "types": ["bun-types"],
-    "esModuleInterop": true,
-    "allowJs": true,
+    "moduleResolution": "bundler",
     "strict": true,
-    "resolveJsonModule": true
-  },
-  "include": [
-    "src"
-  ]
+    "downlevelIteration": true,
+    "skipLibCheck": true,
+    "jsx": "preserve",
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "allowJs": true,
+    "types": ["bun-types"],
+    "baseUrl": ".",
+    "paths": {
+      "packages": ["resources/packages.json"],
+      "qunit": ["runners/qunit/qunit.ts"],
+      "bun-test": ["types/bun-test.d.ts"],
+      "runner": ["runners/bun/runner.ts"],
+      "html": ["scripts/html.ts"]
+    }
+  }
 }

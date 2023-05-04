@@ -1,14 +1,18 @@
 {
   "private": true,
+  "name": "bun-internal-test",
   "type": "module",
-  "dependencies": {
-    "@actions/core": "^1.10.0"
-  },
+  "workspaces": [
+    "runners/bun",
+    "runners/qunit"
+  ],
+  "dependencies": {},
   "devDependencies": {
     "bun-types": "canary",
     "prettier": "^2.8.2"
   },
   "scripts": {
-    "test": "node src/runner.node.mjs"
+    "test": "node src/runner.node.mjs",
+    "test:ecosystem": "bun scripts/run-ecosystem-tests.ts"
   }
 }

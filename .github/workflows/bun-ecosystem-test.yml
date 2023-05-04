@@ -1,4 +1,4 @@
-name: Ecosystem Test
+name: bun-ecosystem-test
 
 on:
   schedule:
@@ -45,4 +45,5 @@ jobs:
           bun-download-url: https://bun.sh/download/${{ github.event.inputs.version }}/${{ matrix.url }}
       - id: test
         name: Test
+        working-directory: packages/bun-internal-test
         run: bun run test:ecosystem

@@ -36,6 +36,11 @@ The following Web APIs are partially or completely supported.
 
 ---
 
+- JSON
+- [`JSON`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/JSON)
+
+---
+
 - Timeouts
 - [`setTimeout`](https://developer.mozilla.org/en-US/docs/Web/API/setTimeout) [`clearTimeout`](https://developer.mozilla.org/en-US/docs/Web/API/clearTimeout)
 

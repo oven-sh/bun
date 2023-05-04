@@ -116,6 +116,7 @@ export interface BundlerTestInput {
   targetFromAPI?: "TargetWasConfigured";
   minifyWhitespace?: boolean;
   splitting?: boolean;
+  serverComponents?: boolean;
   treeShaking?: boolean;
   unsupportedCSSFeatures?: string[];
   unsupportedJSFeatures?: string[];
@@ -285,6 +286,7 @@ function expectBundled(
     matchesReference,
     metafile,
     minifyIdentifiers,
+    serverComponents = false,
     minifySyntax,
     minifyWhitespace,
     mode,
@@ -309,6 +311,10 @@ function expectBundled(
     _referenceFn,
     ...unknownProps
   } = opts;
+
+  if (serverComponents) {
+    splitting = true;
+  }
 
   // TODO: Remove this check once all options have been implemented
   if (Object.keys(unknownProps).length > 0) {
@@ -486,6 +492,7 @@ function expectBundled(
               // `--format=${format}`,
               // legalComments && `--legal-comments=${legalComments}`,
               splitting && `--splitting`,
+              serverComponents && "--server-components",
               // treeShaking === false && `--no-tree-shaking`, // ??
               // outbase && `--outbase=${outbase}`,
               // keepNames && `--keep-names`,

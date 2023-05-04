@@ -71,6 +71,15 @@ pub fn BabyList(comptime Type: type) type {
             std.debug.assert(this.cap >= this.len);
         }
 
+        pub fn writableSlice(this: *@This(), allocator: std.mem.Allocator, cap: usize) ![]Type {
+            var list_ = this.listManaged(allocator);
+            try list_.ensureUnusedCapacity(cap);
+            var writable = list_.items.ptr[this.len .. this.len + @truncate(u32, cap)];
+            list_.items.len += cap;
+            this.update(list_);
+            return writable;
+        }
+
         pub inline fn appendSliceAssumeCapacity(this: *@This(), values: []const Type) void {
             var tail = this.ptr[this.len .. this.len + values.len];
             std.debug.assert(this.cap >= this.len + @truncate(u32, values.len));

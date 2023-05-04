@@ -3130,7 +3130,7 @@ pub const Parser = struct {
                                 },
                                 export_ref.loc_ref.loc,
                             );
-
+                            p.module_scope.generated.push(p.allocator, ref) catch unreachable;
                             var clause_items = p.allocator.alloc(js_ast.ClauseItem, 1) catch unreachable;
                             clause_items[0] = js_ast.ClauseItem{
                                 .alias = alias,
@@ -9110,8 +9110,8 @@ fn NewParser_(
                     const body_loc = p.lexer.loc();
                     try p.lexer.expect(.t_open_brace);
                     _ = try p.pushScopeForParsePass(.block, loc);
-                    var stmtOpts = ParseStatementOptions{};
-                    const body = try p.parseStmtsUpTo(.t_close_brace, &stmtOpts);
+                    var stmt_opts = ParseStatementOptions{};
+                    const body = try p.parseStmtsUpTo(.t_close_brace, &stmt_opts);
                     p.popScope();
                     try p.lexer.next();
 
@@ -9146,19 +9146,22 @@ fn NewParser_(
                                 },
                                 else => {},
                             }
-                            stmtOpts = ParseStatementOptions{};
-                            try p.declareBinding(kind, &value, &stmtOpts);
+                            try p.declareBinding(kind, &value, &stmt_opts);
                             binding = value;
                         }
 
+                        const catch_body_loc = p.lexer.loc();
                         try p.lexer.expect(.t_open_brace);
-                        stmtOpts = ParseStatementOptions{};
-                        const stmts = try p.parseStmtsUpTo(.t_close_brace, &stmtOpts);
+
+                        _ = try p.pushScopeForParsePass(.block, catch_body_loc);
+                        const stmts = try p.parseStmtsUpTo(.t_close_brace, &stmt_opts);
+                        p.popScope();
                         try p.lexer.next();
                         catch_ = js_ast.Catch{
                             .loc = catch_loc,
                             .binding = binding,
                             .body = stmts,
+                            .body_loc = catch_body_loc,
                         };
                         p.popScope();
                     }
@@ -9168,8 +9171,7 @@ fn NewParser_(
                         _ = try p.pushScopeForParsePass(.block, finally_loc);
                         try p.lexer.expect(.t_finally);
                         try p.lexer.expect(.t_open_brace);
-                        stmtOpts = ParseStatementOptions{};
-                        const stmts = try p.parseStmtsUpTo(.t_close_brace, &stmtOpts);
+                        const stmts = try p.parseStmtsUpTo(.t_close_brace, &stmt_opts);
                         try p.lexer.next();
                         finally = js_ast.Finally{ .loc = finally_loc, .stmts = stmts };
                         p.popScope();
@@ -17373,6 +17375,7 @@ fn NewParser_(
                                     .other,
                                     std.fmt.allocPrint(p.allocator, "${any}", .{strings.fmtIdentifier(name)}) catch unreachable,
                                 ) catch unreachable;
+                                p.module_scope.generated.push(p.allocator, new_ref) catch unreachable;
                                 named_export_entry.value_ptr.* = .{
                                     .loc_ref = LocRef{
                                         .loc = name_loc,
@@ -17931,7 +17934,11 @@ fn NewParser_(
                                                 .binding = p.b(B.Identifier{ .ref = ref }, bin.left.loc),
                                                 .value = bin.right,
                                             };
-                                            p.recordDeclaredSymbol(ref) catch unreachable;
+                                            // we have to ensure these are known to be top-level
+                                            p.declared_symbols.append(p.allocator, .{
+                                                .ref = ref,
+                                                .is_top_level = true,
+                                            }) catch unreachable;
                                             p.esm_export_keyword.loc = stmt.loc;
                                             p.esm_export_keyword.len = 5;
                                             p.had_commonjs_named_exports_this_visit = true;
@@ -18223,11 +18230,13 @@ fn NewParser_(
                     if (data.catch_) |*catch_| {
                         p.pushScopeForVisitPass(.block, catch_.loc) catch unreachable;
                         {
-                            if (catch_.binding != null) {
-                                p.visitBinding(catch_.binding.?, null);
+                            if (catch_.binding) |catch_binding| {
+                                p.visitBinding(catch_binding, null);
                             }
                             var _stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, catch_.body);
+                            p.pushScopeForVisitPass(.block, catch_.body_loc) catch unreachable;
                             p.visitStmts(&_stmts, StmtsKind.none) catch unreachable;
+                            p.popScope();
                             catch_.body = _stmts.items;
                         }
                         p.popScope();

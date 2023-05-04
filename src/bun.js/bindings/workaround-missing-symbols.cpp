@@ -187,6 +187,7 @@ extern "C" int __wrap_mknodat(int dirfd, const char* path, __mode_t mode, __dev_
 #if defined(__APPLE__)
 
 #include <dlfcn.h>
+#include <cstdint>
 
 extern "C" int pthread_self_is_exiting_np()
 {
@@ -250,6 +251,29 @@ extern "C" int posix_spawn_file_actions_addfchdir_np(void* ptr,
         return 0;
 
     return ((int (*)(void*, int))posix_spawn_file_actions_addfchdir_np_ptr)(ptr, fd);
+}
+
+extern "C" int __ulock_wait(uint32_t operation, void* addr, uint64_t value,
+    uint32_t timeout_microseconds); /* timeout is specified in microseconds */
+
+// https://github.com/oven-sh/bun/pull/2426#issuecomment-1532343394
+extern "C" int __ulock_wait2(uint32_t operation, void* addr, uint64_t value,
+    uint64_t timeout_ns, uint64_t value2)
+{
+    static void* __ulock_wait2_ptr = nullptr;
+    static bool __ulock_wait2_ptr_initialized = false;
+    if (UNLIKELY(!__ulock_wait2_ptr_initialized)) {
+        __ulock_wait2_ptr_initialized = true;
+        __ulock_wait2_ptr = dlsym(RTLD_DEFAULT, "__ulock_wait2");
+    }
+
+    if (UNLIKELY(__ulock_wait2_ptr == nullptr)) {
+        uint64_t timeout = timeout_ns / 1000;
+        uint32_t timeout_us = static_cast<uint32_t>(timeout > UINT32_MAX ? UINT32_MAX : timeout);
+        return __ulock_wait(operation, addr, value, timeout_us);
+    }
+
+    return ((int (*)(uint32_t, void*, uint64_t, uint64_t, uint64_t))__ulock_wait2_ptr)(operation, addr, value, timeout_ns, value2);
 }
 
 #endif

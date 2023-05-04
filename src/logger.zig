@@ -590,6 +590,10 @@ pub const Range = packed struct {
         return slice[0..@min(@intCast(usize, this.len), buf.len)];
     }
 
+    pub fn contains(this: Range, k: i32) bool {
+        return k >= this.loc.start and k < this.loc.start + this.len;
+    }
+
     pub fn isEmpty(r: *const Range) bool {
         return r.len == 0 and r.loc.start == Loc.Empty.start;
     }

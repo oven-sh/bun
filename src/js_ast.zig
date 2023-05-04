@@ -857,8 +857,8 @@ pub const G = struct {
     };
 
     pub const Fn = struct {
-        name: ?LocRef,
-        open_parens_loc: logger.Loc,
+        name: ?LocRef = null,
+        open_parens_loc: logger.Loc = logger.Loc.Empty,
         args: []Arg = &([_]Arg{}),
         // This was originally nullable, but doing so I believe caused a miscompilation
         // Specifically, the body was always null.
@@ -5410,6 +5410,7 @@ pub const Catch = struct {
     loc: logger.Loc,
     binding: ?BindingNodeIndex = null,
     body: StmtNodeList,
+    body_loc: logger.Loc,
 };
 
 pub const Finally = struct {
@@ -5855,12 +5856,27 @@ pub const ExportsKind = enum {
     // module.
     esm_with_dynamic_fallback_from_cjs,
 
+    const dynamic = std.EnumSet(ExportsKind).init(.{
+        .esm_with_dynamic_fallback = true,
+        .esm_with_dynamic_fallback_from_cjs = true,
+        .cjs = true,
+    });
+
+    const with_dynamic_fallback = std.EnumSet(ExportsKind).init(.{
+        .esm_with_dynamic_fallback = true,
+        .esm_with_dynamic_fallback_from_cjs = true,
+    });
+
     pub fn isDynamic(self: ExportsKind) bool {
-        return self == .esm_with_dynamic_fallback or self == .cjs;
+        return dynamic.contains(self);
     }
 
     pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
         return try std.json.stringify(@tagName(self), opts, o);
+    }
+
+    pub fn isESMWithDynamicFallback(self: ExportsKind) bool {
+        return with_dynamic_fallback.contains(self);
     }
 };
 

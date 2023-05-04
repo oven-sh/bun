@@ -1,6 +1,8 @@
 name: Ecosystem Test
 
 on:
+  schedule:
+    - cron: "0 15 * * *" # every day at 7am PST
   workflow_dispatch:
     inputs:
       version:

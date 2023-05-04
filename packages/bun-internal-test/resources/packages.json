@@ -15,7 +15,7 @@
       "github": "expressjs/express"
     },
     "test": {
-      "runner": "mocha",
+      "runner": "jest",
       "path": "test/"
     }
   },

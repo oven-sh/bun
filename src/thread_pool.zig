@@ -155,6 +155,10 @@ pub const WaitGroup = struct {
         self.counter += 1;
     }
 
+    pub fn isDone(this: *WaitGroup) bool {
+        return @atomicLoad(u32, &this.counter, .Monotonic) == 0;
+    }
+
     pub fn finish(self: *WaitGroup) void {
         self.mutex.lock();
         defer self.mutex.unlock();

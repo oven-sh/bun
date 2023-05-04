@@ -64,6 +64,9 @@ const json_parser = @import("../json_parser.zig");
 const js_printer = @import("../js_printer.zig");
 const js_ast = @import("../js_ast.zig");
 const linker = @import("../linker.zig");
+const sourcemap = bun.sourcemap;
+const Joiner = bun.Joiner;
+const base64 = bun.base64;
 const Ref = @import("../ast/base.zig").Ref;
 const Define = @import("../defines.zig").Define;
 const DebugOptions = @import("../cli.zig").Command.DebugOptions;
@@ -205,6 +208,9 @@ pub const ThreadPool = struct {
 
         deinit_task: ThreadPoolLib.Task = .{ .callback = deinitCallback },
 
+        temporary_arena: std.heap.ArenaAllocator = undefined,
+        stmt_list: LinkerContext.StmtList = undefined,
+
         pub fn deinitCallback(task: *ThreadPoolLib.Task) void {
             debug("Worker.deinit()", .{});
             var this = @fieldParentPtr(Worker, "deinit_task", task);
@@ -282,6 +288,8 @@ pub const ThreadPool = struct {
             this.data.bundler.linker.resolver = &this.data.bundler.resolver;
             this.data.bundler.macro_context = js_ast.Macro.MacroContext.init(&this.data.bundler);
             this.data.macro_context = this.data.bundler.macro_context.?;
+            this.temporary_arena = std.heap.ArenaAllocator.init(this.allocator);
+            this.stmt_list = LinkerContext.StmtList.init(this.allocator);
 
             const CacheSet = @import("../cache.zig");
 
@@ -319,6 +327,7 @@ pub const BundleV2 = struct {
     free_list: std.ArrayList(string) = std.ArrayList(string).init(bun.default_allocator),
 
     unique_key: u64 = 0,
+    dynamic_import_entry_points: std.AutoArrayHashMap(Index.Int, void) = undefined,
 
     const debug = Output.scoped(.Bundle, false);
 
@@ -333,14 +342,21 @@ pub const BundleV2 = struct {
             all_import_records: []ImportRecord.List,
             redirects: []?u32,
             redirect_map: PathToSourceIndexMap,
+            dynamic_import_entry_points: *std.AutoArrayHashMap(Index.Int, void),
 
             // Find all files reachable from all entry points. This order should be
             // deterministic given that the entry point order is deterministic, since the
             // returned order is the postorder of the graph traversal and import record
             // order within a given file is deterministic.
-            pub fn visit(v: *@This(), source_index: Index) void {
+            pub fn visit(v: *@This(), source_index: Index, was_dynamic_import: bool, comptime check_dynamic_imports: bool) void {
                 if (source_index.isInvalid()) return;
+
                 if (v.visited.isSet(source_index.get())) {
+                    if (comptime check_dynamic_imports) {
+                        if (was_dynamic_import) {
+                            v.dynamic_import_entry_points.put(source_index.get(), {}) catch unreachable;
+                        }
+                    }
                     return;
                 }
                 v.visited.set(source_index.get());
@@ -359,22 +375,29 @@ pub const BundleV2 = struct {
                                 import_record.path = other_import_record.path;
                             }
 
-                            v.visit(import_record.source_index);
+                            v.visit(import_record.source_index, check_dynamic_imports and import_record.kind == .dynamic, check_dynamic_imports);
                         }
                     }
 
                     // Redirects replace the source file with another file
                     if (v.redirects[source_index.get()]) |redirect_id| {
                         const redirect_source_index = v.all_import_records[source_index.get()].slice()[redirect_id].source_index.get();
-                        v.visit(Index.source(redirect_source_index));
+                        v.visit(Index.source(redirect_source_index), was_dynamic_import, check_dynamic_imports);
                         return;
                     }
                 }
 
                 // Each file must come after its dependencies
                 v.reachable.append(source_index) catch unreachable;
+                if (comptime check_dynamic_imports) {
+                    if (was_dynamic_import) {
+                        v.dynamic_import_entry_points.put(source_index.get(), {}) catch unreachable;
+                    }
+                }
             }
         };
+
+        this.dynamic_import_entry_points = std.AutoArrayHashMap(Index.Int, void).init(this.graph.allocator);
 
         var visitor = Visitor{
             .reachable = try std.ArrayList(Index).initCapacity(this.graph.allocator, this.graph.entry_points.items.len + 1),
@@ -382,11 +405,20 @@ pub const BundleV2 = struct {
             .redirects = this.graph.ast.items(.redirect_import_record_index),
             .all_import_records = this.graph.ast.items(.import_records),
             .redirect_map = this.graph.path_to_source_index_map,
+            .dynamic_import_entry_points = &this.dynamic_import_entry_points,
         };
         defer visitor.visited.deinit();
 
-        for (this.graph.entry_points.items) |entry_point| {
-            visitor.visit(entry_point);
+        // If we don't include the runtime, __toESM or __toCommonJS will not get
+        // imported and weird things will happen
+        visitor.visit(Index.runtime, false, false);
+
+        switch (this.bundler.options.code_splitting) {
+            inline else => |check_dynamic_imports| {
+                for (this.graph.entry_points.items) |entry_point| {
+                    visitor.visit(entry_point, false, comptime check_dynamic_imports);
+                }
+            },
         }
 
         // if (comptime Environment.allow_assert) {
@@ -579,7 +611,7 @@ pub const BundleV2 = struct {
 
         const loader = this.bundler.options.loaders.get(path.name.ext) orelse .file;
 
-        var entry = try this.graph.path_to_source_index_map.getOrPut(this.graph.allocator, hash orelse wyhash(0, path.text));
+        var entry = try this.graph.path_to_source_index_map.getOrPut(this.graph.allocator, hash orelse path.hashKey());
         if (entry.found_existing) {
             return null;
         }
@@ -656,6 +688,8 @@ pub const BundleV2 = struct {
         generator.bundler.resolver.allocator = generator.graph.allocator;
         generator.bundler.linker.allocator = generator.graph.allocator;
         generator.bundler.log.msgs.allocator = generator.graph.allocator;
+        generator.bundler.log.clone_line_text = true;
+
         generator.linker.resolver = &generator.bundler.resolver;
         generator.linker.graph.code_splitting = bundler.options.code_splitting;
         generator.graph.code_splitting = bundler.options.code_splitting;
@@ -663,6 +697,7 @@ pub const BundleV2 = struct {
         generator.linker.options.minify_syntax = bundler.options.minify_syntax;
         generator.linker.options.minify_identifiers = bundler.options.minify_identifiers;
         generator.linker.options.minify_whitespace = bundler.options.minify_whitespace;
+        generator.linker.options.source_maps = bundler.options.source_map;
 
         var pool = try generator.graph.allocator.create(ThreadPool);
         if (enable_reloading) {
@@ -755,6 +790,226 @@ pub const BundleV2 = struct {
         }
     }
 
+    // For Server Components, we generate an entry point which re-exports all client components
+    // This is a "shadow" of the server entry point.
+    // The client is expected to import this shadow entry point
+    const ShadowEntryPoint = struct {
+        source_code_buffer: MutableString,
+        ctx: *BundleV2,
+        resolved_source_indices: std.ArrayList(Index.Int),
+
+        const ImportsFormatter = struct {
+            ctx: *BundleV2,
+            pretty: string,
+            source_index: Index.Int,
+            pub fn format(self: ImportsFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                var this = self.ctx;
+                const named_exports: js_ast.Ast.NamedExports = this.graph.ast.items(.named_exports)[self.source_index];
+                try writer.writeAll("{");
+                for (named_exports.keys(), 0..) |name, i| {
+                    try writer.writeAll(name);
+                    try writer.writeAll(" as ");
+                    try writer.print(
+                        "${}_{s}",
+                        .{
+                            bun.fmt.hexIntLower(bun.hash(self.pretty)),
+                            name,
+                        },
+                    );
+
+                    if (i < named_exports.count() - 1) {
+                        try writer.writeAll(" , ");
+                    }
+                }
+                try writer.writeAll("}");
+            }
+        };
+
+        const ExportsFormatter = struct {
+            ctx: *BundleV2,
+            pretty: string,
+            source_index: Index.Int,
+            pub fn format(self: ExportsFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                var this = self.ctx;
+                const named_exports: js_ast.Ast.NamedExports = this.graph.ast.items(.named_exports)[self.source_index];
+                try writer.writeAll("{");
+
+                for (named_exports.keys(), 0..) |name, i| {
+                    try writer.print(
+                        "${}_{s}",
+                        .{
+                            bun.fmt.hexIntLower(bun.hash(self.pretty)),
+                            name,
+                        },
+                    );
+
+                    if (i < named_exports.count() - 1) {
+                        try writer.writeAll(" , ");
+                    }
+                }
+                try writer.writeAll("}");
+            }
+        };
+
+        pub fn addClientComponent(
+            this: *ShadowEntryPoint,
+            source_index: usize,
+        ) void {
+            var writer = this.source_code_buffer.writer();
+            const path = this.ctx.graph.input_files.items(.source)[source_index].path;
+            // TODO: tree-shaking to named imports only
+            writer.print(
+                \\// {s}
+                \\import {} from '${d}';
+                \\export {};
+                \\
+            ,
+                .{
+                    path.pretty,
+                    ImportsFormatter{ .ctx = this.ctx, .source_index = @intCast(Index.Int, source_index), .pretty = path.pretty },
+                    bun.fmt.hexIntUpper(bun.hash(path.pretty)),
+                    ExportsFormatter{ .ctx = this.ctx, .source_index = @intCast(Index.Int, source_index), .pretty = path.pretty },
+                },
+            ) catch unreachable;
+            this.resolved_source_indices.append(@truncate(Index.Int, source_index)) catch unreachable;
+        }
+    };
+
+    pub fn enqueueShadowEntryPoints(this: *BundleV2) !void {
+        const allocator = this.graph.allocator;
+
+        // TODO: make this not slow
+        {
+            // process redirects
+            var initial_reachable = try this.findReachableFiles();
+            allocator.free(initial_reachable);
+            this.dynamic_import_entry_points.deinit();
+        }
+
+        var react_client_component_boundary = bun.bit_set.DynamicBitSet.initEmpty(allocator, this.graph.input_files.len) catch unreachable;
+        defer react_client_component_boundary.deinit();
+        var any_client = false;
+
+        // Loop #1: populate the list of files that are react client components
+        for (this.graph.use_directive_entry_points.items(.use_directive), this.graph.use_directive_entry_points.items(.source_index)) |use, source_id| {
+            if (use == .@"use client") {
+                any_client = true;
+                react_client_component_boundary.set(source_id);
+            }
+        }
+
+        this.graph.shadow_entry_point_range.loc.start = -1;
+
+        var visit_queue = std.fifo.LinearFifo(Index.Int, .Dynamic).init(allocator);
+        visit_queue.ensureUnusedCapacity(64) catch unreachable;
+        defer visit_queue.deinit();
+        for (this.graph.entry_points.items) |entry_point_source_index| {
+            var shadow_entry_point = ShadowEntryPoint{
+                .ctx = this,
+                .source_code_buffer = MutableString.initEmpty(allocator),
+                .resolved_source_indices = std.ArrayList(Index.Int).init(allocator),
+            };
+            var all_imported_files = try bun.bit_set.DynamicBitSet.initEmpty(allocator, this.graph.input_files.len);
+            defer all_imported_files.deinit();
+            visit_queue.head = 0;
+            visit_queue.count = 0;
+            const input_path = this.graph.input_files.items(.source)[entry_point_source_index.get()].path;
+
+            {
+                const import_records = this.graph.ast.items(.import_records)[entry_point_source_index.get()];
+                for (import_records.slice()) |import_record| {
+                    if (!import_record.source_index.isValid()) {
+                        continue;
+                    }
+
+                    if (all_imported_files.isSet(import_record.source_index.get())) {
+                        continue;
+                    }
+
+                    all_imported_files.set(import_record.source_index.get());
+
+                    try visit_queue.writeItem(import_record.source_index.get());
+                }
+            }
+
+            while (visit_queue.readItem()) |target_source_index| {
+                const import_records = this.graph.ast.items(.import_records)[target_source_index];
+                for (import_records.slice()) |import_record| {
+                    if (!import_record.source_index.isValid()) {
+                        continue;
+                    }
+
+                    if (all_imported_files.isSet(import_record.source_index.get())) continue;
+                    all_imported_files.set(import_record.source_index.get());
+
+                    try visit_queue.writeItem(import_record.source_index.get());
+                }
+            }
+
+            all_imported_files.setIntersection(react_client_component_boundary);
+            if (all_imported_files.findFirstSet() == null) continue;
+
+            var iter = all_imported_files.iterator(.{});
+            while (iter.next()) |index| {
+                shadow_entry_point.addClientComponent(index);
+            }
+
+            const path = Fs.Path.initWithNamespace(
+                std.fmt.allocPrint(
+                    allocator,
+                    "{s}/{s}.client.js",
+                    .{ input_path.name.dir, input_path.name.base },
+                ) catch unreachable,
+                "client-component",
+            );
+
+            const source_index = Index.init(@intCast(u32, this.graph.ast.len));
+            if (this.graph.shadow_entry_point_range.loc.start < 0) {
+                this.graph.shadow_entry_point_range.loc.start = @intCast(i32, source_index.get());
+            }
+
+            this.graph.ast.append(allocator, js_ast.Ast.empty) catch unreachable;
+            this.graph.input_files.append(allocator, .{
+                .source = .{
+                    .path = path,
+                    .key_path = path,
+                    .contents = shadow_entry_point.source_code_buffer.toOwnedSliceLeaky(),
+                    .index = source_index,
+                },
+                .loader = options.Loader.js,
+                .side_effects = _resolver.SideEffects.has_side_effects,
+            }) catch unreachable;
+
+            var task = bun.default_allocator.create(ParseTask) catch unreachable;
+            task.* = ParseTask{
+                .ctx = this,
+                .path = path,
+                // unknown at this point:
+                .contents_or_fd = .{
+                    .contents = shadow_entry_point.source_code_buffer.toOwnedSliceLeaky(),
+                },
+                .side_effects = _resolver.SideEffects.has_side_effects,
+                .jsx = this.bundler.options.jsx,
+                .source_index = source_index,
+                .module_type = .unknown,
+                .loader = options.Loader.js,
+                .tree_shaking = this.linker.options.tree_shaking,
+                .known_target = options.Target.browser,
+                .presolved_source_indices = shadow_entry_point.resolved_source_indices.items,
+            };
+            task.task.node.next = null;
+            try this.graph.use_directive_entry_points.append(this.graph.allocator, js_ast.UseDirective.EntryPoint{
+                .source_index = source_index.get(),
+                .use_directive = .@"use client",
+            });
+
+            _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .Monotonic);
+            this.graph.entry_points.append(allocator, source_index) catch unreachable;
+            this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&task.task));
+            this.graph.shadow_entry_point_range.len += 1;
+        }
+    }
+
     pub fn generateFromCLI(
         bundler: *ThisBundler,
         allocator: std.mem.Allocator,
@@ -776,6 +1031,15 @@ pub const BundleV2 = struct {
         }
 
         this.waitForParse();
+
+        if (this.graph.use_directive_entry_points.len > 0) {
+            if (this.bundler.log.msgs.items.len > 0) {
+                return error.BuildFailed;
+            }
+
+            try this.enqueueShadowEntryPoints();
+            this.waitForParse();
+        }
 
         if (this.bundler.log.msgs.items.len > 0) {
             return error.BuildFailed;
@@ -1146,7 +1410,7 @@ pub const BundleV2 = struct {
                 var out_source_index: ?Index = null;
                 if (!result.external) {
                     var path = Fs.Path.init(result.path);
-                    if (path.namespace.len == 0 or strings.eqlComptime(path.namespace, "file")) {
+                    if (result.namespace.len == 0 or strings.eqlComptime(result.namespace, "file")) {
                         path.namespace = "file";
                     } else {
                         path.namespace = result.namespace;
@@ -1322,7 +1586,7 @@ pub const BundleV2 = struct {
         bundler.options.minify_whitespace = config.minify.whitespace;
         bundler.options.minify_identifiers = config.minify.identifiers;
         bundler.options.inlining = config.minify.syntax;
-        bundler.options.sourcemap = config.sourcemap;
+        bundler.options.source_map = config.source_map;
 
         try bundler.configureDefines();
         bundler.configureLinker();
@@ -1641,14 +1905,14 @@ pub const BundleV2 = struct {
                 }
 
                 for (import_records.slice(), 0..) |*record, i| {
-                    if (graph.path_to_source_index_map.get(wyhash(0, record.path.text))) |source_index| {
+                    if (graph.path_to_source_index_map.get(record.path.hashKey())) |source_index| {
                         record.source_index.value = source_index;
 
                         if (result.ast.redirect_import_record_index) |compare| {
                             if (compare == @truncate(u32, i)) {
                                 graph.path_to_source_index_map.put(
                                     graph.allocator,
-                                    bun.hash(result.source.path.text),
+                                    result.source.path.hashKey(),
                                     source_index,
                                 ) catch unreachable;
                             }
@@ -1710,6 +1974,9 @@ pub const ParseTask = struct {
     known_target: ?options.Target = null,
     module_type: options.ModuleType = .unknown,
     ctx: *BundleV2,
+
+    /// Used by generated client components
+    presolved_source_indices: []const Index.Int = &.{},
 
     const debug = Output.scoped(.ParseTask, false);
 
@@ -1945,7 +2212,7 @@ pub const ParseTask = struct {
                     switch (err) {
                         error.FileNotFound => {
                             log.addErrorFmt(
-                                &Logger.Source.initEmptyFile(file_path.text),
+                                &Logger.Source.initEmptyFile(log.msgs.allocator.dupe(u8, file_path.text) catch unreachable),
                                 Logger.Loc.Empty,
                                 allocator,
                                 "File not found {}",
@@ -1954,7 +2221,7 @@ pub const ParseTask = struct {
                         },
                         else => {
                             log.addErrorFmt(
-                                &Logger.Source.initEmptyFile(file_path.text),
+                                &Logger.Source.initEmptyFile(log.msgs.allocator.dupe(u8, file_path.text) catch unreachable),
                                 Logger.Loc.Empty,
                                 allocator,
                                 "{s} reading file: {}",
@@ -2039,205 +2306,218 @@ pub const ParseTask = struct {
             task.side_effects = _resolver.SideEffects.no_side_effects__empty_ast;
         }
 
-        var estimated_resolve_queue_count: usize = 0;
-        for (ast.import_records.slice()) |*import_record| {
-            if (import_record.is_internal) {
-                import_record.tag = .runtime;
-                import_record.source_index = Index.runtime;
+        resolution: {
+            if (task.presolved_source_indices.len > 0) {
+                for (ast.import_records.slice(), task.presolved_source_indices) |*record, source_index| {
+                    if (record.is_unused or record.is_internal)
+                        continue;
+
+                    record.source_index = Index.source(source_index);
+                }
+
+                break :resolution;
             }
 
-            if (import_record.is_unused) {
-                import_record.source_index = Index.invalid;
-            }
+            var estimated_resolve_queue_count: usize = 0;
+            for (ast.import_records.slice()) |*import_record| {
+                if (import_record.is_internal) {
+                    import_record.tag = .runtime;
+                    import_record.source_index = Index.runtime;
+                }
 
-            // Don't resolve the runtime
-            if (import_record.is_internal or import_record.is_unused) {
-                continue;
-            }
-            estimated_resolve_queue_count += 1;
-        }
-
-        try resolve_queue.ensureUnusedCapacity(estimated_resolve_queue_count);
-        var last_error: ?anyerror = null;
-
-        for (ast.import_records.slice(), 0..) |*import_record, i| {
-            // Don't resolve the runtime
-            if (import_record.is_unused or import_record.is_internal) {
-                continue;
-            }
-
-            if (target.isBun()) {
-                if (JSC.HardcodedModule.Aliases.get(import_record.path.text)) |replacement| {
-                    import_record.path.text = replacement.path;
-                    import_record.tag = replacement.tag;
+                if (import_record.is_unused) {
                     import_record.source_index = Index.invalid;
+                }
+
+                // Don't resolve the runtime
+                if (import_record.is_internal or import_record.is_unused) {
+                    continue;
+                }
+                estimated_resolve_queue_count += 1;
+            }
+
+            try resolve_queue.ensureUnusedCapacity(estimated_resolve_queue_count);
+            var last_error: ?anyerror = null;
+
+            for (ast.import_records.slice(), 0..) |*import_record, i| {
+                // Don't resolve the runtime
+                if (import_record.is_unused or import_record.is_internal) {
                     continue;
                 }
 
-                if (JSC.DisabledModule.has(import_record.path.text)) {
-                    import_record.path.is_disabled = true;
-                    import_record.do_commonjs_transform_in_printer = true;
-                    import_record.source_index = Index.invalid;
-                    continue;
-                }
+                if (target.isBun()) {
+                    if (JSC.HardcodedModule.Aliases.get(import_record.path.text)) |replacement| {
+                        import_record.path.text = replacement.path;
+                        import_record.tag = replacement.tag;
+                        import_record.source_index = Index.invalid;
+                        continue;
+                    }
 
-                if (bundler.options.rewrite_jest_for_tests) {
-                    if (strings.eqlComptime(
-                        import_record.path.text,
-                        "@jest/globals",
-                    ) or strings.eqlComptime(
-                        import_record.path.text,
-                        "vitest",
-                    )) {
+                    if (JSC.DisabledModule.has(import_record.path.text)) {
+                        import_record.path.is_disabled = true;
+                        import_record.do_commonjs_transform_in_printer = true;
+                        import_record.source_index = Index.invalid;
+                        continue;
+                    }
+
+                    if (bundler.options.rewrite_jest_for_tests) {
+                        if (strings.eqlComptime(
+                            import_record.path.text,
+                            "@jest/globals",
+                        ) or strings.eqlComptime(
+                            import_record.path.text,
+                            "vitest",
+                        )) {
+                            import_record.path.namespace = "bun";
+                            import_record.tag = .bun_test;
+                            import_record.path.text = "test";
+                            continue;
+                        }
+                    }
+
+                    if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
+                        import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
                         import_record.path.namespace = "bun";
-                        import_record.tag = .bun_test;
-                        import_record.path.text = "test";
+                        import_record.source_index = Index.invalid;
+
+                        if (strings.eqlComptime(import_record.path.text, "test")) {
+                            import_record.tag = .bun_test;
+                        }
+
+                        // don't link bun
                         continue;
                     }
                 }
 
-                if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
-                    import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
-                    import_record.path.namespace = "bun";
-                    import_record.source_index = Index.invalid;
-
-                    if (strings.eqlComptime(import_record.path.text, "test")) {
-                        import_record.tag = .bun_test;
-                    }
-
-                    // don't link bun
+                if (this.ctx.enqueueOnResolvePluginIfNeeded(source.index.get(), import_record, source.path.text, @truncate(u32, i), target)) {
                     continue;
                 }
-            }
 
-            if (this.ctx.enqueueOnResolvePluginIfNeeded(source.index.get(), import_record, source.path.text, @truncate(u32, i), target)) {
-                continue;
-            }
+                var resolve_result = resolver.resolve(source_dir, import_record.path.text, import_record.kind) catch |err| {
+                    // Disable failing packages from being printed.
+                    // This may cause broken code to write.
+                    // However, doing this means we tell them all the resolve errors
+                    // Rather than just the first one.
+                    import_record.path.is_disabled = true;
 
-            var resolve_result = resolver.resolve(source_dir, import_record.path.text, import_record.kind) catch |err| {
-                // Disable failing packages from being printed.
-                // This may cause broken code to write.
-                // However, doing this means we tell them all the resolve errors
-                // Rather than just the first one.
-                import_record.path.is_disabled = true;
+                    switch (err) {
+                        error.ModuleNotFound => {
+                            const addError = Logger.Log.addResolveErrorWithTextDupe;
 
-                switch (err) {
-                    error.ModuleNotFound => {
-                        const addError = Logger.Log.addResolveErrorWithTextDupe;
-
-                        if (!import_record.handles_import_errors) {
-                            last_error = err;
-                            if (isPackagePath(import_record.path.text)) {
-                                if (target.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
-                                    try addError(
-                                        log,
-                                        &source,
-                                        import_record.range,
-                                        this.allocator,
-                                        "Could not resolve Node.js builtin: \"{s}\".",
-                                        .{import_record.path.text},
-                                        import_record.kind,
-                                    );
+                            if (!import_record.handles_import_errors) {
+                                last_error = err;
+                                if (isPackagePath(import_record.path.text)) {
+                                    if (target.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
+                                        try addError(
+                                            log,
+                                            &source,
+                                            import_record.range,
+                                            this.allocator,
+                                            "Could not resolve Node.js builtin: \"{s}\".",
+                                            .{import_record.path.text},
+                                            import_record.kind,
+                                        );
+                                    } else {
+                                        try addError(
+                                            log,
+                                            &source,
+                                            import_record.range,
+                                            this.allocator,
+                                            "Could not resolve: \"{s}\". Maybe you need to \"bun install\"?",
+                                            .{import_record.path.text},
+                                            import_record.kind,
+                                        );
+                                    }
                                 } else {
                                     try addError(
                                         log,
                                         &source,
                                         import_record.range,
                                         this.allocator,
-                                        "Could not resolve: \"{s}\". Maybe you need to \"bun install\"?",
-                                        .{import_record.path.text},
+                                        "Could not resolve: \"{s}\"",
+                                        .{
+                                            import_record.path.text,
+                                        },
                                         import_record.kind,
                                     );
                                 }
-                            } else {
-                                try addError(
-                                    log,
-                                    &source,
-                                    import_record.range,
-                                    this.allocator,
-                                    "Could not resolve: \"{s}\"",
-                                    .{
-                                        import_record.path.text,
-                                    },
-                                    import_record.kind,
-                                );
                             }
-                        }
-                    },
-                    // assume other errors are already in the log
-                    else => {
-                        last_error = err;
-                    },
+                        },
+                        // assume other errors are already in the log
+                        else => {
+                            last_error = err;
+                        },
+                    }
+                    continue;
+                };
+                // if there were errors, lets go ahead and collect them all
+                if (last_error != null) continue;
+
+                var path: *Fs.Path = resolve_result.path() orelse {
+                    import_record.path.is_disabled = true;
+                    import_record.source_index = Index.invalid;
+
+                    continue;
+                };
+
+                if (resolve_result.is_external) {
+                    continue;
                 }
-                continue;
-            };
-            // if there were errors, lets go ahead and collect them all
-            if (last_error != null) continue;
 
-            var path: *Fs.Path = resolve_result.path() orelse {
-                import_record.path.is_disabled = true;
-                import_record.source_index = Index.invalid;
+                var resolve_entry = try resolve_queue.getOrPut(path.hashKey());
+                if (resolve_entry.found_existing) {
+                    import_record.path = resolve_entry.value_ptr.*.path;
 
-                continue;
-            };
-
-            if (resolve_result.is_external) {
-                continue;
-            }
-
-            var resolve_entry = try resolve_queue.getOrPut(wyhash(0, path.text));
-            if (resolve_entry.found_existing) {
-                import_record.path = resolve_entry.value_ptr.*.path;
-
-                continue;
-            }
-
-            if (path.pretty.ptr == path.text.ptr) {
-                // TODO: outbase
-                const rel = bun.path.relative(bundler.fs.top_level_dir, path.text);
-                if (rel.len > 0 and rel[0] != '.') {
-                    path.pretty = rel;
+                    continue;
                 }
-            }
 
-            var secondary_path_to_copy: ?Fs.Path = null;
-            if (resolve_result.path_pair.secondary) |*secondary| {
-                if (!secondary.is_disabled and
-                    secondary != path and
-                    !strings.eqlLong(secondary.text, path.text, true))
-                {
-                    secondary_path_to_copy = try secondary.dupeAlloc(allocator);
+                if (path.pretty.ptr == path.text.ptr) {
+                    // TODO: outbase
+                    const rel = bun.path.relative(bundler.fs.top_level_dir, path.text);
+                    if (rel.len > 0 and rel[0] != '.') {
+                        path.pretty = rel;
+                    }
                 }
+
+                var secondary_path_to_copy: ?Fs.Path = null;
+                if (resolve_result.path_pair.secondary) |*secondary| {
+                    if (!secondary.is_disabled and
+                        secondary != path and
+                        !strings.eqlLong(secondary.text, path.text, true))
+                    {
+                        secondary_path_to_copy = try secondary.dupeAlloc(allocator);
+                    }
+                }
+
+                path.* = try path.dupeAlloc(allocator);
+                import_record.path = path.*;
+                debug("created ParseTask: {s}", .{path.text});
+
+                var resolve_task = bun.default_allocator.create(ParseTask) catch @panic("Ran out of memory");
+                resolve_task.* = ParseTask.init(&resolve_result, null, this.ctx);
+
+                resolve_task.secondary_path_for_commonjs_interop = secondary_path_to_copy;
+
+                if (use_directive != .none) {
+                    resolve_task.known_target = target;
+                } else if (task.known_target) |known_target| {
+                    resolve_task.known_target = known_target;
+                }
+
+                resolve_task.jsx.development = task.jsx.development;
+
+                if (resolve_task.loader == null) {
+                    resolve_task.loader = path.loader(&bundler.options.loaders);
+                    resolve_task.tree_shaking = task.tree_shaking;
+                }
+
+                resolve_entry.value_ptr.* = resolve_task;
             }
 
-            path.* = try path.dupeAlloc(allocator);
-            import_record.path = path.*;
-            debug("created ParseTask: {s}", .{path.text});
-
-            var resolve_task = bun.default_allocator.create(ParseTask) catch @panic("Ran out of memory");
-            resolve_task.* = ParseTask.init(&resolve_result, null, this.ctx);
-
-            resolve_task.secondary_path_for_commonjs_interop = secondary_path_to_copy;
-
-            if (use_directive != .none) {
-                resolve_task.known_target = target;
-            } else if (task.known_target) |known_target| {
-                resolve_task.known_target = known_target;
+            if (last_error) |err| {
+                debug("failed with error: {s}", .{@errorName(err)});
+                return err;
             }
-
-            resolve_task.jsx.development = task.jsx.development;
-
-            if (resolve_task.loader == null) {
-                resolve_task.loader = path.loader(&bundler.options.loaders);
-                resolve_task.tree_shaking = task.tree_shaking;
-            }
-
-            resolve_entry.value_ptr.* = resolve_task;
-        }
-
-        if (last_error) |err| {
-            debug("failed with error: {s}", .{@errorName(err)});
-            return err;
         }
 
         // never a react client component if RSC is not enabled.
@@ -2498,6 +2778,11 @@ pub const JSMeta = struct {
         /// to detect when the fixed point has been reached.
         did_wrap_dependencies: bool = false,
 
+        /// When a converted CommonJS module is import() dynamically
+        /// We need ensure that the "default" export is set to the equivalent of module.exports
+        /// (unless a "default" export already exists)
+        needs_synthetic_default_export: bool = false,
+
         wrap: WrapKind = WrapKind.none,
     };
 };
@@ -2521,8 +2806,6 @@ pub const Graph = struct {
 
     /// Stable source index mapping
     source_index_map: std.AutoArrayHashMapUnmanaged(Index.Int, Ref.Int) = .{},
-
-    /// Stable source index mapping
     path_to_source_index_map: PathToSourceIndexMap = .{},
 
     use_directive_entry_points: UseDirective.List = .{},
@@ -2532,6 +2815,7 @@ pub const Graph = struct {
     estimated_file_loader_count: usize = 0,
 
     additional_output_files: std.ArrayListUnmanaged(options.OutputFile) = .{},
+    shadow_entry_point_range: Logger.Range = Logger.Range.None,
 
     pub const InputFile = struct {
         source: Logger.Source,
@@ -2782,28 +3066,19 @@ const LinkerGraph = struct {
     ) !void {
         if (use_count == 0) return;
 
-        // Mark this symbol as used by this part
         var parts_list = g.ast.items(.parts)[source_index].slice();
         var part: *js_ast.Part = &parts_list[part_index];
-        var uses = part.symbol_uses;
-        var needs_reindex = false;
-        if (uses.capacity() < uses.count() + 1 and !uses.contains(ref)) {
-            var symbol_uses = js_ast.Part.SymbolUseMap{};
-            try symbol_uses.ensureTotalCapacity(g.allocator, uses.count() + 1);
-            symbol_uses.entries.len = uses.keys().len;
-            bun.copy(std.meta.Child(@TypeOf(symbol_uses.keys())), symbol_uses.keys(), uses.keys());
-            bun.copy(std.meta.Child(@TypeOf(symbol_uses.values())), symbol_uses.values(), uses.values());
-            needs_reindex = true;
-            uses = symbol_uses;
-        }
-        var entry = uses.getOrPut(g.allocator, ref) catch unreachable;
-        if (entry.found_existing) {
-            entry.value_ptr.count_estimate += use_count;
+
+        // Mark this symbol as used by this part
+
+        var uses = &part.symbol_uses;
+        var uses_entry = uses.getOrPut(g.allocator, ref) catch unreachable;
+
+        if (!uses_entry.found_existing) {
+            uses_entry.value_ptr.* = .{ .count_estimate = use_count };
         } else {
-            entry.value_ptr.* = .{ .count_estimate = use_count };
+            uses_entry.value_ptr.count_estimate += use_count;
         }
-        if (needs_reindex) uses.reIndex(g.allocator) catch unreachable;
-        part.symbol_uses = uses;
 
         const exports_ref = g.ast.items(.exports_ref)[source_index];
         const module_ref = g.ast.items(.module_ref)[source_index];
@@ -2832,10 +3107,7 @@ const LinkerGraph = struct {
         // Pull in all parts that declare this symbol
         var dependencies = &part.dependencies;
         const part_ids = g.topLevelSymbolToParts(source_index_to_import_from.get(), ref);
-        try dependencies.ensureUnusedCapacity(g.allocator, part_ids.len);
-        const old_len = dependencies.len;
-        dependencies.len += @truncate(u32, part_ids.len);
-        var new_dependencies = dependencies.slice()[old_len..];
+        var new_dependencies = try dependencies.writableSlice(g.allocator, part_ids.len);
         for (part_ids, new_dependencies) |part_id, *dependency| {
             dependency.* = .{
                 .source_index = source_index_to_import_from,
@@ -2861,6 +3133,8 @@ const LinkerGraph = struct {
         entry_points: []const Index,
         sources: []const Logger.Source,
         use_directive_entry_points: UseDirective.List,
+        dynamic_import_entry_points: []const Index.Int,
+        shadow_entry_point_range: Logger.Range,
     ) !void {
         try this.files.ensureTotalCapacity(this.allocator, sources.len);
         this.files.zero();
@@ -2879,7 +3153,7 @@ const LinkerGraph = struct {
 
         // Setup entry points
         {
-            try this.entry_points.ensureTotalCapacity(this.allocator, entry_points.len + use_directive_entry_points.len);
+            try this.entry_points.ensureTotalCapacity(this.allocator, entry_points.len + use_directive_entry_points.len + dynamic_import_entry_points.len);
             this.entry_points.len = entry_points.len;
             var source_indices = this.entry_points.items(.source_index);
 
@@ -2897,6 +3171,24 @@ const LinkerGraph = struct {
                 entry_point_kinds[source.index.get()] = EntryPoint.Kind.user_specified;
                 path_string.* = bun.PathString.init(source.path.text);
                 source_index.* = source.index.get();
+            }
+
+            for (dynamic_import_entry_points) |id| {
+                std.debug.assert(this.code_splitting); // this should never be a thing without code splitting
+
+                if (entry_point_kinds[id] != .none) {
+                    // You could dynamic import a file that is already an entry point
+                    continue;
+                }
+
+                const source = &sources[id];
+                entry_point_kinds[id] = EntryPoint.Kind.dynamic_import;
+
+                this.entry_points.appendAssumeCapacity(.{
+                    .source_index = id,
+                    .output_path = bun.PathString.init(source.path.text),
+                    .output_path_was_auto_generated = true,
+                });
             }
 
             var import_records_list: []ImportRecord.List = this.ast.items(.import_records);
@@ -2922,10 +3214,11 @@ const LinkerGraph = struct {
                 }
 
                 if (any_client or any_server) {
-
                     // Loop #2: For each import in the entire module graph
                     for (this.reachable_files) |source_id| {
                         const use_directive = this.useDirectiveBoundary(source_id.get());
+                        const source_i32 = @intCast(i32, source_id.get());
+                        const is_shadow_entrypoint = shadow_entry_point_range.contains(source_i32);
                         // If the reachable file has a "use client"; at the top
                         for (import_records_list[source_id.get()].slice()) |*import_record| {
                             const source_index_ = import_record.source_index;
@@ -2941,28 +3234,12 @@ const LinkerGraph = struct {
                                         // That import is a React Server Component reference.
                                         switch (boundary) {
                                             .@"use client" => {
-                                                import_record.module_id = bun.hash32(sources[source_index].path.pretty);
-                                                import_record.tag = .react_client_component;
-                                                import_record.path.namespace = "client";
-                                                import_record.print_namespace_in_path = true;
-
-                                                // TODO: to make chunking work better for client components
-                                                // we should create a virtual module for each server entry point that corresponds to a client component
-                                                // This virtual module do the equivalent of
-                                                //
-                                                //    export * as id$function from "$id$";
-                                                //
-                                                //
-                                                if (entry_point_kinds[source_index] == .none) {
-                                                    if (comptime Environment.allow_assert)
-                                                        debug("Adding client component entry point for {s}", .{sources[source_index].path.text});
-
-                                                    try this.entry_points.append(this.allocator, .{
-                                                        .source_index = source_index,
-                                                        .output_path = bun.PathString.init(sources[source_index].path.text),
-                                                        .output_path_was_auto_generated = true,
-                                                    });
-                                                    entry_point_kinds[source_index] = .react_client_component;
+                                                if (!is_shadow_entrypoint) {
+                                                    import_record.module_id = bun.hash32(sources[source_index].path.pretty);
+                                                    import_record.tag = .react_client_component;
+                                                    import_record.path.namespace = "client";
+                                                    import_record.print_namespace_in_path = true;
+                                                    import_record.source_index = Index.invalid;
                                                 }
                                             },
                                             .@"use server" => {
@@ -3087,6 +3364,8 @@ const LinkerGraph = struct {
         /// may be "entryPointUserSpecified" instead of "entryPointDynamicImport".
         entry_point_kind: EntryPoint.Kind = .none,
 
+        line_offset_table: bun.sourcemap.LineOffsetTable.List = .{},
+
         pub fn isEntryPoint(this: *const File) bool {
             return this.entry_point_kind.isEntryPoint();
         }
@@ -3132,6 +3411,12 @@ const LinkerContext = struct {
     /// string buffer containing prefix for each unique keys
     unique_key_prefix: string = "",
 
+    source_maps: SourceMapData = .{},
+
+    /// This will eventually be used for reference-counting LinkerContext
+    /// to know whether or not we can free it safely.
+    pending_task_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
+
     pub const LinkerOptions = struct {
         output_format: options.OutputFormat = .esm,
         ignore_dce_annotations: bool = false,
@@ -3139,6 +3424,7 @@ const LinkerContext = struct {
         minify_whitespace: bool = false,
         minify_syntax: bool = false,
         minify_identifiers: bool = false,
+        source_maps: options.SourceMapOption = .none,
 
         mode: Mode = Mode.bundle,
 
@@ -3148,6 +3434,43 @@ const LinkerContext = struct {
             passthrough,
             bundle,
         };
+    };
+
+    pub const SourceMapData = struct {
+        wait_group: sync.WaitGroup = undefined,
+        tasks: []Task = &.{},
+
+        pub const Task = struct {
+            ctx: *LinkerContext,
+            source_index: Index.Int,
+            thread_task: ThreadPoolLib.Task = .{ .callback = &run },
+
+            pub fn run(thread_task: *ThreadPoolLib.Task) void {
+                var task = @fieldParentPtr(Task, "thread_task", thread_task);
+                defer {
+                    task.ctx.markPendingTaskDone();
+                    task.ctx.source_maps.wait_group.finish();
+                }
+
+                SourceMapData.compute(task.ctx, ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", task.ctx)).allocator, task.source_index);
+            }
+        };
+
+        pub fn compute(this: *LinkerContext, allocator: std.mem.Allocator, source_index: Index.Int) void {
+            debug("Computing LineOffsetTable: {d}", .{source_index});
+            var line_offset_table: *bun.sourcemap.LineOffsetTable.List = &this.graph.files.items(.line_offset_table)[source_index];
+            const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
+
+            const approximate_line_count = this.graph.ast.items(.approximate_newline_count)[source_index];
+
+            line_offset_table.* = bun.sourcemap.LineOffsetTable.generate(
+                allocator,
+                source.contents,
+
+                // We don't support sourcemaps for source files with more than 2^31 lines
+                @intCast(i32, @truncate(u31, approximate_line_count)),
+            );
+        }
     };
 
     fn isExternalDynamicImport(this: *LinkerContext, record: *const ImportRecord, source_index: u32) bool {
@@ -3200,7 +3523,8 @@ const LinkerContext = struct {
 
         const sources: []const Logger.Source = this.parse_graph.input_files.items(.source);
 
-        try this.graph.load(entry_points, sources, use_directive_entry_points);
+        try this.graph.load(entry_points, sources, use_directive_entry_points, bundle.dynamic_import_entry_points.keys(), bundle.graph.shadow_entry_point_range);
+        bundle.dynamic_import_entry_points.deinit();
         this.wait_group.init();
         this.ambiguous_result_pool = std.ArrayList(MatchImport).init(this.allocator);
 
@@ -3208,6 +3532,33 @@ const LinkerContext = struct {
 
         this.esm_runtime_ref = runtime_named_exports.get("__esm").?.ref;
         this.cjs_runtime_ref = runtime_named_exports.get("__commonJS").?.ref;
+    }
+
+    pub fn computeDataForSourceMap(
+        this: *LinkerContext,
+        reachable: []const Index.Int,
+    ) void {
+        this.source_maps.wait_group.init();
+        this.source_maps.wait_group.counter = @truncate(u32, reachable.len);
+        this.source_maps.tasks = this.allocator.alloc(SourceMapData.Task, reachable.len) catch unreachable;
+        var batch = ThreadPoolLib.Batch{};
+        for (reachable, this.source_maps.tasks) |source_index, *task| {
+            task.* = .{
+                .ctx = this,
+                .source_index = source_index,
+            };
+            batch.push(ThreadPoolLib.Batch.from(&task.thread_task));
+        }
+        this.scheduleTasks(batch);
+    }
+
+    pub fn scheduleTasks(this: *LinkerContext, batch: ThreadPoolLib.Batch) void {
+        _ = this.pending_task_count.fetchAdd(@truncate(u32, batch.len), .Monotonic);
+        this.parse_graph.pool.pool.schedule(batch);
+    }
+
+    pub fn markPendingTaskDone(this: *LinkerContext) void {
+        _ = this.pending_task_count.fetchSub(1, .Monotonic);
     }
 
     pub noinline fn link(
@@ -3224,6 +3575,10 @@ const LinkerContext = struct {
             use_directive_entry_points,
             reachable,
         );
+
+        if (this.options.source_maps != .none) {
+            this.computeDataForSourceMap(@ptrCast([]Index.Int, reachable));
+        }
 
         if (comptime FeatureFlags.help_catch_memory_issues) {
             this.checkForMemoryCorruption();
@@ -3305,6 +3660,7 @@ const LinkerContext = struct {
                 .content = .{
                     .javascript = .{},
                 },
+                .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
             };
         }
         var file_entry_bits: []AutoBitSet = this.graph.files.items(.entry_bits);
@@ -3337,6 +3693,7 @@ const LinkerContext = struct {
                             .content = .{
                                 .javascript = .{},
                             },
+                            .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
                         };
                     }
 
@@ -3809,6 +4166,7 @@ const LinkerContext = struct {
             var exports_refs: []Ref = this.graph.ast.items(.exports_ref);
             var module_refs: []Ref = this.graph.ast.items(.module_ref);
             var lazy_exports: []bool = this.graph.ast.items(.has_lazy_export);
+            var force_cjs_to_esm: []bool = this.graph.ast.items(.force_cjs_to_esm);
             var symbols = &this.graph.symbols;
             defer this.graph.symbols = symbols.*;
 
@@ -3853,7 +4211,7 @@ const LinkerContext = struct {
                             // In that case the module *is* considered a CommonJS module because
                             // the namespace object must be created.
                             if ((record.contains_import_star or record.contains_default_alias) and
-                                !lazy_exports[other_file] and
+                                !lazy_exports[other_file] and !force_cjs_to_esm[other_file] and
                                 exports_kind[other_file] == .none)
                             {
                                 exports_kind[other_file] = .cjs;
@@ -3865,7 +4223,7 @@ const LinkerContext = struct {
                         {
                             if (other_kind == .esm) {
                                 flags[other_file].wrap = .esm;
-                            } else {
+                            } else if (!force_cjs_to_esm[other_file]) {
                                 flags[other_file].wrap = .cjs;
                                 exports_kind[other_file] = .cjs;
                             }
@@ -3876,7 +4234,7 @@ const LinkerContext = struct {
                                 // returns a promise, so the imported file must be a CommonJS module
                                 if (exports_kind[other_file] == .esm) {
                                     flags[other_file].wrap = .esm;
-                                } else {
+                                } else if (!force_cjs_to_esm[other_file]) {
                                     flags[other_file].wrap = .cjs;
                                     exports_kind[other_file] = .cjs;
                                 }
@@ -4117,21 +4475,22 @@ const LinkerContext = struct {
         // parts that declare the export to all parts that use the import. Also
         // generate wrapper parts for wrapped files.
         {
-            const bufPrint = std.fmt.bufPrint;
-            _ = bufPrint;
-            var parts_list: []js_ast.Part.List = this.graph.ast.items(.parts);
-            var wrapper_refs = this.graph.ast.items(.wrapper_ref);
+
             // const needs_export_symbol_from_runtime: []const bool = this.graph.meta.items(.needs_export_symbol_from_runtime);
-            var imports_to_bind_list: []RefImportData = this.graph.meta.items(.imports_to_bind);
+
             var runtime_export_symbol_ref: Ref = Ref.None;
             var entry_point_kinds: []EntryPoint.Kind = this.graph.files.items(.entry_point_kind);
-            const flags: []const JSMeta.Flags = this.graph.meta.items(.flags);
-            const exports_kind = this.graph.ast.items(.exports_kind);
-            const exports_refs = this.graph.ast.items(.exports_ref);
-            const module_refs = this.graph.ast.items(.module_ref);
-            const named_imports = this.graph.ast.items(.named_imports);
-            const import_records_list = this.graph.ast.items(.import_records);
-            const export_star_import_records = this.graph.ast.items(.export_star_import_records);
+            var flags: []JSMeta.Flags = this.graph.meta.items(.flags);
+            var ast_fields = this.graph.ast.slice();
+
+            var wrapper_refs = ast_fields.items(.wrapper_ref);
+            const exports_kind = ast_fields.items(.exports_kind);
+            const exports_refs = ast_fields.items(.exports_ref);
+            const module_refs = ast_fields.items(.module_ref);
+            const named_imports = ast_fields.items(.named_imports);
+            const import_records_list = ast_fields.items(.import_records);
+            const export_star_import_records = ast_fields.items(.export_star_import_records);
+            const force_cjs_to_esm = ast_fields.items(.force_cjs_to_esm);
             for (reachable) |source_index_| {
                 const source_index = source_index_.get();
                 const id = source_index;
@@ -4251,20 +4610,22 @@ const LinkerContext = struct {
                         Index.runtime,
                     ) catch unreachable;
                 }
+                var imports_to_bind_list: []RefImportData = this.graph.meta.items(.imports_to_bind);
+                var parts_list: []js_ast.Part.List = ast_fields.items(.parts);
 
                 var imports_to_bind = &imports_to_bind_list[id];
-
                 var parts: []js_ast.Part = parts_list[id].slice();
-                var needs_reindex = false;
-                for (imports_to_bind.keys(), imports_to_bind.values()) |*import_ref, import| {
+
+                for (0..imports_to_bind.count()) |i| {
+                    const ref = imports_to_bind.keys()[i];
+                    const import = imports_to_bind.values()[i];
+
                     const import_source_index = import.data.source_index.get();
-                    const import_id = import_source_index;
-                    const ref = import_ref.*;
 
                     if (named_imports[id].get(ref)) |named_import| {
                         for (named_import.local_parts_with_uses.slice()) |part_index| {
                             var part: *js_ast.Part = &parts[part_index];
-                            const parts_declaring_symbol: []u32 = this.graph.topLevelSymbolToParts(import_id, import.data.import_ref);
+                            const parts_declaring_symbol: []const u32 = this.graph.topLevelSymbolToParts(import_source_index, ref);
 
                             const total_len = parts_declaring_symbol.len + @as(usize, import.re_exports.len) + @as(usize, part.dependencies.len);
                             if (part.dependencies.cap < total_len) {
@@ -4288,16 +4649,10 @@ const LinkerContext = struct {
                             // file containing the import and the file containing the imported symbol
                             part.dependencies.appendSliceAssumeCapacity(import.re_exports.slice());
                         }
-
-                        // Merge these symbols so they will share the same name
-                        const merged = this.graph.symbols.merge(ref, import.data.import_ref);
-                        import_ref.* = merged;
-                        needs_reindex = needs_reindex or !merged.eql(ref);
                     }
-                }
 
-                if (needs_reindex)
-                    imports_to_bind.reIndex(this.allocator) catch unreachable;
+                    _ = this.graph.symbols.merge(ref, import.data.import_ref);
+                }
 
                 // If this is an entry point, depend on all exports so they are included
                 if (is_entry_point) {
@@ -4388,6 +4743,7 @@ const LinkerContext = struct {
                     for (part.import_record_indices.slice()) |import_record_index| {
                         var record = &import_records[import_record_index];
                         const kind = record.kind;
+                        const other_id = record.source_index.value;
 
                         // Don't follow external imports (this includes import() expressions)
                         if (!record.source_index.isValid() or this.isExternalDynamicImport(record, source_index)) {
@@ -4395,43 +4751,57 @@ const LinkerContext = struct {
                             if (kind == .require or !output_format.keepES6ImportExportSyntax() or
                                 (kind == .dynamic))
                             {
-                                // We should use "__require" instead of "require" if we're not
-                                // generating a CommonJS output file, since it won't exist otherwise
-                                if (shouldCallRuntimeRequire(output_format)) {
-                                    record.calls_runtime_require = true;
-                                    runtime_require_uses += 1;
-                                }
+                                if (record.source_index.isValid() and kind == .dynamic and force_cjs_to_esm[other_id]) {
+                                    // If the CommonJS module was converted to ESM
+                                    // and the developer `import("cjs_module")`, then
+                                    // they may have code that expects the default export to return the CommonJS module.exports object
+                                    // That module.exports object does not exist.
+                                    // We create a default object with getters for each statically-known export
+                                    // This is kind of similar to what Node.js does
+                                    // Once we track usages of the dynamic import, we can remove this.
+                                    if (!ast_fields.items(.named_exports)[other_id].contains("default"))
+                                        flags[other_id].needs_synthetic_default_export = true;
 
-                                // If this wasn't originally a "require()" call, then we may need
-                                // to wrap this in a call to the "__toESM" wrapper to convert from
-                                // CommonJS semantics to ESM semantics.
-                                //
-                                // Unfortunately this adds some additional code since the conversion
-                                // is somewhat complex. As an optimization, we can avoid this if the
-                                // following things are true:
-                                //
-                                // - The import is an ES module statement (e.g. not an "import()" expression)
-                                // - The ES module namespace object must not be captured
-                                // - The "default" and "__esModule" exports must not be accessed
-                                //
-                                if (kind != .require and
-                                    (kind != .stmt or
-                                    record.contains_import_star or
-                                    record.contains_default_alias or
-                                    record.contains_es_module_alias))
-                                {
-                                    record.wrap_with_to_esm = true;
-                                    to_esm_uses += 1;
+                                    continue;
+                                } else {
+
+                                    // We should use "__require" instead of "require" if we're not
+                                    // generating a CommonJS output file, since it won't exist otherwise
+                                    if (shouldCallRuntimeRequire(output_format)) {
+                                        record.calls_runtime_require = true;
+                                        runtime_require_uses += 1;
+                                    }
+
+                                    // If this wasn't originally a "require()" call, then we may need
+                                    // to wrap this in a call to the "__toESM" wrapper to convert from
+                                    // CommonJS semantics to ESM semantics.
+                                    //
+                                    // Unfortunately this adds some additional code since the conversion
+                                    // is somewhat complex. As an optimization, we can avoid this if the
+                                    // following things are true:
+                                    //
+                                    // - The import is an ES module statement (e.g. not an "import()" expression)
+                                    // - The ES module namespace object must not be captured
+                                    // - The "default" and "__esModule" exports must not be accessed
+                                    //
+                                    if (kind != .require and
+                                        (kind != .stmt or
+                                        record.contains_import_star or
+                                        record.contains_default_alias or
+                                        record.contains_es_module_alias))
+                                    {
+                                        record.wrap_with_to_esm = true;
+                                        to_esm_uses += 1;
+                                    }
                                 }
                             }
                             continue;
                         }
 
-                        const other_source_index = record.source_index.get();
-                        const other_id = other_source_index;
                         std.debug.assert(@intCast(usize, other_id) < this.graph.meta.len);
                         const other_flags = flags[other_id];
                         const other_export_kind = exports_kind[other_id];
+                        const other_source_index = other_id;
 
                         if (other_flags.wrap != .none) {
                             // Depend on the automatically-generated require wrapper symbol
@@ -4456,7 +4826,7 @@ const LinkerContext = struct {
                             // This must be done for "require()" and "import()" expressions
                             // but does not need to be done for "import" statements since
                             // those just cause us to reference the exports directly.
-                            if (other_flags.wrap == .esm and record.kind != .stmt) {
+                            if (other_flags.wrap == .esm and kind != .stmt) {
                                 this.graph.generateSymbolImportAndUse(
                                     source_index,
                                     @intCast(u32, part_index),
@@ -4474,12 +4844,12 @@ const LinkerContext = struct {
                                 // code should see "__esModule". This is an extremely complex
                                 // and subtle set of bundler interop issues. See for example
                                 // https://github.com/evanw/esbuild/issues/1591.
-                                if (record.kind == .require) {
+                                if (kind == .require) {
                                     record.wrap_with_to_commonjs = true;
                                     to_common_js_uses += 1;
                                 }
                             }
-                        } else if (kind == .stmt and other_export_kind == .esm_with_dynamic_fallback) {
+                        } else if (kind == .stmt and other_export_kind.isESMWithDynamicFallback()) {
                             // This is an import of a module that has a dynamic export fallback
                             // object. In that case we need to depend on that object in case
                             // something ends up needing to use it later. This could potentially
@@ -4495,7 +4865,7 @@ const LinkerContext = struct {
                         }
                     }
 
-                    // If there's an ES6 import of a non-ES6 module, then we're going to need the
+                    // If there's an ES6 import of a CommonJS module, then we're going to need the
                     // "__toESM" symbol from the runtime to wrap the result of "require()"
                     this.graph.generateRuntimeSymbolImportAndUse(
                         source_index,
@@ -4542,7 +4912,7 @@ const LinkerContext = struct {
                                 happens_at_runtime = true;
                             }
 
-                            if (other_export_kind == .esm_with_dynamic_fallback) {
+                            if (other_export_kind.isESMWithDynamicFallback()) {
                                 // This looks like "__reExport(exports_a, exports_b)". Make sure to
                                 // pull in the "exports_b" symbol into this export star. This matters
                                 // in code splitting situations where the "export_b" symbol might live
@@ -4898,8 +5268,7 @@ const LinkerContext = struct {
         defer local_dependencies.deinit();
         var parts = &c.graph.ast.items(.parts)[id];
         var parts_slice: []js_ast.Part = parts.slice();
-        var named_imports: js_ast.Ast.NamedImports = c.graph.ast.items(.named_imports)[id];
-        defer c.graph.ast.items(.named_imports)[id] = named_imports;
+        var named_imports: *js_ast.Ast.NamedImports = &c.graph.ast.items(.named_imports)[id];
         outer: for (parts_slice, 0..) |*part, part_index| {
 
             // TODO: inline const TypeScript enum here
@@ -5154,14 +5523,6 @@ const LinkerContext = struct {
                                 // The only internal symbol that wrapped CommonJS files export
                                 // is the wrapper itself.
                                 continue;
-                            } else if (symbol.kind == .other) {
-                                // TODO: figure out why we need to do this
-                                // Without this, we are unable to map the import to runtime symbols across chunks
-                                // which means we miss any runtime-imported symbol
-                                if (imports_to_bind.get(deps.symbols.follow(ref))) |import_data| {
-                                    ref = import_data.data.import_ref;
-                                    symbol = deps.symbols.getConst(ref).?;
-                                }
                             }
 
                             // If this is an ES6 import from a CommonJS file, it will become a
@@ -5231,57 +5592,7 @@ const LinkerContext = struct {
         }
     };
 
-    pub fn computeCrossChunkDependencies(c: *LinkerContext, chunks: []Chunk) !void {
-        if (!c.graph.code_splitting) {
-            // No need to compute cross-chunk dependencies if there can't be any
-            return;
-        }
-
-        var chunk_metas = try c.allocator.alloc(ChunkMeta, chunks.len);
-        for (chunk_metas) |*meta| {
-            // these must be global allocator
-            meta.* = .{
-                .imports = ChunkMeta.Map.init(bun.default_allocator),
-                .exports = ChunkMeta.Map.init(bun.default_allocator),
-                .dynamic_imports = std.AutoArrayHashMap(Index.Int, void).init(bun.default_allocator),
-            };
-        }
-        defer {
-            for (chunk_metas) |*meta| {
-                meta.imports.deinit();
-                meta.exports.deinit();
-                meta.dynamic_imports.deinit();
-            }
-            c.allocator.free(chunk_metas);
-        }
-
-        {
-            var cross_chunk_dependencies = c.allocator.create(CrossChunkDependencies) catch unreachable;
-            defer c.allocator.destroy(cross_chunk_dependencies);
-
-            cross_chunk_dependencies.* = .{
-                .chunks = chunks,
-                .chunk_meta = chunk_metas,
-                .parts = c.graph.ast.items(.parts),
-                .import_records = c.graph.ast.items(.import_records),
-                .flags = c.graph.meta.items(.flags),
-                .entry_point_chunk_indices = c.graph.files.items(.entry_point_chunk_index),
-                .imports_to_bind = c.graph.meta.items(.imports_to_bind),
-                .wrapper_refs = c.graph.ast.items(.wrapper_ref),
-                .sorted_and_filtered_export_aliases = c.graph.meta.items(.sorted_and_filtered_export_aliases),
-                .resolved_exports = c.graph.meta.items(.resolved_exports),
-                .ctx = c,
-                .symbols = &c.graph.symbols,
-            };
-
-            c.parse_graph.pool.pool.doPtr(
-                c.allocator,
-                &c.wait_group,
-                cross_chunk_dependencies,
-                CrossChunkDependencies.walk,
-                chunks,
-            ) catch unreachable;
-        }
+    fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chunk, chunk_metas: []ChunkMeta) !void {
 
         // Mark imported symbols as exported in the chunk from which they are declared
         for (chunks, chunk_metas, 0..) |*chunk, *chunk_meta, chunk_index| {
@@ -5312,6 +5623,8 @@ const LinkerContext = struct {
                             });
                         }
                         _ = chunk_metas[other_chunk_index].exports.getOrPut(import_ref) catch unreachable;
+                    } else {
+                        debug("{s} imports from itself (chunk {d})", .{ symbol.original_name, chunk_index });
                     }
                 }
             }
@@ -5443,13 +5756,11 @@ const LinkerContext = struct {
             debug("Generating cross-chunk imports", .{});
             var list = CrossChunkImport.List.init(c.allocator);
             defer list.deinit();
-
             for (chunks) |*chunk| {
                 if (chunk.content != .javascript) continue;
                 var repr = &chunk.content.javascript;
                 var cross_chunk_prefix_stmts = BabyList(js_ast.Stmt){};
 
-                list.clearRetainingCapacity();
                 CrossChunkImport.sortedCrossChunkImports(&list, chunks, &repr.imports_from_other_chunks) catch unreachable;
                 var cross_chunk_imports_input: []CrossChunkImport = list.items;
                 var cross_chunk_imports = chunk.cross_chunk_imports;
@@ -5500,13 +5811,72 @@ const LinkerContext = struct {
         }
     }
 
+    pub fn computeCrossChunkDependencies(c: *LinkerContext, chunks: []Chunk) !void {
+        if (!c.graph.code_splitting) {
+            // No need to compute cross-chunk dependencies if there can't be any
+            return;
+        }
+
+        var chunk_metas = try c.allocator.alloc(ChunkMeta, chunks.len);
+        for (chunk_metas) |*meta| {
+            // these must be global allocator
+            meta.* = .{
+                .imports = ChunkMeta.Map.init(bun.default_allocator),
+                .exports = ChunkMeta.Map.init(bun.default_allocator),
+                .dynamic_imports = std.AutoArrayHashMap(Index.Int, void).init(bun.default_allocator),
+            };
+        }
+        defer {
+            for (chunk_metas) |*meta| {
+                meta.imports.deinit();
+                meta.exports.deinit();
+                meta.dynamic_imports.deinit();
+            }
+            c.allocator.free(chunk_metas);
+        }
+
+        {
+            var cross_chunk_dependencies = c.allocator.create(CrossChunkDependencies) catch unreachable;
+            defer c.allocator.destroy(cross_chunk_dependencies);
+
+            cross_chunk_dependencies.* = .{
+                .chunks = chunks,
+                .chunk_meta = chunk_metas,
+                .parts = c.graph.ast.items(.parts),
+                .import_records = c.graph.ast.items(.import_records),
+                .flags = c.graph.meta.items(.flags),
+                .entry_point_chunk_indices = c.graph.files.items(.entry_point_chunk_index),
+                .imports_to_bind = c.graph.meta.items(.imports_to_bind),
+                .wrapper_refs = c.graph.ast.items(.wrapper_ref),
+                .sorted_and_filtered_export_aliases = c.graph.meta.items(.sorted_and_filtered_export_aliases),
+                .resolved_exports = c.graph.meta.items(.resolved_exports),
+                .ctx = c,
+                .symbols = &c.graph.symbols,
+            };
+
+            c.parse_graph.pool.pool.doPtr(
+                c.allocator,
+                &c.wait_group,
+                cross_chunk_dependencies,
+                CrossChunkDependencies.walk,
+                chunks,
+            ) catch unreachable;
+        }
+
+        try computeCrossChunkDependenciesWithChunkMetas(c, chunks, chunk_metas);
+    }
+
     const GenerateChunkCtx = struct {
         wg: *sync.WaitGroup,
         c: *LinkerContext,
         chunks: []Chunk,
+        chunk: *Chunk,
     };
     fn generateChunkJS(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) void {
-        generateChunkJS_(ctx, chunk, chunk_index) catch |err| Output.panic("TODO: handle error: {s}", .{@errorName(err)});
+        defer ctx.wg.finish();
+        const worker = ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", ctx.c));
+        defer worker.unget();
+        postProcessJSChunk(ctx, worker, chunk, chunk_index) catch |err| Output.panic("TODO: handle error: {s}", .{@errorName(err)});
     }
 
     // TODO: investigate if we need to parallelize this function
@@ -5759,17 +6129,36 @@ const LinkerContext = struct {
         return r.toRenamer();
     }
 
-    fn generateChunkJS_(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) !void {
-        _ = chunk_index;
+    fn generateJSRenamer(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) void {
         defer ctx.wg.finish();
         var worker = ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", ctx.c));
         defer worker.unget();
+        generateJSRenamer_(ctx, worker, chunk, chunk_index);
+    }
 
-        const allocator = worker.allocator;
-        const c = ctx.c;
-        std.debug.assert(chunk.content == .javascript);
+    fn generateJSRenamer_(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chunk: *Chunk, chunk_index: usize) void {
+        _ = chunk_index;
+        chunk.renamer = ctx.c.renameSymbolsInChunk(
+            worker.allocator,
+            chunk,
+            chunk.content.javascript.files_in_chunk_order,
+        ) catch @panic("TODO: handle error");
+    }
 
-        var repr = &chunk.content.javascript;
+    fn generateCompileResultForJSChunk(task: *ThreadPoolLib.Task) void {
+        const part_range: *const PendingPartRange = @fieldParentPtr(PendingPartRange, "task", task);
+        const ctx = part_range.ctx;
+        defer ctx.wg.finish();
+        var worker = ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", ctx.c));
+        defer worker.unget();
+        ctx.chunk.compile_results_for_chunk[part_range.i] = generateCompileResultForJSChunk_(worker, ctx.c, ctx.chunk, part_range.part_range);
+    }
+
+    fn generateCompileResultForJSChunk_(worker: *ThreadPool.Worker, c: *LinkerContext, chunk: *Chunk, part_range: PartRange) CompileResult {
+        var arena = &worker.temporary_arena;
+        var buffer_writer = js_printer.BufferWriter.init(worker.allocator) catch unreachable;
+        defer _ = arena.reset(.retain_capacity);
+        worker.stmt_list.reset();
 
         var runtime_scope: *Scope = &c.graph.ast.items(.module_scope)[c.graph.files.items(.input_file)[Index.runtime.value].get()];
         var runtime_members = &runtime_scope.members;
@@ -5777,70 +6166,51 @@ const LinkerContext = struct {
         const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
         const runtimeRequireRef = c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
-        var r = try c.renameSymbolsInChunk(allocator, chunk, repr.files_in_chunk_order);
-        defer r.deinit();
-        const part_ranges = repr.parts_in_chunk_in_order;
-        var stmts = StmtList.init(allocator);
-        defer stmts.deinit();
+        const result = c.generateCodeForFileInChunkJS(
+            &buffer_writer,
+            chunk.renamer,
+            chunk,
+            part_range,
+            toCommonJSRef,
+            toESMRef,
+            runtimeRequireRef,
+            &worker.stmt_list,
+            worker.allocator,
+            arena.allocator(),
+        );
+
+        return .{
+            .javascript = .{
+                .result = result,
+                .source_index = part_range.source_index.get(),
+            },
+        };
+    }
+
+    // This runs after we've already populated the compile results
+    fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chunk: *Chunk, chunk_index: usize) !void {
+        _ = chunk_index;
+        const allocator = worker.allocator;
+        const c = ctx.c;
+        std.debug.assert(chunk.content == .javascript);
+
+        js_ast.Expr.Data.Store.create(bun.default_allocator);
+        js_ast.Stmt.Data.Store.create(bun.default_allocator);
+
+        defer chunk.renamer.deinit(bun.default_allocator);
 
         var arena = std.heap.ArenaAllocator.init(allocator);
         defer arena.deinit();
-        var compile_results = std.ArrayList(CompileResult).initCapacity(allocator, part_ranges.len) catch unreachable;
-        {
-            defer _ = arena.reset(.retain_capacity);
-
-            var buffer_writer = js_printer.BufferWriter.init(allocator) catch unreachable;
-
-            for (part_ranges, 0..) |part_range, i| {
-                if (i > 0) _ = arena.reset(.retain_capacity);
-                const result = c.generateCodeForFileInChunkJS(
-                    &buffer_writer,
-                    r,
-                    chunk,
-                    part_range,
-                    toCommonJSRef,
-                    toESMRef,
-                    runtimeRequireRef,
-                    &stmts,
-                    allocator,
-                    arena.allocator(),
-                );
-
-                if (i < part_ranges.len - 1) {
-                    compile_results.appendAssumeCapacity(
-                        // we reuse the memory buffer up until the final chunk to minimize reallocations
-                        .{
-                            .javascript = .{
-                                .result = result.clone(allocator) catch unreachable,
-                                .source_index = part_range.source_index.get(),
-                            },
-                        },
-                    );
-                } else {
-                    if (comptime Environment.allow_assert) {
-                        if (result == .result) {
-                            if (buffer_writer.buffer.list.capacity > result.result.code.len) {
-                                // add a 0 to make it easier to view the code in a debugger
-                                // but only if room
-                                buffer_writer.buffer.list.items.ptr[result.result.code.len] = 0;
-                            }
-                        }
-                    }
-
-                    // the final chunk owns the memory buffer
-                    compile_results.appendAssumeCapacity(.{
-                        .javascript = .{
-                            .result = result.clone(allocator) catch unreachable,
-                            .source_index = part_range.source_index.get(),
-                        },
-                    });
-                }
-            }
-        }
 
         // Also generate the cross-chunk binding code
         var cross_chunk_prefix: []u8 = &.{};
         var cross_chunk_suffix: []u8 = &.{};
+
+        var runtime_scope: *Scope = &c.graph.ast.items(.module_scope)[c.graph.files.items(.input_file)[Index.runtime.value].get()];
+        var runtime_members = &runtime_scope.members;
+        const toCommonJSRef = c.graph.symbols.follow(runtime_members.get("__toCommonJS").?.ref);
+        const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
+        const runtimeRequireRef = c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
         {
             const indent: usize = 0;
@@ -5870,25 +6240,33 @@ const LinkerContext = struct {
                 );
             }
 
+            const ast = c.graph.ast.get(chunk.entry_point.source_index);
+
             cross_chunk_prefix = js_printer.print(
                 allocator,
                 c.resolver.opts.target,
+                ast,
+                c.source_(chunk.entry_point.source_index),
                 print_options,
                 cross_chunk_import_records.slice(),
                 &[_]js_ast.Part{
                     .{ .stmts = chunk.content.javascript.cross_chunk_prefix_stmts.slice() },
                 },
-                r,
+                chunk.renamer,
+                false,
             ).result.code;
             cross_chunk_suffix = js_printer.print(
                 allocator,
                 c.resolver.opts.target,
+                ast,
+                c.source_(chunk.entry_point.source_index),
                 print_options,
                 &.{},
                 &[_]js_ast.Part{
                     .{ .stmts = chunk.content.javascript.cross_chunk_suffix_stmts.slice() },
                 },
-                r,
+                chunk.renamer,
+                false,
             ).result.code;
         }
 
@@ -5901,7 +6279,7 @@ const LinkerContext = struct {
                     chunk.entry_point.source_index,
                     allocator,
                     arena.allocator(),
-                    r,
+                    chunk.renamer,
                 );
             }
 
@@ -5915,7 +6293,8 @@ const LinkerContext = struct {
                 .input = chunk.unique_key,
             },
         };
-        var line_offset: bun.sourcemap.LineColumnOffset.Optional = .{ .null = {} };
+
+        var line_offset: bun.sourcemap.LineColumnOffset.Optional = if (c.options.source_maps != .none) .{ .value = .{} } else .{ .null = {} };
 
         // Concatenate the generated JavaScript chunks together
 
@@ -5954,9 +6333,13 @@ const LinkerContext = struct {
         // Concatenate the generated JavaScript chunks together
 
         var prev_filename_comment: Index.Int = 0;
+        const compile_results = chunk.compile_results_for_chunk;
+        var compile_results_for_source_map = std.MultiArrayList(CompileResultForSourceMap){};
+
+        compile_results_for_source_map.ensureUnusedCapacity(allocator, compile_results.len) catch unreachable;
 
         const sources: []const Logger.Source = c.parse_graph.input_files.items(.source);
-        for (@as([]CompileResult, compile_results.items)) |compile_result| {
+        for (@as([]CompileResult, compile_results)) |compile_result| {
             const source_index = compile_result.sourceIndex();
             const is_runtime = source_index == Index.runtime.value;
 
@@ -6017,10 +6400,25 @@ const LinkerContext = struct {
                 line_offset.advance(compile_result.code());
                 j.append(compile_result.code(), 0, bun.default_allocator);
             } else {
-                line_offset.advance(compile_result.code());
                 j.append(compile_result.code(), 0, bun.default_allocator);
 
-                // TODO: sourcemap
+                var generated_offset = line_offset;
+                line_offset.reset();
+
+                if (c.options.source_maps != .none) {
+                    switch (compile_result.javascript.result) {
+                        .result => |res| {
+                            if (res.source_map) |source_map| {
+                                try compile_results_for_source_map.append(allocator, CompileResultForSourceMap{
+                                    .source_map_chunk = source_map,
+                                    .generated_offset = generated_offset.value,
+                                    .source_index = compile_result.sourceIndex(),
+                                });
+                            }
+                        },
+                        else => {},
+                    }
+                }
             }
 
             // TODO: metafile
@@ -6064,10 +6462,6 @@ const LinkerContext = struct {
         chunk.intermediate_output = c.breakOutputIntoPieces(
             allocator,
             &j,
-
-            cross_chunk_prefix.len > 0 or
-                cross_chunk_suffix.len > 0 or
-                c.parse_graph.estimated_file_loader_count > 0,
             @truncate(u32, ctx.chunks.len),
         ) catch @panic("Unhandled out of memory error in breakOutputIntoPieces()");
 
@@ -6075,6 +6469,145 @@ const LinkerContext = struct {
 
         chunk.isolated_hash = c.generateIsolatedHash(chunk);
         chunk.is_executable = is_executable;
+
+        if (c.options.source_maps != .none) {
+            const can_have_shifts = chunk.intermediate_output == .pieces;
+            chunk.output_source_map = try c.generateSourceMapForChunk(
+                chunk.isolated_hash,
+                worker,
+                compile_results_for_source_map,
+                c.resolver.opts.output_dir,
+                can_have_shifts,
+            );
+        }
+    }
+
+    pub fn generateSourceMapForChunk(
+        c: *LinkerContext,
+        isolated_hash: u64,
+        worker: *ThreadPool.Worker,
+        results: std.MultiArrayList(CompileResultForSourceMap),
+        chunk_abs_dir: string,
+        can_have_shifts: bool,
+    ) !sourcemap.SourceMapPieces {
+        std.debug.assert(results.len > 0);
+
+        var j = Joiner{};
+        const sources = c.parse_graph.input_files.items(.source);
+
+        var source_index_to_sources_index = std.AutoHashMap(u32, u32).init(worker.allocator);
+        defer source_index_to_sources_index.deinit();
+        var next_source_index: u32 = 0;
+        const source_indices = results.items(.source_index);
+
+        j.push("{\n  \"version\": 3,\n  \"sources\": [");
+        if (source_indices.len > 0) {
+            {
+                var path = sources[source_indices[0]].path;
+
+                if (strings.eqlComptime(path.namespace, "file")) {
+                    const rel_path = try std.fs.path.relative(worker.allocator, chunk_abs_dir, path.text);
+                    path.pretty = rel_path;
+                }
+
+                var quote_buf = try MutableString.init(worker.allocator, path.pretty.len + 2);
+                quote_buf = try js_printer.quoteForJSON(path.pretty, quote_buf, false);
+                j.push(quote_buf.list.items);
+            }
+            if (source_indices.len > 1) {
+                for (source_indices[1..]) |index| {
+                    var path = sources[index].path;
+
+                    if (strings.eqlComptime(path.namespace, "file")) {
+                        const rel_path = try std.fs.path.relative(worker.allocator, chunk_abs_dir, path.text);
+                        path.pretty = rel_path;
+                    }
+
+                    var quote_buf = try MutableString.init(worker.allocator, path.pretty.len + ", ".len + 2);
+                    quote_buf.appendAssumeCapacity(", ");
+                    quote_buf = try js_printer.quoteForJSON(path.pretty, quote_buf, false);
+                    j.push(quote_buf.list.items);
+                }
+            }
+        }
+
+        j.push("],\n  \"sourcesContent\": [\n  ");
+
+        if (source_indices.len > 0) {
+            {
+                const contents = sources[source_indices[0]].contents;
+                var quote_buf = try MutableString.init(worker.allocator, contents.len);
+                quote_buf = try js_printer.quoteForJSON(contents, quote_buf, false);
+                j.push(quote_buf.list.items);
+            }
+
+            if (source_indices.len > 1) {
+                for (source_indices[1..]) |index| {
+                    const contents = sources[index].contents;
+                    var quote_buf = try MutableString.init(worker.allocator, contents.len + 2 + ", ".len);
+                    quote_buf.appendAssumeCapacity(",\n  ");
+                    quote_buf = try js_printer.quoteForJSON(contents, quote_buf, false);
+                    j.push(quote_buf.list.items);
+                }
+            }
+        }
+        j.push("\n], \"mappings\": \"");
+
+        var mapping_start = j.len;
+        var prev_end_state = sourcemap.SourceMapState{};
+        var prev_column_offset: i32 = 0;
+        const source_map_chunks = results.items(.source_map_chunk);
+        const offsets = results.items(.generated_offset);
+        for (source_map_chunks, offsets, source_indices) |chunk, offset, current_source_index| {
+            var res = try source_index_to_sources_index.getOrPut(current_source_index);
+            if (res.found_existing) continue;
+            res.value_ptr.* = next_source_index;
+            const source_index = @intCast(i32, next_source_index);
+            next_source_index += 1;
+
+            var start_state = sourcemap.SourceMapState{
+                .source_index = source_index,
+                .generated_line = offset.lines,
+                .generated_column = offset.columns,
+            };
+
+            if (offset.lines == 0) {
+                start_state.generated_column += prev_column_offset;
+            }
+
+            try sourcemap.appendSourceMapChunk(&j, worker.allocator, prev_end_state, start_state, chunk.buffer.list.items);
+
+            prev_end_state = chunk.end_state;
+            prev_end_state.source_index = source_index;
+            prev_column_offset = chunk.final_generated_column;
+
+            if (prev_end_state.generated_line == 0) {
+                prev_end_state.generated_column += start_state.generated_column;
+                prev_column_offset += start_state.generated_column;
+            }
+        }
+        const mapping_end = j.len;
+
+        if (comptime FeatureFlags.source_map_debug_id) {
+            j.push("\",\n  \"debugId\": \"");
+            j.push(try std.fmt.allocPrint(worker.allocator, "{}", .{bun.sourcemap.DebugIDFormatter{ .id = isolated_hash }}));
+            j.push("\",\n  \"names\": []\n}");
+        } else {
+            j.push("\",\n  \"names\": []\n}");
+        }
+
+        const done = try j.done(worker.allocator);
+
+        var pieces = sourcemap.SourceMapPieces.init(worker.allocator);
+        if (can_have_shifts) {
+            try pieces.prefix.appendSlice(done[0..mapping_start]);
+            try pieces.mappings.appendSlice(done[mapping_start..mapping_end]);
+            try pieces.suffix.appendSlice(done[mapping_end..]);
+        } else {
+            try pieces.prefix.appendSlice(done);
+        }
+
+        return pieces;
     }
 
     pub fn generateIsolatedHash(c: *LinkerContext, chunk: *const Chunk) u64 {
@@ -6259,8 +6792,12 @@ const LinkerContext = struct {
                             var items = std.ArrayList(js_ast.ClauseItem).init(temp_allocator);
                             const cjs_export_copies = c.graph.meta.items(.cjs_export_copies)[source_index];
 
+                            var had_default_export = false;
+
                             for (sorted_and_filtered_export_aliases, 0..) |alias, i| {
                                 var resolved_export = resolved_exports.get(alias).?;
+
+                                had_default_export = had_default_export or strings.eqlComptime(alias, "default");
 
                                 // If this is an export of an import, reference the symbol that the import
                                 // was eventually resolved to. We need to do this because imports have
@@ -6395,6 +6932,78 @@ const LinkerContext = struct {
                                     Logger.Loc.Empty,
                                 ),
                             ) catch unreachable;
+
+                            if (flags.needs_synthetic_default_export and !had_default_export) {
+                                var properties = G.Property.List.initCapacity(allocator, items.items.len) catch unreachable;
+                                var getter_fn_body = allocator.alloc(Stmt, items.items.len) catch unreachable;
+                                var remain_getter_fn_body = getter_fn_body;
+                                for (items.items) |export_item| {
+                                    var fn_body = remain_getter_fn_body[0..1];
+                                    remain_getter_fn_body = remain_getter_fn_body[1..];
+                                    fn_body[0] = Stmt.alloc(
+                                        S.Return,
+                                        S.Return{
+                                            .value = Expr.init(
+                                                E.Identifier,
+                                                E.Identifier{
+                                                    .ref = export_item.name.ref.?,
+                                                },
+                                                export_item.name.loc,
+                                            ),
+                                        },
+                                        Logger.Loc.Empty,
+                                    );
+                                    properties.appendAssumeCapacity(
+                                        G.Property{
+                                            .key = Expr.init(
+                                                E.String,
+                                                E.String{
+                                                    .data = export_item.alias,
+                                                    .is_utf16 = false,
+                                                },
+                                                export_item.alias_loc,
+                                            ),
+                                            .value = Expr.init(
+                                                E.Function,
+                                                E.Function{
+                                                    .func = G.Fn{
+                                                        .body = G.FnBody{
+                                                            .loc = Logger.Loc.Empty,
+                                                            .stmts = fn_body,
+                                                        },
+                                                    },
+                                                },
+                                                export_item.alias_loc,
+                                            ),
+                                            .kind = G.Property.Kind.get,
+                                            .flags = js_ast.Flags.Property.init(.{
+                                                .is_method = true,
+                                            }),
+                                        },
+                                    );
+                                }
+                                stmts.append(
+                                    Stmt.alloc(
+                                        S.ExportDefault,
+                                        S.ExportDefault{
+                                            .default_name = .{
+                                                .ref = Ref.None,
+                                                .loc = Logger.Loc.Empty,
+                                            },
+                                            .value = .{
+                                                .expr = Expr.init(
+                                                    E.Object,
+                                                    E.Object{
+                                                        .properties = properties,
+                                                    },
+                                                    Logger.Loc.Empty,
+                                                ),
+                                            },
+                                        },
+                                        Logger.Loc.Empty,
+                                    ),
+                                ) catch unreachable;
+                            }
                         }
                     },
                 }
@@ -6489,6 +7098,8 @@ const LinkerContext = struct {
                 .result = js_printer.print(
                     allocator,
                     c.resolver.opts.target,
+                    ast,
+                    c.source_(source_index),
                     print_options,
                     ast.import_records.slice(),
                     &[_]js_ast.Part{
@@ -6497,13 +7108,14 @@ const LinkerContext = struct {
                         },
                     },
                     r,
+                    false,
                 ),
                 .source_index = source_index,
             },
         };
     }
 
-    const StmtList = struct {
+    pub const StmtList = struct {
         inside_wrapper_prefix: std.ArrayList(Stmt),
         outside_wrapper_prefix: std.ArrayList(Stmt),
         inside_wrapper_suffix: std.ArrayList(Stmt),
@@ -6951,7 +7563,7 @@ const LinkerContext = struct {
 
                             if (record.calls_runtime_re_export_fn) {
                                 const target: Expr = brk: {
-                                    if (c.graph.ast.items(.exports_kind)[source_index] == .esm_with_dynamic_fallback) {
+                                    if (c.graph.ast.items(.exports_kind)[source_index].isESMWithDynamicFallback()) {
                                         // Prefix this module with "__reExport(exports, otherExports, module.exports)"
                                         break :brk Expr.initIdentifier(c.graph.ast.items(.exports_ref)[source_index], stmt.loc);
                                     }
@@ -7317,6 +7929,7 @@ const LinkerContext = struct {
                     stmts.inside_wrapper_prefix.appendSlice(stmts.inside_wrapper_suffix.items) catch unreachable;
                 },
             }
+
             stmts.inside_wrapper_suffix.clearRetainingCapacity();
         }
 
@@ -7727,7 +8340,7 @@ const LinkerContext = struct {
             },
         };
 
-        const print_options = js_printer.Options{
+        var print_options = js_printer.Options{
             // TODO: IIFE
             .indent = 0,
 
@@ -7747,6 +8360,7 @@ const LinkerContext = struct {
                 requireOrImportMetaForSource,
                 c,
             ),
+            .line_offset_tables = c.graph.files.items(.line_offset_table)[part_range.source_index.get()],
         };
 
         writer.buffer.reset();
@@ -7755,16 +8369,30 @@ const LinkerContext = struct {
         );
         defer writer.* = printer.ctx;
 
-        return js_printer.printWithWriter(
-            *js_printer.BufferPrinter,
-            &printer,
-            ast.target,
-            print_options,
-            ast.import_records.slice(),
-            parts_to_print,
-            r,
-        );
+        switch (c.options.source_maps != .none and !part_range.source_index.isRuntime()) {
+            inline else => |enable_source_maps| {
+                return js_printer.printWithWriter(
+                    *js_printer.BufferPrinter,
+                    &printer,
+                    ast.target,
+                    ast,
+                    c.source_(part_range.source_index.get()),
+                    print_options,
+                    ast.import_records.slice(),
+                    parts_to_print,
+                    r,
+                    enable_source_maps,
+                );
+            },
+        }
     }
+
+    const PendingPartRange = struct {
+        part_range: PartRange,
+        task: ThreadPoolLib.Task,
+        ctx: *GenerateChunkCtx,
+        i: u32 = 0,
+    };
 
     fn requireOrImportMetaForSource(
         c: *LinkerContext,
@@ -7781,10 +8409,15 @@ const LinkerContext = struct {
         };
     }
 
+    const SubstituteChunkFinalPathResult = struct {
+        j: Joiner,
+        shifts: []sourcemap.SourceMapShifts,
+    };
+
     pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk) !std.ArrayList(options.OutputFile) {
         {
-            debug("START Generating {d} chunks in parallel", .{chunks.len});
-            defer debug(" DONE Generating {d} chunks in parallel", .{chunks.len});
+            debug(" START {d} renamers", .{chunks.len});
+            defer debug("  DONE {d} renamers", .{chunks.len});
             var wait_group = try c.allocator.create(sync.WaitGroup);
             wait_group.init();
             defer {
@@ -7792,8 +8425,68 @@ const LinkerContext = struct {
                 c.allocator.destroy(wait_group);
             }
             wait_group.counter = @truncate(u32, chunks.len);
-            var ctx = GenerateChunkCtx{ .wg = wait_group, .c = c, .chunks = chunks };
-            try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, ctx, generateChunkJS, chunks);
+            var ctx = GenerateChunkCtx{ .chunk = &chunks[0], .wg = wait_group, .c = c, .chunks = chunks };
+            try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, ctx, generateJSRenamer, chunks);
+        }
+
+        {
+            debug(" START {d} source maps", .{chunks.len});
+            defer debug("  DONE {d} source maps", .{chunks.len});
+            c.source_maps.wait_group.wait();
+            c.allocator.free(c.source_maps.tasks);
+            c.source_maps.tasks.len = 0;
+        }
+        {
+            var chunk_contexts = c.allocator.alloc(GenerateChunkCtx, chunks.len) catch unreachable;
+            defer c.allocator.free(chunk_contexts);
+            var wait_group = try c.allocator.create(sync.WaitGroup);
+            wait_group.init();
+            defer {
+                wait_group.deinit();
+                c.allocator.destroy(wait_group);
+            }
+            {
+                var total_count: usize = 0;
+                for (chunks, chunk_contexts) |*chunk, *chunk_ctx| {
+                    chunk_ctx.* = .{ .wg = wait_group, .c = c, .chunks = chunks, .chunk = chunk };
+                    total_count += chunk.content.javascript.parts_in_chunk_in_order.len;
+                    chunk.compile_results_for_chunk = c.allocator.alloc(CompileResult, chunk.content.javascript.parts_in_chunk_in_order.len) catch unreachable;
+                }
+
+                debug(" START {d} compiling part ranges", .{total_count});
+                defer debug("  DONE {d} compiling part ranges", .{total_count});
+                var combined_part_ranges = c.allocator.alloc(PendingPartRange, total_count) catch unreachable;
+                defer c.allocator.free(combined_part_ranges);
+                var remaining_part_ranges = combined_part_ranges;
+                var batch = ThreadPoolLib.Batch{};
+                for (chunks, chunk_contexts) |*chunk, *chunk_ctx| {
+                    for (chunk.content.javascript.parts_in_chunk_in_order, 0..) |part_range, i| {
+                        remaining_part_ranges[0] = .{
+                            .part_range = part_range,
+                            .i = @truncate(u32, i),
+                            .task = ThreadPoolLib.Task{
+                                .callback = &generateCompileResultForJSChunk,
+                            },
+                            .ctx = chunk_ctx,
+                        };
+                        batch.push(ThreadPoolLib.Batch.from(&remaining_part_ranges[0].task));
+
+                        remaining_part_ranges = remaining_part_ranges[1..];
+                    }
+                }
+                wait_group.counter = @truncate(u32, total_count);
+                c.parse_graph.pool.pool.schedule(batch);
+                wait_group.wait();
+            }
+
+            {
+                debug(" START {d} postprocess chunks", .{chunks.len});
+                defer debug("  DONE {d} postprocess chunks", .{chunks.len});
+                wait_group.init();
+                wait_group.counter = @truncate(u32, chunks.len);
+
+                try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, chunk_contexts[0], generateChunkJS, chunks);
+            }
         }
 
         // TODO: enforceNoCyclicChunkImports()
@@ -7873,7 +8566,7 @@ const LinkerContext = struct {
                             }
                         }
 
-                        @panic("Assertion failure: missing chunk for react client component");
+                        continue;
                     };
 
                     grow_length += chunk.final_rel_path.len;
@@ -7941,12 +8634,13 @@ const LinkerContext = struct {
             break :brk byte_buffer.items;
         } else &.{};
 
-        // Generate the final output files by joining file pieces together
-        var output_files = std.ArrayList(options.OutputFile).initCapacity(bun.default_allocator, chunks.len + @as(
-            usize,
-            @boolToInt(react_client_components_manifest.len > 0) + c.parse_graph.additional_output_files.items.len,
-        )) catch unreachable;
-        output_files.items.len = chunks.len;
+        var output_files = std.ArrayList(options.OutputFile).initCapacity(
+            bun.default_allocator,
+            (if (c.options.source_maps == .external) chunks.len * 2 else chunks.len) + @as(
+                usize,
+                @boolToInt(react_client_components_manifest.len > 0) + c.parse_graph.additional_output_files.items.len,
+            ),
+        ) catch unreachable;
 
         const root_path = c.resolver.opts.output_dir;
 
@@ -7954,22 +8648,66 @@ const LinkerContext = struct {
             try c.writeOutputFilesToDisk(root_path, chunks, react_client_components_manifest, &output_files);
         } else {
             // In-memory build
-            for (chunks, output_files.items) |*chunk, *output_file| {
-                const buffer = chunk.intermediate_output.code(
+            for (chunks) |*chunk| {
+                const _code_result = if (c.options.source_maps != .none) chunk.intermediate_output.codeWithSourceMapShifts(
                     null,
                     c.parse_graph,
                     c.resolver.opts.public_path,
                     chunk,
                     chunks,
-                ) catch @panic("Failed to allocate memory for output file");
-                output_file.* = options.OutputFile.initBuf(
-                    buffer,
-                    Chunk.IntermediateOutput.allocatorForSize(buffer.len),
+                ) else chunk.intermediate_output.code(
+                    null,
+                    c.parse_graph,
+                    c.resolver.opts.public_path,
+                    chunk,
+                    chunks,
+                );
+
+                var code_result = _code_result catch @panic("Failed to allocate memory for output file");
+
+                switch (c.options.source_maps) {
+                    .external => {
+                        var output_source_map = chunk.output_source_map.finalize(bun.default_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
+                        var source_map_final_rel_path = default_allocator.alloc(u8, chunk.final_rel_path.len + ".map".len) catch unreachable;
+                        bun.copy(u8, source_map_final_rel_path, chunk.final_rel_path);
+                        bun.copy(u8, source_map_final_rel_path[chunk.final_rel_path.len..], ".map");
+
+                        output_files.appendAssumeCapacity(options.OutputFile.initBuf(
+                            output_source_map,
+                            Chunk.IntermediateOutput.allocatorForSize(output_source_map.len),
+                            source_map_final_rel_path,
+                            .file,
+                        ));
+                    },
+                    .@"inline" => {
+                        var output_source_map = chunk.output_source_map.finalize(bun.default_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
+                        const encode_len = base64.encodeLen(output_source_map);
+
+                        const source_map_start = "//# sourceMappingURL=data:application/json;base64,";
+                        const total_len = code_result.buffer.len + source_map_start.len + encode_len + 1;
+                        var buf = std.ArrayList(u8).initCapacity(Chunk.IntermediateOutput.allocatorForSize(total_len), total_len) catch @panic("Failed to allocate memory for output file with inline source map");
+
+                        buf.appendSliceAssumeCapacity(code_result.buffer);
+                        buf.appendSliceAssumeCapacity(source_map_start);
+
+                        buf.items.len += encode_len;
+                        _ = base64.encode(buf.items[buf.items.len - encode_len ..], output_source_map);
+
+                        buf.appendAssumeCapacity('\n');
+                        Chunk.IntermediateOutput.allocatorForSize(code_result.buffer.len).free(code_result.buffer);
+                        code_result.buffer = buf.items;
+                    },
+                    .none => {},
+                }
+
+                output_files.appendAssumeCapacity(options.OutputFile.initBuf(
+                    code_result.buffer,
+                    Chunk.IntermediateOutput.allocatorForSize(code_result.buffer.len),
                     // clone for main thread
                     bun.default_allocator.dupe(u8, chunk.final_rel_path) catch unreachable,
                     // TODO: remove this field
                     .js,
-                );
+                ));
             }
 
             if (react_client_components_manifest.len > 0) {
@@ -8041,12 +8779,18 @@ const LinkerContext = struct {
 
         // Optimization: when writing to disk, we can re-use the memory
         var max_heap_allocator: bun.MaxHeapAllocator = undefined;
-        const code_allocator = max_heap_allocator.init(bun.default_allocator);
         defer max_heap_allocator.deinit();
+
+        const code_allocator = max_heap_allocator.init(bun.default_allocator);
+
+        var max_heap_allocator_sourcemap: bun.MaxHeapAllocator = undefined;
+        defer max_heap_allocator_sourcemap.deinit();
+
+        const sourcemap_allocator = max_heap_allocator_sourcemap.init(bun.default_allocator);
 
         var pathbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-        for (chunks, output_files.items) |*chunk, *output_file| {
+        for (chunks) |*chunk| {
             defer max_heap_allocator.reset();
 
             var rel_path = chunk.final_rel_path;
@@ -8066,13 +8810,93 @@ const LinkerContext = struct {
                 }
             }
 
-            const buffer = chunk.intermediate_output.code(
-                code_allocator,
-                c.parse_graph,
-                c.resolver.opts.public_path,
-                chunk,
-                chunks,
-            ) catch @panic("Failed to allocate memory for output chunk");
+            const _code_result = if (c.options.source_maps != .none)
+                chunk.intermediate_output.codeWithSourceMapShifts(
+                    code_allocator,
+                    c.parse_graph,
+                    c.resolver.opts.public_path,
+                    chunk,
+                    chunks,
+                )
+            else
+                chunk.intermediate_output.code(
+                    code_allocator,
+                    c.parse_graph,
+                    c.resolver.opts.public_path,
+                    chunk,
+                    chunks,
+                );
+
+            var code_result = _code_result catch @panic("Failed to allocate memory for output chunk");
+
+            switch (c.options.source_maps) {
+                .external => {
+                    var output_source_map = chunk.output_source_map.finalize(sourcemap_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
+                    const source_map_final_rel_path = strings.concat(default_allocator, &.{
+                        chunk.final_rel_path,
+                        ".map",
+                    }) catch @panic("Failed to allocate memory for external source map path");
+
+                    switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
+                        &pathbuf,
+                        JSC.Node.Arguments.WriteFile{
+                            .data = JSC.Node.StringOrBuffer{
+                                .buffer = JSC.Buffer{
+                                    .buffer = .{
+                                        .ptr = @constCast(output_source_map.ptr),
+                                        // TODO: handle > 4 GB files
+                                        .len = @truncate(u32, output_source_map.len),
+                                        .byte_len = @truncate(u32, output_source_map.len),
+                                    },
+                                },
+                            },
+                            .encoding = .buffer,
+                            .dirfd = @intCast(bun.FileDescriptor, root_dir.dir.fd),
+                            .file = .{
+                                .path = JSC.Node.PathLike{
+                                    .string = JSC.PathString.init(source_map_final_rel_path),
+                                },
+                            },
+                        },
+                    )) {
+                        .err => |err| {
+                            c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing sourcemap for chunk {}", .{
+                                bun.fmt.quote(err.toSystemError().message.slice()),
+                                bun.fmt.quote(chunk.final_rel_path),
+                            }) catch unreachable;
+                            return error.WriteFailed;
+                        },
+                        .result => {},
+                    }
+
+                    output_files.appendAssumeCapacity(options.OutputFile{
+                        .input = Fs.Path.init(source_map_final_rel_path),
+                        .loader = .json,
+                        .size = @truncate(u32, output_source_map.len),
+                        .value = .{
+                            .saved = .{},
+                        },
+                    });
+                },
+                .@"inline" => {
+                    var output_source_map = chunk.output_source_map.finalize(sourcemap_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
+                    const encode_len = base64.encodeLen(output_source_map);
+
+                    const source_map_start = "//# sourceMappingURL=data:application/json;base64,";
+                    const total_len = code_result.buffer.len + source_map_start.len + encode_len + 1;
+                    var buf = std.ArrayList(u8).initCapacity(sourcemap_allocator, total_len) catch @panic("Failed to allocate memory for output file with inline source map");
+
+                    buf.appendSliceAssumeCapacity(code_result.buffer);
+                    buf.appendSliceAssumeCapacity(source_map_start);
+
+                    buf.items.len += encode_len;
+                    _ = base64.encode(buf.items[buf.items.len - encode_len ..], output_source_map);
+
+                    buf.appendAssumeCapacity('\n');
+                    code_result.buffer = buf.items;
+                },
+                .none => {},
+            }
 
             switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
                 &pathbuf,
@@ -8080,10 +8904,10 @@ const LinkerContext = struct {
                     .data = JSC.Node.StringOrBuffer{
                         .buffer = JSC.Buffer{
                             .buffer = .{
-                                .ptr = @constCast(buffer.ptr),
+                                .ptr = @constCast(code_result.buffer.ptr),
                                 // TODO: handle > 4 GB files
-                                .len = @truncate(u32, buffer.len),
-                                .byte_len = @truncate(u32, buffer.len),
+                                .len = @truncate(u32, code_result.buffer.len),
+                                .byte_len = @truncate(u32, code_result.buffer.len),
                             },
                         },
                     },
@@ -8106,14 +8930,14 @@ const LinkerContext = struct {
                 .result => {},
             }
 
-            output_file.* = options.OutputFile{
+            output_files.appendAssumeCapacity(options.OutputFile{
                 .input = Fs.Path.init(bun.default_allocator.dupe(u8, chunk.final_rel_path) catch unreachable),
                 .loader = .js,
-                .size = @truncate(u32, buffer.len),
+                .size = @truncate(u32, code_result.buffer.len),
                 .value = .{
                     .saved = .{},
                 },
-            };
+            });
         }
 
         if (react_client_components_manifest.len > 0) {
@@ -8891,7 +9715,8 @@ const LinkerContext = struct {
         const id = tracker.source_index.get();
         var named_imports: *JSAst.NamedImports = &c.graph.ast.items(.named_imports)[id];
         var import_records = c.graph.ast.items(.import_records)[id];
-        const exports_kind: []js_ast.ExportsKind = c.graph.ast.items(.exports_kind);
+        const exports_kind: []const js_ast.ExportsKind = c.graph.ast.items(.exports_kind);
+        const force_cjs_to_esm: []const bool = c.graph.ast.items(.force_cjs_to_esm);
 
         const named_import: js_ast.NamedImport = named_imports.get(tracker.import_ref) orelse
             // TODO: investigate if this is a bug
@@ -8988,8 +9813,8 @@ const LinkerContext = struct {
         }
 
         // Is this a file with dynamic exports?
-        const is_commonjs_to_esm = other_kind == .esm_with_dynamic_fallback_from_cjs;
-        if (other_kind == .esm_with_dynamic_fallback or is_commonjs_to_esm) {
+        const is_commonjs_to_esm = force_cjs_to_esm[other_id];
+        if (other_kind.isESMWithDynamicFallback() or is_commonjs_to_esm) {
             return .{
                 .value = .{
                     .source_index = Index.source(other_source_index),
@@ -9258,17 +10083,15 @@ const LinkerContext = struct {
         c: *LinkerContext,
         allocator: std.mem.Allocator,
         j: *bun.Joiner,
-        has_any_cross_chunk_code: bool,
         count: u32,
     ) !Chunk.IntermediateOutput {
-        // Optimization: If there can be no substitutions, just reuse the initial
-        // joiner that was used when generating the intermediate chunk output
-        // instead of creating another one and copying the whole file into it.
-        if (!has_any_cross_chunk_code) {
-            return Chunk.IntermediateOutput{
-                .joiner = j.*,
-            };
-        }
+        if (!j.contains(c.unique_key_prefix))
+            // There are like several cases that prohibit this from being checked more trivially, example:
+            // 1. dynamic imports
+            // 2. require()
+            // 3. require.resolve()
+            // 4. externals
+            return Chunk.IntermediateOutput{ .joiner = j.* };
 
         var pieces = try std.ArrayList(Chunk.OutputPiece).initCapacity(allocator, count);
         const complete_output = try j.done(allocator);
@@ -9381,19 +10204,19 @@ const LinkerContext = struct {
                 return false;
             }
 
+            const records = this.import_records[source_index].slice();
             for (this.export_star_records[source_index]) |id| {
-                const records: []const ImportRecord = this.import_records[id].slice();
-                for (records) |record| {
-                    // This file has dynamic exports if the exported imports are from a file
-                    // that either has dynamic exports directly or transitively by itself
-                    // having an export star from a file with dynamic exports.
-                    const kind = this.entry_point_kinds[record.source_index.get()];
-                    if ((record.source_index.get() >= this.import_records.len and (!kind.isEntryPoint() or !this.output_format.keepES6ImportExportSyntax())) or
-                        (record.source_index.get() < this.import_records.len and record.source_index.get() != source_index and this.hasDynamicExportsDueToExportStar(record.source_index.get())))
-                    {
-                        this.exports_kind[source_index] = .esm_with_dynamic_fallback;
-                        return true;
-                    }
+                const record = records[id];
+
+                // This file has dynamic exports if the exported imports are from a file
+                // that either has dynamic exports directly or transitively by itself
+                // having an export star from a file with dynamic exports.
+                const kind = this.entry_point_kinds[source_index];
+                if ((record.source_index.isInvalid() and (!kind.isEntryPoint() or !this.output_format.keepES6ImportExportSyntax())) or
+                    (record.source_index.isValid() and record.source_index.get() != source_index and this.hasDynamicExportsDueToExportStar(record.source_index.get())))
+                {
+                    this.exports_kind[source_index] = .esm_with_dynamic_fallback;
+                    return true;
                 }
             }
 
@@ -9401,6 +10224,10 @@ const LinkerContext = struct {
         }
 
         pub fn wrap(this: *DependencyWrapper, source_index: Index.Int) void {
+            var flags = this.flags[source_index];
+
+            if (flags.did_wrap_dependencies) return;
+            flags.did_wrap_dependencies = true;
 
             // Never wrap the runtime file since it always comes first
             if (source_index == Index.runtime.get()) {
@@ -9408,10 +10235,6 @@ const LinkerContext = struct {
             }
 
             this.flags[source_index] = brk: {
-                var flags = this.flags[source_index];
-
-                if (flags.did_wrap_dependencies) return;
-                flags.did_wrap_dependencies = true;
 
                 // This module must be wrapped
                 if (flags.wrap == .none) {
@@ -9518,8 +10341,14 @@ pub const Chunk = struct {
 
     is_executable: bool = false,
 
+    output_source_map: sourcemap.SourceMapPieces,
+
     intermediate_output: IntermediateOutput = .{ .empty = {} },
     isolated_hash: u64 = std.math.maxInt(u64),
+
+    renamer: renamer.Renamer = undefined,
+
+    compile_results_for_chunk: []CompileResult = &.{},
 
     pub inline fn isEntryPoint(this: *const Chunk) bool {
         return this.entry_point.is_entry_point;
@@ -9571,6 +10400,169 @@ pub const Chunk = struct {
                 return bun.default_allocator;
         }
 
+        pub const CodeResult = struct {
+            buffer: string,
+            shifts: []sourcemap.SourceMapShifts,
+        };
+
+        pub fn codeWithSourceMapShifts(
+            this: IntermediateOutput,
+            allocator_to_use: ?std.mem.Allocator,
+            graph: *const Graph,
+            import_prefix: []const u8,
+            chunk: *Chunk,
+            chunks: []Chunk,
+        ) !CodeResult {
+            const additional_files = graph.input_files.items(.additional_files);
+            const unique_key_for_additional_files = graph.input_files.items(.unique_key_for_additional_file);
+            switch (this) {
+                .pieces => |*pieces| {
+                    var shift = sourcemap.SourceMapShifts{
+                        .after = .{},
+                        .before = .{},
+                    };
+
+                    var shifts = try std.ArrayList(sourcemap.SourceMapShifts).initCapacity(bun.default_allocator, pieces.len + 1);
+                    shifts.appendAssumeCapacity(shift);
+
+                    var count: usize = 0;
+                    var from_chunk_dir = std.fs.path.dirname(chunk.final_rel_path) orelse "";
+                    if (strings.eqlComptime(from_chunk_dir, "."))
+                        from_chunk_dir = "";
+
+                    for (pieces.slice()) |piece| {
+                        count += piece.data_len;
+
+                        switch (piece.index.kind) {
+                            .chunk, .asset => {
+                                const index = piece.index.index;
+                                const file_path = switch (piece.index.kind) {
+                                    .asset => graph.additional_output_files.items[additional_files[index].last().?.output_file].input.text,
+                                    .chunk => chunks[index].final_rel_path,
+                                    else => unreachable,
+                                };
+
+                                const cheap_normalizer = cheapPrefixNormalizer(
+                                    import_prefix,
+                                    if (from_chunk_dir.len == 0)
+                                        file_path
+                                    else
+                                        bun.path.relative(from_chunk_dir, file_path),
+                                );
+                                count += cheap_normalizer[0].len + cheap_normalizer[1].len;
+                            },
+                            .none => {},
+                        }
+                    }
+
+                    const debug_id_len = if (comptime FeatureFlags.source_map_debug_id)
+                        std.fmt.count("\n//# debugId={}\n", .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }})
+                    else
+                        0;
+
+                    var total_buf = try (allocator_to_use orelse allocatorForSize(count)).alloc(u8, count + debug_id_len);
+                    var remain = total_buf;
+
+                    for (pieces.slice()) |piece| {
+                        const data = piece.data();
+
+                        var data_offset = sourcemap.LineColumnOffset{};
+                        data_offset.advance(data);
+                        shift.before.add(data_offset);
+                        shift.after.add(data_offset);
+
+                        if (data.len > 0)
+                            @memcpy(remain.ptr, data.ptr, data.len);
+
+                        remain = remain[data.len..];
+
+                        switch (piece.index.kind) {
+                            .asset, .chunk => {
+                                const index = piece.index.index;
+                                const file_path = brk: {
+                                    switch (piece.index.kind) {
+                                        .asset => {
+                                            shift.before.advance(unique_key_for_additional_files[index]);
+                                            const file = graph.additional_output_files.items[additional_files[index].last().?.output_file];
+                                            break :brk file.input.text;
+                                        },
+                                        .chunk => {
+                                            const piece_chunk = chunks[index];
+                                            shift.before.advance(piece_chunk.unique_key);
+                                            break :brk piece_chunk.final_rel_path;
+                                        },
+                                        else => unreachable,
+                                    }
+                                };
+
+                                const cheap_normalizer = cheapPrefixNormalizer(
+                                    import_prefix,
+                                    if (from_chunk_dir.len == 0)
+                                        file_path
+                                    else
+                                        bun.path.relative(from_chunk_dir, file_path),
+                                );
+
+                                if (cheap_normalizer[0].len > 0) {
+                                    @memcpy(remain.ptr, cheap_normalizer[0].ptr, cheap_normalizer[0].len);
+                                    remain = remain[cheap_normalizer[0].len..];
+                                    shift.after.advance(cheap_normalizer[0]);
+                                }
+
+                                if (cheap_normalizer[1].len > 0) {
+                                    @memcpy(remain.ptr, cheap_normalizer[1].ptr, cheap_normalizer[1].len);
+                                    remain = remain[cheap_normalizer[1].len..];
+                                    shift.after.advance(cheap_normalizer[1]);
+                                }
+
+                                shifts.appendAssumeCapacity(shift);
+                            },
+                            .none => {},
+                        }
+                    }
+
+                    if (comptime FeatureFlags.source_map_debug_id) {
+                        // This comment must go before the //# sourceMappingURL comment
+                        remain = remain[(std.fmt.bufPrint(
+                            remain,
+                            "\n//# debugId={}\n",
+                            .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }},
+                        ) catch unreachable).len..];
+                    }
+
+                    std.debug.assert(remain.len == 0);
+                    std.debug.assert(total_buf.len == count + debug_id_len);
+
+                    return .{
+                        .buffer = total_buf,
+                        .shifts = shifts.items,
+                    };
+                },
+                .joiner => |joiner_| {
+                    // TODO: make this safe
+                    var joiny = joiner_;
+
+                    if (comptime FeatureFlags.source_map_debug_id) {
+                        // This comment must go before the //# sourceMappingURL comment
+                        joiny.push(std.fmt.allocPrint(
+                            graph.allocator,
+                            "\n//# debugId={}\n",
+                            .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }},
+                        ) catch unreachable);
+                    }
+
+                    return .{
+                        .buffer = try joiny.done((allocator_to_use orelse allocatorForSize(joiny.len))),
+                        .shifts = &[_]sourcemap.SourceMapShifts{},
+                    };
+                },
+                .empty => return .{
+                    .buffer = "",
+                    .shifts = &[_]sourcemap.SourceMapShifts{},
+                },
+            }
+        }
+
         pub fn code(
             this: IntermediateOutput,
             allocator_to_use: ?std.mem.Allocator,
@@ -9578,7 +10570,7 @@ pub const Chunk = struct {
             import_prefix: []const u8,
             chunk: *Chunk,
             chunks: []Chunk,
-        ) ![]const u8 {
+        ) !CodeResult {
             const additional_files = graph.input_files.items(.additional_files);
             switch (this) {
                 .pieces => |*pieces| {
@@ -9659,14 +10651,23 @@ pub const Chunk = struct {
                     std.debug.assert(remain.len == 0);
                     std.debug.assert(total_buf.len == count);
 
-                    return total_buf;
+                    return .{
+                        .buffer = total_buf,
+                        .shifts = &[_]sourcemap.SourceMapShifts{},
+                    };
                 },
                 .joiner => |joiner_| {
                     // TODO: make this safe
                     var joiny = joiner_;
-                    return joiny.done((allocator_to_use orelse allocatorForSize(joiny.len)));
+                    return .{
+                        .buffer = try joiny.done((allocator_to_use orelse allocatorForSize(joiny.len))),
+                        .shifts = &[_]sourcemap.SourceMapShifts{},
+                    };
                 },
-                .empty => return "",
+                .empty => return .{
+                    .buffer = "",
+                    .shifts = &[_]sourcemap.SourceMapShifts{},
+                },
             }
         }
     };
@@ -9762,6 +10763,7 @@ pub const CrossChunkImport = struct {
             list.* = result;
         }
 
+        result.clearRetainingCapacity();
         try result.ensureTotalCapacity(imports_from_other_chunks.count());
 
         var import_items_list = imports_from_other_chunks.values();
@@ -9821,6 +10823,12 @@ const CompileResult = union(enum) {
             // else => 0,
         };
     }
+};
+
+const CompileResultForSourceMap = struct {
+    source_map_chunk: sourcemap.Chunk,
+    generated_offset: sourcemap.LineColumnOffset,
+    source_index: u32,
 };
 
 const ContentHasher = struct {

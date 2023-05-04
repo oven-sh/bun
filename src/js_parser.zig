@@ -2988,23 +2988,32 @@ pub const Parser = struct {
                         // https://github.com/kysely-org/kysely/issues/412
                         // TODO: this breaks code if they have any static variables or properties which reference anything from the parent scope
                         // we need to fix it before we merge v0.6.0
-                        var list = if (!p.options.bundle and class.is_export and class.class.extends == null) &before else &parts;
+                        var list = if (!p.options.bundle and class.class.canBeMoved()) &before else &parts;
                         var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
                         sliced.items.len = 1;
                         sliced.items[0] = stmt;
-                        try p.appendPart(list, sliced.items);
+                        try p.appendPart(&parts, sliced.items);
+
+                        if (&parts != list) {
+                            before.append(parts.getLast()) catch unreachable;
+                            parts.items.len -= 1;
+                        }
                     },
                     .s_export_default => |value| {
                         // We move export default statements when we can
                         // This automatically resolves some cyclical import issues in packages like luxon
                         // https://github.com/oven-sh/bun/issues/1961
-                        var list = if (!p.options.bundle and value.canBeMovedAround()) &before else &parts;
+                        var list = if (!p.options.bundle and value.canBeMoved()) &before else &parts;
                         var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
                         sliced.items.len = 1;
                         sliced.items[0] = stmt;
-                        try p.appendPart(list, sliced.items);
-                    },
+                        try p.appendPart(&parts, sliced.items);
 
+                        if (&parts != list) {
+                            before.append(parts.getLast()) catch unreachable;
+                            parts.items.len -= 1;
+                        }
+                    },
                     else => {
                         var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
                         sliced.items.len = 1;
@@ -3121,7 +3130,7 @@ pub const Parser = struct {
                                 },
                                 export_ref.loc_ref.loc,
                             );
-
+                            p.module_scope.generated.push(p.allocator, ref) catch unreachable;
                             var clause_items = p.allocator.alloc(js_ast.ClauseItem, 1) catch unreachable;
                             clause_items[0] = js_ast.ClauseItem{
                                 .alias = alias,
@@ -5064,7 +5073,6 @@ fn NewParser_(
                         }) catch unreachable;
                         p.import_items_for_namespace.put(p.allocator, namespace_ref, ImportItemForNamespaceMap.init(p.allocator)) catch unreachable;
                         p.ignoreUsage(p.require_ref);
-
                         return p.newExpr(
                             E.RequireString{
                                 .import_record_index = import_record_index,
@@ -9555,9 +9563,11 @@ fn NewParser_(
                     try p.lexer.next();
                     var stmtOpts = ParseStatementOptions{};
                     const stmts = try p.parseStmtsUpTo(.t_close_brace, &stmtOpts);
+                    const close_brace_loc = p.lexer.loc();
                     try p.lexer.next();
                     return p.s(S.Block{
                         .stmts = stmts,
+                        .close_brace_loc = close_brace_loc,
                     }, loc);
                 },
 
@@ -10639,7 +10649,7 @@ fn NewParser_(
             return p.s(S.Enum{
                 .name = name,
                 .arg = arg_ref,
-                .values = try values.toOwnedSlice(),
+                .values = values.items,
                 .is_export = opts.is_export,
             }, loc);
         }
@@ -10964,7 +10974,7 @@ fn NewParser_(
                 }
             }
 
-            return try stmts.toOwnedSlice();
+            return stmts.items;
         }
 
         fn markStrictModeFeature(p: *P, feature: StrictModeFeature, r: logger.Range, detail: string) !void {
@@ -12361,7 +12371,7 @@ fn NewParser_(
                 .ts_decorators = ExprNodeList.init(class_opts.ts_decorators),
                 .class_keyword = class_keyword,
                 .body_loc = body_loc,
-                .properties = try properties.toOwnedSlice(),
+                .properties = properties.items,
                 .has_decorators = has_decorators or class_opts.ts_decorators.len > 0,
             };
         }
@@ -12420,7 +12430,7 @@ fn NewParser_(
 
             p.allow_in = oldAllowIn;
 
-            return try parts.toOwnedSlice();
+            return parts.items;
         }
 
         // This assumes the caller has already checked for TStringLiteral or TNoSubstitutionTemplateLiteral
@@ -14442,7 +14452,7 @@ fn NewParser_(
             }
 
             if (partStmts.items.len > 0) {
-                const _stmts = try partStmts.toOwnedSlice();
+                const _stmts = partStmts.items;
 
                 // -- hoist_bun_plugin --
                 if (_stmts.len == 1 and p.options.features.hoist_bun_plugin and !p.bun_plugin.ref.isNull()) {
@@ -14719,7 +14729,7 @@ fn NewParser_(
             var stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, body.stmts);
             var temp_opts = PrependTempRefsOpts{ .kind = StmtsKind.fn_body, .fn_body_loc = body.loc };
             p.visitStmtsAndPrependTempRefs(&stmts, &temp_opts) catch unreachable;
-            func.body = G.FnBody{ .stmts = stmts.toOwnedSlice() catch @panic("TODO"), .loc = body.loc };
+            func.body = G.FnBody{ .stmts = stmts.items, .loc = body.loc };
 
             p.popScope();
             p.popScope();
@@ -16511,7 +16521,7 @@ fn NewParser_(
                     var temp_opts = PrependTempRefsOpts{ .kind = StmtsKind.fn_body };
                     p.visitStmtsAndPrependTempRefs(&stmts_list, &temp_opts) catch unreachable;
                     p.allocator.free(e_.body.stmts);
-                    e_.body.stmts = stmts_list.toOwnedSlice() catch @panic("TODO");
+                    e_.body.stmts = stmts_list.items;
                     p.popScope();
                     p.popScope();
 
@@ -17338,7 +17348,7 @@ fn NewParser_(
                         } else if (p.options.bundle and strings.eqlComptime(name, "id") and identifier_opts.assign_target == .none) {
                             // inline module.id
                             p.ignoreUsage(p.module_ref);
-                            return p.newExpr(E.String.init(p.source.path.text), name_loc);
+                            return p.newExpr(E.String.init(p.source.path.pretty), name_loc);
                         } else if (p.options.bundle and strings.eqlComptime(name, "filename") and identifier_opts.assign_target == .none) {
                             // inline module.filename
                             p.ignoreUsage(p.module_ref);
@@ -17363,6 +17373,7 @@ fn NewParser_(
                                     .other,
                                     std.fmt.allocPrint(p.allocator, "${any}", .{strings.fmtIdentifier(name)}) catch unreachable,
                                 ) catch unreachable;
+                                p.module_scope.generated.push(p.allocator, new_ref) catch unreachable;
                                 named_export_entry.value_ptr.* = .{
                                     .loc_ref = LocRef{
                                         .loc = name_loc,
@@ -17642,7 +17653,7 @@ fn NewParser_(
 
                             var items = try List(js_ast.ClauseItem).initCapacity(p.allocator, 1);
                             items.appendAssumeCapacity(js_ast.ClauseItem{ .alias = alias.original_name, .original_name = alias.original_name, .alias_loc = alias.loc, .name = LocRef{ .loc = alias.loc, .ref = data.namespace_ref } });
-                            stmts.appendAssumeCapacity(p.s(S.ExportClause{ .items = items.toOwnedSlice(p.allocator) catch @panic("TODO"), .is_single_line = true }, stmt.loc));
+                            stmts.appendAssumeCapacity(p.s(S.ExportClause{ .items = items.items, .is_single_line = true }, stmt.loc));
                             return;
                         }
                     }
@@ -17921,7 +17932,11 @@ fn NewParser_(
                                                 .binding = p.b(B.Identifier{ .ref = ref }, bin.left.loc),
                                                 .value = bin.right,
                                             };
-                                            p.recordDeclaredSymbol(ref) catch unreachable;
+                                            // we have to ensure these are known to be top-level
+                                            p.declared_symbols.append(p.allocator, .{
+                                                .ref = ref,
+                                                .is_top_level = true,
+                                            }) catch unreachable;
                                             p.esm_export_keyword.loc = stmt.loc;
                                             p.esm_export_keyword.len = 5;
                                             p.had_commonjs_named_exports_this_visit = true;
@@ -18006,7 +18021,7 @@ fn NewParser_(
                         const kind = if (std.meta.eql(p.loop_body, stmt.data)) StmtsKind.loop_body else StmtsKind.none;
                         var _stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, data.stmts);
                         p.visitStmts(&_stmts, kind) catch unreachable;
-                        data.stmts = _stmts.toOwnedSlice() catch @panic("TODO");
+                        data.stmts = _stmts.items;
                         p.popScope();
                     }
 
@@ -18206,7 +18221,7 @@ fn NewParser_(
                         p.fn_or_arrow_data_visit.try_body_count += 1;
                         p.visitStmts(&_stmts, StmtsKind.none) catch unreachable;
                         p.fn_or_arrow_data_visit.try_body_count -= 1;
-                        data.body = _stmts.toOwnedSlice() catch @panic("TODO");
+                        data.body = _stmts.items;
                     }
                     p.popScope();
 
@@ -18218,7 +18233,7 @@ fn NewParser_(
                             }
                             var _stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, catch_.body);
                             p.visitStmts(&_stmts, StmtsKind.none) catch unreachable;
-                            catch_.body = _stmts.toOwnedSlice() catch @panic("TODO");
+                            catch_.body = _stmts.items;
                         }
                         p.popScope();
                     }
@@ -18228,7 +18243,7 @@ fn NewParser_(
                         {
                             var _stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, finally.stmts);
                             p.visitStmts(&_stmts, StmtsKind.none) catch unreachable;
-                            finally.stmts = _stmts.toOwnedSlice() catch @panic("TODO");
+                            finally.stmts = _stmts.items;
                         }
                         p.popScope();
                     }
@@ -18252,7 +18267,7 @@ fn NewParser_(
                             }
                             var _stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, case.body);
                             p.visitStmts(&_stmts, StmtsKind.none) catch unreachable;
-                            data.cases[i].body = _stmts.toOwnedSlice() catch @panic("TODO");
+                            data.cases[i].body = _stmts.items;
                         }
                     }
                     // TODO: duplicate case checker
@@ -18487,7 +18502,7 @@ fn NewParser_(
                         data.name.loc,
                         data.name.ref.?,
                         data.arg,
-                        try value_stmts.toOwnedSlice(),
+                        value_stmts.items,
                     );
                     return;
                 },
@@ -19698,8 +19713,8 @@ fn NewParser_(
                                 }
                             }
 
-                            class.properties = class_body.toOwnedSlice() catch unreachable;
-                            constructor.func.body.stmts = stmts.toOwnedSlice() catch unreachable;
+                            class.properties = class_body.items;
+                            constructor.func.body.stmts = stmts.items;
                         }
                     }
                 }
@@ -20052,32 +20067,32 @@ fn NewParser_(
 
             var is_control_flow_dead = false;
 
-            // Inline single-use variable declarations where possible:
-            //
-            //   // Before
-            //   let x = fn();
-            //   return x.y();
-            //
-            //   // After
-            //   return fn().y();
-            //
-            // The declaration must not be exported. We can't just check for the
-            // "export" keyword because something might do "export {id};" later on.
-            // Instead we just ignore all top-level declarations for now. That means
-            // this optimization currently only applies in nested scopes.
-            //
-            // Ignore declarations if the scope is shadowed by a direct "eval" call.
-            // The eval'd code may indirectly reference this symbol and the actual
-            // use count may be greater than 1.
-            if (p.current_scope != p.module_scope and !p.current_scope.contains_direct_eval) {
-                var output = ListManaged(Stmt).initCapacity(p.allocator, stmts.items.len) catch unreachable;
+            var output = ListManaged(Stmt).initCapacity(p.allocator, stmts.items.len) catch unreachable;
 
-                for (stmts.items) |stmt| {
-                    if (is_control_flow_dead and !SideEffects.shouldKeepStmtInDeadControlFlow(stmt, p.allocator)) {
-                        // Strip unnecessary statements if the control flow is dead here
-                        continue;
-                    }
+            for (stmts.items) |stmt| {
+                if (is_control_flow_dead and !SideEffects.shouldKeepStmtInDeadControlFlow(stmt, p.allocator)) {
+                    // Strip unnecessary statements if the control flow is dead here
+                    continue;
+                }
 
+                // Inline single-use variable declarations where possible:
+                //
+                //   // Before
+                //   let x = fn();
+                //   return x.y();
+                //
+                //   // After
+                //   return fn().y();
+                //
+                // The declaration must not be exported. We can't just check for the
+                // "export" keyword because something might do "export {id};" later on.
+                // Instead we just ignore all top-level declarations for now. That means
+                // this optimization currently only applies in nested scopes.
+                //
+                // Ignore declarations if the scope is shadowed by a direct "eval" call.
+                // The eval'd code may indirectly reference this symbol and the actual
+                // use count may be greater than 1.
+                if (p.current_scope != p.module_scope and !p.current_scope.contains_direct_eval) {
                     // Keep inlining variables until a failure or until there are none left.
                     // That handles cases like this:
                     //
@@ -20146,114 +20161,143 @@ fn NewParser_(
                         }
                         break;
                     }
-
-                    // don't merge super calls to ensure they are called before "this" is accessed
-                    if (stmt.isSuperCall()) {
-                        output.append(stmt) catch unreachable;
-                        continue;
-                    }
-
-                    switch (stmt.data) {
-                        .s_empty => continue,
-
-                        // skip directives for now
-                        .s_directive => continue,
-
-                        .s_local => |local| {
-                            // Merge adjacent local statements
-                            if (output.items.len > 0) {
-                                var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_local and
-                                    local.canMergeWith(prev_stmt.data.s_local))
-                                {
-                                    prev_stmt.data.s_local.decls.append(p.allocator, local.decls.slice()) catch unreachable;
-                                    continue;
-                                }
-                            }
-                        },
-
-                        .s_expr => |s_expr| {
-                            // Merge adjacent expression statements
-                            if (output.items.len > 0) {
-                                var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
-                                    prev_stmt.data.s_expr.does_not_affect_tree_shaking = prev_stmt.data.s_expr.does_not_affect_tree_shaking and
-                                        s_expr.does_not_affect_tree_shaking;
-                                    prev_stmt.data.s_expr.value = prev_stmt.data.s_expr.value.joinWithComma(
-                                        s_expr.value,
-                                        p.allocator,
-                                    );
-                                    continue;
-                                }
-                            }
-                        },
-                        .s_switch => |s_switch| {
-                            // Absorb a previous expression statement
-                            if (output.items.len > 0) {
-                                var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
-                                    s_switch.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_switch.test_, p.allocator);
-                                    output.items.len -= 1;
-                                }
-                            }
-                        },
-                        .s_if => |s_if| {
-                            // Absorb a previous expression statement
-                            if (output.items.len > 0) {
-                                var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
-                                    s_if.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_if.test_, p.allocator);
-                                    output.items.len -= 1;
-                                }
-                            }
-
-                            // TODO: optimize jump
-                        },
-
-                        .s_return => |ret| {
-                            // Merge return statements with the previous expression statement
-                            if (output.items.len > 0 and ret.value != null) {
-                                var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
-                                    ret.value = prev_stmt.data.s_expr.value.joinWithComma(ret.value.?, p.allocator);
-                                    prev_stmt.* = stmt;
-                                    continue;
-                                }
-                            }
-
-                            is_control_flow_dead = true;
-                        },
-
-                        .s_break, .s_continue => {
-                            is_control_flow_dead = true;
-                        },
-
-                        .s_throw => {
-                            // Merge throw statements with the previous expression statement
-                            if (output.items.len > 0) {
-                                var prev_stmt = &output.items[output.items.len - 1];
-                                if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
-                                    prev_stmt.* = p.s(S.Throw{
-                                        .value = prev_stmt.data.s_expr.value.joinWithComma(
-                                            stmt.data.s_throw.value,
-                                            p.allocator,
-                                        ),
-                                    }, stmt.loc);
-                                    continue;
-                                }
-                            }
-
-                            is_control_flow_dead = true;
-                        },
-
-                        else => {},
-                    }
-
-                    output.append(stmt) catch unreachable;
                 }
-                stmts.deinit();
-                stmts.* = output;
+
+                // don't merge super calls to ensure they are called before "this" is accessed
+                if (stmt.isSuperCall()) {
+                    output.append(stmt) catch unreachable;
+                    continue;
+                }
+
+                switch (stmt.data) {
+                    .s_empty => continue,
+
+                    // skip directives for now
+                    .s_directive => continue,
+
+                    .s_local => |local| {
+                        // Merge adjacent local statements
+                        if (output.items.len > 0) {
+                            var prev_stmt = &output.items[output.items.len - 1];
+                            if (prev_stmt.data == .s_local and
+                                local.canMergeWith(prev_stmt.data.s_local))
+                            {
+                                prev_stmt.data.s_local.decls.append(p.allocator, local.decls.slice()) catch unreachable;
+                                continue;
+                            }
+                        }
+                    },
+
+                    .s_expr => |s_expr| {
+                        // Merge adjacent expression statements
+                        if (output.items.len > 0) {
+                            var prev_stmt = &output.items[output.items.len - 1];
+                            if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
+                                prev_stmt.data.s_expr.does_not_affect_tree_shaking = prev_stmt.data.s_expr.does_not_affect_tree_shaking and
+                                    s_expr.does_not_affect_tree_shaking;
+                                prev_stmt.data.s_expr.value = prev_stmt.data.s_expr.value.joinWithComma(
+                                    s_expr.value,
+                                    p.allocator,
+                                );
+                                continue;
+                            } else if
+                            //
+                            // Input:
+                            //      var f;
+                            //      f = 123;
+                            // Output:
+                            //      var f = 123;
+                            //
+                            // This doesn't handle every case. Only the very simple one.
+                            (prev_stmt.data == .s_local and
+                                s_expr.value.data == .e_binary and
+                                prev_stmt.data.s_local.decls.len == 1 and
+                                s_expr.value.data.e_binary.op == .bin_assign)
+                            {
+                                var prev_local = prev_stmt.data.s_local;
+                                var bin_assign = s_expr.value.data.e_binary;
+
+                                if (bin_assign.left.data == .e_identifier) {
+                                    var decl = &prev_local.decls.slice()[0];
+                                    if (decl.binding.data == .b_identifier and
+                                        decl.binding.data.b_identifier.ref.eql(bin_assign.left.data.e_identifier.ref) and
+                                        (decl.value == null or decl.value.?.isPrimitiveLiteral()))
+                                    {
+                                        decl.value = bin_assign.right;
+                                        p.ignoreUsage(bin_assign.left.data.e_identifier.ref);
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    .s_switch => |s_switch| {
+                        // Absorb a previous expression statement
+                        if (output.items.len > 0) {
+                            var prev_stmt = &output.items[output.items.len - 1];
+                            if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
+                                s_switch.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_switch.test_, p.allocator);
+                                output.items.len -= 1;
+                            }
+                        }
+                    },
+                    .s_if => |s_if| {
+                        // Absorb a previous expression statement
+                        if (output.items.len > 0) {
+                            var prev_stmt = &output.items[output.items.len - 1];
+                            if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
+                                s_if.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_if.test_, p.allocator);
+                                output.items.len -= 1;
+                            }
+                        }
+
+                        // TODO: optimize jump
+                    },
+
+                    .s_return => |ret| {
+                        // Merge return statements with the previous expression statement
+                        if (output.items.len > 0 and ret.value != null) {
+                            var prev_stmt = &output.items[output.items.len - 1];
+                            if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
+                                ret.value = prev_stmt.data.s_expr.value.joinWithComma(ret.value.?, p.allocator);
+                                prev_stmt.* = stmt;
+                                continue;
+                            }
+                        }
+
+                        is_control_flow_dead = true;
+                    },
+
+                    .s_break, .s_continue => {
+                        is_control_flow_dead = true;
+                    },
+
+                    .s_throw => {
+                        // Merge throw statements with the previous expression statement
+                        if (output.items.len > 0) {
+                            var prev_stmt = &output.items[output.items.len - 1];
+                            if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
+                                prev_stmt.* = p.s(S.Throw{
+                                    .value = prev_stmt.data.s_expr.value.joinWithComma(
+                                        stmt.data.s_throw.value,
+                                        p.allocator,
+                                    ),
+                                }, stmt.loc);
+                                continue;
+                            }
+                        }
+
+                        is_control_flow_dead = true;
+                    },
+
+                    else => {},
+                }
+
+                output.append(stmt) catch unreachable;
             }
+
+            stmts.deinit();
+            stmts.* = output;
         }
 
         fn extractDeclsForBinding(binding: Binding, decls: *ListManaged(G.Decl)) !void {
@@ -21202,6 +21246,7 @@ fn NewParser_(
                 else
                     p.require_ref,
 
+                .force_cjs_to_esm = p.unwrap_all_requires or exports_kind == .esm_with_dynamic_fallback_from_cjs,
                 .uses_module_ref = (p.symbols.items[p.module_ref.innerIndex()].use_count_estimate > 0),
                 .uses_exports_ref = (p.symbols.items[p.exports_ref.innerIndex()].use_count_estimate > 0),
                 .uses_require_ref = if (p.runtime_imports.__require != null)

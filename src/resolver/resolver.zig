@@ -1794,7 +1794,7 @@ pub const Resolver = struct {
                 if (r.dirInfoForResolution(dir_path_for_resolution, resolved_package_id)) |dir_info_to_use_| {
                     if (dir_info_to_use_) |pkg_dir_info| {
                         const abs_package_path = pkg_dir_info.abs_path;
-
+                        var module_type = options.ModuleType.unknown;
                         if (pkg_dir_info.package_json) |package_json| {
                             if (package_json.exports) |exports_map| {
                                 // The condition set is determined by the kind of import
@@ -1806,6 +1806,7 @@ pub const Resolver = struct {
                                         else => r.opts.conditions.import,
                                     },
                                     .allocator = r.allocator,
+                                    .module_type = &module_type,
                                     .debug_logs = if (r.debug_logs) |*debug|
                                         debug
                                     else
@@ -2046,7 +2047,7 @@ pub const Resolver = struct {
 
             // All packages are enqueued to the root
             // because we download all the npm package dependencies
-            switch (pm.enqueueDependencyToRoot(esm.name, esm.version, &version, behavior, is_main)) {
+            switch (pm.enqueueDependencyToRoot(esm.name, esm.version, &version, behavior)) {
                 .resolution => |result| {
                     input_package_id_.* = result.package_id;
                     return .{ .resolution = result.resolution };
@@ -2735,6 +2736,7 @@ pub const Resolver = struct {
             }
             return .{ .not_found = {} };
         }
+        var module_type = options.ModuleType.unknown;
 
         const esmodule = ESModule{
             .conditions = switch (kind) {
@@ -2743,6 +2745,7 @@ pub const Resolver = struct {
             },
             .allocator = r.allocator,
             .debug_logs = if (r.debug_logs) |*debug| debug else null,
+            .module_type = &module_type,
         };
 
         const esm_resolution = esmodule.resolveImports(import_path, imports_map.root);

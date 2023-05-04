@@ -115,3 +115,13 @@ pub fn append(this: *Joiner, slice: string, offset: u32, allocator: ?Allocator) 
     tail.next = new_tail;
     this.tail = new_tail;
 }
+
+pub fn contains(this: *const Joiner, slice: string) bool {
+    var el = this.head;
+    while (el) |node| {
+        el = node.next;
+        if (bun.strings.contains(node.data.slice[node.data.offset..], slice)) return true;
+    }
+
+    return false;
+}

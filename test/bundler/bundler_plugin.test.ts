@@ -54,7 +54,7 @@ describe("bundler", () => {
       });
     },
     run: {
-      stdout: "foo",
+      stdout: "HELLO WORLD",
     },
   });
 

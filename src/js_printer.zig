@@ -491,6 +491,7 @@ pub const Options = struct {
     rewrite_require_resolve: bool = true,
     allocator: std.mem.Allocator = default_allocator,
     source_map_handler: ?SourceMapHandler = null,
+    source_map_builder: ?*bun.sourcemap.Chunk.Builder = null,
     css_import_behavior: Api.CssInJsBehavior = Api.CssInJsBehavior.facade,
 
     commonjs_named_exports: js_ast.Ast.CommonJSNamedExports = .{},
@@ -527,7 +528,7 @@ pub const Options = struct {
 
     // If we're writing out a source map, this table of line start indices lets
     // us do binary search on to figure out what line a given AST node came from
-    // line_offset_tables: []LineOffsetTable
+    line_offset_tables: ?SourceMap.LineOffsetTable.List = null,
 
     pub inline fn unindent(self: *Options) void {
         self.indent -|= 1;
@@ -976,7 +977,7 @@ fn NewPrinter(
             switch (stmt.data) {
                 .s_block => |block| {
                     p.printSpace();
-                    p.printBlock(stmt.loc, block.stmts);
+                    p.printBlock(stmt.loc, block.stmts, block.close_brace_loc);
                     p.printNewline();
                 },
                 else => {
@@ -995,7 +996,7 @@ fn NewPrinter(
             }
         }
 
-        pub fn printBlock(p: *Printer, loc: logger.Loc, stmts: []const Stmt) void {
+        pub fn printBlock(p: *Printer, loc: logger.Loc, stmts: []const Stmt, close_brace_loc: ?logger.Loc) void {
             p.addSourceMapping(loc);
             p.print("{");
             p.printNewline();
@@ -1006,6 +1007,9 @@ fn NewPrinter(
             p.needs_semicolon = false;
 
             p.printIndent();
+            if (close_brace_loc != null and close_brace_loc.?.start > loc.start) {
+                p.addSourceMapping(close_brace_loc.?);
+            }
             p.print("}");
         }
 
@@ -1177,6 +1181,19 @@ fn NewPrinter(
             printer.source_map_builder.addSourceMapping(location, printer.writer.slice());
         }
 
+        // pub inline fn addSourceMappingForName(printer: *Printer, location: logger.Loc, name: string, ref: Ref) void {
+        //     _ = location;
+        //     if (comptime !generate_source_map) {
+        //         return;
+        //     }
+
+        //     if (printer.symbols().get(printer.symbols().follow(ref))) |symbol| {
+        //         if (!strings.eqlLong(symbol.original_name, name)) {
+        //             printer.source_map_builder.addSourceMapping()
+        //         }
+        //     }
+        // }
+
         pub fn printSymbol(p: *Printer, ref: Ref) void {
             std.debug.assert(!ref.isNull());
             const name = p.renamer.nameForSymbol(ref);
@@ -1237,7 +1254,7 @@ fn NewPrinter(
         pub fn printFunc(p: *Printer, func: G.Fn) void {
             p.printFnArgs(func.open_parens_loc, func.args, func.flags.contains(.has_rest_arg), false);
             p.printSpace();
-            p.printBlock(func.body.loc, func.body.stmts);
+            p.printBlock(func.body.loc, func.body.stmts, null);
         }
         pub fn printClass(p: *Printer, class: G.Class) void {
             if (class.extends) |extends| {
@@ -1260,7 +1277,7 @@ fn NewPrinter(
                 if (item.kind == .class_static_block) {
                     p.print("static");
                     p.printSpace();
-                    p.printBlock(item.class_static_block.?.loc, item.class_static_block.?.stmts.slice());
+                    p.printBlock(item.class_static_block.?.loc, item.class_static_block.?.stmts.slice(), null);
                     p.printNewline();
                     continue;
                 }
@@ -2313,7 +2330,7 @@ fn NewPrinter(
                     }
 
                     if (!wasPrinted) {
-                        p.printBlock(e.body.loc, e.body.stmts);
+                        p.printBlock(e.body.loc, e.body.stmts, null);
                     }
 
                     if (wrap) {
@@ -2737,7 +2754,8 @@ fn NewPrinter(
                     }
                 },
                 .e_unary => |e| {
-                    const entry: Op = Op.Table.get(e.op);
+                    // 4.00 ms  eums.EnumIndexer(src.js_ast.Op.Code).indexOf
+                    const entry: *const Op = Op.Table.getPtrConst(e.op);
                     const wrap = level.gte(entry.level);
 
                     if (wrap) {
@@ -2768,8 +2786,11 @@ fn NewPrinter(
                     }
                 },
                 .e_binary => |e| {
-                    const entry: Op = Op.Table.get(e.op);
-                    var wrap = level.gte(entry.level) or (e.op == Op.Code.bin_in and flags.contains(.forbid_in));
+                    // 4.00 ms  enums.EnumIndexer(src.js_ast.Op.Code).indexOf
+                    const entry: *const Op = Op.Table.getPtrConst(e.op);
+                    const e_level = entry.level;
+
+                    var wrap = level.gte(e_level) or (e.op == Op.Code.bin_in and flags.contains(.forbid_in));
 
                     // Destructuring assignments must be parenthesized
                     const n = p.writer.written;
@@ -2787,15 +2808,15 @@ fn NewPrinter(
                         flags.insert(.forbid_in);
                     }
 
-                    var left_level = entry.level.sub(1);
-                    var right_level = entry.level.sub(1);
+                    var left_level = e_level.sub(1);
+                    var right_level = e_level.sub(1);
 
                     if (e.op.isRightAssociative()) {
-                        left_level = entry.level;
+                        left_level = e_level;
                     }
 
                     if (e.op.isLeftAssociative()) {
-                        right_level = entry.level;
+                        right_level = e_level;
                     }
 
                     switch (e.op) {
@@ -3851,8 +3872,8 @@ fn NewPrinter(
 
                     if (comptime is_bun_platform) {
                         if (import_record.do_commonjs_transform_in_printer) {
-                            assert(s.items.len > 0);
-
+                            if (s.items.len == 0)
+                                return;
                             p.print("var {");
                             var symbol_counter: u32 = p.symbol_counter;
 
@@ -3964,7 +3985,7 @@ fn NewPrinter(
                     switch (s.body.data) {
                         .s_block => {
                             p.printSpace();
-                            p.printBlock(s.body.loc, s.body.data.s_block.stmts);
+                            p.printBlock(s.body.loc, s.body.data.s_block.stmts, s.body.data.s_block.close_brace_loc);
                             p.printSpace();
                         },
                         else => {
@@ -4049,7 +4070,7 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
                     p.print("try");
                     p.printSpace();
-                    p.printBlock(s.body_loc, s.body);
+                    p.printBlock(s.body_loc, s.body, null);
 
                     if (s.catch_) |catch_| {
                         p.printSpace();
@@ -4061,14 +4082,14 @@ fn NewPrinter(
                             p.print(")");
                         }
                         p.printSpace();
-                        p.printBlock(catch_.loc, catch_.body);
+                        p.printBlock(catch_.loc, catch_.body, null);
                     }
 
                     if (s.finally) |finally| {
                         p.printSpace();
                         p.print("finally");
                         p.printSpace();
-                        p.printBlock(finally.loc, finally.stmts);
+                        p.printBlock(finally.loc, finally.stmts, null);
                     }
 
                     p.printNewline();
@@ -4133,7 +4154,7 @@ fn NewPrinter(
                             switch (c.body[0].data) {
                                 .s_block => {
                                     p.printSpace();
-                                    p.printBlock(c.body[0].loc, c.body[0].data.s_block.stmts);
+                                    p.printBlock(c.body[0].loc, c.body[0].data.s_block.stmts, c.body[0].data.s_block.close_brace_loc);
                                     p.printNewline();
                                     continue;
                                 },
@@ -4532,7 +4553,7 @@ fn NewPrinter(
                 },
                 .s_block => |s| {
                     p.printIndent();
-                    p.printBlock(stmt.loc, s.stmts);
+                    p.printBlock(stmt.loc, s.stmts, s.close_brace_loc);
                     p.printNewline();
                 },
                 .s_debugger => {
@@ -4595,7 +4616,11 @@ fn NewPrinter(
                     p.printSemicolonAfterStatement();
                 },
                 .s_expr => |s| {
-                    p.printIndent();
+                    if (!p.options.minify_whitespace and p.options.indent > 0) {
+                        p.addSourceMapping(stmt.loc);
+                        p.printIndent();
+                    }
+
                     p.stmt_start = p.writer.written;
                     p.printExpr(s.value, .lowest, ExprFlag.ExprResultIsUnused());
                     p.printSemicolonAfterStatement();
@@ -4856,7 +4881,7 @@ fn NewPrinter(
             switch (s.yes.data) {
                 .s_block => |block| {
                     p.printSpace();
-                    p.printBlock(s.yes.loc, block.stmts);
+                    p.printBlock(s.yes.loc, block.stmts, block.close_brace_loc);
 
                     if (s.no != null) {
                         p.printSpace();
@@ -4904,7 +4929,7 @@ fn NewPrinter(
                 switch (no_block.data) {
                     .s_block => {
                         p.printSpace();
-                        p.printBlock(no_block.loc, no_block.data.s_block.stmts);
+                        p.printBlock(no_block.loc, no_block.data.s_block.stmts, null);
                         p.printNewline();
                     },
                     .s_if => {
@@ -5145,7 +5170,7 @@ fn NewPrinter(
 
             imported_module_ids_list.clearRetainingCapacity();
 
-            return Printer{
+            var printer = Printer{
                 .import_records = import_records,
                 .options = opts,
                 .writer = writer,
@@ -5153,6 +5178,16 @@ fn NewPrinter(
                 .renamer = renamer,
                 .source_map_builder = source_map_builder,
             };
+            if (comptime generate_source_map) {
+                // This seems silly to cache but the .items() function apparently costs 1ms according to Instruments.
+                printer.source_map_builder.line_offset_table_byte_offset_list =
+                    printer
+                    .source_map_builder
+                    .line_offset_tables
+                    .items(.byte_offset_to_start_of_line);
+            }
+
+            return printer;
         }
     };
 }
@@ -5555,7 +5590,7 @@ pub const Format = enum {
     cjs_ascii,
 };
 
-fn getSourceMapBuilder(
+pub fn getSourceMapBuilder(
     comptime generate_source_map: bool,
     comptime is_bun_platform: bool,
     opts: Options,
@@ -5572,7 +5607,7 @@ fn getSourceMapBuilder(
         ),
         .cover_lines_without_mappings = true,
         .prepend_count = is_bun_platform,
-        .line_offset_tables = SourceMap.LineOffsetTable.generate(
+        .line_offset_tables = opts.line_offset_tables orelse SourceMap.LineOffsetTable.generate(
             opts.allocator,
             source.contents,
             @intCast(
@@ -5663,12 +5698,7 @@ pub fn printAst(
 
     defer {
         if (opts.minify_identifiers) {
-            for (&renamer.MinifyRenamer.slots.values) |*val| {
-                val.deinit();
-            }
-            renamer.MinifyRenamer.reserved_names.deinit(opts.allocator);
-            renamer.MinifyRenamer.top_level_symbol_to_slot.deinit(opts.allocator);
-            opts.allocator.destroy(renamer.MinifyRenamer);
+            renamer.deinit(opts.allocator);
         }
     }
 
@@ -5763,10 +5793,13 @@ pub fn printJSON(
 pub fn print(
     allocator: std.mem.Allocator,
     target: options.Target,
+    ast: Ast,
+    source: *const logger.Source,
     opts: Options,
     import_records: []const ImportRecord,
     parts: []const js_ast.Part,
     renamer: bun.renamer.Renamer,
+    comptime generate_source_maps: bool,
 ) PrintResult {
     var buffer_writer = BufferWriter.init(allocator) catch |err| return .{ .err = err };
     var buffer_printer = BufferPrinter.init(buffer_writer);
@@ -5775,10 +5808,13 @@ pub fn print(
         *BufferPrinter,
         &buffer_printer,
         target,
+        ast,
+        source,
         opts,
         import_records,
         parts,
         renamer,
+        comptime generate_source_maps,
     );
 }
 
@@ -5786,20 +5822,26 @@ pub fn printWithWriter(
     comptime Writer: type,
     _writer: Writer,
     target: options.Target,
+    ast: Ast,
+    source: *const logger.Source,
     opts: Options,
     import_records: []const ImportRecord,
     parts: []const js_ast.Part,
     renamer: bun.renamer.Renamer,
+    comptime generate_source_maps: bool,
 ) PrintResult {
     return switch (target.isBun()) {
         inline else => |is_bun| printWithWriterAndPlatform(
             Writer,
             _writer,
             is_bun,
+            ast,
+            source,
             opts,
             import_records,
             parts,
             renamer,
+            generate_source_maps,
         ),
     };
 }
@@ -5808,19 +5850,22 @@ pub fn printWithWriter(
 pub fn printWithWriterAndPlatform(
     comptime Writer: type,
     _writer: Writer,
-    comptime is_bun: bool,
+    comptime is_bun_platform: bool,
+    ast: Ast,
+    source: *const logger.Source,
     opts: Options,
     import_records: []const ImportRecord,
     parts: []const js_ast.Part,
     renamer: bun.renamer.Renamer,
+    comptime generate_source_maps: bool,
 ) PrintResult {
     const PrinterType = NewPrinter(
         false,
         Writer,
         false,
-        is_bun,
+        is_bun_platform,
         false,
-        false,
+        generate_source_maps,
     );
     var writer = _writer;
     var printer = PrinterType.init(
@@ -5828,7 +5873,7 @@ pub fn printWithWriterAndPlatform(
         import_records,
         opts,
         renamer,
-        undefined,
+        getSourceMapBuilder(generate_source_maps, is_bun_platform, opts, source, &ast),
     );
     defer printer.temporary_bindings.deinit(bun.default_allocator);
     defer _writer.* = printer.writer.*;
@@ -5851,9 +5896,18 @@ pub fn printWithWriterAndPlatform(
     printer.writer.done() catch |err|
         return .{ .err = err };
 
+    const written = printer.writer.ctx.getWritten();
+    const source_map: ?SourceMap.Chunk = if (generate_source_maps and written.len > 0) brk: {
+        const chunk = printer.source_map_builder.generateChunk(written);
+        if (chunk.should_ignore)
+            break :brk null;
+        break :brk chunk;
+    } else null;
+
     return .{
         .result = .{
-            .code = writer.ctx.getWritten(),
+            .code = written,
+            .source_map = source_map,
         },
     };
 }

@@ -770,12 +770,14 @@ pub const Loader = enum(u8) {
             .ts => .ts,
             .tsx => .tsx,
             .css => .css,
+            .file => .file,
             .json => .json,
             .toml => .toml,
             .wasm => .wasm,
             .napi => .napi,
+            .base64 => .base64,
+            .dataurl => .dataurl,
             .text => .text,
-            else => .file,
         };
     }
 
@@ -786,10 +788,13 @@ pub const Loader = enum(u8) {
             .ts => .ts,
             .tsx => .tsx,
             .css => .css,
+            .file => .file,
             .json => .json,
             .toml => .toml,
             .wasm => .wasm,
             .napi => .napi,
+            .base64 => .base64,
+            .dataurl => .dataurl,
             .text => .text,
             else => .file,
         };
@@ -862,9 +867,9 @@ pub const ESMConditions = struct {
         var import_condition_map = ConditionsMap.init(allocator);
         var require_condition_map = ConditionsMap.init(allocator);
 
-        try default_condition_amp.ensureTotalCapacity(defaults.len + 1);
-        try import_condition_map.ensureTotalCapacity(defaults.len + 1);
-        try require_condition_map.ensureTotalCapacity(defaults.len + 1);
+        try default_condition_amp.ensureTotalCapacity(defaults.len + 2);
+        try import_condition_map.ensureTotalCapacity(defaults.len + 2);
+        try require_condition_map.ensureTotalCapacity(defaults.len + 2);
 
         import_condition_map.putAssumeCapacity("import", {});
         require_condition_map.putAssumeCapacity("require", {});
@@ -876,6 +881,8 @@ pub const ESMConditions = struct {
         }
 
         default_condition_amp.putAssumeCapacity("default", {});
+        import_condition_map.putAssumeCapacity("default", {});
+        require_condition_map.putAssumeCapacity("default", {});
 
         return ESMConditions{
             .default = default_condition_amp,
@@ -1217,41 +1224,8 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
     var input_loaders = _loaders orelse std.mem.zeroes(Api.LoaderMap);
     var loader_values = try allocator.alloc(Loader, input_loaders.loaders.len);
 
-    if (target.isBun()) {
-        for (loader_values, 0..) |_, i| {
-            const loader = switch (input_loaders.loaders[i]) {
-                .jsx => Loader.jsx,
-                .js => Loader.js,
-                .ts => Loader.ts,
-                .css => Loader.css,
-                .tsx => Loader.tsx,
-                .json => Loader.json,
-                .toml => Loader.toml,
-                .wasm => Loader.wasm,
-                .napi => Loader.napi,
-                .text => Loader.text,
-                else => unreachable,
-            };
-
-            loader_values[i] = loader;
-        }
-    } else {
-        for (loader_values, 0..) |_, i| {
-            const loader = switch (input_loaders.loaders[i]) {
-                .jsx => Loader.jsx,
-                .js => Loader.js,
-                .ts => Loader.ts,
-                .css => Loader.css,
-                .tsx => Loader.tsx,
-                .json => Loader.json,
-                .toml => Loader.toml,
-                .wasm => Loader.wasm,
-                .text => Loader.text,
-                else => unreachable,
-            };
-
-            loader_values[i] = loader;
-        }
+    for (loader_values, input_loaders.loaders) |*loader, input| {
+        loader.* = Loader.fromAPI(input);
     }
 
     var loaders = try stringHashMapFromArrays(
@@ -1398,7 +1372,7 @@ pub const BundleOptions = struct {
     conditions: ESMConditions = undefined,
     tree_shaking: bool = false,
     code_splitting: bool = false,
-    sourcemap: SourceMapOption = SourceMapOption.none,
+    source_map: SourceMapOption = SourceMapOption.none,
 
     disable_transpilation: bool = false,
 
@@ -1695,7 +1669,7 @@ pub const BundleOptions = struct {
             if (opts.framework == null)
                 opts.env.behavior = .load_all;
 
-            opts.sourcemap = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode.external);
+            opts.source_map = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode.external);
 
             opts.resolve_mode = .lazy;
 
@@ -1837,7 +1811,7 @@ pub const BundleOptions = struct {
 
             opts.serve = true;
         } else {
-            opts.sourcemap = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode._none);
+            opts.source_map = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode._none);
         }
 
         opts.tree_shaking = opts.serve or opts.target.isBun() or opts.production or is_generating_bundle;

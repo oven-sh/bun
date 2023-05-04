@@ -1,6 +1,8 @@
-// Dear reader
+// This file parses the output of `bun test` and outputs
+// a markdown summary and Github Action annotations.
 //
-// The existence of this file is temporary, a hack.
+// In the future, a version of this will be built-in to Bun.
+
 import { join, basename } from "node:path";
 import { readdirSync, writeSync, fsyncSync, appendFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
@@ -557,16 +559,17 @@ function formatTest(result: ParseTestResult, options?: FormatTestOptions): strin
         ...tests
           .filter(({ status }) => status === "fail")
           .map(({ name, errors }) => {
-            let content = header(3, name);
+            let url = "";
+            let content = "";
             if (errors) {
               content += errors
                 .map(({ name, message, stack }) => {
                   let preview = code(`${name}: ${message}`, "diff");
                   if (stack?.length && baseUrl) {
                     const { file, line } = stack[0];
-                    if (!is3rdParty(file)) {
-                      const { href } = new URL(`${file}?plain=1#L${Math.max(1, line - 5)}-L${line}`, baseUrl);
-                      preview += `\n${href}\n`;
+                    if (!is3rdParty(file) && !url) {
+                      const { href } = new URL(`${file}?plain=1#L${line}`, baseUrl);
+                      url = href;
                     }
                   }
                   return preview;
@@ -575,7 +578,7 @@ function formatTest(result: ParseTestResult, options?: FormatTestOptions): strin
             } else {
               content += code("See logs for details");
             }
-            return content;
+            return `${header(3, link(name, url))}\n${content}`;
           }),
       ];
     })

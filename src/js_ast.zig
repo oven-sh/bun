@@ -765,6 +765,44 @@ pub const G = struct {
         close_brace_loc: logger.Loc = logger.Loc.Empty,
         properties: []Property = &([_]Property{}),
         has_decorators: bool = false,
+
+        pub fn canBeMoved(this: *const Class) bool {
+            if (this.extends != null)
+                return false;
+
+            if (this.has_decorators) {
+                return false;
+            }
+
+            for (this.properties) |property| {
+                if (property.kind == .class_static_block)
+                    return false;
+
+                const flags = property.flags;
+                if (flags.contains(.is_computed) or flags.contains(.is_spread)) {
+                    return false;
+                }
+
+                if (property.kind == .normal) {
+                    if (flags.contains(.is_static)) {
+                        for ([2]?Expr{ property.value, property.initializer }) |val_| {
+                            if (val_) |val| {
+                                switch (val.data) {
+                                    .e_arrow, .e_function => {},
+                                    else => {
+                                        if (!val.canBeConstValue()) {
+                                            return false;
+                                        }
+                                    },
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            return true;
+        }
     };
 
     // invalid shadowing if left as Comment
@@ -819,8 +857,8 @@ pub const G = struct {
     };
 
     pub const Fn = struct {
-        name: ?LocRef,
-        open_parens_loc: logger.Loc,
+        name: ?LocRef = null,
+        open_parens_loc: logger.Loc = logger.Loc.Empty,
         args: []Arg = &([_]Arg{}),
         // This was originally nullable, but doing so I believe caused a miscompilation
         // Specifically, the body was always null.
@@ -4022,6 +4060,10 @@ pub const Expr = struct {
         }
     }
 
+    pub fn isPrimitiveLiteral(this: Expr) bool {
+        return @as(Tag, this.data).isPrimitiveLiteral();
+    }
+
     pub const Tag = enum(u6) {
         e_array,
         e_unary,
@@ -5160,7 +5202,11 @@ pub const EnumValue = struct {
 };
 
 pub const S = struct {
-    pub const Block = struct { stmts: StmtNodeList };
+    pub const Block = struct {
+        stmts: StmtNodeList,
+        close_brace_loc: logger.Loc = logger.Loc.Empty,
+    };
+
     pub const SExpr = struct {
         value: ExprNodeIndex,
 
@@ -5207,15 +5253,15 @@ pub const S = struct {
         default_name: LocRef, // value may be a SFunction or SClass
         value: StmtOrExpr,
 
-        pub fn canBeMovedAround(self: ExportDefault) bool {
+        pub fn canBeMoved(self: *const ExportDefault) bool {
             return switch (self.value) {
                 .expr => |e| switch (e.data) {
-                    .e_class => |class| class.extends == null,
+                    .e_class => |class| class.canBeMoved(),
                     .e_arrow, .e_function => true,
                     else => e.canBeConstValue(),
                 },
                 .stmt => |s| switch (s.data) {
-                    .s_class => |class| class.class.extends == null,
+                    .s_class => |class| class.class.canBeMoved(),
                     .s_function => true,
                     else => false,
                 },
@@ -5682,6 +5728,8 @@ pub const Ast = struct {
     uses_exports_ref: bool = false,
     uses_module_ref: bool = false,
     uses_require_ref: bool = false,
+
+    force_cjs_to_esm: bool = false,
     exports_kind: ExportsKind = ExportsKind.none,
 
     bundle_export_ref: ?Ref = null,
@@ -5807,12 +5855,27 @@ pub const ExportsKind = enum {
     // module.
     esm_with_dynamic_fallback_from_cjs,
 
+    const dynamic = std.EnumSet(ExportsKind).init(.{
+        .esm_with_dynamic_fallback = true,
+        .esm_with_dynamic_fallback_from_cjs = true,
+        .cjs = true,
+    });
+
+    const with_dynamic_fallback = std.EnumSet(ExportsKind).init(.{
+        .esm_with_dynamic_fallback = true,
+        .esm_with_dynamic_fallback_from_cjs = true,
+    });
+
     pub fn isDynamic(self: ExportsKind) bool {
-        return self == .esm_with_dynamic_fallback or self == .cjs;
+        return dynamic.contains(self);
     }
 
     pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
         return try std.json.stringify(@tagName(self), opts, o);
+    }
+
+    pub fn isESMWithDynamicFallback(self: ExportsKind) bool {
+        return with_dynamic_fallback.contains(self);
     }
 };
 

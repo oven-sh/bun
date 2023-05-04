@@ -1394,6 +1394,9 @@ JSC_DECLARE_HOST_FUNCTION(ExpectPrototype__toBeCloseToCallback);
 extern "C" EncodedJSValue ExpectPrototype__toBeDefined(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(ExpectPrototype__toBeDefinedCallback);
 
+extern "C" EncodedJSValue ExpectPrototype__toBeEven(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ExpectPrototype__toBeEvenCallback);
+
 extern "C" EncodedJSValue ExpectPrototype__toBeFalsy(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(ExpectPrototype__toBeFalsyCallback);
 
@@ -1417,6 +1420,9 @@ JSC_DECLARE_HOST_FUNCTION(ExpectPrototype__toBeNaNCallback);
 
 extern "C" EncodedJSValue ExpectPrototype__toBeNull(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(ExpectPrototype__toBeNullCallback);
+
+extern "C" EncodedJSValue ExpectPrototype__toBeOdd(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ExpectPrototype__toBeOddCallback);
 
 extern "C" EncodedJSValue ExpectPrototype__toBeTruthy(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(ExpectPrototype__toBeTruthyCallback);
@@ -1496,6 +1502,7 @@ static const HashTableValue JSExpectPrototypeTableValues[] = {
     { "toBe"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toBeCallback, 1 } },
     { "toBeCloseTo"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toBeCloseToCallback, 1 } },
     { "toBeDefined"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toBeDefinedCallback, 0 } },
+    { "toBeEven"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toBeEvenCallback, 0 } },
     { "toBeFalsy"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toBeFalsyCallback, 0 } },
     { "toBeGreaterThan"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toBeGreaterThanCallback, 1 } },
     { "toBeGreaterThanOrEqual"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toBeGreaterThanOrEqualCallback, 1 } },
@@ -1504,6 +1511,7 @@ static const HashTableValue JSExpectPrototypeTableValues[] = {
     { "toBeLessThanOrEqual"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toBeLessThanOrEqualCallback, 1 } },
     { "toBeNaN"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toBeNaNCallback, 0 } },
     { "toBeNull"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toBeNullCallback, 0 } },
+    { "toBeOdd"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toBeOddCallback, 0 } },
     { "toBeTruthy"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toBeTruthyCallback, 0 } },
     { "toBeUndefined"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toBeUndefinedCallback, 0 } },
     { "toContain"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toContainCallback, 1 } },
@@ -1625,6 +1633,22 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeDefinedCallback, (JSGlobalObject *
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
 
     return ExpectPrototype__toBeDefined(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeEvenCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSExpect* thisObject = jsDynamicCast<JSExpect*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return ExpectPrototype__toBeEven(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeFalsyCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -1753,6 +1777,22 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeNullCallback, (JSGlobalObject * le
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
 
     return ExpectPrototype__toBeNull(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeOddCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSExpect* thisObject = jsDynamicCast<JSExpect*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return ExpectPrototype__toBeOdd(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeTruthyCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

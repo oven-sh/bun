@@ -378,4 +378,54 @@ describe("bundler", () => {
       "/x.aaaa": `x`,
     },
   });
+  itBundled("edgecase/PackageJSONDefaultConditionRequire", {
+    files: {
+      "/entry.js": /* js */ `
+        const boop = require('boop')
+        console.log(boop)
+      `,
+      "/node_modules/boop/package.json": /* json */ `
+        {
+          "name": "boop",
+          "exports": {
+            ".": {
+              "boop-server": "./ignore.js",
+              "default": "./boop.js",
+            }
+          }
+        }
+      `,
+      "/node_modules/boop/boop.js": /* js */ `
+        module.exports = 123
+      `,
+    },
+    run: {
+      stdout: "123",
+    },
+  });
+  itBundled("edgecase/PackageJSONDefaultConditionImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import React from 'react'
+        console.log(React)
+      `,
+      "/node_modules/react/package.json": /* json */ `
+        {
+          "name": "react",
+          "exports": {
+            ".": {
+              "react-server": "./ignore.js",
+              "default": "./react.js",
+            }
+          }
+        }
+      `,
+      "/node_modules/react/react.js": /* js */ `
+        export default 123
+      `,
+    },
+    run: {
+      stdout: "123",
+    },
+  });
 });

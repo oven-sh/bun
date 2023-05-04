@@ -620,7 +620,7 @@ pub const Bunfig = struct {
                     var key = item.key.?.asString(allocator).?;
                     if (key.len == 0) continue;
                     if (key[0] != '.') {
-                        try this.addError(item.key.?.loc, "file extension must start with a dot");
+                        try this.addError(item.key.?.loc, "file extension for loader must start with a '.'");
                     }
                     var value = item.value.?;
                     try this.expect(value, .e_string);

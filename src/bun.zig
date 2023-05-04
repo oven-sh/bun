@@ -40,6 +40,41 @@ pub const fmt = struct {
         };
     }
 
+    pub fn EnumTagListFormatter(comptime Enum: type, comptime Separator: @Type(.EnumLiteral)) type {
+        return struct {
+            pretty: bool = true,
+            const output = brk: {
+                var text: []const u8 = "";
+                const names = std.meta.fieldNames(Enum);
+                inline for (names, 0..) |name, i| {
+                    if (Separator == .list) {
+                        if (i > 0) {
+                            if (i + 1 == names.len) {
+                                text = text ++ ", or ";
+                            } else {
+                                text = text ++ ", ";
+                            }
+                        }
+
+                        text = text ++ "\"" ++ name ++ "\"";
+                    } else if (Separator == .dash) {
+                        text = text ++ "\n-  " ++ name;
+                    } else {
+                        @compileError("Unknown separator type: must be .dash or .list");
+                    }
+                }
+                break :brk text;
+            };
+            pub fn format(_: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+                try writer.writeAll(output);
+            }
+        };
+    }
+
+    pub fn enumTagList(comptime Enum: type, comptime separator: @Type(.EnumLiteral)) EnumTagListFormatter(Enum, separator) {
+        return EnumTagListFormatter(Enum, separator){};
+    }
+
     pub fn formatIp(address: std.net.Address, into: []u8) ![]u8 {
         // std.net.Address.format includes `:<port>` and square brackets (IPv6)
         //  while Node does neither.  This uses format then strips these to bring

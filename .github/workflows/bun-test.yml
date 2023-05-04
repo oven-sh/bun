@@ -33,9 +33,10 @@ jobs:
           - os: ubuntu-latest
             tag: linux-x64-baseline
             url: linux/x64?baseline=true
-          - os: macos-latest
-            tag: darwin-x64
-            url: darwin/x64?avx2=true
+          # FIXME: runner fails with "No tests found"?
+          #- os: macos-latest
+          #  tag: darwin-x64
+          #  url: darwin/x64?avx2=true
           - os: macos-latest
             tag: darwin-x64-baseline
             url: darwin/x64?baseline=true

@@ -790,6 +790,226 @@ pub const BundleV2 = struct {
         }
     }
 
+    // For Server Components, we generate an entry point which re-exports all client components
+    // This is a "shadow" of the server entry point.
+    // The client is expected to import this shadow entry point
+    const ShadowEntryPoint = struct {
+        source_code_buffer: MutableString,
+        ctx: *BundleV2,
+        resolved_source_indices: std.ArrayList(Index.Int),
+
+        const ImportsFormatter = struct {
+            ctx: *BundleV2,
+            pretty: string,
+            source_index: Index.Int,
+            pub fn format(self: ImportsFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                var this = self.ctx;
+                const named_exports: js_ast.Ast.NamedExports = this.graph.ast.items(.named_exports)[self.source_index];
+                try writer.writeAll("{");
+                for (named_exports.keys(), 0..) |name, i| {
+                    try writer.writeAll(name);
+                    try writer.writeAll(" as ");
+                    try writer.print(
+                        "${}_{s}",
+                        .{
+                            bun.fmt.hexIntLower(bun.hash(self.pretty)),
+                            name,
+                        },
+                    );
+
+                    if (i < named_exports.count() - 1) {
+                        try writer.writeAll(" , ");
+                    }
+                }
+                try writer.writeAll("}");
+            }
+        };
+
+        const ExportsFormatter = struct {
+            ctx: *BundleV2,
+            pretty: string,
+            source_index: Index.Int,
+            pub fn format(self: ExportsFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                var this = self.ctx;
+                const named_exports: js_ast.Ast.NamedExports = this.graph.ast.items(.named_exports)[self.source_index];
+                try writer.writeAll("{");
+
+                for (named_exports.keys(), 0..) |name, i| {
+                    try writer.print(
+                        "${}_{s}",
+                        .{
+                            bun.fmt.hexIntLower(bun.hash(self.pretty)),
+                            name,
+                        },
+                    );
+
+                    if (i < named_exports.count() - 1) {
+                        try writer.writeAll(" , ");
+                    }
+                }
+                try writer.writeAll("}");
+            }
+        };
+
+        pub fn addClientComponent(
+            this: *ShadowEntryPoint,
+            source_index: usize,
+        ) void {
+            var writer = this.source_code_buffer.writer();
+            const path = this.ctx.graph.input_files.items(.source)[source_index].path;
+            // TODO: tree-shaking to named imports only
+            writer.print(
+                \\// {s}
+                \\import {} from '${d}';
+                \\export {};
+                \\
+            ,
+                .{
+                    path.pretty,
+                    ImportsFormatter{ .ctx = this.ctx, .source_index = @intCast(Index.Int, source_index), .pretty = path.pretty },
+                    bun.fmt.hexIntUpper(bun.hash(path.pretty)),
+                    ExportsFormatter{ .ctx = this.ctx, .source_index = @intCast(Index.Int, source_index), .pretty = path.pretty },
+                },
+            ) catch unreachable;
+            this.resolved_source_indices.append(@truncate(Index.Int, source_index)) catch unreachable;
+        }
+    };
+
+    pub fn enqueueShadowEntryPoints(this: *BundleV2) !void {
+        const allocator = this.graph.allocator;
+
+        // TODO: make this not slow
+        {
+            // process redirects
+            var initial_reachable = try this.findReachableFiles();
+            allocator.free(initial_reachable);
+            this.dynamic_import_entry_points.deinit();
+        }
+
+        var react_client_component_boundary = bun.bit_set.DynamicBitSet.initEmpty(allocator, this.graph.input_files.len) catch unreachable;
+        defer react_client_component_boundary.deinit();
+        var any_client = false;
+
+        // Loop #1: populate the list of files that are react client components
+        for (this.graph.use_directive_entry_points.items(.use_directive), this.graph.use_directive_entry_points.items(.source_index)) |use, source_id| {
+            if (use == .@"use client") {
+                any_client = true;
+                react_client_component_boundary.set(source_id);
+            }
+        }
+
+        this.graph.shadow_entry_point_range.loc.start = -1;
+
+        var visit_queue = std.fifo.LinearFifo(Index.Int, .Dynamic).init(allocator);
+        visit_queue.ensureUnusedCapacity(64) catch unreachable;
+        defer visit_queue.deinit();
+        for (this.graph.entry_points.items) |entry_point_source_index| {
+            var shadow_entry_point = ShadowEntryPoint{
+                .ctx = this,
+                .source_code_buffer = MutableString.initEmpty(allocator),
+                .resolved_source_indices = std.ArrayList(Index.Int).init(allocator),
+            };
+            var all_imported_files = try bun.bit_set.DynamicBitSet.initEmpty(allocator, this.graph.input_files.len);
+            defer all_imported_files.deinit();
+            visit_queue.head = 0;
+            visit_queue.count = 0;
+            const input_path = this.graph.input_files.items(.source)[entry_point_source_index.get()].path;
+
+            {
+                const import_records = this.graph.ast.items(.import_records)[entry_point_source_index.get()];
+                for (import_records.slice()) |import_record| {
+                    if (!import_record.source_index.isValid()) {
+                        continue;
+                    }
+
+                    if (all_imported_files.isSet(import_record.source_index.get())) {
+                        continue;
+                    }
+
+                    all_imported_files.set(import_record.source_index.get());
+
+                    try visit_queue.writeItem(import_record.source_index.get());
+                }
+            }
+
+            while (visit_queue.readItem()) |target_source_index| {
+                const import_records = this.graph.ast.items(.import_records)[target_source_index];
+                for (import_records.slice()) |import_record| {
+                    if (!import_record.source_index.isValid()) {
+                        continue;
+                    }
+
+                    if (all_imported_files.isSet(import_record.source_index.get())) continue;
+                    all_imported_files.set(import_record.source_index.get());
+
+                    try visit_queue.writeItem(import_record.source_index.get());
+                }
+            }
+
+            all_imported_files.setIntersection(react_client_component_boundary);
+            if (all_imported_files.findFirstSet() == null) continue;
+
+            var iter = all_imported_files.iterator(.{});
+            while (iter.next()) |index| {
+                shadow_entry_point.addClientComponent(index);
+            }
+
+            const path = Fs.Path.initWithNamespace(
+                std.fmt.allocPrint(
+                    allocator,
+                    "{s}/{s}.client.js",
+                    .{ input_path.name.dir, input_path.name.base },
+                ) catch unreachable,
+                "client-component",
+            );
+
+            const source_index = Index.init(@intCast(u32, this.graph.ast.len));
+            if (this.graph.shadow_entry_point_range.loc.start < 0) {
+                this.graph.shadow_entry_point_range.loc.start = @intCast(i32, source_index.get());
+            }
+
+            this.graph.ast.append(allocator, js_ast.Ast.empty) catch unreachable;
+            this.graph.input_files.append(allocator, .{
+                .source = .{
+                    .path = path,
+                    .key_path = path,
+                    .contents = shadow_entry_point.source_code_buffer.toOwnedSliceLeaky(),
+                    .index = source_index,
+                },
+                .loader = options.Loader.js,
+                .side_effects = _resolver.SideEffects.has_side_effects,
+            }) catch unreachable;
+
+            var task = bun.default_allocator.create(ParseTask) catch unreachable;
+            task.* = ParseTask{
+                .ctx = this,
+                .path = path,
+                // unknown at this point:
+                .contents_or_fd = .{
+                    .contents = shadow_entry_point.source_code_buffer.toOwnedSliceLeaky(),
+                },
+                .side_effects = _resolver.SideEffects.has_side_effects,
+                .jsx = this.bundler.options.jsx,
+                .source_index = source_index,
+                .module_type = .unknown,
+                .loader = options.Loader.js,
+                .tree_shaking = this.linker.options.tree_shaking,
+                .known_target = options.Target.browser,
+                .presolved_source_indices = shadow_entry_point.resolved_source_indices.items,
+            };
+            task.task.node.next = null;
+            try this.graph.use_directive_entry_points.append(this.graph.allocator, js_ast.UseDirective.EntryPoint{
+                .source_index = source_index.get(),
+                .use_directive = .@"use client",
+            });
+
+            _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .Monotonic);
+            this.graph.entry_points.append(allocator, source_index) catch unreachable;
+            this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&task.task));
+            this.graph.shadow_entry_point_range.len += 1;
+        }
+    }
+
     pub fn generateFromCLI(
         bundler: *ThisBundler,
         allocator: std.mem.Allocator,
@@ -811,6 +1031,15 @@ pub const BundleV2 = struct {
         }
 
         this.waitForParse();
+
+        if (this.graph.use_directive_entry_points.len > 0) {
+            if (this.bundler.log.msgs.items.len > 0) {
+                return error.BuildFailed;
+            }
+
+            try this.enqueueShadowEntryPoints();
+            this.waitForParse();
+        }
 
         if (this.bundler.log.msgs.items.len > 0) {
             return error.BuildFailed;
@@ -1746,6 +1975,9 @@ pub const ParseTask = struct {
     module_type: options.ModuleType = .unknown,
     ctx: *BundleV2,
 
+    /// Used by generated client components
+    presolved_source_indices: []const Index.Int = &.{},
+
     const debug = Output.scoped(.ParseTask, false);
 
     pub const ResolveQueue = std.AutoArrayHashMap(u64, *ParseTask);
@@ -2074,205 +2306,218 @@ pub const ParseTask = struct {
             task.side_effects = _resolver.SideEffects.no_side_effects__empty_ast;
         }
 
-        var estimated_resolve_queue_count: usize = 0;
-        for (ast.import_records.slice()) |*import_record| {
-            if (import_record.is_internal) {
-                import_record.tag = .runtime;
-                import_record.source_index = Index.runtime;
+        resolution: {
+            if (task.presolved_source_indices.len > 0) {
+                for (ast.import_records.slice(), task.presolved_source_indices) |*record, source_index| {
+                    if (record.is_unused or record.is_internal)
+                        continue;
+
+                    record.source_index = Index.source(source_index);
+                }
+
+                break :resolution;
             }
 
-            if (import_record.is_unused) {
-                import_record.source_index = Index.invalid;
-            }
+            var estimated_resolve_queue_count: usize = 0;
+            for (ast.import_records.slice()) |*import_record| {
+                if (import_record.is_internal) {
+                    import_record.tag = .runtime;
+                    import_record.source_index = Index.runtime;
+                }
 
-            // Don't resolve the runtime
-            if (import_record.is_internal or import_record.is_unused) {
-                continue;
-            }
-            estimated_resolve_queue_count += 1;
-        }
-
-        try resolve_queue.ensureUnusedCapacity(estimated_resolve_queue_count);
-        var last_error: ?anyerror = null;
-
-        for (ast.import_records.slice(), 0..) |*import_record, i| {
-            // Don't resolve the runtime
-            if (import_record.is_unused or import_record.is_internal) {
-                continue;
-            }
-
-            if (target.isBun()) {
-                if (JSC.HardcodedModule.Aliases.get(import_record.path.text)) |replacement| {
-                    import_record.path.text = replacement.path;
-                    import_record.tag = replacement.tag;
+                if (import_record.is_unused) {
                     import_record.source_index = Index.invalid;
+                }
+
+                // Don't resolve the runtime
+                if (import_record.is_internal or import_record.is_unused) {
+                    continue;
+                }
+                estimated_resolve_queue_count += 1;
+            }
+
+            try resolve_queue.ensureUnusedCapacity(estimated_resolve_queue_count);
+            var last_error: ?anyerror = null;
+
+            for (ast.import_records.slice(), 0..) |*import_record, i| {
+                // Don't resolve the runtime
+                if (import_record.is_unused or import_record.is_internal) {
                     continue;
                 }
 
-                if (JSC.DisabledModule.has(import_record.path.text)) {
-                    import_record.path.is_disabled = true;
-                    import_record.do_commonjs_transform_in_printer = true;
-                    import_record.source_index = Index.invalid;
-                    continue;
-                }
+                if (target.isBun()) {
+                    if (JSC.HardcodedModule.Aliases.get(import_record.path.text)) |replacement| {
+                        import_record.path.text = replacement.path;
+                        import_record.tag = replacement.tag;
+                        import_record.source_index = Index.invalid;
+                        continue;
+                    }
 
-                if (bundler.options.rewrite_jest_for_tests) {
-                    if (strings.eqlComptime(
-                        import_record.path.text,
-                        "@jest/globals",
-                    ) or strings.eqlComptime(
-                        import_record.path.text,
-                        "vitest",
-                    )) {
+                    if (JSC.DisabledModule.has(import_record.path.text)) {
+                        import_record.path.is_disabled = true;
+                        import_record.do_commonjs_transform_in_printer = true;
+                        import_record.source_index = Index.invalid;
+                        continue;
+                    }
+
+                    if (bundler.options.rewrite_jest_for_tests) {
+                        if (strings.eqlComptime(
+                            import_record.path.text,
+                            "@jest/globals",
+                        ) or strings.eqlComptime(
+                            import_record.path.text,
+                            "vitest",
+                        )) {
+                            import_record.path.namespace = "bun";
+                            import_record.tag = .bun_test;
+                            import_record.path.text = "test";
+                            continue;
+                        }
+                    }
+
+                    if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
+                        import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
                         import_record.path.namespace = "bun";
-                        import_record.tag = .bun_test;
-                        import_record.path.text = "test";
+                        import_record.source_index = Index.invalid;
+
+                        if (strings.eqlComptime(import_record.path.text, "test")) {
+                            import_record.tag = .bun_test;
+                        }
+
+                        // don't link bun
                         continue;
                     }
                 }
 
-                if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
-                    import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
-                    import_record.path.namespace = "bun";
-                    import_record.source_index = Index.invalid;
-
-                    if (strings.eqlComptime(import_record.path.text, "test")) {
-                        import_record.tag = .bun_test;
-                    }
-
-                    // don't link bun
+                if (this.ctx.enqueueOnResolvePluginIfNeeded(source.index.get(), import_record, source.path.text, @truncate(u32, i), target)) {
                     continue;
                 }
-            }
 
-            if (this.ctx.enqueueOnResolvePluginIfNeeded(source.index.get(), import_record, source.path.text, @truncate(u32, i), target)) {
-                continue;
-            }
+                var resolve_result = resolver.resolve(source_dir, import_record.path.text, import_record.kind) catch |err| {
+                    // Disable failing packages from being printed.
+                    // This may cause broken code to write.
+                    // However, doing this means we tell them all the resolve errors
+                    // Rather than just the first one.
+                    import_record.path.is_disabled = true;
 
-            var resolve_result = resolver.resolve(source_dir, import_record.path.text, import_record.kind) catch |err| {
-                // Disable failing packages from being printed.
-                // This may cause broken code to write.
-                // However, doing this means we tell them all the resolve errors
-                // Rather than just the first one.
-                import_record.path.is_disabled = true;
+                    switch (err) {
+                        error.ModuleNotFound => {
+                            const addError = Logger.Log.addResolveErrorWithTextDupe;
 
-                switch (err) {
-                    error.ModuleNotFound => {
-                        const addError = Logger.Log.addResolveErrorWithTextDupe;
-
-                        if (!import_record.handles_import_errors) {
-                            last_error = err;
-                            if (isPackagePath(import_record.path.text)) {
-                                if (target.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
-                                    try addError(
-                                        log,
-                                        &source,
-                                        import_record.range,
-                                        this.allocator,
-                                        "Could not resolve Node.js builtin: \"{s}\".",
-                                        .{import_record.path.text},
-                                        import_record.kind,
-                                    );
+                            if (!import_record.handles_import_errors) {
+                                last_error = err;
+                                if (isPackagePath(import_record.path.text)) {
+                                    if (target.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
+                                        try addError(
+                                            log,
+                                            &source,
+                                            import_record.range,
+                                            this.allocator,
+                                            "Could not resolve Node.js builtin: \"{s}\".",
+                                            .{import_record.path.text},
+                                            import_record.kind,
+                                        );
+                                    } else {
+                                        try addError(
+                                            log,
+                                            &source,
+                                            import_record.range,
+                                            this.allocator,
+                                            "Could not resolve: \"{s}\". Maybe you need to \"bun install\"?",
+                                            .{import_record.path.text},
+                                            import_record.kind,
+                                        );
+                                    }
                                 } else {
                                     try addError(
                                         log,
                                         &source,
                                         import_record.range,
                                         this.allocator,
-                                        "Could not resolve: \"{s}\". Maybe you need to \"bun install\"?",
-                                        .{import_record.path.text},
+                                        "Could not resolve: \"{s}\"",
+                                        .{
+                                            import_record.path.text,
+                                        },
                                         import_record.kind,
                                     );
                                 }
-                            } else {
-                                try addError(
-                                    log,
-                                    &source,
-                                    import_record.range,
-                                    this.allocator,
-                                    "Could not resolve: \"{s}\"",
-                                    .{
-                                        import_record.path.text,
-                                    },
-                                    import_record.kind,
-                                );
                             }
-                        }
-                    },
-                    // assume other errors are already in the log
-                    else => {
-                        last_error = err;
-                    },
+                        },
+                        // assume other errors are already in the log
+                        else => {
+                            last_error = err;
+                        },
+                    }
+                    continue;
+                };
+                // if there were errors, lets go ahead and collect them all
+                if (last_error != null) continue;
+
+                var path: *Fs.Path = resolve_result.path() orelse {
+                    import_record.path.is_disabled = true;
+                    import_record.source_index = Index.invalid;
+
+                    continue;
+                };
+
+                if (resolve_result.is_external) {
+                    continue;
                 }
-                continue;
-            };
-            // if there were errors, lets go ahead and collect them all
-            if (last_error != null) continue;
 
-            var path: *Fs.Path = resolve_result.path() orelse {
-                import_record.path.is_disabled = true;
-                import_record.source_index = Index.invalid;
+                var resolve_entry = try resolve_queue.getOrPut(path.hashKey());
+                if (resolve_entry.found_existing) {
+                    import_record.path = resolve_entry.value_ptr.*.path;
 
-                continue;
-            };
-
-            if (resolve_result.is_external) {
-                continue;
-            }
-
-            var resolve_entry = try resolve_queue.getOrPut(path.hashKey());
-            if (resolve_entry.found_existing) {
-                import_record.path = resolve_entry.value_ptr.*.path;
-
-                continue;
-            }
-
-            if (path.pretty.ptr == path.text.ptr) {
-                // TODO: outbase
-                const rel = bun.path.relative(bundler.fs.top_level_dir, path.text);
-                if (rel.len > 0 and rel[0] != '.') {
-                    path.pretty = rel;
+                    continue;
                 }
-            }
 
-            var secondary_path_to_copy: ?Fs.Path = null;
-            if (resolve_result.path_pair.secondary) |*secondary| {
-                if (!secondary.is_disabled and
-                    secondary != path and
-                    !strings.eqlLong(secondary.text, path.text, true))
-                {
-                    secondary_path_to_copy = try secondary.dupeAlloc(allocator);
+                if (path.pretty.ptr == path.text.ptr) {
+                    // TODO: outbase
+                    const rel = bun.path.relative(bundler.fs.top_level_dir, path.text);
+                    if (rel.len > 0 and rel[0] != '.') {
+                        path.pretty = rel;
+                    }
                 }
+
+                var secondary_path_to_copy: ?Fs.Path = null;
+                if (resolve_result.path_pair.secondary) |*secondary| {
+                    if (!secondary.is_disabled and
+                        secondary != path and
+                        !strings.eqlLong(secondary.text, path.text, true))
+                    {
+                        secondary_path_to_copy = try secondary.dupeAlloc(allocator);
+                    }
+                }
+
+                path.* = try path.dupeAlloc(allocator);
+                import_record.path = path.*;
+                debug("created ParseTask: {s}", .{path.text});
+
+                var resolve_task = bun.default_allocator.create(ParseTask) catch @panic("Ran out of memory");
+                resolve_task.* = ParseTask.init(&resolve_result, null, this.ctx);
+
+                resolve_task.secondary_path_for_commonjs_interop = secondary_path_to_copy;
+
+                if (use_directive != .none) {
+                    resolve_task.known_target = target;
+                } else if (task.known_target) |known_target| {
+                    resolve_task.known_target = known_target;
+                }
+
+                resolve_task.jsx.development = task.jsx.development;
+
+                if (resolve_task.loader == null) {
+                    resolve_task.loader = path.loader(&bundler.options.loaders);
+                    resolve_task.tree_shaking = task.tree_shaking;
+                }
+
+                resolve_entry.value_ptr.* = resolve_task;
             }
 
-            path.* = try path.dupeAlloc(allocator);
-            import_record.path = path.*;
-            debug("created ParseTask: {s}", .{path.text});
-
-            var resolve_task = bun.default_allocator.create(ParseTask) catch @panic("Ran out of memory");
-            resolve_task.* = ParseTask.init(&resolve_result, null, this.ctx);
-
-            resolve_task.secondary_path_for_commonjs_interop = secondary_path_to_copy;
-
-            if (use_directive != .none) {
-                resolve_task.known_target = target;
-            } else if (task.known_target) |known_target| {
-                resolve_task.known_target = known_target;
+            if (last_error) |err| {
+                debug("failed with error: {s}", .{@errorName(err)});
+                return err;
             }
-
-            resolve_task.jsx.development = task.jsx.development;
-
-            if (resolve_task.loader == null) {
-                resolve_task.loader = path.loader(&bundler.options.loaders);
-                resolve_task.tree_shaking = task.tree_shaking;
-            }
-
-            resolve_entry.value_ptr.* = resolve_task;
-        }
-
-        if (last_error) |err| {
-            debug("failed with error: {s}", .{@errorName(err)});
-            return err;
         }
 
         // never a react client component if RSC is not enabled.
@@ -2570,6 +2815,7 @@ pub const Graph = struct {
     estimated_file_loader_count: usize = 0,
 
     additional_output_files: std.ArrayListUnmanaged(options.OutputFile) = .{},
+    shadow_entry_point_range: Logger.Range = Logger.Range.None,
 
     pub const InputFile = struct {
         source: Logger.Source,
@@ -2888,6 +3134,7 @@ const LinkerGraph = struct {
         sources: []const Logger.Source,
         use_directive_entry_points: UseDirective.List,
         dynamic_import_entry_points: []const Index.Int,
+        shadow_entry_point_range: Logger.Range,
     ) !void {
         try this.files.ensureTotalCapacity(this.allocator, sources.len);
         this.files.zero();
@@ -2967,10 +3214,11 @@ const LinkerGraph = struct {
                 }
 
                 if (any_client or any_server) {
-
                     // Loop #2: For each import in the entire module graph
                     for (this.reachable_files) |source_id| {
                         const use_directive = this.useDirectiveBoundary(source_id.get());
+                        const source_i32 = @intCast(i32, source_id.get());
+                        const is_shadow_entrypoint = shadow_entry_point_range.contains(source_i32);
                         // If the reachable file has a "use client"; at the top
                         for (import_records_list[source_id.get()].slice()) |*import_record| {
                             const source_index_ = import_record.source_index;
@@ -2986,28 +3234,12 @@ const LinkerGraph = struct {
                                         // That import is a React Server Component reference.
                                         switch (boundary) {
                                             .@"use client" => {
-                                                import_record.module_id = bun.hash32(sources[source_index].path.pretty);
-                                                import_record.tag = .react_client_component;
-                                                import_record.path.namespace = "client";
-                                                import_record.print_namespace_in_path = true;
-
-                                                // TODO: to make chunking work better for client components
-                                                // we should create a virtual module for each server entry point that corresponds to a client component
-                                                // This virtual module do the equivalent of
-                                                //
-                                                //    export * as id$function from "$id$";
-                                                //
-                                                //
-                                                if (entry_point_kinds[source_index] == .none) {
-                                                    if (comptime Environment.allow_assert)
-                                                        debug("Adding client component entry point for {s}", .{sources[source_index].path.text});
-
-                                                    try this.entry_points.append(this.allocator, .{
-                                                        .source_index = source_index,
-                                                        .output_path = bun.PathString.init(sources[source_index].path.text),
-                                                        .output_path_was_auto_generated = true,
-                                                    });
-                                                    entry_point_kinds[source_index] = .react_client_component;
+                                                if (!is_shadow_entrypoint) {
+                                                    import_record.module_id = bun.hash32(sources[source_index].path.pretty);
+                                                    import_record.tag = .react_client_component;
+                                                    import_record.path.namespace = "client";
+                                                    import_record.print_namespace_in_path = true;
+                                                    import_record.source_index = Index.invalid;
                                                 }
                                             },
                                             .@"use server" => {
@@ -3291,7 +3523,7 @@ const LinkerContext = struct {
 
         const sources: []const Logger.Source = this.parse_graph.input_files.items(.source);
 
-        try this.graph.load(entry_points, sources, use_directive_entry_points, bundle.dynamic_import_entry_points.keys());
+        try this.graph.load(entry_points, sources, use_directive_entry_points, bundle.dynamic_import_entry_points.keys(), bundle.graph.shadow_entry_point_range);
         bundle.dynamic_import_entry_points.deinit();
         this.wait_group.init();
         this.ambiguous_result_pool = std.ArrayList(MatchImport).init(this.allocator);
@@ -8334,7 +8566,7 @@ const LinkerContext = struct {
                             }
                         }
 
-                        @panic("Assertion failure: missing chunk for react client component");
+                        continue;
                     };
 
                     grow_length += chunk.final_rel_path.len;

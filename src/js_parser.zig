@@ -3130,7 +3130,7 @@ pub const Parser = struct {
                                 },
                                 export_ref.loc_ref.loc,
                             );
-
+                            p.module_scope.generated.push(p.allocator, ref) catch unreachable;
                             var clause_items = p.allocator.alloc(js_ast.ClauseItem, 1) catch unreachable;
                             clause_items[0] = js_ast.ClauseItem{
                                 .alias = alias,

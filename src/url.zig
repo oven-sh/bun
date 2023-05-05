@@ -1029,9 +1029,9 @@ pub const FormData = struct {
                 .form = form,
             };
 
-            forEachMultipartEntry(input, boundary, *Wrapper, &wrap, Wrapper.onEntry) catch {
+            forEachMultipartEntry(input, boundary, *Wrapper, &wrap, Wrapper.onEntry) catch |err| {
                 log("failed to parse multipart data", .{});
-                return error.@"failed to parse multipart data";
+                return err;
             };
         }
 

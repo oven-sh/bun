@@ -1074,6 +1074,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn renderMissingCorked(ctx: *RequestContext) void {
+            if (ctx.is_waiting_body) {
+                ctx.is_waiting_body = false;
+                ctx.resp.clearOnData();
+            }
             if (comptime !debug_mode) {
                 if (!ctx.has_written_status)
                     ctx.resp.writeStatus("204 No Content");
@@ -1201,6 +1205,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.finalizeForAbort();
                 return false;
             }
+            if (this.is_waiting_body) {
+                this.is_waiting_body = false;
+                resp.clearOnData();
+            }
             resp.end("", this.shouldCloseConnection());
             this.finalize();
             return false;
@@ -1220,6 +1228,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (this.method == .HEAD) {
+                if (this.is_waiting_body) {
+                    this.is_waiting_body = false;
+                    resp.clearOnData();
+                }
                 resp.end("", this.shouldCloseConnection());
                 this.finalize();
                 return false;
@@ -1461,6 +1473,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         fn cleanupAndFinalizeAfterSendfile(this: *RequestContext) void {
             this.resp.overrideWriteOffset(this.sendfile.offset);
+            if (this.is_waiting_body) {
+                this.is_waiting_body = false;
+                this.resp.clearOnData();
+            }
             this.resp.endWithoutBody(this.shouldCloseConnection());
             // use node syscall so that we don't segfault on BADF
             if (this.sendfile.auto_close)
@@ -1859,6 +1875,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     this.renderMissing();
                     return;
                 } else if (wrote_anything and !responded and !this.aborted) {
+                    if (this.is_waiting_body) {
+                        this.is_waiting_body = false;
+                        this.resp.clearOnData();
+                    }
                     this.resp.endStream(this.shouldCloseConnection());
                 }
 
@@ -2128,6 +2148,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return;
             } else if (!responded and wrote_anything) {
                 req.resp.clearAborted();
+                if (req.is_waiting_body) {
+                    req.is_waiting_body = false;
+                    req.resp.clearOnData();
+                }
                 req.resp.endStream(req.shouldCloseConnection());
             }
 
@@ -2186,6 +2210,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 req.handleReject(err);
                 return;
             } else if (wrote_anything) {
+                if (req.is_waiting_body) {
+                    req.is_waiting_body = false;
+                    req.resp.clearOnData();
+                }
                 req.resp.endStream(true);
                 if (comptime debug_mode) {
                     if (!err.isEmptyOrUndefinedOrNull()) {
@@ -2335,6 +2363,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // so any write will buffer if the write fails
             if (this.resp.write(chunk)) {
                 if (stream.isDone()) {
+                    if (this.is_waiting_body) {
+                        this.is_waiting_body = false;
+                        this.resp.clearOnData();
+                    }
                     this.resp.endStream(this.shouldCloseConnection());
                     this.finalize();
                 }
@@ -2383,7 +2415,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         this.resp.writeStatus("404 Not Found");
                         this.has_written_status = true;
                     }
-
+                    if (this.is_waiting_body) {
+                        this.is_waiting_body = false;
+                        this.resp.clearOnData();
+                    }
                     this.resp.endWithoutBody(this.shouldCloseConnection());
                 },
                 else => {
@@ -2393,6 +2428,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         this.has_written_status = true;
                     }
 
+                    if (this.is_waiting_body) {
+                        this.is_waiting_body = false;
+                        this.resp.clearOnData();
+                    }
                     this.resp.end("Something went wrong!", true);
                 },
             }

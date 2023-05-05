@@ -88,6 +88,16 @@ pub const JSBundler = struct {
                 this.target = target;
             }
 
+            if (try config.getOptionalEnum(globalThis, "format", options.Format)) |format| {
+                switch (format) {
+                    .esm => {},
+                    else => {
+                        globalThis.throwInvalidArguments("Formats besides 'esm' are not implemented.", .{});
+                        return error.JSException;
+                    },
+                }
+            }
+
             // if (try config.getOptional(globalThis, "hot", bool)) |hot| {
             //     this.hot = hot;
             // }
@@ -195,6 +205,39 @@ pub const JSBundler = struct {
                 } else {
                     globalThis.throwInvalidArguments("Expected naming to be a string or an object", .{});
                     return error.JSException;
+                }
+            }
+
+            if (try config.getObject(globalThis, "define")) |define| {
+                if (!define.isUndefinedOrNull()) {
+                    if (!define.isObject()) {
+                        globalThis.throwInvalidArguments("define must be an object", .{});
+                        return error.JSException;
+                    }
+
+                    var define_iter = JSC.JSPropertyIterator(.{
+                        .skip_empty_name = true,
+                        .include_value = true,
+                    }).init(globalThis, define.asObjectRef());
+                    defer define_iter.deinit();
+
+                    while (define_iter.next()) |prop| {
+                        const property_value = define_iter.value;
+                        const value_type = property_value.jsType();
+
+                        if (!value_type.isStringLike()) {
+                            globalThis.throwInvalidArguments("define \"{s}\" must be a JSON string", .{prop});
+                            return error.JSException;
+                        }
+
+                        var val = JSC.ZigString.init("");
+                        property_value.toZigString(&val, globalThis);
+                        if (val.len == 0) {
+                            val = JSC.ZigString.init("\"\"");
+                        }
+
+                        try this.define.insert(prop.toOwnedSlice(allocator) catch unreachable, val.toOwnedSlice(allocator) catch unreachable);
+                    }
                 }
             }
 

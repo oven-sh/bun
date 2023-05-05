@@ -969,6 +969,7 @@ declare module "bun" {
     // manifest?: boolean; // whether to return manifest
     external?: Array<string>;
     publicPath?: string;
+    define?: Record<string, string>;
     // origin?: string; // e.g. http://mydomain.com
     // loaders?: { [k in string]: Loader };
     // sourcemap?: "none" | "inline" | "external"; // default: "none"

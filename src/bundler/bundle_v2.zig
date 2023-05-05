@@ -1182,7 +1182,14 @@ pub const BundleV2 = struct {
                             JSC.ZigString.static("result"),
                             output_file.toJS(
                                 if (output_file.value == .saved)
-                                    bun.default_allocator.dupe(u8, output_file.input.text) catch unreachable
+                                    bun.default_allocator.dupe(
+                                        u8,
+                                        bun.path.joinAbsString(
+                                            this.config.dir.toOwnedSliceLeaky(),
+                                            &[_]string{ this.config.outdir.toOwnedSliceLeaky(), output_file.input.text },
+                                            .auto,
+                                        ),
+                                    ) catch unreachable
                                 else
                                     "",
                                 globalThis,

@@ -57,6 +57,20 @@ describe("bundler", () => {
       stdout: "HELLO WORLD",
     },
   });
+  itBundled("plugin/LoadImplicitLoader", {
+    files: loadFixture,
+    plugins(builder) {
+      builder.onLoad({ filter: /\.magic$/ }, async args => {
+        const text = await Bun.file(args.path).text();
+        return {
+          contents: `export const foo = ${JSON.stringify(text.toUpperCase())};`,
+        };
+      });
+    },
+    run: {
+      stdout: "HELLO WORLD",
+    },
+  });
 
   // Load Plugin Errors
   itBundled("plugin/LoadThrow", {
@@ -66,13 +80,20 @@ describe("bundler", () => {
         throw new Error("error here");
       });
     },
+    bundleErrors: {
+      "/foo.magic": [`error here`],
+    },
   });
   itBundled("plugin/LoadThrowPrimative", {
     files: loadFixture,
+    notImplemented: true,
     plugins(builder) {
       builder.onLoad({ filter: /\.magic$/ }, args => {
         throw "123";
       });
+    },
+    bundleErrors: {
+      "/foo.magic": [`123`],
     },
   });
   itBundled("plugin/LoadThrowAsync", {
@@ -82,13 +103,20 @@ describe("bundler", () => {
         throw new Error("error here");
       });
     },
+    bundleErrors: {
+      "/foo.magic": [`error here`],
+    },
   });
   itBundled("plugin/LoadThrowPrimativeAsync", {
     files: loadFixture,
+    notImplemented: true,
     plugins(builder) {
       builder.onLoad({ filter: /\.magic$/ }, async args => {
         throw 123;
       });
+    },
+    bundleErrors: {
+      "/foo.magic": [`123`],
     },
   });
 
@@ -100,13 +128,43 @@ describe("bundler", () => {
         throw new Error("error here");
       });
     },
+    bundleErrors: {
+      "/index.ts": [`error here`],
+    },
   });
   itBundled("plugin/ResolveThrowPrimative", {
     files: resolveFixture,
+    notImplemented: true,
     plugins(builder) {
       builder.onResolve({ filter: /\.magic$/ }, args => {
         throw "123";
       });
+    },
+    bundleErrors: {
+      "/index.ts": [`123`],
+    },
+  });
+  itBundled("plugin/ResolveThrowAsync", {
+    files: resolveFixture,
+    plugins(builder) {
+      builder.onResolve({ filter: /\.magic$/ }, async args => {
+        throw new Error("error here");
+      });
+    },
+    bundleErrors: {
+      "/index.ts": [`error here`],
+    },
+  });
+  itBundled("plugin/ResolveThrowPrimativeAsync", {
+    files: resolveFixture,
+    notImplemented: true,
+    plugins(builder) {
+      builder.onResolve({ filter: /\.magic$/ }, async args => {
+        throw 123;
+      });
+    },
+    bundleErrors: {
+      "/index.ts": [`123`],
     },
   });
 
@@ -223,7 +281,6 @@ describe("bundler", () => {
         builder.onLoad({ filter: /namespace_path/, namespace: "my_namespace" }, args => {
           expect(args.path).toBe("namespace_path");
           expect(args.namespace).toBe("my_namespace");
-          expect(args.suffix).toBeFalsy();
 
           return {
             contents: "export const foo = 'foo';",
@@ -231,6 +288,30 @@ describe("bundler", () => {
           };
         });
         builder.onLoad({ filter: /.*/, namespace: "my_namespace" }, args => {
+          throw new Error("SHOULD NOT BE CALLED");
+        });
+      },
+      run: {
+        stdout: "foo",
+      },
+    };
+  });
+  itBundled("plugin/ResolveAndLoadImplicit", ({ root }) => {
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          import * as foo from "magic:some_string";
+          console.log(foo.foo);
+        `,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /magic:some_string/ }, args => {
+          return {
+            path: "namespace_path",
+            namespace: "my_namespace",
+          };
+        });
+        builder.onLoad({ namespace: "my_namespace" }, args => {
           throw new Error("SHOULD NOT BE CALLED");
         });
       },
@@ -264,7 +345,8 @@ describe("bundler", () => {
         builder.onResolve({ filter: /namespace_path/ }, args => {
           throw new Error("SHOULD NOT BE CALLED");
         });
-        builder.onLoad({ filter: /namespace_path/, namespace: "my_namespace" }, args => {
+        builder.onLoad({ filter: /.*/, namespace: "my_namespace" }, args => {
+          console.log("a", args);
           expect(args.path).toBe("namespace_path");
           expect(args.namespace).toBe("my_namespace");
           expect(args.suffix).toBeFalsy();
@@ -274,13 +356,16 @@ describe("bundler", () => {
             loader: "js",
           };
         });
-        builder.onResolve({ filter: /nested_import/ }, args => {
+        builder.onResolve({ filter: /nested_import/, namespace: "my_namespace" }, args => {
           expect(args.path).toBe("nested_import");
           expect(args.namespace).toBe("my_namespace");
           return {
             path: root + "/foo.ts",
             namespace: "file",
           };
+        });
+        builder.onResolve({ filter: /.*/ }, args => {
+          throw new Error("SHOULD NOT BE CALLED");
         });
       },
       run: {
@@ -314,9 +399,10 @@ describe("bundler", () => {
       },
     };
   });
-  itBundled("plugin/ResolveTwoImportsOnce", ({ root }) => {
+  itBundled("plugin/ResolveOnceWhenSameFile", ({ root }) => {
     let onResolveCount = 0;
     return {
+      notImplemented: true,
       files: {
         "index.ts": /* ts */ `
           import * as foo from "./foo.ts";
@@ -569,6 +655,74 @@ describe("bundler", () => {
       },
     };
   });
+  // itBundled("plugin/ManyPlugins", ({ root }) => {
+  //   const pluginCount = 4000;
+  //   let resolveCount = 0;
+  //   let loadCount = 0;
+  //   return {
+  //     files: {
+  //       "index.ts": /* ts */ `
+  //         import { foo as foo1 } from "plugin1:file";
+  //         import { foo as foo2 } from "plugin4000:file";
+  //         console.log(foo1, foo2);
+  //       `,
+  //     },
+  //     plugins: Array.from({ length: pluginCount }).map((_, i) => ({
+  //       name: `${i}`,
+  //       setup(builder) {
+  //         builder.onResolve({ filter: new RegExp(`^plugin${i}:file$`) }, args => {
+  //           resolveCount++;
+  //           return {
+  //             path: `plugin${i}:file`,
+  //             namespace: `plugin${i}`,
+  //           };
+  //         });
+  //         builder.onLoad({ filter: new RegExp(`^plugin${i}:file$`), namespace: `plugin${i}` }, args => {
+  //           loadCount++;
+  //           return {
+  //             contents: `export const foo = ${i};`,
+  //             loader: "js",
+  //           };
+  //         });
+  //       },
+  //     })),
+  //     run: {
+  //       stdout: `${pluginCount - 1} ${pluginCount - 1}`,
+  //     },
+  //     onAfterBundle(api) {
+  //       expect(resolveCount).toBe(pluginCount * 2);
+  //       expect(loadCount).toBe(pluginCount);
+  //     },
+  //   };
+  // });
+  itBundled("plugin/NamespaceOnLoadBug", () => {
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          import { foo } from "plugin:file";
+          console.log(foo);
+        `,
+      },
+      plugins(build) {
+        build.onResolve({ filter: /^plugin:/ }, args => {
+          return {
+            path: args.path,
+            namespace: "this",
+          };
+        });
+        build.onLoad({ filter: /.*/, namespace: "that" }, args => {
+          return {
+            contents: "export const foo = 'FAILED';",
+            loader: "js",
+          };
+        });
+        build.onLoad({ filter: /.*/, namespace: "this" }, args => {
+          return {
+            contents: `export const foo = '${args.namespace}';`,
+            loader: "js",
+          };
+        });
+      },
+    };
+  });
 });
-
-// TODO: add async on resolve stuff

@@ -472,7 +472,6 @@ function expectBundled(
       if (plugins) {
         throw new Error("plugins not possible in backend=CLI");
       }
-
       const cmd = (
         !ESBUILD
           ? [
@@ -816,7 +815,7 @@ for (const blob of build.outputs) {
 
         if (buildLogs) {
           const rawErrors = buildLogs instanceof AggregateError ? buildLogs.errors : [buildLogs];
-          const errors: ErrorMeta[] = [];
+          const allErrors: ErrorMeta[] = [];
           for (const error of rawErrors) {
             const str = error.message ?? String(error);
             if (str.startsWith("\u001B[2mexpect(") || str.startsWith("expect(")) {
@@ -833,22 +832,69 @@ for (const blob of build.outputs) {
               offset: number;
             };
 
-            console.log("position", position);
             const filename = position?.file
               ? position.namespace === "file"
                 ? "/" + path.relative(root, position.file)
                 : `${position.namespace}:${position.file.replace(root, "")}`
               : "<bun>";
 
-            errors.push({
+            allErrors.push({
               file: filename,
               error: str,
               col: position?.column !== undefined ? String(position.column) : undefined,
               line: position?.line !== undefined ? String(position.line) : undefined,
             });
           }
-          console.log(errors);
-          throw new Error("Build failed");
+
+          if (DEBUG && allErrors.length) {
+            console.log("REFERENCE ERRORS OBJECT");
+            console.log("bundleErrors: {");
+            const files: any = {};
+            for (const err of allErrors) {
+              files[err.file] ??= [];
+              files[err.file].push(err);
+            }
+            for (const [file, errs] of Object.entries(files)) {
+              console.log('  "' + file + '": [');
+              for (const err of errs as any) {
+                console.log("    `" + err.error + "`,");
+              }
+              console.log("  ],");
+            }
+            console.log("},");
+          }
+
+          if (expectedErrors) {
+            const errorsLeft = [...expectedErrors];
+            let unexpectedErrors = [];
+
+            for (const error of allErrors) {
+              const i = errorsLeft.findIndex(item => error.file === item.file && error.error.includes(item.error));
+              if (i === -1) {
+                unexpectedErrors.push(error);
+              } else {
+                errorsLeft.splice(i, 1);
+              }
+            }
+
+            if (unexpectedErrors.length) {
+              throw new Error(
+                "Unexpected errors reported while bundling:\n" +
+                  [...unexpectedErrors].map(formatError).join("\n") +
+                  "\n\nExpected errors:\n" +
+                  expectedErrors.map(formatError).join("\n"),
+              );
+            }
+
+            if (errorsLeft.length) {
+              throw new Error("Errors were expected while bundling:\n" + errorsLeft.map(formatError).join("\n"));
+            }
+
+            return testRef(id, opts);
+          }
+          throw new Error("Bundle Failed\n" + [...allErrors].map(formatError).join("\n"));
+        } else if (expectedErrors && expectedErrors.length > 0) {
+          throw new Error("Errors were expected while bundling:\n" + expectedErrors.map(formatError).join("\n"));
         }
       } else {
         await esbuild.build({
@@ -1224,7 +1270,7 @@ export function itBundled(
     //   });
     // } catch (error: any) {}
   } else {
-    it(id, () => expectBundled(id, opts));
+    it(id, () => expectBundled(id, opts as any));
   }
   return ref;
 }
@@ -1238,7 +1284,7 @@ itBundled.skip = (id: string, opts: BundlerTestInput) => {
 };
 
 function formatError(err: ErrorMeta) {
-  return `${err.file}${err.line ? " :" + err.line : ""}${err.col ? ":" + err.col : ""}: ${err.error}`;
+  return `${err.file}${err.line ? ":" + err.line : ""}${err.col ? ":" + err.col : ""}: ${err.error}`;
 }
 
 function filterMatches(id: string) {

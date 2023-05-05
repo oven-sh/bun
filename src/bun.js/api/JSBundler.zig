@@ -61,7 +61,6 @@ pub const JSBundler = struct {
         server_components: ServerComponents = ServerComponents{},
 
         names: Names = .{},
-        label: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         external: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         source_map: options.SourceMapOption = .none,
         public_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
@@ -74,7 +73,6 @@ pub const JSBundler = struct {
                 .external = bun.StringSet.init(allocator),
                 .define = bun.StringMap.init(allocator, true),
                 .dir = OwnedString.initEmpty(allocator),
-                .label = OwnedString.initEmpty(allocator),
                 .outdir = OwnedString.initEmpty(allocator),
                 .names = .{
                     .owned_entry_point = OwnedString.initEmpty(allocator),
@@ -165,17 +163,12 @@ pub const JSBundler = struct {
                 }
             }
 
-            if (try config.getOptional(globalThis, "label", ZigString.Slice)) |slice| {
-                defer slice.deinit();
-                this.label.appendSliceExact(slice.slice()) catch unreachable;
-            }
-
-            if (try config.getOptional(globalThis, "dir", ZigString.Slice)) |slice| {
-                defer slice.deinit();
-                this.dir.appendSliceExact(slice.slice()) catch unreachable;
-            } else {
-                this.dir.appendSliceExact(globalThis.bunVM().bundler.fs.top_level_dir) catch unreachable;
-            }
+            // if (try config.getOptional(globalThis, "dir", ZigString.Slice)) |slice| {
+            //     defer slice.deinit();
+            //     this.dir.appendSliceExact(slice.slice()) catch unreachable;
+            // } else {
+            //     this.dir.appendSliceExact(globalThis.bunVM().bundler.fs.top_level_dir) catch unreachable;
+            // }
 
             if (try config.getOptional(globalThis, "publicPath", ZigString.Slice)) |slice| {
                 defer slice.deinit();
@@ -278,9 +271,6 @@ pub const JSBundler = struct {
 
                         var val = JSC.ZigString.init("");
                         property_value.toZigString(&val, globalThis);
-                        if (val.len == 0) {
-                            val = JSC.ZigString.init("\"\"");
-                        }
                         if (options.Loader.fromString(val.slice())) |loader| {
                             loader_values[loader_iter.i] = loader.toAPI();
                         } else {
@@ -453,7 +443,6 @@ pub const JSBundler = struct {
             self.serve.deinit(allocator);
             self.server_components.deinit(allocator);
             self.names.deinit();
-            self.label.deinit();
             self.outdir.deinit();
             self.public_path.deinit();
         }

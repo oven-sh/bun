@@ -88,6 +88,27 @@ describe("bundler", () => {
     capture: ["`\\\\?`", "hello`\\\\?`"],
     target: "bun",
   });
+  itBundled("edgecase/TemplateStringTernaryIssue", {
+    files: {
+      "/entry.ts": /* js */ `
+        capture(\`\${1}\\\${\${VARIABLE ? "SOMETHING" : ""}\`);
+        capture(\`\${1}\\\${\${true ? "SOMETHING" : ""}\`);
+        capture(\`\${1}\\\${\${false ? "SOMETHING" : ""}\`);
+      `,
+    },
+    capture: ['`${"1"}\\${${VARIABLE ? "SOMETHING" : ""}`', '`${"1"}\\${${"SOMETHING"}`', '`${"1"}\\${${""}`'],
+    target: "bun",
+  });
+  itBundled("edgecase/TemplateStringEscapeIssue", {
+    files: {
+      "/entry.ts": /* js */ `
+        capture(\`\\abc\${ident}\`);
+        capture(\`\\x1b[\${ident}\`);
+      `,
+    },
+    capture: ["`abc${ident}`", "`\\x1B[${ident}`"],
+    target: "bun",
+  });
   itBundled("edgecase/StringNullBytes", {
     files: {
       "/entry.ts": /* js */ `
@@ -426,6 +447,50 @@ describe("bundler", () => {
     },
     run: {
       stdout: "123",
+    },
+  });
+  itBundled("edgecase/TSConfigPathsStarOnlyInLeft", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import test0 from 'test0/hello'
+        console.log(test0)
+      `,
+      "/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "baseUrl": ".",
+            "paths": {
+              "test0/*": ["./test0-success.ts"]
+            }
+          }
+        }
+      `,
+      "/test0-success.ts": `export default 'success'`,
+    },
+    run: {
+      stdout: "success",
+    },
+  });
+  itBundled("tsconfig/TSConfigPathStarAnywhere", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import test0 from 'test3/foo'
+        console.log(test0)
+      `,
+      "/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "baseUrl": ".",
+            "paths": {
+              "t*t3/foo": ["./test3-succ*s.ts"],
+            }
+          }
+        }
+      `,
+      "/test3-success.ts": `export default 'success'`,
+    },
+    run: {
+      stdout: "success",
     },
   });
 });

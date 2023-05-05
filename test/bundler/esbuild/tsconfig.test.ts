@@ -7,16 +7,14 @@ var { describe, test, expect } = testForFile(import.meta.path);
 // For debug, all files are written to $TEMP/bun-bundle-tests/tsconfig
 
 describe("bundler", () => {
-  return;
-  itBundled("tsconfig/TsConfigPaths", {
-    // GENERATED
+  itBundled("tsconfig/Paths", ({ root }) => ({
     files: {
-      "/Users/user/project/entry.ts": /* ts */ `
+      "/entry.ts": /* ts */ `
         import baseurl_dot from './baseurl_dot'
         import baseurl_nested from './baseurl_nested'
-        console.log(baseurl_dot, baseurl_nested)
+        console.log(JSON.stringify({baseurl_dot, baseurl_nested}))
       `,
-      "/Users/user/project/baseurl_dot/index.ts": /* ts */ `
+      "/baseurl_dot/index.ts": /* ts */ `
         import test0 from 'test0'
         import test1 from 'test1/foo'
         import test2 from 'test2/foo'
@@ -40,7 +38,7 @@ describe("bundler", () => {
           absoluteOutStar,
         }
       `,
-      "/Users/user/project/baseurl_dot/tsconfig.json": /* json */ `
+      "/baseurl_dot/tsconfig.json": /* json */ `
         {
           "compilerOptions": {
             "baseUrl": ".",
@@ -53,24 +51,24 @@ describe("bundler", () => {
               "test5/*": ["./test5-first/*", "./test5-second/*"],
               "/virtual-in/test": ["./actual/test"],
               "/virtual-in-star/*": ["./actual/*"],
-              "/virtual-out/test": ["/Users/user/project/baseurl_dot/actual/test"],
-              "/virtual-out-star/*": ["/Users/user/project/baseurl_dot/actual/*"],
+              "/virtual-out/test": ["${root}/baseurl_dot/actual/test"],
+              "/virtual-out-star/*": ["${root}/baseurl_dot/actual/*"],
             }
           }
         }
       `,
-      "/Users/user/project/baseurl_dot/test0-success.ts": `export default 'test0-success'`,
-      "/Users/user/project/baseurl_dot/test1-success.ts": `export default 'test1-success'`,
-      "/Users/user/project/baseurl_dot/test2-success/foo.ts": `export default 'test2-success'`,
-      "/Users/user/project/baseurl_dot/test3-success.ts": `export default 'test3-success'`,
-      "/Users/user/project/baseurl_dot/test4-first/foo.ts": `export default 'test4-success'`,
-      "/Users/user/project/baseurl_dot/test5-second/foo.ts": `export default 'test5-success'`,
-      "/Users/user/project/baseurl_dot/absolute-in.ts": `export {default} from '/virtual-in/test'`,
-      "/Users/user/project/baseurl_dot/absolute-in-star.ts": `export {default} from '/virtual-in-star/test'`,
-      "/Users/user/project/baseurl_dot/absolute-out.ts": `export {default} from '/virtual-out/test'`,
-      "/Users/user/project/baseurl_dot/absolute-out-star.ts": `export {default} from '/virtual-out-star/test'`,
-      "/Users/user/project/baseurl_dot/actual/test.ts": `export default 'absolute-success'`,
-      "/Users/user/project/baseurl_nested/index.ts": /* ts */ `
+      "/baseurl_dot/test0-success.ts": `export default 'test0-success'`,
+      "/baseurl_dot/test1-success.ts": `export default 'test1-success'`,
+      "/baseurl_dot/test2-success/foo.ts": `export default 'test2-success'`,
+      "/baseurl_dot/test3-success.ts": `export default 'test3-success'`,
+      "/baseurl_dot/test4-first/foo.ts": `export default 'test4-success'`,
+      "/baseurl_dot/test5-second/foo.ts": `export default 'test5-success'`,
+      "/baseurl_dot/absolute-in.ts": `export {default} from '/virtual-in/test'`,
+      "/baseurl_dot/absolute-in-star.ts": `export {default} from '/virtual-in-star/test'`,
+      "/baseurl_dot/absolute-out.ts": `export {default} from '/virtual-out/test'`,
+      "/baseurl_dot/absolute-out-star.ts": `export {default} from '/virtual-out-star/test'`,
+      "/baseurl_dot/actual/test.ts": `export default 'absolute-success'`,
+      "/baseurl_nested/index.ts": /* ts */ `
         import test0 from 'test0'
         import test1 from 'test1/foo'
         import test2 from 'test2/foo'
@@ -94,7 +92,7 @@ describe("bundler", () => {
           absoluteOutStar,
         }
       `,
-      "/Users/user/project/baseurl_nested/tsconfig.json": /* json */ `
+      "/baseurl_nested/tsconfig.json": /* json */ `
         {
           "compilerOptions": {
             "baseUrl": "nested",
@@ -107,34 +105,38 @@ describe("bundler", () => {
               "test5/*": ["./test5-first/*", "./test5-second/*"],
               "/virtual-in/test": ["./actual/test"],
               "/virtual-in-star/*": ["./actual/*"],
-              "/virtual-out/test": ["/Users/user/project/baseurl_nested/nested/actual/test"],
-              "/virtual-out-star/*": ["/Users/user/project/baseurl_nested/nested/actual/*"],
+              "/virtual-out/test": ["${root}/baseurl_nested/nested/actual/test"],
+              "/virtual-out-star/*": ["${root}/baseurl_nested/nested/actual/*"],
             }
           }
         }
       `,
-      "/Users/user/project/baseurl_nested/nested/test0-success.ts": `export default 'test0-success'`,
-      "/Users/user/project/baseurl_nested/nested/test1-success.ts": `export default 'test1-success'`,
-      "/Users/user/project/baseurl_nested/nested/test2-success/foo.ts": `export default 'test2-success'`,
-      "/Users/user/project/baseurl_nested/nested/test3-success.ts": `export default 'test3-success'`,
-      "/Users/user/project/baseurl_nested/nested/test4-first/foo.ts": `export default 'test4-success'`,
-      "/Users/user/project/baseurl_nested/nested/test5-second/foo.ts": `export default 'test5-success'`,
-      "/Users/user/project/baseurl_nested/absolute-in.ts": `export {default} from '/virtual-in/test'`,
-      "/Users/user/project/baseurl_nested/absolute-in-star.ts": `export {default} from '/virtual-in/test'`,
-      "/Users/user/project/baseurl_nested/absolute-out.ts": `export {default} from '/virtual-out/test'`,
-      "/Users/user/project/baseurl_nested/absolute-out-star.ts": `export {default} from '/virtual-out-star/test'`,
-      "/Users/user/project/baseurl_nested/nested/actual/test.ts": `export default 'absolute-success'`,
+      "/baseurl_nested/nested/test0-success.ts": `export default 'test0-success'`,
+      "/baseurl_nested/nested/test1-success.ts": `export default 'test1-success'`,
+      "/baseurl_nested/nested/test2-success/foo.ts": `export default 'test2-success'`,
+      "/baseurl_nested/nested/test3-success.ts": `export default 'test3-success'`,
+      "/baseurl_nested/nested/test4-first/foo.ts": `export default 'test4-success'`,
+      "/baseurl_nested/nested/test5-second/foo.ts": `export default 'test5-success'`,
+      "/baseurl_nested/absolute-in.ts": `export {default} from '/virtual-in/test'`,
+      "/baseurl_nested/absolute-in-star.ts": `export {default} from '/virtual-in/test'`,
+      "/baseurl_nested/absolute-out.ts": `export {default} from '/virtual-out/test'`,
+      "/baseurl_nested/absolute-out-star.ts": `export {default} from '/virtual-out-star/test'`,
+      "/baseurl_nested/nested/actual/test.ts": `export default 'absolute-success'`,
     },
-  });
-  itBundled("tsconfig/TsConfigPathsNoBaseURL", {
+    run: {
+      stdout:
+        '{"baseurl_dot":{"test0":"test0-success","test1":"test1-success","test2":"test2-success","test3":"test3-success","test4":"test4-success","test5":"test5-success","absoluteIn":"absolute-success","absoluteInStar":"absolute-success","absoluteOut":"absolute-success","absoluteOutStar":"absolute-success"},"baseurl_nested":{"test0":"test0-success","test1":"test1-success","test2":"test2-success","test3":"test3-success","test4":"test4-success","test5":"test5-success","absoluteIn":"absolute-success","absoluteInStar":"absolute-success","absoluteOut":"absolute-success","absoluteOutStar":"absolute-success"}}',
+    },
+  }));
+  itBundled("tsconfig/PathsNoBaseURL", {
     // GENERATED
     files: {
-      "/Users/user/project/entry.ts": /* ts */ `
+      "/entry.ts": /* ts */ `
         import simple from './simple'
         import extended from './extended'
-        console.log(simple, extended)
+        console.log(JSON.stringify({simple, extended}))
       `,
-      "/Users/user/project/simple/index.ts": /* ts */ `
+      "/simple/index.ts": /* ts */ `
         import test0 from 'test0'
         import test1 from 'test1/foo'
         import test2 from 'test2/foo'
@@ -152,7 +154,7 @@ describe("bundler", () => {
           absolute,
         }
       `,
-      "/Users/user/project/simple/tsconfig.json": /* json */ `
+      "/simple/tsconfig.json": /* json */ `
         {
           "compilerOptions": {
             "paths": {
@@ -167,15 +169,15 @@ describe("bundler", () => {
           }
         }
       `,
-      "/Users/user/project/simple/test0-success.ts": `export default 'test0-success'`,
-      "/Users/user/project/simple/test1-success.ts": `export default 'test1-success'`,
-      "/Users/user/project/simple/test2-success/foo.ts": `export default 'test2-success'`,
-      "/Users/user/project/simple/test3-success.ts": `export default 'test3-success'`,
-      "/Users/user/project/simple/test4-first/foo.ts": `export default 'test4-success'`,
-      "/Users/user/project/simple/test5-second/foo.ts": `export default 'test5-success'`,
-      "/Users/user/project/simple/absolute.ts": `export {default} from '/virtual/test'`,
-      "/Users/user/project/simple/actual/test.ts": `export default 'absolute-success'`,
-      "/Users/user/project/extended/index.ts": /* ts */ `
+      "/simple/test0-success.ts": `export default 'test0-success'`,
+      "/simple/test1-success.ts": `export default 'test1-success'`,
+      "/simple/test2-success/foo.ts": `export default 'test2-success'`,
+      "/simple/test3-success.ts": `export default 'test3-success'`,
+      "/simple/test4-first/foo.ts": `export default 'test4-success'`,
+      "/simple/test5-second/foo.ts": `export default 'test5-success'`,
+      "/simple/absolute.ts": `export {default} from '/virtual/test'`,
+      "/simple/actual/test.ts": `export default 'absolute-success'`,
+      "/extended/index.ts": /* ts */ `
         import test0 from 'test0'
         import test1 from 'test1/foo'
         import test2 from 'test2/foo'
@@ -193,12 +195,12 @@ describe("bundler", () => {
           absolute,
         }
       `,
-      "/Users/user/project/extended/tsconfig.json": /* json */ `
+      "/extended/tsconfig.json": /* json */ `
         {
           "extends": "./nested/tsconfig.json"
         }
       `,
-      "/Users/user/project/extended/nested/tsconfig.json": /* json */ `
+      "/extended/nested/tsconfig.json": /* json */ `
         {
           "compilerOptions": {
             "paths": {
@@ -213,17 +215,21 @@ describe("bundler", () => {
           }
         }
       `,
-      "/Users/user/project/extended/nested/test0-success.ts": `export default 'test0-success'`,
-      "/Users/user/project/extended/nested/test1-success.ts": `export default 'test1-success'`,
-      "/Users/user/project/extended/nested/test2-success/foo.ts": `export default 'test2-success'`,
-      "/Users/user/project/extended/nested/test3-success.ts": `export default 'test3-success'`,
-      "/Users/user/project/extended/nested/test4-first/foo.ts": `export default 'test4-success'`,
-      "/Users/user/project/extended/nested/test5-second/foo.ts": `export default 'test5-success'`,
-      "/Users/user/project/extended/absolute.ts": `export {default} from '/virtual/test'`,
-      "/Users/user/project/extended/nested/actual/test.ts": `export default 'absolute-success'`,
+      "/extended/nested/test0-success.ts": `export default 'test0-success'`,
+      "/extended/nested/test1-success.ts": `export default 'test1-success'`,
+      "/extended/nested/test2-success/foo.ts": `export default 'test2-success'`,
+      "/extended/nested/test3-success.ts": `export default 'test3-success'`,
+      "/extended/nested/test4-first/foo.ts": `export default 'test4-success'`,
+      "/extended/nested/test5-second/foo.ts": `export default 'test5-success'`,
+      "/extended/absolute.ts": `export {default} from '/virtual/test'`,
+      "/extended/nested/actual/test.ts": `export default 'absolute-success'`,
+    },
+    run: {
+      stdout:
+        '{"simple":{"test0":"test0-success","test1":"test1-success","test2":"test2-success","test3":"test3-success","test4":"test4-success","test5":"test5-success","absolute":"absolute-success"},"extended":{"test0":"test0-success","test1":"test1-success","test2":"test2-success","test3":"test3-success","test4":"test4-success","test5":"test5-success","absolute":"absolute-success"}}',
     },
   });
-  itBundled("tsconfig/TsConfigBadPathsNoBaseURL", {
+  itBundled("tsconfig/BadPathsNoBaseURL", {
     // GENERATED
     files: {
       "/Users/user/project/entry.ts": `import "should-not-be-imported"`,
@@ -236,22 +242,22 @@ describe("bundler", () => {
                 ".",
                 "..",
                 "./good",
-                ".\\good",
+                ".\\\\good",
                 "../good",
-                "..\\good",
+                "..\\\\good",
                 "/good",
-                "\\good",
+                "\\\\good",
                 "c:/good",
-                "c:\\good",
+                "c:\\\\good",
                 "C:/good",
-                "C:\\good",
+                "C:\\\\good",
   
                 "bad",
                 "@bad/core",
                 ".*/bad",
                 "..*/bad",
-                "c*:\\bad",
-                "c:*\\bad",
+                "c*:\\\\bad",
+                "c:*\\\\bad",
                 "http://bad"
               ]
             }
@@ -270,7 +276,7 @@ describe("bundler", () => {
   Users/user/project/tsconfig.json: WARNING: Non-relative path "http://bad" is not allowed when "baseUrl" is not set (did you forget a leading "./"?)
   `, */
   });
-  itBundled("tsconfig/TsConfigPathsOverriddenBaseURL", {
+  itBundled("tsconfig/PathsOverriddenBaseURL", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
@@ -297,7 +303,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("tsconfig/TsConfigPathsOverriddenBaseURLDifferentDir", {
+  itBundled("tsconfig/PathsOverriddenBaseURLDifferentDir", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
@@ -324,7 +330,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("tsconfig/TsConfigPathsMissingBaseURL", {
+  itBundled("tsconfig/PathsMissingBaseURL", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
@@ -353,7 +359,7 @@ describe("bundler", () => {
   NOTE: You can mark the path "#/test" as external to exclude it from the bundle, which will remove this error.
   `, */
   });
-  itBundled("tsconfig/TsConfigPathsTypeOnly", {
+  itBundled("tsconfig/PathsTypeOnly", {
     // GENERATED
     files: {
       "/Users/user/project/entry.ts": /* ts */ `
@@ -382,7 +388,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("tsconfig/TsConfigJSX", {
+  itBundled("tsconfig/JSX", {
     // GENERATED
     files: {
       "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
@@ -396,7 +402,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("tsconfig/TsConfigNestedJSX", {
+  itBundled("tsconfig/NestedJSX", {
     // GENERATED
     files: {
       "/Users/user/project/entry.ts": /* ts */ `
@@ -432,7 +438,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("tsconfig/TsConfigReactJSX", {
+  itBundled("tsconfig/ReactJSX", {
     // GENERATED
     files: {
       "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
@@ -447,7 +453,7 @@ describe("bundler", () => {
     },
     outfile: "/Users/user/project/out.js",
   });
-  itBundled("tsconfig/TsConfigReactJSXDev", {
+  itBundled("tsconfig/ReactJSXDev", {
     // GENERATED
     files: {
       "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
@@ -461,7 +467,7 @@ describe("bundler", () => {
     },
     outfile: "/Users/user/project/out.js",
   });
-  itBundled("tsconfig/TsConfigReactJSXWithDevInMainConfig", {
+  itBundled("tsconfig/ReactJSXWithDevInMainConfig", {
     // GENERATED
     files: {
       "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
@@ -478,7 +484,7 @@ describe("bundler", () => {
       development: true,
     },
   });
-  itBundled("tsconfig/TsconfigJsonBaseUrl", {
+  itBundled("tsconfig/JsonBaseUrl", {
     // GENERATED
     files: {
       "/Users/user/project/src/app/entry.js": /* js */ `
@@ -520,7 +526,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("tsconfig/TsconfigJsonAbsoluteBaseUrl", {
+  itBundled("tsconfig/JsonAbsoluteBaseUrl", {
     // GENERATED
     files: {
       "/Users/user/project/src/app/entry.js": /* js */ `
@@ -541,7 +547,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("tsconfig/TsconfigJsonCommentAllowed", {
+  itBundled("tsconfig/JsonCommentAllowed", {
     // GENERATED
     files: {
       "/Users/user/project/src/app/entry.js": /* js */ `
@@ -563,7 +569,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("tsconfig/TsconfigJsonTrailingCommaAllowed", {
+  itBundled("tsconfig/JsonTrailingCommaAllowed", {
     // GENERATED
     files: {
       "/Users/user/project/src/app/entry.js": /* js */ `
@@ -584,7 +590,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("tsconfig/TsconfigJsonExtends", {
+  itBundled("tsconfig/JsonExtends", {
     // GENERATED
     files: {
       "/entry.jsx": `console.log(<div/>, <></>)`,
@@ -606,8 +612,8 @@ describe("bundler", () => {
       `,
     },
   });
-  bundlerTest.skip("tsconfig/TsconfigJsonExtendsAbsolute", () => {
-    expectBundled("tsconfig/TsconfigJsonExtendsAbsoluteUnix", {
+  test.skip("tsconfig/JsonExtendsAbsolute", () => {
+    expectBundled("tsconfig/JsonExtendsAbsoluteUnix", {
       // GENERATED
       host: "unix",
       files: {
@@ -630,7 +636,7 @@ describe("bundler", () => {
         `,
       },
     });
-    expectBundled("tsconfig/TsconfigJsonExtendsAbsoluteWindows", {
+    expectBundled("tsconfig/JsonExtendsAbsoluteWindows", {
       // GENERATED
       host: "windows",
       files: {
@@ -654,7 +660,7 @@ describe("bundler", () => {
       },
     });
   });
-  itBundled("tsconfig/TsconfigJsonExtendsThreeLevels", {
+  itBundled("tsconfig/JsonExtendsThreeLevels", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.jsx": /* jsx */ `
@@ -689,7 +695,7 @@ describe("bundler", () => {
       "/Users/user/project/src/path2/works/import.js": `console.log('works')`,
     },
   });
-  itBundled("tsconfig/TsconfigJsonExtendsLoop", {
+  itBundled("tsconfig/JsonExtendsLoop", {
     // GENERATED
     files: {
       "/entry.js": `console.log(123)`,
@@ -707,7 +713,7 @@ describe("bundler", () => {
     /* TODO FIX expectedScanLog: `base.json: WARNING: Base config file "./tsconfig" forms cycle
   `, */
   });
-  itBundled("tsconfig/TsconfigJsonExtendsPackage", {
+  itBundled("tsconfig/JsonExtendsPackage", {
     // GENERATED
     files: {
       "/Users/user/project/src/app/entry.jsx": `console.log(<div/>)`,
@@ -725,7 +731,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("tsconfig/TsconfigJsonOverrideMissing", {
+  itBundled("tsconfig/JsonOverrideMissing", {
     // GENERATED
     files: {
       "/Users/user/project/src/app/entry.ts": `import 'foo'`,
@@ -754,7 +760,7 @@ describe("bundler", () => {
     },
     outfile: "/Users/user/project/out.js",
   });
-  itBundled("tsconfig/TsconfigJsonOverrideNodeModules", {
+  itBundled("tsconfig/JsonOverrideNodeModules", {
     // GENERATED
     files: {
       "/Users/user/project/src/app/entry.ts": `import 'foo'`,
@@ -784,7 +790,7 @@ describe("bundler", () => {
     },
     outfile: "/Users/user/project/out.js",
   });
-  itBundled("tsconfig/TsconfigJsonOverrideInvalid", {
+  itBundled("tsconfig/JsonOverrideInvalid", {
     // GENERATED
     files: {
       "/entry.ts": ``,
@@ -792,7 +798,7 @@ describe("bundler", () => {
     /* TODO FIX expectedScanLog: `ERROR: Cannot find tsconfig file "this/file/doesn't/exist/tsconfig.json"
   `, */
   });
-  itBundled("tsconfig/TsconfigJsonNodeModulesImplicitFile", {
+  itBundled("tsconfig/JsonNodeModulesImplicitFile", {
     // GENERATED
     files: {
       "/Users/user/project/src/app/entry.tsx": `console.log(<div/>)`,
@@ -811,7 +817,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("tsconfig/TsconfigJsonInsideNodeModules", {
+  itBundled("tsconfig/JsonInsideNodeModules", {
     // GENERATED
     files: {
       "/Users/user/project/src/app/entry.tsx": `import 'foo'`,
@@ -825,7 +831,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("tsconfig/TsconfigWarningsInsideNodeModules", {
+  itBundled("tsconfig/WarningsInsideNodeModules", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.tsx": /* tsx */ `
@@ -840,7 +846,7 @@ describe("bundler", () => {
     /* TODO FIX expectedScanLog: `Users/user/project/src/foo/tsconfig.json: WARNING: Cannot find base config file "extends for foo"
   `, */
   });
-  itBundled("tsconfig/TsconfigRemoveUnusedImports", {
+  itBundled("tsconfig/RemoveUnusedImports", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
@@ -856,7 +862,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("tsconfig/TsconfigPreserveUnusedImports", {
+  itBundled("tsconfig/PreserveUnusedImports", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
@@ -873,7 +879,7 @@ describe("bundler", () => {
     },
     outfile: "/Users/user/project/out.js",
   });
-  itBundled("tsconfig/TsconfigImportsNotUsedAsValuesPreserve", {
+  itBundled("tsconfig/ImportsNotUsedAsValuesPreserve", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
@@ -894,7 +900,7 @@ describe("bundler", () => {
     outfile: "/Users/user/project/out.js",
     mode: "convertformat",
   });
-  itBundled("tsconfig/TsconfigPreserveValueImports", {
+  itBundled("tsconfig/PreserveValueImports", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
@@ -921,7 +927,7 @@ describe("bundler", () => {
     outfile: "/Users/user/project/out.js",
     mode: "convertformat",
   });
-  itBundled("tsconfig/TsconfigPreserveValueImportsAndImportsNotUsedAsValuesPreserve", {
+  itBundled("tsconfig/PreserveValueImportsAndImportsNotUsedAsValuesPreserve", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
@@ -949,7 +955,7 @@ describe("bundler", () => {
     outfile: "/Users/user/project/out.js",
     mode: "convertformat",
   });
-  itBundled("tsconfig/TsconfigTarget", {
+  itBundled("tsconfig/Target", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
@@ -1007,7 +1013,7 @@ describe("bundler", () => {
     /* TODO FIX expectedScanLog: `Users/user/project/src/es4/tsconfig.json: WARNING: Unrecognized target environment "ES4"
   `, */
   });
-  itBundled("tsconfig/TsconfigTargetError", {
+  itBundled("tsconfig/TargetError", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": `x = 123n`,
@@ -1024,7 +1030,7 @@ describe("bundler", () => {
   Users/user/project/src/tsconfig.json: NOTE: The target environment was set to "ES2019" here:
   `, */
   });
-  itBundled("tsconfig/TsconfigTargetIgnored", {
+  itBundled("tsconfig/TargetIgnored", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": `x = 123n`,
@@ -1038,7 +1044,7 @@ describe("bundler", () => {
     },
     outfile: "/Users/user/project/out.js",
   });
-  itBundled("tsconfig/TsconfigUseDefineForClassFieldsES2020", {
+  itBundled("tsconfig/UseDefineForClassFieldsES2020", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
@@ -1055,7 +1061,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("tsconfig/TsconfigUseDefineForClassFieldsESNext", {
+  itBundled("tsconfig/UseDefineForClassFieldsESNext", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
@@ -1072,7 +1078,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("tsconfig/TsconfigUnrecognizedTargetWarning", {
+  itBundled("tsconfig/UnrecognizedTargetWarning", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
@@ -1099,7 +1105,7 @@ describe("bundler", () => {
     /* TODO FIX expectedScanLog: `Users/user/project/src/a/tsconfig.json: WARNING: Unrecognized target environment "es3"
   `, */
   });
-  itBundled("tsconfig/TsconfigTargetWarning", {
+  itBundled("tsconfig/TargetWarning", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": `await 0`,
@@ -1117,7 +1123,7 @@ describe("bundler", () => {
   Users/user/project/src/tsconfig.json: NOTE: The target environment was set to "es6" here:
   `, */
   });
-  itBundled("tsconfig/TsconfigOverriddenTargetWarning", {
+  itBundled("tsconfig/OverriddenTargetWarning", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": `await 0`,
@@ -1135,7 +1141,7 @@ describe("bundler", () => {
     /* TODO FIX expectedScanLog: `Users/user/project/src/entry.ts: ERROR: Top-level await is not available in the configured target environment (es2020)
   `, */
   });
-  itBundled("tsconfig/TsConfigNoBaseURLExtendsPaths", {
+  itBundled("tsconfig/NoBaseURLExtendsPaths", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
@@ -1163,7 +1169,7 @@ describe("bundler", () => {
   NOTE: You can mark the path "foo" as external to exclude it from the bundle, which will remove this error.
   `, */
   });
-  itBundled("tsconfig/TsConfigBaseURLExtendsPaths", {
+  itBundled("tsconfig/BaseURLExtendsPaths", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
@@ -1190,7 +1196,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("tsconfig/TsConfigPathsExtendsBaseURL", {
+  itBundled("tsconfig/PathsExtendsBaseURL", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
@@ -1217,7 +1223,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("tsconfig/TsConfigModuleSuffixesInsert", {
+  itBundled("tsconfig/ModuleSuffixesInsert", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
@@ -1243,7 +1249,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("tsconfig/TsConfigModuleSuffixesNoInsert", {
+  itBundled("tsconfig/ModuleSuffixesNoInsert", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
@@ -1267,7 +1273,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("tsconfig/TsConfigModuleSuffixesNoEmpty", {
+  itBundled("tsconfig/ModuleSuffixesNoEmpty", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
@@ -1287,7 +1293,7 @@ describe("bundler", () => {
     /* TODO FIX expectedScanLog: `Users/user/project/src/entry.ts: ERROR: Could not resolve "./bar"
   `, */
   });
-  itBundled("tsconfig/TsConfigWithStatementAlwaysStrictFalse", {
+  itBundled("tsconfig/WithStatementAlwaysStrictFalse", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": `with (x) y`,
@@ -1301,7 +1307,7 @@ describe("bundler", () => {
     },
     outfile: "/Users/user/project/out.js",
   });
-  itBundled("tsconfig/TsConfigWithStatementAlwaysStrictTrue", {
+  itBundled("tsconfig/WithStatementAlwaysStrictTrue", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": `with (x) y`,
@@ -1317,7 +1323,7 @@ describe("bundler", () => {
   Users/user/project/tsconfig.json: NOTE: TypeScript's "alwaysStrict" setting was enabled here:
   `, */
   });
-  itBundled("tsconfig/TsConfigWithStatementStrictFalse", {
+  itBundled("tsconfig/WithStatementStrictFalse", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": `with (x) y`,
@@ -1331,7 +1337,7 @@ describe("bundler", () => {
     },
     outfile: "/Users/user/project/out.js",
   });
-  itBundled("tsconfig/TsConfigWithStatementStrictTrue", {
+  itBundled("tsconfig/WithStatementStrictTrue", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": `with (x) y`,
@@ -1347,7 +1353,7 @@ describe("bundler", () => {
   Users/user/project/tsconfig.json: NOTE: TypeScript's "strict" setting was enabled here:
   `, */
   });
-  itBundled("tsconfig/TsConfigWithStatementStrictFalseAlwaysStrictTrue", {
+  itBundled("tsconfig/WithStatementStrictFalseAlwaysStrictTrue", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": `with (x) y`,
@@ -1364,7 +1370,7 @@ describe("bundler", () => {
   Users/user/project/tsconfig.json: NOTE: TypeScript's "alwaysStrict" setting was enabled here:
   `, */
   });
-  itBundled("tsconfig/TsConfigWithStatementStrictTrueAlwaysStrictFalse", {
+  itBundled("tsconfig/WithStatementStrictTrueAlwaysStrictFalse", {
     // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": `with (x) y`,
@@ -1379,7 +1385,7 @@ describe("bundler", () => {
     },
     outfile: "/Users/user/project/out.js",
   });
-  itBundled("tsconfig/TsConfigAlwaysStrictTrueEmitDirectivePassThrough", {
+  itBundled("tsconfig/AlwaysStrictTrueEmitDirectivePassThrough", {
     // GENERATED
     files: {
       "/Users/user/project/src/implicit.ts": `console.log('this file should start with "use strict"')`,
@@ -1398,7 +1404,7 @@ describe("bundler", () => {
     entryPoints: ["/Users/user/project/src/implicit.ts", "/Users/user/project/src/explicit.ts"],
     mode: "passthrough",
   });
-  itBundled("tsconfig/TsConfigAlwaysStrictTrueEmitDirectiveFormat", {
+  itBundled("tsconfig/AlwaysStrictTrueEmitDirectiveFormat", {
     // GENERATED
     files: {
       "/Users/user/project/src/implicit.ts": `console.log('this file should start with "use strict"')`,
@@ -1417,7 +1423,7 @@ describe("bundler", () => {
     entryPoints: ["/Users/user/project/src/implicit.ts", "/Users/user/project/src/explicit.ts"],
     mode: "convertformat",
   });
-  itBundled("tsconfig/TsConfigAlwaysStrictTrueEmitDirectiveBundleIIFE", {
+  itBundled("tsconfig/AlwaysStrictTrueEmitDirectiveBundleIIFE", {
     // GENERATED
     files: {
       "/Users/user/project/src/implicit.ts": `console.log('this file should start with "use strict"')`,
@@ -1436,7 +1442,7 @@ describe("bundler", () => {
     entryPoints: ["/Users/user/project/src/implicit.ts", "/Users/user/project/src/explicit.ts"],
     outdir: "/Users/user/project/out",
   });
-  itBundled("tsconfig/TsConfigAlwaysStrictTrueEmitDirectiveBundleCJS", {
+  itBundled("tsconfig/AlwaysStrictTrueEmitDirectiveBundleCJS", {
     // GENERATED
     files: {
       "/Users/user/project/src/implicit.ts": `console.log('this file should start with "use strict"')`,
@@ -1455,7 +1461,7 @@ describe("bundler", () => {
     entryPoints: ["/Users/user/project/src/implicit.ts", "/Users/user/project/src/explicit.ts"],
     outdir: "/Users/user/project/out",
   });
-  itBundled("tsconfig/TsConfigAlwaysStrictTrueEmitDirectiveBundleESM", {
+  itBundled("tsconfig/AlwaysStrictTrueEmitDirectiveBundleESM", {
     // GENERATED
     files: {
       "/Users/user/project/src/implicit.ts": `console.log('this file should not start with "use strict"')`,
@@ -1474,7 +1480,7 @@ describe("bundler", () => {
     entryPoints: ["/Users/user/project/src/implicit.ts", "/Users/user/project/src/explicit.ts"],
     outdir: "/Users/user/project/out",
   });
-  itBundled("tsconfig/TsConfigExtendsDotWithoutSlash", {
+  itBundled("tsconfig/ExtendsDotWithoutSlash", {
     // GENERATED
     files: {
       "/Users/user/project/src/main.ts": `console.log(123n)`,
@@ -1497,7 +1503,7 @@ describe("bundler", () => {
   Users/user/project/src/tsconfig.json: NOTE: The target environment was set to "ES6" here:
   `, */
   });
-  itBundled("tsconfig/TsConfigExtendsDotDotWithoutSlash", {
+  itBundled("tsconfig/ExtendsDotDotWithoutSlash", {
     // GENERATED
     files: {
       "/Users/user/project/src/main.ts": `console.log(123n)`,
@@ -1519,7 +1525,7 @@ describe("bundler", () => {
   Users/user/project/tsconfig.json: NOTE: The target environment was set to "ES6" here:
   `, */
   });
-  itBundled("tsconfig/TsConfigExtendsDotWithSlash", {
+  itBundled("tsconfig/ExtendsDotWithSlash", {
     // GENERATED
     files: {
       "/Users/user/project/src/main.ts": `console.log(123n)`,
@@ -1541,7 +1547,7 @@ describe("bundler", () => {
     /* TODO FIX expectedScanLog: `Users/user/project/src/foo.json: WARNING: Cannot find base config file "./"
   `, */
   });
-  itBundled("tsconfig/TsConfigExtendsDotDotWithSlash", {
+  itBundled("tsconfig/ExtendsDotDotWithSlash", {
     // GENERATED
     files: {
       "/Users/user/project/src/main.ts": `console.log(123n)`,

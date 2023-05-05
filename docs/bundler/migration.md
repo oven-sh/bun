@@ -2,8 +2,8 @@ Bun's bundler API is inspired heavily by [esbuild](https://esbuild.github.io/). 
 
 There are a few behavioral differences to note.
 
-- **Bundling by default**. Bun _always bundles by default_. This is why the `--bundle` flag isn't necessary in the Bun example.
-- **It's just a bundler**. Bun's bundler does not include a built-in development server or file watcher. It's just a bundler. The bundler is intended for use in conjunction with `Bun.serve` and other runtime APIs to achieve the same effect. As such, all options relating to HTTP/file watching are not applicable.
+- **Bundling by default**. Unlike esbuild, Bun _always bundles by default_. This is why the `--bundle` flag isn't necessary in the Bun example. To transpile each file individually, use [`Bun.Transpiler`](/docs/api/transpiler.md).
+- **It's just a bundler**. Unlike esbuild, Bun's bundler does not include a built-in development server or file watcher. It's just a bundler. The bundler is intended for use in conjunction with `Bun.serve` and other runtime APIs to achieve the same effect. As such, all options relating to HTTP/file watching are not applicable.
 
 ## Performance
 
@@ -40,8 +40,8 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 - Small syntax difference; no colon.
 
   ```bash
-  $ esbuild --define:K=V
-  $ bun build --define K=V
+  $ esbuild --define:foo=bar
+  $ bun build --define foo=bar
   ```
 
 ---
@@ -49,6 +49,11 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 - `--external:<pkg>`
 - `--external <pkg>`
 - Small syntax difference; no colon.
+
+  ```bash
+  $ esbuild --external:react
+  $ bun build --external react
+  ```
 
 ---
 
@@ -60,7 +65,9 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `--loader`
 - `--loader`
-- Small syntax difference.
+- Bun supports a different set of built-in loaders than esbuild; see [Bundler > Loaders](/docs/bundler/loaders) for a complete reference. The esbuild loaders `dataurl`, `binary`, `base64`, `copy`, and `empty` are not yet implemented.
+
+  The syntax for `--loader` is slightly different.
 
   ```bash
   $ esbuild app.ts --bundle --loader:.svg=text
@@ -213,14 +220,14 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 ---
 
 - `--jsx`
-- `--jsx-runtime`
+- `--jsx-runtime <runtime>`
 - Supports `"automatic"` (uses `jsx` transform) and `"classic"` (uses `React.createElement`)
 
 ---
 
 - `--jsx-dev`
 - n/a
-- Bun uses `jsxDEV` by default. Set `NODE_ENV=production` to use the production `jsx` transform instead.
+- Bun reads `compilerOptions.jsx` from `tsconfig.json` to determine a default. If `compilerOptions.jsx` is `"react-jsx"`, or if `NODE_ENV=production`, Bun will use the `jsx` transform. Otherwise, it uses `jsxDEV`. For any to Bun uses `jsxDEV`. The bundler does not support `preserve`.
 
 ---
 
@@ -496,7 +503,7 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `color`
 - n/a
-- Always `true`
+- Bun returns logs in the `logs` property of the build result.
 
 ---
 
@@ -706,19 +713,19 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `minifyIdentifiers`
 - `minify.identifiers`
-- Nested object syntax
+- See `minify`
 
 ---
 
 - `minifySyntax`
 - `minify.syntax`
-- Nested object syntax
+- See `minify`
 
 ---
 
 - `minifyWhitespace`
 - `minify.whitespace`
-- Nested object syntax
+- See `minify`
 
 ---
 
@@ -766,7 +773,7 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `plugins`
 - `plugins`
-- Bun's plugin API is esbuild-compatible
+- Bun's plugin API is a subset of esbuild's. Some esbuild plugins will work out of the box with Bun.
 
 ---
 
@@ -871,7 +878,20 @@ Long term, we aim for feature parity with esbuild's API, so if something doesn't
 
 {% /callout %}
 
-Plugins in Bun and esbuild consist of a set of `onResolve` and `onLoad` hooks.
+Plugins in Bun and esbuild are defined with a `builder` object.
+
+```ts
+import type { BunPlugin } from "bun";
+
+const myPlugin: BunPlugin = {
+  name: "my-plugin",
+  setup(builder) {
+    // define plugin
+  },
+};
+```
+
+The `builder` object provides some methods for hooking into parts of the bundling process. Bun implements `onResolve` and `onLoad`; it does not yet implement the esbuild hooks `onStart`, `onEnd`, and `onDispose`, or the `initialOptions` and `resolve` utilities.
 
 ```ts
 import type { BunPlugin } from "bun";

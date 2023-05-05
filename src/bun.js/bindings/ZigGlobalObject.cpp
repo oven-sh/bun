@@ -1124,6 +1124,10 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     if (!domURL) {
         if (arg0.isString()) {
             auto url = WTF::URL(arg0.toWTFString(globalObject));
+            if (!url.protocolIs("file"_s)) {
+                throwTypeError(globalObject, scope, "Argument must be a file URL"_s);
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
             RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
             RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, url.fileSystemPath())));
         }
@@ -1131,7 +1135,13 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    return JSC::JSValue::encode(JSC::jsString(vm, domURL->href().fileSystemPath()));
+    auto& url = domURL->href();
+    if (!url.protocolIs("file"_s)) {
+        throwTypeError(globalObject, scope, "Argument must be a file URL"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    return JSC::JSValue::encode(JSC::jsString(vm, url.fileSystemPath()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(noop_getter, (JSGlobalObject*, EncodedJSValue, PropertyName))

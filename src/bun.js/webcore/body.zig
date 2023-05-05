@@ -663,8 +663,7 @@ pub const Body = struct {
                                 // .InlineBlob,
                                 => {
                                     var blob = new.useAsAnyBlob();
-                                    var blob_value = blob.toString(global, .transfer);
-                                    promise.resolve(global, blob_value);
+                                    promise.resolve(global, blob.toString(global, .transfer));
                                 },
                                 else => {
                                     var blob = new.use();

@@ -141,7 +141,6 @@ pub const Arguments = struct {
         clap.parseParam("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
         clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments") catch unreachable,
         clap.parseParam("--jsx-import-source <STR>         Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: \"react\"") catch unreachable,
-        clap.parseParam("--jsx-production                  Use jsx instead of jsxDEV (default) for the automatic runtime") catch unreachable,
         clap.parseParam("--jsx-runtime <STR>               \"automatic\" (default) or \"classic\"") catch unreachable,
         clap.parseParam("-r, --preload <STR>...            Import a module before other modules are loaded") catch unreachable,
         clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --target dependent") catch unreachable,
@@ -569,9 +568,8 @@ pub const Arguments = struct {
         var jsx_fragment = args.option("--jsx-fragment");
         var jsx_import_source = args.option("--jsx-import-source");
         var jsx_runtime = args.option("--jsx-runtime");
-        var jsx_production = args.flag("--jsx-production");
         const react_fast_refresh = switch (comptime cmd) {
-            .DevCommand => !(args.flag("--disable-react-fast-refresh") or jsx_production),
+            .DevCommand => !args.flag("--disable-react-fast-refresh"),
             else => true,
         };
 
@@ -689,7 +687,7 @@ pub const Arguments = struct {
             jsx_fragment != null or
             jsx_import_source != null or
             jsx_runtime != null or
-            jsx_production or !react_fast_refresh)
+            !react_fast_refresh)
         {
             var default_factory = "".*;
             var default_fragment = "".*;
@@ -700,7 +698,7 @@ pub const Arguments = struct {
                     .fragment = constStrToU8(jsx_fragment orelse &default_fragment),
                     .import_source = constStrToU8(jsx_import_source orelse &default_import_source),
                     .runtime = if (jsx_runtime != null) try resolve_jsx_runtime(jsx_runtime.?) else Api.JsxRuntime.automatic,
-                    .development = !jsx_production,
+                    .development = false,
                     .react_fast_refresh = react_fast_refresh,
                 };
             } else {
@@ -709,7 +707,7 @@ pub const Arguments = struct {
                     .fragment = constStrToU8(jsx_fragment orelse opts.jsx.?.fragment),
                     .import_source = constStrToU8(jsx_import_source orelse opts.jsx.?.import_source),
                     .runtime = if (jsx_runtime != null) try resolve_jsx_runtime(jsx_runtime.?) else opts.jsx.?.runtime,
-                    .development = !jsx_production,
+                    .development = false,
                     .react_fast_refresh = react_fast_refresh,
                 };
             }

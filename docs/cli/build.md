@@ -1033,7 +1033,7 @@ $ bun build ./index.tsx --outdir ./out --define 'STRING="value"' --define "neste
 
 {% /codetabs %}
 
-### `loaders`
+### `loader`
 
 A map of file extensions to [built-in loader names](https://bun.sh/docs/bundler/loaders#built-in-loaders). This can be used to quickly customize how certainly file files are loaded.
 
@@ -1043,7 +1043,7 @@ A map of file extensions to [built-in loader names](https://bun.sh/docs/bundler/
 await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
-  loaders: {
+  loader: {
     ".png": "dataurl",
     ".txt": "file",
   },

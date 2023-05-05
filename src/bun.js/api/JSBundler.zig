@@ -242,10 +242,10 @@ pub const JSBundler = struct {
                 }
             }
 
-            if (try config.getObject(globalThis, "loaders")) |loaders| {
+            if (try config.getObject(globalThis, "loader")) |loaders| {
                 if (!loaders.isUndefinedOrNull()) {
                     if (!loaders.isObject()) {
-                        globalThis.throwInvalidArguments("loaders must be an object", .{});
+                        globalThis.throwInvalidArguments("loader must be an object", .{});
                         return error.JSException;
                     }
 
@@ -268,7 +268,7 @@ pub const JSBundler = struct {
                         var property_value = loader_iter.value;
                         var value_type = property_value.jsType();
                         if (!value_type.isStringLike()) {
-                            globalThis.throwInvalidArguments("define \"{s}\" must be a JSON string", .{prop});
+                            globalThis.throwInvalidArguments("loader \"{s}\" must be a string", .{prop});
                             return error.JSException;
                         }
 

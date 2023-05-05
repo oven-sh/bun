@@ -970,7 +970,7 @@ declare module "bun" {
     publicPath?: string;
     define?: Record<string, string>;
     // origin?: string; // e.g. http://mydomain.com
-    loaders?: { [k in string]: Loader };
+    loader?: { [k in string]: Loader };
     // sourcemap?: "none" | "inline" | "external"; // default: "none"
     minify?:
       | boolean

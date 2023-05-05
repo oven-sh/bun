@@ -1552,6 +1552,7 @@ pub const BundleV2 = struct {
         );
         bundler.options.jsx = config.jsx;
 
+        bundler.options.loaders = try options.loadersFromTransformOptions(allocator, config.loaders, config.target);
         bundler.options.entry_naming = config.names.entry_point.data;
         bundler.options.chunk_naming = config.names.chunk.data;
         bundler.options.asset_naming = config.names.asset.data;

@@ -1008,7 +1008,7 @@ The output file would now look something like this.
 
 ### `define`
 
-An map of global identifiers to be replaced at build time. Keys of this object are identifier names, and values are JSON strings that will be inlined.
+A map of global identifiers to be replaced at build time. Keys of this object are identifier names, and values are JSON strings that will be inlined.
 
 {% callout }
 This is not needed to inline `process.env.NODE_ENV`, as Bun does this automatically.
@@ -1029,6 +1029,29 @@ await Bun.build({
 
 ```bash#CLI
 $ bun build ./index.tsx --outdir ./out --define 'STRING="value"' --define "nested.boolean=true"
+```
+
+{% /codetabs %}
+
+### `loaders`
+
+A map of file extensions to [built-in loader names](https://bun.sh/docs/bundler/loaders#built-in-loaders). This can be used to quickly customize how certainly file files are loaded.
+
+{% codetabs %}
+
+```ts#JavaScript
+await Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+  loaders: {
+    ".png": "dataurl",
+    ".txt": "file",
+  },
+})
+```
+
+```bash#CLI
+$ bun build ./index.tsx --outdir ./out --loader .png:dataurl --loader .txt:file
 ```
 
 {% /codetabs %}

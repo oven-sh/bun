@@ -955,7 +955,6 @@ declare module "bun" {
     outdir?: string; // output directory
     target?: Target; // default: "browser"
     format?: ModuleFormat; // later: "cjs", "iife"
-
     naming?:
       | string
       | {
@@ -971,7 +970,7 @@ declare module "bun" {
     publicPath?: string;
     define?: Record<string, string>;
     // origin?: string; // e.g. http://mydomain.com
-    // loaders?: { [k in string]: Loader };
+    loaders?: { [k in string]: Loader };
     // sourcemap?: "none" | "inline" | "external"; // default: "none"
     minify?:
       | boolean
@@ -981,6 +980,19 @@ declare module "bun" {
           identifiers?: boolean;
         };
     // treeshaking?: boolean;
+
+    // jsx?:
+    //   | "automatic"
+    //   | "classic"
+    //   | /* later: "preserve" */ {
+    //       runtime?: "automatic" | "classic"; // later: "preserve"
+    //       /** Only works when runtime=classic */
+    //       factory?: string; // default: "React.createElement"
+    //       /** Only works when runtime=classic */
+    //       fragment?: string; // default: "React.Fragment"
+    //       /** Only works when runtime=automatic */
+    //       importSource?: string; // default: "react"
+    //     };
   }
 
   type BuildResult<T = Blob> = {

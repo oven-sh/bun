@@ -1074,15 +1074,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn renderMissingCorked(ctx: *RequestContext) void {
-            if (ctx.is_waiting_body) {
-                ctx.is_waiting_body = false;
-                ctx.resp.clearOnData();
-            }
             if (comptime !debug_mode) {
                 if (!ctx.has_written_status)
                     ctx.resp.writeStatus("204 No Content");
                 ctx.has_written_status = true;
-                ctx.resp.end("", ctx.shouldCloseConnection());
+                ctx.end("", ctx.shouldCloseConnection());
             } else {
                 if (ctx.is_web_browser_navigation) {
                     ctx.resp.writeStatus("200 OK");
@@ -1091,14 +1087,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     ctx.resp.writeHeader("content-type", MimeType.html.value);
                     ctx.resp.writeHeader("content-encoding", "gzip");
                     ctx.resp.writeHeaderInt("content-length", welcome_page_html_gz.len);
-                    ctx.resp.end(welcome_page_html_gz, ctx.shouldCloseConnection());
+                    ctx.end(welcome_page_html_gz, ctx.shouldCloseConnection());
                     return;
                 }
 
                 if (!ctx.has_written_status)
                     ctx.resp.writeStatus("200 OK");
                 ctx.has_written_status = true;
-                ctx.resp.end("Welcome to Bun! To get started, return a Response object.", ctx.shouldCloseConnection());
+                ctx.end("Welcome to Bun! To get started, return a Response object.", ctx.shouldCloseConnection());
             }
         }
 
@@ -1199,17 +1195,37 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.resp.runCorkedWithType(*RequestContext, drainResponseBufferAndMetadata, this);
         }
 
+        pub fn end(this: *RequestContext, data: []const u8, closeConnection: bool) void {
+            if (this.is_waiting_body) {
+                this.is_waiting_body = false;
+                this.resp.clearOnData();
+            }
+            this.resp.end(data, closeConnection);
+        }
+
+        pub fn endStream(this: *RequestContext, closeConnection: bool) void {
+            if (this.is_waiting_body) {
+                this.is_waiting_body = false;
+                this.resp.clearOnData();
+            }
+            this.resp.endStream(closeConnection);
+        }
+
+        pub fn endWithoutBody(this: *RequestContext, closeConnection: bool) void {
+            if (this.is_waiting_body) {
+                this.is_waiting_body = false;
+                this.resp.clearOnData();
+            }
+            this.resp.endWithoutBody(closeConnection);
+        }
+
         pub fn onWritableResponseBuffer(this: *RequestContext, _: c_ulong, resp: *App.Response) callconv(.C) bool {
             std.debug.assert(this.resp == resp);
             if (this.aborted) {
                 this.finalizeForAbort();
                 return false;
             }
-            if (this.is_waiting_body) {
-                this.is_waiting_body = false;
-                resp.clearOnData();
-            }
-            resp.end("", this.shouldCloseConnection());
+            this.end("", this.shouldCloseConnection());
             this.finalize();
             return false;
         }
@@ -1228,11 +1244,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (this.method == .HEAD) {
-                if (this.is_waiting_body) {
-                    this.is_waiting_body = false;
-                    resp.clearOnData();
-                }
-                resp.end("", this.shouldCloseConnection());
+                this.end("", this.shouldCloseConnection());
                 this.finalize();
                 return false;
             }
@@ -1473,11 +1485,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         fn cleanupAndFinalizeAfterSendfile(this: *RequestContext) void {
             this.resp.overrideWriteOffset(this.sendfile.offset);
-            if (this.is_waiting_body) {
-                this.is_waiting_body = false;
-                this.resp.clearOnData();
-            }
-            this.resp.endWithoutBody(this.shouldCloseConnection());
+            this.endWithoutBody(this.shouldCloseConnection());
             // use node syscall so that we don't segfault on BADF
             if (this.sendfile.auto_close)
                 _ = JSC.Node.Syscall.close(this.sendfile.fd);
@@ -1875,11 +1883,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     this.renderMissing();
                     return;
                 } else if (wrote_anything and !responded and !this.aborted) {
-                    if (this.is_waiting_body) {
-                        this.is_waiting_body = false;
-                        this.resp.clearOnData();
-                    }
-                    this.resp.endStream(this.shouldCloseConnection());
+                    this.endStream(this.shouldCloseConnection());
                 }
 
                 this.finalize();
@@ -2148,11 +2152,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return;
             } else if (!responded and wrote_anything) {
                 req.resp.clearAborted();
-                if (req.is_waiting_body) {
-                    req.is_waiting_body = false;
-                    req.resp.clearOnData();
-                }
-                req.resp.endStream(req.shouldCloseConnection());
+                req.endStream(req.shouldCloseConnection());
             }
 
             req.finalize();
@@ -2210,11 +2210,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 req.handleReject(err);
                 return;
             } else if (wrote_anything) {
-                if (req.is_waiting_body) {
-                    req.is_waiting_body = false;
-                    req.resp.clearOnData();
-                }
-                req.resp.endStream(true);
+                req.endStream(true);
                 if (comptime debug_mode) {
                     if (!err.isEmptyOrUndefinedOrNull()) {
                         var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(req.allocator);
@@ -2363,11 +2359,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // so any write will buffer if the write fails
             if (this.resp.write(chunk)) {
                 if (stream.isDone()) {
-                    if (this.is_waiting_body) {
-                        this.is_waiting_body = false;
-                        this.resp.clearOnData();
-                    }
-                    this.resp.endStream(this.shouldCloseConnection());
+                    this.endStream(this.shouldCloseConnection());
                     this.finalize();
                 }
             } else {
@@ -2415,11 +2407,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         this.resp.writeStatus("404 Not Found");
                         this.has_written_status = true;
                     }
-                    if (this.is_waiting_body) {
-                        this.is_waiting_body = false;
-                        this.resp.clearOnData();
-                    }
-                    this.resp.endWithoutBody(this.shouldCloseConnection());
+                    this.endWithoutBody(this.shouldCloseConnection());
                 },
                 else => {
                     if (!this.has_written_status) {
@@ -2428,11 +2416,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         this.has_written_status = true;
                     }
 
-                    if (this.is_waiting_body) {
-                        this.is_waiting_body = false;
-                        this.resp.clearOnData();
-                    }
-                    this.resp.end("Something went wrong!", true);
+                    this.end("Something went wrong!", this.shouldCloseConnection());
                 },
             }
 

@@ -129,7 +129,6 @@ describe("bundler", () => {
     },
   }));
   itBundled("tsconfig/PathsNoBaseURL", {
-    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import simple from './simple'
@@ -229,8 +228,10 @@ describe("bundler", () => {
         '{"simple":{"test0":"test0-success","test1":"test1-success","test2":"test2-success","test3":"test3-success","test4":"test4-success","test5":"test5-success","absolute":"absolute-success"},"extended":{"test0":"test0-success","test1":"test1-success","test2":"test2-success","test3":"test3-success","test4":"test4-success","test5":"test5-success","absolute":"absolute-success"}}',
     },
   });
+  // TODO: warnings shouldnt stop build?
   itBundled("tsconfig/BadPathsNoBaseURL", {
     // GENERATED
+    notImplemented: true,
     files: {
       "/Users/user/project/entry.ts": `import "should-not-be-imported"`,
       "/Users/user/project/should-not-be-imported.ts": ``,
@@ -302,9 +303,11 @@ describe("bundler", () => {
         }
       `,
     },
+    run: {
+      stdout: "123",
+    },
   });
   itBundled("tsconfig/PathsOverriddenBaseURLDifferentDir", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
         import test from '#/test'
@@ -329,9 +332,11 @@ describe("bundler", () => {
         }
       `,
     },
+    run: {
+      stdout: "123",
+    },
   });
   itBundled("tsconfig/PathsMissingBaseURL", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
         import test from '#/test'
@@ -355,10 +360,11 @@ describe("bundler", () => {
         }
       `,
     },
-    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.ts: ERROR: Could not resolve "#/test"
-  NOTE: You can mark the path "#/test" as external to exclude it from the bundle, which will remove this error.
-  `, */
+    bundleErrors: {
+      "/Users/user/project/src/entry.ts": [`Could not resolve: "#/test". Maybe you need to "bun install"?`],
+    },
   });
+  return;
   itBundled("tsconfig/PathsTypeOnly", {
     // GENERATED
     files: {

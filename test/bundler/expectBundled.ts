@@ -203,7 +203,7 @@ export interface BundlerTestBundleAPI {
    */
   captureFile(file: string, fnName?: string): string[];
 
-  warnings: Record<string, { file: string; error: string; line?: string; col?: string }[]>;
+  warnings: Record<string, ErrorMeta[]>;
   options: BundlerTestInput;
 }
 
@@ -238,6 +238,13 @@ export interface BundlerTestWrappedAPI {
 export interface BundlerTestRef {
   id: string;
   options: BundlerTestInput;
+}
+
+interface ErrorMeta {
+  file: string;
+  error: string;
+  line?: string;
+  col?: string;
 }
 
 var testFiles = new Map();
@@ -456,7 +463,11 @@ function expectBundled(
     }
 
     // Run bun build cli. In the future we can move to using `Bun.Bundler`
-    let warningReference: Record<string, { file: string; error: string; line?: string; col?: string }[]> = {};
+    let warningReference: Record<string, ErrorMeta[]> = {};
+    const expectedErrors = bundleErrors
+      ? Object.entries(bundleErrors).flatMap(([file, v]) => v.map(error => ({ file, error })))
+      : null;
+
     if (backend === "cli") {
       if (plugins) {
         throw new Error("plugins not possible in backend=CLI");
@@ -470,31 +481,31 @@ function expectBundled(
               "build",
               ...entryPaths,
               ...(entryPointsRaw ?? []),
-              mode === "bundle" ? [outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`] : [],
+              outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
               define && Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
               `--target=${target}`,
+              // `--format=${format}`,
               external && external.map(x => ["--external", x]),
               minifyIdentifiers && `--minify-identifiers`,
               minifySyntax && `--minify-syntax`,
               minifyWhitespace && `--minify-whitespace`,
               globalName && `--global-name=${globalName}`,
-              // inject && inject.map(x => ["--inject", path.join(root, x)]),
-              // jsx.preserve && "--jsx=preserve",
               jsx.runtime && ["--jsx-runtime", jsx.runtime],
               jsx.factory && ["--jsx-factory", jsx.factory],
               jsx.fragment && ["--jsx-fragment", jsx.fragment],
               jsx.importSource && ["--jsx-import-source", jsx.importSource],
               // metafile && `--manifest=${metafile}`,
-              // sourceMap && `--sourcemap${sourceMap !== true ? `=${sourceMap}` : ""}`,
+              sourceMap && `--sourcemap${sourceMap !== true ? `=${sourceMap}` : ""}`,
               entryNaming && entryNaming !== "[name].[ext]" && [`--entry-naming`, entryNaming],
               chunkNaming && chunkNaming !== "[name]-[hash].[ext]" && [`--chunk-naming`, chunkNaming],
               assetNaming && assetNaming !== "[name]-[hash].[ext]" && [`--asset-naming`, chunkNaming],
-              // `--format=${format}`,
-              // legalComments && `--legal-comments=${legalComments}`,
               splitting && `--splitting`,
               serverComponents && "--server-components",
+              outbase && `--outbase=${outbase}`,
+              // inject && inject.map(x => ["--inject", path.join(root, x)]),
+              // jsx.preserve && "--jsx=preserve",
+              // legalComments && `--legal-comments=${legalComments}`,
               // treeShaking === false && `--no-tree-shaking`, // ??
-              // outbase && `--outbase=${outbase}`,
               // keepNames && `--keep-names`,
               // mainFields && `--main-fields=${mainFields}`,
               loader && Object.entries(loader).map(([k, v]) => ["--loader", `${k}:${v}`]),
@@ -598,10 +609,6 @@ function expectBundled(
       });
 
       // Check for errors
-      const expectedErrors = bundleErrors
-        ? Object.entries(bundleErrors).flatMap(([file, v]) => v.map(error => ({ file, error })))
-        : null;
-
       if (!success) {
         if (!ESBUILD) {
           const errorText = stderr.toString("utf-8");
@@ -805,11 +812,43 @@ for (const blob of build.outputs) {
         const build = await Bun.build(buildConfig);
         Bun.gc(true);
 
-        console.log(build);
+        const buildLogs = (build as any).logs;
 
-        if (build.logs) {
-          console.log(build.logs);
-          throw new Error("TODO: handle build logs, but we should make this api nicer");
+        if (buildLogs) {
+          const rawErrors = buildLogs instanceof AggregateError ? buildLogs.errors : [buildLogs];
+          const errors: ErrorMeta[] = [];
+          for (const error of rawErrors) {
+            const str = error.message ?? String(error);
+            if (str.startsWith("\u001B[2mexpect(") || str.startsWith("expect(")) {
+              throw error;
+            }
+
+            // undocuemnted types
+            const position = error.position as {
+              lineText: string;
+              file: string;
+              namespace: string;
+              line: number;
+              column: number;
+              offset: number;
+            };
+
+            console.log("position", position);
+            const filename = position?.file
+              ? position.namespace === "file"
+                ? "/" + path.relative(root, position.file)
+                : `${position.namespace}:${position.file.replace(root, "")}`
+              : "<bun>";
+
+            errors.push({
+              file: filename,
+              error: str,
+              col: position?.column !== undefined ? String(position.column) : undefined,
+              line: position?.line !== undefined ? String(position.line) : undefined,
+            });
+          }
+          console.log(errors);
+          throw new Error("Build failed");
         }
       } else {
         await esbuild.build({
@@ -1198,7 +1237,7 @@ itBundled.skip = (id: string, opts: BundlerTestInput) => {
   return testRef(id, opts);
 };
 
-function formatError(err: { file: string; error: string; line?: string; col?: string }) {
+function formatError(err: ErrorMeta) {
   return `${err.file}${err.line ? " :" + err.line : ""}${err.col ? ":" + err.col : ""}: ${err.error}`;
 }
 

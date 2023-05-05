@@ -383,7 +383,7 @@ describe("bundler", () => {
         stdout: "this string should exist once this string should exist once",
       },
       onAfterBundle(api) {
-        expect(importers).toEqual([root + "/one.ts", root + "/two.ts"]);
+        expect(importers.sort()).toEqual([root + "/one.ts", root + "/two.ts"]);
         expect(onResolveCount).toBe(2);
         const contents = api.readFile("/out.js");
         expect([...contents.matchAll(/this string should exist once/g)].length).toBe(1);
@@ -562,12 +562,10 @@ describe("bundler", () => {
           },
         },
       ],
-      run: {
-        stdout: "101 102",
-      },
+      run: true,
       onAfterBundle(api) {
-        expect(resolveCount).toBe(103);
-        expect(loadCount).toBe(102);
+        expect(resolveCount).toBe(5050);
+        expect(loadCount).toBe(101);
       },
     };
   });

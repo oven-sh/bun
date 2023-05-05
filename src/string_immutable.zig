@@ -232,10 +232,7 @@ pub inline fn lastIndexOf(self: string, str: string) ?usize {
 }
 
 pub inline fn indexOf(self: string, str: string) ?usize {
-    const self_ptr = self.ptr;
     const self_len = self.len;
-
-    const str_ptr = str.ptr;
     const str_len = str.len;
 
     // > Both old and new libc's have the bug that if needle is empty,
@@ -244,6 +241,12 @@ pub inline fn indexOf(self: string, str: string) ?usize {
     // > in glibc 2.1.
     if (self_len == 0 or str_len == 0 or self_len < str_len)
         return null;
+
+    const self_ptr = self.ptr;
+    const str_ptr = str.ptr;
+
+    if (str_len == 1)
+        return indexOfCharUsize(self, str_ptr[0]);
 
     const start = bun.C.memmem(self_ptr, self_len, str_ptr, str_len) orelse return null;
 
@@ -3317,6 +3320,10 @@ pub fn indexOfCharZ(sliceZ: [:0]const u8, char: u8) ?u63 {
 }
 
 pub fn indexOfChar(slice: []const u8, char: u8) ?u32 {
+    return @truncate(u32, indexOfCharUsize(slice, char) orelse return null);
+}
+
+pub fn indexOfCharUsize(slice: []const u8, char: u8) ?usize {
     if (slice.len == 0)
         return null;
 
@@ -3325,7 +3332,7 @@ pub fn indexOfChar(slice: []const u8, char: u8) ?u32 {
     std.debug.assert(i < slice.len);
     std.debug.assert(slice[i] == char);
 
-    return @truncate(u32, i);
+    return i;
 }
 
 test "indexOfChar" {

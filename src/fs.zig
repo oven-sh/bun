@@ -1125,6 +1125,14 @@ pub const PathName = struct {
         return self.base;
     }
 
+    pub fn dirOrDot(this: *const PathName) string {
+        if (this.dir.len == 0) {
+            return ".";
+        }
+
+        return this.dir;
+    }
+
     pub fn fmtIdentifier(self: *const PathName) strings.FormatValidIdentifier {
         return strings.fmtIdentifier(self.nonUniqueNameStringBase());
     }

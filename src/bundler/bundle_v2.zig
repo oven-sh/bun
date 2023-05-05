@@ -790,91 +790,6 @@ pub const BundleV2 = struct {
         }
     }
 
-    // For Server Components, we generate an entry point which re-exports all client components
-    // This is a "shadow" of the server entry point.
-    // The client is expected to import this shadow entry point
-    const ShadowEntryPoint = struct {
-        source_code_buffer: MutableString,
-        ctx: *BundleV2,
-        resolved_source_indices: std.ArrayList(Index.Int),
-
-        const ImportsFormatter = struct {
-            ctx: *BundleV2,
-            pretty: string,
-            source_index: Index.Int,
-            pub fn format(self: ImportsFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-                var this = self.ctx;
-                const named_exports: js_ast.Ast.NamedExports = this.graph.ast.items(.named_exports)[self.source_index];
-                try writer.writeAll("{");
-                for (named_exports.keys(), 0..) |name, i| {
-                    try writer.writeAll(name);
-                    try writer.writeAll(" as ");
-                    try writer.print(
-                        "${}_{s}",
-                        .{
-                            bun.fmt.hexIntLower(bun.hash(self.pretty)),
-                            name,
-                        },
-                    );
-
-                    if (i < named_exports.count() - 1) {
-                        try writer.writeAll(" , ");
-                    }
-                }
-                try writer.writeAll("}");
-            }
-        };
-
-        const ExportsFormatter = struct {
-            ctx: *BundleV2,
-            pretty: string,
-            source_index: Index.Int,
-            pub fn format(self: ExportsFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-                var this = self.ctx;
-                const named_exports: js_ast.Ast.NamedExports = this.graph.ast.items(.named_exports)[self.source_index];
-                try writer.writeAll("{");
-
-                for (named_exports.keys(), 0..) |name, i| {
-                    try writer.print(
-                        "${}_{s}",
-                        .{
-                            bun.fmt.hexIntLower(bun.hash(self.pretty)),
-                            name,
-                        },
-                    );
-
-                    if (i < named_exports.count() - 1) {
-                        try writer.writeAll(" , ");
-                    }
-                }
-                try writer.writeAll("}");
-            }
-        };
-
-        pub fn addClientComponent(
-            this: *ShadowEntryPoint,
-            source_index: usize,
-        ) void {
-            var writer = this.source_code_buffer.writer();
-            const path = this.ctx.graph.input_files.items(.source)[source_index].path;
-            // TODO: tree-shaking to named imports only
-            writer.print(
-                \\// {s}
-                \\import {} from '${d}';
-                \\export {};
-                \\
-            ,
-                .{
-                    path.pretty,
-                    ImportsFormatter{ .ctx = this.ctx, .source_index = @intCast(Index.Int, source_index), .pretty = path.pretty },
-                    bun.fmt.hexIntUpper(bun.hash(path.pretty)),
-                    ExportsFormatter{ .ctx = this.ctx, .source_index = @intCast(Index.Int, source_index), .pretty = path.pretty },
-                },
-            ) catch unreachable;
-            this.resolved_source_indices.append(@truncate(Index.Int, source_index)) catch unreachable;
-        }
-    };
-
     pub fn enqueueShadowEntryPoints(this: *BundleV2) !void {
         const allocator = this.graph.allocator;
 
@@ -886,7 +801,8 @@ pub const BundleV2 = struct {
             this.dynamic_import_entry_points.deinit();
         }
 
-        var react_client_component_boundary = bun.bit_set.DynamicBitSet.initEmpty(allocator, this.graph.input_files.len) catch unreachable;
+        const bitset_length = this.graph.input_files.len;
+        var react_client_component_boundary = bun.bit_set.DynamicBitSet.initEmpty(allocator, bitset_length) catch unreachable;
         defer react_client_component_boundary.deinit();
         var any_client = false;
 
@@ -903,13 +819,14 @@ pub const BundleV2 = struct {
         var visit_queue = std.fifo.LinearFifo(Index.Int, .Dynamic).init(allocator);
         visit_queue.ensureUnusedCapacity(64) catch unreachable;
         defer visit_queue.deinit();
-        for (this.graph.entry_points.items) |entry_point_source_index| {
-            var shadow_entry_point = ShadowEntryPoint{
-                .ctx = this,
-                .source_code_buffer = MutableString.initEmpty(allocator),
-                .resolved_source_indices = std.ArrayList(Index.Int).init(allocator),
-            };
-            var all_imported_files = try bun.bit_set.DynamicBitSet.initEmpty(allocator, this.graph.input_files.len);
+        const original_file_count = this.graph.entry_points.items.len;
+
+        for (0..original_file_count) |entry_point_id| {
+            // we are modifying the array while iterating
+            // so we should be careful
+            const entry_point_source_index = this.graph.entry_points.items[entry_point_id];
+
+            var all_imported_files = try bun.bit_set.DynamicBitSet.initEmpty(allocator, bitset_length);
             defer all_imported_files.deinit();
             visit_queue.head = 0;
             visit_queue.count = 0;
@@ -948,32 +865,45 @@ pub const BundleV2 = struct {
 
             all_imported_files.setIntersection(react_client_component_boundary);
             if (all_imported_files.findFirstSet() == null) continue;
+            const source_index = Index.init(@intCast(u32, this.graph.ast.len));
+
+            var shadow = ShadowEntryPoint{
+                .from_source_index = entry_point_source_index.get(),
+                .to_source_index = source_index.get(),
+            };
+            var builder = ShadowEntryPoint.Builder{
+                .ctx = this,
+                .source_code_buffer = MutableString.initEmpty(allocator),
+                .resolved_source_indices = std.ArrayList(Index.Int).init(allocator),
+                .shadow = &shadow,
+            };
 
             var iter = all_imported_files.iterator(.{});
             while (iter.next()) |index| {
-                shadow_entry_point.addClientComponent(index);
+                builder.addClientComponent(index);
             }
+            std.debug.assert(builder.resolved_source_indices.items.len > 0);
 
             const path = Fs.Path.initWithNamespace(
                 std.fmt.allocPrint(
                     allocator,
                     "{s}/{s}.client.js",
-                    .{ input_path.name.dir, input_path.name.base },
+                    .{ input_path.name.dirOrDot(), input_path.name.base },
                 ) catch unreachable,
                 "client-component",
             );
 
-            const source_index = Index.init(@intCast(u32, this.graph.ast.len));
             if (this.graph.shadow_entry_point_range.loc.start < 0) {
                 this.graph.shadow_entry_point_range.loc.start = @intCast(i32, source_index.get());
             }
 
             this.graph.ast.append(allocator, js_ast.Ast.empty) catch unreachable;
+            this.graph.shadow_entry_points.append(allocator, shadow) catch unreachable;
             this.graph.input_files.append(allocator, .{
                 .source = .{
                     .path = path,
                     .key_path = path,
-                    .contents = shadow_entry_point.source_code_buffer.toOwnedSliceLeaky(),
+                    .contents = builder.source_code_buffer.toOwnedSliceLeaky(),
                     .index = source_index,
                 },
                 .loader = options.Loader.js,
@@ -986,7 +916,7 @@ pub const BundleV2 = struct {
                 .path = path,
                 // unknown at this point:
                 .contents_or_fd = .{
-                    .contents = shadow_entry_point.source_code_buffer.toOwnedSliceLeaky(),
+                    .contents = builder.source_code_buffer.toOwnedSliceLeaky(),
                 },
                 .side_effects = _resolver.SideEffects.has_side_effects,
                 .jsx = this.bundler.options.jsx,
@@ -995,7 +925,7 @@ pub const BundleV2 = struct {
                 .loader = options.Loader.js,
                 .tree_shaking = this.linker.options.tree_shaking,
                 .known_target = options.Target.browser,
-                .presolved_source_indices = shadow_entry_point.resolved_source_indices.items,
+                .presolved_source_indices = builder.resolved_source_indices.items,
             };
             task.task.node.next = null;
             try this.graph.use_directive_entry_points.append(this.graph.allocator, js_ast.UseDirective.EntryPoint{
@@ -2816,6 +2746,7 @@ pub const Graph = struct {
 
     additional_output_files: std.ArrayListUnmanaged(options.OutputFile) = .{},
     shadow_entry_point_range: Logger.Range = Logger.Range.None,
+    shadow_entry_points: std.ArrayListUnmanaged(ShadowEntryPoint) = .{},
 
     pub const InputFile = struct {
         source: Logger.Source,
@@ -3219,6 +3150,7 @@ const LinkerGraph = struct {
                         const use_directive = this.useDirectiveBoundary(source_id.get());
                         const source_i32 = @intCast(i32, source_id.get());
                         const is_shadow_entrypoint = shadow_entry_point_range.contains(source_i32);
+
                         // If the reachable file has a "use client"; at the top
                         for (import_records_list[source_id.get()].slice()) |*import_record| {
                             const source_index_ = import_record.source_index;
@@ -3235,7 +3167,8 @@ const LinkerGraph = struct {
                                         switch (boundary) {
                                             .@"use client" => {
                                                 if (!is_shadow_entrypoint) {
-                                                    import_record.module_id = bun.hash32(sources[source_index].path.pretty);
+                                                    const pretty = sources[source_index].path.pretty;
+                                                    import_record.module_id = bun.hash32(pretty);
                                                     import_record.tag = .react_client_component;
                                                     import_record.path.namespace = "client";
                                                     import_record.print_namespace_in_path = true;
@@ -8548,27 +8481,36 @@ const LinkerContext = struct {
                 &client_modules,
                 &server_modules,
             }) |sorted_component_ids, modules| {
-                for (sorted_component_ids) |source_index| {
-                    const named_exports = all_named_exports[source_index].keys();
-                    const exports_len = @intCast(u32, named_exports.len);
-                    const exports_start = @intCast(u32, export_names.items.len);
-
-                    var grow_length: usize = 0;
-                    try export_names.ensureUnusedCapacity(named_exports.len);
+                for (sorted_component_ids) |component_source_index| {
+                    var source_index_for_named_exports = component_source_index;
 
                     var chunk: *Chunk = brk2: {
                         for (chunks) |*chunk_| {
-                            if (chunk_.entry_point.source_index == @intCast(u32, source_index)) {
+                            if (!chunk_.entry_point.is_entry_point) continue;
+                            if (chunk_.entry_point.source_index == @intCast(u32, component_source_index)) {
+                                break :brk2 chunk_;
+                            }
+
+                            if (chunk_.files_with_parts_in_chunk.contains(component_source_index)) {
+                                source_index_for_named_exports = chunk_.entry_point.source_index;
                                 break :brk2 chunk_;
                             }
                         }
 
-                        continue;
+                        @panic("could not find chunk for component");
                     };
+
+                    var grow_length: usize = 0;
+
+                    const named_exports = all_named_exports[source_index_for_named_exports].keys();
+
+                    try export_names.ensureUnusedCapacity(named_exports.len);
+                    const exports_len = @intCast(u32, named_exports.len);
+                    const exports_start = @intCast(u32, export_names.items.len);
 
                     grow_length += chunk.final_rel_path.len;
 
-                    grow_length += all_sources[source_index].path.pretty.len;
+                    grow_length += all_sources[component_source_index].path.pretty.len;
 
                     for (named_exports) |export_name| {
                         try export_names.append(Api.StringPointer{
@@ -8582,10 +8524,10 @@ const LinkerContext = struct {
 
                     const input_name = Api.StringPointer{
                         .offset = @intCast(u32, bytes.items.len),
-                        .length = @intCast(u32, all_sources[source_index].path.pretty.len),
+                        .length = @intCast(u32, all_sources[component_source_index].path.pretty.len),
                     };
 
-                    bytes.appendSliceAssumeCapacity(all_sources[source_index].path.pretty);
+                    bytes.appendSliceAssumeCapacity(all_sources[component_source_index].path.pretty);
 
                     const asset_name = Api.StringPointer{
                         .offset = @intCast(u32, bytes.items.len),
@@ -8599,7 +8541,7 @@ const LinkerContext = struct {
                     }
 
                     modules.appendAssumeCapacity(.{
-                        .module_id = bun.hash32(all_sources[source_index].path.pretty),
+                        .module_id = bun.hash32(all_sources[component_source_index].path.pretty),
                         .asset_name = asset_name,
                         .input_name = input_name,
                         .export_names = .{
@@ -10913,3 +10855,108 @@ fn cheapPrefixNormalizer(prefix: []const u8, suffix: []const u8) [2]string {
 }
 
 const components_manifest_path = "./components-manifest.blob";
+
+// For Server Components, we generate an entry point which re-exports all client components
+// This is a "shadow" of the server entry point.
+// The client is expected to import this shadow entry point
+const ShadowEntryPoint = struct {
+    from_source_index: Index.Int,
+    to_source_index: Index.Int,
+
+    named_exports: bun.BabyList(NamedExport) = .{},
+
+    pub const NamedExport = struct {
+        // TODO: packed string
+        from: string,
+        to: string,
+        source_index: Index.Int,
+    };
+
+    pub const Builder = struct {
+        source_code_buffer: MutableString,
+        ctx: *BundleV2,
+        resolved_source_indices: std.ArrayList(Index.Int),
+        shadow: *ShadowEntryPoint,
+
+        pub fn addClientComponent(
+            this: *ShadowEntryPoint.Builder,
+            source_index: usize,
+        ) void {
+            var writer = this.source_code_buffer.writer();
+            const path = this.ctx.graph.input_files.items(.source)[source_index].path;
+            // TODO: tree-shaking to named imports only
+            writer.print(
+                \\// {s}
+                \\import {} from '${d}';
+                \\export {};
+                \\
+            ,
+                .{
+                    path.pretty,
+                    ImportsFormatter{ .ctx = this.ctx, .source_index = @intCast(Index.Int, source_index), .pretty = path.pretty },
+                    bun.fmt.hexIntUpper(bun.hash(path.pretty)),
+                    ExportsFormatter{ .ctx = this.ctx, .source_index = @intCast(Index.Int, source_index), .pretty = path.pretty, .shadow = this.shadow },
+                },
+            ) catch unreachable;
+            this.resolved_source_indices.append(@truncate(Index.Int, source_index)) catch unreachable;
+        }
+    };
+    const ImportsFormatter = struct {
+        ctx: *BundleV2,
+        pretty: string,
+        source_index: Index.Int,
+        pub fn format(self: ImportsFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            var this = self.ctx;
+            const named_exports: *js_ast.Ast.NamedExports = &this.graph.ast.items(.named_exports)[self.source_index];
+            try writer.writeAll("{");
+            for (named_exports.keys()) |*named| {
+                named.* = try std.fmt.allocPrint(
+                    this.graph.allocator,
+                    "${}_{s}",
+                    .{
+                        bun.fmt.hexIntLower(bun.hash(self.pretty)),
+                        named.*,
+                    },
+                );
+            }
+            try named_exports.reIndex();
+
+            for (named_exports.keys(), 0..) |name, i| {
+                try writer.writeAll(name);
+                if (i < named_exports.count() - 1) {
+                    try writer.writeAll(" , ");
+                }
+            }
+            try writer.writeAll("}");
+        }
+    };
+
+    const ExportsFormatter = struct {
+        ctx: *BundleV2,
+        pretty: string,
+        source_index: Index.Int,
+        shadow: *ShadowEntryPoint,
+        pub fn format(self: ExportsFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            var this = self.ctx;
+            const named_exports: js_ast.Ast.NamedExports = this.graph.ast.items(.named_exports)[self.source_index];
+            try writer.writeAll("{");
+            var shadow = self.shadow;
+            try shadow.named_exports.ensureUnusedCapacity(this.graph.allocator, named_exports.count());
+            const last = named_exports.count() - 1;
+            for (named_exports.keys(), 0..) |name, i| {
+                try shadow.named_exports.push(this.graph.allocator, .{
+                    .from = name,
+                    .to = name,
+                    .source_index = self.source_index,
+                });
+
+                try writer.writeAll(name);
+
+                if (i < last) {
+                    try writer.writeAll(" , ");
+                }
+            }
+            try writer.writeAll("}");
+        }
+    };
+};

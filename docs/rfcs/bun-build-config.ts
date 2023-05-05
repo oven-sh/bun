@@ -158,9 +158,7 @@ export interface BundlerConfig {
 export type BuildManifest = {
   inputs: {
     [path: string]: {
-      output: {
-        path: string;
-      };
+      output: string; // path to corresponding entry bundle
       imports: {
         path: string;
         kind: ImportKind;
@@ -181,6 +179,7 @@ export type BuildManifest = {
         external?: boolean;
       }[];
       exports: string[];
+      entrypoint?: string;
     };
   };
 };

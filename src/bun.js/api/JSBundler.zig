@@ -89,6 +89,10 @@ pub const JSBundler = struct {
                 this.target = target;
             }
 
+            if (try config.getOptionalEnum(globalThis, "sourcemap", options.SourceMapOption)) |source_map| {
+                this.source_map = source_map;
+            }
+
             if (try config.getOptionalEnum(globalThis, "format", options.Format)) |format| {
                 switch (format) {
                     .esm => {},

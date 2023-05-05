@@ -971,7 +971,7 @@ declare module "bun" {
     define?: Record<string, string>;
     // origin?: string; // e.g. http://mydomain.com
     loader?: { [k in string]: Loader };
-    // sourcemap?: "none" | "inline" | "external"; // default: "none"
+    sourcemap?: "none" | "inline" | "external"; // default: "none"
     minify?:
       | boolean
       | {
@@ -2527,7 +2527,19 @@ declare module "bun" {
      * The plugin will be applied to browser builds
      */
     | "browser";
-  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml";
+  /** https://bun.sh/docs/bundler/loaders */
+  type Loader =
+    | "js"
+    | "jsx"
+    | "ts"
+    | "tsx"
+    | "json"
+    | "toml"
+    | "file"
+    | "napi"
+    | "wasm"
+    | "dataurl"
+    | "text";
 
   interface PluginConstraints {
     /**

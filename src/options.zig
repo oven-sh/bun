@@ -1325,7 +1325,7 @@ pub const SourceMapOption = enum {
         };
     }
 
-    pub const map = ComptimeStringMap(SourceMapOption, .{
+    pub const Map = ComptimeStringMap(SourceMapOption, .{
         .{ "none", .none },
         .{ "inline", .@"inline" },
         .{ "external", .external },

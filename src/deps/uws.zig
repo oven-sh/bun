@@ -1448,6 +1448,10 @@ pub fn NewApp(comptime ssl: bool) type {
                 uws_res_on_aborted(ssl_flag, res.downcast(), null, null);
             }
 
+            pub fn clearOnData(res: *Response) void {
+                uws_res_on_data(ssl_flag, res.downcast(), null, null);
+            }
+
             pub fn onData(
                 res: *Response,
                 comptime UserDataType: type,

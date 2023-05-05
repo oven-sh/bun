@@ -856,6 +856,7 @@ pub const PercentEncoding = struct {
 pub const FormData = struct {
     fields: Map,
     buffer: []const u8,
+    const log = Output.scoped(.FormData, false);
 
     pub const Map = std.ArrayHashMapUnmanaged(
         bun.Semver.String,
@@ -907,6 +908,7 @@ pub const FormData = struct {
 
         pub fn toJS(this: *AsyncFormData, global: *bun.JSC.JSGlobalObject, data: []const u8, promise: bun.JSC.AnyPromise) void {
             if (this.encoding == .Multipart and this.encoding.Multipart.len == 0) {
+                log("AsnycFormData.toJS -> promise.reject missing boundary", .{});
                 promise.reject(global, bun.JSC.ZigString.init("FormData missing boundary").toErrorInstance(global));
                 return;
             }
@@ -916,10 +918,10 @@ pub const FormData = struct {
                 data,
                 this.encoding,
             ) catch |err| {
+                log("AsnycFormData.toJS -> failed ", .{});
                 promise.reject(global, global.createErrorInstance("FormData {s}", .{@errorName(err)}));
                 return;
             };
-
             promise.resolve(global, js_value);
         }
     };
@@ -976,7 +978,10 @@ pub const FormData = struct {
     ) !bun.JSC.JSValue {
         const form_data_value = bun.JSC.DOMFormData.create(globalThis);
         form_data_value.ensureStillAlive();
-        var form = bun.JSC.DOMFormData.fromJS(form_data_value).?;
+        var form = bun.JSC.DOMFormData.fromJS(form_data_value) orelse {
+            log("failed to create DOMFormData.fromJS", .{});
+            return error.@"failed to parse multipart data";
+        };
         const Wrapper = struct {
             globalThis: *bun.JSC.JSGlobalObject,
             form: *bun.JSC.DOMFormData,
@@ -1024,7 +1029,10 @@ pub const FormData = struct {
                 .form = form,
             };
 
-            try forEachMultipartEntry(input, boundary, *Wrapper, &wrap, Wrapper.onEntry);
+            forEachMultipartEntry(input, boundary, *Wrapper, &wrap, Wrapper.onEntry) catch {
+                log("failed to parse multipart data", .{});
+                return error.@"failed to parse multipart data";
+            };
         }
 
         return form_data_value;

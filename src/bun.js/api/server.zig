@@ -948,6 +948,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         /// Used to avoid looking at the uws.Request struct after it's been freed
         is_transfer_encoding: bool = false,
 
+        /// Used to identify if request can be safely deinitialized
+        is_waiting_body: bool = false,
+
         /// Used in renderMissing in debug mode to show the user an HTML page
         /// Used to avoid looking at the uws.Request struct after it's been freed
         is_web_browser_navigation: if (debug_mode) bool else void = if (debug_mode) false else {},
@@ -1400,6 +1403,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.allocator.free(bun.constStrToU8(this.pathname));
                 this.pathname = "";
             }
+
+            // if we are waiting for the body yet and the request was not aborted we can safely clear the onData callback
+            if (this.is_waiting_body and this.aborted == false) {
+                this.resp.clearOnData();
+                this.is_waiting_body = false;
+            }
         }
         pub fn finalize(this: *RequestContext) void {
             ctxLog("finalize", .{});
@@ -1424,6 +1433,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 _ = body.unref();
                 this.request_body = null;
             }
+
             server.request_pool_allocator.destroy(this);
         }
 
@@ -2608,9 +2618,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn onBufferedBodyChunk(this: *RequestContext, resp: *App.Response, chunk: []const u8, last: bool) void {
             ctxLog("onBufferedBodyChunk {} {}", .{ chunk.len, last });
+
             std.debug.assert(this.resp == resp);
 
-            if (this.aborted) return;
+            this.is_waiting_body = last == false;
+            if (this.aborted or this.has_marked_complete) return;
 
             if (this.request_body != null) {
                 var body = this.request_body.?;
@@ -4957,6 +4969,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                             .onStartStreaming = RequestContext.onStartStreamingRequestBodyCallback,
                         },
                     };
+                    ctx.is_waiting_body = true;
                     resp.onData(*RequestContext, RequestContext.onBufferedBodyChunk, ctx);
                 }
             }

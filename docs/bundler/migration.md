@@ -107,7 +107,7 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `--serve`
 - n/a
-- Not applicable.
+- Not applicable
 
 ---
 

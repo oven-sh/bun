@@ -399,10 +399,6 @@ export class IncomingMessage extends Readable {
     callback();
   }
 
-  setNoDelay(val) {
-    return this;
-  }
-
   #closeBodyStream() {
     debug("closeBodyStream()");
     var bodyStream = this.#bodyStream;
@@ -913,6 +909,7 @@ export class ClientRequest extends OutgoingMessage {
   #upgradeOrConnect = false;
   #parser = null;
   #maxHeadersCount = null;
+  #reusedSocket = false;
   #host;
   #protocol;
   #method;
@@ -1183,6 +1180,7 @@ export class ClientRequest extends OutgoingMessage {
     this.#upgradeOrConnect = false;
     this.#parser = null;
     this.#maxHeadersCount = null;
+    this.#reusedSocket = false;
     this.#host = host;
     this.#protocol = protocol;
 

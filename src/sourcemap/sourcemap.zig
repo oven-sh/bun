@@ -356,17 +356,16 @@ pub const LineColumnOffset = struct {
             std.debug.assert(i >= offset);
             std.debug.assert(i < input.len);
 
-            offset = i + 1;
+            var iter = strings.CodepointIterator.initOffset(input, i);
+            var cursor = strings.CodepointIterator.Cursor{ .i = @truncate(u32, iter.i) };
+            _ = iter.next(&cursor);
+            offset = i + cursor.width;
 
-            var cp = strings.CodepointIterator.initOffset(input, offset);
-            var cursor = strings.CodepointIterator.Cursor{};
-            _ = cp.next(&cursor);
             switch (cursor.c) {
                 '\r', '\n', 0x2028, 0x2029 => {
                     // Handle Windows-specific "\r\n" newlines
-                    if (cp.c == '\r' and input.len > offset + 1 and input[offset + 1] == '\n') {
+                    if (cursor.c == '\r' and input.len > i + 1 and input[i + 1] == '\n') {
                         columns += 1;
-                        offset += 1;
                         continue;
                     }
 

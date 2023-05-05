@@ -60,6 +60,43 @@ pub fn done(this: *Joiner, allocator: Allocator) ![]u8 {
     return slice[0 .. slice.len - remaining.len];
 }
 
+pub fn doneWithEnd(this: *Joiner, allocator: Allocator, end: []const u8) ![]u8 {
+    if (this.head == null and end.len == 0) {
+        return &[_]u8{};
+    }
+
+    if (this.head == null) {
+        var slice = try allocator.alloc(u8, end.len);
+        @memcpy(slice.ptr, end.ptr, end.len);
+        return slice;
+    }
+
+    var slice = try allocator.alloc(u8, this.len + end.len);
+    var remaining = slice;
+    var el_ = this.head;
+    while (el_) |join| {
+        const to_join = join.data.slice[join.data.offset..];
+        @memcpy(remaining.ptr, to_join.ptr, to_join.len);
+
+        remaining = remaining[@min(remaining.len, to_join.len)..];
+
+        var prev = join;
+        el_ = join.next;
+        if (prev.data.needs_deinit) {
+            prev.data.allocator.free(prev.data.slice);
+            prev.data = Joinable{};
+        }
+
+        if (this.use_pool) prev.release();
+    }
+
+    @memcpy(remaining.ptr, end.ptr, end.len);
+
+    remaining = remaining[@min(remaining.len, end.len)..];
+
+    return slice[0 .. slice.len - remaining.len];
+}
+
 pub fn lastByte(this: *const Joiner) u8 {
     if (this.tail) |tail| {
         const slice = tail.data.slice[tail.data.offset..];

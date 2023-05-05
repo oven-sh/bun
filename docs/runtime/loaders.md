@@ -82,7 +82,7 @@ $ bun run ./my-wasm-app.whatever
 
 ## Custom loaders
 
-Support for additional file types can be implemented with plugins. Refer to [Runtime > Plugins](/docs/runtime/plugins) for full documentation.
+Support for additional file types can be implemented with plugins. Refer to [Runtime > Plugins](/docs/bundler/plugins) for full documentation.
 
 <!--
 

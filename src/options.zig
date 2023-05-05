@@ -1323,6 +1323,7 @@ pub const BundleOptions = struct {
     output_dir_handle: ?Dir = null,
 
     output_dir: string = "out",
+    root_dir: string = "",
     node_modules_bundle_url: string = "",
     node_modules_bundle_pretty_path: string = "",
 
@@ -2619,7 +2620,7 @@ pub const PathTemplate = struct {
             };
 
             switch (field) {
-                .dir => try writer.writeAll(self.placeholder.dir),
+                .dir => try writer.writeAll(if (self.placeholder.dir.len > 0) self.placeholder.dir else "."),
                 .name => try writer.writeAll(self.placeholder.name),
                 .ext => try writer.writeAll(self.placeholder.ext),
                 .hash => {

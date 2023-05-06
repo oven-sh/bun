@@ -6,7 +6,9 @@
     "runners/bun",
     "runners/qunit"
   ],
-  "dependencies": {},
+  "dependencies": {
+    "@actions/core": "latest"
+  },
   "devDependencies": {
     "bun-types": "canary",
     "prettier": "^2.8.2"

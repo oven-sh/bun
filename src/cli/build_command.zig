@@ -84,16 +84,36 @@ pub const BuildCommand = struct {
         this_bundler.options.output_dir = ctx.bundler_options.outdir;
         this_bundler.resolver.opts.output_dir = ctx.bundler_options.outdir;
 
-        const src_root_dir = brk: {
-            if (ctx.bundler_options.root_dir.len > 0) {
-                break :brk ctx.bundler_options.root_dir;
-            }
+        var src_root_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        const src_root_dir: string = brk1: {
+            const path = brk2: {
+                if (ctx.bundler_options.root_dir.len > 0) {
+                    break :brk2 ctx.bundler_options.root_dir;
+                }
 
-            if (this_bundler.options.entry_points.len == 1) {
-                break :brk std.fs.path.dirname(this_bundler.options.entry_points[0]) orelse ".";
-            }
+                if (this_bundler.options.entry_points.len == 1) {
+                    break :brk2 std.fs.path.dirname(this_bundler.options.entry_points[0]) orelse ".";
+                }
 
-            break :brk resolve_path.longestCommonPath(this_bundler.options.entry_points);
+                break :brk2 resolve_path.getIfExistsLongestCommonPath(this_bundler.options.entry_points) orelse ".";
+            };
+
+            const dir = std.fs.cwd().openDir(path, .{}) catch |err| {
+                switch (err) {
+                    error.FileNotFound => {
+                        Output.prettyErrorln("error: root directory for entry points should exist: {s}", .{path});
+                        Global.exit(1);
+                        return;
+                    },
+                    else => {
+                        Output.prettyErrorln("error: failed to open root entry point directory: {s}", .{path});
+                        Global.exit(1);
+                        return;
+                    },
+                }
+            };
+
+            break :brk1 try bun.getFdPath(dir.fd, &src_root_dir_buf);
         };
 
         this_bundler.options.root_dir = src_root_dir;

@@ -36,6 +36,145 @@ inline fn @"is ../"(slice: []const u8) bool {
     return strings.hasPrefixComptime(slice, "../");
 }
 
+pub fn getIfExistsLongestCommonPathGeneric(input: []const []const u8, comptime separator: u8, comptime isPathSeparator: IsSeparatorFunc) ?[]const u8 {
+    var min_length: usize = std.math.maxInt(usize);
+    for (input) |str| {
+        min_length = @min(str.len, min_length);
+    }
+
+    var index: usize = 0;
+    var last_common_separator: ?usize = null;
+
+    // try to use an unrolled version of this loop
+    switch (input.len) {
+        0 => {
+            return "";
+        },
+        1 => {
+            return input[0];
+        },
+        2 => {
+            while (index < min_length) : (index += 1) {
+                if (input[0][index] != input[1][index]) {
+                    if (last_common_separator == null) return null;
+                    break;
+                }
+                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
+                    last_common_separator = index;
+                }
+            }
+        },
+        3 => {
+            while (index < min_length) : (index += 1) {
+                if (nqlAtIndex(3, index, input)) {
+                    if (last_common_separator == null) return null;
+                    break;
+                }
+                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
+                    last_common_separator = index;
+                }
+            }
+        },
+        4 => {
+            while (index < min_length) : (index += 1) {
+                if (nqlAtIndex(4, index, input)) {
+                    if (last_common_separator == null) return null;
+                    break;
+                }
+                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
+                    last_common_separator = index;
+                }
+            }
+        },
+        5 => {
+            while (index < min_length) : (index += 1) {
+                if (nqlAtIndex(5, index, input)) {
+                    if (last_common_separator == null) return null;
+                    break;
+                }
+                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
+                    last_common_separator = index;
+                }
+            }
+        },
+        6 => {
+            while (index < min_length) : (index += 1) {
+                if (nqlAtIndex(6, index, input)) {
+                    if (last_common_separator == null) return null;
+                    break;
+                }
+                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
+                    last_common_separator = index;
+                }
+            }
+        },
+        7 => {
+            while (index < min_length) : (index += 1) {
+                if (nqlAtIndex(7, index, input)) {
+                    if (last_common_separator == null) return null;
+                    break;
+                }
+                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
+                    last_common_separator = index;
+                }
+            }
+        },
+        8 => {
+            while (index < min_length) : (index += 1) {
+                if (nqlAtIndex(8, index, input)) {
+                    if (last_common_separator == null) return null;
+                    break;
+                }
+                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
+                    last_common_separator = index;
+                }
+            }
+        },
+        else => {
+            var string_index: usize = 1;
+            while (string_index < input.len) : (string_index += 1) {
+                while (index < min_length) : (index += 1) {
+                    if (input[0][index] != input[string_index][index]) {
+                        if (last_common_separator == null) return null;
+                        break;
+                    }
+                }
+                if (index == min_length) index -= 1;
+                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
+                    last_common_separator = index;
+                }
+            }
+        },
+    }
+
+    if (index == 0) {
+        return &([_]u8{separator});
+    }
+
+    if (last_common_separator == null) {
+        return &([_]u8{'.'});
+    }
+
+    // The above won't work for a case like this:
+    // /app/public/index.js
+    // /app/public
+    // It will return:
+    // /app/
+    // It should return:
+    // /app/public/
+    // To detect /app/public is actually a folder, we do one more loop through the strings
+    // and say, "do one of you have a path separator after what we thought was the end?"
+    for (input) |str| {
+        if (str.len > index) {
+            if (@call(.always_inline, isPathSeparator, .{str[index]})) {
+                return str[0 .. index + 1];
+            }
+        }
+    }
+
+    return input[0][0 .. last_common_separator.? + 1];
+}
+
 // TODO: is it faster to determine longest_common_separator in the while loop
 // or as an extra step at the end?
 // only boether to check if this function appears in benchmarking
@@ -168,6 +307,10 @@ pub fn longestCommonPathGeneric(input: []const []const u8, comptime separator: u
 
 pub fn longestCommonPath(input: []const []const u8) []const u8 {
     return longestCommonPathGeneric(input, '/', isSepAny);
+}
+
+pub fn getIfExistsLongestCommonPath(input: []const []const u8) ?[]const u8 {
+    return getIfExistsLongestCommonPathGeneric(input, '/', isSepAny);
 }
 
 pub fn longestCommonPathWindows(input: []const []const u8) []const u8 {

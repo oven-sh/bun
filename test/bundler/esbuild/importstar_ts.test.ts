@@ -211,7 +211,7 @@ describe("bundler", () => {
         console.log(foo)
       `,
     },
-    mode: "transform",
+    external: ["*"],
   });
   itBundled("ts/TSImportStarNoBundleCapture", {
     // GENERATED
@@ -222,7 +222,7 @@ describe("bundler", () => {
         console.log(ns, ns.foo, foo)
       `,
     },
-    mode: "transform",
+    external: ["*"],
   });
   itBundled("ts/TSImportStarNoBundleNoCapture", {
     // GENERATED
@@ -233,7 +233,7 @@ describe("bundler", () => {
         console.log(ns.foo, ns.foo, foo)
       `,
     },
-    mode: "transform",
+    external: ["*"],
   });
   itBundled("ts/TSImportStarMangleNoBundleUnused", {
     // GENERATED
@@ -245,7 +245,7 @@ describe("bundler", () => {
       `,
     },
     minifySyntax: true,
-    mode: "transform",
+    external: ["*"],
   });
   itBundled("ts/TSImportStarMangleNoBundleCapture", {
     // GENERATED
@@ -257,7 +257,7 @@ describe("bundler", () => {
       `,
     },
     minifySyntax: true,
-    mode: "transform",
+    external: ["*"],
   });
   itBundled("ts/TSImportStarMangleNoBundleNoCapture", {
     // GENERATED
@@ -269,7 +269,7 @@ describe("bundler", () => {
       `,
     },
     minifySyntax: true,
-    mode: "transform",
+    external: ["*"],
   });
   itBundled("ts/TSReExportTypeOnlyFileES6", {
     // GENERATED

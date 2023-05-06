@@ -460,7 +460,7 @@ describe("bundler", () => {
     files: {
       "/test.json": `{"test": 123, "invalid-identifier": true}`,
     },
-    mode: "transform",
+    external: ["*"],
   });
   itBundled("loader/JSONNoBundleES6", {
     // GENERATED

@@ -50,6 +50,7 @@ describe("bundler", () => {
     run: true,
   });
   itBundled("edgecase/BunPluginTreeShakeImport", {
+    notImplemented: true,
     // This only appears at runtime and not with bun build, even with --transform
     files: {
       "/entry.ts": /* js */ `
@@ -71,8 +72,7 @@ describe("bundler", () => {
         }
       `,
     },
-    external: ["external"],
-    mode: "transform",
+    external: ["*"],
     minifySyntax: true,
     target: "bun",
     run: { file: "/entry.ts" },
@@ -308,6 +308,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/ScriptTagEscape", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         console.log('<script></script>');

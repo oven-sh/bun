@@ -12,6 +12,8 @@ import type { Expect } from "bun:test";
 import { PluginBuilder } from "bun";
 import * as esbuild from "esbuild";
 
+let currentFile: string | undefined;
+
 type BunTestExports = typeof import("bun:test");
 export function testForFile(file: string): BunTestExports {
   if (file.startsWith("file://")) {
@@ -20,7 +22,47 @@ export function testForFile(file: string): BunTestExports {
 
   var testFile = testFiles.get(file);
   if (!testFile) {
-    testFile = (Bun as any).jest(file);
+    const native = (Bun as any).jest(file);
+    const notImplemented: BundlerTestRef[] = [];
+    testFile = {
+      it: native.it,
+      test: native.test,
+      expect: native.expect,
+      addNotImplemented: (ref: BundlerTestRef) => notImplemented.push(ref),
+    };
+    testFile.describe = function (name: string, fn: () => void) {
+      native.describe(name, function () {
+        if (currentFile) {
+          throw new Error("please don't nest describe blocks in the bundler tests.");
+        }
+        currentFile = file;
+        fn();
+        currentFile = undefined;
+        if (!FILTER && !process.env.BUN_BUNDLER_TEST_NO_CHECK_SKIPPED) {
+          native.test(`"${path.basename(file)}" has proper notImplemented markers`, async () => {
+            console.log(`\n  Checking if any of the ${notImplemented.length} not implemented tests work...`);
+            const implemented = (
+              await Promise.all(
+                notImplemented.map(async ref => {
+                  try {
+                    await expectBundled(ref.id, { ...ref.options, notImplemented: false }, false, true);
+                    return { id: ref.id, success: true };
+                  } catch (e) {
+                    return { id: ref.id, success: false };
+                  }
+                }),
+              )
+            ).filter(x => x.success);
+            if (implemented.length) {
+              throw (
+                '"notImplemented" can only be used on failing tests. the following tests pass:\n' +
+                implemented.map(x => "  - " + x.id).join("\n")
+              );
+            }
+          });
+        }
+      });
+    };
     testFiles.set(file, testFile);
   }
   return testFile;
@@ -64,7 +106,7 @@ export interface BundlerTestInput {
   /** These are not path resolved. Used for `default/RelativeEntryPointError` */
   entryPointsRaw?: string[];
   /** Defaults to bundle */
-  mode?: "bundle" | "transform";
+  mode?: "bundle";
   /** Used for `default/ErrorMessageCrashStdinESBuildIssue2913`. */
   stdin?: { contents: string; cwd: string };
   /** Use when doing something weird with entryPoints and you need to check other output paths. */
@@ -122,7 +164,7 @@ export interface BundlerTestInput {
   unsupportedJSFeatures?: string[];
   /** if set to true or false, create or edit tsconfig.json to set compilerOptions.useDefineForClassFields */
   useDefineForClassFields?: boolean;
-  sourceMap?: boolean | "inline" | "external";
+  sourceMap?: "inline" | "external" | "none";
   plugins?: BunPlugin[] | ((builder: PluginBuilder) => void | Promise<void>);
 
   // pass subprocess.env
@@ -259,7 +301,7 @@ function expectBundled(
   dryRun = false,
   ignoreFilter = false,
 ): Promise<BundlerTestRef> | BundlerTestRef {
-  var { expect, it, test } = testForFile(callerSourceOrigin());
+  var { expect, it, test } = testForFile(currentFile ?? callerSourceOrigin());
   if (!ignoreFilter && FILTER && !filterMatches(id)) return testRef(id, opts);
 
   let {
@@ -344,6 +386,9 @@ function expectBundled(
   if (bundleWarnings === true) bundleWarnings = {};
   const useOutFile = outfile ? true : outdir ? false : entryPoints.length === 1;
 
+  if (mode !== "bundle") {
+    throw new Error("mode must be bundle");
+  }
   if (!ESBUILD && format !== "esm") {
     throw new Error("formats besides esm not implemented in bun build");
   }
@@ -360,16 +405,13 @@ function expectBundled(
     throw new Error("unsupportedCSSFeatures not implemented in bun build");
   }
   if (!ESBUILD && outbase) {
-    throw new Error("outbase not implemented in bun build");
+    throw new Error("outbase/root not implemented in bun build");
   }
   if (!ESBUILD && keepNames) {
     throw new Error("keepNames not implemented in bun build");
   }
   if (!ESBUILD && mainFields) {
     throw new Error("mainFields not implemented in bun build");
-  }
-  if (!ESBUILD && sourceMap) {
-    throw new Error("sourceMap not implemented in bun build");
   }
   if (!ESBUILD && banner) {
     throw new Error("banner not implemented in bun build");
@@ -415,9 +457,6 @@ function expectBundled(
         : entryPaths.map(file => path.join(outdir!, path.basename(file)))
     ).map(x => x.replace(/\.ts$/, ".js"));
 
-    if (mode === "transform" && !outfile && !ESBUILD) {
-      throw new Error("transform mode requires one single outfile");
-    }
     if (cjs2esm && !outfile && !minifySyntax && !minifyWhitespace) {
       throw new Error("cjs2esm=true requires one output file, minifyWhitespace=false, and minifySyntax=false");
     }
@@ -494,7 +533,7 @@ function expectBundled(
               jsx.fragment && ["--jsx-fragment", jsx.fragment],
               jsx.importSource && ["--jsx-import-source", jsx.importSource],
               // metafile && `--manifest=${metafile}`,
-              sourceMap && `--sourcemap${sourceMap !== true ? `=${sourceMap}` : ""}`,
+              sourceMap && `--sourcemap=${sourceMap}`,
               entryNaming && entryNaming !== "[name].[ext]" && [`--entry-naming`, entryNaming],
               chunkNaming && chunkNaming !== "[name]-[hash].[ext]" && [`--chunk-naming`, chunkNaming],
               assetNaming && assetNaming !== "[name]-[hash].[ext]" && [`--asset-naming`, chunkNaming],
@@ -509,7 +548,6 @@ function expectBundled(
               // mainFields && `--main-fields=${mainFields}`,
               loader && Object.entries(loader).map(([k, v]) => ["--loader", `${k}:${v}`]),
               publicPath && `--public-path=${publicPath}`,
-              mode === "transform" && "--transform",
             ]
           : [
               ESBUILD_PATH,
@@ -537,7 +575,7 @@ function expectBundled(
                 assetNaming !== "[name]-[hash].[ext]" &&
                 `--asset-names=${assetNaming.replace(/\.\[ext]$/, "")}`,
               metafile && `--metafile=${metafile}`,
-              sourceMap && `--sourcemap${sourceMap !== true ? `=${sourceMap}` : ""}`,
+              sourceMap && `--sourcemap=${sourceMap}`,
               banner && `--banner:js=${banner}`,
               legalComments && `--legal-comments=${legalComments}`,
               splitting && `--splitting`,
@@ -695,11 +733,6 @@ function expectBundled(
         throw new Error("Errors were expected while bundling:\n" + expectedErrors.map(formatError).join("\n"));
       }
 
-      if (mode === "transform" && !ESBUILD) {
-        mkdirSync(path.dirname(outfile!), { recursive: true });
-        Bun.write(outfile!, stdout);
-      }
-
       // Check for warnings
       if (!ESBUILD) {
         const warningRegex = /^warn: (.*?)\n.*?\n\s*\^\s*\n(.*?)\n/gms;
@@ -779,7 +812,7 @@ function expectBundled(
           plugins: pluginArray,
           treeShaking,
           outdir: buildOutDir,
-          sourcemap: sourceMap === true ? "external" : sourceMap || "none",
+          sourcemap: sourceMap ?? "none",
           splitting,
           target,
           publicPath,
@@ -1245,7 +1278,7 @@ export function itBundled(
     opts._referenceFn = fn;
   }
   const ref = testRef(id, opts);
-  const { it } = testForFile(callerSourceOrigin());
+  const { it, addNotImplemented } = testForFile(currentFile ?? callerSourceOrigin()) as any;
 
   if (FILTER && !filterMatches(id)) {
     return ref;
@@ -1258,17 +1291,9 @@ export function itBundled(
     }
   }
 
-  if (opts.notImplemented) {
+  if (opts.notImplemented && !FILTER) {
     if (!HIDE_SKIP) it.skip(id, () => {});
-    // commented out because expectBundled was made async and this is no longer possible in a sense.
-    // try {
-    //   expectBundled(id, opts);
-    //   it(id, () => {
-    //     throw new Error(
-    //       `Test ${id} passes but was marked as "notImplemented"\nPlease remove "notImplemented: true" from this test.`,
-    //     );
-    //   });
-    // } catch (error: any) {}
+    addNotImplemented({ id, options: opts });
   } else {
     it(id, () => expectBundled(id, opts as any));
   }
@@ -1278,7 +1303,7 @@ itBundled.skip = (id: string, opts: BundlerTestInput) => {
   if (FILTER && !filterMatches(id)) {
     return testRef(id, opts);
   }
-  const { it } = testForFile(callerSourceOrigin());
+  const { it } = testForFile(currentFile ?? callerSourceOrigin());
   if (!HIDE_SKIP) it.skip(id, () => expectBundled(id, opts));
   return testRef(id, opts);
 };

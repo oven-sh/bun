@@ -1212,7 +1212,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/ExportsNode", {
-    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg'`,
       "/Users/user/project/node_modules/pkg/package.json": /* json */ `

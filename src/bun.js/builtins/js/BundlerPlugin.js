@@ -53,7 +53,8 @@ function runOnResolvePlugins(
   ][kindId];
 
   var promiseResult = (async (inputPath, inputNamespace, importer, kind) => {
-    var results = this.onResolve.@get(inputNamespace);
+    var {onResolve, onLoad} = this;
+    var results = onResolve.@get(inputNamespace);
     if (!results) {
       this.onResolveAsync(internalID, null, null, null);
       return null;
@@ -131,7 +132,7 @@ function runOnResolvePlugins(
           if (userNamespace === "dataurl") {
             if (!path.startsWith("data:")) {
               @throwTypeError(
-                'onResolve plugin "path" must start with "data:" when the namespace is"dataurl"'
+                'onResolve plugin "path" must start with "data:" when the namespace is "dataurl"'
               );
             }
           }
@@ -399,7 +400,7 @@ function runOnLoadPlugins(internalID, path, namespace, defaultLoaderId) {
 
         const chosenLoader = LOADERS_MAP[loader];
         if (chosenLoader === @undefined) {
-          @throwTypeError('Loader "' + loader + '" is not supported.');
+          @throwTypeError(`Loader ${@jsonStringify(loader, " ")} is not supported.`);
         }
 
         this.onLoadAsync(internalID, contents, chosenLoader);

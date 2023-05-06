@@ -678,6 +678,7 @@ pub const JSBundler = struct {
             source_code_value: JSValue,
             loader_as_int: JSValue,
         ) void {
+            JSC.markBinding(@src());
             var completion = this.completion orelse {
                 this.deinit();
                 return;
@@ -719,6 +720,7 @@ pub const JSBundler = struct {
     pub const Plugin = opaque {
         extern fn JSBundlerPlugin__create(*JSC.JSGlobalObject, JSC.JSGlobalObject.BunPluginTarget) *Plugin;
         pub fn create(globalObject: *JSC.JSGlobalObject, target: JSC.JSGlobalObject.BunPluginTarget) *Plugin {
+            JSC.markBinding(@src());
             var plugin = JSBundlerPlugin__create(globalObject, target);
             JSC.JSValue.fromCell(plugin).protect();
             return plugin;
@@ -757,6 +759,7 @@ pub const JSBundler = struct {
             path: *const Fs.Path,
             is_onLoad: bool,
         ) bool {
+            JSC.markBinding(@src());
             const namespace_string = if (path.isFile())
                 ZigString.Empty
             else

@@ -452,6 +452,7 @@ pub const BundleV2 = struct {
         ) catch |err| {
             var handles_import_errors = false;
             var source: ?*const Logger.Source = null;
+            var log = &this.completion.?.log;
 
             if (import_record.importer_source_index) |importer| {
                 var record: *ImportRecord = &this.graph.ast.items(.import_records)[importer].slice()[import_record.import_record_index];
@@ -475,7 +476,7 @@ pub const BundleV2 = struct {
                         if (isPackagePath(import_record.specifier)) {
                             if (target.isWebLike() and options.ExternalModules.isNodeBuiltin(path_to_use)) {
                                 addError(
-                                    this.bundler.log,
+                                    log,
                                     source,
                                     import_record.range,
                                     this.graph.allocator,
@@ -485,7 +486,7 @@ pub const BundleV2 = struct {
                                 ) catch unreachable;
                             } else {
                                 addError(
-                                    this.bundler.log,
+                                    log,
                                     source,
                                     import_record.range,
                                     this.graph.allocator,
@@ -496,7 +497,7 @@ pub const BundleV2 = struct {
                             }
                         } else {
                             addError(
-                                this.bundler.log,
+                                log,
                                 source,
                                 import_record.range,
                                 this.graph.allocator,
@@ -1253,6 +1254,7 @@ pub const BundleV2 = struct {
                 this.graph.heap.gc(true);
             }
         }
+        var log = &load.completion.?.log;
 
         switch (load.value.consume()) {
             .no_match => {
@@ -1266,7 +1268,7 @@ pub const BundleV2 = struct {
 
                 // When it's not a file, this is a build error and we should report it.
                 // we have no way of loading non-files.
-                this.bundler.log.addErrorFmt(source, Logger.Loc.Empty, bun.default_allocator, "Module not found {} in namespace {}", .{
+                log.addErrorFmt(source, Logger.Loc.Empty, bun.default_allocator, "Module not found {} in namespace {}", .{
                     bun.fmt.quote(source.path.pretty),
                     bun.fmt.quote(source.path.namespace),
                 }) catch {};
@@ -1286,9 +1288,9 @@ pub const BundleV2 = struct {
                 this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&parse_task.task));
             },
             .err => |err| {
-                this.bundler.log.msgs.append(err) catch unreachable;
-                this.bundler.log.errors += @as(usize, @boolToInt(err.kind == .err));
-                this.bundler.log.warnings += @as(usize, @boolToInt(err.kind == .warn));
+                log.msgs.append(err) catch unreachable;
+                log.errors += @as(usize, @boolToInt(err.kind == .err));
+                log.warnings += @as(usize, @boolToInt(err.kind == .warn));
 
                 // An error ocurred, prevent spinning the event loop forever
                 _ = @atomicRmw(usize, &this.graph.parse_pending, .Sub, 1, .Monotonic);
@@ -1310,6 +1312,7 @@ pub const BundleV2 = struct {
                 this.graph.heap.gc(true);
             }
         }
+        var log = &resolve.completion.?.log;
 
         switch (resolve.value.consume()) {
             .no_match => {
@@ -1325,16 +1328,16 @@ pub const BundleV2 = struct {
                 //
                 // We have no way of loading non-files.
                 if (resolve.import_record.kind == .entry_point or resolve.import_record.importer_source_index == null) {
-                    this.bundler.log.addErrorFmt(null, Logger.Loc.Empty, this.graph.allocator, "Module not found {} in namespace {}", .{
+                    log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Module not found {} in namespace {}", .{
                         bun.fmt.quote(resolve.import_record.specifier),
                         bun.fmt.quote(resolve.import_record.namespace),
                     }) catch {};
                 } else {
                     const source = &this.graph.input_files.items(.source)[resolve.import_record.importer_source_index.?];
-                    this.bundler.log.addRangeErrorFmt(
+                    log.addRangeErrorFmt(
                         source,
                         resolve.import_record.range,
-                        this.graph.allocator,
+                        bun.default_allocator,
                         "Module not found {} in namespace {}",
                         .{
                             bun.fmt.quote(resolve.import_record.specifier),
@@ -1434,9 +1437,9 @@ pub const BundleV2 = struct {
                 }
             },
             .err => |err| {
-                this.bundler.log.msgs.append(err) catch unreachable;
-                this.bundler.log.errors += @as(usize, @boolToInt(err.kind == .err));
-                this.bundler.log.warnings += @as(usize, @boolToInt(err.kind == .warn));
+                log.msgs.append(err) catch unreachable;
+                log.errors += @as(usize, @boolToInt(err.kind == .err));
+                log.warnings += @as(usize, @boolToInt(err.kind == .warn));
             },
             .pending, .consumed => unreachable,
         }
@@ -1535,6 +1538,12 @@ pub const BundleV2 = struct {
         this.completion = completion;
         completion.bundler = this;
 
+        errdefer {
+            var out_log = Logger.Log.init(bun.default_allocator);
+            this.bundler.log.appendToWithRecycled(&out_log, true) catch @panic("OOM");
+            completion.log = out_log;
+        }
+
         defer {
             if (this.graph.pool.pool.threadpool_context == @ptrCast(?*anyopaque, this.graph.pool)) {
                 this.graph.pool.pool.threadpool_context = null;
@@ -1556,6 +1565,9 @@ pub const BundleV2 = struct {
             .task = completion.task.task(),
             .next = null,
         };
+        var out_log = Logger.Log.init(bun.default_allocator);
+        this.bundler.log.appendToWithRecycled(&out_log, true) catch @panic("OOM");
+        completion.log = out_log;
         completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
     }
 
@@ -2146,10 +2158,11 @@ pub const ParseTask = struct {
                     else
                         null,
                 ) catch |err| {
+                    const source_ = &Logger.Source.initEmptyFile(log.msgs.allocator.dupe(u8, file_path.text) catch unreachable);
                     switch (err) {
                         error.FileNotFound => {
                             log.addErrorFmt(
-                                &Logger.Source.initEmptyFile(log.msgs.allocator.dupe(u8, file_path.text) catch unreachable),
+                                source_,
                                 Logger.Loc.Empty,
                                 allocator,
                                 "File not found {}",
@@ -2158,7 +2171,7 @@ pub const ParseTask = struct {
                         },
                         else => {
                             log.addErrorFmt(
-                                &Logger.Source.initEmptyFile(log.msgs.allocator.dupe(u8, file_path.text) catch unreachable),
+                                source_,
                                 Logger.Loc.Empty,
                                 allocator,
                                 "{s} reading file: {}",

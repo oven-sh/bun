@@ -953,7 +953,7 @@ declare module "bun" {
     entrypoints: string[]; // list of file path
     outdir?: string; // output directory
     target?: Target; // default: "browser"
-    // format?: ModuleFormat; // later: "cjs", "iife"
+    format?: ModuleFormat; // later: "cjs", "iife"
 
     naming?:
       | string

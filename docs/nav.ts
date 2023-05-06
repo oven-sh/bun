@@ -166,6 +166,9 @@ export default {
     page("bundler/plugins", "Plugins", {
       description: `Implement custom loaders and module resolution logic with Bun's plugin system.`,
     }),
+    page("bundler/migration", "Migration", {
+      description: `Guides for migrating from other bundlers to Bun.`,
+    }),
 
     divider("Test runner"),
     page("cli/test", "`bun test`", {
@@ -202,7 +205,7 @@ export default {
     page("ecosystem/stric", "Stric", {
       description: `Stric is a minimalist, fast web framework for Bun.`,
     }),
-    
+
     page("ecosystem/awesome", "Awesome", {
       href: "https://github.com/apvarun/awesome-bun",
       description: ``,

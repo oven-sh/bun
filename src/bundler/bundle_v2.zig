@@ -1735,7 +1735,7 @@ pub const BundleV2 = struct {
                 }
             },
             .success => |*result| {
-                result.log.appendTo(this.bundler.log) catch unreachable;
+                result.log.cloneToWithRecycled(this.bundler.log, true) catch unreachable;
 
                 {
                     // to minimize contention, we add watcher here
@@ -1875,12 +1875,12 @@ pub const BundleV2 = struct {
                 }
 
                 if (err.log.msgs.items.len > 0) {
-                    err.log.appendTo(this.bundler.log) catch unreachable;
+                    err.log.cloneToWithRecycled(this.bundler.log, true) catch unreachable;
                 } else {
                     this.bundler.log.addErrorFmt(
                         null,
                         Logger.Loc.Empty,
-                        this.bundler.allocator,
+                        bun.default_allocator,
                         "{s} while {s}",
                         .{ @errorName(err.err), @tagName(err.step) },
                     ) catch unreachable;

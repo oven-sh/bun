@@ -729,7 +729,7 @@ pub const Log = struct {
         }
     }
 
-    pub fn appendTo(self: *Log, other: *Log) !void {
+    pub fn cloneTo(self: *Log, other: *Log) !void {
         var notes_count: usize = 0;
 
         for (self.msgs.items) |msg_| {
@@ -759,10 +759,14 @@ pub const Log = struct {
         try other.msgs.appendSlice(self.msgs.items);
         other.warnings += self.warnings;
         other.errors += self.errors;
-        self.msgs.deinit();
     }
 
-    pub fn appendToWithRecycled(self: *Log, other: *Log, recycled: bool) !void {
+    pub fn appendTo(self: *Log, other: *Log) !void {
+        try self.cloneTo(other);
+        self.msgs.clearAndFree();
+    }
+
+    pub fn cloneToWithRecycled(self: *Log, other: *Log, recycled: bool) !void {
         try other.msgs.appendSlice(self.msgs.items);
         other.warnings += self.warnings;
         other.errors += self.errors;
@@ -805,7 +809,10 @@ pub const Log = struct {
                 }
             }
         }
+    }
 
+    pub fn appendToWithRecycled(self: *Log, other: *Log, recycled: bool) !void {
+        try self.cloneToWithRecycled(other, recycled);
         self.msgs.clearAndFree();
     }
 

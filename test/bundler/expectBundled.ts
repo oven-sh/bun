@@ -41,18 +41,15 @@ export function testForFile(file: string): BunTestExports {
         if (!FILTER && !process.env.BUN_BUNDLER_TEST_NO_CHECK_SKIPPED) {
           native.test(`"${path.basename(file)}" has proper notImplemented markers`, async () => {
             console.log(`\n  Checking if any of the ${notImplemented.length} not implemented tests work...`);
-            const implemented = (
-              await Promise.all(
-                notImplemented.map(async ref => {
-                  try {
-                    await expectBundled(ref.id, { ...ref.options, notImplemented: false }, false, true);
-                    return { id: ref.id, success: true };
-                  } catch (e) {
-                    return { id: ref.id, success: false };
-                  }
-                }),
-              )
-            ).filter(x => x.success);
+            const implemented = [];
+            for (const ref of notImplemented) {
+              try {
+                await expectBundled(ref.id, { ...ref.options, notImplemented: false }, false, true);
+                implemented.push({ id: ref.id, success: true });
+              } catch (e) {
+                implemented.push({ id: ref.id, success: false });
+              }
+            }
             if (implemented.length) {
               throw (
                 '"notImplemented" can only be used on failing tests. the following tests pass:\n' +
@@ -812,7 +809,7 @@ function expectBundled(
           plugins: pluginArray,
           treeShaking,
           outdir: buildOutDir,
-          sourcemap: sourceMap ?? "none",
+          sourcemap: sourceMap,
           splitting,
           target,
           publicPath,

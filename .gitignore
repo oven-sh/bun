@@ -116,3 +116,6 @@ src/bun.js/debug-bindings-obj
 failing-tests.txt
 test.txt
 myscript.sh
+
+cold-jsc-start
+cold-jsc-start.d

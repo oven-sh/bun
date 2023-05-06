@@ -1827,6 +1827,22 @@ copy-to-bun-release-dir-bin:
 PACKAGE_MAP = --pkg-begin async_io $(BUN_DIR)/src/io/io_darwin.zig --pkg-begin bun $(BUN_DIR)/src/bun_redirect.zig --pkg-end --pkg-end --pkg-begin javascript_core $(BUN_DIR)/src/jsc.zig --pkg-begin bun $(BUN_DIR)/src/bun_redirect.zig --pkg-end --pkg-end --pkg-begin bun $(BUN_DIR)/src/bun_redirect.zig --pkg-end
 
 
+.PHONY: cold-jsc-start
+cold-jsc-start:
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
+		$(MACOS_MIN_FLAG) \
+		$(OPTIMIZATION_LEVEL) \
+		-MMD \
+		-fno-exceptions \
+		-fno-rtti \
+		-ferror-limit=1000 \
+		$(LIBICONV_PATH) \
+		$(DEFAULT_LINKER_FLAGS) \
+		$(PLATFORM_LINKER_FLAGS) \
+		$(ICU_FLAGS) \
+		$(JSC_FILES) \
+		misctools/cold-jsc-start.cpp -o cold-jsc-start
+
 .PHONY: vendor-without-npm
 vendor-without-npm: node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws tinycc c-ares
 

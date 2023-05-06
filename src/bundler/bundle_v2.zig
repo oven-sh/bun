@@ -1259,7 +1259,7 @@ pub const BundleV2 = struct {
                 // If it's a file namespace, we should run it through the parser like normal.
                 // The file could be on disk.
                 const source = &this.graph.input_files.items(.source)[load.source_index.get()];
-                if (strings.eqlComptime(source.path.namespace, "file")) {
+                if (source.path.isFile()) {
                     this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&load.parse_task.task));
                     return;
                 }

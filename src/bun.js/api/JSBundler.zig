@@ -491,6 +491,7 @@ pub const JSBundler = struct {
             this.value.deinit();
             if (this.completion) |completion|
                 completion.deref();
+            bun.default_allocator.destroy(this);
         }
 
         const AnyTask = JSC.AnyTask.New(@This(), runOnJSThread);

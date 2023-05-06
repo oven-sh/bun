@@ -136,6 +136,13 @@ function runOnResolvePlugins(
               );
             }
           }
+
+          if (userNamespace && userNamespace !== "file" && (!onLoad || !onLoad.@has(userNamespace))) {
+            @throwTypeError(
+              `Expected onLoad plugin for namespace ${@jsonStringify(userNamespace, " ")} to exist`
+            );
+          }
+
         }
         this.onResolveAsync(internalID, path, userNamespace, external);
         return null;

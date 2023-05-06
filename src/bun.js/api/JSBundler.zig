@@ -776,6 +776,7 @@ pub const JSBundler = struct {
             context: *anyopaque,
             default_loader: options.Loader,
         ) void {
+            JSC.markBinding(@src());
             const namespace_string = if (namespace.len == 0)
                 ZigString.init("file")
             else
@@ -793,6 +794,7 @@ pub const JSBundler = struct {
             context: *anyopaque,
             import_record_kind: bun.ImportKind,
         ) void {
+            JSC.markBinding(@src());
             const namespace_string = if (strings.eqlComptime(namespace, "file"))
                 ZigString.Empty
             else
@@ -806,15 +808,18 @@ pub const JSBundler = struct {
             this: *Plugin,
             object: JSC.JSValue,
         ) JSValue {
+            JSC.markBinding(@src());
             return JSBundlerPlugin__runSetupFunction(this, object);
         }
 
         pub fn deinit(this: *Plugin) void {
+            JSC.markBinding(@src());
             JSBundlerPlugin__tombestone(this);
             JSC.JSValue.fromCell(this).unprotect();
         }
 
         pub fn setConfig(this: *Plugin, config: *anyopaque) void {
+            JSC.markBinding(@src());
             JSBundlerPlugin__setConfig(this, config);
         }
 

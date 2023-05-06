@@ -6442,7 +6442,7 @@ const LinkerContext = struct {
             {
                 var path = sources[source_indices[0]].path;
 
-                if (strings.eqlComptime(path.namespace, "file")) {
+                if (path.isFile()) {
                     const rel_path = try std.fs.path.relative(worker.allocator, chunk_abs_dir, path.text);
                     path.pretty = rel_path;
                 }
@@ -6455,7 +6455,7 @@ const LinkerContext = struct {
                 for (source_indices[1..]) |index| {
                     var path = sources[index].path;
 
-                    if (strings.eqlComptime(path.namespace, "file")) {
+                    if (path.isFile()) {
                         const rel_path = try std.fs.path.relative(worker.allocator, chunk_abs_dir, path.text);
                         path.pretty = rel_path;
                     }
@@ -6560,7 +6560,7 @@ const LinkerContext = struct {
                 const source: Logger.Source = sources[part_range.source_index.get()];
 
                 const file_path = brk: {
-                    if (strings.eqlComptime(source.path.namespace, "file")) {
+                    if (source.path.isFile()) {
                         // Use the pretty path as the file name since it should be platform-
                         // independent (relative paths and the "/" path separator)
                         break :brk source.path.pretty;

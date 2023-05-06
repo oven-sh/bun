@@ -1223,8 +1223,12 @@ pub const Path = struct {
     is_disabled: bool = false,
     is_symlink: bool = false,
 
+    pub fn isFile(this: *const Path) bool {
+        return this.namespace.len == 0 or strings.eqlComptime(this.namespace, "file");
+    }
+
     pub fn hashKey(this: *const Path) u64 {
-        if (this.namespace.len == 0 or strings.eqlComptime(this.namespace, "file")) {
+        if (this.isFile()) {
             return bun.hash(this.text);
         }
 

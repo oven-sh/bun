@@ -4653,7 +4653,7 @@ fn NewPrinter(
                 p.print(":");
                 p.printModuleIdAssumeEnabled(import_record.module_id);
                 p.print(quote);
-            } else if (import_record.print_namespace_in_path and import_record.path.namespace.len > 0 and !strings.eqlComptime(import_record.path.namespace, "file")) {
+            } else if (import_record.print_namespace_in_path and !import_record.path.isFile()) {
                 p.print(quote);
                 p.print(import_record.path.namespace);
                 p.print(":");

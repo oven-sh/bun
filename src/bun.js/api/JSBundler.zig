@@ -756,7 +756,7 @@ pub const JSBundler = struct {
             path: *const Fs.Path,
             is_onLoad: bool,
         ) bool {
-            const namespace_string = if (strings.eqlComptime(path.namespace, "file"))
+            const namespace_string = if (path.isFile())
                 ZigString.Empty
             else
                 ZigString.fromUTF8(path.namespace);

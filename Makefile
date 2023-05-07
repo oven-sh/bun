@@ -173,7 +173,7 @@ AR = $(shell which llvm-ar-15 2>/dev/null || which llvm-ar 2>/dev/null || which 
 endif
 
 OPTIMIZATION_LEVEL=-O3 $(MARCH_NATIVE)
-DEBUG_OPTIMIZATION_LEVEL= -O1 $(MARCH_NATIVE)
+DEBUG_OPTIMIZATION_LEVEL= -O1 $(MARCH_NATIVE) -gdwarf-4
 CFLAGS_WITHOUT_MARCH = $(MACOS_MIN_FLAG) $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
 BUN_CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE)  $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
 BUN_TMP_DIR := /tmp/make-bun

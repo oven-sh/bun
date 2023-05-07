@@ -1507,14 +1507,10 @@ pub const SideEffects = enum(u1) {
     pub const typeof = Expr.Data.toTypeof;
 
     pub fn isPrimitiveToReorder(data: Expr.Data) bool {
-        switch (data) {
-            .e_null, .e_undefined, .e_string, .e_boolean, .e_number, .e_big_int => {
-                return true;
-            },
-            else => {
-                return false;
-            },
-        }
+        return switch (data) {
+            .e_null, .e_undefined, .e_string, .e_boolean, .e_number, .e_big_int => true,
+            else => false,
+        };
     }
 
     pub fn simpifyUnusedExpr(p: anytype, expr: Expr) ?Expr {

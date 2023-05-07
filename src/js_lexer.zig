@@ -3162,7 +3162,7 @@ pub fn isLatin1Identifier(comptime Buffer: type, name: Buffer) bool {
         else => return false,
     }
 
-    if (name.len > 0) {
+    if (name.len > 1) {
         for (name[1..]) |c| {
             switch (c) {
                 '0'...'9',

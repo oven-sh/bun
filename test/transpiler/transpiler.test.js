@@ -2635,6 +2635,16 @@ console.log(foo, array);
     });
 
     it("constant folding", () => {
+      // we have an optimization for numbers 0 - 100, -0 - -100 so we must test those specifically
+      // https://github.com/oven-sh/bun/issues/2810
+      for (let i = 1; i < 120; i++) {
+        const inner = "${" + i + " * 1}";
+        expectPrinted("console.log(`" + inner + "`)", 'console.log("' + i + '")');
+
+        const innerNeg = "${" + -i + " * 1}";
+        expectPrinted("console.log(`" + innerNeg + "`)", 'console.log("' + -i + '")');
+      }
+
       expectPrinted("1 && 2", "2");
       expectPrinted("1 || 2", "1");
       expectPrinted("0 && 1", "0");

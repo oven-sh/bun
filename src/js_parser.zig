@@ -16906,9 +16906,9 @@ fn NewParser_(
                                 return false;
                             }
                         }
-                    }
 
-                    return true;
+                        return true;
+                    }
                 },
                 else => {},
             }

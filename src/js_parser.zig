@@ -15530,7 +15530,7 @@ fn NewParser_(
                             // notimpl();
                         },
                         .bin_loose_eq => {
-                            const equality = e_.left.data.eql(e_.right.data, p.allocator);
+                            const equality = e_.left.data.eql(e_.right.data, p.allocator, .loose);
                             if (equality.ok) {
                                 return p.newExpr(
                                     E.Boolean{ .value = equality.equal },
@@ -15544,7 +15544,7 @@ fn NewParser_(
 
                         },
                         .bin_strict_eq => {
-                            const equality = e_.left.data.eql(e_.right.data, p.allocator);
+                            const equality = e_.left.data.eql(e_.right.data, p.allocator, .strict);
                             if (equality.ok) {
                                 return p.newExpr(E.Boolean{ .value = equality.equal }, expr.loc);
                             }
@@ -15554,7 +15554,7 @@ fn NewParser_(
                             // TODO: warn about typeof string
                         },
                         .bin_loose_ne => {
-                            const equality = e_.left.data.eql(e_.right.data, p.allocator);
+                            const equality = e_.left.data.eql(e_.right.data, p.allocator, .loose);
                             if (equality.ok) {
                                 return p.newExpr(E.Boolean{ .value = !equality.equal }, expr.loc);
                             }
@@ -15568,7 +15568,7 @@ fn NewParser_(
                             }
                         },
                         .bin_strict_ne => {
-                            const equality = e_.left.data.eql(e_.right.data, p.allocator);
+                            const equality = e_.left.data.eql(e_.right.data, p.allocator, .strict);
                             if (equality.ok) {
                                 return p.newExpr(E.Boolean{ .value = !equality.equal }, expr.loc);
                             }

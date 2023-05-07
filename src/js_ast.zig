@@ -1708,11 +1708,11 @@ pub const E = struct {
         }
 
         pub fn toStringFromF64Safe(value: f64, allocator: std.mem.Allocator) ?string {
-            if (value == @trunc(value)) {
-                const int_value = @floatToInt(i64, value);
+            const int_value = @floatToInt(i64, value);
+            if (value == @intToFloat(f64, int_value)) {
                 const abs = @intCast(u64, std.math.absInt(int_value) catch return null);
                 if (abs < double_digit.len) {
-                    return if (value < 0)
+                    return if (int_value < 0)
                         neg_double_digit[abs]
                     else
                         double_digit[abs];
@@ -5040,7 +5040,10 @@ pub const Expr = struct {
             };
         }
 
-        pub const Equality = struct { equal: bool = false, ok: bool = false };
+        pub const Equality = struct {
+            equal: bool = false,
+            ok: bool = false,
+        };
 
         // Returns "equal, ok". If "ok" is false, then nothing is known about the two
         // values. If "ok" is true, the equality or inequality of the two values is
@@ -5049,36 +5052,133 @@ pub const Expr = struct {
             left: Expr.Data,
             right: Expr.Data,
             allocator: std.mem.Allocator,
+            comptime kind: enum { loose, strict },
         ) Equality {
+            // https://dorey.github.io/JavaScript-Equality-Table/
             var equality = Equality{};
             switch (left) {
-                .e_null => {
-                    equality.equal = @as(Expr.Tag, right) == Expr.Tag.e_null;
-                    equality.ok = equality.equal;
-                },
-                .e_undefined => {
-                    equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_undefined;
-                    equality.equal = equality.ok;
+                .e_null, .e_undefined => {
+                    const ok = switch (@as(Expr.Tag, right)) {
+                        .e_null, .e_undefined => true,
+                        else => @as(Expr.Tag, right).isPrimitiveLiteral(),
+                    };
+
+                    if (comptime kind == .loose) {
+                        return .{
+                            .equal = switch (@as(Expr.Tag, right)) {
+                                .e_null, .e_undefined => true,
+                                else => false,
+                            },
+                            .ok = ok,
+                        };
+                    }
+
+                    return .{
+                        .equal = @as(Tag, right) == @as(Tag, left),
+                        .ok = ok,
+                    };
                 },
                 .e_boolean => |l| {
-                    equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_boolean;
-                    equality.equal = equality.ok and l.value == right.e_boolean.value;
+                    switch (right) {
+                        .e_boolean => {
+                            equality.ok = true;
+                            equality.equal = l.value == right.e_boolean.value;
+                        },
+                        .e_number => |num| {
+                            if (comptime kind == .strict) {
+                                // "true === 1" is false
+                                // "false === 0" is false
+                                return .{ .ok = true, .equal = false };
+                            }
+
+                            return .{
+                                .ok = true,
+                                .equal = if (l.value)
+                                    num.value == 1
+                                else
+                                    num.value == 0,
+                            };
+                        },
+                        .e_null, .e_undefined => {
+                            return .{ .ok = true, .equal = false };
+                        },
+                        else => {},
+                    }
                 },
                 .e_number => |l| {
-                    equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_number;
-                    equality.equal = equality.ok and l.value == right.e_number.value;
+                    switch (right) {
+                        .e_number => |r| {
+                            return .{
+                                .ok = true,
+                                .equal = l.value == r.value,
+                            };
+                        },
+                        .e_boolean => |r| {
+                            if (comptime kind == .loose) {
+                                return .{
+                                    .ok = true,
+                                    // "1 == true" is true
+                                    // "0 == false" is true
+                                    .equal = if (r.value)
+                                        l.value == 1
+                                    else
+                                        l.value == 0,
+                                };
+                            }
+
+                            // "1 === true" is false
+                            // "0 === false" is false
+                            return .{ .ok = true, .equal = false };
+                        },
+                        .e_null, .e_undefined => {
+                            // "(not null or undefined) == undefined" is false
+                            return .{ .ok = true, .equal = false };
+                        },
+                        else => {},
+                    }
                 },
                 .e_big_int => |l| {
-                    equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_big_int;
-                    equality.equal = equality.ok and strings.eql(l.value, right.e_big_int.value);
+                    if (right == .e_big_int) {
+                        equality.ok = true;
+                        equality.equal = strings.eql(l.value, l.value);
+                    } else {
+                        equality.ok = switch (right) {
+                            .e_null, .e_undefined => true,
+                            else => false,
+                        };
+                        equality.equal = false;
+                    }
                 },
                 .e_string => |l| {
-                    equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_string;
-                    if (equality.ok) {
-                        var r = right.e_string;
-                        r.resovleRopeIfNeeded(allocator);
-                        l.resovleRopeIfNeeded(allocator);
-                        equality.equal = r.eql(E.String, l);
+                    switch (right) {
+                        .e_string => |r| {
+                            equality.ok = true;
+                            r.resovleRopeIfNeeded(allocator);
+                            l.resovleRopeIfNeeded(allocator);
+                            equality.equal = r.eql(E.String, l);
+                        },
+                        .e_null, .e_undefined => {
+                            equality.ok = true;
+                            equality.equal = false;
+                        },
+                        .e_number => |r| {
+                            if (comptime kind == .loose) {
+                                if (r.value == 0 or r.value == 1) {
+                                    equality.ok = true;
+                                    equality.equal = if (r.value == 0)
+                                        l.eqlComptime("0")
+                                    else if (r.value == 1)
+                                        l.eqlComptime("1")
+                                    else
+                                        unreachable;
+                                }
+                            } else {
+                                equality.ok = true;
+                                equality.equal = false;
+                            }
+                        },
+
+                        else => {},
                     }
                 },
                 else => {},

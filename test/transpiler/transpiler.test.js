@@ -1737,8 +1737,10 @@ export const { dead } = { dead: "hello world!" };
 
     it("rewrite string to length", () => {
       expectBunPrinted_(`export const foo = "a".length + "b".length;`, `export const foo = 2`);
+      // check rope string
       expectBunPrinted_(`export const foo = ("a" + "b").length;`, `export const foo = 2`);
       expectBunPrinted_(
+        // check UTF-16
         `export const foo = "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌".length;`,
         `export const foo = 52`,
       );

@@ -48,6 +48,11 @@ const templateStringTests: Record<string, TemplateStringTest> = {
   BigIntDivide: { expr: "`${6n / 2n}`", print: "3" },
   BigIntModulo: { expr: "`${6n % 4n}`", print: "2" },
   BigIntExponent: { expr: "`${2n ** 3n}`", print: "8" },
+  ArrowFunction: { expr: "`${() => 123}`", captureRaw: "`${(" }, // capture is weird in this scenario
+  Function: { expr: "`${function() { return 123; }}`", captureRaw: "`${function(" },
+  Identifier: { expr: "`${ident}`", captureRaw: "`${ident}`" },
+  IdentifierAdd: { expr: "`${ident + ident}`", captureRaw: "`${ident+ident}`" },
+  IdentifierConstAdd: { expr: "`${2 + ident}`", captureRaw: "`${ident+ident}`" },
   EscapeIssue1: {
     expr: `\`\\abc\${ident}\``,
     captureRaw: `\`abc\${ident}\``,
@@ -75,6 +80,8 @@ const templateStringTests: Record<string, TemplateStringTest> = {
   FoldNested4: { expr: "`a${`b`}c${`${`${`${'d'}`}`}`}e`", capture: true },
   FoldNested5: { expr: "`\\$${`d`}`", print: true }, // could be captured
   FoldNested6: { expr: "`a\0${5}c\\${{$${`d`}e`", capture: true },
+  EscapedDollar: { expr: "`\\${'a'}`", captureRaw: "`\\${'a'}`" },
+  EscapedDollar2: { expr: "`\\${'a'}\\${'b'}`", captureRaw: "`\\${'a'}\\${'b'}`" },
 };
 
 describe("bundler", () => {
@@ -98,6 +105,8 @@ describe("bundler", () => {
               `,
             },
             capture: [captureRaw],
+            minifySyntax: true,
+            minifyWhitespace: true,
           }
         : {
             files: {
@@ -109,6 +118,8 @@ describe("bundler", () => {
             run: {
               stdout: test.print as string,
             },
+            minifySyntax: true,
+            minifyWhitespace: true,
             onAfterBundle(api) {
               const capture = api.captureFile("out.js");
               if (capture[0] === JSON.stringify(test.print)) {

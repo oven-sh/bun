@@ -88,17 +88,6 @@ describe("bundler", () => {
     capture: ["`\\\\?`", "hello`\\\\?`"],
     target: "bun",
   });
-  // itBundled("edgecase/TemplateConstantFoldingIssue2810", {
-  //   files: {
-  //     "/entry.ts": ["capture(`${7 * 6}`);", 'capture(`P${`A${"S"}`}S`);', "capture(`P${`A${dyanmic()}`}S`);"].join(
-  //       "\n",
-  //     ),
-  //   },
-  //   minifySyntax: true,
-  //   minifyWhitespace: true,
-  //   capture: ['"42"', '"PASS"'],
-  //   target: "bun",
-  // });
   // https://github.com/oven-sh/bun/issues/2699
   itBundled("edgecase/ImportNamedFromExportStarCJS", {
     files: {
@@ -285,8 +274,7 @@ describe("bundler", () => {
       ".cool": "wtf",
     },
     bundleErrors: {
-      // todo: get the exact error
-      "<bun>": ["InvalidLoader"],
+      "<bun>": ['invalid loader "wtf", expected one of:'],
     },
   });
   itBundled("edgecase/ScriptTagEscape", {
@@ -454,7 +442,7 @@ describe("bundler", () => {
       stdout: "success",
     },
   });
-  itBundled("tsconfig/TSConfigPathStarAnywhere", {
+  itBundled("edgecase/TSConfigPathStarAnywhere", {
     files: {
       "/entry.ts": /* ts */ `
         import test0 from 'test3/foo'
@@ -474,6 +462,131 @@ describe("bundler", () => {
     },
     run: {
       stdout: "success",
+    },
+  });
+  itBundled("edgecase/StaticClassNameIssue2806", {
+    files: {
+      "/entry.ts": /* ts */ `
+        new class C {
+          set baz(x) {
+            C.foo = x;
+            C.bar;
+          }
+          static get bar() {
+            console.log(C.foo);
+          }
+        }().baz = "PASS";
+
+        new class C {
+          set baz(x) {
+            C.foo = x;
+            C.bar;
+          }
+          static get bar() {
+            console.log(C.foo);
+          }
+        }().baz = "Hello World";
+      `,
+    },
+    minifyIdentifiers: true,
+    run: {
+      stdout: "PASS\nHello World",
+    },
+  });
+  itBundled("edgecase/DCEVarRedeclarationIssue2814A", {
+    files: {
+      "/entry.ts": /* ts */ `
+        var a = 1;
+        if (false) {
+          var a;
+        }
+        console.log(a);
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: `1`,
+    },
+  });
+  itBundled("edgecase/DCEVarRedeclarationIssue2814B", {
+    files: {
+      "/entry.ts": /* ts */ `
+        var a = 1;
+        switch ("foo") {
+          case "foo":
+            var a;
+        }
+        console.log(a);
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: `1`,
+    },
+  });
+  itBundled("edgecase/DCEVarRedeclarationIssue2814C", {
+    files: {
+      "/entry.ts": /* ts */ `
+        "use strict";
+        var a = 1;
+        {
+          var a;
+        }
+        console.log(a);
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: `1`,
+    },
+  });
+  itBundled("edgecase/DCESwitchVarRedeclarationIssue2814", {
+    files: {
+      "/entry.ts": /* ts */ `
+        "use strict";
+        var a = 1, b = 2;
+        switch (b++) {
+          case b:
+            var c = a;
+            var a;
+            break;
+        }
+        console.log(a);
+    
+        var x = 123, y = 45;
+        switch (console) {
+          case 456:
+            var x = 789, y = 0;
+        }
+        var y = 67;
+        console.log(x, y);
+    
+        var z = 123;
+        switch (console) {
+          default:
+            var z = typeof z;
+        }
+        console.log(z);
+    
+        var A = 1, B = 2;
+        switch (A) {
+          case A:
+            var B;
+            break;
+          case B:
+            break;
+        }
+        console.log(B);
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: `
+        1
+        123 67
+        number
+        2
+      `,
     },
   });
 });

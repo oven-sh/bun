@@ -296,31 +296,9 @@ describe("bundler", () => {
       },
     };
   });
-  itBundled("plugin/ResolveAndLoadImplicit", ({ root }) => {
-    return {
-      files: {
-        "index.ts": /* ts */ `
-          import * as foo from "magic:some_string";
-          console.log(foo.foo);
-        `,
-      },
-      plugins(builder) {
-        builder.onResolve({ filter: /magic:some_string/ }, args => {
-          return {
-            path: "namespace_path",
-            namespace: "my_namespace",
-          };
-        });
-        builder.onLoad({ namespace: "my_namespace" }, args => {
-          throw new Error("SHOULD NOT BE CALLED");
-        });
-      },
-      run: {
-        stdout: "foo",
-      },
-    };
-  });
   itBundled("plugin/ResolveAndLoadNamespaceNested", ({ root }) => {
+    let counter1 = 0;
+    let counter2 = 0;
     return {
       files: {
         "index.ts": /* ts */ `
@@ -332,6 +310,9 @@ describe("bundler", () => {
         `,
       },
       plugins(builder) {
+        builder.onResolve({ filter: /.*/ }, args => {
+          counter1++;
+        });
         builder.onResolve({ filter: /magic:some_string/ }, args => {
           return {
             path: "namespace_path",
@@ -340,23 +321,33 @@ describe("bundler", () => {
         });
         // the path given is already resolved, so it should not re-resolve
         builder.onResolve({ filter: /namespace_path/, namespace: "my_namespace" }, args => {
-          throw new Error("SHOULD NOT BE CALLED");
+          throw new Error("SHOULD NOT BE CALLED 1, " + JSON.stringify(args));
         });
         builder.onResolve({ filter: /namespace_path/ }, args => {
-          throw new Error("SHOULD NOT BE CALLED");
+          throw new Error("SHOULD NOT BE CALLED 2, " + JSON.stringify(args));
         });
+        // load
         builder.onLoad({ filter: /.*/, namespace: "my_namespace" }, args => {
-          console.log("a", args);
           expect(args.path).toBe("namespace_path");
           expect(args.namespace).toBe("my_namespace");
-          expect(args.suffix).toBeFalsy();
 
           return {
             contents: "import 'nested_import';export const foo = 'foo';",
             loader: "js",
           };
         });
+        // nested_import should not be resolved as a file namespace
+        builder.onResolve({ filter: /nested_import/, namespace: "file" }, args => {
+          throw new Error("SHOULD NOT BE CALLED 3, " + JSON.stringify(args));
+        });
         builder.onResolve({ filter: /nested_import/, namespace: "my_namespace" }, args => {
+          expect(args.path).toBe("nested_import");
+          expect(args.namespace).toBe("my_namespace");
+          // gonna let this passthrough
+          counter2 += 1;
+        });
+        // but it can be resolved with no namespace filter
+        builder.onResolve({ filter: /nested_import/ }, args => {
           expect(args.path).toBe("nested_import");
           expect(args.namespace).toBe("my_namespace");
           return {
@@ -365,11 +356,18 @@ describe("bundler", () => {
           };
         });
         builder.onResolve({ filter: /.*/ }, args => {
-          throw new Error("SHOULD NOT BE CALLED");
+          // entrypoint should hit this but this is a catch all
+          if (args.kind === "import-statement") {
+            throw new Error("SHOULD NOT BE CALLED 4, " + JSON.stringify(args));
+          }
         });
       },
       run: {
         stdout: "foo",
+      },
+      onAfterBundle(api) {
+        expect(counter1).toBe(3);
+        expect(counter2).toBe(1);
       },
     };
   });
@@ -655,46 +653,46 @@ describe("bundler", () => {
       },
     };
   });
-  // itBundled("plugin/ManyPlugins", ({ root }) => {
-  //   const pluginCount = 4000;
-  //   let resolveCount = 0;
-  //   let loadCount = 0;
-  //   return {
-  //     files: {
-  //       "index.ts": /* ts */ `
-  //         import { foo as foo1 } from "plugin1:file";
-  //         import { foo as foo2 } from "plugin4000:file";
-  //         console.log(foo1, foo2);
-  //       `,
-  //     },
-  //     plugins: Array.from({ length: pluginCount }).map((_, i) => ({
-  //       name: `${i}`,
-  //       setup(builder) {
-  //         builder.onResolve({ filter: new RegExp(`^plugin${i}:file$`) }, args => {
-  //           resolveCount++;
-  //           return {
-  //             path: `plugin${i}:file`,
-  //             namespace: `plugin${i}`,
-  //           };
-  //         });
-  //         builder.onLoad({ filter: new RegExp(`^plugin${i}:file$`), namespace: `plugin${i}` }, args => {
-  //           loadCount++;
-  //           return {
-  //             contents: `export const foo = ${i};`,
-  //             loader: "js",
-  //           };
-  //         });
-  //       },
-  //     })),
-  //     run: {
-  //       stdout: `${pluginCount - 1} ${pluginCount - 1}`,
-  //     },
-  //     onAfterBundle(api) {
-  //       expect(resolveCount).toBe(pluginCount * 2);
-  //       expect(loadCount).toBe(pluginCount);
-  //     },
-  //   };
-  // });
+  itBundled("plugin/ManyPlugins", ({ root }) => {
+    const pluginCount = 4000;
+    let resolveCount = 0;
+    let loadCount = 0;
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          import { foo as foo1 } from "plugin1:file";
+          import { foo as foo2 } from "plugin4000:file";
+          console.log(foo1, foo2);
+        `,
+      },
+      plugins: Array.from({ length: pluginCount }).map((_, i) => ({
+        name: `${i}`,
+        setup(builder) {
+          builder.onResolve({ filter: new RegExp(`^plugin${i}:file$`) }, args => {
+            resolveCount++;
+            return {
+              path: `plugin${i}:file`,
+              namespace: `plugin${i}`,
+            };
+          });
+          builder.onLoad({ filter: new RegExp(`^plugin${i}:file$`), namespace: `plugin${i}` }, args => {
+            loadCount++;
+            return {
+              contents: `export const foo = ${i};`,
+              loader: "js",
+            };
+          });
+        },
+      })),
+      run: {
+        stdout: `${pluginCount - 1} ${pluginCount - 1}`,
+      },
+      onAfterBundle(api) {
+        expect(resolveCount).toBe(pluginCount * 2);
+        expect(loadCount).toBe(pluginCount);
+      },
+    };
+  });
   itBundled("plugin/NamespaceOnLoadBug", () => {
     return {
       files: {
@@ -722,6 +720,36 @@ describe("bundler", () => {
             loader: "js",
           };
         });
+      },
+    };
+  });
+  itBundled("plugin/EntrypointResolve", ({ root }) => {
+    return {
+      files: {},
+      entryPointsRaw: ["plugin"],
+      plugins(build) {
+        build.onResolve({ filter: /^plugin$/ }, args => {
+          expect(args.path).toBe("plugin");
+          expect(args.importer).toBe("");
+          expect(args.kind).toBe("entry-point");
+          expect(args.namespace).toBe("");
+          // expect(args.pluginData).toEqual(undefined);
+          // expect(args.resolveDir).toEqual(root);
+          return {
+            path: args.path,
+            namespace: "plugin",
+          };
+        });
+        build.onLoad({ filter: /.*/, namespace: "plugin" }, args => {
+          console.log(args);
+          return {
+            contents: `console.log("it works")`,
+          };
+        });
+      },
+      run: {
+        file: "./out/plugin.js",
+        stdout: "it works",
       },
     };
   });

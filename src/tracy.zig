@@ -475,6 +475,13 @@ const ___tracy_source_location_data = extern struct {
 };
 
 fn dlsym(comptime Type: type, comptime symbol: [:0]const u8) ?Type {
+    if (comptime bun.Environment.isLinux) {
+        // use LD_PRELOAD on linux
+        if (bun.C.dlsym(Type, symbol)) |val| {
+            return val;
+        }
+    }
+
     const Handle = struct {
         pub var handle: ?*anyopaque = null;
         pub fn getter() ?*anyopaque {

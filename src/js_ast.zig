@@ -578,7 +578,7 @@ pub const CharFreq = struct {
     const Vector = @Vector(64, i32);
     const Buffer = [64]i32;
 
-    freqs: Buffer align(@alignOf(Vector)) = undefined,
+    freqs: Buffer align(1) = undefined,
 
     const scan_big_chunk_size = 32;
     pub fn scan(this: *CharFreq, text: string, delta: i32) void {
@@ -592,7 +592,7 @@ pub const CharFreq = struct {
         }
     }
 
-    fn scanBig(out: *align(@alignOf(Vector)) Buffer, text: string, delta: i32) void {
+    fn scanBig(out: *align(1) Buffer, text: string, delta: i32) void {
         // https://zig.godbolt.org/z/P5dPojWGK
         var freqs = out.*;
         defer out.* = freqs;
@@ -625,7 +625,7 @@ pub const CharFreq = struct {
         freqs[63] = deltas['$'];
     }
 
-    fn scanSmall(out: *align(@alignOf(Vector)) [64]i32, text: string, delta: i32) void {
+    fn scanSmall(out: *align(1) Buffer, text: string, delta: i32) void {
         var freqs: [64]i32 = out.*;
         defer out.* = freqs;
 
@@ -5835,8 +5835,6 @@ pub const Ast = struct {
     force_cjs_to_esm: bool = false,
     exports_kind: ExportsKind = ExportsKind.none,
 
-    bundle_export_ref: ?Ref = null,
-
     // This is a list of ES6 features. They are ranges instead of booleans so
     // that they can be used in log messages. Check to see if "Len > 0".
     import_keyword: logger.Range = logger.Range.None, // Does not include TypeScript-specific syntax or "import()"
@@ -5861,8 +5859,6 @@ pub const Ast = struct {
     require_ref: Ref = Ref.None,
 
     bun_plugin: BunPlugin = .{},
-
-    bundle_namespace_ref: ?Ref = null,
 
     prepend_part: ?Part = null,
 
@@ -5919,6 +5915,195 @@ pub const Ast = struct {
         if (this.externals.len > 0) bun.default_allocator.free(this.externals);
         if (this.symbols.len > 0) this.symbols.deinitWithAllocator(bun.default_allocator);
         if (this.import_records.len > 0) this.import_records.deinitWithAllocator(bun.default_allocator);
+    }
+};
+
+/// Like Ast but slimmer and for bundling only.
+///
+/// On Linux, the hottest function in the bundler is:
+/// src.multi_array_list.MultiArrayList(src.js_ast.Ast).ensureTotalCapacity
+/// https://share.firefox.dev/3NNlRKt
+///
+/// So we make a slimmer version of Ast for bundling that doesn't allocate as much memory
+pub const BundledAst = struct {
+    approximate_newline_count: u32 = 0,
+    nested_scope_slot_counts: SlotCounts = SlotCounts{},
+    externals: []u32 = &[_]u32{},
+
+    exports_kind: ExportsKind = ExportsKind.none,
+
+    /// These are stored at the AST level instead of on individual AST nodes so
+    /// they can be manipulated efficiently without a full AST traversal
+    import_records: ImportRecord.List = .{},
+
+    hashbang: string = "",
+    directive: string = "",
+    url_for_css: string = "",
+    parts: Part.List = Part.List{},
+    // This list may be mutated later, so we should store the capacity
+    symbols: Symbol.List = Symbol.List{},
+    module_scope: Scope = Scope{},
+    char_freq: CharFreq = undefined,
+    exports_ref: Ref = Ref.None,
+    module_ref: Ref = Ref.None,
+    wrapper_ref: Ref = Ref.None,
+    require_ref: Ref = Ref.None,
+
+    // These are used when bundling. They are filled in during the parser pass
+    // since we already have to traverse the AST then anyway and the parser pass
+    // is conveniently fully parallelized.
+    named_imports: NamedImports = NamedImports.init(bun.failing_allocator),
+    named_exports: NamedExports = NamedExports.init(bun.failing_allocator),
+    export_star_import_records: []u32 = &([_]u32{}),
+
+    allocator: std.mem.Allocator,
+    top_level_symbols_to_parts: TopLevelSymbolToParts = .{},
+
+    commonjs_named_exports: CommonJSNamedExports = .{},
+
+    redirect_import_record_index: u32 = std.math.maxInt(u32),
+
+    /// Only populated when bundling
+    target: bun.options.Target = .browser,
+
+    const_values: ConstValuesMap = .{},
+
+    flags: BundledAst.Flags = .{},
+
+    pub const NamedImports = Ast.NamedImports;
+    pub const NamedExports = Ast.NamedExports;
+    pub const TopLevelSymbolToParts = Ast.TopLevelSymbolToParts;
+    pub const CommonJSNamedExports = Ast.CommonJSNamedExports;
+    pub const ConstValuesMap = Ast.ConstValuesMap;
+
+    pub const Flags = packed struct {
+        // This is a list of CommonJS features. When a file uses CommonJS features,
+        // it's not a candidate for "flat bundling" and must be wrapped in its own
+        // closure.
+        uses_exports_ref: bool = false,
+        uses_module_ref: bool = false,
+        // uses_require_ref: bool = false,
+
+        uses_export_keyword: bool = false,
+
+        has_char_freq: bool = false,
+        force_cjs_to_esm: bool = false,
+        has_lazy_export: bool = false,
+    };
+
+    pub const empty = BundledAst.init(Ast.empty);
+
+    pub inline fn uses_exports_ref(this: *const BundledAst) bool {
+        return this.flags.uses_exports_ref;
+    }
+    pub inline fn uses_module_ref(this: *const BundledAst) bool {
+        return this.flags.uses_module_ref;
+    }
+    // pub inline fn uses_require_ref(this: *const BundledAst) bool {
+    //     return this.flags.uses_require_ref;
+    // }
+
+    pub fn toAST(this: *const BundledAst) Ast {
+        return .{
+            .approximate_newline_count = this.approximate_newline_count,
+            .nested_scope_slot_counts = this.nested_scope_slot_counts,
+            .externals = this.externals,
+
+            .exports_kind = this.exports_kind,
+
+            .import_records = this.import_records,
+
+            .hashbang = this.hashbang,
+            .directive = this.directive,
+            // .url_for_css = this.url_for_css,
+            .parts = this.parts,
+            // This list may be mutated later, so we should store the capacity
+            .symbols = this.symbols,
+            .module_scope = this.module_scope,
+            .char_freq = if (this.flags.has_char_freq) this.char_freq else null,
+            .exports_ref = this.exports_ref,
+            .module_ref = this.module_ref,
+            .wrapper_ref = this.wrapper_ref,
+            .require_ref = this.require_ref,
+
+            // These are used when bundling. They are filled in during the parser pass
+            // since we already have to traverse the AST then anyway and the parser pass
+            // is conveniently fully parallelized.
+            .named_imports = this.named_imports,
+            .named_exports = this.named_exports,
+            .export_star_import_records = this.export_star_import_records,
+
+            .allocator = this.allocator,
+            .top_level_symbols_to_parts = this.top_level_symbols_to_parts,
+
+            .commonjs_named_exports = this.commonjs_named_exports,
+
+            .redirect_import_record_index = this.redirect_import_record_index,
+
+            .target = this.target,
+
+            .const_values = this.const_values,
+
+            .uses_exports_ref = this.flags.uses_exports_ref,
+            .uses_module_ref = this.flags.uses_module_ref,
+            // .uses_require_ref = ast.uses_require_ref,
+            .export_keyword = .{ .len = if (this.flags.uses_export_keyword) 1 else 0, .loc = .{} },
+            .force_cjs_to_esm = this.flags.force_cjs_to_esm,
+            .has_lazy_export = this.flags.has_lazy_export,
+        };
+    }
+
+    pub fn init(ast: Ast) BundledAst {
+        return .{
+            .approximate_newline_count = @truncate(u32, ast.approximate_newline_count),
+            .nested_scope_slot_counts = ast.nested_scope_slot_counts,
+            .externals = ast.externals,
+
+            .exports_kind = ast.exports_kind,
+
+            .import_records = ast.import_records,
+
+            .hashbang = ast.hashbang,
+            .directive = ast.directive orelse "",
+            // .url_for_css = ast.url_for_css orelse "",
+            .parts = ast.parts,
+            // This list may be mutated later, so we should store the capacity
+            .symbols = ast.symbols,
+            .module_scope = ast.module_scope,
+            .char_freq = ast.char_freq orelse undefined,
+            .exports_ref = ast.exports_ref,
+            .module_ref = ast.module_ref,
+            .wrapper_ref = ast.wrapper_ref,
+            .require_ref = ast.require_ref,
+
+            // These are used when bundling. They are filled in during the parser pass
+            // since we already have to traverse the AST then anyway and the parser pass
+            // is conveniently fully parallelized.
+            .named_imports = ast.named_imports,
+            .named_exports = ast.named_exports,
+            .export_star_import_records = ast.export_star_import_records,
+
+            .allocator = ast.allocator,
+            .top_level_symbols_to_parts = ast.top_level_symbols_to_parts,
+
+            .commonjs_named_exports = ast.commonjs_named_exports,
+
+            .redirect_import_record_index = ast.redirect_import_record_index orelse std.math.maxInt(u32),
+
+            .target = ast.target,
+
+            .const_values = ast.const_values,
+
+            .flags = .{
+                .uses_exports_ref = ast.uses_exports_ref,
+                .uses_module_ref = ast.uses_module_ref,
+                // .uses_require_ref = ast.uses_require_ref,
+                .uses_export_keyword = ast.export_keyword.len > 0,
+                .has_char_freq = ast.char_freq != null,
+                .force_cjs_to_esm = ast.force_cjs_to_esm,
+                .has_lazy_export = ast.has_lazy_export,
+            },
+        };
     }
 };
 

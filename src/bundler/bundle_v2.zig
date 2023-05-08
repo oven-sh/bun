@@ -105,7 +105,7 @@ const EntryPoints = @import("./entry_points.zig");
 const ThisBundler = @import("../bundler.zig").Bundler;
 const wyhash = std.hash.Wyhash.hash;
 const Dependency = js_ast.Dependency;
-const JSAst = js_ast.Ast;
+const JSAst = js_ast.BundledAst;
 const Loader = options.Loader;
 const Index = @import("../ast/base.zig").Index;
 const Batcher = bun.Batcher;
@@ -354,7 +354,7 @@ pub const BundleV2 = struct {
             reachable: std.ArrayList(Index),
             visited: bun.bit_set.DynamicBitSet = undefined,
             all_import_records: []ImportRecord.List,
-            redirects: []?u32,
+            redirects: []u32,
             redirect_map: PathToSourceIndexMap,
             dynamic_import_entry_points: *std.AutoArrayHashMap(Index.Int, void),
 
@@ -382,7 +382,7 @@ pub const BundleV2 = struct {
                     for (import_records) |*import_record| {
                         const other_source = import_record.source_index;
                         if (other_source.isValid()) {
-                            if (v.redirects[other_source.get()]) |redirect_id| {
+                            if (getRedirectId(v.redirects[other_source.get()])) |redirect_id| {
                                 var other_import_records = v.all_import_records[other_source.get()].slice();
                                 const other_import_record = &other_import_records[redirect_id];
                                 import_record.source_index = other_import_record.source_index;
@@ -394,7 +394,7 @@ pub const BundleV2 = struct {
                     }
 
                     // Redirects replace the source file with another file
-                    if (v.redirects[source_index.get()]) |redirect_id| {
+                    if (getRedirectId(v.redirects[source_index.get()])) |redirect_id| {
                         const redirect_source_index = v.all_import_records[source_index.get()].slice()[redirect_id].source_index.get();
                         v.visit(Index.source(redirect_source_index), was_dynamic_import, check_dynamic_imports);
                         return;
@@ -576,10 +576,10 @@ pub const BundleV2 = struct {
             const source_index = Index.init(@intCast(u32, this.graph.ast.len));
             entry.value_ptr.* = source_index.get();
             out_source_index = source_index;
-            this.graph.ast.append(this.graph.allocator, js_ast.Ast.empty) catch unreachable;
+            this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
             const loader = path.loader(&this.bundler.options.loaders) orelse options.Loader.file;
 
-            this.graph.input_files.append(this.graph.allocator, .{
+            this.graph.input_files.append(bun.default_allocator, .{
                 .source = .{
                     .path = path.*,
                     .key_path = path.*,
@@ -641,9 +641,9 @@ pub const BundleV2 = struct {
         }
         path.* = try path.dupeAlloc(this.graph.allocator);
         entry.value_ptr.* = source_index.get();
-        this.graph.ast.append(this.graph.allocator, js_ast.Ast.empty) catch unreachable;
+        this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
 
-        try this.graph.input_files.append(this.graph.allocator, .{
+        try this.graph.input_files.append(bun.default_allocator, .{
             .source = .{
                 .path = path.*,
                 .key_path = path.*,
@@ -753,14 +753,14 @@ pub const BundleV2 = struct {
 
         {
             // Add the runtime
-            try this.graph.input_files.append(this.graph.allocator, Graph.InputFile{
+            try this.graph.input_files.append(bun.default_allocator, Graph.InputFile{
                 .source = ParseTask.runtime_source,
                 .loader = .js,
                 .side_effects = _resolver.SideEffects.no_side_effects__pure_data,
             });
 
             // try this.graph.entry_points.append(allocator, Index.runtime);
-            this.graph.ast.append(this.graph.allocator, js_ast.Ast.empty) catch unreachable;
+            this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
             this.graph.path_to_source_index_map.put(this.graph.allocator, bun.hash("bun:wrap"), Index.runtime.get()) catch unreachable;
             var runtime_parse_task = try this.graph.allocator.create(ParseTask);
             runtime_parse_task.* = ParseTask.runtime;
@@ -933,9 +933,9 @@ pub const BundleV2 = struct {
                 this.graph.shadow_entry_point_range.loc.start = @intCast(i32, source_index.get());
             }
 
-            this.graph.ast.append(allocator, js_ast.Ast.empty) catch unreachable;
+            this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
             this.graph.shadow_entry_points.append(allocator, shadow) catch unreachable;
-            this.graph.input_files.append(allocator, .{
+            this.graph.input_files.append(bun.default_allocator, .{
                 .source = .{
                     .path = path,
                     .key_path = path,
@@ -1399,10 +1399,10 @@ pub const BundleV2 = struct {
                         const source_index = Index.init(@intCast(u32, this.graph.ast.len));
                         existing.value_ptr.* = source_index.get();
                         out_source_index = source_index;
-                        this.graph.ast.append(this.graph.allocator, js_ast.Ast.empty) catch unreachable;
+                        this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
                         const loader = path.loader(&this.bundler.options.loaders) orelse options.Loader.file;
 
-                        this.graph.input_files.append(this.graph.allocator, .{
+                        this.graph.input_files.append(bun.default_allocator, .{
                             .source = .{
                                 .path = path,
                                 .key_path = path,
@@ -1607,6 +1607,8 @@ pub const BundleV2 = struct {
     }
 
     pub fn deinit(this: *BundleV2) void {
+        defer this.graph.ast.deinit(bun.default_allocator);
+        defer this.graph.input_files.deinit(bun.default_allocator);
         if (this.graph.pool.workers_assignments.count() > 0) {
             {
                 this.graph.pool.workers_assignments_lock.lock();
@@ -1851,8 +1853,8 @@ pub const BundleV2 = struct {
                         new_task.source_index = new_input_file.source.index;
 
                         new_task.ctx = this;
-                        graph.input_files.append(graph.allocator, new_input_file) catch unreachable;
-                        graph.ast.append(graph.allocator, js_ast.Ast.empty) catch unreachable;
+                        graph.input_files.append(bun.default_allocator, new_input_file) catch unreachable;
+                        graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
                         diff += 1;
 
                         if (loader.shouldCopyForBundling()) {
@@ -1894,7 +1896,7 @@ pub const BundleV2 = struct {
                     if (graph.path_to_source_index_map.get(record.path.hashKey())) |source_index| {
                         record.source_index.value = source_index;
 
-                        if (result.ast.redirect_import_record_index) |compare| {
+                        if (getRedirectId(result.ast.redirect_import_record_index)) |compare| {
                             if (compare == @truncate(u32, i)) {
                                 graph.path_to_source_index_map.put(
                                     graph.allocator,
@@ -2026,7 +2028,7 @@ pub const ParseTask = struct {
         };
 
         pub const Success = struct {
-            ast: js_ast.Ast,
+            ast: JSAst,
             resolve_queue: ResolveQueue,
             source: Logger.Source,
             log: Logger.Log,
@@ -2064,9 +2066,9 @@ pub const ParseTask = struct {
 
     threadlocal var override_file_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-    fn getEmptyAST(log: *Logger.Log, bundler: *Bundler, opts: js_parser.Parser.Options, allocator: std.mem.Allocator, source: Logger.Source) !js_ast.Ast {
+    fn getEmptyAST(log: *Logger.Log, bundler: *Bundler, opts: js_parser.Parser.Options, allocator: std.mem.Allocator, source: Logger.Source) !JSAst {
         const root = Expr.init(E.Undefined, E.Undefined{}, Logger.Loc.Empty);
-        return (try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?;
+        return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
     }
 
     fn getAST(
@@ -2079,7 +2081,7 @@ pub const ParseTask = struct {
         loader: Loader,
         unique_key_prefix: u64,
         unique_key_for_additional_file: *[]const u8,
-    ) !js_ast.Ast {
+    ) !JSAst {
         switch (loader) {
             .jsx, .tsx, .js, .ts => {
                 const trace = tracer(@src(), "ParseJS");
@@ -2091,7 +2093,7 @@ pub const ParseTask = struct {
                     log,
                     &source,
                 )) |res|
-                    res.ast
+                    JSAst.init(res.ast)
                 else
                     try getEmptyAST(log, bundler, opts, allocator, source);
             },
@@ -2099,20 +2101,20 @@ pub const ParseTask = struct {
                 const trace = tracer(@src(), "ParseJSON");
                 defer trace.end();
                 const root = (try resolver.caches.json.parseJSON(log, source, allocator)) orelse Expr.init(E.Object, E.Object{}, Logger.Loc.Empty);
-                return (try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?;
+                return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
             .toml => {
                 const trace = tracer(@src(), "ParseTOML");
                 defer trace.end();
                 const root = try TOML.parse(&source, log, allocator);
-                return (try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?;
+                return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
             .text => {
                 const root = Expr.init(E.String, E.String{
                     .data = source.contents,
                     .prefer_template = true,
                 }, Logger.Loc{ .start = 0 });
-                return (try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?;
+                return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
             // TODO: css
             .css, .file => {
@@ -2121,13 +2123,13 @@ pub const ParseTask = struct {
                     .data = unique_key,
                 }, Logger.Loc{ .start = 0 });
                 unique_key_for_additional_file.* = unique_key;
-                return (try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?;
+                return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
             else => {
                 const root = Expr.init(E.String, E.String{
                     .data = source.path.text,
                 }, Logger.Loc{ .start = 0 });
-                return (try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?;
+                return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
         }
     }
@@ -2291,7 +2293,7 @@ pub const ParseTask = struct {
 
         var unique_key_for_additional_file: []const u8 = "";
 
-        var ast: js_ast.Ast = if (!is_empty)
+        var ast: JSAst = if (!is_empty)
             try getAST(log, bundler, opts, allocator, resolver, source, loader, task.ctx.unique_key, &unique_key_for_additional_file)
         else
             try getEmptyAST(log, bundler, opts, allocator, source);
@@ -2908,7 +2910,7 @@ const LinkerGraph = struct {
 
     // This is an alias from Graph
     // it is not a clone!
-    ast: MultiArrayList(js_ast.Ast) = .{},
+    ast: MultiArrayList(JSAst) = .{},
     meta: MultiArrayList(JSMeta) = .{},
 
     reachable_files: []Index = &[_]Index{},
@@ -3081,11 +3083,11 @@ const LinkerGraph = struct {
         const exports_ref = g.ast.items(.exports_ref)[source_index];
         const module_ref = g.ast.items(.module_ref)[source_index];
         if (!exports_ref.isNull() and ref.eql(exports_ref)) {
-            g.ast.items(.uses_exports_ref)[source_index] = true;
+            g.ast.items(.flags)[source_index].uses_exports_ref = true;
         }
 
         if (!module_ref.isNull() and ref.eql(module_ref)) {
-            g.ast.items(.uses_module_ref)[source_index] = true;
+            g.ast.items(.flags)[source_index].uses_module_ref = true;
         }
 
         // null ref shouldn't be there.
@@ -4175,8 +4177,7 @@ const LinkerContext = struct {
             var export_star_import_records: [][]u32 = this.graph.ast.items(.export_star_import_records);
             var exports_refs: []Ref = this.graph.ast.items(.exports_ref);
             var module_refs: []Ref = this.graph.ast.items(.module_ref);
-            var lazy_exports: []bool = this.graph.ast.items(.has_lazy_export);
-            var force_cjs_to_esm: []bool = this.graph.ast.items(.force_cjs_to_esm);
+            var ast_flags_list = this.graph.ast.items(.flags);
             var symbols = &this.graph.symbols;
             defer this.graph.symbols = symbols.*;
 
@@ -4196,6 +4197,7 @@ const LinkerContext = struct {
                     }
 
                     const other_file = record.source_index.get();
+                    const other_flags = ast_flags_list[other_file];
                     // other file is empty
                     if (other_file >= exports_kind.len) continue;
                     const other_kind = exports_kind[other_file];
@@ -4223,7 +4225,7 @@ const LinkerContext = struct {
                             // In that case the module *is* considered a CommonJS module because
                             // the namespace object must be created.
                             if ((record.contains_import_star or record.contains_default_alias) and
-                                !lazy_exports[other_file] and !force_cjs_to_esm[other_file] and
+                                !other_flags.has_lazy_export and !other_flags.force_cjs_to_esm and
                                 exports_kind[other_file] == .none)
                             {
                                 exports_kind[other_file] = .cjs;
@@ -4235,7 +4237,7 @@ const LinkerContext = struct {
                         {
                             if (other_kind == .esm) {
                                 flags[other_file].wrap = .esm;
-                            } else if (!force_cjs_to_esm[other_file]) {
+                            } else if (!other_flags.force_cjs_to_esm) {
                                 flags[other_file].wrap = .cjs;
                                 exports_kind[other_file] = .cjs;
                             }
@@ -4246,7 +4248,7 @@ const LinkerContext = struct {
                                 // returns a promise, so the imported file must be a CommonJS module
                                 if (exports_kind[other_file] == .esm) {
                                     flags[other_file].wrap = .esm;
-                                } else if (!force_cjs_to_esm[other_file]) {
+                                } else if (!other_flags.force_cjs_to_esm) {
                                     flags[other_file].wrap = .cjs;
                                     exports_kind[other_file] = .cjs;
                                 }
@@ -4357,14 +4359,13 @@ const LinkerContext = struct {
                 }
                 var resolved_exports: []ResolvedExports = this.graph.meta.items(.resolved_exports);
                 var resolved_export_stars: []ExportData = this.graph.meta.items(.resolved_export_star);
-                var has_lazy_export: []bool = this.graph.ast.items(.has_lazy_export);
 
                 for (reachable) |source_index_| {
                     const source_index = source_index_.get();
                     const id = source_index;
 
                     // --
-                    if (has_lazy_export[id]) {
+                    if (ast_flags_list[id].has_lazy_export) {
                         try this.generateCodeForLazyExport(id);
                     }
                     // --
@@ -4509,7 +4510,7 @@ const LinkerContext = struct {
             const named_imports = ast_fields.items(.named_imports);
             const import_records_list = ast_fields.items(.import_records);
             const export_star_import_records = ast_fields.items(.export_star_import_records);
-            const force_cjs_to_esm = ast_fields.items(.force_cjs_to_esm);
+            const ast_flags = ast_fields.items(.flags);
             for (reachable) |source_index_| {
                 const source_index = source_index_.get();
                 const id = source_index;
@@ -4770,7 +4771,7 @@ const LinkerContext = struct {
                             if (kind == .require or !output_format.keepES6ImportExportSyntax() or
                                 (kind == .dynamic))
                             {
-                                if (record.source_index.isValid() and kind == .dynamic and force_cjs_to_esm[other_id]) {
+                                if (record.source_index.isValid() and kind == .dynamic and ast_flags[other_id].force_cjs_to_esm) {
                                     // If the CommonJS module was converted to ESM
                                     // and the developer `import("cjs_module")`, then
                                     // they may have code that expects the default export to return the CommonJS module.exports object
@@ -4955,7 +4956,7 @@ const LinkerContext = struct {
                                 1,
                                 Index.source(source_index),
                             ) catch unreachable;
-                            this.graph.ast.items(.uses_exports_ref)[id] = true;
+                            this.graph.ast.items(.flags)[id].uses_exports_ref = true;
                             record.calls_runtime_re_export_fn = true;
                             re_export_uses += 1;
                         }
@@ -5175,7 +5176,7 @@ const LinkerContext = struct {
             }
 
             // Make sure the CommonJS closure, if there is one, includes "exports"
-            c.graph.ast.items(.uses_exports_ref)[id] = true;
+            c.graph.ast.items(.flags)[id].uses_exports_ref = true;
         }
 
         // No need to generate a part if it'll be empty
@@ -5981,25 +5982,27 @@ const LinkerContext = struct {
             var freq = js_ast.CharFreq{
                 .freqs = [_]i32{0} ** 64,
             };
+            const ast_flags_list = c.graph.ast.items(.flags);
+
             var capacity = sorted_imports_from_other_chunks.items.len;
             {
                 const char_freqs = c.graph.ast.items(.char_freq);
+
                 for (files_in_order) |source_index| {
-                    if (char_freqs[source_index]) |char_freq| {
-                        freq.include(char_freq);
+                    if (ast_flags_list[source_index].has_char_freq) {
+                        freq.include(char_freqs[source_index]);
                     }
                 }
             }
 
-            const uses_exports_ref_list = c.graph.ast.items(.uses_exports_ref);
-            const uses_module_ref_list = c.graph.ast.items(.uses_module_ref);
             const exports_ref_list = c.graph.ast.items(.exports_ref);
             const module_ref_list = c.graph.ast.items(.module_ref);
             const parts_list = c.graph.ast.items(.parts);
 
             for (files_in_order) |source_index| {
-                const uses_exports_ref = uses_exports_ref_list[source_index];
-                const uses_module_ref = uses_module_ref_list[source_index];
+                const ast_flags = ast_flags_list[source_index];
+                const uses_exports_ref = ast_flags.uses_exports_ref;
+                const uses_module_ref = ast_flags.uses_module_ref;
                 const exports_ref = exports_ref_list[source_index];
                 const module_ref = module_ref_list[source_index];
                 const parts = parts_list[source_index];
@@ -6286,7 +6289,7 @@ const LinkerContext = struct {
             cross_chunk_prefix = js_printer.print(
                 allocator,
                 c.resolver.opts.target,
-                ast,
+                ast.toAST(),
                 c.source_(chunk.entry_point.source_index),
                 print_options,
                 cross_chunk_import_records.slice(),
@@ -6299,7 +6302,7 @@ const LinkerContext = struct {
             cross_chunk_suffix = js_printer.print(
                 allocator,
                 c.resolver.opts.target,
-                ast,
+                ast.toAST(),
                 c.source_(chunk.entry_point.source_index),
                 print_options,
                 &.{},
@@ -6735,7 +6738,7 @@ const LinkerContext = struct {
         const flags: JSMeta.Flags = c.graph.meta.items(.flags)[source_index];
         var stmts = std.ArrayList(Stmt).init(temp_allocator);
         defer stmts.deinit();
-        const ast: js_ast.Ast = c.graph.ast.get(source_index);
+        const ast: JSAst = c.graph.ast.get(source_index);
 
         switch (c.options.output_format) {
             // TODO:
@@ -7141,7 +7144,7 @@ const LinkerContext = struct {
                 .result = js_printer.print(
                     allocator,
                     c.resolver.opts.target,
-                    ast,
+                    ast.toAST(),
                     c.source_(source_index),
                     print_options,
                     ast.import_records.slice(),
@@ -7236,7 +7239,7 @@ const LinkerContext = struct {
         namespace_ref: Ref,
         import_record_index: u32,
         allocator: std.mem.Allocator,
-        ast: *const js_ast.Ast,
+        ast: *const JSAst,
     ) !bool {
         const record = ast.import_records.at(import_record_index);
         if (record.tag.isReactReference())
@@ -7409,7 +7412,7 @@ const LinkerContext = struct {
         chunk: *Chunk,
         allocator: std.mem.Allocator,
         wrap: WrapKind,
-        ast: *const js_ast.Ast,
+        ast: *const JSAst,
     ) !void {
         const shouldExtractESMStmtsForWrap = wrap != .none;
         const shouldStripExports = c.options.mode != .passthrough or c.graph.files.items(.entry_point_kind)[source_index] != .none;
@@ -7932,7 +7935,7 @@ const LinkerContext = struct {
             Index.invalid;
 
         // referencing everything by array makes the code a lot more annoying :(
-        const ast: js_ast.Ast = c.graph.ast.get(part_range.source_index.get());
+        const ast: JSAst = c.graph.ast.get(part_range.source_index.get());
 
         var needs_wrapper = false;
 
@@ -7940,7 +7943,7 @@ const LinkerContext = struct {
 
         stmts.reset();
 
-        const part_index_for_lazy_default_export: u32 = if (ast.has_lazy_export) brk: {
+        const part_index_for_lazy_default_export: u32 = if (ast.flags.has_lazy_export) brk: {
             if (c.graph.meta.items(.resolved_exports)[part_range.source_index.get()].get("default")) |default| {
                 break :brk c.graph.topLevelSymbolToParts(part_range.source_index.get(), default.data.import_ref)[0];
             }
@@ -8122,15 +8125,15 @@ const LinkerContext = struct {
         if (needs_wrapper) {
             switch (flags.wrap) {
                 .cjs => {
-                    var uses_exports_ref = ast.uses_exports_ref;
+                    var uses_exports_ref = ast.uses_exports_ref();
 
                     // Only include the arguments that are actually used
                     var args = std.ArrayList(js_ast.G.Arg).initCapacity(
                         temp_allocator,
-                        if (ast.uses_module_ref or uses_exports_ref) 2 else 0,
+                        if (ast.uses_module_ref() or uses_exports_ref) 2 else 0,
                     ) catch unreachable;
 
-                    if (ast.uses_module_ref or uses_exports_ref) {
+                    if (ast.uses_module_ref() or uses_exports_ref) {
                         args.appendAssumeCapacity(
                             js_ast.G.Arg{
                                 .binding = js_ast.Binding.alloc(
@@ -8143,7 +8146,7 @@ const LinkerContext = struct {
                             },
                         );
 
-                        if (ast.uses_module_ref) {
+                        if (ast.uses_module_ref()) {
                             args.appendAssumeCapacity(
                                 js_ast.G.Arg{
                                     .binding = js_ast.Binding.alloc(
@@ -8419,7 +8422,7 @@ const LinkerContext = struct {
                     *js_printer.BufferPrinter,
                     &printer,
                     ast.target,
-                    ast,
+                    ast.toAST(),
                     c.source_(part_range.source_index.get()),
                     print_options,
                     ast.import_records.slice(),
@@ -9781,7 +9784,7 @@ const LinkerContext = struct {
         var named_imports: *JSAst.NamedImports = &c.graph.ast.items(.named_imports)[id];
         var import_records = c.graph.ast.items(.import_records)[id];
         const exports_kind: []const js_ast.ExportsKind = c.graph.ast.items(.exports_kind);
-        const force_cjs_to_esm: []const bool = c.graph.ast.items(.force_cjs_to_esm);
+        const ast_flags = c.graph.ast.items(.flags);
 
         const named_import: js_ast.NamedImport = named_imports.get(tracker.import_ref) orelse
             // TODO: investigate if this is a bug
@@ -9816,14 +9819,16 @@ const LinkerContext = struct {
             };
         }
 
+        const flags = ast_flags[other_id];
+
         // Is this a named import of a file without any exports?
         if (!named_import.alias_is_star and
-            !c.parse_graph.ast.items(.has_lazy_export)[other_id] and
+            flags.has_lazy_export and
 
             // CommonJS exports
-            c.graph.ast.items(.export_keyword)[other_id].len == 0 and !strings.eqlComptime(named_import.alias orelse "", "default") and
+            !flags.uses_export_keyword and !strings.eqlComptime(named_import.alias orelse "", "default") and
             // ESM exports
-            !c.graph.ast.items(.uses_exports_ref)[other_id] and !c.graph.ast.items(.uses_module_ref)[other_id])
+            !flags.uses_exports_ref and !flags.uses_module_ref)
         {
             // Just warn about it and replace the import with "undefined"
             return .{
@@ -9878,7 +9883,7 @@ const LinkerContext = struct {
         }
 
         // Is this a file with dynamic exports?
-        const is_commonjs_to_esm = force_cjs_to_esm[other_id];
+        const is_commonjs_to_esm = ast_flags[other_id].force_cjs_to_esm;
         if (other_kind.isESMWithDynamicFallback() or is_commonjs_to_esm) {
             return .{
                 .value = .{
@@ -11084,3 +11089,11 @@ const ShadowEntryPoint = struct {
         }
     };
 };
+
+fn getRedirectId(id: u32) ?u32 {
+    if (id == std.math.maxInt(u32)) {
+        return null;
+    }
+
+    return id;
+}

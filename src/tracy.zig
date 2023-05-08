@@ -512,15 +512,20 @@ fn dlsym(comptime Type: type, comptime symbol: [:0]const u8) ?Type {
                 "tracy.dll",
             } else .{};
 
+            const RLTD = if (bun.Environment.isMac)
+                RTLD_LAZY | RTLD_LOCAL
+            else
+                0;
+
             if (bun.getenvZ("BUN_TRACY_PATH")) |path| {
-                const handle = std.c.dlopen(&(std.os.toPosixPath(path) catch unreachable), RTLD_LAZY | RTLD_LOCAL);
+                const handle = std.c.dlopen(&(std.os.toPosixPath(path) catch unreachable), RLTD);
                 if (handle != null) {
                     Handle.handle = handle;
                     break :get;
                 }
             }
             inline for (comptime paths_to_try) |path| {
-                const handle = std.c.dlopen(path, RTLD_LAZY | RTLD_LOCAL);
+                const handle = std.c.dlopen(path, RLTD);
                 if (handle != null) {
                     Handle.handle = handle;
                     break;

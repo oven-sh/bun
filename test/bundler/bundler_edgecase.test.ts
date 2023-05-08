@@ -540,7 +540,7 @@ describe("bundler", () => {
       stdout: `1`,
     },
   });
-  itBundled("edgecase/DCESwitchVarRedeclarationIssue2814", {
+  itBundled("edgecase/DCEVarRedeclarationIssue2814", {
     files: {
       "/entry.ts": /* ts */ `
         "use strict";
@@ -577,6 +577,53 @@ describe("bundler", () => {
             break;
         }
         console.log(B);
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: `
+        1
+        123 67
+        number
+        2
+      `,
+    },
+  });
+  itBundled("edgecase/DCEVarRedeclarationIssue2815", {
+    files: {
+      "/entry.ts": /* ts */ `
+        var x = 1;
+        try {
+          console.blog;
+        } catch (x) {
+          var x = 2;
+        }
+        console.log(x);
+
+        var e = 3;
+        try {
+          console.log("try2");
+        } catch (e) {
+          var e = 4;
+        }
+        console.log(e);
+
+        try {
+          var z = 5;
+          throw "try3";
+        } catch (w) {
+          z += w;
+          var w = 6;
+        }
+        console.log(z);
+
+        var c = 8;
+        try {
+          "try4";
+        } catch (c) {
+          var c = 9;
+        }
+        console.log(c);
       `,
     },
     target: "bun",

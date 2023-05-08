@@ -3109,7 +3109,6 @@ pub const Blob = struct {
         }
 
         var view_ = this.sharedView();
-        bloblog("sharedView {d}", .{view_.len});
         if (view_.len == 0)
             return JSC.ArrayBuffer.create(global, "", .ArrayBuffer);
 

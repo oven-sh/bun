@@ -167,6 +167,8 @@ pub const ThreadPool = struct {
             debug("{d} workers", .{cpu_count});
         }
 
+        this.pool.warm(8);
+
         this.pool.setThreadContext(this);
     }
 

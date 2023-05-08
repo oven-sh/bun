@@ -23,6 +23,7 @@ join_event: Event = .{},
 run_queue: Node.Queue = .{},
 threads: Atomic(?*Thread) = Atomic(?*Thread).init(null),
 name: []const u8 = "",
+spawned_thread_count: Atomic(u32) = Atomic(u32).init(0),
 
 const Sync = packed struct {
     /// Tracks the number of threads not searching for Tasks
@@ -437,6 +438,35 @@ inline fn notify(self: *ThreadPool, is_waking: bool) void {
     }
 
     return self.notifySlow(is_waking);
+}
+
+/// Warm the thread pool up to the given number of threads.
+/// https://www.youtube.com/watch?v=ys3qcbO5KWw
+pub fn warm(self: *ThreadPool, count: u14) void {
+    var sync = @bitCast(Sync, self.sync.load(.Monotonic));
+    if (sync.spawned >= count)
+        return;
+
+    const to_spawn = @min(count - sync.spawned, @truncate(u14, self.max_threads));
+    while (sync.spawned < to_spawn) {
+        var new_sync = sync;
+        new_sync.spawned += 1;
+        sync = @bitCast(Sync, self.sync.tryCompareAndSwap(
+            @bitCast(u32, sync),
+            @bitCast(u32, new_sync),
+            .Release,
+            .Monotonic,
+        ) orelse break);
+        const spawn_config = if (Environment.isMac)
+            // stack size must be a multiple of page_size
+            // macOS will fail to spawn a thread if the stack size is not a multiple of page_size
+            std.Thread.SpawnConfig{ .stack_size = ((std.Thread.SpawnConfig{}).stack_size + (std.mem.page_size / 2) / std.mem.page_size) * std.mem.page_size }
+        else
+            std.Thread.SpawnConfig{};
+
+        const thread = std.Thread.spawn(spawn_config, Thread.run, .{self}) catch return self.unregister(null);
+        thread.detach();
+    }
 }
 
 noinline fn notifySlow(self: *ThreadPool, is_waking: bool) void {

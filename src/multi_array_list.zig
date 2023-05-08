@@ -393,7 +393,7 @@ pub fn MultiArrayList(comptime S: type) type {
         pub fn clone(self: Self, gpa: Allocator) !Self {
             var result = Self{};
             errdefer result.deinit(gpa);
-            try result.ensureTotalCapacity(gpa, self.len);
+            try result.setCapacity(gpa, self.len);
             result.len = self.len;
             const self_slice = self.slice();
             const result_slice = result.slice();

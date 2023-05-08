@@ -487,7 +487,6 @@ pub const Options = struct {
     runtime_imports: runtime.Runtime.Imports = runtime.Runtime.Imports{},
     module_hash: u32 = 0,
     source_path: ?fs.Path = null,
-    bundle_export_ref: ?Ref = null,
     rewrite_require_resolve: bool = true,
     allocator: std.mem.Allocator = default_allocator,
     source_map_handler: ?SourceMapHandler = null,
@@ -4653,7 +4652,7 @@ fn NewPrinter(
                 p.print(":");
                 p.printModuleIdAssumeEnabled(import_record.module_id);
                 p.print(quote);
-            } else if (import_record.print_namespace_in_path and import_record.path.namespace.len > 0 and !strings.eqlComptime(import_record.path.namespace, "file")) {
+            } else if (import_record.print_namespace_in_path and !import_record.path.isFile()) {
                 p.print(quote);
                 p.print(import_record.path.namespace);
                 p.print(":");
@@ -5810,6 +5809,9 @@ pub fn print(
     renamer: bun.renamer.Renamer,
     comptime generate_source_maps: bool,
 ) PrintResult {
+    const trace = bun.tracy.traceNamed(@src(), "JSPrinter.print");
+    defer trace.end();
+
     var buffer_writer = BufferWriter.init(allocator) catch |err| return .{ .err = err };
     var buffer_printer = BufferPrinter.init(buffer_writer);
 

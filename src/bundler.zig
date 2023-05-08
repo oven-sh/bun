@@ -1387,7 +1387,7 @@ pub const Bundler = struct {
                 opts.legacy_transform_require_to_import = bundler.options.allow_runtime and !bundler.options.target.isBun();
                 opts.features.allow_runtime = bundler.options.allow_runtime;
                 opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
-                opts.features.should_fold_typescript_constant_expressions = loader.isTypeScript() or target.isBun() or bundler.options.inlining;
+                opts.features.should_fold_typescript_constant_expressions = loader.isTypeScript() or target.isBun() or bundler.options.minify_syntax;
                 opts.features.dynamic_require = target.isBun();
                 opts.transform_only = bundler.options.transform_only;
 

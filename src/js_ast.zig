@@ -578,7 +578,7 @@ pub const CharFreq = struct {
     const Vector = @Vector(64, i32);
     const Buffer = [64]i32;
 
-    freqs: Buffer align(@alignOf(Vector)) = undefined,
+    freqs: Buffer align(1) = undefined,
 
     const scan_big_chunk_size = 32;
     pub fn scan(this: *CharFreq, text: string, delta: i32) void {
@@ -592,7 +592,7 @@ pub const CharFreq = struct {
         }
     }
 
-    fn scanBig(out: *align(@alignOf(Vector)) Buffer, text: string, delta: i32) void {
+    fn scanBig(out: *align(1) Buffer, text: string, delta: i32) void {
         // https://zig.godbolt.org/z/P5dPojWGK
         var freqs = out.*;
         defer out.* = freqs;
@@ -625,7 +625,7 @@ pub const CharFreq = struct {
         freqs[63] = deltas['$'];
     }
 
-    fn scanSmall(out: *align(@alignOf(Vector)) [64]i32, text: string, delta: i32) void {
+    fn scanSmall(out: *align(1) Buffer, text: string, delta: i32) void {
         var freqs: [64]i32 = out.*;
         defer out.* = freqs;
 
@@ -1317,6 +1317,8 @@ pub const Symbol = struct {
         }
 
         pub fn followAll(symbols: *Map) void {
+            const trace = bun.tracy.traceNamed(@src(), "Symbols.followAll");
+            defer trace.end();
             for (symbols.symbols_for_source.slice()) |list| {
                 for (list.slice()) |*symbol| {
                     if (!symbol.hasLink()) continue;
@@ -1695,8 +1697,8 @@ pub const E = struct {
     pub const Number = struct {
         value: f64,
 
-        const double_digit = [_]string{ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62", "63", "64", "65", "66", "67", "68", "69", "70", "71", "72", "73", "74", "75", "76", "77", "78", "79", "80", "81", "82", "83", "84", "85", "86", "87", "88", "89", "90", "91", "92", "93", "94", "95", "96", "97", "98", "99", "100" };
-        const neg_double_digit = [_]string{ "-0", "-1", "-2", "-3", "-4", "-5", "-6", "-7", "-8", "-9", "-11", "-12", "-13", "-14", "-15", "-16", "-17", "-18", "-19", "-20", "-21", "-22", "-23", "-24", "-25", "-26", "-27", "-28", "-29", "-30", "-31", "-32", "-33", "-34", "-35", "-36", "-37", "-38", "-39", "-40", "-41", "-42", "-43", "-44", "-45", "-46", "-47", "-48", "-49", "-50", "-51", "-52", "-53", "-54", "-55", "-56", "-57", "-58", "-59", "-60", "-61", "-62", "-63", "-64", "-65", "-66", "-67", "-68", "-69", "-70", "-71", "-72", "-73", "-74", "-75", "-76", "-77", "-78", "-79", "-80", "-81", "-82", "-83", "-84", "-85", "-86", "-87", "-88", "-89", "-90", "-91", "-92", "-93", "-94", "-95", "-96", "-97", "-98", "-99", "-100" };
+        const double_digit = [_]string{ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62", "63", "64", "65", "66", "67", "68", "69", "70", "71", "72", "73", "74", "75", "76", "77", "78", "79", "80", "81", "82", "83", "84", "85", "86", "87", "88", "89", "90", "91", "92", "93", "94", "95", "96", "97", "98", "99", "100" };
+        const neg_double_digit = [_]string{ "-0", "-1", "-2", "-3", "-4", "-5", "-6", "-7", "-8", "-9", "-10", "-11", "-12", "-13", "-14", "-15", "-16", "-17", "-18", "-19", "-20", "-21", "-22", "-23", "-24", "-25", "-26", "-27", "-28", "-29", "-30", "-31", "-32", "-33", "-34", "-35", "-36", "-37", "-38", "-39", "-40", "-41", "-42", "-43", "-44", "-45", "-46", "-47", "-48", "-49", "-50", "-51", "-52", "-53", "-54", "-55", "-56", "-57", "-58", "-59", "-60", "-61", "-62", "-63", "-64", "-65", "-66", "-67", "-68", "-69", "-70", "-71", "-72", "-73", "-74", "-75", "-76", "-77", "-78", "-79", "-80", "-81", "-82", "-83", "-84", "-85", "-86", "-87", "-88", "-89", "-90", "-91", "-92", "-93", "-94", "-95", "-96", "-97", "-98", "-99", "-100" };
 
         /// String concatenation with numbers is required by the TypeScript compiler for
         /// "constant expression" handling in enums. However, we don't want to introduce
@@ -1708,11 +1710,11 @@ pub const E = struct {
         }
 
         pub fn toStringFromF64Safe(value: f64, allocator: std.mem.Allocator) ?string {
-            if (value == @trunc(value)) {
-                const int_value = @floatToInt(i64, value);
+            const int_value = @floatToInt(i64, value);
+            if (value == @intToFloat(f64, int_value)) {
                 const abs = @intCast(u64, std.math.absInt(int_value) catch return null);
                 if (abs < double_digit.len) {
-                    return if (value < 0)
+                    return if (int_value < 0)
                         neg_double_digit[abs]
                     else
                         double_digit[abs];
@@ -5040,7 +5042,10 @@ pub const Expr = struct {
             };
         }
 
-        pub const Equality = struct { equal: bool = false, ok: bool = false };
+        pub const Equality = struct {
+            equal: bool = false,
+            ok: bool = false,
+        };
 
         // Returns "equal, ok". If "ok" is false, then nothing is known about the two
         // values. If "ok" is true, the equality or inequality of the two values is
@@ -5049,36 +5054,133 @@ pub const Expr = struct {
             left: Expr.Data,
             right: Expr.Data,
             allocator: std.mem.Allocator,
+            comptime kind: enum { loose, strict },
         ) Equality {
+            // https://dorey.github.io/JavaScript-Equality-Table/
             var equality = Equality{};
             switch (left) {
-                .e_null => {
-                    equality.equal = @as(Expr.Tag, right) == Expr.Tag.e_null;
-                    equality.ok = equality.equal;
-                },
-                .e_undefined => {
-                    equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_undefined;
-                    equality.equal = equality.ok;
+                .e_null, .e_undefined => {
+                    const ok = switch (@as(Expr.Tag, right)) {
+                        .e_null, .e_undefined => true,
+                        else => @as(Expr.Tag, right).isPrimitiveLiteral(),
+                    };
+
+                    if (comptime kind == .loose) {
+                        return .{
+                            .equal = switch (@as(Expr.Tag, right)) {
+                                .e_null, .e_undefined => true,
+                                else => false,
+                            },
+                            .ok = ok,
+                        };
+                    }
+
+                    return .{
+                        .equal = @as(Tag, right) == @as(Tag, left),
+                        .ok = ok,
+                    };
                 },
                 .e_boolean => |l| {
-                    equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_boolean;
-                    equality.equal = equality.ok and l.value == right.e_boolean.value;
+                    switch (right) {
+                        .e_boolean => {
+                            equality.ok = true;
+                            equality.equal = l.value == right.e_boolean.value;
+                        },
+                        .e_number => |num| {
+                            if (comptime kind == .strict) {
+                                // "true === 1" is false
+                                // "false === 0" is false
+                                return .{ .ok = true, .equal = false };
+                            }
+
+                            return .{
+                                .ok = true,
+                                .equal = if (l.value)
+                                    num.value == 1
+                                else
+                                    num.value == 0,
+                            };
+                        },
+                        .e_null, .e_undefined => {
+                            return .{ .ok = true, .equal = false };
+                        },
+                        else => {},
+                    }
                 },
                 .e_number => |l| {
-                    equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_number;
-                    equality.equal = equality.ok and l.value == right.e_number.value;
+                    switch (right) {
+                        .e_number => |r| {
+                            return .{
+                                .ok = true,
+                                .equal = l.value == r.value,
+                            };
+                        },
+                        .e_boolean => |r| {
+                            if (comptime kind == .loose) {
+                                return .{
+                                    .ok = true,
+                                    // "1 == true" is true
+                                    // "0 == false" is true
+                                    .equal = if (r.value)
+                                        l.value == 1
+                                    else
+                                        l.value == 0,
+                                };
+                            }
+
+                            // "1 === true" is false
+                            // "0 === false" is false
+                            return .{ .ok = true, .equal = false };
+                        },
+                        .e_null, .e_undefined => {
+                            // "(not null or undefined) == undefined" is false
+                            return .{ .ok = true, .equal = false };
+                        },
+                        else => {},
+                    }
                 },
                 .e_big_int => |l| {
-                    equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_big_int;
-                    equality.equal = equality.ok and strings.eql(l.value, right.e_big_int.value);
+                    if (right == .e_big_int) {
+                        equality.ok = true;
+                        equality.equal = strings.eql(l.value, l.value);
+                    } else {
+                        equality.ok = switch (right) {
+                            .e_null, .e_undefined => true,
+                            else => false,
+                        };
+                        equality.equal = false;
+                    }
                 },
                 .e_string => |l| {
-                    equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_string;
-                    if (equality.ok) {
-                        var r = right.e_string;
-                        r.resovleRopeIfNeeded(allocator);
-                        l.resovleRopeIfNeeded(allocator);
-                        equality.equal = r.eql(E.String, l);
+                    switch (right) {
+                        .e_string => |r| {
+                            equality.ok = true;
+                            r.resovleRopeIfNeeded(allocator);
+                            l.resovleRopeIfNeeded(allocator);
+                            equality.equal = r.eql(E.String, l);
+                        },
+                        .e_null, .e_undefined => {
+                            equality.ok = true;
+                            equality.equal = false;
+                        },
+                        .e_number => |r| {
+                            if (comptime kind == .loose) {
+                                if (r.value == 0 or r.value == 1) {
+                                    equality.ok = true;
+                                    equality.equal = if (r.value == 0)
+                                        l.eqlComptime("0")
+                                    else if (r.value == 1)
+                                        l.eqlComptime("1")
+                                    else
+                                        unreachable;
+                                }
+                            } else {
+                                equality.ok = true;
+                                equality.equal = false;
+                            }
+                        },
+
+                        else => {},
                     }
                 },
                 else => {},
@@ -5733,8 +5835,6 @@ pub const Ast = struct {
     force_cjs_to_esm: bool = false,
     exports_kind: ExportsKind = ExportsKind.none,
 
-    bundle_export_ref: ?Ref = null,
-
     // This is a list of ES6 features. They are ranges instead of booleans so
     // that they can be used in log messages. Check to see if "Len > 0".
     import_keyword: logger.Range = logger.Range.None, // Does not include TypeScript-specific syntax or "import()"
@@ -5759,8 +5859,6 @@ pub const Ast = struct {
     require_ref: Ref = Ref.None,
 
     bun_plugin: BunPlugin = .{},
-
-    bundle_namespace_ref: ?Ref = null,
 
     prepend_part: ?Part = null,
 
@@ -5817,6 +5915,195 @@ pub const Ast = struct {
         if (this.externals.len > 0) bun.default_allocator.free(this.externals);
         if (this.symbols.len > 0) this.symbols.deinitWithAllocator(bun.default_allocator);
         if (this.import_records.len > 0) this.import_records.deinitWithAllocator(bun.default_allocator);
+    }
+};
+
+/// Like Ast but slimmer and for bundling only.
+///
+/// On Linux, the hottest function in the bundler is:
+/// src.multi_array_list.MultiArrayList(src.js_ast.Ast).ensureTotalCapacity
+/// https://share.firefox.dev/3NNlRKt
+///
+/// So we make a slimmer version of Ast for bundling that doesn't allocate as much memory
+pub const BundledAst = struct {
+    approximate_newline_count: u32 = 0,
+    nested_scope_slot_counts: SlotCounts = SlotCounts{},
+    externals: []u32 = &[_]u32{},
+
+    exports_kind: ExportsKind = ExportsKind.none,
+
+    /// These are stored at the AST level instead of on individual AST nodes so
+    /// they can be manipulated efficiently without a full AST traversal
+    import_records: ImportRecord.List = .{},
+
+    hashbang: string = "",
+    directive: string = "",
+    url_for_css: string = "",
+    parts: Part.List = Part.List{},
+    // This list may be mutated later, so we should store the capacity
+    symbols: Symbol.List = Symbol.List{},
+    module_scope: Scope = Scope{},
+    char_freq: CharFreq = undefined,
+    exports_ref: Ref = Ref.None,
+    module_ref: Ref = Ref.None,
+    wrapper_ref: Ref = Ref.None,
+    require_ref: Ref = Ref.None,
+
+    // These are used when bundling. They are filled in during the parser pass
+    // since we already have to traverse the AST then anyway and the parser pass
+    // is conveniently fully parallelized.
+    named_imports: NamedImports = NamedImports.init(bun.failing_allocator),
+    named_exports: NamedExports = NamedExports.init(bun.failing_allocator),
+    export_star_import_records: []u32 = &([_]u32{}),
+
+    allocator: std.mem.Allocator,
+    top_level_symbols_to_parts: TopLevelSymbolToParts = .{},
+
+    commonjs_named_exports: CommonJSNamedExports = .{},
+
+    redirect_import_record_index: u32 = std.math.maxInt(u32),
+
+    /// Only populated when bundling
+    target: bun.options.Target = .browser,
+
+    const_values: ConstValuesMap = .{},
+
+    flags: BundledAst.Flags = .{},
+
+    pub const NamedImports = Ast.NamedImports;
+    pub const NamedExports = Ast.NamedExports;
+    pub const TopLevelSymbolToParts = Ast.TopLevelSymbolToParts;
+    pub const CommonJSNamedExports = Ast.CommonJSNamedExports;
+    pub const ConstValuesMap = Ast.ConstValuesMap;
+
+    pub const Flags = packed struct {
+        // This is a list of CommonJS features. When a file uses CommonJS features,
+        // it's not a candidate for "flat bundling" and must be wrapped in its own
+        // closure.
+        uses_exports_ref: bool = false,
+        uses_module_ref: bool = false,
+        // uses_require_ref: bool = false,
+
+        uses_export_keyword: bool = false,
+
+        has_char_freq: bool = false,
+        force_cjs_to_esm: bool = false,
+        has_lazy_export: bool = false,
+    };
+
+    pub const empty = BundledAst.init(Ast.empty);
+
+    pub inline fn uses_exports_ref(this: *const BundledAst) bool {
+        return this.flags.uses_exports_ref;
+    }
+    pub inline fn uses_module_ref(this: *const BundledAst) bool {
+        return this.flags.uses_module_ref;
+    }
+    // pub inline fn uses_require_ref(this: *const BundledAst) bool {
+    //     return this.flags.uses_require_ref;
+    // }
+
+    pub fn toAST(this: *const BundledAst) Ast {
+        return .{
+            .approximate_newline_count = this.approximate_newline_count,
+            .nested_scope_slot_counts = this.nested_scope_slot_counts,
+            .externals = this.externals,
+
+            .exports_kind = this.exports_kind,
+
+            .import_records = this.import_records,
+
+            .hashbang = this.hashbang,
+            .directive = this.directive,
+            // .url_for_css = this.url_for_css,
+            .parts = this.parts,
+            // This list may be mutated later, so we should store the capacity
+            .symbols = this.symbols,
+            .module_scope = this.module_scope,
+            .char_freq = if (this.flags.has_char_freq) this.char_freq else null,
+            .exports_ref = this.exports_ref,
+            .module_ref = this.module_ref,
+            .wrapper_ref = this.wrapper_ref,
+            .require_ref = this.require_ref,
+
+            // These are used when bundling. They are filled in during the parser pass
+            // since we already have to traverse the AST then anyway and the parser pass
+            // is conveniently fully parallelized.
+            .named_imports = this.named_imports,
+            .named_exports = this.named_exports,
+            .export_star_import_records = this.export_star_import_records,
+
+            .allocator = this.allocator,
+            .top_level_symbols_to_parts = this.top_level_symbols_to_parts,
+
+            .commonjs_named_exports = this.commonjs_named_exports,
+
+            .redirect_import_record_index = this.redirect_import_record_index,
+
+            .target = this.target,
+
+            .const_values = this.const_values,
+
+            .uses_exports_ref = this.flags.uses_exports_ref,
+            .uses_module_ref = this.flags.uses_module_ref,
+            // .uses_require_ref = ast.uses_require_ref,
+            .export_keyword = .{ .len = if (this.flags.uses_export_keyword) 1 else 0, .loc = .{} },
+            .force_cjs_to_esm = this.flags.force_cjs_to_esm,
+            .has_lazy_export = this.flags.has_lazy_export,
+        };
+    }
+
+    pub fn init(ast: Ast) BundledAst {
+        return .{
+            .approximate_newline_count = @truncate(u32, ast.approximate_newline_count),
+            .nested_scope_slot_counts = ast.nested_scope_slot_counts,
+            .externals = ast.externals,
+
+            .exports_kind = ast.exports_kind,
+
+            .import_records = ast.import_records,
+
+            .hashbang = ast.hashbang,
+            .directive = ast.directive orelse "",
+            // .url_for_css = ast.url_for_css orelse "",
+            .parts = ast.parts,
+            // This list may be mutated later, so we should store the capacity
+            .symbols = ast.symbols,
+            .module_scope = ast.module_scope,
+            .char_freq = ast.char_freq orelse undefined,
+            .exports_ref = ast.exports_ref,
+            .module_ref = ast.module_ref,
+            .wrapper_ref = ast.wrapper_ref,
+            .require_ref = ast.require_ref,
+
+            // These are used when bundling. They are filled in during the parser pass
+            // since we already have to traverse the AST then anyway and the parser pass
+            // is conveniently fully parallelized.
+            .named_imports = ast.named_imports,
+            .named_exports = ast.named_exports,
+            .export_star_import_records = ast.export_star_import_records,
+
+            .allocator = ast.allocator,
+            .top_level_symbols_to_parts = ast.top_level_symbols_to_parts,
+
+            .commonjs_named_exports = ast.commonjs_named_exports,
+
+            .redirect_import_record_index = ast.redirect_import_record_index orelse std.math.maxInt(u32),
+
+            .target = ast.target,
+
+            .const_values = ast.const_values,
+
+            .flags = .{
+                .uses_exports_ref = ast.uses_exports_ref,
+                .uses_module_ref = ast.uses_module_ref,
+                // .uses_require_ref = ast.uses_require_ref,
+                .uses_export_keyword = ast.export_keyword.len > 0,
+                .has_char_freq = ast.char_freq != null,
+                .force_cjs_to_esm = ast.force_cjs_to_esm,
+                .has_lazy_export = ast.has_lazy_export,
+            },
+        };
     }
 };
 
@@ -9668,7 +9955,9 @@ pub const Macro = struct {
 };
 
 pub const ASTMemoryAllocator = struct {
-    stack_allocator: std.heap.StackFallbackAllocator(8096) = undefined,
+    stack_allocator: std.heap.StackFallbackAllocator(
+        if (std.mem.page_size > 8096) 8096 else std.mem.page_size,
+    ) = undefined,
     bump_allocator: std.mem.Allocator = undefined,
     allocator: std.mem.Allocator,
     previous: ?*ASTMemoryAllocator = null,

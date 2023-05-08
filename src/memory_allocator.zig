@@ -79,6 +79,10 @@ const CAllocator = struct {
     }
 
     fn alloc(_: *anyopaque, len: usize, log2_align: u8, _: usize) ?[*]u8 {
+        if (comptime FeatureFlags.alignment_tweak) {
+            return alignedAlloc(len, log2_align);
+        }
+
         const alignment = @as(usize, 1) << @intCast(Allocator.Log2Align, log2_align);
         return alignedAlloc(len, alignment);
     }

@@ -2129,7 +2129,7 @@ pub const ExternalBuffer = struct {
     }
 
     pub fn toJS(this: *ExternalBuffer, ctx: *JSC.JSGlobalObject) JSC.JSValue {
-        return JSC.JSValue.createBufferWithCtx(ctx, this.buf, this.ctx, ExternalBuffer_deallocator);
+        return JSC.JSValue.createBufferWithCtx(ctx, this.buf, this, ExternalBuffer_deallocator);
     }
 
     pub fn toArrayBuffer(this: *ExternalBuffer, ctx: *JSC.JSGlobalObject) JSC.JSValue {

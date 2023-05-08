@@ -697,11 +697,11 @@ fn NewLexer_(
                             if (lexer.code_point == '{') {
                                 suffix_len = 2;
                                 lexer.step();
-                                if (lexer.rescan_close_brace_as_template_token) {
-                                    lexer.token = T.t_template_middle;
-                                } else {
-                                    lexer.token = T.t_template_head;
-                                }
+                                lexer.token = if (lexer.rescan_close_brace_as_template_token)
+                                    T.t_template_middle
+                                else
+                                    T.t_template_head;
+
                                 break :stringLiteral;
                             }
                             continue :stringLiteral;
@@ -1698,16 +1698,23 @@ fn NewLexer_(
                     },
 
                     '_', '$', 'a'...'z', 'A'...'Z' => {
+                        const advance = latin1IdentifierContinueLength(lexer.source.contents[lexer.current..]);
+
+                        lexer.end = lexer.current + advance;
+                        lexer.current = lexer.end;
+
                         lexer.step();
-                        while (isIdentifierContinue(lexer.code_point)) {
-                            lexer.step();
+
+                        if (lexer.code_point >= 0x80) {
+                            while (isIdentifierContinue(lexer.code_point)) {
+                                lexer.step();
+                            }
                         }
 
                         if (lexer.code_point != '\\') {
                             // this code is so hot that if you save lexer.raw() into a temporary variable
                             // it shows up in profiling
                             lexer.identifier = lexer.raw();
-                            // switching to strings.ExactSizeMatcher doesn't seem to have an impact here
                             lexer.token = Keywords.get(lexer.identifier) orelse T.t_identifier;
                         } else {
                             const scan_result = try lexer.scanIdentifierWithEscapes(.normal);
@@ -3162,7 +3169,7 @@ pub fn isLatin1Identifier(comptime Buffer: type, name: Buffer) bool {
         else => return false,
     }
 
-    if (name.len > 0) {
+    if (name.len > 1) {
         for (name[1..]) |c| {
             switch (c) {
                 '0'...'9',
@@ -3177,6 +3184,64 @@ pub fn isLatin1Identifier(comptime Buffer: type, name: Buffer) bool {
     }
 
     return true;
+}
+
+fn latin1IdentifierContinueLength(name: []const u8) usize {
+    var remaining = name;
+    const wrap_len = 16;
+    const len_wrapped: usize = if (comptime Environment.enableSIMD) remaining.len - (remaining.len % wrap_len) else 0;
+    var wrapped = name[0..len_wrapped];
+    remaining = name[wrapped.len..];
+
+    if (comptime Environment.enableSIMD) {
+        // This is not meaningfully faster on aarch64.
+        // Earlier attempt: https://zig.godbolt.org/z/j5G8M9ooG
+        // Later: https://zig.godbolt.org/z/7Yzh7df9v
+        const Vec = @Vector(wrap_len, u8);
+
+        while (wrapped.len > 0) : (wrapped = wrapped[wrap_len..]) {
+            var other: [wrap_len]u8 = undefined;
+            const vec: [wrap_len]u8 = wrapped[0..wrap_len].*;
+            for (vec, &other) |c, *dest| {
+                dest.* = switch (c) {
+                    '0'...'9',
+                    'a'...'z',
+                    'A'...'Z',
+                    '$',
+                    '_',
+                    => 0,
+                    else => 1,
+                };
+            }
+
+            if (std.simd.firstIndexOfValue(@bitCast(Vec, other), 1)) |first| {
+                if (comptime Environment.allow_assert) {
+                    for (vec[0..first]) |c| {
+                        std.debug.assert(isIdentifierContinue(c));
+                    }
+
+                    std.debug.assert(!isIdentifierContinue(vec[first]));
+                }
+
+                return @as(usize, first) +
+                    @ptrToInt(wrapped.ptr) - @ptrToInt(name.ptr);
+            }
+        }
+    }
+
+    for (remaining, 0..) |c, len| {
+        switch (c) {
+            '0'...'9',
+            'a'...'z',
+            'A'...'Z',
+            '$',
+            '_',
+            => {},
+            else => return len + len_wrapped,
+        }
+    }
+
+    return name.len;
 }
 
 pub const PragmaArg = enum {

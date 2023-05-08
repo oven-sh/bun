@@ -230,6 +230,10 @@ pub const Arena = struct {
         var this = bun.cast(*mimalloc.Heap, arena);
         // if (comptime Environment.allow_assert)
         //     ArenaRegistry.assert(.{ .heap = this });
+        if (comptime FeatureFlags.alignment_tweak) {
+            return alignedAlloc(this, len, log2_align);
+        }
+
         const alignment = @as(usize, 1) << @intCast(Allocator.Log2Align, log2_align);
 
         return alignedAlloc(

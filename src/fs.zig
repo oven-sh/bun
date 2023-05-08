@@ -22,6 +22,7 @@ const allocators = @import("./allocators.zig");
 
 pub const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
 pub const PathBuffer = [bun.MAX_PATH_BYTES]u8;
+const debug = Output.scoped(.fs, false);
 
 // pub const FilesystemImplementation = @import("fs_impl.zig");
 
@@ -959,6 +960,7 @@ pub const FileSystem = struct {
                 fs.readFileError(path, err);
                 return err;
             });
+            debug("stat({d}) = {d}", .{ file.handle, size });
 
             // Skip the pread call for empty files
             // Otherwise will get out of bounds errors
@@ -997,6 +999,7 @@ pub const FileSystem = struct {
                     };
                     shared_buffer.list.items = shared_buffer.list.items[0 .. read_count + offset];
                     file_contents = shared_buffer.list.items;
+                    debug("pread({d}, {d}) = {d}", .{ file.handle, size, read_count });
 
                     if (comptime stream) {
                         // check again that stat() didn't change the file size
@@ -1022,12 +1025,17 @@ pub const FileSystem = struct {
                 }
             } else {
                 // We use pread to ensure if the file handle was open, it doesn't seek from the last position
-                var buf = try allocator.alloc(u8, size);
+                var buf = try allocator.alloc(u8, size + 1);
+
+                // stick a zero at the end
+                buf[size] = 0;
+
                 const read_count = file.preadAll(buf, 0) catch |err| {
                     fs.readFileError(path, err);
                     return err;
                 };
                 file_contents = buf[0..read_count];
+                debug("pread({d}, {d}) = {d}", .{ file.handle, size, read_count });
             }
 
             return File{ .path = Path.init(path), .contents = file_contents };
@@ -1223,8 +1231,12 @@ pub const Path = struct {
     is_disabled: bool = false,
     is_symlink: bool = false,
 
+    pub fn isFile(this: *const Path) bool {
+        return this.namespace.len == 0 or strings.eqlComptime(this.namespace, "file");
+    }
+
     pub fn hashKey(this: *const Path) u64 {
-        if (this.namespace.len == 0 or strings.eqlComptime(this.namespace, "file")) {
+        if (this.isFile()) {
             return bun.hash(this.text);
         }
 

@@ -48,7 +48,7 @@ namespace WebCore {
 const JSC::ConstructAbility s_bundlerPluginRunOnResolvePluginsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_bundlerPluginRunOnResolvePluginsCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_bundlerPluginRunOnResolvePluginsCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_bundlerPluginRunOnResolvePluginsCodeLength = 3300;
+const int s_bundlerPluginRunOnResolvePluginsCodeLength = 3593;
 static const JSC::Intrinsic s_bundlerPluginRunOnResolvePluginsCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_bundlerPluginRunOnResolvePluginsCode =
     "(function (\n" \
@@ -73,7 +73,8 @@ const char* const s_bundlerPluginRunOnResolvePluginsCode =
     "  ][kindId];\n" \
     "\n" \
     "  var promiseResult = (async (inputPath, inputNamespace, importer, kind) => {\n" \
-    "    var results = this.onResolve.@get(inputNamespace);\n" \
+    "    var {onResolve, onLoad} = this;\n" \
+    "    var results = onResolve.@get(inputNamespace);\n" \
     "    if (!results) {\n" \
     "      this.onResolveAsync(internalID, null, null, null);\n" \
     "      return null;\n" \
@@ -151,10 +152,17 @@ const char* const s_bundlerPluginRunOnResolvePluginsCode =
     "          if (userNamespace === \"dataurl\") {\n" \
     "            if (!path.startsWith(\"data:\")) {\n" \
     "              @throwTypeError(\n" \
-    "                'onResolve plugin \"path\" must start with \"data:\" when the namespace is\"dataurl\"'\n" \
+    "                'onResolve plugin \"path\" must start with \"data:\" when the namespace is \"dataurl\"'\n" \
     "              );\n" \
     "            }\n" \
     "          }\n" \
+    "\n" \
+    "          if (userNamespace && userNamespace !== \"file\" && (!onLoad || !onLoad.@has(userNamespace))) {\n" \
+    "            @throwTypeError(\n" \
+    "              `Expected onLoad plugin for namespace ${@jsonStringify(userNamespace, \" \")} to exist`\n" \
+    "            );\n" \
+    "          }\n" \
+    "\n" \
     "        }\n" \
     "        this.onResolveAsync(internalID, path, userNamespace, external);\n" \
     "        return null;\n" \
@@ -192,7 +200,7 @@ const char* const s_bundlerPluginRunOnResolvePluginsCode =
 const JSC::ConstructAbility s_bundlerPluginRunSetupFunctionCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_bundlerPluginRunSetupFunctionCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_bundlerPluginRunSetupFunctionCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_bundlerPluginRunSetupFunctionCodeLength = 3795;
+const int s_bundlerPluginRunSetupFunctionCodeLength = 3794;
 static const JSC::Intrinsic s_bundlerPluginRunSetupFunctionCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_bundlerPluginRunSetupFunctionCode =
     "(function (setup) {\n" \
@@ -232,7 +240,6 @@ const char* const s_bundlerPluginRunSetupFunctionCode =
     "    }\n" \
     "\n" \
     "    var callbacks = map.@get(namespace);\n" \
-    "\n" \
     "\n" \
     "    if (!callbacks) {\n" \
     "      map.@set(namespace, [[filter, callback]]);\n" \
@@ -346,7 +353,7 @@ const char* const s_bundlerPluginRunSetupFunctionCode =
 const JSC::ConstructAbility s_bundlerPluginRunOnLoadPluginsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_bundlerPluginRunOnLoadPluginsCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_bundlerPluginRunOnLoadPluginsCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_bundlerPluginRunOnLoadPluginsCodeLength = 2726;
+const int s_bundlerPluginRunOnLoadPluginsCodeLength = 2740;
 static const JSC::Intrinsic s_bundlerPluginRunOnLoadPluginsCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_bundlerPluginRunOnLoadPluginsCode =
     "(function (internalID, path, namespace, defaultLoaderId) {\n" \
@@ -434,7 +441,7 @@ const char* const s_bundlerPluginRunOnLoadPluginsCode =
     "\n" \
     "        const chosenLoader = LOADERS_MAP[loader];\n" \
     "        if (chosenLoader === @undefined) {\n" \
-    "          @throwTypeError('Loader \"' + loader + '\" is not supported.');\n" \
+    "          @throwTypeError(`Loader ${@jsonStringify(loader, \" \")} is not supported.`);\n" \
     "        }\n" \
     "\n" \
     "        this.onLoadAsync(internalID, contents, chosenLoader);\n" \

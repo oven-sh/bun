@@ -491,6 +491,7 @@ pub const JSBundler = struct {
             this.value.deinit();
             if (this.completion) |completion|
                 completion.deref();
+            bun.default_allocator.destroy(this);
         }
 
         const AnyTask = JSC.AnyTask.New(@This(), runOnJSThread);
@@ -677,6 +678,7 @@ pub const JSBundler = struct {
             source_code_value: JSValue,
             loader_as_int: JSValue,
         ) void {
+            JSC.markBinding(@src());
             var completion = this.completion orelse {
                 this.deinit();
                 return;
@@ -718,6 +720,7 @@ pub const JSBundler = struct {
     pub const Plugin = opaque {
         extern fn JSBundlerPlugin__create(*JSC.JSGlobalObject, JSC.JSGlobalObject.BunPluginTarget) *Plugin;
         pub fn create(globalObject: *JSC.JSGlobalObject, target: JSC.JSGlobalObject.BunPluginTarget) *Plugin {
+            JSC.markBinding(@src());
             var plugin = JSBundlerPlugin__create(globalObject, target);
             JSC.JSValue.fromCell(plugin).protect();
             return plugin;
@@ -756,7 +759,11 @@ pub const JSBundler = struct {
             path: *const Fs.Path,
             is_onLoad: bool,
         ) bool {
-            const namespace_string = if (strings.eqlComptime(path.namespace, "file"))
+            JSC.markBinding(@src());
+            const tracer = bun.tracy.traceNamed(@src(), "JSBundler.hasAnyMatches");
+            defer tracer.end();
+
+            const namespace_string = if (path.isFile())
                 ZigString.Empty
             else
                 ZigString.fromUTF8(path.namespace);
@@ -772,6 +779,9 @@ pub const JSBundler = struct {
             context: *anyopaque,
             default_loader: options.Loader,
         ) void {
+            JSC.markBinding(@src());
+            const tracer = bun.tracy.traceNamed(@src(), "JSBundler.matchOnLoad");
+            defer tracer.end();
             const namespace_string = if (namespace.len == 0)
                 ZigString.init("file")
             else
@@ -789,6 +799,9 @@ pub const JSBundler = struct {
             context: *anyopaque,
             import_record_kind: bun.ImportKind,
         ) void {
+            JSC.markBinding(@src());
+            const tracer = bun.tracy.traceNamed(@src(), "JSBundler.matchOnResolve");
+            defer tracer.end();
             const namespace_string = if (strings.eqlComptime(namespace, "file"))
                 ZigString.Empty
             else
@@ -802,15 +815,20 @@ pub const JSBundler = struct {
             this: *Plugin,
             object: JSC.JSValue,
         ) JSValue {
+            JSC.markBinding(@src());
+            const tracer = bun.tracy.traceNamed(@src(), "JSBundler.addPlugin");
+            defer tracer.end();
             return JSBundlerPlugin__runSetupFunction(this, object);
         }
 
         pub fn deinit(this: *Plugin) void {
+            JSC.markBinding(@src());
             JSBundlerPlugin__tombestone(this);
             JSC.JSValue.fromCell(this).unprotect();
         }
 
         pub fn setConfig(this: *Plugin, config: *anyopaque) void {
+            JSC.markBinding(@src());
             JSBundlerPlugin__setConfig(this, config);
         }
 

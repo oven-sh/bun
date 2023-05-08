@@ -199,9 +199,9 @@ export default {
     page("ecosystem/hono", "Hono", {
       description: `Hono is an ultra-fast, Bun-friendly web framework designed for edge environments.`,
     }),
-    page("ecosystem/buchta", "Buchta", {
-      description: `Buchta is a Bun-native fullstack framework for Svelte and Preact apps.`,
-    }),
+    // page("ecosystem/buchta", "Buchta", {
+    //   description: `Buchta is a Bun-native fullstack framework for Svelte and Preact apps.`,
+    // }),
     page("ecosystem/stric", "Stric", {
       description: `Stric is a minimalist, fast web framework for Bun.`,
     }),

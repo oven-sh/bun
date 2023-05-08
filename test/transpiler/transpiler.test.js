@@ -259,7 +259,7 @@ describe("Bun.Transpiler", () => {
       // TODO: why are there two newlines here?
       exp("F<{}>()\nclass F<T> {}", "F();\n\nclass F {\n}");
 
-      exp("f<{}>()\nfunction f<T>() {}", "f();\nfunction f() {\n}");
+      exp("f<{}>()\nfunction f<T>() {}", "let f = function() {\n};\nf()");
     });
 
     // TODO: fix all the cases that report generic "Parse error"
@@ -596,7 +596,7 @@ describe("Bun.Transpiler", () => {
       exp("class Foo<const T extends X> {}", "class Foo {\n}");
       exp("Foo = class <const T> {}", "Foo = class {\n}");
       exp("Foo = class Bar<const T> {}", "Foo = class Bar {\n}");
-      exp("function foo<const T>() {}", "function foo() {\n}");
+      exp("function foo<const T>() {}", "let foo = function() {\n}");
       exp("foo = function <const T>() {}", "foo = function() {\n}");
       exp("foo = function bar<const T>() {}", "foo = function bar() {\n}");
       exp("class Foo { bar<const T>() {} }", "class Foo {\n  bar() {\n  }\n}");
@@ -1098,6 +1098,9 @@ export default class {
       react: {
         bacon: `${import.meta.dir}/macro-check.js`,
       },
+    },
+    minify: {
+      syntax: true,
     },
   });
 
@@ -1733,8 +1736,14 @@ export const { dead } = { dead: "hello world!" };
     });
 
     it("rewrite string to length", () => {
-      expectPrinted_(`export const foo = "a".length + "b".length;`, `export const foo = 1 + 1`);
       expectBunPrinted_(`export const foo = "a".length + "b".length;`, `export const foo = 2`);
+      // check rope string
+      expectBunPrinted_(`export const foo = ("a" + "b").length;`, `export const foo = 2`);
+      expectBunPrinted_(
+        // check UTF-16
+        `export const foo = "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌".length;`,
+        `export const foo = 52`,
+      );
     });
 
     describe("Bun.js", () => {
@@ -2163,6 +2172,60 @@ class Foo {
   });
 
   describe("simplification", () => {
+    const transpiler = new Bun.Transpiler({
+      loader: "tsx",
+      define: {
+        "process.env.NODE_ENV": JSON.stringify("development"),
+        user_undefined: "undefined",
+      },
+      macro: {
+        react: {
+          bacon: `${import.meta.dir}/macro-check.js`,
+        },
+      },
+      platform: "browser",
+      minify: { syntax: true },
+    });
+
+    const parsed = (code, trim = true, autoExport = false, transpiler_ = transpiler) => {
+      if (autoExport) {
+        code = "export default (" + code + ")";
+      }
+
+      var out = transpiler_.transformSync(code, "js");
+      if (autoExport && out.startsWith("export default ")) {
+        out = out.substring("export default ".length);
+      }
+
+      if (trim) {
+        out = out.trim();
+
+        if (out.endsWith(";")) {
+          out = out.substring(0, out.length - 1);
+        }
+
+        return out.trim();
+      }
+
+      return out;
+    };
+
+    const expectPrinted = (code, out) => {
+      expect(parsed(code, true, true)).toBe(out);
+    };
+
+    const expectPrinted_ = (code, out) => {
+      expect(parsed(code, !out.endsWith(";\n"), false)).toBe(out);
+    };
+
+    const expectPrintedNoTrim = (code, out) => {
+      expect(parsed(code, false, false)).toBe(out);
+    };
+
+    const expectBunPrinted_ = (code, out) => {
+      expect(parsed(code, !out.endsWith(";\n"), false, bunTranspiler)).toBe(out);
+    };
+
     it("unary operator", () => {
       expectPrinted("a = !(b, c)", "a = (b, !c)");
     });
@@ -2172,6 +2235,7 @@ class Foo {
         inline: true,
         platform: "bun",
         allowBunRuntime: false,
+        minify: { syntax: true },
       });
 
       function check(input, output) {
@@ -2182,6 +2246,7 @@ class Foo {
             .replaceAll(/^  /gm, ""),
         ).toBe("export function hello() {\n" + output + "\n}".replaceAll(/^  /gm, ""));
       }
+      hideFromStackTrace(check);
 
       check("const x = 1; return x", "return 1;");
       check("const x = 1; return x + 1", "return 2;");
@@ -2199,9 +2264,7 @@ const d = b + a;
 console.log(a, b, c, d);
         `,
         `
-const c = "ba";
-const b = c + "a";
-const d = b + "a";
+const c = "ba", b = c + "a", d = b + "a";
 console.log("a", b, c, d);
         `.trim(),
       );
@@ -2253,8 +2316,7 @@ hey();
         console.log(foo, array);
         `,
         `
-const foo = { bar: true };
-const array = [1];
+const foo = { bar: !0 }, array = [1];
 console.log(foo, array);
           `.trim(),
       );
@@ -2265,6 +2327,7 @@ console.log(foo, array);
         inline: true,
         platform: "bun",
         allowBunRuntime: false,
+        minify: { syntax: true },
       });
 
       // Check that pushing/popping scopes doesn't cause a crash
@@ -2313,6 +2376,7 @@ console.log(foo, array);
         inline: true,
         platform: "bun",
         allowBunRuntime: false,
+        minify: { syntax: true },
       });
       function check(input, output) {
         expect(
@@ -2334,7 +2398,7 @@ console.log(foo, array);
       // Can substitute into normal unary operators
       check("let x = 1; return +x", "return 1;");
       check("let x = 1; return -x", "return -1;");
-      check("let x = 1; return !x", "return false;");
+      check("let x = 1; return !x", "return !1;");
       check("let x = 1; return ~x", "return ~1;");
       // TODO: remove needless return undefined;
       // check("let x = 1; return void x", "let x = 1;");
@@ -2374,10 +2438,10 @@ console.log(foo, array);
       check("let x = 1; x--", "let x = 1;\nx--;");
       check("let x = 1; delete x", "let x = 1;\ndelete x;");
 
-      // Cannot substitute into mutating binary operators
-      check("let x = 1; x = 2", "let x = 1;\nx = 2;");
-      check("let x = 1; x += 2", "let x = 1;\nx += 2;");
-      check("let x = 1; x ||= 2", "let x = 1;\nx ||= 2;");
+      // Cannot substitute into mutating binary operators unless immediately after the assignment
+      check("let x = 1; let y; x = 2", "let x = 1, y;\nx = 2;");
+      check("let x = 1; let y; x += 2", "let x = 1, y;\nx += 2;");
+      check("let x = 1; let y; x ||= 2", "let x = 1, y;\nx ||= 2;");
 
       // Can substitute past mutating binary operators when the left operand has no side effects
       // check("let x = 1; arg0 = x", "arg0 = 1;");
@@ -2635,6 +2699,16 @@ console.log(foo, array);
     });
 
     it("constant folding", () => {
+      // we have an optimization for numbers 0 - 100, -0 - -100 so we must test those specifically
+      // https://github.com/oven-sh/bun/issues/2810
+      for (let i = 1; i < 120; i++) {
+        const inner = "${" + i + " * 1}";
+        expectPrinted("console.log(`" + inner + "`)", 'console.log("' + i + '")');
+
+        const innerNeg = "${" + -i + " * 1}";
+        expectPrinted("console.log(`" + innerNeg + "`)", 'console.log("' + -i + '")');
+      }
+
       expectPrinted("1 && 2", "2");
       expectPrinted("1 || 2", "1");
       expectPrinted("0 && 1", "0");
@@ -2643,7 +2717,7 @@ console.log(foo, array);
       expectPrinted("null ?? 1", "1");
       expectPrinted("undefined ?? 1", "1");
       expectPrinted("0 ?? 1", "0");
-      expectPrinted("false ?? 1", "false");
+      expectPrinted("false ?? 1", "!1");
       expectPrinted('"" ?? 1', '""');
 
       expectPrinted("typeof undefined", '"undefined"');
@@ -2662,60 +2736,60 @@ console.log(foo, array);
       expectPrinted("typeof [null]", '"object"');
       expectPrinted("typeof ['boolean']", '"object"');
 
-      expectPrinted('typeof [] === "object"', "true");
-      expectPrinted("typeof {foo: 123} === typeof {bar: 123}", "true");
-      expectPrinted("typeof {foo: 123} !== typeof 123", "true");
+      expectPrinted('typeof [] === "object"', "!0");
+      expectPrinted("typeof {foo: 123} === typeof {bar: 123}", "!0");
+      expectPrinted("typeof {foo: 123} !== typeof 123", "!0");
 
-      expectPrinted("undefined === undefined", "true");
-      expectPrinted("undefined !== undefined", "false");
-      expectPrinted("undefined == undefined", "true");
-      expectPrinted("undefined != undefined", "false");
+      expectPrinted("undefined === undefined", "!0");
+      expectPrinted("undefined !== undefined", "!1");
+      expectPrinted("undefined == undefined", "!0");
+      expectPrinted("undefined != undefined", "!1");
 
-      expectPrinted("null === null", "true");
-      expectPrinted("null !== null", "false");
-      expectPrinted("null == null", "true");
-      expectPrinted("null != null", "false");
+      expectPrinted("null === null", "!0");
+      expectPrinted("null !== null", "!1");
+      expectPrinted("null == null", "!0");
+      expectPrinted("null != null", "!1");
 
-      expectPrinted("undefined === null", "undefined === null");
-      expectPrinted("undefined !== null", "undefined !== null");
-      expectPrinted("undefined == null", "undefined == null");
-      expectPrinted("undefined != null", "undefined != null");
+      expectPrinted("undefined === null", "!1");
+      expectPrinted("undefined !== null", "!0");
+      expectPrinted("undefined == null", "!0");
+      expectPrinted("undefined != null", "!1");
 
-      expectPrinted("true === true", "true");
-      expectPrinted("true === false", "false");
-      expectPrinted("true !== true", "false");
-      expectPrinted("true !== false", "true");
-      expectPrinted("true == true", "true");
-      expectPrinted("true == false", "false");
-      expectPrinted("true != true", "false");
-      expectPrinted("true != false", "true");
+      expectPrinted("true === true", "!0");
+      expectPrinted("true === false", "!1");
+      expectPrinted("true !== true", "!1");
+      expectPrinted("true !== false", "!0");
+      expectPrinted("true == true", "!0");
+      expectPrinted("true == false", "!1");
+      expectPrinted("true != true", "!1");
+      expectPrinted("true != false", "!0");
 
-      expectPrinted("1 === 1", "true");
-      expectPrinted("1 === 2", "false");
+      expectPrinted("1 === 1", "!0");
+      expectPrinted("1 === 2", "!1");
       expectPrinted("1 === '1'", '1 === "1"');
-      expectPrinted("1 == 1", "true");
-      expectPrinted("1 == 2", "false");
+      expectPrinted("1 == 1", "!0");
+      expectPrinted("1 == 2", "!1");
       expectPrinted("1 == '1'", '1 == "1"');
 
-      expectPrinted("1 !== 1", "false");
-      expectPrinted("1 !== 2", "true");
+      expectPrinted("1 !== 1", "!1");
+      expectPrinted("1 !== 2", "!0");
       expectPrinted("1 !== '1'", '1 !== "1"');
-      expectPrinted("1 != 1", "false");
-      expectPrinted("1 != 2", "true");
+      expectPrinted("1 != 1", "!1");
+      expectPrinted("1 != 2", "!0");
       expectPrinted("1 != '1'", '1 != "1"');
 
-      expectPrinted("'a' === '\\x61'", "true");
-      expectPrinted("'a' === '\\x62'", "false");
-      expectPrinted("'a' === 'abc'", "false");
-      expectPrinted("'a' !== '\\x61'", "false");
-      expectPrinted("'a' !== '\\x62'", "true");
-      expectPrinted("'a' !== 'abc'", "true");
-      expectPrinted("'a' == '\\x61'", "true");
-      expectPrinted("'a' == '\\x62'", "false");
-      expectPrinted("'a' == 'abc'", "false");
-      expectPrinted("'a' != '\\x61'", "false");
-      expectPrinted("'a' != '\\x62'", "true");
-      expectPrinted("'a' != 'abc'", "true");
+      expectPrinted("'a' === '\\x61'", "!0");
+      expectPrinted("'a' === '\\x62'", "!1");
+      expectPrinted("'a' === 'abc'", "!1");
+      expectPrinted("'a' !== '\\x61'", "!1");
+      expectPrinted("'a' !== '\\x62'", "!0");
+      expectPrinted("'a' !== 'abc'", "!0");
+      expectPrinted("'a' == '\\x61'", "!0");
+      expectPrinted("'a' == '\\x62'", "!1");
+      expectPrinted("'a' == 'abc'", "!1");
+      expectPrinted("'a' != '\\x61'", "!1");
+      expectPrinted("'a' != '\\x62'", "!0");
+      expectPrinted("'a' != 'abc'", "!0");
 
       expectPrinted("'a' + 'b'", '"ab"');
       expectPrinted("'a' + 'bc'", '"abc"');
@@ -2761,19 +2835,19 @@ console.log(foo, array);
       expectPrinted("(-123).toString()", "(-123).toString()");
       expectPrinted("-0", "-0");
       expectPrinted("(-0).toString()", "(-0).toString()");
-      expectPrinted("-0 === 0", "true");
+      expectPrinted("-0 === 0", "!0");
 
       expectPrinted("NaN", "NaN");
       expectPrinted("NaN.toString()", "NaN.toString()");
-      expectPrinted("NaN === NaN", "false");
+      expectPrinted("NaN === NaN", "!1");
 
       expectPrinted("Infinity", "Infinity");
       expectPrinted("Infinity.toString()", "Infinity.toString()");
       expectPrinted("(-Infinity).toString()", "(-Infinity).toString()");
-      expectPrinted("Infinity === Infinity", "true");
-      expectPrinted("Infinity === -Infinity", "false");
+      expectPrinted("Infinity === Infinity", "!0");
+      expectPrinted("Infinity === -Infinity", "!1");
 
-      expectPrinted("123n === 1_2_3n", "true");
+      expectPrinted("123n === 1_2_3n", "!0");
     });
     describe("type coercions", () => {
       const dead = `
@@ -2820,8 +2894,8 @@ console.log(foo, array);
           }
 
           if (line.includes("should_be_false")) {
-            if (!line.includes("= false")) throw new Error(`Expected false in "${line}"`);
-            expect(line.includes("= false")).toBe(true);
+            if (!line.includes("= !1")) throw new Error(`Expected false in "${line}"`);
+            expect(line.includes("= !1")).toBe(true);
           }
 
           if (line.includes("TEST_FAIL")) {

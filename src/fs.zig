@@ -1025,7 +1025,11 @@ pub const FileSystem = struct {
                 }
             } else {
                 // We use pread to ensure if the file handle was open, it doesn't seek from the last position
-                var buf = try allocator.alloc(u8, size);
+                var buf = try allocator.alloc(u8, size + 1);
+
+                // stick a zero at the end
+                buf[size] = 0;
+
                 const read_count = file.preadAll(buf, 0) catch |err| {
                     fs.readFileError(path, err);
                     return err;

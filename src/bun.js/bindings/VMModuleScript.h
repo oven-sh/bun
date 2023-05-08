@@ -59,8 +59,10 @@ public:
 
     static JSObject* createPrototype(VM& vm, JSGlobalObject* globalObject);
 
+    const JSC::SourceCode& source() const { return m_source; }
+
 private:
-    Ref<JSC::StringSourceProvider> m_source;
+    JSC::SourceCode m_source;
 
     VMModuleScript(JSC::VM& vm, JSC::Structure* structure, String source)
         : Base(vm, structure)
@@ -71,5 +73,8 @@ private:
 
     void finishCreation(JSC::VM&);
 };
+
+JSC_DECLARE_HOST_FUNCTION(vmModule_createContext);
+JSC_DECLARE_HOST_FUNCTION(vmModule_isContext);
 
 }

@@ -16,6 +16,9 @@
 #include "wtf/URL.h"
 #include "JavaScriptCore/TypedArrayInlines.h"
 #include "JavaScriptCore/PropertyNameArray.h"
+#include "JavaScriptCore/JSWeakMap.h"
+#include "JavaScriptCore/JSWeakMapInlines.h"
+#include "JavaScriptCore/JSWithScope.h"
 #include "Buffer.h"
 #include "GCDefferalContext.h"
 #include "Buffer.h"
@@ -47,9 +50,26 @@ static EncodedJSValue constructScript(JSGlobalObject* globalObject, CallFrame* c
         RETURN_IF_EXCEPTION(scope, {});
         structure = InternalFunction::createSubclassStructure(
             globalObject, targetObj, functionGlobalObject->VMModuleScriptStructure());
+        scope.release();
     }
     VMModuleScript* script = VMModuleScript::create(vm, globalObject, structure, source);
     return JSValue::encode(JSValue(script));
+}
+
+static EncodedJSValue runInContext(JSGlobalObject* globalObject, VMModuleScript* script, JSObject* globalThis, JSScope* scope, JSValue optionsArg)
+{
+    auto& vm = globalObject->vm();
+
+    if (!optionsArg.isUndefined()) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        return throwVMError(globalObject, scope, "TODO: options"_s);
+    }
+
+    auto* eval = DirectEvalExecutable::create(
+        globalObject, script->source(), DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
+        false, false, EvalContextType::None, nullptr, nullptr, ECMAMode::sloppy());
+
+    return JSValue::encode(vm.interpreter.executeEval(eval, globalThis, scope));
 }
 
 JSC_DEFINE_HOST_FUNCTION(scriptConstructorCall, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -66,25 +86,99 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataRejected, (JSGlobalObject* globalObj
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    return throwVMTypeError(globalObject, scope, "TODO"_s);
+    return throwVMError(globalObject, scope, "TODO"_s);
 }
 JSC_DEFINE_HOST_FUNCTION(scriptCreateCachedData, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    return throwVMTypeError(globalObject, scope, "TODO"_s);
+    return throwVMError(globalObject, scope, "TODO"_s);
 }
+
 JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    return throwVMTypeError(globalObject, scope, "TODO"_s);
+
+    JSValue thisValue = callFrame->thisValue();
+    auto* script = jsDynamicCast<VMModuleScript*>(thisValue);
+    if (UNLIKELY(!script)) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(globalObject, scope, "Script.prototype.runInContext can only be called on a Script object"_s);
+    }
+
+    ArgList args(callFrame);
+
+    JSValue contextArg = args.at(0);
+    if (!UNLIKELY(contextArg.isObject())) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(globalObject, scope, "context parameter must be a contextified object"_s);
+    }
+    JSObject* context = asObject(contextArg);
+
+    auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    JSValue scopeVal = zigGlobalObject->vmModuleContextMap()->get(context);
+    if (UNLIKELY(scopeVal.isUndefined())) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(globalObject, scope, "context parameter must be a contextified object"_s);
+    }
+    JSScope* scope = jsDynamicCast<JSScope*>(scopeVal);
+    ASSERT(scope);
+
+    return runInContext(globalObject, script, context, scope, args.at(1));
 }
+JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    JSValue thisValue = callFrame->thisValue();
+    auto* script = jsDynamicCast<VMModuleScript*>(thisValue);
+    if (UNLIKELY(!script)) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(globalObject, scope, "Script.prototype.runInThisContext can only be called on a Script object"_s);
+    }
+
+    ArgList args(callFrame);
+    return runInContext(globalObject, script, globalObject->globalThis(), globalObject->globalScope(), args.at(0));
+}
+
 JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    return throwVMTypeError(globalObject, scope, "TODO"_s);
+    return throwVMError(globalObject, scope, "TODO"_s);
+}
+
+JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    ArgList args(callFrame);
+    JSValue contextArg = args.at(0);
+    if (!contextArg.isObject()) {
+        return throwVMTypeError(globalObject, scope, "parameter to createContext must be an object"_s);
+    }
+    JSObject* context = asObject(contextArg);
+
+    JSScope* contextScope = JSWithScope::create(vm, globalObject, globalObject->globalScope(), context);
+
+    auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    zigGlobalObject->vmModuleContextMap()->set(vm, context, contextScope);
+
+    return JSValue::encode(context);
+}
+
+JSC_DEFINE_HOST_FUNCTION(vmModule_isContext, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    ArgList args(callFrame);
+    JSValue contextArg = args.at(0);
+    bool isContext;
+    if (!contextArg.isObject()) {
+        isContext = false;
+    } else {
+        auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+        isContext = zigGlobalObject->vmModuleContextMap()->has(asObject(contextArg));
+    }
+    return JSValue::encode(jsBoolean(isContext));
 }
 
 class VMModuleScriptPrototype final : public JSNonFinalObject {
@@ -123,6 +217,7 @@ static const struct HashTableValue scriptPrototypeTableValues[] = {
    { "cachedDataRejected"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, scriptGetCachedDataRejected, nullptr } },
    { "createCachedData"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, scriptCreateCachedData, 0 } },
    { "runInContext"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, scriptRunInContext, 0 } },
+   { "runInThisContext"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, scriptRunInThisContext, 0 } },
    { "sourceMapURL"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, scriptGetSourceMapURL, nullptr } },
 };
 

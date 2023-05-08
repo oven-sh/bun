@@ -47,6 +47,7 @@
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/JSValueInternal.h"
 #include "JavaScriptCore/JSVirtualMachineInternal.h"
+#include "JavaScriptCore/JSWeakMap.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/OptionsList.h"
 #include "JavaScriptCore/ParserError.h"
@@ -1215,7 +1216,7 @@ JSC:
         static NeverDestroyed<const String> noopString(MAKE_STATIC_STRING_IMPL("noop"));
         static NeverDestroyed<const String> createImportMeta(MAKE_STATIC_STRING_IMPL("createImportMeta"));
         static NeverDestroyed<const String> masqueradesAsUndefined(MAKE_STATIC_STRING_IMPL("masqueradesAsUndefined"));
-        static NeverDestroyed<const String> scriptString(MAKE_STATIC_STRING_IMPL("node:vm:Script"));
+        static NeverDestroyed<const String> vmString(MAKE_STATIC_STRING_IMPL("vm"));
 
         JSC::JSValue moduleName = callFrame->argument(0);
         if (moduleName.isNumber()) {
@@ -1299,9 +1300,18 @@ JSC:
             return JSValue::encode(InternalFunction::createFunctionThatMasqueradesAsUndefined(vm, globalObject, 0, String(), functionCallNotImplemented));
         }
 
-        if (string == scriptString) {
-            auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-            return JSC::JSValue::encode(zigGlobalObject->VMModuleScript());
+        if (string == vmString) {
+            auto* obj = constructEmptyObject(globalObject);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "Script"_s)),
+                reinterpret_cast<Zig::GlobalObject*>(globalObject)->VMModuleScript(), 0);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createContext"_s)),
+                JSC::JSFunction::create(vm, globalObject, 0, "createContext"_s, vmModule_createContext, ImplementationVisibility::Public), 0);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "isContext"_s)),
+                JSC::JSFunction::create(vm, globalObject, 0, "isContext"_s, vmModule_isContext, ImplementationVisibility::Public), 0);
+            return JSValue::encode(obj);
         }
 
         if (UNLIKELY(string == noopString)) {
@@ -2591,6 +2601,11 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(dnsObject);
         });
 
+    m_vmModuleContextMap.initLater(
+        [](const Initializer<JSWeakMap>& init) {
+            init.set(JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
+        });
+
     m_JSBufferSubclassStructure.initLater(
         [](const Initializer<Structure>& init) {
             auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(init.owner);
@@ -3701,6 +3716,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_requireResolveFunctionStructure.visit(visitor);
     thisObject->m_resolveFunctionPrototype.visit(visitor);
     thisObject->m_dnsObject.visit(visitor);
+    thisObject->m_vmModuleContextMap.visit(visitor);
     thisObject->m_bunSleepThenCallback.visit(visitor);
 
     for (auto& barrier : thisObject->m_thenables) {

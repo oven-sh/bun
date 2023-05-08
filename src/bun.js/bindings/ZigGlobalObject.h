@@ -254,6 +254,8 @@ public:
 
     JSObject* dnsObject() { return m_dnsObject.getInitializedOnMainThread(this); }
 
+    JSWeakMap* vmModuleContextMap() { return m_vmModuleContextMap.getInitializedOnMainThread(this); }
+
     JSC::JSObject* processObject()
     {
         return m_processObject.getInitializedOnMainThread(this);
@@ -460,6 +462,8 @@ private:
     LazyProperty<JSGlobalObject, JSC::Structure> m_requireResolveFunctionStructure;
     LazyProperty<JSGlobalObject, JSObject> m_resolveFunctionPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_dnsObject;
+    LazyProperty<JSGlobalObject, JSWeakMap> m_vmModuleContextMap;
+
     LazyProperty<JSGlobalObject, JSFunction> m_bunSleepThenCallback;
 
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);

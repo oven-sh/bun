@@ -5771,7 +5771,12 @@ fn NewParser_(
                 return p.newExpr(_ident, loc);
             }
 
-            return p.newExpr(ident, loc);
+            return Expr{
+                .data = .{
+                    .e_identifier = ident,
+                },
+                .loc = loc,
+            };
         }
 
         pub fn generateImportStmt(

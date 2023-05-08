@@ -46,9 +46,7 @@ export function testForFile(file: string): BunTestExports {
               try {
                 await expectBundled(ref.id, { ...ref.options, notImplemented: false }, false, true);
                 implemented.push({ id: ref.id, success: true });
-              } catch (e) {
-                implemented.push({ id: ref.id, success: false });
-              }
+              } catch (e) {}
             }
             if (implemented.length) {
               throw (

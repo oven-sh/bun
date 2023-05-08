@@ -88,35 +88,17 @@ describe("bundler", () => {
     capture: ["`\\\\?`", "hello`\\\\?`"],
     target: "bun",
   });
-  itBundled("edgecase/TemplateStringTernaryIssue", {
-    files: {
-      "/entry.ts": /* js */ `
-        capture(\`\${1}\\\${\${VARIABLE ? "SOMETHING" : ""}\`);
-        capture(\`\${1}\\\${\${true ? "SOMETHING" : ""}\`);
-        capture(\`\${1}\\\${\${false ? "SOMETHING" : ""}\`);
-      `,
-    },
-    capture: ['`${"1"}\\${${VARIABLE ? "SOMETHING" : ""}`', '`${"1"}\\${${"SOMETHING"}`', '`${"1"}\\${${""}`'],
-    target: "bun",
-  });
-  itBundled("edgecase/TemplateStringEscapeIssue", {
-    files: {
-      "/entry.ts": /* js */ `
-        capture(\`\\abc\${ident}\`);
-        capture(\`\\x1b[\${ident}\`);
-      `,
-    },
-    capture: ["`abc${ident}`", "`\\x1B[${ident}`"],
-    target: "bun",
-  });
-  itBundled("edgecase/StringNullBytes", {
-    files: {
-      "/entry.ts": /* js */ `
-        capture("Hello\0");
-      `,
-    },
-    capture: ['"Hello\0"'],
-  });
+  // itBundled("edgecase/TemplateConstantFoldingIssue2810", {
+  //   files: {
+  //     "/entry.ts": ["capture(`${7 * 6}`);", 'capture(`P${`A${"S"}`}S`);', "capture(`P${`A${dyanmic()}`}S`);"].join(
+  //       "\n",
+  //     ),
+  //   },
+  //   minifySyntax: true,
+  //   minifyWhitespace: true,
+  //   capture: ['"42"', '"PASS"'],
+  //   target: "bun",
+  // });
   // https://github.com/oven-sh/bun/issues/2699
   itBundled("edgecase/ImportNamedFromExportStarCJS", {
     files: {

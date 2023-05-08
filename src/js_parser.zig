@@ -2859,12 +2859,15 @@ pub const Parser = struct {
 
         // Parse the file in the first pass, but do not bind symbols
         var opts = ParseStatementOptions{ .is_module_scope = true };
+        const parse_tracer = bun.tracy.traceNamed(@src(), "JSParser.parse");
 
         // Parsing seems to take around 2x as much time as visiting.
         // Which makes sense.
         // June 4: "Parsing took: 18028000"
         // June 4: "Rest of this took: 8003000"
         const stmts = try p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts);
+
+        parse_tracer.end();
 
         // Halt parsing right here if there were any errors
         // This fixes various conditions that would cause crashes due to the AST being in an invalid state while visiting
@@ -2875,6 +2878,7 @@ pub const Parser = struct {
             return error.SyntaxError;
         }
 
+        const visit_tracer = bun.tracy.traceNamed(@src(), "JSParser.visit");
         try p.prepareForVisitPass();
 
         // ESM is always strict mode. I don't think we need this.
@@ -3020,10 +3024,15 @@ pub const Parser = struct {
             }
         }
 
+        visit_tracer.end();
+
         // If there were errors while visiting, also halt here
         if (self.log.errors > orig_error_count) {
             return error.SyntaxError;
         }
+
+        const postvisit_tracer = bun.tracy.traceNamed(@src(), "JSParser.postvisit");
+        defer postvisit_tracer.end();
 
         const uses_dirname = p.symbols.items[p.dirname_ref.innerIndex()].use_count_estimate > 0;
         const uses_filename = p.symbols.items[p.filename_ref.innerIndex()].use_count_estimate > 0;
@@ -5703,6 +5712,7 @@ fn NewParser_(
             }
         }
 
+        /// This function is very very hot.
         pub fn handleIdentifier(p: *P, loc: logger.Loc, ident: E.Identifier, _original_name: ?string, opts: IdentifierOpts) Expr {
             const ref = ident.ref;
 
@@ -13944,18 +13954,6 @@ fn NewParser_(
                 },
             }
             return error.SyntaxError;
-        }
-
-        fn jsxRefToMemberExpression(p: *P, loc: logger.Loc, ref: Ref) Expr {
-            p.recordUsage(ref);
-            return p.handleIdentifier(
-                loc,
-                E.Identifier{
-                    .ref = ref,
-                    .can_be_removed_if_unused = true,
-                    .call_can_be_unwrapped_if_unused = true,
-                },
-            );
         }
 
         fn jsxStringsToMemberExpression(p: *P, loc: logger.Loc, parts: []const []const u8) !Expr {

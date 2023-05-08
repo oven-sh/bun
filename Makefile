@@ -1381,6 +1381,19 @@ bun-relink-copy:
 	mkdir -p $(PACKAGE_DIR)
 	cp $(BUN_DEPLOY_DIR).o $(BUN_RELEASE_BIN).o
 
+.PHONY: bun-link-lld-profile profile
+bun-link-lld-profile:
+	$(CXX) $(BUN_LLD_FLAGS) $(SYMBOLS) -g -gdwarf-4 -fno-omit-frame-pointer \
+		$(BUN_RELEASE_BIN).o \
+		-o $(BUN_RELEASE_BIN) \
+		-W \
+		$(OPTIMIZATION_LEVEL) $(RELEASE_FLAGS)
+	rm -rf $(BUN_RELEASE_BIN).dSYM
+	cp $(BUN_RELEASE_BIN) $(BUN_RELEASE_BIN)-profile
+	@rm -f $(BUN_RELEASE_BIN).o.o # workaround for https://github.com/ziglang/zig/issues/14080
+
+build-profile: build-obj bun-link-lld-profile bun-codesign-release-local
+
 bun-link-lld-release:
 	$(CXX) $(BUN_LLD_FLAGS) $(SYMBOLS) \
 		$(BUN_RELEASE_BIN).o \

@@ -1745,6 +1745,236 @@ pub const BundleV2 = struct {
         return false;
     }
 
+    // TODO: remove ResolveQueue
+    fn runResolutionForParseTask(parse_result: *ParseTask.Result, this: *BundleV2) ResolveQueue {
+        var ast = &parse_result.value.success.ast;
+        const source = &parse_result.value.success.source;
+        const source_dir = source.path.sourceDir();
+        var estimated_resolve_queue_count: usize = 0;
+        for (ast.import_records.slice()) |*import_record| {
+            if (import_record.is_internal) {
+                import_record.tag = .runtime;
+                import_record.source_index = Index.runtime;
+            }
+
+            if (import_record.is_unused) {
+                import_record.source_index = Index.invalid;
+            }
+
+            estimated_resolve_queue_count += @as(usize, @boolToInt(!(import_record.is_internal or import_record.is_unused or import_record.source_index.isValid())));
+        }
+        var resolve_queue = ResolveQueue.init(this.graph.allocator);
+        resolve_queue.ensureTotalCapacity(estimated_resolve_queue_count) catch @panic("OOM");
+
+        var last_error: ?anyerror = null;
+
+        for (ast.import_records.slice(), 0..) |*import_record, i| {
+            if (
+            // Don't resolve TypeScript types
+            import_record.is_unused or
+
+                // Don't resolve the runtime
+                import_record.is_internal or
+
+                // Don't resolve pre-resolved imports
+                import_record.source_index.isValid())
+            {
+                continue;
+            }
+
+            if (ast.target.isBun()) {
+                if (JSC.HardcodedModule.Aliases.get(import_record.path.text)) |replacement| {
+                    import_record.path.text = replacement.path;
+                    import_record.tag = replacement.tag;
+                    import_record.source_index = Index.invalid;
+                    continue;
+                }
+
+                if (JSC.DisabledModule.has(import_record.path.text)) {
+                    import_record.path.is_disabled = true;
+                    import_record.do_commonjs_transform_in_printer = true;
+                    import_record.source_index = Index.invalid;
+                    continue;
+                }
+
+                if (this.bundler.options.rewrite_jest_for_tests) {
+                    if (strings.eqlComptime(
+                        import_record.path.text,
+                        "@jest/globals",
+                    ) or strings.eqlComptime(
+                        import_record.path.text,
+                        "vitest",
+                    )) {
+                        import_record.path.namespace = "bun";
+                        import_record.tag = .bun_test;
+                        import_record.path.text = "test";
+                        continue;
+                    }
+                }
+
+                if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
+                    import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
+                    import_record.path.namespace = "bun";
+                    import_record.source_index = Index.invalid;
+
+                    if (strings.eqlComptime(import_record.path.text, "test")) {
+                        import_record.tag = .bun_test;
+                    }
+
+                    // don't link bun
+                    continue;
+                }
+            }
+
+            if (this.enqueueOnResolvePluginIfNeeded(source.index.get(), import_record, source.path.text, @truncate(u32, i), ast.target)) {
+                continue;
+            }
+
+            var resolve_result = this.bundler.resolver.resolve(source_dir, import_record.path.text, import_record.kind) catch |err| {
+                // Disable failing packages from being printed.
+                // This may cause broken code to write.
+                // However, doing this means we tell them all the resolve errors
+                // Rather than just the first one.
+                import_record.path.is_disabled = true;
+
+                switch (err) {
+                    error.ModuleNotFound => {
+                        const addError = Logger.Log.addResolveErrorWithTextDupe;
+
+                        if (!import_record.handles_import_errors) {
+                            last_error = err;
+                            if (isPackagePath(import_record.path.text)) {
+                                if (ast.target.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
+                                    addError(
+                                        this.bundler.log,
+                                        source,
+                                        import_record.range,
+                                        this.graph.allocator,
+                                        "Could not resolve Node.js builtin: \"{s}\".",
+                                        .{import_record.path.text},
+                                        import_record.kind,
+                                    ) catch @panic("unexpected log error");
+                                } else {
+                                    addError(
+                                        this.bundler.log,
+                                        source,
+                                        import_record.range,
+                                        this.graph.allocator,
+                                        "Could not resolve: \"{s}\". Maybe you need to \"bun install\"?",
+                                        .{import_record.path.text},
+                                        import_record.kind,
+                                    ) catch @panic("unexpected log error");
+                                }
+                            } else {
+                                addError(
+                                    this.bundler.log,
+                                    source,
+                                    import_record.range,
+                                    this.graph.allocator,
+                                    "Could not resolve: \"{s}\"",
+                                    .{
+                                        import_record.path.text,
+                                    },
+                                    import_record.kind,
+                                ) catch @panic("unexpected log error");
+                            }
+                        }
+                    },
+                    // assume other errors are already in the log
+                    else => {
+                        last_error = err;
+                    },
+                }
+                continue;
+            };
+            // if there were errors, lets go ahead and collect them all
+            if (last_error != null) continue;
+
+            var path: *Fs.Path = resolve_result.path() orelse {
+                import_record.path.is_disabled = true;
+                import_record.source_index = Index.invalid;
+
+                continue;
+            };
+
+            if (resolve_result.is_external) {
+                continue;
+            }
+
+            const hash_key = path.hashKey();
+
+            if (this.graph.path_to_source_index_map.get(hash_key)) |id| {
+                import_record.source_index = Index.init(id);
+                continue;
+            }
+
+            var resolve_entry = resolve_queue.getOrPut(hash_key) catch @panic("Ran out of memory");
+            if (resolve_entry.found_existing) {
+                import_record.path = resolve_entry.value_ptr.*.path;
+
+                continue;
+            }
+
+            if (path.pretty.ptr == path.text.ptr) {
+                // TODO: outbase
+                const rel = bun.path.relative(this.bundler.fs.top_level_dir, path.text);
+                if (rel.len > 0 and rel[0] != '.') {
+                    path.pretty = rel;
+                }
+            }
+
+            var secondary_path_to_copy: ?Fs.Path = null;
+            if (resolve_result.path_pair.secondary) |*secondary| {
+                if (!secondary.is_disabled and
+                    secondary != path and
+                    !strings.eqlLong(secondary.text, path.text, true))
+                {
+                    secondary_path_to_copy = secondary.dupeAlloc(this.graph.allocator) catch @panic("Ran out of memory");
+                }
+            }
+
+            path.* = path.dupeAlloc(this.graph.allocator) catch @panic("Ran out of memory");
+            import_record.path = path.*;
+            debug("created ParseTask: {s}", .{path.text});
+
+            var resolve_task = bun.default_allocator.create(ParseTask) catch @panic("Ran out of memory");
+            resolve_task.* = ParseTask.init(&resolve_result, null, this);
+
+            resolve_task.secondary_path_for_commonjs_interop = secondary_path_to_copy;
+
+            if (parse_result.value.success.use_directive != .none) {
+                resolve_task.known_target = ast.target;
+            } else {
+                resolve_task.known_target = ast.target;
+            }
+
+            resolve_task.jsx.development = resolve_result.jsx.development;
+
+            if (resolve_task.loader == null) {
+                resolve_task.loader = path.loader(&this.bundler.options.loaders);
+                resolve_task.tree_shaking = this.bundler.options.tree_shaking;
+            }
+
+            resolve_entry.value_ptr.* = resolve_task;
+        }
+
+        if (last_error) |err| {
+            debug("failed with error: {s}", .{@errorName(err)});
+            resolve_queue.clearAndFree();
+            parse_result.value = .{
+                .err = ParseTask.Result.Error{
+                    .err = err,
+                    .step = .resolve,
+                    .log = Logger.Log.init(bun.default_allocator),
+                },
+            };
+        }
+
+        return resolve_queue;
+    }
+
+    const ResolveQueue = std.AutoArrayHashMap(u64, *ParseTask);
+
     pub fn onParseTaskComplete(parse_result: *ParseTask.Result, this: *BundleV2) void {
         const trace = tracer(@src(), "onParseTaskComplete");
         defer trace.end();
@@ -1759,6 +1989,16 @@ pub const BundleV2 = struct {
                 _ = @atomicRmw(usize, &graph.parse_pending, .Add, @intCast(usize, diff), .Monotonic)
             else
                 _ = @atomicRmw(usize, &graph.parse_pending, .Sub, @intCast(usize, -diff), .Monotonic);
+        }
+
+        var resolve_queue = ResolveQueue.init(this.graph.allocator);
+        defer resolve_queue.deinit();
+        var process_log = true;
+        if (parse_result.value == .success) {
+            resolve_queue = runResolutionForParseTask(parse_result, this);
+            if (parse_result.value == .err) {
+                process_log = false;
+            }
         }
 
         switch (parse_result.value) {
@@ -1820,8 +2060,7 @@ pub const BundleV2 = struct {
                     result.ast.named_exports.count(),
                 });
 
-                var iter = result.resolve_queue.iterator();
-                defer result.resolve_queue.deinit();
+                var iter = resolve_queue.iterator();
 
                 while (iter.next()) |entry| {
                     const hash = entry.key_ptr.*;
@@ -1927,16 +2166,18 @@ pub const BundleV2 = struct {
                     debug("onParse() = err", .{});
                 }
 
-                if (err.log.msgs.items.len > 0) {
-                    err.log.cloneToWithRecycled(this.bundler.log, true) catch unreachable;
-                } else {
-                    this.bundler.log.addErrorFmt(
-                        null,
-                        Logger.Loc.Empty,
-                        bun.default_allocator,
-                        "{s} while {s}",
-                        .{ @errorName(err.err), @tagName(err.step) },
-                    ) catch unreachable;
+                if (process_log) {
+                    if (err.log.msgs.items.len > 0) {
+                        err.log.cloneToWithRecycled(this.bundler.log, true) catch unreachable;
+                    } else {
+                        this.bundler.log.addErrorFmt(
+                            null,
+                            Logger.Loc.Empty,
+                            bun.default_allocator,
+                            "{s} while {s}",
+                            .{ @errorName(err.err), @tagName(err.step) },
+                        ) catch unreachable;
+                    }
                 }
             },
         }
@@ -1969,8 +2210,6 @@ pub const ParseTask = struct {
     presolved_source_indices: []const Index.Int = &.{},
 
     const debug = Output.scoped(.ParseTask, false);
-
-    pub const ResolveQueue = std.AutoArrayHashMap(u64, *ParseTask);
 
     pub fn init(resolve_result: *const _resolver.Result, source_index: ?Index, ctx: *BundleV2) ParseTask {
         return .{
@@ -2031,7 +2270,6 @@ pub const ParseTask = struct {
 
         pub const Success = struct {
             ast: JSAst,
-            resolve_queue: ResolveQueue,
             source: Logger.Source,
             log: Logger.Log,
 
@@ -2262,13 +2500,7 @@ pub const ParseTask = struct {
             .contents_is_recycled = false,
         };
 
-        const source_dir = file_path.sourceDir();
         const target = use_directive.target(task.known_target orelse bundler.options.target);
-
-        var resolve_queue = ResolveQueue.init(bun.default_allocator);
-        // TODO: server ESM condition
-
-        errdefer resolve_queue.clearAndFree();
 
         var opts = js_parser.Parser.Options.init(task.jsx, loader);
         opts.legacy_transform_require_to_import = false;
@@ -2305,219 +2537,12 @@ pub const ParseTask = struct {
             task.side_effects = _resolver.SideEffects.no_side_effects__empty_ast;
         }
 
-        resolution: {
-            const trace = tracer(@src(), "resolve");
-            defer trace.end();
-            if (task.presolved_source_indices.len > 0) {
-                for (ast.import_records.slice(), task.presolved_source_indices) |*record, source_index| {
-                    if (record.is_unused or record.is_internal)
-                        continue;
-
-                    record.source_index = Index.source(source_index);
-                }
-
-                break :resolution;
-            }
-
-            var estimated_resolve_queue_count: usize = 0;
-            for (ast.import_records.slice()) |*import_record| {
-                if (import_record.is_internal) {
-                    import_record.tag = .runtime;
-                    import_record.source_index = Index.runtime;
-                }
-
-                if (import_record.is_unused) {
-                    import_record.source_index = Index.invalid;
-                }
-
-                // Don't resolve the runtime
-                if (import_record.is_internal or import_record.is_unused) {
+        if (task.presolved_source_indices.len > 0) {
+            for (ast.import_records.slice(), task.presolved_source_indices) |*record, source_index| {
+                if (record.is_unused or record.is_internal)
                     continue;
-                }
-                estimated_resolve_queue_count += 1;
-            }
 
-            try resolve_queue.ensureUnusedCapacity(estimated_resolve_queue_count);
-            var last_error: ?anyerror = null;
-
-            for (ast.import_records.slice(), 0..) |*import_record, i| {
-                // Don't resolve the runtime
-                if (import_record.is_unused or import_record.is_internal) {
-                    continue;
-                }
-
-                if (target.isBun()) {
-                    if (JSC.HardcodedModule.Aliases.get(import_record.path.text)) |replacement| {
-                        import_record.path.text = replacement.path;
-                        import_record.tag = replacement.tag;
-                        import_record.source_index = Index.invalid;
-                        continue;
-                    }
-
-                    if (JSC.DisabledModule.has(import_record.path.text)) {
-                        import_record.path.is_disabled = true;
-                        import_record.do_commonjs_transform_in_printer = true;
-                        import_record.source_index = Index.invalid;
-                        continue;
-                    }
-
-                    if (bundler.options.rewrite_jest_for_tests) {
-                        if (strings.eqlComptime(
-                            import_record.path.text,
-                            "@jest/globals",
-                        ) or strings.eqlComptime(
-                            import_record.path.text,
-                            "vitest",
-                        )) {
-                            import_record.path.namespace = "bun";
-                            import_record.tag = .bun_test;
-                            import_record.path.text = "test";
-                            continue;
-                        }
-                    }
-
-                    if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
-                        import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
-                        import_record.path.namespace = "bun";
-                        import_record.source_index = Index.invalid;
-
-                        if (strings.eqlComptime(import_record.path.text, "test")) {
-                            import_record.tag = .bun_test;
-                        }
-
-                        // don't link bun
-                        continue;
-                    }
-                }
-
-                if (this.ctx.enqueueOnResolvePluginIfNeeded(source.index.get(), import_record, source.path.text, @truncate(u32, i), target)) {
-                    continue;
-                }
-
-                var resolve_result = resolver.resolve(source_dir, import_record.path.text, import_record.kind) catch |err| {
-                    // Disable failing packages from being printed.
-                    // This may cause broken code to write.
-                    // However, doing this means we tell them all the resolve errors
-                    // Rather than just the first one.
-                    import_record.path.is_disabled = true;
-
-                    switch (err) {
-                        error.ModuleNotFound => {
-                            const addError = Logger.Log.addResolveErrorWithTextDupe;
-
-                            if (!import_record.handles_import_errors) {
-                                last_error = err;
-                                if (isPackagePath(import_record.path.text)) {
-                                    if (target.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
-                                        try addError(
-                                            log,
-                                            &source,
-                                            import_record.range,
-                                            this.allocator,
-                                            "Could not resolve Node.js builtin: \"{s}\".",
-                                            .{import_record.path.text},
-                                            import_record.kind,
-                                        );
-                                    } else {
-                                        try addError(
-                                            log,
-                                            &source,
-                                            import_record.range,
-                                            this.allocator,
-                                            "Could not resolve: \"{s}\". Maybe you need to \"bun install\"?",
-                                            .{import_record.path.text},
-                                            import_record.kind,
-                                        );
-                                    }
-                                } else {
-                                    try addError(
-                                        log,
-                                        &source,
-                                        import_record.range,
-                                        this.allocator,
-                                        "Could not resolve: \"{s}\"",
-                                        .{
-                                            import_record.path.text,
-                                        },
-                                        import_record.kind,
-                                    );
-                                }
-                            }
-                        },
-                        // assume other errors are already in the log
-                        else => {
-                            last_error = err;
-                        },
-                    }
-                    continue;
-                };
-                // if there were errors, lets go ahead and collect them all
-                if (last_error != null) continue;
-
-                var path: *Fs.Path = resolve_result.path() orelse {
-                    import_record.path.is_disabled = true;
-                    import_record.source_index = Index.invalid;
-
-                    continue;
-                };
-
-                if (resolve_result.is_external) {
-                    continue;
-                }
-
-                var resolve_entry = try resolve_queue.getOrPut(path.hashKey());
-                if (resolve_entry.found_existing) {
-                    import_record.path = resolve_entry.value_ptr.*.path;
-
-                    continue;
-                }
-
-                if (path.pretty.ptr == path.text.ptr) {
-                    // TODO: outbase
-                    const rel = bun.path.relative(bundler.fs.top_level_dir, path.text);
-                    if (rel.len > 0 and rel[0] != '.') {
-                        path.pretty = rel;
-                    }
-                }
-
-                var secondary_path_to_copy: ?Fs.Path = null;
-                if (resolve_result.path_pair.secondary) |*secondary| {
-                    if (!secondary.is_disabled and
-                        secondary != path and
-                        !strings.eqlLong(secondary.text, path.text, true))
-                    {
-                        secondary_path_to_copy = try secondary.dupeAlloc(allocator);
-                    }
-                }
-
-                path.* = try path.dupeAlloc(allocator);
-                import_record.path = path.*;
-                debug("created ParseTask: {s}", .{path.text});
-
-                var resolve_task = bun.default_allocator.create(ParseTask) catch @panic("Ran out of memory");
-                resolve_task.* = ParseTask.init(&resolve_result, null, this.ctx);
-
-                resolve_task.secondary_path_for_commonjs_interop = secondary_path_to_copy;
-
-                if (use_directive != .none) {
-                    resolve_task.known_target = target;
-                } else if (task.known_target) |known_target| {
-                    resolve_task.known_target = known_target;
-                }
-
-                resolve_task.jsx.development = task.jsx.development;
-
-                if (resolve_task.loader == null) {
-                    resolve_task.loader = path.loader(&bundler.options.loaders);
-                    resolve_task.tree_shaking = task.tree_shaking;
-                }
-
-                resolve_entry.value_ptr.* = resolve_task;
-            }
-
-            if (last_error) |err| {
-                debug("failed with error: {s}", .{@errorName(err)});
-                return err;
+                record.source_index = Index.source(source_index);
             }
         }
 
@@ -2530,7 +2555,6 @@ pub const ParseTask = struct {
         return Result.Success{
             .ast = ast,
             .source = source,
-            .resolve_queue = resolve_queue,
             .log = log.*,
             .use_directive = use_directive,
             .unique_key_for_additional_file = unique_key_for_additional_file,

@@ -3136,7 +3136,7 @@ const LinkerGraph = struct {
         dynamic_import_entry_points: []const Index.Int,
         shadow_entry_point_range: Logger.Range,
     ) !void {
-        try this.files.ensureTotalCapacity(this.allocator, sources.len);
+        try this.files.setCapacity(this.allocator, sources.len);
         this.files.zero();
         this.files_live = try BitSet.initEmpty(
             this.allocator,
@@ -3153,7 +3153,7 @@ const LinkerGraph = struct {
 
         // Setup entry points
         {
-            try this.entry_points.ensureTotalCapacity(this.allocator, entry_points.len + use_directive_entry_points.len + dynamic_import_entry_points.len);
+            try this.entry_points.setCapacity(this.allocator, entry_points.len + use_directive_entry_points.len + dynamic_import_entry_points.len);
             this.entry_points.len = entry_points.len;
             var source_indices = this.entry_points.items(.source_index);
 
@@ -3192,7 +3192,7 @@ const LinkerGraph = struct {
             }
 
             var import_records_list: []ImportRecord.List = this.ast.items(.import_records);
-            try this.meta.ensureTotalCapacity(this.allocator, import_records_list.len);
+            try this.meta.setCapacity(this.allocator, import_records_list.len);
             this.meta.len = this.ast.len;
             this.meta.zero();
 

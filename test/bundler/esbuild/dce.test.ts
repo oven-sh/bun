@@ -1278,7 +1278,7 @@ describe("bundler", () => {
         let POSSIBLE_REMOVAL_1 = class { [{ toString() {} }] = 'x' }
       `,
     },
-    external: ["*"],
+    bundling: true,
     treeShaking: true,
     dce: true,
   });
@@ -1314,7 +1314,7 @@ describe("bundler", () => {
         let POSSIBLE_REMOVAL_1 = class { static [{ toString() {} }] = 'x' }
       `,
     },
-    external: ["*"],
+    bundling: true,
     treeShaking: true,
     dce: true,
   });
@@ -1405,7 +1405,7 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
-    external: ["*"],
+    bundling: true,
     treeShaking: true,
     dce: true,
   });
@@ -1420,7 +1420,7 @@ describe("bundler", () => {
     dce: true,
     format: "cjs",
     treeShaking: true,
-    external: ["*"],
+    bundling: true,
   });
   itBundled("dce/TreeShakingNoBundleIIFE", {
     files: {
@@ -1433,7 +1433,7 @@ describe("bundler", () => {
     dce: true,
     format: "iife",
     treeShaking: true,
-    external: ["*"],
+    bundling: true,
   });
   itBundled("dce/TreeShakingInESMWrapper", {
     files: {
@@ -1696,7 +1696,7 @@ describe("bundler", () => {
       `,
     },
     minifySyntax: true,
-    external: ["*"],
+    bundling: true,
     dce: true,
   });
   itBundled("dce/RemoveUnusedImportsEvalTS", {
@@ -1710,7 +1710,7 @@ describe("bundler", () => {
     },
     dce: true,
     minifySyntax: true,
-    external: ["*"],
+    bundling: true,
   });
   itBundled("dce/DCEClassStaticBlocks", {
     files: {
@@ -2195,7 +2195,7 @@ describe("bundler", () => {
         "  delete id_REMOVE((foo(), bar())),\n" +
         "]",
     },
-    external: ["*"],
+    bundling: true,
     minifySyntax: true,
     treeShaking: true,
     dce: true,
@@ -2564,7 +2564,7 @@ describe("bundler", () => {
       "/ts-namespace-no-eval.ts",
       "/ts-namespace-eval.ts",
     ],
-    external: ["*"],
+    bundling: true,
     minifySyntax: true,
     dce: true,
     dceKeepMarkerCount: {

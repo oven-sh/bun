@@ -659,34 +659,26 @@ pub const Format = enum {
         },
     );
 
-    pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Format {
-        if (!value.jsType().isStringLike()) {
-            JSC.throwInvalidArguments("format must be a string", .{}, global, exception);
+    pub fn fromJS(global: *JSC.JSGlobalObject, loader: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Loader {
+        if (loader.isUndefinedOrNull()) return null;
 
+        if (!loader.jsType().isStringLike()) {
+            JSC.throwInvalidArguments("format must be a string", .{}, global, exception);
             return null;
         }
+
         var zig_str = JSC.ZigString.init("");
-        value.toZigString(&zig_str, global);
+        loader.toZigString(&zig_str, global);
+        if (zig_str.len == 0) return null;
 
-        var slice = zig_str.slice();
-
-        const matcher = strings.ExactSizeMatcher(4);
-
-        return switch (matcher.match(slice)) {
-            matcher.case("esm") => Format.esm,
-            matcher.case("cjs") => {
-                JSC.throwInvalidArguments("commonjs format is not yet implemented", .{}, global, exception);
-                return null;
-            },
-            matcher.case("iife") => {
-                JSC.throwInvalidArguments("iife format is not yet implemented", .{}, global, exception);
-                return null;
-            },
-            else => {
-                JSC.throwInvalidArguments("format must be one of: esm", .{}, global, exception);
-                return null;
-            },
+        return fromString(zig_str.slice()) orelse {
+            JSC.throwInvalidArguments("invalid format - must be esm, cjs, or iife", .{}, global, exception);
+            return null;
         };
+    }
+
+    pub fn fromString(slice: string) ?Loader {
+        return Map.getWithEql(slice, strings.eqlCaseInsensitiveASCIIICheckLength);
     }
 };
 

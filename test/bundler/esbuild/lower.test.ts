@@ -18,7 +18,7 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2018",
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/LowerObjectSpreadNoBundle", {
     // GENERATED
@@ -41,7 +41,7 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2017",
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/LowerExponentiationOperatorNoBundle", {
     // GENERATED
@@ -79,7 +79,7 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2015",
-    external: ["*"],
+    bundling: true,
     /* TODO FIX expectedScanLog: `entry.js: ERROR: Big integer literals are not available in the configured target environment
   `, */
   });
@@ -117,7 +117,7 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2015",
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/LowerPrivateFieldAssignments2019NoBundle", {
     // GENERATED
@@ -153,7 +153,7 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2019",
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/LowerPrivateFieldAssignments2020NoBundle", {
     // GENERATED
@@ -189,7 +189,7 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2020",
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/LowerPrivateFieldAssignmentsNextNoBundle", {
     // GENERATED
@@ -224,7 +224,7 @@ describe("bundler", () => {
         }
       `,
     },
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/LowerPrivateFieldOptionalChain2019NoBundle", {
     // GENERATED
@@ -241,7 +241,7 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2019",
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/LowerPrivateFieldOptionalChain2020NoBundle", {
     // GENERATED
@@ -258,7 +258,7 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2020",
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/LowerPrivateFieldOptionalChainNextNoBundle", {
     // GENERATED
@@ -274,7 +274,7 @@ describe("bundler", () => {
         }
       `,
     },
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/TSLowerPrivateFieldOptionalChain2015NoBundle", {
     // GENERATED
@@ -291,7 +291,7 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2015",
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/TSLowerPrivateStaticMembers2015NoBundle", {
     // GENERATED
@@ -311,7 +311,7 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2015",
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/TSLowerPrivateFieldAndMethodAvoidNameCollision2015", {
     // GENERATED
@@ -623,7 +623,7 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2020",
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/LowerPrivateMethodWithModifiers2020", {
     // GENERATED
@@ -668,7 +668,7 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2016",
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/LowerAsync2017NoBundle", {
     // GENERATED
@@ -696,7 +696,7 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2017",
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/LowerAsyncThis2016CommonJS", {
     // GENERATED
@@ -790,7 +790,7 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2017",
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/LowerAsyncSuperES2016NoBundle", {
     // GENERATED
@@ -833,7 +833,7 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2016",
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/LowerStaticAsyncSuperES2021NoBundle", {
     // GENERATED
@@ -876,7 +876,7 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2021",
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/LowerStaticAsyncSuperES2016NoBundle", {
     // GENERATED
@@ -919,7 +919,7 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2016",
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/LowerStaticSuperES2021NoBundle", {
     // GENERATED
@@ -962,7 +962,7 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2021",
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/LowerStaticSuperES2016NoBundle", {
     // GENERATED
@@ -1005,7 +1005,7 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2016",
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/LowerAsyncArrowSuperES2016", {
     // GENERATED
@@ -1238,7 +1238,7 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2020",
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/LowerClassFieldNextNoBundle", {
     // GENERATED
@@ -1256,7 +1256,7 @@ describe("bundler", () => {
         }
       `,
     },
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/TSLowerClassField2020NoBundle", {
     // GENERATED
@@ -1275,7 +1275,7 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2020",
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/TSLowerClassPrivateFieldNextNoBundle", {
     // GENERATED
@@ -1293,7 +1293,7 @@ describe("bundler", () => {
         }
       `,
     },
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/LowerClassFieldStrictTsconfigJson2020", {
     // GENERATED
@@ -1406,7 +1406,7 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2017",
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/TSLowerObjectRest2018NoBundle", {
     // GENERATED
@@ -1449,7 +1449,7 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2018",
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/ClassSuperThisESBuildIssue242NoBundle", {
     // GENERATED
@@ -1470,7 +1470,7 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2019",
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/LowerExportStarAsNameCollisionNoBundle", {
     // GENERATED
@@ -1482,7 +1482,7 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2019",
-    external: ["*"],
+    bundling: true,
   });
   itBundled("lower/LowerExportStarAsNameCollision", {
     // GENERATED

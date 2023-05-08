@@ -100,8 +100,8 @@ export interface BundlerTestInput {
   entryPointsAdvanced?: Array<{ input: string; output?: string }>;
   /** These are not path resolved. Used for `default/RelativeEntryPointError` */
   entryPointsRaw?: string[];
-  /** Defaults to bundle */
-  mode?: "bundle";
+  /** Defaults to true */
+  bundling?: boolean;
   /** Used for `default/ErrorMessageCrashStdinESBuildIssue2913`. */
   stdin?: { contents: string; cwd: string };
   /** Use when doing something weird with entryPoints and you need to check other output paths. */
@@ -333,7 +333,7 @@ function expectBundled(
     serverComponents = false,
     minifySyntax,
     minifyWhitespace,
-    mode,
+    bundling,
     onAfterBundle,
     outbase,
     outdir,
@@ -371,7 +371,7 @@ function expectBundled(
   }
 
   // Resolve defaults for options and some related things
-  mode ??= "bundle";
+  bundling ??= true;
   target ??= "browser";
   format ??= "esm";
   entryPoints ??= entryPointsRaw ? [] : [Object.keys(files)[0]];
@@ -381,8 +381,9 @@ function expectBundled(
   if (bundleWarnings === true) bundleWarnings = {};
   const useOutFile = outfile ? true : outdir ? false : entryPoints.length === 1;
 
-  if (mode !== "bundle") {
-    throw new Error("mode must be bundle");
+  if (bundling === false) {
+    // https://github.com/oven-sh/bun/issues/2821
+    external = ["*"];
   }
   if (!ESBUILD && format !== "esm") {
     throw new Error("formats besides esm not implemented in bun build");
@@ -517,7 +518,7 @@ function expectBundled(
               outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
               define && Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
               `--target=${target}`,
-              // `--format=${format}`,
+              `--format=${format}`,
               external && external.map(x => ["--external", x]),
               minifyIdentifiers && `--minify-identifiers`,
               minifySyntax && `--minify-syntax`,
@@ -546,7 +547,7 @@ function expectBundled(
             ]
           : [
               ESBUILD_PATH,
-              mode === "bundle" && "--bundle",
+              bundling && "--bundle",
               outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
               `--format=${format}`,
               `--platform=${target === "bun" ? "node" : target}`,

@@ -207,35 +207,33 @@ pub const JSBundler = struct {
             }
 
             if (try config.getObject(globalThis, "define")) |define| {
-                if (!define.isUndefinedOrNull()) {
-                    if (!define.isObject()) {
-                        globalThis.throwInvalidArguments("define must be an object", .{});
+                if (!define.isObject()) {
+                    globalThis.throwInvalidArguments("define must be an object", .{});
+                    return error.JSException;
+                }
+
+                var define_iter = JSC.JSPropertyIterator(.{
+                    .skip_empty_name = true,
+                    .include_value = true,
+                }).init(globalThis, define.asObjectRef());
+                defer define_iter.deinit();
+
+                while (define_iter.next()) |prop| {
+                    const property_value = define_iter.value;
+                    const value_type = property_value.jsType();
+
+                    if (!value_type.isStringLike()) {
+                        globalThis.throwInvalidArguments("define \"{s}\" must be a JSON string", .{prop});
                         return error.JSException;
                     }
 
-                    var define_iter = JSC.JSPropertyIterator(.{
-                        .skip_empty_name = true,
-                        .include_value = true,
-                    }).init(globalThis, define.asObjectRef());
-                    defer define_iter.deinit();
-
-                    while (define_iter.next()) |prop| {
-                        const property_value = define_iter.value;
-                        const value_type = property_value.jsType();
-
-                        if (!value_type.isStringLike()) {
-                            globalThis.throwInvalidArguments("define \"{s}\" must be a JSON string", .{prop});
-                            return error.JSException;
-                        }
-
-                        var val = JSC.ZigString.init("");
-                        property_value.toZigString(&val, globalThis);
-                        if (val.len == 0) {
-                            val = JSC.ZigString.init("\"\"");
-                        }
-
-                        try this.define.insert(prop.toOwnedSlice(allocator) catch unreachable, val.toOwnedSlice(allocator) catch unreachable);
+                    var val = JSC.ZigString.init("");
+                    property_value.toZigString(&val, globalThis);
+                    if (val.len == 0) {
+                        val = JSC.ZigString.init("\"\"");
                     }
+
+                    try this.define.insert(prop.slice(), val.slice());
                 }
             }
 

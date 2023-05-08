@@ -1317,6 +1317,8 @@ pub const Symbol = struct {
         }
 
         pub fn followAll(symbols: *Map) void {
+            const trace = bun.tracy.traceNamed(@src(), "Symbols.followAll");
+            defer trace.end();
             for (symbols.symbols_for_source.slice()) |list| {
                 for (list.slice()) |*symbol| {
                     if (!symbol.hasLink()) continue;

@@ -54,6 +54,7 @@ pub const Set = struct {
         };
     }
 };
+const debug = Output.scoped(.fs, false);
 pub const Fs = struct {
     const Entry = FsCacheEntry;
 
@@ -179,9 +180,12 @@ pub const Fs = struct {
             }
         }
 
+        debug("openat({d}, {s}) = {d}", .{ dirname_fd, path, file_handle.handle });
+
         const will_close = rfs.needToCloseFiles() and _file_handle == null;
         defer {
             if (will_close) {
+                debug("close({d})", .{file_handle.handle});
                 file_handle.close();
             }
         }

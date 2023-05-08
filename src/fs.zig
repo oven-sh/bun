@@ -22,6 +22,7 @@ const allocators = @import("./allocators.zig");
 
 pub const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
 pub const PathBuffer = [bun.MAX_PATH_BYTES]u8;
+const debug = Output.scoped(.fs, false);
 
 // pub const FilesystemImplementation = @import("fs_impl.zig");
 
@@ -959,6 +960,7 @@ pub const FileSystem = struct {
                 fs.readFileError(path, err);
                 return err;
             });
+            debug("stat({d}) = {d}", .{ file.handle, size });
 
             // Skip the pread call for empty files
             // Otherwise will get out of bounds errors
@@ -997,6 +999,7 @@ pub const FileSystem = struct {
                     };
                     shared_buffer.list.items = shared_buffer.list.items[0 .. read_count + offset];
                     file_contents = shared_buffer.list.items;
+                    debug("pread({d}, {d}) = {d}", .{ file.handle, size, read_count });
 
                     if (comptime stream) {
                         // check again that stat() didn't change the file size
@@ -1028,6 +1031,7 @@ pub const FileSystem = struct {
                     return err;
                 };
                 file_contents = buf[0..read_count];
+                debug("pread({d}, {d}) = {d}", .{ file.handle, size, read_count });
             }
 
             return File{ .path = Path.init(path), .contents = file_contents };

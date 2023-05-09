@@ -1563,6 +1563,7 @@ pub const BundleV2 = struct {
         bundler.options.public_path = config.public_path.list.items;
 
         bundler.options.output_dir = config.outdir.toOwnedSliceLeaky();
+        bundler.options.root_dir = config.rootdir.toOwnedSliceLeaky();
         bundler.options.minify_syntax = config.minify.syntax;
         bundler.options.minify_whitespace = config.minify.whitespace;
         bundler.options.minify_identifiers = config.minify.identifiers;

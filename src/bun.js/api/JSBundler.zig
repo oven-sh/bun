@@ -11,6 +11,7 @@ const js = JSC.C;
 const WebCore = @import("../webcore/response.zig");
 const Bundler = bun.bundler;
 const options = @import("../../options.zig");
+const resolve_path = @import("../../resolver/resolve_path.zig");
 const VirtualMachine = JavaScript.VirtualMachine;
 const ScriptSrcStream = std.io.FixedBufferStream([]u8);
 const ZigString = JSC.ZigString;
@@ -54,6 +55,7 @@ pub const JSBundler = struct {
         loaders: ?Api.LoaderMap = null,
         dir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         outdir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        rootdir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         serve: Serve = .{},
         jsx: options.JSX.Pragma = .{},
         code_splitting: bool = false,
@@ -74,6 +76,7 @@ pub const JSBundler = struct {
                 .define = bun.StringMap.init(allocator, true),
                 .dir = OwnedString.initEmpty(allocator),
                 .outdir = OwnedString.initEmpty(allocator),
+                .rootdir = OwnedString.initEmpty(allocator),
                 .names = .{
                     .owned_entry_point = OwnedString.initEmpty(allocator),
                     .owned_chunk = OwnedString.initEmpty(allocator),
@@ -149,6 +152,41 @@ pub const JSBundler = struct {
             } else {
                 globalThis.throwInvalidArguments("Expected entrypoints to be an array of strings", .{});
                 return error.JSException;
+            }
+
+            {
+                const path: ZigString.Slice = brk: {
+                    if (try config.getOptional(globalThis, "root", ZigString.Slice)) |slice| {
+                        break :brk slice;
+                    }
+
+                    const entry_points = this.entry_points.keys();
+
+                    if (entry_points.len == 1) {
+                        break :brk ZigString.Slice.fromUTF8NeverFree(std.fs.path.dirname(entry_points[0]) orelse ".");
+                    }
+
+                    break :brk ZigString.Slice.fromUTF8NeverFree(resolve_path.getIfExistsLongestCommonPath(entry_points) orelse ".");
+                };
+
+                defer path.deinit();
+
+                var dir = std.fs.cwd().openDir(path.slice(), .{}) catch |err| {
+                    switch (err) {
+                        error.FileNotFound => {
+                            globalThis.throwPretty("{s}: root directory for entry points should exist: {s}", .{ @errorName(err), path.slice() });
+                            return error.JSException;
+                        },
+                        else => {
+                            globalThis.throwPretty("{s}: failed to open root entry point directory: {s}", .{ @errorName(err), path.slice() });
+                            return error.JSException;
+                        },
+                    }
+                };
+                defer dir.close();
+
+                var rootdir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                this.rootdir.appendSliceExact(try bun.getFdPath(dir.fd, &rootdir_buf)) catch unreachable;
             }
 
             if (try config.getArray(globalThis, "external")) |externals| {
@@ -442,6 +480,7 @@ pub const JSBundler = struct {
             }
             self.names.deinit();
             self.outdir.deinit();
+            self.rootdir.deinit();
             self.public_path.deinit();
         }
     };

@@ -98,7 +98,7 @@ pub const BuildCommand = struct {
                 break :brk2 resolve_path.getIfExistsLongestCommonPath(this_bundler.options.entry_points) orelse ".";
             };
 
-            const dir = std.fs.cwd().openDir(path, .{}) catch |err| {
+            var dir = std.fs.cwd().openDir(path, .{}) catch |err| {
                 switch (err) {
                     error.FileNotFound => {
                         Output.prettyErrorln("error: root directory for entry points should exist: {s}", .{path});
@@ -112,6 +112,7 @@ pub const BuildCommand = struct {
                     },
                 }
             };
+            defer dir.close();
 
             break :brk1 try bun.getFdPath(dir.fd, &src_root_dir_buf);
         };

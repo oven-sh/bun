@@ -565,7 +565,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
             }
         } else {
             var sourcemap = flag.toSlice(globalThis, allocator);
-            if (options.SourceMapOption.map.get(sourcemap.slice())) |source| {
+            if (options.SourceMapOption.Map.get(sourcemap.slice())) |source| {
                 transpiler.transform.source_map = source.toAPI();
             } else {
                 JSC.throwInvalidArguments("sourcemap must be one of \"inline\", \"external\", or \"none\"", .{}, globalObject, exception);

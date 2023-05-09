@@ -12,7 +12,7 @@ total_skip=0
 
 for test in $tests; do
   defined=$(grep "^import" $test -v | grep -v expectBundled.md | grep -Ec "expectBundled|itBundled")
-  output=$(BUN_BUNDLER_TEST_LOOSE=false bun test $test 2>&1 | tail -n 5)
+  output=$(BUN_BUNDLER_TEST_LOOSE=false BUN_BUNDLER_TEST_NO_CHECK_SKIPPED=true bun test $test 2>&1 | tail -n 5)
   pass=$(echo "$output" | grep "pass" | cut -d " " -f 2)
   fail=$(echo "$output" | grep "fail" | cut -d " " -f 2)
   skip=$(echo "$output" | grep "skip" | cut -d " " -f 2)

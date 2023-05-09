@@ -247,11 +247,10 @@ describe("bundler", () => {
         console.log(foo)
       `,
     },
-    mode: "transform",
     runtimeFiles: {
       "/foo.js": `console.log('foo')`,
     },
-    external: ["./foo"],
+    bundling: false,
     run: {
       stdout: "foo\n234",
     },
@@ -264,7 +263,6 @@ describe("bundler", () => {
         console.log(JSON.stringify(ns), ns.foo, foo)
       `,
     },
-    mode: "transform",
     runtimeFiles: {
       "/foo.js": `export const foo = 123`,
     },
@@ -282,7 +280,6 @@ describe("bundler", () => {
       `,
     },
     external: ["./foo"],
-    mode: "transform",
     runtimeFiles: {
       "/foo.js": `export const foo = 123`,
     },
@@ -300,7 +297,6 @@ describe("bundler", () => {
     },
     minifySyntax: true,
     external: ["./foo"],
-    mode: "transform",
     runtimeFiles: {
       "/foo.js": `console.log('foo')`,
     },
@@ -317,7 +313,6 @@ describe("bundler", () => {
       `,
     },
     minifySyntax: true,
-    mode: "transform",
     external: ["./foo"],
     runtimeFiles: {
       "/foo.js": `export const foo = 123`,
@@ -335,7 +330,6 @@ describe("bundler", () => {
       `,
     },
     minifySyntax: true,
-    mode: "transform",
     external: ["./foo"],
     runtimeFiles: {
       "/foo.js": `export const foo = 123`,

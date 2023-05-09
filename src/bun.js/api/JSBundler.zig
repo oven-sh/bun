@@ -51,6 +51,7 @@ pub const JSBundler = struct {
         entry_points: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         hot: bool = false,
         define: bun.StringMap = bun.StringMap.init(bun.default_allocator, true),
+        loaders: ?Api.LoaderMap = null,
         dir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         outdir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         serve: Serve = .{},
@@ -60,7 +61,6 @@ pub const JSBundler = struct {
         server_components: ServerComponents = ServerComponents{},
 
         names: Names = .{},
-        label: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         external: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         source_map: options.SourceMapOption = .none,
         public_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
@@ -73,7 +73,6 @@ pub const JSBundler = struct {
                 .external = bun.StringSet.init(allocator),
                 .define = bun.StringMap.init(allocator, true),
                 .dir = OwnedString.initEmpty(allocator),
-                .label = OwnedString.initEmpty(allocator),
                 .outdir = OwnedString.initEmpty(allocator),
                 .names = .{
                     .owned_entry_point = OwnedString.initEmpty(allocator),
@@ -86,6 +85,20 @@ pub const JSBundler = struct {
 
             if (try config.getOptionalEnum(globalThis, "target", options.Target)) |target| {
                 this.target = target;
+            }
+
+            if (try config.getOptionalEnum(globalThis, "sourcemap", options.SourceMapOption)) |source_map| {
+                this.source_map = source_map;
+            }
+
+            if (try config.getOptionalEnum(globalThis, "format", options.Format)) |format| {
+                switch (format) {
+                    .esm => {},
+                    else => {
+                        globalThis.throwInvalidArguments("Formats besides 'esm' are not implemented", .{});
+                        return error.JSException;
+                    },
+                }
             }
 
             // if (try config.getOptional(globalThis, "hot", bool)) |hot| {
@@ -150,17 +163,12 @@ pub const JSBundler = struct {
                 }
             }
 
-            if (try config.getOptional(globalThis, "label", ZigString.Slice)) |slice| {
-                defer slice.deinit();
-                this.label.appendSliceExact(slice.slice()) catch unreachable;
-            }
-
-            if (try config.getOptional(globalThis, "dir", ZigString.Slice)) |slice| {
-                defer slice.deinit();
-                this.dir.appendSliceExact(slice.slice()) catch unreachable;
-            } else {
-                this.dir.appendSliceExact(globalThis.bunVM().bundler.fs.top_level_dir) catch unreachable;
-            }
+            // if (try config.getOptional(globalThis, "dir", ZigString.Slice)) |slice| {
+            //     defer slice.deinit();
+            //     this.dir.appendSliceExact(slice.slice()) catch unreachable;
+            // } else {
+            //     this.dir.appendSliceExact(globalThis.bunVM().bundler.fs.top_level_dir) catch unreachable;
+            // }
 
             if (try config.getOptional(globalThis, "publicPath", ZigString.Slice)) |slice| {
                 defer slice.deinit();
@@ -195,6 +203,84 @@ pub const JSBundler = struct {
                 } else {
                     globalThis.throwInvalidArguments("Expected naming to be a string or an object", .{});
                     return error.JSException;
+                }
+            }
+
+            if (try config.getObject(globalThis, "define")) |define| {
+                if (!define.isObject()) {
+                    globalThis.throwInvalidArguments("define must be an object", .{});
+                    return error.JSException;
+                }
+
+                var define_iter = JSC.JSPropertyIterator(.{
+                    .skip_empty_name = true,
+                    .include_value = true,
+                }).init(globalThis, define.asObjectRef());
+                defer define_iter.deinit();
+
+                while (define_iter.next()) |prop| {
+                    const property_value = define_iter.value;
+                    const value_type = property_value.jsType();
+
+                    if (!value_type.isStringLike()) {
+                        globalThis.throwInvalidArguments("define \"{s}\" must be a JSON string", .{prop});
+                        return error.JSException;
+                    }
+
+                    var val = JSC.ZigString.init("");
+                    property_value.toZigString(&val, globalThis);
+                    if (val.len == 0) {
+                        val = JSC.ZigString.init("\"\"");
+                    }
+
+                    try this.define.insert(prop.slice(), val.slice());
+                }
+            }
+
+            if (try config.getObject(globalThis, "loader")) |loaders| {
+                if (!loaders.isUndefinedOrNull()) {
+                    if (!loaders.isObject()) {
+                        globalThis.throwInvalidArguments("loader must be an object", .{});
+                        return error.JSException;
+                    }
+
+                    var loader_iter = JSC.JSPropertyIterator(.{
+                        .skip_empty_name = true,
+                        .include_value = true,
+                    }).init(globalThis, loaders.asObjectRef());
+                    defer loader_iter.deinit();
+
+                    var loader_names = try allocator.alloc(string, loader_iter.len);
+                    var loader_values = try allocator.alloc(Api.Loader, loader_iter.len);
+
+                    while (loader_iter.next()) |prop| {
+                        if (prop.len == 0 or prop.ptr[0] != '.') {
+                            globalThis.throwInvalidArguments("loader property names must be file extensions, such as '.txt'", .{});
+                            return error.JSException;
+                        }
+
+                        loader_names[loader_iter.i] = prop.slice();
+                        var property_value = loader_iter.value;
+                        var value_type = property_value.jsType();
+                        if (!value_type.isStringLike()) {
+                            globalThis.throwInvalidArguments("loader \"{s}\" must be a string", .{prop});
+                            return error.JSException;
+                        }
+
+                        var val = JSC.ZigString.init("");
+                        property_value.toZigString(&val, globalThis);
+                        if (options.Loader.fromString(val.slice())) |loader| {
+                            loader_values[loader_iter.i] = loader.toAPI();
+                        } else {
+                            globalThis.throwInvalidArguments("loader \"{s}\" is not a valid loader", .{val});
+                            return error.JSException;
+                        }
+                    }
+
+                    this.loaders = Api.LoaderMap{
+                        .extensions = loader_names,
+                        .loaders = loader_values,
+                    };
                 }
             }
 
@@ -355,7 +441,6 @@ pub const JSBundler = struct {
             self.serve.deinit(allocator);
             self.server_components.deinit(allocator);
             self.names.deinit();
-            self.label.deinit();
             self.outdir.deinit();
             self.public_path.deinit();
         }

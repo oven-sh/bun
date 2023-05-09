@@ -63,8 +63,8 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 ---
 
-- `--loader`
-- `--loader`
+- `--loader:.ext=loader`
+- `--loader .ext:loader`
 - Bun supports a different set of built-in loaders than esbuild; see [Bundler > Loaders](/docs/bundler/loaders) for a complete reference. The esbuild loaders `dataurl`, `binary`, `base64`, `copy`, and `empty` are not yet implemented.
 
   The syntax for `--loader` is slightly different.
@@ -131,7 +131,7 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `--watch`
 - n/a
-- Not applicable.
+- Not applicable
 
 ---
 
@@ -143,7 +143,7 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `--analyze`
 - n/a
-- Not supported. Use `--manifest` to generate a manifest file.
+- Not supported
 
 ---
 
@@ -161,7 +161,7 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `--certfile`
 - n/a
-- Not applicable, Bun's bundler does
+- Not applicable
 
 ---
 
@@ -203,7 +203,7 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `--global-name`
 - n/a
-- Not applicable, Bun does not support `iife` output at this time.
+- Not applicable, Bun does not support `iife` output at this time
 
 ---
 
@@ -248,7 +248,7 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `--jsx-side-effects`
 - n/a
-- JSX is always assumed to be side-effect-free.
+- JSX is always assumed to be side-effect-free
 
 ---
 
@@ -313,7 +313,8 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 ---
 
 - `--metafile`
-- `--manifest`
+- n/a
+- Not supported
 
 ---
 
@@ -340,7 +341,6 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `--outbase`
 - `--root`
-- Not supported
 
 ---
 
@@ -515,7 +515,6 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `define`
 - `define`
-- Not supported in JS API
 
 ---
 
@@ -637,8 +636,8 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 ---
 
 - `loader`
-- n/a
-- Not supported in JS API
+- `loader`
+- Bun supports a different set of built-in loaders than esbuild; see [Bundler > Loaders](/docs/bundler/loaders) for a complete reference. The esbuild loaders `dataurl`, `binary`, `base64`, `copy`, and `empty` are not yet implemented.
 
 ---
 
@@ -685,8 +684,11 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 ---
 
 - `metafile`
-- `manifest`
-- When `manifest` is `true`, the result of `Bun.build()` will contain a `manifest` property. The manifest is compatible with esbuild's metafile format.
+- n/a
+- Not supported
+
+<!-- - `manifest`
+- When `manifest` is `true`, the result of `Bun.build()` will contain a `manifest` property. The manifest is compatible with esbuild's metafile format. -->
 
 ---
 

@@ -933,18 +933,19 @@ declare module "bun" {
     scanImports(code: StringOrBuffer): Import[];
   }
 
+  export type ImportKind =
+    | "import-statement"
+    | "require-call"
+    | "require-resolve"
+    | "dynamic-import"
+    | "import-rule"
+    | "url-token"
+    | "internal"
+    | "entry-point";
+
   export interface Import {
     path: string;
-
-    kind:
-      | "import-statement"
-      | "require-call"
-      | "require-resolve"
-      | "dynamic-import"
-      | "import-rule"
-      | "url-token"
-      | "internal"
-      | "entry-point";
+    kind: ImportKind;
   }
 
   type ModuleFormat = "esm"; // later: "cjs", "iife"
@@ -954,7 +955,6 @@ declare module "bun" {
     outdir?: string; // output directory
     target?: Target; // default: "browser"
     format?: ModuleFormat; // later: "cjs", "iife"
-
     naming?:
       | string
       | {
@@ -968,9 +968,10 @@ declare module "bun" {
     // manifest?: boolean; // whether to return manifest
     external?: Array<string>;
     publicPath?: string;
+    define?: Record<string, string>;
     // origin?: string; // e.g. http://mydomain.com
-    // loaders?: { [k in string]: Loader };
-    // sourcemap?: "none" | "inline" | "external"; // default: "none"
+    loader?: { [k in string]: Loader };
+    sourcemap?: "none" | "inline" | "external"; // default: "none"
     minify?:
       | boolean
       | {
@@ -979,6 +980,19 @@ declare module "bun" {
           identifiers?: boolean;
         };
     // treeshaking?: boolean;
+
+    // jsx?:
+    //   | "automatic"
+    //   | "classic"
+    //   | /* later: "preserve" */ {
+    //       runtime?: "automatic" | "classic"; // later: "preserve"
+    //       /** Only works when runtime=classic */
+    //       factory?: string; // default: "React.createElement"
+    //       /** Only works when runtime=classic */
+    //       fragment?: string; // default: "React.Fragment"
+    //       /** Only works when runtime=automatic */
+    //       importSource?: string; // default: "react"
+    //     };
   }
 
   type BuildResult<T = Blob> = {
@@ -2513,7 +2527,19 @@ declare module "bun" {
      * The plugin will be applied to browser builds
      */
     | "browser";
-  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml";
+  /** https://bun.sh/docs/bundler/loaders */
+  type Loader =
+    | "js"
+    | "jsx"
+    | "ts"
+    | "tsx"
+    | "json"
+    | "toml"
+    | "file"
+    | "napi"
+    | "wasm"
+    | "dataurl"
+    | "text";
 
   interface PluginConstraints {
     /**
@@ -2556,7 +2582,7 @@ declare module "bun" {
      *
      * "css" will be added in a future version of Bun.
      */
-    loader: Loader;
+    loader?: Loader;
   }
 
   interface OnLoadResultObject {
@@ -2593,6 +2619,14 @@ declare module "bun" {
      * ```
      */
     path: string;
+    /**
+     * The namespace of the module being loaded
+     */
+    namespace: string;
+    /**
+     * The default loader for this file extension
+     */
+    loader: Loader;
   }
 
   type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject;
@@ -2609,6 +2643,16 @@ declare module "bun" {
      * The module that imported the module being resolved
      */
     importer: string;
+    /**
+     * The namespace of the importer.
+     */
+    namespace: string;
+    /**
+     * The kind of import this resolve is for.
+     */
+    kind: ImportKind;
+    // resolveDir: string;
+    // pluginData: any;
   }
 
   interface OnResolveResult {
@@ -2627,7 +2671,14 @@ declare module "bun" {
     namespace?: string;
   }
 
-  type OnResolveCallback = (args: OnResolveArgs) => OnResolveResult | void;
+  type OnResolveCallback = (
+    args: OnResolveArgs,
+  ) =>
+    | OnResolveResult
+    | Promise<OnResolveResult | void | undefined | null>
+    | void
+    | undefined
+    | null;
 
   interface PluginBuilder {
     /**

@@ -73,7 +73,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/SyntaxErrorTrailingComma", {
-    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -1212,7 +1211,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/ExportsNode", {
-    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg'`,
       "/Users/user/project/node_modules/pkg/package.json": /* json */ `

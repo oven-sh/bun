@@ -4009,9 +4009,10 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn getOptionalEnum(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime Enum: type) !?Enum {
         if (get(this, globalThis, property_name)) |prop| {
+            if (prop.isEmptyOrUndefinedOrNull())
+                return null;
             return try toEnum(prop, globalThis, property_name, Enum);
         }
-
         return null;
     }
 

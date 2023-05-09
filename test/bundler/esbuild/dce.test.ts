@@ -889,8 +889,14 @@ describe("bundler", () => {
     run: {
       stdout: "unused import",
     },
+    assetNaming: "[name].[ext]",
+    outdir: "/out",
     loader: {
       ".data": "file",
+    },
+    onAfterBundle(api) {
+      const fs = require("fs");
+      expect(fs.readdirSync(api.outdir)).toEqual(["entry.js"]);
     },
   });
   itBundled("dce/RemoveUnusedImportMeta", {
@@ -1038,7 +1044,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/DeadCodeFollowingJump", {
-    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         function testReturn() {
@@ -1273,7 +1278,7 @@ describe("bundler", () => {
         let POSSIBLE_REMOVAL_1 = class { [{ toString() {} }] = 'x' }
       `,
     },
-    mode: "transform",
+    bundling: false,
     treeShaking: true,
     dce: true,
   });
@@ -1309,7 +1314,7 @@ describe("bundler", () => {
         let POSSIBLE_REMOVAL_1 = class { static [{ toString() {} }] = 'x' }
       `,
     },
-    mode: "transform",
+    bundling: false,
     treeShaking: true,
     dce: true,
   });
@@ -1392,7 +1397,6 @@ describe("bundler", () => {
     format: "iife",
   });
   itBundled("dce/TreeShakingNoBundleESM", {
-    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         function keep() {}
@@ -1401,7 +1405,7 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
-    mode: "transform",
+    bundling: false,
     treeShaking: true,
     dce: true,
   });
@@ -1416,7 +1420,7 @@ describe("bundler", () => {
     dce: true,
     format: "cjs",
     treeShaking: true,
-    mode: "transform",
+    bundling: false,
   });
   itBundled("dce/TreeShakingNoBundleIIFE", {
     files: {
@@ -1429,7 +1433,7 @@ describe("bundler", () => {
     dce: true,
     format: "iife",
     treeShaking: true,
-    mode: "transform",
+    bundling: false,
   });
   itBundled("dce/TreeShakingInESMWrapper", {
     files: {
@@ -1692,8 +1696,7 @@ describe("bundler", () => {
       `,
     },
     minifySyntax: true,
-    mode: "transform",
-    external: ["a", "b", "c"],
+    bundling: false,
     dce: true,
   });
   itBundled("dce/RemoveUnusedImportsEvalTS", {
@@ -1707,7 +1710,7 @@ describe("bundler", () => {
     },
     dce: true,
     minifySyntax: true,
-    mode: "transform",
+    bundling: false,
   });
   itBundled("dce/DCEClassStaticBlocks", {
     files: {
@@ -2192,7 +2195,7 @@ describe("bundler", () => {
         "  delete id_REMOVE((foo(), bar())),\n" +
         "]",
     },
-    mode: "transform",
+    bundling: false,
     minifySyntax: true,
     treeShaking: true,
     dce: true,
@@ -2561,7 +2564,7 @@ describe("bundler", () => {
       "/ts-namespace-no-eval.ts",
       "/ts-namespace-eval.ts",
     ],
-    mode: "transform",
+    bundling: false,
     minifySyntax: true,
     dce: true,
     dceKeepMarkerCount: {
@@ -2683,7 +2686,6 @@ describe("bundler", () => {
     dce: true,
   });
   itBundled("dce/MultipleDeclarationTreeShaking", {
-    notImplemented: true,
     files: {
       "/var2.js": /* js */ `
         var x = 1
@@ -2722,7 +2724,6 @@ describe("bundler", () => {
     ],
   });
   itBundled("dce/MultipleDeclarationTreeShakingMinifySyntax", {
-    notImplemented: true,
     files: {
       "/var2.js": /* js */ `
         var x = 1

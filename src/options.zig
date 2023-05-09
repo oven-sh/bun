@@ -636,6 +636,52 @@ pub const Target = enum {
     };
 };
 
+pub const Format = enum {
+    esm,
+    cjs,
+    iife,
+
+    pub const Map = ComptimeStringMap(
+        Format,
+        .{
+            .{
+                "esm",
+                Format.esm,
+            },
+            .{
+                "cjs",
+                Format.cjs,
+            },
+            .{
+                "iife",
+                Format.iife,
+            },
+        },
+    );
+
+    pub fn fromJS(global: *JSC.JSGlobalObject, format: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Format {
+        if (format.isUndefinedOrNull()) return null;
+
+        if (!format.jsType().isStringLike()) {
+            JSC.throwInvalidArguments("Format must be a string", .{}, global, exception);
+            return null;
+        }
+
+        var zig_str = JSC.ZigString.init("");
+        format.toZigString(&zig_str, global);
+        if (zig_str.len == 0) return null;
+
+        return fromString(zig_str.slice()) orelse {
+            JSC.throwInvalidArguments("Invalid format - must be esm, cjs, or iife", .{}, global, exception);
+            return null;
+        };
+    }
+
+    pub fn fromString(slice: string) ?Format {
+        return Map.getWithEql(slice, strings.eqlComptime);
+    }
+};
+
 pub const Loader = enum(u8) {
     jsx,
     js,
@@ -1271,7 +1317,7 @@ pub const SourceMapOption = enum {
         };
     }
 
-    pub const map = ComptimeStringMap(SourceMapOption, .{
+    pub const Map = ComptimeStringMap(SourceMapOption, .{
         .{ "none", .none },
         .{ "inline", .@"inline" },
         .{ "external", .external },

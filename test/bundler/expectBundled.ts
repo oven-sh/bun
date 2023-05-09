@@ -12,6 +12,8 @@ import type { Expect } from "bun:test";
 import { PluginBuilder } from "bun";
 import * as esbuild from "esbuild";
 
+let currentFile: string | undefined;
+
 type BunTestExports = typeof import("bun:test");
 export function testForFile(file: string): BunTestExports {
   if (file.startsWith("file://")) {
@@ -20,7 +22,42 @@ export function testForFile(file: string): BunTestExports {
 
   var testFile = testFiles.get(file);
   if (!testFile) {
-    testFile = (Bun as any).jest(file);
+    const native = (Bun as any).jest(file);
+    const notImplemented: BundlerTestRef[] = [];
+    testFile = {
+      it: native.it,
+      test: native.test,
+      expect: native.expect,
+      addNotImplemented: (ref: BundlerTestRef) => notImplemented.push(ref),
+    };
+    testFile.describe = function (name: string, fn: () => void) {
+      native.describe(name, function () {
+        if (currentFile) {
+          throw new Error("please don't nest describe blocks in the bundler tests.");
+        }
+        currentFile = file;
+        fn();
+        currentFile = undefined;
+        if (!FILTER && !process.env.BUN_BUNDLER_TEST_NO_CHECK_SKIPPED) {
+          native.test(`"${path.basename(file)}" has proper notImplemented markers`, async () => {
+            console.log(`\n  Checking if any of the ${notImplemented.length} not implemented tests work...`);
+            const implemented = [];
+            for (const ref of notImplemented) {
+              try {
+                await expectBundled(ref.id, { ...ref.options, notImplemented: false }, false, true);
+                implemented.push({ id: ref.id, success: true });
+              } catch (e) {}
+            }
+            if (implemented.length) {
+              throw (
+                '"notImplemented" can only be used on failing tests. the following tests pass:\n' +
+                implemented.map(x => "  - " + x.id).join("\n")
+              );
+            }
+          });
+        }
+      });
+    };
     testFiles.set(file, testFile);
   }
   return testFile;
@@ -63,8 +100,8 @@ export interface BundlerTestInput {
   entryPointsAdvanced?: Array<{ input: string; output?: string }>;
   /** These are not path resolved. Used for `default/RelativeEntryPointError` */
   entryPointsRaw?: string[];
-  /** Defaults to bundle */
-  mode?: "bundle" | "transform";
+  /** Defaults to true */
+  bundling?: boolean;
   /** Used for `default/ErrorMessageCrashStdinESBuildIssue2913`. */
   stdin?: { contents: string; cwd: string };
   /** Use when doing something weird with entryPoints and you need to check other output paths. */
@@ -122,7 +159,7 @@ export interface BundlerTestInput {
   unsupportedJSFeatures?: string[];
   /** if set to true or false, create or edit tsconfig.json to set compilerOptions.useDefineForClassFields */
   useDefineForClassFields?: boolean;
-  sourceMap?: boolean | "inline" | "external";
+  sourceMap?: "inline" | "external" | "none";
   plugins?: BunPlugin[] | ((builder: PluginBuilder) => void | Promise<void>);
 
   // pass subprocess.env
@@ -203,7 +240,7 @@ export interface BundlerTestBundleAPI {
    */
   captureFile(file: string, fnName?: string): string[];
 
-  warnings: Record<string, { file: string; error: string; line?: string; col?: string }[]>;
+  warnings: Record<string, ErrorMeta[]>;
   options: BundlerTestInput;
 }
 
@@ -240,6 +277,13 @@ export interface BundlerTestRef {
   options: BundlerTestInput;
 }
 
+interface ErrorMeta {
+  file: string;
+  error: string;
+  line?: string;
+  col?: string;
+}
+
 var testFiles = new Map();
 
 function testRef(id: string, options: BundlerTestInput): BundlerTestRef {
@@ -252,18 +296,18 @@ function expectBundled(
   dryRun = false,
   ignoreFilter = false,
 ): Promise<BundlerTestRef> | BundlerTestRef {
-  var { expect, it, test } = testForFile(callerSourceOrigin());
+  var { expect, it, test } = testForFile(currentFile ?? callerSourceOrigin());
   if (!ignoreFilter && FILTER && !filterMatches(id)) return testRef(id, opts);
 
   let {
-    notImplemented,
-    bundleWarnings,
-    bundleErrors,
-    banner,
-    backend,
     assertNotPresent,
-    capture,
     assetNaming,
+    backend,
+    banner,
+    bundleErrors,
+    bundleWarnings,
+    bundling,
+    capture,
     chunkNaming,
     cjs2esm,
     dce,
@@ -286,23 +330,23 @@ function expectBundled(
     matchesReference,
     metafile,
     minifyIdentifiers,
-    serverComponents = false,
     minifySyntax,
     minifyWhitespace,
-    mode,
+    notImplemented,
     onAfterBundle,
     outbase,
     outdir,
     outfile,
     outputPaths,
-    target,
     plugins,
     publicPath,
     run,
     runtimeFiles,
+    serverComponents = false,
     skipOnEsbuild,
     sourceMap,
     splitting,
+    target,
     treeShaking,
     unsupportedCSSFeatures,
     unsupportedJSFeatures,
@@ -327,7 +371,7 @@ function expectBundled(
   }
 
   // Resolve defaults for options and some related things
-  mode ??= "bundle";
+  bundling ??= true;
   target ??= "browser";
   format ??= "esm";
   entryPoints ??= entryPointsRaw ? [] : [Object.keys(files)[0]];
@@ -337,6 +381,10 @@ function expectBundled(
   if (bundleWarnings === true) bundleWarnings = {};
   const useOutFile = outfile ? true : outdir ? false : entryPoints.length === 1;
 
+  if (bundling === false) {
+    // https://github.com/oven-sh/bun/issues/2821
+    external = ["*"];
+  }
   if (!ESBUILD && format !== "esm") {
     throw new Error("formats besides esm not implemented in bun build");
   }
@@ -353,16 +401,13 @@ function expectBundled(
     throw new Error("unsupportedCSSFeatures not implemented in bun build");
   }
   if (!ESBUILD && outbase) {
-    throw new Error("outbase not implemented in bun build");
+    throw new Error("outbase/root not implemented in bun build");
   }
   if (!ESBUILD && keepNames) {
     throw new Error("keepNames not implemented in bun build");
   }
   if (!ESBUILD && mainFields) {
     throw new Error("mainFields not implemented in bun build");
-  }
-  if (!ESBUILD && sourceMap) {
-    throw new Error("sourceMap not implemented in bun build");
   }
   if (!ESBUILD && banner) {
     throw new Error("banner not implemented in bun build");
@@ -372,7 +417,7 @@ function expectBundled(
   }
   if (!ESBUILD && loader) {
     const loaderValues = [...new Set(Object.values(loader))];
-    const supportedLoaderTypes = ["js", "jsx", "ts", "tsx", "css", "json", "text", "file"];
+    const supportedLoaderTypes = ["js", "jsx", "ts", "tsx", "css", "json", "text", "file", "wtf"];
     const unsupportedLoaderTypes = loaderValues.filter(x => !supportedLoaderTypes.includes(x));
     if (unsupportedLoaderTypes.length) {
       throw new Error(`loader '${unsupportedLoaderTypes.join("', '")}' not implemented in bun build`);
@@ -408,9 +453,6 @@ function expectBundled(
         : entryPaths.map(file => path.join(outdir!, path.basename(file)))
     ).map(x => x.replace(/\.ts$/, ".js"));
 
-    if (mode === "transform" && !outfile && !ESBUILD) {
-      throw new Error("transform mode requires one single outfile");
-    }
     if (cjs2esm && !outfile && !minifySyntax && !minifyWhitespace) {
       throw new Error("cjs2esm=true requires one output file, minifyWhitespace=false, and minifySyntax=false");
     }
@@ -456,12 +498,15 @@ function expectBundled(
     }
 
     // Run bun build cli. In the future we can move to using `Bun.Bundler`
-    let warningReference: Record<string, { file: string; error: string; line?: string; col?: string }[]> = {};
+    let warningReference: Record<string, ErrorMeta[]> = {};
+    const expectedErrors = bundleErrors
+      ? Object.entries(bundleErrors).flatMap(([file, v]) => v.map(error => ({ file, error })))
+      : null;
+
     if (backend === "cli") {
       if (plugins) {
         throw new Error("plugins not possible in backend=CLI");
       }
-
       const cmd = (
         !ESBUILD
           ? [
@@ -470,40 +515,39 @@ function expectBundled(
               "build",
               ...entryPaths,
               ...(entryPointsRaw ?? []),
-              mode === "bundle" ? [outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`] : [],
+              outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
               define && Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
               `--target=${target}`,
+              // `--format=${format}`,
               external && external.map(x => ["--external", x]),
               minifyIdentifiers && `--minify-identifiers`,
               minifySyntax && `--minify-syntax`,
               minifyWhitespace && `--minify-whitespace`,
               globalName && `--global-name=${globalName}`,
-              // inject && inject.map(x => ["--inject", path.join(root, x)]),
-              // jsx.preserve && "--jsx=preserve",
               jsx.runtime && ["--jsx-runtime", jsx.runtime],
               jsx.factory && ["--jsx-factory", jsx.factory],
               jsx.fragment && ["--jsx-fragment", jsx.fragment],
               jsx.importSource && ["--jsx-import-source", jsx.importSource],
               // metafile && `--manifest=${metafile}`,
-              // sourceMap && `--sourcemap${sourceMap !== true ? `=${sourceMap}` : ""}`,
+              sourceMap && `--sourcemap=${sourceMap}`,
               entryNaming && entryNaming !== "[name].[ext]" && [`--entry-naming`, entryNaming],
               chunkNaming && chunkNaming !== "[name]-[hash].[ext]" && [`--chunk-naming`, chunkNaming],
               assetNaming && assetNaming !== "[name]-[hash].[ext]" && [`--asset-naming`, chunkNaming],
-              // `--format=${format}`,
-              // legalComments && `--legal-comments=${legalComments}`,
               splitting && `--splitting`,
               serverComponents && "--server-components",
+              outbase && `--outbase=${outbase}`,
+              // inject && inject.map(x => ["--inject", path.join(root, x)]),
+              // jsx.preserve && "--jsx=preserve",
+              // legalComments && `--legal-comments=${legalComments}`,
               // treeShaking === false && `--no-tree-shaking`, // ??
-              // outbase && `--outbase=${outbase}`,
               // keepNames && `--keep-names`,
               // mainFields && `--main-fields=${mainFields}`,
               loader && Object.entries(loader).map(([k, v]) => ["--loader", `${k}:${v}`]),
               publicPath && `--public-path=${publicPath}`,
-              mode === "transform" && "--transform",
             ]
           : [
               ESBUILD_PATH,
-              mode === "bundle" && "--bundle",
+              bundling && "--bundle",
               outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
               `--format=${format}`,
               `--platform=${target === "bun" ? "node" : target}`,
@@ -514,7 +558,7 @@ function expectBundled(
               external && external.map(x => `--external:${x}`),
               inject && inject.map(x => `--inject:${path.join(root, x)}`),
               define && Object.entries(define).map(([k, v]) => `--define:${k}=${v}`),
-              `--jsx=${jsx.runtime ?? "automatic"}`,
+              `--jsx=${jsx.runtime === "classic" ? "transform" : "automatic"}`,
               // jsx.preserve && "--jsx=preserve",
               jsx.factory && `--jsx-factory=${jsx.factory}`,
               jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
@@ -527,7 +571,7 @@ function expectBundled(
                 assetNaming !== "[name]-[hash].[ext]" &&
                 `--asset-names=${assetNaming.replace(/\.\[ext]$/, "")}`,
               metafile && `--metafile=${metafile}`,
-              sourceMap && `--sourcemap${sourceMap !== true ? `=${sourceMap}` : ""}`,
+              sourceMap && `--sourcemap=${sourceMap}`,
               banner && `--banner:js=${banner}`,
               legalComments && `--legal-comments=${legalComments}`,
               splitting && `--splitting`,
@@ -598,10 +642,6 @@ function expectBundled(
       });
 
       // Check for errors
-      const expectedErrors = bundleErrors
-        ? Object.entries(bundleErrors).flatMap(([file, v]) => v.map(error => ({ file, error })))
-        : null;
-
       if (!success) {
         if (!ESBUILD) {
           const errorText = stderr.toString("utf-8");
@@ -689,11 +729,6 @@ function expectBundled(
         throw new Error("Errors were expected while bundling:\n" + expectedErrors.map(formatError).join("\n"));
       }
 
-      if (mode === "transform" && !ESBUILD) {
-        mkdirSync(path.dirname(outfile!), { recursive: true });
-        Bun.write(outfile!, stdout);
-      }
-
       // Check for warnings
       if (!ESBUILD) {
         const warningRegex = /^warn: (.*?)\n.*?\n\s*\^\s*\n(.*?)\n/gms;
@@ -773,7 +808,7 @@ function expectBundled(
           plugins: pluginArray,
           treeShaking,
           outdir: buildOutDir,
-          sourcemap: sourceMap === true ? "external" : sourceMap || "none",
+          sourcemap: sourceMap,
           splitting,
           target,
           publicPath,
@@ -805,11 +840,90 @@ for (const blob of build.outputs) {
         const build = await Bun.build(buildConfig);
         Bun.gc(true);
 
-        console.log(build);
+        const buildLogs = (build as any).logs;
 
-        if (build.logs) {
-          console.log(build.logs);
-          throw new Error("TODO: handle build logs, but we should make this api nicer");
+        if (buildLogs) {
+          const rawErrors = buildLogs instanceof AggregateError ? buildLogs.errors : [buildLogs];
+          const allErrors: ErrorMeta[] = [];
+          for (const error of rawErrors) {
+            const str = error.message ?? String(error);
+            if (str.startsWith("\u001B[2mexpect(") || str.startsWith("expect(")) {
+              throw error;
+            }
+
+            // undocuemnted types
+            const position = error.position as {
+              lineText: string;
+              file: string;
+              namespace: string;
+              line: number;
+              column: number;
+              offset: number;
+            };
+
+            const filename = position?.file
+              ? position.namespace === "file"
+                ? "/" + path.relative(root, position.file)
+                : `${position.namespace}:${position.file.replace(root, "")}`
+              : "<bun>";
+
+            allErrors.push({
+              file: filename,
+              error: str,
+              col: position?.column !== undefined ? String(position.column) : undefined,
+              line: position?.line !== undefined ? String(position.line) : undefined,
+            });
+          }
+
+          if (DEBUG && allErrors.length) {
+            console.log("REFERENCE ERRORS OBJECT");
+            console.log("bundleErrors: {");
+            const files: any = {};
+            for (const err of allErrors) {
+              files[err.file] ??= [];
+              files[err.file].push(err);
+            }
+            for (const [file, errs] of Object.entries(files)) {
+              console.log('  "' + file + '": [');
+              for (const err of errs as any) {
+                console.log("    `" + err.error + "`,");
+              }
+              console.log("  ],");
+            }
+            console.log("},");
+          }
+
+          if (expectedErrors) {
+            const errorsLeft = [...expectedErrors];
+            let unexpectedErrors = [];
+
+            for (const error of allErrors) {
+              const i = errorsLeft.findIndex(item => error.file === item.file && error.error.includes(item.error));
+              if (i === -1) {
+                unexpectedErrors.push(error);
+              } else {
+                errorsLeft.splice(i, 1);
+              }
+            }
+
+            if (unexpectedErrors.length) {
+              throw new Error(
+                "Unexpected errors reported while bundling:\n" +
+                  [...unexpectedErrors].map(formatError).join("\n") +
+                  "\n\nExpected errors:\n" +
+                  expectedErrors.map(formatError).join("\n"),
+              );
+            }
+
+            if (errorsLeft.length) {
+              throw new Error("Errors were expected while bundling:\n" + errorsLeft.map(formatError).join("\n"));
+            }
+
+            return testRef(id, opts);
+          }
+          throw new Error("Bundle Failed\n" + [...allErrors].map(formatError).join("\n"));
+        } else if (expectedErrors && expectedErrors.length > 0) {
+          throw new Error("Errors were expected while bundling:\n" + expectedErrors.map(formatError).join("\n"));
         }
       } else {
         await esbuild.build({
@@ -914,7 +1028,7 @@ for (const blob of build.outputs) {
             }
             if (dce) {
               const content = readFileSync(fullpath, "utf8");
-              const dceFails = [...content.matchAll(/FAIL|FAILED|DROP|REMOVE/gi)];
+              const dceFails = [...content.replace(/\/\*.*?\*\//g, "").matchAll(/FAIL|FAILED|DROP|REMOVE/gi)];
               const key = fullpath.slice(root.length);
               if (dceFails.length) {
                 throw new Error("DCE test did not remove all expected code in " + key + ".");
@@ -1160,7 +1274,7 @@ export function itBundled(
     opts._referenceFn = fn;
   }
   const ref = testRef(id, opts);
-  const { it } = testForFile(callerSourceOrigin());
+  const { it, addNotImplemented } = testForFile(currentFile ?? callerSourceOrigin()) as any;
 
   if (FILTER && !filterMatches(id)) {
     return ref;
@@ -1173,19 +1287,11 @@ export function itBundled(
     }
   }
 
-  if (opts.notImplemented) {
+  if (opts.notImplemented && !FILTER) {
     if (!HIDE_SKIP) it.skip(id, () => {});
-    // commented out because expectBundled was made async and this is no longer possible in a sense.
-    // try {
-    //   expectBundled(id, opts);
-    //   it(id, () => {
-    //     throw new Error(
-    //       `Test ${id} passes but was marked as "notImplemented"\nPlease remove "notImplemented: true" from this test.`,
-    //     );
-    //   });
-    // } catch (error: any) {}
+    addNotImplemented({ id, options: opts });
   } else {
-    it(id, () => expectBundled(id, opts));
+    it(id, () => expectBundled(id, opts as any));
   }
   return ref;
 }
@@ -1193,13 +1299,13 @@ itBundled.skip = (id: string, opts: BundlerTestInput) => {
   if (FILTER && !filterMatches(id)) {
     return testRef(id, opts);
   }
-  const { it } = testForFile(callerSourceOrigin());
+  const { it } = testForFile(currentFile ?? callerSourceOrigin());
   if (!HIDE_SKIP) it.skip(id, () => expectBundled(id, opts));
   return testRef(id, opts);
 };
 
-function formatError(err: { file: string; error: string; line?: string; col?: string }) {
-  return `${err.file}${err.line ? " :" + err.line : ""}${err.col ? ":" + err.col : ""}: ${err.error}`;
+function formatError(err: ErrorMeta) {
+  return `${err.file}${err.line ? ":" + err.line : ""}${err.col ? ":" + err.col : ""}: ${err.error}`;
 }
 
 function filterMatches(id: string) {

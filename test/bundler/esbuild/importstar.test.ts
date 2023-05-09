@@ -250,7 +250,7 @@ describe("bundler", () => {
     runtimeFiles: {
       "/foo.js": `console.log('foo')`,
     },
-    bundling: true,
+    bundling: false,
     run: {
       stdout: "foo\n234",
     },

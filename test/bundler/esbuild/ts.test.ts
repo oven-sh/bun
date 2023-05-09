@@ -391,7 +391,7 @@ describe("bundler", () => {
     minifySyntax: true,
     minifyWhitespace: true,
     minifyIdentifiers: true,
-    bundling: true,
+    bundling: false,
     onAfterBundle(api) {
       const a = api.readFile("/out.js");
       api.writeFile("/out.edited.js", a.replace(/capture\((.*?)\)/, `export const Foo = $1`));
@@ -434,7 +434,7 @@ describe("bundler", () => {
     minifySyntax: true,
     minifyWhitespace: true,
     minifyIdentifiers: true,
-    bundling: true,
+    bundling: false,
     onAfterBundle(api) {
       const b = api.readFile("/out.js");
 
@@ -505,7 +505,7 @@ describe("bundler", () => {
     minifySyntax: true,
     minifyWhitespace: true,
     minifyIdentifiers: true,
-    bundling: true,
+    bundling: false,
     unsupportedJSFeatures: ["logical-assignment"],
     onAfterBundle(api) {
       const a = api.readFile("/out/a.js");
@@ -526,7 +526,7 @@ describe("bundler", () => {
     minifyWhitespace: true,
     minifyIdentifiers: true,
     outdir: "/",
-    bundling: true,
+    bundling: false,
     unsupportedJSFeatures: ["arrow"],
     onAfterBundle(api) {
       const a = api.readFile("/a.js");
@@ -596,7 +596,7 @@ describe("bundler", () => {
     minifyWhitespace: true,
     minifyIdentifiers: true,
     outdir: "/",
-    bundling: true,
+    bundling: false,
     unsupportedJSFeatures: ["logical-assignment"],
     onAfterBundle(api) {
       const a = api.readFile("/a.js");
@@ -629,7 +629,7 @@ describe("bundler", () => {
     minifyWhitespace: true,
     minifyIdentifiers: true,
     outdir: "/",
-    bundling: true,
+    bundling: false,
     unsupportedJSFeatures: ["arrow"],
     onAfterBundle(api) {
       const a = api.readFile("/a.js");
@@ -759,7 +759,7 @@ describe("bundler", () => {
     },
     treeShaking: false,
     dce: true,
-    bundling: true,
+    bundling: false,
     external: ["pkg"],
   });
   itBundled("ts/ImportEqualsTreeShakingTrue", {
@@ -774,7 +774,7 @@ describe("bundler", () => {
     dce: true,
     treeShaking: true,
     external: ["pkg"],
-    bundling: true,
+    bundling: false,
   });
   itBundled("ts/ImportEqualsBundle", {
     notImplemented: true,
@@ -1028,7 +1028,7 @@ describe("bundler", () => {
         }
       `,
     },
-    bundling: true,
+    bundling: false,
     onAfterBundle(api) {
       const capturedCalls = api.captureFile("/out.js", "dec");
       expect(capturedCalls).toEqual([
@@ -1457,7 +1457,7 @@ describe("bundler", () => {
         }
       `,
     },
-    bundling: true,
+    bundling: false,
     runtimeFiles: {
       "/test.js": /* js */ `
         globalThis.nested = true;
@@ -1525,7 +1525,7 @@ describe("bundler", () => {
         }
       `,
     },
-    bundling: true,
+    bundling: false,
     runtimeFiles: {
       "/test.js": /* js */ `
         globalThis.nested = true;
@@ -1574,7 +1574,7 @@ describe("bundler", () => {
       `,
     },
     useDefineForClassFields: false,
-    bundling: true,
+    bundling: false,
     run: {
       stdout: `
         [null,{},"x1",null]
@@ -1621,7 +1621,7 @@ describe("bundler", () => {
       `,
     },
     useDefineForClassFields: true,
-    bundling: true,
+    bundling: false,
     run: {
       stdout: `
         [null,{},"x1",null]
@@ -1668,7 +1668,7 @@ describe("bundler", () => {
       `,
     },
     useDefineForClassFields: true,
-    bundling: true,
+    bundling: false,
     run: {
       stdout: `
         [null,{},"x1",null]
@@ -1712,7 +1712,7 @@ describe("bundler", () => {
         (() => new Foo())()
       `,
     },
-    bundling: true,
+    bundling: false,
     useDefineForClassFields: true,
   });
   itBundled("ts/ImportMTS", {
@@ -1781,7 +1781,7 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/let.ts", "/function.ts", "/class.ts", "/namespace.ts", "/enum.ts"],
-    bundling: true,
+    bundling: false,
     runtimeFiles: {
       "/test.js": /* js */ `
         import assert from 'assert'
@@ -1872,7 +1872,6 @@ describe("bundler", () => {
       "/nested-string.ts",
       "/nested-propagation.ts",
     ],
-    mode: "passthrough",
   });
   itBundled("ts/EnumTreeShaking", {
     // GENERATED

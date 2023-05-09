@@ -233,7 +233,7 @@ describe("bundler", () => {
     },
     entryPoints: ["/a.js", "/b.js", "/c.js", "/d.js", "/e.js"],
     mode: "bundle",
-    bundling: true,
+    bundling: false,
     runtimeFiles: {
       "./out/f.js": /* js */ `
         export const f = 987;
@@ -312,7 +312,7 @@ describe("bundler", () => {
     run: {
       file: "/test.js",
     },
-    bundling: true,
+    bundling: false,
   } as const;
   itBundled("default/ImportFormsWithNoBundle", {
     ...importFormsConfig,
@@ -830,7 +830,7 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    bundling: true,
+    bundling: false,
     onAfterBundle(api) {
       api.expectFile("/out.js").toContain('import("foo")');
       api.expectFile("/out.js").toContain("import(foo())");
@@ -844,7 +844,7 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    bundling: true,
+    bundling: false,
     minifyWhitespace: true,
     onAfterBundle(api) {
       api.expectFile("/out.js").toContain('import("foo")');
@@ -1490,7 +1490,7 @@ describe("bundler", () => {
         console.log(__require(), typeof (require('fs')))
       `,
     },
-    bundling: true,
+    bundling: false,
     target: "bun",
     run: {
       stdout: "123 object",
@@ -1532,7 +1532,7 @@ describe("bundler", () => {
         export var foo
       `,
     },
-    bundling: true,
+    bundling: false,
     bundleErrors: {
       "/entry.js": ["Top-level return cannot be used inside an ECMAScript module"],
     },
@@ -1541,7 +1541,7 @@ describe("bundler", () => {
     files: {
       "/entry.js": `return await foo`,
     },
-    bundling: true,
+    bundling: false,
     bundleErrors: {
       "/entry.js": ["Top-level return cannot be used inside an ECMAScript module"],
     },
@@ -1793,7 +1793,7 @@ describe("bundler", () => {
       `,
     },
     minifyIdentifiers: true,
-    bundling: true,
+    bundling: false,
     onAfterBundle(api) {
       assert(!api.readFile("/out.js").includes("foo"), 'bundle shouldnt include "foo"');
       assert(!api.readFile("/out.js").includes("let bar"), 'bundle shouldnt include "let bar"');
@@ -1823,7 +1823,7 @@ describe("bundler", () => {
       );
     },
     minifyIdentifiers: true,
-    bundling: true,
+    bundling: false,
   });
   itBundled("default/ArgumentsSpecialCaseNoBundle", {
     files: {
@@ -1956,7 +1956,7 @@ describe("bundler", () => {
     },
     format: "iife",
     minifyIdentifiers: true,
-    bundling: true,
+    bundling: false,
     run: {
       runtime: "node",
       stdout: `
@@ -2015,7 +2015,7 @@ describe("bundler", () => {
       `,
     },
     minifyIdentifiers: true,
-    bundling: true,
+    bundling: false,
     format: "cjs",
     onAfterBundle(api) {
       const text = api.readFile("/out.js");
@@ -2350,7 +2350,7 @@ describe("bundler", () => {
     files: {
       "/entry.js": `import "foo"`,
     },
-    bundling: true,
+    bundling: false,
   });
   itBundled("default/ManyEntryPoints", {
     files: Object.fromEntries([
@@ -2528,7 +2528,7 @@ describe("bundler", () => {
     format: "iife",
     minifySyntax: true,
     minifyWhitespace: true,
-    bundling: true,
+    bundling: false,
     onAfterBundle(api) {
       assert(api.readFile("/out.js").includes('"use strict";'), '"use strict"; was emitted');
     },
@@ -2742,7 +2742,7 @@ describe("bundler", () => {
       file: "/test.js",
       stdout: "foo bar",
     },
-    bundling: true,
+    bundling: false,
   });
   itBundled("default/ImportMetaCommonJS", {
     files: {
@@ -2770,7 +2770,7 @@ describe("bundler", () => {
     files: {
       "/entry.js": `console.log(import.meta.url, import.meta.path)`,
     },
-    bundling: true,
+    bundling: false,
     run: {
       stdout: "url_here path_here",
       bunArgs: ["--define", 'import.meta.url="url_here"', "--define", 'import.meta.path="path_here"'],
@@ -3441,7 +3441,7 @@ describe("bundler", () => {
         for await (foo of bar) ;
       `,
     },
-    bundling: true,
+    bundling: false,
   });
   itBundled("default/TopLevelAwaitForbiddenRequire", {
     notImplemented: true,
@@ -3903,7 +3903,7 @@ describe("bundler", () => {
     },
     dce: true,
     treeShaking: true,
-    bundling: true,
+    bundling: false,
     run: {
       stdout: `
         side effects
@@ -4086,7 +4086,7 @@ describe("bundler", () => {
         export let bar = 123
       `,
     },
-    bundling: true,
+    bundling: false,
     runtimeFiles: {
       "/test.js": /* js */ `
         import * as mod from './out';
@@ -4572,7 +4572,7 @@ describe("bundler", () => {
       `,
     },
     minifySyntax: true,
-    bundling: true,
+    bundling: false,
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
       expect(code).not.toContain("const");
@@ -5140,7 +5140,7 @@ describe("bundler", () => {
       "/node_modules/some-path/index.js": `module.exports = 123`,
       "/node_modules/second-path/index.js": `module.exports = 567`,
     },
-    bundling: true,
+    bundling: false,
     target: "browser",
     format: "esm",
     outfile: "/out.mjs",
@@ -5167,7 +5167,7 @@ describe("bundler", () => {
     notImplemented: true,
     files: RequireShimSubstitutionBrowser.options.files,
     runtimeFiles: RequireShimSubstitutionBrowser.options.runtimeFiles,
-    bundling: true,
+    bundling: false,
     target: "node",
     format: "esm",
     outfile: "/out.mjs",
@@ -5354,7 +5354,7 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    bundling: true,
+    bundling: false,
   });
   itBundled("default/NamedFunctionExpressionArgumentCollision", {
     files: {
@@ -5436,7 +5436,7 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/entry1.js", "/entry2.js"],
-    bundling: true,
+    bundling: false,
     mangleProps: /_$/,
   });
   itBundled("default/ManglePropsMinify", {
@@ -5485,7 +5485,7 @@ describe("bundler", () => {
     entryPoints: ["/entry1.js", "/entry2.js"],
     mangleProps: /_$/,
     minifyIdentifiers: true,
-    bundling: true,
+    bundling: false,
   });
   itBundled("default/ManglePropsKeywordPropertyMinify", {
     // GENERATED
@@ -5499,7 +5499,7 @@ describe("bundler", () => {
     mangleProps: /./,
     minifyIdentifiers: true,
     minifySyntax: true,
-    bundling: true,
+    bundling: false,
   });
   itBundled("default/ManglePropsOptionalChain", {
     // GENERATED
@@ -5518,7 +5518,7 @@ describe("bundler", () => {
       `,
     },
     mangleProps: /_$/,
-    bundling: true,
+    bundling: false,
   });
   itBundled("default/ManglePropsLoweredOptionalChain", {
     // GENERATED
@@ -5537,7 +5537,7 @@ describe("bundler", () => {
       `,
     },
     mangleProps: /_$/,
-    bundling: true,
+    bundling: false,
   });
   itBundled("default/ReserveProps", {
     // GENERATED
@@ -5550,7 +5550,7 @@ describe("bundler", () => {
       `,
     },
     mangleProps: /_$/,
-    bundling: true,
+    bundling: false,
   });
   itBundled("default/ManglePropsImportExport", {
     // GENERATED
@@ -5566,7 +5566,7 @@ describe("bundler", () => {
     },
     entryPoints: ["/esm.js", "/cjs.js"],
     mangleProps: /_$/,
-    bundling: true,
+    bundling: false,
   });
   itBundled("default/ManglePropsImportExportBundled", {
     // GENERATED
@@ -6005,7 +6005,7 @@ describe("bundler", () => {
   //     // preserve: true,
   //   },
   //   // minifySyntax: true,
-  //   bundling: true,
+  //   bundling: false,
   // });
   itBundled("default/PackageAlias", {
     files: {
@@ -6230,7 +6230,7 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/project/entry.js", "/project/entry.css"],
-    bundling: true,
+    bundling: false,
     metafile: true,
   });
   itBundled("default/MetafileVeryLongExternalPaths", {

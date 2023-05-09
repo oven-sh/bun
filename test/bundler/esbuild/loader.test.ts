@@ -116,7 +116,7 @@ describe("bundler", () => {
     loader: {
       ".cjs": "jsx",
     },
-    bundling: true,
+    bundling: false,
   });
   // itBundled("loader/JSXPreserveCapitalLetter", {
   //   // GENERATED
@@ -460,7 +460,7 @@ describe("bundler", () => {
     files: {
       "/test.json": `{"test": 123, "invalid-identifier": true}`,
     },
-    bundling: true,
+    bundling: false,
   });
   itBundled("loader/JSONNoBundleES6", {
     // GENERATED

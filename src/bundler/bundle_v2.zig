@@ -8572,7 +8572,8 @@ const LinkerContext = struct {
 
         // TODO: enforceNoCyclicChunkImports()
         {
-
+            var path_names_map = bun.StringHashMap(void).init(c.allocator);
+            defer path_names_map.deinit();
             // Compute the final hashes of each chunk. This can technically be done in
             // parallel but it probably doesn't matter so much because we're not hashing
             // that much data.
@@ -8580,7 +8581,13 @@ const LinkerContext = struct {
                 // TODO: non-isolated-hash
                 chunk.template.placeholder.hash = chunk.isolated_hash;
 
-                chunk.final_rel_path = std.fmt.allocPrint(c.allocator, "{any}", .{chunk.template}) catch unreachable;
+                const rel_path = std.fmt.allocPrint(c.allocator, "{any}", .{chunk.template}) catch unreachable;
+                if ((try path_names_map.getOrPut(rel_path)).found_existing) {
+                    try c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "two files share the same output path: {s}", .{rel_path});
+                    return error.DuplicateOutputPath;
+                }
+
+                chunk.final_rel_path = rel_path;
             }
         }
 

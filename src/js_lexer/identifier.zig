@@ -25,19 +25,6 @@ pub const Bitset = struct {
         ));
     }
 
-    pub fn isIdentifier(str: []const u8) bool {
-        if (str.len == 0)
-            return false;
-        var iter = std.unicode.Utf8Iterator{ .bytes = str, .i = 0 };
-        if (!isIdentifierStart(iter.nextCodepoint() orelse return false)) return false;
-
-        while (iter.nextCodepoint()) |i| {
-            if (!isIdentifierPart(i)) return false;
-        }
-
-        return true;
-    }
-
     pub fn isIdentifierPart(codepoint: i32) bool {
         return codepoint >= (comptime id_end_range[0]) and
             codepoint <= (comptime id_end_range[1]) and

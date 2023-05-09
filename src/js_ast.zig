@@ -1710,8 +1710,8 @@ pub const E = struct {
         }
 
         pub fn toStringFromF64Safe(value: f64, allocator: std.mem.Allocator) ?string {
-            const int_value = @floatToInt(i64, value);
-            if (value == @intToFloat(f64, int_value)) {
+            if (value == @trunc(value) and (value < std.math.maxInt(i32) and value > std.math.minInt(i32))) {
+                const int_value = @floatToInt(i64, value);
                 const abs = @intCast(u64, std.math.absInt(int_value) catch return null);
                 if (abs < double_digit.len) {
                     return if (int_value < 0)
@@ -1720,9 +1720,7 @@ pub const E = struct {
                         double_digit[abs];
                 }
 
-                if (abs <= std.math.maxInt(i32)) {
-                    return std.fmt.allocPrint(allocator, "{d}", .{@intCast(i32, int_value)}) catch return null;
-                }
+                return std.fmt.allocPrint(allocator, "{d}", .{@intCast(i32, int_value)}) catch return null;
             }
 
             if (std.math.isNan(value)) {

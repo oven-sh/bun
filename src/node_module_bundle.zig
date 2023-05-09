@@ -54,18 +54,12 @@ pub const NodeModuleBundle = struct {
 
     code_string: ?AllocatedString = null,
 
-    bytecode_cache_fetcher: Fs.BytecodeCacheFetcher = Fs.BytecodeCacheFetcher{},
-
     pub const magic_bytes = "#!/usr/bin/env bun\n\n";
     threadlocal var jsbundle_prefix: [magic_bytes.len + 5]u8 = undefined;
 
     // TODO: support preact-refresh, others by not hard coding
     pub fn hasFastRefresh(this: *const NodeModuleBundle) bool {
         return this.package_name_map.contains("react-refresh");
-    }
-
-    pub inline fn fetchByteCodeCache(this: *NodeModuleBundle, basename: string, fs: *Fs.FileSystem.RealFS) ?StoredFileDescriptorType {
-        return this.bytecode_cache_fetcher.fetch(basename, fs);
     }
 
     pub fn readCodeAsStringSlow(this: *NodeModuleBundle, allocator: std.mem.Allocator) !string {

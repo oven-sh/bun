@@ -33,51 +33,6 @@ pub const Preallocate = struct {
     };
 };
 
-pub const BytecodeCacheFetcher = struct {
-    fd: ?StoredFileDescriptorType = null,
-
-    pub const Available = enum {
-        Unknown,
-        Available,
-        NotAvailable,
-
-        pub inline fn determine(fd: ?StoredFileDescriptorType) Available {
-            if (!comptime FeatureFlags.enable_bytecode_caching) return .NotAvailable;
-
-            const _fd = fd orelse return .Unknown;
-            return if (_fd > 0) .Available else return .NotAvailable;
-        }
-    };
-
-    pub fn fetch(this: *BytecodeCacheFetcher, sourcename: string, fs: *FileSystem.RealFS) ?StoredFileDescriptorType {
-        switch (Available.determine(this.fd)) {
-            .Available => {
-                return this.fd.?;
-            },
-            .NotAvailable => {
-                return null;
-            },
-            .Unknown => {
-                var basename_buf: [512]u8 = undefined;
-                var pathname = Fs.PathName.init(sourcename);
-                bun.copy(u8, &basename_buf, pathname.base);
-                bun.copy(u8, basename_buf[pathname.base.len..], ".bytecode");
-                const basename = basename_buf[0 .. pathname.base.len + ".bytecode".len];
-
-                if (fs.fetchCacheFile(basename)) |cache_file| {
-                    this.fd = @truncate(StoredFileDescriptorType, cache_file.handle);
-                    return @truncate(StoredFileDescriptorType, cache_file.handle);
-                } else |err| {
-                    Output.prettyWarnln("<r><yellow>Warn<r>: Bytecode caching unavailable due to error: {s}", .{@errorName(err)});
-                    Output.flush();
-                    this.fd = 0;
-                    return null;
-                }
-            },
-        }
-    }
-};
-
 pub const FileSystem = struct {
     top_level_dir: string = "/",
 

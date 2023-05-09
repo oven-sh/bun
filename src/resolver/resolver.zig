@@ -2683,7 +2683,7 @@ pub const Resolver = struct {
             while (iter.next()) |entry| {
                 const key = entry.key_ptr.*;
 
-                if (strings.eql(key, path)) {
+                if (strings.eqlLong(key, path, true)) {
                     for (entry.value_ptr.*) |original_path| {
                         var absolute_original_path = original_path;
 
@@ -2737,7 +2737,7 @@ pub const Resolver = struct {
 
         // If there is at least one match, only consider the one with the longest
         // prefix. This matches the behavior of the TypeScript compiler.
-        if (longest_match_prefix_length > -1) {
+        if (longest_match_prefix_length != -1) {
             if (r.debug_logs) |*debug| {
                 debug.addNoteFmt("Found a fuzzy match for \"{s}*{s}\" in \"paths\"", .{ longest_match.prefix, longest_match.suffix });
             }
@@ -2746,8 +2746,8 @@ pub const Resolver = struct {
                 // Swap out the "*" in the original path for whatever the "*" matched
                 const matched_text = path[longest_match.prefix.len .. path.len - longest_match.suffix.len];
 
-                const total_length = std.mem.indexOfScalar(u8, original_path, '*') orelse unreachable;
-                var prefix_parts = [_]string{ abs_base_url, original_path[0..total_length] };
+                const total_length: ?u32 = strings.indexOfChar(original_path, '*');
+                var prefix_parts = [_]string{ abs_base_url, original_path[0 .. total_length orelse original_path.len] };
 
                 // 1. Normalize the base path
                 // so that "/Users/foo/project/", "../components/*" => "/Users/foo/components/""
@@ -2755,7 +2755,11 @@ pub const Resolver = struct {
 
                 // 2. Join the new base path with the matched result
                 // so that "/Users/foo/components/", "/foo/bar" => /Users/foo/components/foo/bar
-                var parts = [_]string{ prefix, std.mem.trimLeft(u8, matched_text, "/"), std.mem.trimLeft(u8, longest_match.suffix, "/") };
+                var parts = [_]string{
+                    prefix,
+                    if (total_length != null) std.mem.trimLeft(u8, matched_text, "/") else "",
+                    std.mem.trimLeft(u8, longest_match.suffix, "/"),
+                };
                 var absolute_original_path = r.fs.absBuf(
                     &parts,
                     bufs(.tsconfig_match_full_buf),

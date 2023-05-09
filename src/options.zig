@@ -659,26 +659,26 @@ pub const Format = enum {
         },
     );
 
-    pub fn fromJS(global: *JSC.JSGlobalObject, loader: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Loader {
-        if (loader.isUndefinedOrNull()) return null;
+    pub fn fromJS(global: *JSC.JSGlobalObject, format: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Format {
+        if (format.isUndefinedOrNull()) return null;
 
-        if (!loader.jsType().isStringLike()) {
-            JSC.throwInvalidArguments("format must be a string", .{}, global, exception);
+        if (!format.jsType().isStringLike()) {
+            JSC.throwInvalidArguments("Format must be a string", .{}, global, exception);
             return null;
         }
 
         var zig_str = JSC.ZigString.init("");
-        loader.toZigString(&zig_str, global);
+        format.toZigString(&zig_str, global);
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {
-            JSC.throwInvalidArguments("invalid format - must be esm, cjs, or iife", .{}, global, exception);
+            JSC.throwInvalidArguments("Invalid format - must be esm, cjs, or iife", .{}, global, exception);
             return null;
         };
     }
 
-    pub fn fromString(slice: string) ?Loader {
-        return Map.getWithEql(slice, strings.eqlCaseInsensitiveASCIIICheckLength);
+    pub fn fromString(slice: string) ?Format {
+        return Map.getWithEql(slice, strings.eqlComptime);
     }
 };
 

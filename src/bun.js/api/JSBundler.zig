@@ -95,7 +95,7 @@ pub const JSBundler = struct {
                 switch (format) {
                     .esm => {},
                     else => {
-                        globalThis.throwInvalidArguments("Formats besides 'esm' are not implemented.", .{});
+                        globalThis.throwInvalidArguments("Formats besides 'esm' are not implemented", .{});
                         return error.JSException;
                     },
                 }

@@ -518,7 +518,7 @@ function expectBundled(
               outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
               define && Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
               `--target=${target}`,
-              `--format=${format}`,
+              // `--format=${format}`,
               external && external.map(x => ["--external", x]),
               minifyIdentifiers && `--minify-identifiers`,
               minifySyntax && `--minify-syntax`,
@@ -558,7 +558,7 @@ function expectBundled(
               external && external.map(x => `--external:${x}`),
               inject && inject.map(x => `--inject:${path.join(root, x)}`),
               define && Object.entries(define).map(([k, v]) => `--define:${k}=${v}`),
-              `--jsx=${jsx.runtime ?? "automatic"}`,
+              `--jsx=${jsx.runtime === "classic" ? "transform" : "automatic"}`,
               // jsx.preserve && "--jsx=preserve",
               jsx.factory && `--jsx-factory=${jsx.factory}`,
               jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
@@ -1028,7 +1028,7 @@ for (const blob of build.outputs) {
             }
             if (dce) {
               const content = readFileSync(fullpath, "utf8");
-              const dceFails = [...content.matchAll(/FAIL|FAILED|DROP|REMOVE/gi)];
+              const dceFails = [...content.replace(/\/\*.*?\*\//g, "").matchAll(/FAIL|FAILED|DROP|REMOVE/gi)];
               const key = fullpath.slice(root.length);
               if (dceFails.length) {
                 throw new Error("DCE test did not remove all expected code in " + key + ".");

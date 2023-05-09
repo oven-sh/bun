@@ -193,6 +193,7 @@ pub const Arguments = struct {
     pub const params = public_params ++ debug_params;
 
     const build_only_params = [_]ParamType{
+        clap.parseParam("--format <STR>                   Specifies the module format to build to. Only esm is supported.") catch unreachable,
         clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
         clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
         clap.parseParam("--splitting                      Enable code splitting") catch unreachable,
@@ -485,6 +486,20 @@ pub const Arguments = struct {
             } else if (args.option("--outfile")) |outfile| {
                 if (outfile.len > 0) {
                     ctx.bundler_options.outfile = outfile;
+                }
+            }
+
+            if (args.option("--format")) |format_str| {
+                const format = options.Format.fromString(format_str) orelse {
+                    Output.prettyErrorln("<r><red>error<r>: Invalid format - must be esm, cjs, or iife", .{});
+                    Global.crash();
+                };
+                switch (format) {
+                    .esm => {},
+                    else => {
+                        Output.prettyErrorln("<r><red>error<r>: Formats besides 'esm' are not implemented", .{});
+                        Global.crash();
+                    },
                 }
             }
 

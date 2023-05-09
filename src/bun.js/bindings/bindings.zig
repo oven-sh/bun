@@ -214,6 +214,17 @@ pub const ZigString = extern struct {
         return ZigString__toJSONObject(&this, globalThis);
     }
 
+    pub fn hasPrefixChar(this: ZigString, char: u8) bool {
+        if (this.len == 0)
+            return false;
+
+        if (this.is16Bit()) {
+            return this.utf16SliceAligned()[0] == char;
+        }
+
+        return this.slice()[0] == char;
+    }
+
     pub fn substring(this: ZigString, offset: usize, maxlen: usize) ZigString {
         var len: usize = undefined;
         if (maxlen == 0) {
@@ -3997,7 +4008,7 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn toEnum(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime Enum: type) !Enum {
-        return toEnumWithMapField(this, globalThis, property_name, Enum, "Map");
+        return toEnumFromMap(this, globalThis, property_name, Enum, Enum.Map);
     }
 
     pub fn toOptionalEnum(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime Enum: type) !?Enum {

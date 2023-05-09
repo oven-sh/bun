@@ -689,6 +689,10 @@ pub const BundleV2 = struct {
                 bun.tracy.start();
 
                 if (!bun.tracy.isConnected()) {
+                    std.time.sleep(std.time.ns_per_ms * 10);
+                }
+
+                if (!bun.tracy.isConnected()) {
                     Output.prettyErrorln("Tracy is not connected. Is Tracy running on your computer?", .{});
                     Output.flush();
                     break :tracy;

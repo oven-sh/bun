@@ -1490,7 +1490,7 @@ pub const BundleV2 = struct {
 
         while (true) {
             while (instance.queue.pop()) |completion| {
-                generateInNewThread(completion) catch |err| {
+                generateInNewThread(completion, instance.generation) catch |err| {
                     completion.result = .{ .err = err };
                     var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch unreachable;
                     concurrent_task.* = JSC.ConcurrentTask{
@@ -1502,6 +1502,7 @@ pub const BundleV2 = struct {
                 };
                 any = true;
             }
+            instance.generation +|= 1;
 
             if (any) {
                 bun.Mimalloc.mi_collect(false);
@@ -1513,12 +1514,14 @@ pub const BundleV2 = struct {
     pub const BundleThread = struct {
         waker: bun.AsyncIO.Waker,
         queue: bun.UnboundedQueue(JSBundleCompletionTask, .next) = .{},
+        generation: bun.Generation = 0,
         pub var created = false;
         pub var instance: *BundleThread = undefined;
     };
 
     fn generateInNewThread(
         completion: *JSBundleCompletionTask,
+        generation: bun.Generation,
     ) !void {
         var heap = try ThreadlocalArena.init();
         defer heap.deinit();
@@ -1564,6 +1567,7 @@ pub const BundleV2 = struct {
         bundler.options.minify_identifiers = config.minify.identifiers;
         bundler.options.inlining = config.minify.syntax;
         bundler.options.source_map = config.source_map;
+        bundler.resolver.generation = generation;
 
         try bundler.configureDefines();
         bundler.configureLinker();

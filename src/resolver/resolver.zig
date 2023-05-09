@@ -478,10 +478,12 @@ pub const Resolver = struct {
     watcher: ?AnyResolveWatcher = null,
 
     caches: CacheSet,
+    generation: bun.Generation = 0,
 
     package_manager: ?*PackageManager = null,
     onWakePackageManager: PackageManager.WakeHandler = .{},
     env_loader: ?*DotEnv.Loader = null,
+    store_fd: bool = false,
 
     // These are sets that represent various conditions for the "exports" field
     // in package.json.
@@ -944,9 +946,9 @@ pub const Resolver = struct {
                 module_type = ModuleTypeMap.getWithLength(path.name.ext, 4) orelse .unknown;
             }
 
-            if (dir.getEntries()) |entries| {
+            if (dir.getEntries(r.generation)) |entries| {
                 if (entries.get(path.name.filename)) |query| {
-                    const symlink_path = query.entry.symlink(&r.fs.fs);
+                    const symlink_path = query.entry.symlink(&r.fs.fs, r.store_fd);
                     if (symlink_path.len > 0) {
                         path.setRealpath(symlink_path);
                         if (result.file_fd == 0) result.file_fd = query.entry.cache.fd;
@@ -960,12 +962,17 @@ pub const Resolver = struct {
 
                         var out = r.fs.absBuf(&parts, &buf);
 
+                        const store_fd = r.store_fd;
+
                         if (query.entry.cache.fd == 0) {
                             buf[out.len] = 0;
                             const span = buf[0..out.len :0];
-                            var file = try std.fs.openFileAbsoluteZ(span, .{ .mode = .read_only });
+                            var file = try if (store_fd)
+                                std.fs.openFileAbsoluteZ(span, .{ .mode = .read_only })
+                            else
+                                bun.openFileForPath(span);
 
-                            if (comptime !FeatureFlags.store_file_descriptors) {
+                            if (!store_fd) {
                                 out = try bun.getFdPath(query.entry.cache.fd, &buf);
                                 file.close();
                             } else {
@@ -984,7 +991,7 @@ pub const Resolver = struct {
                             }
                         }
 
-                        if (comptime FeatureFlags.store_file_descriptors) {
+                        if (store_fd) {
                             out = try bun.getFdPath(query.entry.cache.fd, &buf);
                         }
 
@@ -993,7 +1000,7 @@ pub const Resolver = struct {
                             debug.addNoteFmt("Resolved symlink \"{s}\" to \"{s}\"", .{ symlink, path.text });
                         }
                         query.entry.cache.symlink = PathString.init(symlink);
-                        if (result.file_fd == 0) result.file_fd = query.entry.cache.fd;
+                        if (result.file_fd == 0 and store_fd) result.file_fd = query.entry.cache.fd;
 
                         path.setRealpath(symlink);
                     }
@@ -1912,6 +1919,7 @@ pub const Resolver = struct {
 
         var dir_entries_option: *Fs.FileSystem.RealFS.EntriesOption = undefined;
         var needs_iter = true;
+        var in_place: ?*Fs.FileSystem.DirEntry = null;
         var open_dir = std.fs.cwd().openIterableDir(dir_path, .{}) catch |err| {
             switch (err) {
                 error.FileNotFound => unreachable,
@@ -1925,26 +1933,45 @@ pub const Resolver = struct {
 
         if (rfs.entries.atIndex(cached_dir_entry_result.index)) |cached_entry| {
             if (cached_entry.* == .entries) {
-                dir_entries_option = cached_entry;
-                needs_iter = false;
+                if (cached_entry.entries.generation >= r.generation) {
+                    dir_entries_option = cached_entry;
+                    needs_iter = false;
+                } else {
+                    in_place = cached_entry.entries;
+                }
             }
         }
 
         if (needs_iter) {
             const allocator = bun.fs_allocator;
-            var dir_entries_ptr = allocator.create(Fs.FileSystem.DirEntry) catch unreachable;
-            dir_entries_ptr.* = Fs.FileSystem.DirEntry.init(
-                Fs.FileSystem.DirnameStore.instance.append(string, dir_path) catch unreachable,
+            var new_entry = Fs.FileSystem.DirEntry.init(
+                if (in_place) |existing| existing.dir else Fs.FileSystem.DirnameStore.instance.append(string, dir_path) catch unreachable,
+                r.generation,
             );
 
-            if (FeatureFlags.store_file_descriptors) {
+            var dir_iterator = open_dir.iterate();
+            while (dir_iterator.next() catch null) |_value| {
+                new_entry.addEntry(
+                    if (in_place) |existing| &existing.data else null,
+                    _value,
+                    allocator,
+                    void,
+                    {},
+                ) catch unreachable;
+            }
+            if (in_place) |existing| {
+                existing.data.clearAndFree(allocator);
+            }
+
+            var dir_entries_ptr = in_place orelse allocator.create(Fs.FileSystem.DirEntry) catch unreachable;
+            dir_entries_ptr.* = new_entry;
+
+            if (r.store_fd) {
                 Fs.FileSystem.setMaxFd(open_dir.dir.fd);
                 dir_entries_ptr.fd = open_dir.dir.fd;
             }
-            var dir_iterator = open_dir.iterate();
-            while (dir_iterator.next() catch null) |_value| {
-                dir_entries_ptr.addEntry(_value, allocator, void, {}) catch unreachable;
-            }
+
+            bun.fs.debug("readdir({d}, {s}) = {d}", .{ open_dir.dir.fd, dir_path, dir_entries_ptr.data.count() });
 
             dir_entries_option = rfs.entries.put(&cached_dir_entry_result, .{
                 .entries = dir_entries_ptr,
@@ -2102,7 +2129,7 @@ pub const Resolver = struct {
                     esm_resolution.status = .ModuleNotFound;
                     return null;
                 };
-                const entries = resolved_dir_info.getEntries() orelse {
+                const entries = resolved_dir_info.getEntries(r.generation) orelse {
                     esm_resolution.status = .ModuleNotFound;
                     return null;
                 };
@@ -2135,21 +2162,21 @@ pub const Resolver = struct {
                     return null;
                 };
 
-                if (entry_query.entry.kind(&r.fs.fs) == .dir) {
+                if (entry_query.entry.kind(&r.fs.fs, r.store_fd) == .dir) {
                     const ends_with_star = esm_resolution.status == .ExactEndsWithStar;
                     esm_resolution.status = .UnsupportedDirectoryImport;
 
                     // Try to have a friendly error message if people forget the "/index.js" suffix
                     if (ends_with_star) {
                         if (r.dirInfoCached(abs_esm_path) catch null) |dir_info| {
-                            if (dir_info.getEntries()) |dir_entries| {
+                            if (dir_info.getEntries(r.generation)) |dir_entries| {
                                 const index = "index";
                                 bun.copy(u8, bufs(.load_as_file), index);
                                 for (extension_order) |ext| {
                                     var file_name = bufs(.load_as_file)[0 .. index.len + ext.len];
                                     bun.copy(u8, file_name[index.len..], ext);
                                     const index_query = dir_entries.get(file_name);
-                                    if (index_query != null and index_query.?.entry.kind(&r.fs.fs) == .file) {
+                                    if (index_query != null and index_query.?.entry.kind(&r.fs.fs, r.store_fd) == .file) {
                                         missing_suffix = std.fmt.allocPrint(r.allocator, "/{s}", .{file_name}) catch unreachable;
                                         // defer r.allocator.free(missing_suffix);
                                         if (r.debug_logs) |*debug| {
@@ -2237,6 +2264,8 @@ pub const Resolver = struct {
             false,
             null,
         );
+        _ = bun.JSC.Node.Syscall.close(entry.fd);
+
         // The file name needs to be persistent because it can have errors
         // and if those errors need to print the filename
         // then it will be undefined memory if we parse another tsconfig.json late
@@ -2422,10 +2451,10 @@ pub const Resolver = struct {
         defer {
 
             // Anything
-            if (open_dir_count > 0 and r.fs.fs.needToCloseFiles()) {
+            if (open_dir_count > 0 and (!r.store_fd or r.fs.fs.needToCloseFiles())) {
                 var open_dirs: []std.fs.IterableDir = bufs(.open_dirs)[0..open_dir_count];
                 for (open_dirs) |*open_dir| {
-                    open_dir.dir.close();
+                    _ = bun.JSC.Node.Syscall.close(open_dir.dir.fd);
                 }
             }
         }
@@ -2459,12 +2488,14 @@ pub const Resolver = struct {
                 path.ptr[queue_top.unsafe_path.len] = 0;
                 defer path.ptr[queue_top.unsafe_path.len] = prev_char;
                 var sentinel = path.ptr[0..queue_top.unsafe_path.len :0];
+
                 _open_dir = std.fs.openIterableDirAbsoluteZ(
                     sentinel,
                     .{
                         .no_follow = !follow_symlinks,
                     },
                 );
+                bun.fs.debug("open({s}) = {any}", .{ sentinel, _open_dir });
                 // }
             }
 
@@ -2548,30 +2579,46 @@ pub const Resolver = struct {
 
             var dir_entries_option: *Fs.FileSystem.RealFS.EntriesOption = undefined;
             var needs_iter: bool = true;
+            var in_place: ?*Fs.FileSystem.DirEntry = null;
 
             if (rfs.entries.atIndex(cached_dir_entry_result.index)) |cached_entry| {
-                if (cached_entry.* == .entries) {
+                if (cached_entry.entries.generation >= r.generation) {
                     dir_entries_option = cached_entry;
                     needs_iter = false;
+                } else {
+                    in_place = cached_entry.entries;
                 }
             }
 
             if (needs_iter) {
                 const allocator = bun.fs_allocator;
-                var entries_ptr = allocator.create(Fs.FileSystem.DirEntry) catch unreachable;
-                entries_ptr.* = Fs.FileSystem.DirEntry.init(dir_path);
-                if (FeatureFlags.store_file_descriptors) {
-                    Fs.FileSystem.setMaxFd(open_dir.dir.fd);
-                    entries_ptr.fd = open_dir.dir.fd;
-                }
-                var dir_iterator = open_dir.iterate();
-                while (try dir_iterator.next()) |_value| {
-                    entries_ptr.addEntry(_value, allocator, void, {}) catch unreachable;
-                }
+                var new_entry = Fs.FileSystem.DirEntry.init(
+                    if (in_place) |existing| existing.dir else Fs.FileSystem.DirnameStore.instance.append(string, dir_path) catch unreachable,
+                    r.generation,
+                );
 
+                var dir_iterator = open_dir.iterate();
+                while (dir_iterator.next() catch null) |_value| {
+                    new_entry.addEntry(
+                        if (in_place) |existing| &existing.data else null,
+                        _value,
+                        allocator,
+                        void,
+                        {},
+                    ) catch unreachable;
+                }
+                if (in_place) |existing| {
+                    existing.data.clearAndFree(allocator);
+                }
+                if (!r.store_fd) {
+                    new_entry.fd = 0;
+                }
+                var dir_entries_ptr = in_place orelse allocator.create(Fs.FileSystem.DirEntry) catch unreachable;
+                dir_entries_ptr.* = new_entry;
                 dir_entries_option = try rfs.entries.put(&cached_dir_entry_result, .{
-                    .entries = entries_ptr,
+                    .entries = dir_entries_ptr,
                 });
+                bun.fs.debug("readdir({d}, {s}) = {d}", .{ open_dir.dir.fd, dir_path, dir_entries_ptr.data.count() });
             }
 
             // We must initialize it as empty so that the result index is correct.
@@ -2597,7 +2644,7 @@ pub const Resolver = struct {
             } else if (queue_slice.len == 1) {
                 // const next_in_queue = queue_slice[0];
                 // const next_basename = std.fs.path.basename(next_in_queue.unsafe_path);
-                // if (dir_info_ptr.getEntries()) |entries| {
+                // if (dir_info_ptr.getEntries(r.generation)) |entries| {
                 //     if (entries.get(next_basename) != null) {
                 //         return null;
                 //     }
@@ -3011,9 +3058,9 @@ pub const Resolver = struct {
             base[0.."index".len].* = "index".*;
             bun.copy(u8, base["index".len..], ext);
 
-            if (dir_info.getEntries()) |entries| {
+            if (dir_info.getEntries(r.generation)) |entries| {
                 if (entries.get(base)) |lookup| {
-                    if (lookup.entry.kind(rfs) == .file) {
+                    if (lookup.entry.kind(rfs, r.store_fd) == .file) {
                         const out_buf = brk: {
                             if (lookup.entry.abs_path.isEmpty()) {
                                 const parts = [_]string{ dir_info.abs_path, base };
@@ -3281,6 +3328,8 @@ pub const Resolver = struct {
         const dir_entry: *Fs.FileSystem.RealFS.EntriesOption = rfs.readDirectory(
             dir_path,
             null,
+            r.generation,
+            r.store_fd,
         ) catch {
             return null;
         };
@@ -3311,7 +3360,7 @@ pub const Resolver = struct {
         }
 
         if (entries.get(base)) |query| {
-            if (query.entry.kind(rfs) == .file) {
+            if (query.entry.kind(rfs, r.store_fd) == .file) {
                 if (r.debug_logs) |*debug| {
                     debug.addNoteFmt("Found file \"{s}\" ", .{base});
                 }
@@ -3346,7 +3395,7 @@ pub const Resolver = struct {
             }
 
             if (entries.get(file_name)) |query| {
-                if (query.entry.kind(rfs) == .file) {
+                if (query.entry.kind(rfs, r.store_fd) == .file) {
                     if (r.debug_logs) |*debug| {
                         debug.addNoteFmt("Found file \"{s}\" ", .{buffer});
                     }
@@ -3398,7 +3447,7 @@ pub const Resolver = struct {
                     buffer[segment.len..buffer.len][0..ext_to_replace.len].* = ext_to_replace.*;
 
                     if (entries.get(buffer)) |query| {
-                        if (query.entry.kind(rfs) == .file) {
+                        if (query.entry.kind(rfs, r.store_fd) == .file) {
                             if (r.debug_logs) |*debug| {
                                 debug.addNoteFmt("Rewrote to \"{s}\" ", .{buffer});
                             }
@@ -3480,7 +3529,7 @@ pub const Resolver = struct {
         // if (entries != null) {
         if (!info.isNodeModules()) {
             if (entries.getComptimeQuery("node_modules")) |entry| {
-                info.flags.setPresent(.has_node_modules, (entry.entry.kind(rfs)) == .dir);
+                info.flags.setPresent(.has_node_modules, (entry.entry.kind(rfs, r.store_fd)) == .dir);
             }
         }
 
@@ -3512,7 +3561,7 @@ pub const Resolver = struct {
 
                 if (info.isNodeModules()) {
                     if (entries.getComptimeQuery(".bin")) |q| {
-                        if (q.entry.kind(rfs) == .dir) {
+                        if (q.entry.kind(rfs, r.store_fd) == .dir) {
                             if (!bin_folders_loaded) {
                                 bin_folders_loaded = true;
                                 bin_folders = BinFolderArray.init(0) catch unreachable;
@@ -3562,12 +3611,12 @@ pub const Resolver = struct {
 
             // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
             if (!r.opts.preserve_symlinks) {
-                if (parent.?.getEntries()) |parent_entries| {
+                if (parent.?.getEntries(r.generation)) |parent_entries| {
                     if (parent_entries.get(base)) |lookup| {
-                        if (entries.fd != 0 and lookup.entry.cache.fd == 0) lookup.entry.cache.fd = entries.fd;
+                        if (entries.fd != 0 and lookup.entry.cache.fd == 0 and r.store_fd) lookup.entry.cache.fd = entries.fd;
                         const entry = lookup.entry;
 
-                        var symlink = entry.symlink(rfs);
+                        var symlink = entry.symlink(rfs, r.store_fd);
                         if (symlink.len > 0) {
                             if (r.debug_logs) |*logs| {
                                 logs.addNote(std.fmt.allocPrint(r.allocator, "Resolved symlink \"{s}\" to \"{s}\"", .{ path, symlink }) catch unreachable);
@@ -3592,7 +3641,7 @@ pub const Resolver = struct {
         // Record if this directory has a package.json file
         if (entries.getComptimeQuery("package.json")) |lookup| {
             const entry = lookup.entry;
-            if (entry.kind(rfs) == .file) {
+            if (entry.kind(rfs, r.store_fd) == .file) {
                 info.package_json = if (r.usePackageManager() and !info.hasNodeModules() and !info.isNodeModules())
                     r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else 0, package_id, true) catch null
                 else
@@ -3625,7 +3674,7 @@ pub const Resolver = struct {
             if (r.opts.tsconfig_override == null) {
                 if (entries.getComptimeQuery("tsconfig.json")) |lookup| {
                     const entry = lookup.entry;
-                    if (entry.kind(rfs) == .file) {
+                    if (entry.kind(rfs, r.store_fd) == .file) {
                         const parts = [_]string{ path, "tsconfig.json" };
 
                         tsconfig_path = r.fs.absBuf(&parts, bufs(.dir_info_uncached_filename));
@@ -3634,7 +3683,7 @@ pub const Resolver = struct {
                 if (tsconfig_path == null) {
                     if (entries.getComptimeQuery("jsconfig.json")) |lookup| {
                         const entry = lookup.entry;
-                        if (entry.kind(rfs) == .file) {
+                        if (entry.kind(rfs, r.store_fd) == .file) {
                             const parts = [_]string{ path, "jsconfig.json" };
                             tsconfig_path = r.fs.absBuf(&parts, bufs(.dir_info_uncached_filename));
                         }

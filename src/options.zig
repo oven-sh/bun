@@ -1681,18 +1681,18 @@ pub const BundleOptions = struct {
 
             if (!static_dir_set) {
                 chosen_dir = choice: {
-                    if (fs.fs.readDirectory(fs.top_level_dir, null)) |dir_| {
+                    if (fs.fs.readDirectory(fs.top_level_dir, null, 0, false)) |dir_| {
                         const dir: *const Fs.FileSystem.RealFS.EntriesOption = dir_;
                         switch (dir.*) {
                             .entries => {
                                 if (dir.entries.getComptimeQuery("public")) |q| {
-                                    if (q.entry.kind(&fs.fs) == .dir) {
+                                    if (q.entry.kind(&fs.fs, true) == .dir) {
                                         break :choice "public";
                                     }
                                 }
 
                                 if (dir.entries.getComptimeQuery("static")) |q| {
-                                    if (q.entry.kind(&fs.fs) == .dir) {
+                                    if (q.entry.kind(&fs.fs, true) == .dir) {
                                         break :choice "static";
                                     }
                                 }

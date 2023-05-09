@@ -431,7 +431,7 @@ const RouteLoader = struct {
                     continue :outer;
                 }
 
-                switch (entry.kind(&fs.fs)) {
+                switch (entry.kind(&fs.fs, false)) {
                     .dir => {
                         inline for (banned_dirs) |banned_dir| {
                             if (strings.eqlComptime(entry.base(), comptime banned_dir)) {

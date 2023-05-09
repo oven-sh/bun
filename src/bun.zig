@@ -784,6 +784,31 @@ pub const StringHashMapContext = struct {
             return strings.eqlLong(a, b, true);
         }
     };
+
+    pub const PrehashedCaseInsensitive = struct {
+        value: u64,
+        input: []const u8,
+        pub fn init(allocator: std.mem.Allocator, input: []const u8) PrehashedCaseInsensitive {
+            var out = allocator.alloc(u8, input.len) catch unreachable;
+            _ = strings.copyLowercase(input, out);
+            return PrehashedCaseInsensitive{
+                .value = StringHashMapContext.hash(.{}, out),
+                .input = out,
+            };
+        }
+        pub fn deinit(this: @This(), allocator: std.mem.Allocator) void {
+            allocator.free(this.input);
+        }
+        pub fn hash(this: @This(), s: []const u8) u64 {
+            if (s.ptr == this.input.ptr and s.len == this.input.len)
+                return this.value;
+            return StringHashMapContext.hash(.{}, s);
+        }
+
+        pub fn eql(_: @This(), a: []const u8, b: []const u8) bool {
+            return strings.eqlCaseInsensitiveASCIIICheckLength(a, b);
+        }
+    };
 };
 
 pub fn StringArrayHashMap(comptime Type: type) type {
@@ -1468,3 +1493,15 @@ pub const MaxHeapAllocator = @import("./max_heap_allocator.zig").MaxHeapAllocato
 
 pub const tracy = @import("./tracy.zig");
 pub const trace = tracy.trace;
+
+pub fn openFileForPath(path_: [:0]const u8) !std.fs.File {
+    const O_PATH = if (comptime Environment.isLinux) std.os.O.PATH else std.os.O.RDONLY;
+    const flags: u32 = std.os.O.CLOEXEC | std.os.O.NOCTTY | O_PATH;
+
+    const fd = try std.os.openZ(path_, flags, 0);
+    return std.fs.File{
+        .handle = fd,
+    };
+}
+
+pub const Generation = u16;

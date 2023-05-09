@@ -124,6 +124,10 @@ pub const BuildCommand = struct {
         this_bundler.resolver.opts.react_server_components = ctx.bundler_options.react_server_components;
         this_bundler.options.code_splitting = ctx.bundler_options.code_splitting;
         this_bundler.resolver.opts.code_splitting = ctx.bundler_options.code_splitting;
+        this_bundler.options.transform_only = ctx.bundler_options.transform_only;
+        if (this_bundler.options.transform_only) {
+            this_bundler.options.resolve_mode = .disable;
+        }
 
         this_bundler.configureLinker();
 
@@ -157,7 +161,6 @@ pub const BuildCommand = struct {
 
         const output_files: []options.OutputFile = brk: {
             if (ctx.bundler_options.transform_only) {
-                this_bundler.linker.options.resolve_mode = .lazy;
                 this_bundler.options.import_path_format = .relative;
                 this_bundler.options.allow_runtime = false;
                 this_bundler.resolver.opts.allow_runtime = false;

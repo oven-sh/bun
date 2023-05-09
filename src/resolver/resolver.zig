@@ -2612,9 +2612,7 @@ pub const Resolver = struct {
                 if (in_place) |existing| {
                     existing.data.clearAndFree(allocator);
                 }
-                if (!r.store_fd) {
-                    new_entry.fd = 0;
-                }
+                new_entry.fd = if (r.store_fd) open_dir.dir.fd else 0;
                 var dir_entries_ptr = in_place orelse allocator.create(Fs.FileSystem.DirEntry) catch unreachable;
                 dir_entries_ptr.* = new_entry;
                 dir_entries_option = try rfs.entries.put(&cached_dir_entry_result, .{

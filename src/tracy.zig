@@ -491,9 +491,6 @@ fn dlsym(comptime Type: type, comptime symbol: [:0]const u8) ?Type {
 
     get: {
         if (Handle.handle == null) {
-            const RTLD_LAZY = 1;
-            const RTLD_LOCAL = 4;
-
             const paths_to_try = if (bun.Environment.isMac) .{
                 "/usr/local/opt/tracy/lib/libtracy.dylib",
                 "/usr/local/lib/libtracy.dylib",
@@ -520,7 +517,7 @@ fn dlsym(comptime Type: type, comptime symbol: [:0]const u8) ?Type {
             } else .{};
 
             const RLTD = if (bun.Environment.isMac)
-                RTLD_LAZY | RTLD_LOCAL
+                -2
             else
                 0;
 

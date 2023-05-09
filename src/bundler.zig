@@ -874,7 +874,10 @@ pub const Bundler = struct {
                 }
 
                 if (bundler.options.target.isBun()) {
-                    try bundler.linker.link(file_path, &result, origin, import_path_format, false, true);
+                    if (!bundler.options.transform_only) {
+                        try bundler.linker.link(file_path, &result, origin, import_path_format, false, true);
+                    }
+
                     return BuildResolveResultPair{
                         .written = switch (result.ast.exports_kind) {
                             .esm => try bundler.printWithSourceMapMaybe(
@@ -901,7 +904,9 @@ pub const Bundler = struct {
                     };
                 }
 
-                try bundler.linker.link(file_path, &result, origin, import_path_format, false, false);
+                if (!bundler.options.transform_only) {
+                    try bundler.linker.link(file_path, &result, origin, import_path_format, false, false);
+                }
 
                 return BuildResolveResultPair{
                     .written = switch (result.ast.exports_kind) {
@@ -990,24 +995,26 @@ pub const Bundler = struct {
                 ) orelse {
                     return null;
                 };
-                if (!bundler.options.target.isBun())
-                    try bundler.linker.link(
-                        file_path,
-                        &result,
-                        bundler.options.origin,
-                        import_path_format,
-                        false,
-                        false,
-                    )
-                else
-                    try bundler.linker.link(
-                        file_path,
-                        &result,
-                        bundler.options.origin,
-                        import_path_format,
-                        false,
-                        true,
-                    );
+                if (!bundler.options.transform_only) {
+                    if (!bundler.options.target.isBun())
+                        try bundler.linker.link(
+                            file_path,
+                            &result,
+                            bundler.options.origin,
+                            import_path_format,
+                            false,
+                            false,
+                        )
+                    else
+                        try bundler.linker.link(
+                            file_path,
+                            &result,
+                            bundler.options.origin,
+                            import_path_format,
+                            false,
+                            true,
+                        );
+                }
 
                 output_file.size = switch (bundler.options.target) {
                     .browser, .node => try bundler.print(

@@ -1470,6 +1470,7 @@ pub const RequestContext = struct {
                 null,
                 handler.log,
                 handler.env_loader,
+                true,
             ) catch |err| {
                 handler.handleJSError(.create_vm, err) catch {};
                 javascript_disabled = true;

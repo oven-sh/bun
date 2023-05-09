@@ -729,6 +729,7 @@ pub const VirtualMachine = struct {
         existing_bundle: ?*NodeModuleBundle,
         _log: ?*logger.Log,
         env_loader: ?*DotEnv.Loader,
+        store_fd: bool,
     ) !*VirtualMachine {
         var log: *logger.Log = undefined;
         if (_log) |__log| {
@@ -748,7 +749,6 @@ pub const VirtualMachine = struct {
             existing_bundle,
             env_loader,
         );
-
         var vm = VMHolder.vm.?;
 
         vm.* = VirtualMachine{
@@ -781,6 +781,7 @@ pub const VirtualMachine = struct {
         vm.event_loop = &vm.regular_event_loop;
 
         vm.bundler.macro_context = null;
+        vm.bundler.resolver.store_fd = store_fd;
 
         vm.bundler.resolver.onWakePackageManager = .{
             .context = &vm.modules,

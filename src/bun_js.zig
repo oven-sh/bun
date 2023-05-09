@@ -58,7 +58,14 @@ pub const Run = struct {
         }
 
         run = .{
-            .vm = try VirtualMachine.init(arena.allocator(), ctx.args, null, ctx.log, null),
+            .vm = try VirtualMachine.init(
+                arena.allocator(),
+                ctx.args,
+                null,
+                ctx.log,
+                null,
+                ctx.debug.hot_reload != .none,
+            ),
             .file = file,
             .arena = arena,
             .ctx = ctx,
@@ -92,8 +99,6 @@ pub const Run = struct {
         if (ctx.debug.macros) |macros| {
             b.options.macro_remap = macros;
         }
-
-        b.resolver.store_fd = ctx.debug.hot_reload != .none;
 
         b.configureRouter(false) catch {
             if (Output.enable_ansi_colors_stderr) {

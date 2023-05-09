@@ -252,6 +252,7 @@ const Scanner = struct {
             if (@as(FileSystem.RealFS.EntriesOption.Tag, root.*) == .entries) {
                 var iter = root.entries.data.iterator();
                 const fd = root.entries.fd;
+                std.debug.assert(fd != 0);
                 while (iter.next()) |entry| {
                     this.next(entry.value_ptr.*, fd);
                 }
@@ -260,6 +261,8 @@ const Scanner = struct {
 
         while (this.dirs_to_scan.readItem()) |entry| {
             var dir = std.fs.Dir{ .fd = entry.relative_dir };
+            std.debug.assert(dir.fd != 0);
+
             var parts2 = &[_]string{ entry.dir_path, entry.name.slice() };
             var path2 = this.fs.absBuf(parts2, &this.open_dir_buf);
             this.open_dir_buf[path2.len] = 0;
@@ -400,10 +403,21 @@ pub const TestCommand = struct {
 
         js_ast.Expr.Data.Store.create(default_allocator);
         js_ast.Stmt.Data.Store.create(default_allocator);
-        var vm = try JSC.VirtualMachine.init(ctx.allocator, ctx.args, null, ctx.log, env_loader);
+        var vm = try JSC.VirtualMachine.init(
+            ctx.allocator,
+            ctx.args,
+            null,
+            ctx.log,
+            env_loader,
+            // we must store file descriptors because we reuse them for
+            // iterating through the directory tree recursively
+            //
+            // in the future we should investigate if refactoring this to not
+            // rely on the dir fd yields a performance improvement
+            true,
+        );
         vm.argv = ctx.passthrough;
         vm.preload = ctx.preloads;
-        vm.bundler.resolver.store_fd = true;
 
         try vm.bundler.configureDefines();
         vm.bundler.options.rewrite_jest_for_tests = true;

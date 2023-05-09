@@ -636,4 +636,135 @@ describe("bundler", () => {
       `,
     },
   });
+  itBundled("edgecase/ExportDefaultUndefined", {
+    files: {
+      "/entry.ts": /* ts */ `
+        export const a = 1;
+      `,
+    },
+    target: "bun",
+  });
+  itBundled("edgecase/RuntimeExternalRequire", {
+    files: {
+      "/entry.ts": /* ts */ `
+        console.log(require("hello-1").type);
+      `,
+    },
+    external: ["hello-1"],
+    target: "bun",
+    runtimeFiles: {
+      "/node_modules/hello-1/require.js": `export const type = "require";`,
+      "/node_modules/hello-1/package.json": /* json */ `
+        {
+          "type": "module",
+          "exports": {
+            ".": {
+              "require": "./require.js",
+            }
+          }
+        }
+      `,
+    },
+    run: {
+      stdout: `
+        require
+      `,
+    },
+  });
+  itBundled("edgecase/RuntimeExternalImport", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { type as a1 } from 'hello-1';
+        import { type as a2 } from 'hello-2';
+        import { type as a3 } from 'hello-3';
+        console.log(a1, a2, a3);
+
+        const b1 = require('hello-1').type;
+        const b2 = require('hello-2').type;
+        const b3 = require('hello-3').type;
+        console.log(b1, b2, b3);
+      `,
+    },
+    external: ["hello-1", "hello-2", "hello-3"],
+    target: "bun",
+    runtimeFiles: {
+      "/node_modules/hello-1/node.js": `export const type = "node";`,
+      "/node_modules/hello-1/bun.js": `export const type = "bun";`,
+      "/node_modules/hello-1/package.json": /* json */ `
+        {
+          "type": "module",
+          "exports": {
+            ".": {
+              "node": "./node.js",
+              "bun": "./bun.js"
+            }
+          }
+        }
+      `,
+      "/node_modules/hello-2/node.js": `export const type = "node";`,
+      "/node_modules/hello-2/bun.js": `export const type = "bun";`,
+      "/node_modules/hello-2/package.json": /* json */ `
+        {
+          "type": "module",
+          "exports": {
+            ".": {
+              "bun": "./bun.js",
+              "node": "./node.js"
+            }
+          }
+        }
+      `,
+      "/node_modules/hello-3/import.js": `export const type = "import";`,
+      "/node_modules/hello-3/require.js": `exports.type = "require";`,
+      "/node_modules/hello-3/package.json": /* json */ `
+        {
+          "type": "module",
+          "exports": {
+            ".": {
+              "require": "./require.js",
+              "import": "./import.js",
+            }
+          }
+        }
+      `,
+    },
+    run: {
+      stdout: `
+        bun bun import
+        bun bun import
+      `,
+    },
+  });
+  itBundled("edgecase/RuntimeExternalImport2", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import t from 'hello';
+        console.log(t);
+      `,
+    },
+    external: ["hello"],
+    target: "bun",
+    runtimeFiles: {
+      "/node_modules/hello/import.js": `export default "import";`,
+      "/node_modules/hello/require.js": `module.exports = "require";`,
+      "/node_modules/hello/package.json": /* json */ `
+        {
+          "type": "module",
+          "exports": {
+            ".": {
+              "node": "./require.js",
+              "bun": "./import.js",
+              "require": "./require.js",
+              "import": "./import.js",
+            }
+          }
+        }
+      `,
+    },
+    run: {
+      stdout: `
+        import
+      `,
+    },
+  });
 });

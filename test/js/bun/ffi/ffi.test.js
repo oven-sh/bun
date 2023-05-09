@@ -616,3 +616,13 @@ if (ok) {
 } else {
   it.skip("run ffi", () => {});
 }
+
+it("dlopen throws an error instead of returning it", () => {
+  let err;
+  try {
+    dlopen("nonexistent", { x: {} });
+  } catch (error) {
+    err = error;
+  }
+  expect(err).toBeTruthy();
+});

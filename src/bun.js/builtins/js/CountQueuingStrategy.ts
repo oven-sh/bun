@@ -23,28 +23,20 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-@getter
-function highWaterMark()
-{
-    "use strict";
+$getter;
+export function highWaterMark(this: any) {
+  const highWaterMark = $getByIdDirectPrivate(this, "highWaterMark");
 
-    const highWaterMark = @getByIdDirectPrivate(this, "highWaterMark");
-    if (highWaterMark === @undefined)
-        @throwTypeError("CountQueuingStrategy.highWaterMark getter called on incompatible |this| value.");
+  if (highWaterMark === undefined)
+    throw new TypeError("CountQueuingStrategy.highWaterMark getter called on incompatible |this| value.");
 
-    return highWaterMark;
+  return highWaterMark;
 }
 
-function size()
-{
-    "use strict";
-
-    return 1;
+export function size() {
+  return 1;
 }
 
-function initializeCountQueuingStrategy(parameters)
-{
-    "use strict";
-
-    @putByIdDirectPrivate(this, "highWaterMark", @extractHighWaterMarkFromQueuingStrategyInit(parameters));
+export function initializeCountQueuingStrategy(this: any, parameters: any) {
+  $putByIdDirectPrivate(this, "highWaterMark", $extractHighWaterMarkFromQueuingStrategyInit(parameters));
 }

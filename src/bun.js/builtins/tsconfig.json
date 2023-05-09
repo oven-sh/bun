@@ -1,0 +1,10 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "experimentalDecorators": true,
+    "noEmit": true,
+    // "skipLibCheck": true,
+    "allowJs": true
+  },
+  "include": [".", "packages/bun-types/index.d.ts"]
+}

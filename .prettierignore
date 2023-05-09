@@ -1,6 +1,6 @@
 src/fallback.html
 src/bun.js/WebKit
-src/bun.js/builtins/js
+src/bun.js/builtins/js/*.js
 src/*.out.js
 src/*out.*.js
 src/deps

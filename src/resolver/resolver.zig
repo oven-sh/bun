@@ -973,8 +973,10 @@ pub const Resolver = struct {
                                 bun.openFileForPath(span);
 
                             if (!store_fd) {
-                                out = try bun.getFdPath(query.entry.cache.fd, &buf);
+                                std.debug.assert(file.handle > 2);
+                                out = try bun.getFdPath(file.handle, &buf);
                                 file.close();
+                                query.entry.cache.fd = 0;
                             } else {
                                 query.entry.cache.fd = file.handle;
                                 Fs.FileSystem.setMaxFd(file.handle);

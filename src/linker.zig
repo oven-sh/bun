@@ -1,3 +1,5 @@
+// Most of this file should eventually be replaced with `bundle_v2.zig` or
+// `bundle_v2` should be split into several files.
 const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;

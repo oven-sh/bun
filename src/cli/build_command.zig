@@ -99,18 +99,9 @@ pub const BuildCommand = struct {
             };
 
             var dir = std.fs.cwd().openDir(path, .{}) catch |err| {
-                switch (err) {
-                    error.FileNotFound => {
-                        Output.prettyErrorln("error: root directory for entry points should exist: {s}", .{path});
-                        Global.exit(1);
-                        return;
-                    },
-                    else => {
-                        Output.prettyErrorln("error: failed to open root entry point directory: {s}", .{path});
-                        Global.exit(1);
-                        return;
-                    },
-                }
+                Output.prettyErrorln("<r>error<r>: {s}: failed to open root directory: {s}", .{ @errorName(err), path });
+                Global.exit(1);
+                return;
             };
             defer dir.close();
 

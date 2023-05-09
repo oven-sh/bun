@@ -172,16 +172,8 @@ pub const JSBundler = struct {
                 defer path.deinit();
 
                 var dir = std.fs.cwd().openDir(path.slice(), .{}) catch |err| {
-                    switch (err) {
-                        error.FileNotFound => {
-                            globalThis.throwPretty("{s}: root directory for entry points should exist: {s}", .{ @errorName(err), path.slice() });
-                            return error.JSException;
-                        },
-                        else => {
-                            globalThis.throwPretty("{s}: failed to open root entry point directory: {s}", .{ @errorName(err), path.slice() });
-                            return error.JSException;
-                        },
-                    }
+                    globalThis.throwPretty("{s}: failed to open root directory: {s}", .{ @errorName(err), path.slice() });
+                    return error.JSException;
                 };
                 defer dir.close();
 

@@ -3804,7 +3804,15 @@ const LinkerContext = struct {
                 const pathname = Fs.PathName.init(this.graph.entry_points.items(.output_path)[chunk.entry_point.entry_point_id].slice());
                 chunk.template.placeholder.name = pathname.base;
                 chunk.template.placeholder.ext = "js";
-                chunk.template.placeholder.dir = try resolve_path.relativeAlloc(this.allocator, this.resolver.opts.root_dir, pathname.dir);
+
+                var dir = std.fs.cwd().openDir(pathname.dir, .{}) catch |err| {
+                    try this.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{s}: failed to open entry point directory: {s}", .{ @errorName(err), pathname.dir });
+                    return error.FailedToOpenEntryPointDirectory;
+                };
+                defer dir.close();
+
+                var real_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                chunk.template.placeholder.dir = try resolve_path.relativeAlloc(this.allocator, this.resolver.opts.root_dir, try bun.getFdPath(dir.fd, &real_path_buf));
             } else {
                 chunk.template = PathTemplate.chunk;
                 if (this.resolver.opts.chunk_naming.len > 0)

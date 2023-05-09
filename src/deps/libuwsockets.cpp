@@ -1261,14 +1261,22 @@ extern "C"
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      uwsRes->onData([handler, res, opcional_data](auto chunk, bool is_end)
-                     { handler(res, chunk.data(), chunk.length(), is_end, opcional_data); });
+      if (handler) {
+        uwsRes->onData([handler, res, opcional_data](auto chunk, bool is_end)
+                       { handler(res, chunk.data(), chunk.length(), is_end, opcional_data); });
+      } else {
+        uwsRes->onData(nullptr);
+      }
     }
     else
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      uwsRes->onData([handler, res, opcional_data](auto chunk, bool is_end)
-                     { handler(res, chunk.data(), chunk.length(), is_end, opcional_data); });
+      if (handler) {
+        uwsRes->onData([handler, res, opcional_data](auto chunk, bool is_end)
+                       { handler(res, chunk.data(), chunk.length(), is_end, opcional_data); });
+      } else {
+        uwsRes->onData(nullptr);
+      }
     }
   }
 

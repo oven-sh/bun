@@ -503,7 +503,7 @@ pub const RunCommand = struct {
             //   This would cause potentially a different .env file to be loaded
             this_bundler.runEnvLoader() catch {};
 
-            if (root_dir_info.getEntries()) |dir| {
+            if (root_dir_info.getEntries(0)) |dir| {
                 // Run .env again if it exists in a parent dir
                 if (this_bundler.options.production) {
                     this_bundler.env.load(&this_bundler.fs.fs, dir, false) catch {};
@@ -654,6 +654,7 @@ pub const RunCommand = struct {
 
         this_bundler.resolver.care_about_bin_folder = true;
         this_bundler.resolver.care_about_scripts = true;
+        this_bundler.resolver.store_fd = true;
         defer {
             this_bundler.resolver.care_about_bin_folder = false;
             this_bundler.resolver.care_about_scripts = false;
@@ -699,7 +700,7 @@ pub const RunCommand = struct {
                         var dir_slice: string = "";
                         while (iter.next()) |entry| {
                             const value = entry.value_ptr.*;
-                            if (value.kind(&this_bundler.fs.fs) == .file) {
+                            if (value.kind(&this_bundler.fs.fs, true) == .file) {
                                 if (!has_copied) {
                                     bun.copy(u8, &path_buf, value.dir);
                                     dir_slice = path_buf[0..value.dir.len];
@@ -736,7 +737,7 @@ pub const RunCommand = struct {
                             !strings.contains(name, ".d.ts") and
                             !strings.contains(name, ".d.mts") and
                             !strings.contains(name, ".d.cts") and
-                            value.kind(&this_bundler.fs.fs) == .file)
+                            value.kind(&this_bundler.fs.fs, true) == .file)
                         {
                             _ = try results.getOrPut(this_bundler.fs.filename_store.append(@TypeOf(name), name) catch continue);
                         }

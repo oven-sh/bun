@@ -139,7 +139,6 @@ describe("bundler", () => {
     },
   });
   itBundled("cjs2esm/ModuleExportsEqualsRuntimeCondition", {
-    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         import { foo } from 'lib';

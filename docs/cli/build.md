@@ -324,7 +324,7 @@ Depending on the target, Bun will apply different module resolution rules and op
 
 {% /table %}
 
-<!-- ### `module`
+### `format`
 
 Specifies the module format to be used in the generated bundles.
 
@@ -714,6 +714,24 @@ var value = z.string().parse("Hello world!")
 console.log(_.upperCase(value));
 ```
 
+To mark all imports as external, use the wildcard `*`:
+
+{% codetabs %}
+
+```ts#JavaScript
+await Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+  external: ['*'],
+})
+```
+
+```bash#CLI
+$ bun build ./index.tsx --outdir ./out --external '*'
+```
+
+{% /codetabs %}
+
 ### `naming`
 
 Customizes the generated file names. Defaults to `./[dir]/[name].[ext]`.
@@ -988,6 +1006,56 @@ The output file would now look something like this.
 + var logo = 'https://cdn.example.com/logo-a7305bdef.svg';
 ```
 
+### `define`
+
+A map of global identifiers to be replaced at build time. Keys of this object are identifier names, and values are JSON strings that will be inlined.
+
+{% callout }
+This is not needed to inline `process.env.NODE_ENV`, as Bun does this automatically.
+{% /callout %}
+
+{% codetabs %}
+
+```ts#JavaScript
+await Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+  define: {
+    STRING: JSON.stringify("value"),
+    "nested.boolean": "true",
+  },
+})
+```
+
+```bash#CLI
+$ bun build ./index.tsx --outdir ./out --define 'STRING="value"' --define "nested.boolean=true"
+```
+
+{% /codetabs %}
+
+### `loader`
+
+A map of file extensions to [built-in loader names](https://bun.sh/docs/bundler/loaders#built-in-loaders). This can be used to quickly customize how certain file files are loaded.
+
+{% codetabs %}
+
+```ts#JavaScript
+await Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+  loader: {
+    ".png": "dataurl",
+    ".txt": "file",
+  },
+})
+```
+
+```bash#CLI
+$ bun build ./index.tsx --outdir ./out --loader .png:dataurl --loader .txt:file
+```
+
+{% /codetabs %}
+
 ## Reference
 
 ```ts
@@ -1003,8 +1071,8 @@ interface BuildOptions {
   outdir?: string; // default: no write (in-memory only)
   target?: "browser" | "bun" | "node"; // "browser"
   splitting?: boolean; // true
-  plugins?: BunPlugin[]; // []
-  loader?: { [k in string]: Loader };
+  plugins?: BunPlugin[]; // [] // See https://bun.sh/docs/bundler/plugins
+  loader?: { [k in string]: Loader }; // See https://bun.sh/docs/bundler/loaders
   manifest?: boolean; // false
   external?: string[]; // []
   sourcemap?: "none" | "inline" | "external"; // "none"

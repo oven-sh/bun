@@ -2736,8 +2736,10 @@ pub fn wrapWithHasContainer(
             exception: js.ExceptionRef,
         ) js.JSObjectRef {
             var iter = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
+            defer iter.deinit();
             var args: Args = undefined;
 
+            comptime var passed_exception_ref = false;
             comptime var i: usize = 0;
             inline while (i < FunctionTypeInfo.params.len) : (i += 1) {
                 const ArgType = comptime FunctionTypeInfo.params[i].type.?;
@@ -2752,12 +2754,10 @@ pub fn wrapWithHasContainer(
                     JSC.Node.StringOrBuffer => {
                         const arg = iter.nextEat() orelse {
                             exception.* = JSC.toInvalidArguments("expected string or buffer", .{}, ctx).asObjectRef();
-                            iter.deinit();
                             return null;
                         };
                         args[i] = JSC.Node.StringOrBuffer.fromJS(ctx.ptr(), iter.arena.allocator(), arg, exception) orelse {
                             exception.* = JSC.toInvalidArguments("expected string or buffer", .{}, ctx).asObjectRef();
-                            iter.deinit();
                             return null;
                         };
                     },
@@ -2766,7 +2766,6 @@ pub fn wrapWithHasContainer(
                             if (!arg.isEmptyOrUndefinedOrNull()) {
                                 args[i] = JSC.Node.StringOrBuffer.fromJS(ctx.ptr(), iter.arena.allocator(), arg, exception) orelse {
                                     exception.* = JSC.toInvalidArguments("expected string or buffer", .{}, ctx).asObjectRef();
-                                    iter.deinit();
                                     return null;
                                 };
                             } else {
@@ -2781,7 +2780,6 @@ pub fn wrapWithHasContainer(
                             if (!arg.isEmptyOrUndefinedOrNull()) {
                                 args[i] = JSC.Node.SliceOrBuffer.fromJS(ctx.ptr(), iter.arena.allocator(), arg, exception) orelse {
                                     exception.* = JSC.toInvalidArguments("expected string or buffer", .{}, ctx).asObjectRef();
-                                    iter.deinit();
                                     return null;
                                 };
                             } else {
@@ -2795,12 +2793,10 @@ pub fn wrapWithHasContainer(
                         if (iter.nextEat()) |arg| {
                             args[i] = arg.asArrayBuffer(ctx.ptr()) orelse {
                                 exception.* = JSC.toInvalidArguments("expected TypedArray", .{}, ctx).asObjectRef();
-                                iter.deinit();
                                 return null;
                             };
                         } else {
                             exception.* = JSC.toInvalidArguments("expected TypedArray", .{}, ctx).asObjectRef();
-                            iter.deinit();
                             return null;
                         }
                     },
@@ -2809,7 +2805,6 @@ pub fn wrapWithHasContainer(
                             if (!arg.isEmptyOrUndefinedOrNull()) {
                                 args[i] = arg.asArrayBuffer(ctx.ptr()) orelse {
                                     exception.* = JSC.toInvalidArguments("expected TypedArray", .{}, ctx).asObjectRef();
-                                    iter.deinit();
                                     return null;
                                 };
                             } else {
@@ -2822,13 +2817,11 @@ pub fn wrapWithHasContainer(
                     ZigString => {
                         var string_value = eater(&iter) orelse {
                             JSC.throwInvalidArguments("Missing argument", .{}, ctx, exception);
-                            iter.deinit();
                             return null;
                         };
 
                         if (string_value.isUndefinedOrNull()) {
                             JSC.throwInvalidArguments("Expected string", .{}, ctx, exception);
-                            iter.deinit();
                             return null;
                         }
 
@@ -2857,11 +2850,9 @@ pub fn wrapWithHasContainer(
                     *Request => {
                         args[i] = (eater(&iter) orelse {
                             JSC.throwInvalidArguments("Missing Request object", .{}, ctx, exception);
-                            iter.deinit();
                             return null;
                         }).as(Request) orelse {
                             JSC.throwInvalidArguments("Expected Request object", .{}, ctx, exception);
-                            iter.deinit();
                             return null;
                         };
                     },
@@ -2869,17 +2860,16 @@ pub fn wrapWithHasContainer(
                         args[i] = thisObject;
                         if (!JSValue.fromRef(thisObject).isCell() or !JSValue.fromRef(thisObject).isObject()) {
                             JSC.throwInvalidArguments("Expected object", .{}, ctx, exception);
-                            iter.deinit();
                             return null;
                         }
                     },
                     js.ExceptionRef => {
                         args[i] = exception;
+                        passed_exception_ref = true;
                     },
                     JSValue => {
                         const val = eater(&iter) orelse {
                             JSC.throwInvalidArguments("Missing argument", .{}, ctx, exception);
-                            iter.deinit();
                             return null;
                         };
                         args[i] = val;
@@ -2892,9 +2882,15 @@ pub fn wrapWithHasContainer(
             }
 
             var result: JSValue = @call(.auto, @field(Container, name), args);
-            if (exception.* != null) {
-                iter.deinit();
-                return null;
+            if (comptime passed_exception_ref) {
+                if (exception.* != null) {
+                    return null;
+                }
+            } else {
+                if (result.isError()) {
+                    exception.* = result.asObjectRef();
+                    return null;
+                }
             }
 
             if (comptime maybe_async) {
@@ -2904,8 +2900,6 @@ pub fn wrapWithHasContainer(
                     result = promise.result(ctx.vm());
                 }
             }
-
-            iter.deinit();
 
             if (result == .zero) {
                 return null;

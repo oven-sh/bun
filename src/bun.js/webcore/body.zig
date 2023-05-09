@@ -269,6 +269,7 @@ pub const Body = struct {
                 var promise = JSC.JSPromise.create(globalThis);
                 const promise_value = promise.asValue(globalThis);
                 value.promise = promise_value;
+                promise_value.protect();
 
                 if (value.onStartBuffering) |onStartBuffering| {
                     value.onStartBuffering = null;
@@ -290,6 +291,7 @@ pub const Body = struct {
 
     /// This is a duplex stream!
     pub const Value = union(Tag) {
+        const log = Output.scoped(.BodyValue, false);
         Blob: Blob,
         /// Single-use Blob
         /// Avoids a heap allocation.
@@ -636,6 +638,7 @@ pub const Body = struct {
         }
 
         pub fn resolve(to_resolve: *Value, new: *Value, global: *JSGlobalObject) void {
+            log("resolve", .{});
             if (to_resolve.* == .Locked) {
                 var locked = &to_resolve.Locked;
                 if (locked.readable) |readable| {

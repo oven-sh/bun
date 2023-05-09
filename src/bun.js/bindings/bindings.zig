@@ -214,6 +214,17 @@ pub const ZigString = extern struct {
         return ZigString__toJSONObject(&this, globalThis);
     }
 
+    pub fn hasPrefixChar(this: ZigString, char: u8) bool {
+        if (this.len == 0)
+            return false;
+
+        if (this.is16Bit()) {
+            return this.utf16SliceAligned()[0] == char;
+        }
+
+        return this.slice()[0] == char;
+    }
+
     pub fn substring(this: ZigString, offset: usize, maxlen: usize) ZigString {
         var len: usize = undefined;
         if (maxlen == 0) {
@@ -3960,12 +3971,12 @@ pub const JSValue = enum(JSValueReprInt) {
         return null;
     }
 
-    pub fn toEnumWithMapField(
+    pub fn toEnumFromMap(
         this: JSValue,
         globalThis: *JSGlobalObject,
         comptime property_name: []const u8,
         comptime Enum: type,
-        comptime map_name: []const u8,
+        comptime StringMap: anytype,
     ) !Enum {
         if (!this.isString()) {
             globalThis.throwInvalidArguments(property_name ++ " must be a string", .{});
@@ -3973,11 +3984,11 @@ pub const JSValue = enum(JSValueReprInt) {
         }
 
         const target_str = this.getZigString(globalThis);
-        return @field(Enum, map_name).getWithEql(target_str, ZigString.eqlComptime) orelse {
+        return StringMap.getWithEql(target_str, ZigString.eqlComptime) orelse {
             const one_of = struct {
                 pub const list = brk: {
                     var str: []const u8 = "'";
-                    const field_names = std.meta.fieldNames(Enum);
+                    const field_names = bun.meta.enumFieldNames(Enum);
                     for (field_names, 0..) |entry, i| {
                         str = str ++ entry ++ "'";
                         if (i < field_names.len - 2) {
@@ -3997,7 +4008,7 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn toEnum(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime Enum: type) !Enum {
-        return toEnumWithMapField(this, globalThis, property_name, Enum, "Map");
+        return toEnumFromMap(this, globalThis, property_name, Enum, Enum.Map);
     }
 
     pub fn toOptionalEnum(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime Enum: type) !?Enum {
@@ -4009,9 +4020,10 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn getOptionalEnum(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime Enum: type) !?Enum {
         if (get(this, globalThis, property_name)) |prop| {
+            if (prop.isEmptyOrUndefinedOrNull())
+                return null;
             return try toEnum(prop, globalThis, property_name, Enum);
         }
-
         return null;
     }
 

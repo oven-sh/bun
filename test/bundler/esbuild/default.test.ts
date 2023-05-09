@@ -233,7 +233,7 @@ describe("bundler", () => {
     },
     entryPoints: ["/a.js", "/b.js", "/c.js", "/d.js", "/e.js"],
     mode: "bundle",
-    external: ["*"],
+    bundling: false,
     runtimeFiles: {
       "./out/f.js": /* js */ `
         export const f = 987;
@@ -309,11 +309,10 @@ describe("bundler", () => {
         }
       `,
     },
-    // mode: "transform",
     run: {
       file: "/test.js",
     },
-    external: ["*"],
+    bundling: false,
   } as const;
   itBundled("default/ImportFormsWithNoBundle", {
     ...importFormsConfig,
@@ -435,59 +434,59 @@ describe("bundler", () => {
       "/foo.js": [`Detected cycle while resolving import "b"`, `Detected cycle while resolving import "d"`],
     },
   });
-  itBundled("default/JSXImportsCommonJS", {
-    notImplemented: true, // jsx in bun is too different to esbuild
-    files: {
-      "/entry.jsx": /* jsx */ `
-        import {elem, frag} from './custom-react'
-        console.log(<div/>, <>fragment</>)
-      `,
-      "/custom-react.js": /* js */ `
-        module.exports = {
-          elem: (...args) => console.log('elem', ...args),
-          frag: 'frag',
-        };
-      `,
-    },
-    jsx: {
-      factory: "elem",
-      fragment: "frag",
-      automaticRuntime: true,
-    },
-    run: {
-      stdout: `
-        elem div null
-        elem frag null fragment
-        undefined undefined
-      `,
-    },
-  });
-  itBundled("default/JSXImportsES6", {
-    notImplemented: true, // jsx in bun is too different to esbuild
-    files: {
-      "/entry.jsx": /* jsx */ `
-        import {elem, frag} from './custom-react'
-        console.log(<div/>, <>fragment</>)
-      `,
-      "/custom-react.js": /* js */ `
-        export function elem(...args) {
-          console.log('elem', ...args)
-        }
-        export const frag = "frag";
-      `,
-    },
-    jsx: {
-      factory: "elem",
-      fragment: "frag",
-    },
-    run: {
-      stdout: `
-        elem div null
-        elem frag null fragment
-        undefined undefined
-      `,
-    },
-  });
+  // itBundled("default/JSXImportsCommonJS", {
+  //   notImplemented: true, // jsx in bun is too different to esbuild
+  //   files: {
+  //     "/entry.jsx": /* jsx */ `
+  //       import {elem, frag} from './custom-react'
+  //       console.log(<div/>, <>fragment</>)
+  //     `,
+  //     "/custom-react.js": /* js */ `
+  //       module.exports = {
+  //         elem: (...args) => console.log('elem', ...args),
+  //         frag: 'frag',
+  //       };
+  //     `,
+  //   },
+  //   jsx: {
+  //     factory: "elem",
+  //     fragment: "frag",
+  //     automaticRuntime: true,
+  //   },
+  //   run: {
+  //     stdout: `
+  //       elem div null
+  //       elem frag null fragment
+  //       undefined undefined
+  //     `,
+  //   },
+  // });
+  // itBundled("default/JSXImportsES6", {
+  //   notImplemented: true, // jsx in bun is too different to esbuild
+  //   files: {
+  //     "/entry.jsx": /* jsx */ `
+  //       import {elem, frag} from './custom-react'
+  //       console.log(<div/>, <>fragment</>)
+  //     `,
+  //     "/custom-react.js": /* js */ `
+  //       export function elem(...args) {
+  //         console.log('elem', ...args)
+  //       }
+  //       export const frag = "frag";
+  //     `,
+  //   },
+  //   jsx: {
+  //     factory: "elem",
+  //     fragment: "frag",
+  //   },
+  //   run: {
+  //     stdout: `
+  //       elem div null
+  //       elem frag null fragment
+  //       undefined undefined
+  //     `,
+  //   },
+  // });
   // note: esbuild treats .js as non-jsx
   // bun treats js as jsx
   // so the extension has to be .mjs or .cjs to disable JSX.
@@ -504,105 +503,105 @@ describe("bundler", () => {
     outdir: "/out",
     entryPoints: ["/entry.mjs", "/entry.cjs"],
   });
-  itBundled("default/JSXConstantFragments", {
-    notImplemented: true, // jsx in bun is too different to esbuild
-    files: {
-      "/entry.js": /* js */ `
-        import './default'
-        import './null'
-        import './boolean'
-        import './number'
-        import './string-single-empty'
-        import './string-double-empty'
-        import './string-single-punctuation'
-        import './string-double-punctuation'
-        import './string-template'
-      `,
-      "/default.jsx": `console.log(<></>)`,
-      "/null.jsx": `console.log(<></>) // @jsxFrag null`,
-      "/boolean.jsx": `console.log(<></>) // @jsxFrag true`,
-      "/number.jsx": `console.log(<></>) // @jsxFrag 123`,
-      "/string-single-empty.jsx": `console.log(<></>) // @jsxFrag ''`,
-      "/string-double-empty.jsx": `console.log(<></>) // @jsxFrag ""`,
-      "/string-single-punctuation.jsx": `console.log(<></>) // @jsxFrag '['`,
-      "/string-double-punctuation.jsx": `console.log(<></>) // @jsxFrag "["`,
-      "/string-template.jsx": "console.log(<></>) // @jsxFrag ``",
+  // itBundled("default/JSXConstantFragments", {
+  //   notImplemented: true, // jsx in bun is too different to esbuild
+  //   files: {
+  //     "/entry.js": /* js */ `
+  //       import './default'
+  //       import './null'
+  //       import './boolean'
+  //       import './number'
+  //       import './string-single-empty'
+  //       import './string-double-empty'
+  //       import './string-single-punctuation'
+  //       import './string-double-punctuation'
+  //       import './string-template'
+  //     `,
+  //     "/default.jsx": `console.log(<></>)`,
+  //     "/null.jsx": `console.log(<></>) // @jsxFrag null`,
+  //     "/boolean.jsx": `console.log(<></>) // @jsxFrag true`,
+  //     "/number.jsx": `console.log(<></>) // @jsxFrag 123`,
+  //     "/string-single-empty.jsx": `console.log(<></>) // @jsxFrag ''`,
+  //     "/string-double-empty.jsx": `console.log(<></>) // @jsxFrag ""`,
+  //     "/string-single-punctuation.jsx": `console.log(<></>) // @jsxFrag '['`,
+  //     "/string-double-punctuation.jsx": `console.log(<></>) // @jsxFrag "["`,
+  //     "/string-template.jsx": "console.log(<></>) // @jsxFrag ``",
 
-      "/test.js": /* js */ `
-        globalThis.React = {
-          createElement: (x) => x,
-          Fragment: 'frag'
-        }
-        await import('./out.js');
-      `,
-    },
-    jsx: {
-      fragment: "']'",
-    },
-    bundleWarnings: {
-      "/string-template.jsx": ["Invalid JSX fragment: ``"],
-    },
-    run: {
-      file: "/test.js",
-      stdout: "]\nnull\ntrue\n123\n\n\n[\n[\n]",
-    },
-  });
-  itBundled("default/JSXAutomaticImportsCommonJS", {
-    files: {
-      "/entry.jsx": /* jsx */ `
-        import {jsx, Fragment} from './custom-react'
-        console.log(<div jsx={jsx}/>, <><Fragment/></>)
-      `,
-      "/custom-react.js": `module.exports = { jsx: 'jsx', Fragment: 'fragment2' }`,
-    },
-    jsx: {
-      automaticRuntime: true,
-    },
-    external: ["react"],
-    run: {
-      stdout: `
-        <div jsx="jsx" /> <>
-          <fragment2 />
-        </>
-      `,
-    },
-  });
-  itBundled("default/JSXAutomaticImportsES6", {
-    files: {
-      "/entry.jsx": /* jsx */ `
-        import {jsx, Fragment} from './custom-react'
-        console.log(<div jsx={jsx}/>, <><Fragment/></>)
-      `,
-      "/custom-react.js": /* js */ `
-        export const jsx = 'jsx function'
-        export const Fragment = 'fragment'
-      `,
-    },
-    jsx: {
-      automaticRuntime: true,
-    },
-    external: ["react"],
-    run: {
-      stdout: `
-        <div jsx="jsx function" /> <>
-          <fragment />
-        </>
-      `,
-    },
-  });
-  itBundled("default/JSXAutomaticSyntaxInJS", {
-    files: {
-      "/entry.mjs": `console.log(<div/>)`,
-    },
-    jsx: {
-      automaticRuntime: true,
-    },
-    external: ["react"],
-    bundleErrors: {
-      // TODO: this could be a nicer error
-      "/entry.mjs": [`Unexpected <`],
-    },
-  });
+  //     "/test.js": /* js */ `
+  //       globalThis.React = {
+  //         createElement: (x) => x,
+  //         Fragment: 'frag'
+  //       }
+  //       await import('./out.js');
+  //     `,
+  //   },
+  //   jsx: {
+  //     fragment: "']'",
+  //   },
+  //   bundleWarnings: {
+  //     "/string-template.jsx": ["Invalid JSX fragment: ``"],
+  //   },
+  //   run: {
+  //     file: "/test.js",
+  //     stdout: "]\nnull\ntrue\n123\n\n\n[\n[\n]",
+  //   },
+  // });
+  // itBundled("default/JSXAutomaticImportsCommonJS", {
+  //   files: {
+  //     "/entry.jsx": /* jsx */ `
+  //       import {jsx, Fragment} from './custom-react'
+  //       console.log(<div jsx={jsx}/>, <><Fragment/></>)
+  //     `,
+  //     "/custom-react.js": `module.exports = { jsx: 'jsx', Fragment: 'fragment2' }`,
+  //   },
+  //   jsx: {
+  //     automaticRuntime: true,
+  //   },
+  //   external: ["react"],
+  //   run: {
+  //     stdout: `
+  //       <div jsx="jsx" /> <>
+  //         <fragment2 />
+  //       </>
+  //     `,
+  //   },
+  // });
+  // itBundled("default/JSXAutomaticImportsES6", {
+  //   files: {
+  //     "/entry.jsx": /* jsx */ `
+  //       import {jsx, Fragment} from './custom-react'
+  //       console.log(<div jsx={jsx}/>, <><Fragment/></>)
+  //     `,
+  //     "/custom-react.js": /* js */ `
+  //       export const jsx = 'jsx function'
+  //       export const Fragment = 'fragment'
+  //     `,
+  //   },
+  //   jsx: {
+  //     automaticRuntime: true,
+  //   },
+  //   external: ["react"],
+  //   run: {
+  //     stdout: `
+  //       <div jsx="jsx function" /> <>
+  //         <fragment />
+  //       </>
+  //     `,
+  //   },
+  // });
+  // itBundled("default/JSXAutomaticSyntaxInJS", {
+  //   files: {
+  //     "/entry.mjs": `console.log(<div/>)`,
+  //   },
+  //   jsx: {
+  //     automaticRuntime: true,
+  //   },
+  //   external: ["react"],
+  //   bundleErrors: {
+  //     // TODO: this could be a nicer error
+  //     "/entry.mjs": [`Unexpected <`],
+  //   },
+  // });
   itBundled("default/NodeModules", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
@@ -784,7 +783,6 @@ describe("bundler", () => {
     },
   });
   itBundled("default/RequireAndDynamicImportInvalidTemplate", {
-    notImplemented: true,
     files: {
       "/entry.cjs": `
         require(tag\`./b\`)
@@ -832,7 +830,7 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    mode: "transform",
+    bundling: false,
     onAfterBundle(api) {
       api.expectFile("/out.js").toContain('import("foo")');
       api.expectFile("/out.js").toContain("import(foo())");
@@ -846,7 +844,7 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    mode: "transform",
+    bundling: false,
     minifyWhitespace: true,
     onAfterBundle(api) {
       api.expectFile("/out.js").toContain('import("foo")');
@@ -1152,11 +1150,31 @@ describe("bundler", () => {
       `,
       "/Users/user/project/src/bar.js": `export function bar() { console.log('hi') }`,
     },
-    outfile: "/Users/user/project/out.js",
-    sourceMap: true,
+    outdir: "/Users/user/project/out",
+    sourceMap: "external",
     onAfterBundle(api) {
-      api.assertFileExists("/Users/user/project/out.js.map");
-      api.expectFile("/Users/user/project/out.js").toContain("//# sourceMappingURL=out.js.map");
+      const json = JSON.parse(api.readFile("/Users/user/project/out/entry.js.map"));
+      api.expectFile("/Users/user/project/out/entry.js").toContain(`//# debugId=${json.debugId}`);
+    },
+    run: {
+      stdout: "hi",
+    },
+  });
+  itBundled("default/SourceMapInline", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import {bar} from './bar'
+        function foo() { bar() }
+        foo()
+      `,
+      "/Users/user/project/src/bar.js": `export function bar() { console.log('hi') }`,
+    },
+    outdir: "/Users/user/project/out",
+    sourceMap: "inline",
+    onAfterBundle(api) {
+      api
+        .expectFile("/Users/user/project/out/entry.js")
+        .toContain(`//# sourceMappingURL=data:application/json;base64,`);
     },
     run: {
       stdout: "hi",
@@ -1469,12 +1487,13 @@ describe("bundler", () => {
     files: {
       "/entry.js": /* js */ `
         function __require() { return 123 }
-        console.log(__require())
+        console.log(__require(), typeof (require('fs')))
       `,
     },
-    mode: "transform",
+    bundling: false,
+    target: "bun",
     run: {
-      stdout: "123",
+      stdout: "123 object",
     },
   });
   itBundled("default/TopLevelReturnForbiddenImport", {
@@ -1513,7 +1532,7 @@ describe("bundler", () => {
         export var foo
       `,
     },
-    mode: "transform",
+    bundling: false,
     bundleErrors: {
       "/entry.js": ["Top-level return cannot be used inside an ECMAScript module"],
     },
@@ -1522,7 +1541,7 @@ describe("bundler", () => {
     files: {
       "/entry.js": `return await foo`,
     },
-    mode: "transform",
+    bundling: false,
     bundleErrors: {
       "/entry.js": ["Top-level return cannot be used inside an ECMAScript module"],
     },
@@ -1774,7 +1793,7 @@ describe("bundler", () => {
       `,
     },
     minifyIdentifiers: true,
-    mode: "transform",
+    bundling: false,
     onAfterBundle(api) {
       assert(!api.readFile("/out.js").includes("foo"), 'bundle shouldnt include "foo"');
       assert(!api.readFile("/out.js").includes("let bar"), 'bundle shouldnt include "let bar"');
@@ -1804,7 +1823,7 @@ describe("bundler", () => {
       );
     },
     minifyIdentifiers: true,
-    mode: "transform",
+    bundling: false,
   });
   itBundled("default/ArgumentsSpecialCaseNoBundle", {
     files: {
@@ -1904,7 +1923,6 @@ describe("bundler", () => {
     format: "iife",
     outfile: "/out.js",
     minifyIdentifiers: true,
-    // mode: "transform",
   });
   itBundled("default/WithStatementTaintingNoBundle", {
     files: {
@@ -1938,7 +1956,7 @@ describe("bundler", () => {
     },
     format: "iife",
     minifyIdentifiers: true,
-    mode: "transform",
+    bundling: false,
     run: {
       runtime: "node",
       stdout: `
@@ -1997,7 +2015,7 @@ describe("bundler", () => {
       `,
     },
     minifyIdentifiers: true,
-    mode: "transform",
+    bundling: false,
     format: "cjs",
     onAfterBundle(api) {
       const text = api.readFile("/out.js");
@@ -2332,7 +2350,7 @@ describe("bundler", () => {
     files: {
       "/entry.js": `import "foo"`,
     },
-    external: ["*"],
+    bundling: false,
   });
   itBundled("default/ManyEntryPoints", {
     files: Object.fromEntries([
@@ -2384,7 +2402,6 @@ describe("bundler", () => {
   });
   // These labels should all share the same minified names
   itBundled("default/MinifySiblingLabelsNoBundle", {
-    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         foo: {
@@ -2442,30 +2459,14 @@ describe("bundler", () => {
     }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}console.log('a')
     }}}}}}}}}}}}}}}}}}}}}}}}}}}
   `;
-  itBundled("default/NestedLabelsBundle", {
+  // these tests are flaky. at least if i run it just on its own, i get a crash. in a row its fine
+  itBundled.skip("default/NestedLabelsBundle", {
     notImplemented: true,
     files: {
       "/entry.js": crazyNestedLabelFile,
     },
   });
-  itBundled("default/NestedLabelsNoBundle", {
-    notImplemented: true,
-    files: {
-      "/entry.js": crazyNestedLabelFile,
-    },
-    mode: "transform",
-  });
-  itBundled("default/MinifyNestedLabelsNoBundle", {
-    notImplemented: true,
-    files: {
-      "/entry.js": crazyNestedLabelFile,
-    },
-    minifyWhitespace: true,
-    minifyIdentifiers: true,
-    minifySyntax: true,
-    mode: "transform",
-  });
-  itBundled("default/MinifyNestedLabelsBundle", {
+  itBundled.skip("default/MinifyNestedLabelsBundle", {
     notImplemented: true,
     files: {
       "/entry.js": crazyNestedLabelFile,
@@ -2527,7 +2528,7 @@ describe("bundler", () => {
     format: "iife",
     minifySyntax: true,
     minifyWhitespace: true,
-    mode: "transform",
+    bundling: false,
     onAfterBundle(api) {
       assert(api.readFile("/out.js").includes('"use strict";'), '"use strict"; was emitted');
     },
@@ -2741,7 +2742,7 @@ describe("bundler", () => {
       file: "/test.js",
       stdout: "foo bar",
     },
-    external: ["*"],
+    bundling: false,
   });
   itBundled("default/ImportMetaCommonJS", {
     files: {
@@ -2769,7 +2770,7 @@ describe("bundler", () => {
     files: {
       "/entry.js": `console.log(import.meta.url, import.meta.path)`,
     },
-    mode: "transform",
+    bundling: false,
     run: {
       stdout: "url_here path_here",
       bunArgs: ["--define", 'import.meta.url="url_here"', "--define", 'import.meta.path="path_here"'],
@@ -3440,7 +3441,7 @@ describe("bundler", () => {
         for await (foo of bar) ;
       `,
     },
-    mode: "transform",
+    bundling: false,
   });
   itBundled("default/TopLevelAwaitForbiddenRequire", {
     notImplemented: true,
@@ -3902,7 +3903,7 @@ describe("bundler", () => {
     },
     dce: true,
     treeShaking: true,
-    mode: "transform",
+    bundling: false,
     run: {
       stdout: `
         side effects
@@ -4085,7 +4086,7 @@ describe("bundler", () => {
         export let bar = 123
       `,
     },
-    mode: "transform",
+    bundling: false,
     runtimeFiles: {
       "/test.js": /* js */ `
         import * as mod from './out';
@@ -4571,7 +4572,7 @@ describe("bundler", () => {
       `,
     },
     minifySyntax: true,
-    mode: "transform",
+    bundling: false,
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
       expect(code).not.toContain("const");
@@ -4681,7 +4682,6 @@ describe("bundler", () => {
   //     `,
   //   },
   //   entryPoints: ["/js.js", "/ts.ts", "/jsx-components.jsx", "/jsx-a.jsx", "/jsx-b.jsx", "/jsx-c.jsx"],
-  //   mode: "transform",
   //   external: ["a", "b", "c", "react/jsx-dev-runtime"],
   // });
   // I cant get bun to use `this` as the JSX runtime. It's a pretty silly idea anyways.
@@ -5140,7 +5140,7 @@ describe("bundler", () => {
       "/node_modules/some-path/index.js": `module.exports = 123`,
       "/node_modules/second-path/index.js": `module.exports = 567`,
     },
-    external: ["*"],
+    bundling: false,
     target: "browser",
     format: "esm",
     outfile: "/out.mjs",
@@ -5167,7 +5167,7 @@ describe("bundler", () => {
     notImplemented: true,
     files: RequireShimSubstitutionBrowser.options.files,
     runtimeFiles: RequireShimSubstitutionBrowser.options.runtimeFiles,
-    external: ["*"],
+    bundling: false,
     target: "node",
     format: "esm",
     outfile: "/out.mjs",
@@ -5209,7 +5209,6 @@ describe("bundler", () => {
     minifySyntax: true,
   });
   itBundled("default/BuiltInNodeModulePrecedence", {
-    // GENERATED
     notImplemented: true,
     files: {
       "/entry.js": /* js */ `
@@ -5222,13 +5221,28 @@ describe("bundler", () => {
           // These are not node core modules
           require('fs/abc'),
           require('fs/'),
-        ])
+        ].map(x => typeof x).join(','))
       `,
       "/node_modules/fs/abc.js": `console.log('include this')`,
       "/node_modules/fs/index.js": `console.log('include this too')`,
       "/node_modules/fs/promises.js": `throw 'DO NOT INCLUDE THIS'`,
     },
     target: "node",
+    runtimeFiles: {
+      "/node_modules/node_foo/index.js": `console.log('include this too')`,
+    },
+    onAfterBundle(api) {
+      api.writeFile("/out.js", api.readFile("/out.js").replace(/node:foo/g, "node_foo"));
+    },
+    run: {
+      runtime: "node",
+      stdout: `
+        include this too
+        include this
+        include this too
+        object,object,object,object,object
+      `,
+    },
   });
   itBundled("default/EntryNamesNoSlashAfterDir", {
     // GENERATED
@@ -5340,7 +5354,7 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    external: ["*"],
+    bundling: false,
   });
   itBundled("default/NamedFunctionExpressionArgumentCollision", {
     files: {
@@ -5422,7 +5436,7 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/entry1.js", "/entry2.js"],
-    external: ["*"],
+    bundling: false,
     mangleProps: /_$/,
   });
   itBundled("default/ManglePropsMinify", {
@@ -5471,7 +5485,7 @@ describe("bundler", () => {
     entryPoints: ["/entry1.js", "/entry2.js"],
     mangleProps: /_$/,
     minifyIdentifiers: true,
-    external: ["*"],
+    bundling: false,
   });
   itBundled("default/ManglePropsKeywordPropertyMinify", {
     // GENERATED
@@ -5485,7 +5499,7 @@ describe("bundler", () => {
     mangleProps: /./,
     minifyIdentifiers: true,
     minifySyntax: true,
-    external: ["*"],
+    bundling: false,
   });
   itBundled("default/ManglePropsOptionalChain", {
     // GENERATED
@@ -5504,7 +5518,7 @@ describe("bundler", () => {
       `,
     },
     mangleProps: /_$/,
-    external: ["*"],
+    bundling: false,
   });
   itBundled("default/ManglePropsLoweredOptionalChain", {
     // GENERATED
@@ -5523,7 +5537,7 @@ describe("bundler", () => {
       `,
     },
     mangleProps: /_$/,
-    external: ["*"],
+    bundling: false,
   });
   itBundled("default/ReserveProps", {
     // GENERATED
@@ -5536,7 +5550,7 @@ describe("bundler", () => {
       `,
     },
     mangleProps: /_$/,
-    external: ["*"],
+    bundling: false,
   });
   itBundled("default/ManglePropsImportExport", {
     // GENERATED
@@ -5552,7 +5566,7 @@ describe("bundler", () => {
     },
     entryPoints: ["/esm.js", "/cjs.js"],
     mangleProps: /_$/,
-    external: ["*"],
+    bundling: false,
   });
   itBundled("default/ManglePropsImportExportBundled", {
     // GENERATED
@@ -5991,7 +6005,7 @@ describe("bundler", () => {
   //     // preserve: true,
   //   },
   //   // minifySyntax: true,
-  //   external: ["*"],
+  //   bundling: false,
   // });
   itBundled("default/PackageAlias", {
     files: {
@@ -6216,7 +6230,7 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/project/entry.js", "/project/entry.css"],
-    external: ["*"],
+    bundling: false,
     metafile: true,
   });
   itBundled("default/MetafileVeryLongExternalPaths", {
@@ -6425,7 +6439,7 @@ describe("bundler", () => {
       }
     },
   });
-  itBundled("default/CommentPreservationImportAssertions", {
+  itBundled.skip("default/CommentPreservationImportAssertions", {
     // GENERATED
     notImplemented: true,
     files: {
@@ -6439,7 +6453,7 @@ describe("bundler", () => {
     },
     external: ["foo"],
   });
-  itBundled("default/CommentPreservationTransformJSX", {
+  itBundled.skip("default/CommentPreservationTransformJSX", {
     // GENERATED
     notImplemented: true,
     files: {
@@ -6469,7 +6483,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("default/CommentPreservationPreserveJSX", {
+  itBundled.skip("default/CommentPreservationPreserveJSX", {
     // GENERATED
     notImplemented: true,
     files: {

@@ -906,7 +906,7 @@ pub const Printer = struct {
         var fs = &FileSystem.instance;
         var options = PackageManager.Options{};
 
-        var entries_option = try fs.fs.readDirectory(fs.top_level_dir, null);
+        var entries_option = try fs.fs.readDirectory(fs.top_level_dir, null, 0, true);
 
         var env_loader: *DotEnv.Loader = brk: {
             var map = try allocator.create(DotEnv.Map);
@@ -2592,6 +2592,8 @@ pub const Package = extern struct {
                 const entries_option = FileSystem.instance.fs.readDirectory(
                     dir_prefix,
                     null,
+                    0,
+                    true,
                 ) catch |err| switch (err) {
                     error.FileNotFound => {
                         log.addWarningFmt(
@@ -2624,7 +2626,7 @@ pub const Package = extern struct {
                     if (strings.eqlAnyComptime(name, skipped_names))
                         continue;
                     var entry: *FileSystem.Entry = entry_iter.value_ptr.*;
-                    if (entry.kind(&Fs.FileSystem.instance.fs) != .dir) continue;
+                    if (entry.kind(&Fs.FileSystem.instance.fs, true) != .dir) continue;
 
                     var parts = [2]string{ entry.dir, entry.base() };
                     var entry_path = Path.joinAbsStringBufZ(

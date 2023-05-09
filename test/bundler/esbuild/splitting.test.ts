@@ -263,7 +263,7 @@ describe("bundler", () => {
       { file: "/out/b.js", stdout: "[null]" },
     ],
     bundleWarnings: {
-      "/empty.js": [`Import "missing" will always be undefined because the file "empty.js" has no exports`],
+      "/common.js": [`Import "missing" will always be undefined because there is no matching export in "empty.js"`],
     },
   });
   itBundled("splitting/ReExportESBuildIssue273", {

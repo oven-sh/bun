@@ -391,7 +391,7 @@ describe("bundler", () => {
     minifySyntax: true,
     minifyWhitespace: true,
     minifyIdentifiers: true,
-    mode: "transform",
+    bundling: false,
     onAfterBundle(api) {
       const a = api.readFile("/out.js");
       api.writeFile("/out.edited.js", a.replace(/capture\((.*?)\)/, `export const Foo = $1`));
@@ -434,7 +434,7 @@ describe("bundler", () => {
     minifySyntax: true,
     minifyWhitespace: true,
     minifyIdentifiers: true,
-    mode: "transform",
+    bundling: false,
     onAfterBundle(api) {
       const b = api.readFile("/out.js");
 
@@ -505,7 +505,7 @@ describe("bundler", () => {
     minifySyntax: true,
     minifyWhitespace: true,
     minifyIdentifiers: true,
-    mode: "transform",
+    bundling: false,
     unsupportedJSFeatures: ["logical-assignment"],
     onAfterBundle(api) {
       const a = api.readFile("/out/a.js");
@@ -526,7 +526,7 @@ describe("bundler", () => {
     minifyWhitespace: true,
     minifyIdentifiers: true,
     outdir: "/",
-    mode: "transform",
+    bundling: false,
     unsupportedJSFeatures: ["arrow"],
     onAfterBundle(api) {
       const a = api.readFile("/a.js");
@@ -596,7 +596,7 @@ describe("bundler", () => {
     minifyWhitespace: true,
     minifyIdentifiers: true,
     outdir: "/",
-    mode: "transform",
+    bundling: false,
     unsupportedJSFeatures: ["logical-assignment"],
     onAfterBundle(api) {
       const a = api.readFile("/a.js");
@@ -629,7 +629,7 @@ describe("bundler", () => {
     minifyWhitespace: true,
     minifyIdentifiers: true,
     outdir: "/",
-    mode: "transform",
+    bundling: false,
     unsupportedJSFeatures: ["arrow"],
     onAfterBundle(api) {
       const a = api.readFile("/a.js");
@@ -759,7 +759,7 @@ describe("bundler", () => {
     },
     treeShaking: false,
     dce: true,
-    mode: "transform",
+    bundling: false,
     external: ["pkg"],
   });
   itBundled("ts/ImportEqualsTreeShakingTrue", {
@@ -774,7 +774,7 @@ describe("bundler", () => {
     dce: true,
     treeShaking: true,
     external: ["pkg"],
-    mode: "transform",
+    bundling: false,
   });
   itBundled("ts/ImportEqualsBundle", {
     notImplemented: true,
@@ -1028,7 +1028,7 @@ describe("bundler", () => {
         }
       `,
     },
-    mode: "transform",
+    bundling: false,
     onAfterBundle(api) {
       const capturedCalls = api.captureFile("/out.js", "dec");
       expect(capturedCalls).toEqual([
@@ -1457,7 +1457,7 @@ describe("bundler", () => {
         }
       `,
     },
-    mode: "transform",
+    bundling: false,
     runtimeFiles: {
       "/test.js": /* js */ `
         globalThis.nested = true;
@@ -1525,7 +1525,7 @@ describe("bundler", () => {
         }
       `,
     },
-    mode: "transform",
+    bundling: false,
     runtimeFiles: {
       "/test.js": /* js */ `
         globalThis.nested = true;
@@ -1574,7 +1574,7 @@ describe("bundler", () => {
       `,
     },
     useDefineForClassFields: false,
-    mode: "transform",
+    bundling: false,
     run: {
       stdout: `
         [null,{},"x1",null]
@@ -1621,7 +1621,7 @@ describe("bundler", () => {
       `,
     },
     useDefineForClassFields: true,
-    mode: "transform",
+    bundling: false,
     run: {
       stdout: `
         [null,{},"x1",null]
@@ -1668,7 +1668,7 @@ describe("bundler", () => {
       `,
     },
     useDefineForClassFields: true,
-    mode: "transform",
+    bundling: false,
     run: {
       stdout: `
         [null,{},"x1",null]
@@ -1712,7 +1712,7 @@ describe("bundler", () => {
         (() => new Foo())()
       `,
     },
-    mode: "transform",
+    bundling: false,
     useDefineForClassFields: true,
   });
   itBundled("ts/ImportMTS", {
@@ -1781,7 +1781,7 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/let.ts", "/function.ts", "/class.ts", "/namespace.ts", "/enum.ts"],
-    mode: "transform",
+    bundling: false,
     runtimeFiles: {
       "/test.js": /* js */ `
         import assert from 'assert'
@@ -1802,6 +1802,9 @@ describe("bundler", () => {
     // GENERATED
     files: {
       "/number.ts": /* ts */ `
+        (0, eval)('globalThis.y = 1234');
+        (0, eval)('globalThis.z = 2345');
+
         export enum x { y, yy = y }
         export enum x { z = y + 1 }
   
@@ -1810,6 +1813,9 @@ describe("bundler", () => {
         console.log(x.y, x.z)
       `,
       "/string.ts": /* ts */ `
+        (0, eval)('globalThis.y = 1234');
+        (0, eval)('globalThis.z = 2345');
+
         export enum x { y = 'a', yy = y }
         export enum x { z = y }
   
@@ -1829,6 +1835,8 @@ describe("bundler", () => {
         console.log(a.b, a['b'], x.g, x['g'])
       `,
       "/nested-number.ts": /* ts */ `
+        (0, eval)('globalThis.y = 1234');
+        (0, eval)('globalThis.z = 2345');
         export namespace foo { export enum x { y, yy = y } }
         export namespace foo { export enum x { z = y + 1 } }
   
@@ -1839,6 +1847,9 @@ describe("bundler", () => {
         }
       `,
       "/nested-string.ts": /* ts */ `
+        (0, eval)('globalThis.y = 1234');
+        (0, eval)('globalThis.z = 2345');
+
         export namespace foo { export enum x { y = 'a', yy = y } }
         export namespace foo { export enum x { z = y } }
   
@@ -1872,23 +1883,29 @@ describe("bundler", () => {
       "/nested-string.ts",
       "/nested-propagation.ts",
     ],
-    mode: "passthrough",
+    run: [
+      { file: "/out/number.js", stdout: "1234 2345\n0 1" },
+      { file: "/out/string.js", stdout: "1234 2345\na a" },
+      { file: "/out/propagation.js", stdout: "100 100 625 625" },
+      { file: "/out/nested-number.js", stdout: "1234 2345\n0 1" },
+      { file: "/out/nested-string.js", stdout: "1234 2345\na a" },
+      { file: "/out/nested-propagation.js", stdout: "100 100 100 625 625 625" },
+    ],
   });
   itBundled("ts/EnumTreeShaking", {
-    // GENERATED
     files: {
       "/simple-member.ts": /* ts */ `
-        enum x { y = 123 }
-        console.log(x.y)
+        enum x_DROP { y_DROP = 123 }
+        console.log(x_DROP.y_DROP)
       `,
       "/simple-enum.ts": /* ts */ `
         enum x { y = 123 }
-        console.log(x)
+        console.log(JSON.stringify(x))
       `,
       "/sibling-member.ts": /* ts */ `
-        enum x { y = 123 }
-        enum x { z = y * 2 }
-        console.log(x.y, x.z)
+        enum drop_x { drop_y = 123 }
+        enum drop_x { drop_z = drop_y * 2 }
+        console.log(drop_x.drop_y, drop_x.drop_z)
       `,
       "/sibling-enum-before.ts": /* ts */ `
         console.log(x)
@@ -1897,21 +1914,27 @@ describe("bundler", () => {
       `,
       "/sibling-enum-middle.ts": /* ts */ `
         enum x { y = 123 }
-        console.log(x)
+        console.log(JSON.stringify(x))
         enum x { z = y * 2 }
       `,
       "/sibling-enum-after.ts": /* ts */ `
         enum x { y = 123 }
         enum x { z = y * 2 }
-        console.log(x)
+        console.log(JSON.stringify(x))
       `,
       "/namespace-before.ts": /* ts */ `
+        (0, eval)('globalThis.y = 1234');
+        (0, eval)('globalThis.x = 2345');
+
         namespace x { console.log(x, y) }
         enum x { y = 123 }
       `,
       "/namespace-after.ts": /* ts */ `
+        (0, eval)('globalThis.y = 1234');
+        (0, eval)('globalThis.x = 2345');
+
         enum x { y = 123 }
-        namespace x { console.log(x, y) }
+        namespace x { console.log(JSON.stringify(x), y) }
       `,
     },
     entryPoints: [
@@ -1924,91 +1947,138 @@ describe("bundler", () => {
       "/namespace-before.ts",
       "/namespace-after.ts",
     ],
+    dce: true,
+    run: [
+      { file: "/out/simple-member.js", stdout: "123" },
+      { file: "/out/simple-enum.js", stdout: '{"123":"y","y":123}' },
+      { file: "/out/sibling-member.js", stdout: "123 246" },
+      { file: "/out/sibling-enum-before.js", stdout: "undefined" },
+      { file: "/out/sibling-enum-middle.js", stdout: '{"123":"y","y":123}' },
+      { file: "/out/sibling-enum-after.js", stdout: '{"123":"y","246":"z","y":123,"z":246}' },
+      { file: "/out/namespace-before.js", stdout: "{} 1234" },
+      { file: "/out/namespace-after.js", stdout: '{"123":"y","y":123} 1234' },
+    ],
   });
   itBundled("ts/EnumJSX", {
-    // GENERATED
+    notImplemented: true,
     files: {
       "/element.tsx": /* tsx */ `
+        import { create } from 'not-react'
+
         export enum Foo { Div = 'div' }
-        console.log(<Foo.Div />)
+        console.log(JSON.stringify(<Foo.Div />))
       `,
       "/fragment.tsx": /* tsx */ `
+        import { create } from 'not-react'
+        
         export enum React { Fragment = 'div' }
-        console.log(<>test</>)
+        console.log(JSON.stringify(<>test</>))
       `,
       "/nested-element.tsx": /* tsx */ `
+        import { create } from 'not-react'
+        
         namespace x.y { export enum Foo { Div = 'div' } }
-        namespace x.y { console.log(<x.y.Foo.Div />) }
+        namespace x.y { console.log(JSON.stringify(<Foo.Div />)) }
       `,
       "/nested-fragment.tsx": /* tsx */ `
+        import { create } from 'not-react'
+        
         namespace x.y { export enum React { Fragment = 'div' } }
-        namespace x.y { console.log(<>test</>) }
+        namespace x.y { console.log(JSON.stringify(<>test</>)) }
       `,
     },
     entryPoints: ["/element.tsx", "/fragment.tsx", "/nested-element.tsx", "/nested-fragment.tsx"],
-    mode: "passthrough",
+    outputPaths: ["/out/element.js", "/out/fragment.js", "/out/nested-element.js", "/out/nested-fragment.js"],
+    external: ["*"],
+    jsx: {
+      runtime: "classic",
+      factory: "create",
+    },
+    runtimeFiles: {
+      "/node_modules/not-react/index.js": /* js */ `
+        export const create = (tag, props, ...children) => [tag, props, children]
+      `,
+    },
+    run: [
+      { file: "/out/element.js", stdout: '["div",null,[]]' },
+      { file: "/out/fragment.js", stdout: '["div",null,["test"]]' },
+      { file: "/out/nested-element.js", stdout: '["div",null,[]]' },
+      { file: "/out/nested-fragment.js", stdout: '["div",null,["test"]]' },
+    ],
   });
   itBundled("ts/EnumDefine", {
-    // GENERATED
+    notImplemented: true,
     files: {
-      "/entry.ts": `enum a { b = 123, c = d }`,
+      "/entry.ts": `
+        enum a { b = 123, c = d }
+        console.log(a.b, a.c)
+      `,
     },
-    mode: "passthrough",
+    define: {
+      d: "b",
+    },
+    run: { stdout: "123 123" },
   });
   itBundled("ts/EnumSameModuleInliningAccess", {
-    // GENERATED
+    notImplemented: true,
     files: {
       "/entry.ts": /* ts */ `
-        enum a { x = 123 }
-        enum b { x = 123 }
+        enum a_drop { x = 123 }
+        enum b_drop { x = 123 }
         enum c { x = 123 }
         enum d { x = 123 }
         enum e { x = 123 }
-        console.log([
-          a.x,
-          b['x'],
+        console.log(JSON.stringify([
+          a_drop.x,
+          b_drop['x'],
           c?.x,
           d?.['x'],
           e,
-        ])
+        ]))
       `,
     },
+    dce: true,
+    run: { stdout: '[123,123,123,123,{"123":"x","x":123}]' },
   });
   itBundled("ts/EnumCrossModuleInliningAccess", {
-    // GENERATED
+    notImplemented: true,
     files: {
       "/entry.ts": /* ts */ `
-        import { a, b, c, d, e } from './enums'
-        console.log([
-          a.x,
-          b['x'],
+        import { drop_a, drop_b, c, d, e } from './enums'
+        console.log(JSON.stringify([
+          drop_a.x,
+          drop_b['x'],
           c?.x,
           d?.['x'],
           e,
-        ])
+        ]))
       `,
       "/enums.ts": /* ts */ `
-        export enum a { x = 123 }
-        export enum b { x = 123 }
+        export enum drop_a { x = 123 }
+        export enum drop_b { x = 123 }
         export enum c { x = 123 }
         export enum d { x = 123 }
         export enum e { x = 123 }
       `,
     },
+    dce: true,
   });
   itBundled("ts/EnumCrossModuleInliningDefinitions", {
-    // GENERATED
+    notImplemented: true,
     files: {
       "/entry.ts": /* ts */ `
         import { a } from './enums'
-        console.log([
-          a.implicit_number,
-          a.explicit_number,
-          a.explicit_string,
+        (0, eval)('globalThis.capture = x => x');
+        console.log(JSON.stringify([
+          capture(a.implicit_number),
+          capture(a.explicit_number),
+          capture(a.explicit_string),
           a.non_constant,
-        ])
+        ]))
       `,
       "/enums.ts": /* ts */ `
+        (0, eval)('globalThis.foo = 321');
+
         export enum a {
           implicit_number,
           explicit_number = 123,
@@ -2017,18 +2087,21 @@ describe("bundler", () => {
         }
       `,
     },
+    onAfterBundle(api) {
+      expect(api.captureFile("/out.js").map(x => x.replace(/\/\*.*\*\//g, "").trim())).toEqual(["0", "123", '"xyz"']);
+    },
   });
   itBundled("ts/EnumCrossModuleInliningReExport", {
-    // GENERATED
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         import { a } from './re-export'
         import { b } from './re-export-star'
         import * as ns from './enums'
         console.log([
-          a.x,
-          b.x,
-          ns.c.x,
+          capture(a.x),
+          capture(b.x),
+          capture(ns.c.x),
         ])
       `,
       "/re-export.js": `export { a } from './enums'`,
@@ -2039,9 +2112,12 @@ describe("bundler", () => {
         export enum c { x = 'c' }
       `,
     },
+    onAfterBundle(api) {
+      expect(api.captureFile("/out.js").map(x => x.replace(/\/\*.*\*\//g, "").trim())).toEqual(['"a"', '"b"', '"c"']);
+    },
   });
   itBundled("ts/EnumCrossModuleTreeShaking", {
-    // GENERATED
+    notImplemented: true,
     files: {
       "/entry.ts": /* ts */ `
         import {
@@ -2051,25 +2127,19 @@ describe("bundler", () => {
         } from './enums'
   
         console.log([
-          a_DROP.x,
-          b_DROP['x'],
-          c_DROP.x,
+          capture(a_DROP.x),
+          capture(b_DROP['x']),
+          capture(c_DROP.x),
         ])
   
-        import {
-          a_keep,
-          b_keep,
-          c_keep,
-          d_keep,
-          e_keep,
-        } from './enums'
+        import { a, b, c, d, e } from './enums'
   
         console.log([
-          a_keep.x,
-          b_keep.x,
-          c_keep,
-          d_keep.y,
-          e_keep.x,
+          capture(a.x),
+          capture(b.x),
+          capture(c),
+          capture(d.y),
+          capture(e.x),
         ])
       `,
       "/enums.ts": /* ts */ `
@@ -2077,16 +2147,28 @@ describe("bundler", () => {
         export enum b_DROP { x = 2 }  // test an index access
         export enum c_DROP { x = '' } // test a string enum
   
-        export enum a_keep { x = false } // false is not inlinable
-        export enum b_keep { x = foo }   // foo has side effects
-        export enum c_keep { x = 3 }     // this enum object is captured
-        export enum d_keep { x = 4 }     // we access "y" on this object
-        export let e_keep = {}           // non-enum properties should be kept
+        export enum a { x = false } // false is not inlinable
+        export enum b { x = foo }   // foo has side effects
+        export enum c { x = 3 }     // this enum object is captured
+        export enum d { x = 4 }     // we access "y" on this object
+        export let e = {}           // non-enum properties should be kept
       `,
+    },
+    onAfterBundle(api) {
+      expect(api.captureFile("/out.js").map(x => x.replace(/\/\*.*\*\//g, "").trim())).toEqual([
+        "1",
+        "2",
+        '""',
+        "a.x",
+        "b.x",
+        "c",
+        "d.y",
+        "e.x",
+      ]);
     },
   });
   itBundled("ts/EnumExportClause", {
-    // GENERATED
+    notImplemented: true,
     files: {
       "/entry.ts": /* ts */ `
         import {
@@ -2097,100 +2179,185 @@ describe("bundler", () => {
         } from './enums'
   
         console.log([
-          A.A,
-          B.B,
-          c.C,
-          dd.D,
+          capture(A.A),
+          capture(B.B),
+          capture(c.C),
+          capture(dd.D),
         ])
       `,
       "/enums.ts": /* ts */ `
         export enum A { A = 1 }
-          enum B { B = 2 }
-          export enum C { C = 3 }
-          enum D { D = 4 }
-          export { B, D as d }
+        enum B { B = 2 }
+        export enum C { C = 3 }
+        enum D { D = 4 }
+        export { B, D as d }
       `,
     },
-  });
-  itBundled("ts/ThisIsUndefinedWarning", {
-    // GENERATED
-    files: {
-      "/warning1.ts": `export var foo = this`,
-      "/warning2.ts": `export var foo = this || this.foo`,
-      "/warning3.ts": `export var foo = this ? this.foo : null`,
-      "/silent1.ts": `export var foo = this && this.foo`,
-      "/silent2.ts": `export var foo = this && (() => this.foo)`,
+    onAfterBundle(api) {
+      expect(api.captureFile("/out.js").map(x => x.replace(/\/\*.*\*\//g, "").trim())).toEqual(["1", "2", "3", "4"]);
     },
-    entryPoints: ["/warning1.ts", "/warning2.ts", "/warning3.ts", "/silent1.ts", "/silent2.ts"],
-    /* TODO FIX expectedScanLog: `warning1.ts: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
-  warning1.ts: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  warning2.ts: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
-  warning2.ts: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  warning3.ts: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
-  warning3.ts: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  `, */
   });
-  itBundled("ts/CommonJSVariableInESMTypeModule", {
-    // GENERATED
-    files: {
-      "/entry.ts": `module.exports = null`,
-      "/package.json": `{ "type": "module" }`,
-    },
-    /* TODO FIX expectedScanLog: `entry.ts: WARNING: The CommonJS "module" variable is treated as a global variable in an ECMAScript module and may not work as expected
-  package.json: NOTE: This file is considered to be an ECMAScript module because the enclosing "package.json" file sets the type of this file to "module":
-  NOTE: Node's package format requires that CommonJS files in a "type": "module" package use the ".cjs" file extension. If you are using TypeScript, you can use the ".cts" file extension with esbuild instead.
-  `, */
-  });
+  // itBundled("ts/CommonJSVariableInESMTypeModule", {
+  //   // GENERATED
+  //   files: {
+  //     "/entry.ts": `module.exports = null`,
+  //     "/package.json": `{ "type": "module" }`,
+  //   },
+  //   /* TODO FIX expectedScanLog: `entry.ts: WARNING: The CommonJS "module" variable is treated as a global variable in an ECMAScript module and may not work as expected
+  // package.json: NOTE: This file is considered to be an ECMAScript module because the enclosing "package.json" file sets the type of this file to "module":
+  // NOTE: Node's package format requires that CommonJS files in a "type": "module" package use the ".cjs" file extension. If you are using TypeScript, you can use the ".cts" file extension with esbuild instead.
+  // `, */
+  // });
   itBundled("ts/EnumRulesFrom_TypeScript_5_0", {
     // GENERATED
     files: {
-      "/supported.ts": /* ts */ `
+      "/supported.ts":
+        `
         // From https://github.com/microsoft/TypeScript/pull/50528:
-        // "An expression is considered a constant expression if it is
-        const enum Foo {
-          // a number or string literal,
-          X0 = 123,
-          X1 = 'x',
-  
-          // a unary +, -, or ~ applied to a numeric constant expression,
-          X2 = +1,
-          X3 = -2,
-          X4 = ~3,
-  
-          // a binary +, -, *, /, %, **, <<, >>, >>>, |, &, ^ applied to two numeric constant expressions,
-          X5 = 1 + 2,
-          X6 = 1 - 2,
-          X7 = 2 * 3,
-          X8 = 1 / 2,
-          X9 = 3 % 2,
-          X10 = 2 ** 3,
-          X11 = 1 << 2,
-          X12 = -9 >> 1,
-          X13 = -9 >>> 1,
-          X14 = 5 | 12,
-          X15 = 5 & 12,
-          X16 = 5 ^ 12,
-  
-          // a binary + applied to two constant expressions whereof at least one is a string,
-          X17 = 'x' + 0,
-          X18 = 0 + 'x',
-          X19 = 'x' + 'y',
-          X20 = '' + NaN,
-          X21 = '' + Infinity,
-          X22 = '' + -Infinity,
-          X23 = '' + -0,
-  
-          // a template expression where each substitution expression is a constant expression,
-          X24 = \` + "\`A\$00}B\$0'x'}C\$01 + 3 - 4 / 2 * 5 ** 6}D\`" +
+				// "An expression is considered a constant expression if it is
+				const enum DROP {
+					// a number or string literal,
+					X0 = 123,
+					X1 = 'x',
+
+					// a unary +, -, or ~ applied to a numeric constant expression,
+					X2 = +1,
+					X3 = -2,
+					X4 = ~3,
+
+					// a binary +, -, *, /, %, **, <<, >>, >>>, |, &, ^ applied to two numeric constant expressions,
+					X5 = 1 + 2,
+					X6 = 1 - 2,
+					X7 = 2 * 3,
+					X8 = 1 / 2,
+					X9 = 3 % 2,
+					X10 = 2 ** 3,
+					X11 = 1 << 2,
+					X12 = -9 >> 1,
+					X13 = -9 >>> 1,
+					X14 = 5 | 12,
+					X15 = 5 & 12,
+					X16 = 5 ^ 12,
+
+					// a binary + applied to two constant expressions whereof at least one is a string,
+					X17 = 'x' + 0,
+					X18 = 0 + 'x',
+					X19 = 'x' + 'y',
+					X20 = '' + NaN,
+					X21 = '' + Infinity,
+					X22 = '' + -Infinity,
+					X23 = '' + -0,
+
+					// a template expression where each substitution expression is a constant expression,
+					X24 = ` +
+        "`A${0}B${'x'}C${1 + 3 - 4 / 2 * 5 ** 6}D`" +
+        `,
+
+					// a parenthesized constant expression,
+					X25 = (321),
+
+					// a dotted name (e.g. x.y.z) that references a const variable with a constant expression initializer and no type annotation,
+					/* (we don't implement this one) */
+
+					// a dotted name that references an enum member with an enum literal type, or
+					X26 = X0,
+					X27 = X0 + 'x',
+					X28 = 'x' + X0,
+					X29 = ` +
+        "`a${X0}b`" +
+        `,
+					X30 = DROP.X0,
+					X31 = DROP.X0 + 'x',
+					X32 = 'x' + DROP.X0,
+					X33 = ` +
+        "`a${DROP.X0}b`" +
+        `,
+
+					// a dotted name indexed by a string literal (e.g. x.y["z"]) that references an enum member with an enum literal type."
+					X34 = X1,
+					X35 = X1 + 'y',
+					X36 = 'y' + X1,
+					X37 = ` +
+        "`a${X1}b`" +
+        `,
+					X38 = DROP['X1'],
+					X39 = DROP['X1'] + 'y',
+					X40 = 'y' + DROP['X1'],
+					X41 = ` +
+        "`a${DROP['X1']}b`" +
+        `,
+				}
+
+				console.log(JSON.stringify([
+					// a number or string literal,
+					DROP.X0,
+					DROP.X1,
+
+					// a unary +, -, or ~ applied to a numeric constant expression,
+					DROP.X2,
+					DROP.X3,
+					DROP.X4,
+
+					// a binary +, -, *, /, %, **, <<, >>, >>>, |, &, ^ applied to two numeric constant expressions,
+					DROP.X5,
+					DROP.X6,
+					DROP.X7,
+					DROP.X8,
+					DROP.X9,
+					DROP.X10,
+					DROP.X11,
+					DROP.X12,
+					DROP.X13,
+					DROP.X14,
+					DROP.X15,
+					DROP.X16,
+
+					// a template expression where each substitution expression is a constant expression,
+					DROP.X17,
+					DROP.X18,
+					DROP.X19,
+					DROP.X20,
+					DROP.X21,
+					DROP.X22,
+					DROP.X23,
+
+					// a template expression where each substitution expression is a constant expression,
+					DROP.X24,
+
+					// a parenthesized constant expression,
+					DROP.X25,
+
+					// a dotted name that references an enum member with an enum literal type, or
+					DROP.X26,
+					DROP.X27,
+					DROP.X28,
+					DROP.X29,
+					DROP.X30,
+					DROP.X31,
+					DROP.X32,
+					DROP.X33,
+
+					// a dotted name indexed by a string literal (e.g. x.y["z"]) that references an enum member with an enum literal type."
+					DROP.X34,
+					DROP.X35,
+					DROP.X36,
+					DROP.X37,
+					DROP.X38,
+					DROP.X39,
+					DROP.X40,
+					DROP.X41,
+        ]))
       `,
       "/not-supported.ts": /* ts */ `
+        (0, eval)('globalThis.capture = x => x');
+
         const enum NonIntegerNumberToString {
           SUPPORTED = '' + 1,
           UNSUPPORTED = '' + 1.5,
         }
         console.log(
-          NonIntegerNumberToString.SUPPORTED,
-          NonIntegerNumberToString.UNSUPPORTED,
+          capture(NonIntegerNumberToString.SUPPORTED),
+          capture(NonIntegerNumberToString.UNSUPPORTED),
         )
   
         const enum OutOfBoundsNumberToString {
@@ -2198,8 +2365,8 @@ describe("bundler", () => {
           UNSUPPORTED = '' + 1_000_000_000_000,
         }
         console.log(
-          OutOfBoundsNumberToString.SUPPORTED,
-          OutOfBoundsNumberToString.UNSUPPORTED,
+          capture(OutOfBoundsNumberToString.SUPPORTED),
+          capture(OutOfBoundsNumberToString.UNSUPPORTED),
         )
   
         const enum TemplateExpressions {
@@ -2209,27 +2376,70 @@ describe("bundler", () => {
           FALSE = '' + false,
           BIGINT = '' + 123n,
         }
+
         console.log(
-          TemplateExpressions.NULL,
-          TemplateExpressions.TRUE,
-          TemplateExpressions.FALSE,
-          TemplateExpressions.BIGINT,
+          capture(TemplateExpressions.NULL),
+          capture(TemplateExpressions.TRUE),
+          capture(TemplateExpressions.FALSE),
+          capture(TemplateExpressions.BIGINT),
         )
       `,
     },
+    // dce: true,
     entryPoints: ["/supported.ts", "/not-supported.ts"],
+    run: [
+      {
+        file: "/out/supported.js",
+        stdout:
+          '[123,"x",1,-2,-4,3,-1,6,0.5,1,8,4,-5,2147483643,13,4,9,"x0","0x","xy","NaN","Infinity","-Infinity","0","A0BxC-31246D",321,123,"123x","x123","a123b",123,"123x","x123","a123b","x","xy","yx","axb","x","xy","yx","axb"]',
+      },
+      {
+        file: "/out/not-supported.js",
+        stdout: `
+          1 1.5
+          1000000000 1000000000000
+          null true false 123
+        `,
+      },
+    ],
+    onAfterBundle(api) {
+      // expect(api.captureFile("/out/not-supported.js").map(x => x.replace(/\/\*.*\*\//g, "").trim())).toEqual([
+      //   '"1"',
+      //   "NonIntegerNumberToString.UNSUPPORTED",
+      //   '"1000000000"',
+      //   "OutOfBoundsNumberToString.UNSUPPORTED",
+      //   "TemplateExpressions.NULL",
+      //   "TemplateExpressions.TRUE",
+      //   "TemplateExpressions.FALSE",
+      //   "TemplateExpressions.BIGINT",
+      // ]);
+    },
   });
   itBundled("ts/EnumUseBeforeDeclare", {
-    // GENERATED
+    notImplemented: true,
     files: {
       "/entry.ts": /* ts */ `
+        before();
+        after();
+        
         export function before() {
-          console.log(Foo.FOO)
+          console.log(JSON.stringify(Foo), Foo.FOO)
         }
         enum Foo { FOO }
         export function after() {
-          console.log(Foo.FOO)
+          console.log(JSON.stringify(Foo), Foo.FOO)
         }
+
+        before();
+        after();
+      `,
+    },
+    run: {
+      stdout: `
+        undefined 0
+        undefined 0
+        {"0":"FOO","FOO":0} 0
+        {"0":"FOO","FOO":0} 0
       `,
     },
   });

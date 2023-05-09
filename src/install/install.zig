@@ -5019,7 +5019,7 @@ pub const PackageManager = struct {
         bun.copy(u8, &package_json_cwd_buf, fs.top_level_dir);
         bun.copy(u8, package_json_cwd_buf[fs.top_level_dir.len..], "package.json");
 
-        var entries_option = try fs.fs.readDirectory(fs.top_level_dir, null);
+        var entries_option = try fs.fs.readDirectory(fs.top_level_dir, null, 0, true);
         var options = Options{
             .global = cli.global,
         };
@@ -5128,6 +5128,8 @@ pub const PackageManager = struct {
         var root_dir = try Fs.FileSystem.instance.fs.readDirectory(
             Fs.FileSystem.instance.top_level_dir,
             null,
+            0,
+            true,
         );
         // var progress = Progress{};
         // var node = progress.start(name: []const u8, estimated_total_items: usize)

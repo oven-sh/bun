@@ -19540,6 +19540,11 @@ fn NewParser_(
             // are not allowed to assign to this symbol (it throws a TypeError).
             if (class.class_name) |name| {
                 shadow_ref = name.ref.?;
+                p.current_scope.members.put(
+                    p.allocator,
+                    p.symbols.items[shadow_ref.innerIndex()].original_name,
+                    Scope.Member{ .ref = name.ref orelse Ref.None, .loc = name.loc },
+                ) catch unreachable;
             } else {
                 const name_str: []const u8 = if (default_name_ref.isNull()) "_this" else "_default";
                 shadow_ref = p.newSymbol(.cconst, name_str) catch unreachable;

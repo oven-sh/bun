@@ -66,7 +66,9 @@ function runOnResolvePlugins(
           path: inputPath,
           importer,
           namespace: inputNamespace,
+          // resolveDir
           kind,
+          // pluginData
         });
 
         while (
@@ -368,6 +370,8 @@ function runOnLoadPlugins(internalID, path, namespace, defaultLoaderId) {
         var result = callback({
           path,
           namespace,
+          // suffix
+          // pluginData
           loader: defaultLoader,
         });
 

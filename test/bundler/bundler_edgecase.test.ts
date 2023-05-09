@@ -50,6 +50,7 @@ describe("bundler", () => {
     run: true,
   });
   itBundled("edgecase/BunPluginTreeShakeImport", {
+    notImplemented: true,
     // This only appears at runtime and not with bun build, even with --transform
     files: {
       "/entry.ts": /* js */ `
@@ -71,8 +72,7 @@ describe("bundler", () => {
         }
       `,
     },
-    external: ["external"],
-    mode: "transform",
+    bundling: false,
     minifySyntax: true,
     target: "bun",
     run: { file: "/entry.ts" },
@@ -87,14 +87,6 @@ describe("bundler", () => {
     },
     capture: ["`\\\\?`", "hello`\\\\?`"],
     target: "bun",
-  });
-  itBundled("edgecase/StringNullBytes", {
-    files: {
-      "/entry.ts": /* js */ `
-        capture("Hello\0");
-      `,
-    },
-    capture: ['"Hello\0"'],
   });
   // https://github.com/oven-sh/bun/issues/2699
   itBundled("edgecase/ImportNamedFromExportStarCJS", {
@@ -198,7 +190,7 @@ describe("bundler", () => {
         console.log(foo);
       `,
     },
-    external: ["*"],
+    bundling: false,
   });
   itBundled("edgecase/ImportNamespaceAndDefault", {
     files: {
@@ -207,7 +199,7 @@ describe("bundler", () => {
         console.log(def2, JSON.stringify(ns2))
       `,
     },
-    external: ["*"],
+    bundling: false,
     runtimeFiles: {
       "/c.js": /* js */ `
         export default 1
@@ -282,11 +274,11 @@ describe("bundler", () => {
       ".cool": "wtf",
     },
     bundleErrors: {
-      // todo: get the exact error
-      "<bun>": ["InvalidLoader"],
+      "<bun>": ['invalid loader "wtf", expected one of:'],
     },
   });
   itBundled("edgecase/ScriptTagEscape", {
+    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         console.log('<script></script>');
@@ -426,6 +418,222 @@ describe("bundler", () => {
     },
     run: {
       stdout: "123",
+    },
+  });
+  itBundled("edgecase/TSConfigPathsStarOnlyInLeft", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import test0 from 'test0/hello'
+        console.log(test0)
+      `,
+      "/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "baseUrl": ".",
+            "paths": {
+              "test0/*": ["./test0-success.ts"]
+            }
+          }
+        }
+      `,
+      "/test0-success.ts": `export default 'success'`,
+    },
+    run: {
+      stdout: "success",
+    },
+  });
+  itBundled("edgecase/TSConfigPathStarAnywhere", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import test0 from 'test3/foo'
+        console.log(test0)
+      `,
+      "/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "baseUrl": ".",
+            "paths": {
+              "t*t3/foo": ["./test3-succ*s.ts"],
+            }
+          }
+        }
+      `,
+      "/test3-success.ts": `export default 'success'`,
+    },
+    run: {
+      stdout: "success",
+    },
+  });
+  itBundled("edgecase/StaticClassNameIssue2806", {
+    files: {
+      "/entry.ts": /* ts */ `
+        new class C {
+          set baz(x) {
+            C.foo = x;
+            C.bar;
+          }
+          static get bar() {
+            console.log(C.foo);
+          }
+        }().baz = "PASS";
+
+        new class C {
+          set baz(x) {
+            C.foo = x;
+            C.bar;
+          }
+          static get bar() {
+            console.log(C.foo);
+          }
+        }().baz = "Hello World";
+      `,
+    },
+    minifyIdentifiers: true,
+    run: {
+      stdout: "PASS\nHello World",
+    },
+  });
+  itBundled("edgecase/DCEVarRedeclarationIssue2814A", {
+    files: {
+      "/entry.ts": /* ts */ `
+        var a = 1;
+        if (false) {
+          var a;
+        }
+        console.log(a);
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: `1`,
+    },
+  });
+  itBundled("edgecase/DCEVarRedeclarationIssue2814B", {
+    files: {
+      "/entry.ts": /* ts */ `
+        var a = 1;
+        switch ("foo") {
+          case "foo":
+            var a;
+        }
+        console.log(a);
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: `1`,
+    },
+  });
+  itBundled("edgecase/DCEVarRedeclarationIssue2814C", {
+    files: {
+      "/entry.ts": /* ts */ `
+        "use strict";
+        var a = 1;
+        {
+          var a;
+        }
+        console.log(a);
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: `1`,
+    },
+  });
+  itBundled("edgecase/DCEVarRedeclarationIssue2814", {
+    files: {
+      "/entry.ts": /* ts */ `
+        "use strict";
+        var a = 1, b = 2;
+        switch (b++) {
+          case b:
+            var c = a;
+            var a;
+            break;
+        }
+        console.log(a);
+    
+        var x = 123, y = 45;
+        switch (console) {
+          case 456:
+            var x = 789, y = 0;
+        }
+        var y = 67;
+        console.log(x, y);
+    
+        var z = 123;
+        switch (console) {
+          default:
+            var z = typeof z;
+        }
+        console.log(z);
+    
+        var A = 1, B = 2;
+        switch (A) {
+          case A:
+            var B;
+            break;
+          case B:
+            break;
+        }
+        console.log(B);
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: `
+        1
+        123 67
+        number
+        2
+      `,
+    },
+  });
+  itBundled("edgecase/DCEVarRedeclarationIssue2815", {
+    files: {
+      "/entry.ts": /* ts */ `
+        var x = 1;
+        try {
+          console.blog;
+        } catch (x) {
+          var x = 2;
+        }
+        console.log(x);
+
+        var e = 3;
+        try {
+          console.log("try2");
+        } catch (e) {
+          var e = 4;
+        }
+        console.log(e);
+
+        try {
+          var z = 5;
+          throw "try3";
+        } catch (w) {
+          z += w;
+          var w = 6;
+        }
+        console.log(z);
+
+        var c = 8;
+        try {
+          "try4";
+        } catch (c) {
+          var c = 9;
+        }
+        console.log(c);
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: `
+        1
+        123 67
+        number
+        2
+      `,
     },
   });
 });

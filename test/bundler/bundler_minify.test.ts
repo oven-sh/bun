@@ -134,4 +134,27 @@ describe("bundler", () => {
     minifySyntax: true,
     minifyWhitespace: true,
   });
+  itBundled("minify/ForAndWhileLoopsWithMissingBlock", {
+    files: {
+      "/entry.js": /* js */ `
+        {
+          var n = 0;
+          for (let i = 0; i < 10; i++) i;
+        }
+        {
+          var j = 0;
+          for (let i in [1, 2, 3]) i;
+        }
+        {
+          var k = 0;
+          for (let i of [1, 2, 3]) i;
+        }
+        console.log("PASS");
+      `,
+    },
+    minifyWhitespace: true,
+    run: {
+      stdout: "PASS",
+    },
+  });
 });

@@ -22,7 +22,7 @@ const allocators = @import("./allocators.zig");
 
 pub const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
 pub const PathBuffer = [bun.MAX_PATH_BYTES]u8;
-const debug = Output.scoped(.fs, false);
+pub const debug = Output.scoped(.fs, false);
 
 // pub const FilesystemImplementation = @import("fs_impl.zig");
 
@@ -31,51 +31,6 @@ pub const Preallocate = struct {
         pub const dir_entry: usize = 2048;
         pub const files: usize = 4096;
     };
-};
-
-pub const BytecodeCacheFetcher = struct {
-    fd: ?StoredFileDescriptorType = null,
-
-    pub const Available = enum {
-        Unknown,
-        Available,
-        NotAvailable,
-
-        pub inline fn determine(fd: ?StoredFileDescriptorType) Available {
-            if (!comptime FeatureFlags.enable_bytecode_caching) return .NotAvailable;
-
-            const _fd = fd orelse return .Unknown;
-            return if (_fd > 0) .Available else return .NotAvailable;
-        }
-    };
-
-    pub fn fetch(this: *BytecodeCacheFetcher, sourcename: string, fs: *FileSystem.RealFS) ?StoredFileDescriptorType {
-        switch (Available.determine(this.fd)) {
-            .Available => {
-                return this.fd.?;
-            },
-            .NotAvailable => {
-                return null;
-            },
-            .Unknown => {
-                var basename_buf: [512]u8 = undefined;
-                var pathname = Fs.PathName.init(sourcename);
-                bun.copy(u8, &basename_buf, pathname.base);
-                bun.copy(u8, basename_buf[pathname.base.len..], ".bytecode");
-                const basename = basename_buf[0 .. pathname.base.len + ".bytecode".len];
-
-                if (fs.fetchCacheFile(basename)) |cache_file| {
-                    this.fd = @truncate(StoredFileDescriptorType, cache_file.handle);
-                    return @truncate(StoredFileDescriptorType, cache_file.handle);
-                } else |err| {
-                    Output.prettyWarnln("<r><yellow>Warn<r>: Bytecode caching unavailable due to error: {s}", .{@errorName(err)});
-                    Output.flush();
-                    this.fd = 0;
-                    return null;
-                }
-            },
-        }
-    }
 };
 
 pub const FileSystem = struct {
@@ -193,13 +148,14 @@ pub const FileSystem = struct {
         pub const EntryStore = allocators.BSSList(Entry, Preallocate.Counts.files);
         dir: string,
         fd: StoredFileDescriptorType = 0,
+        generation: bun.Generation = 0,
         data: EntryMap,
 
         // pub fn removeEntry(dir: *DirEntry, name: string) !void {
         //     // dir.data.remove(name);
         // }
 
-        pub fn addEntry(dir: *DirEntry, entry: std.fs.IterableDir.Entry, allocator: std.mem.Allocator, comptime Iterator: type, iterator: Iterator) !void {
+        pub fn addEntry(dir: *DirEntry, prev_map: ?*EntryMap, entry: std.fs.IterableDir.Entry, allocator: std.mem.Allocator, comptime Iterator: type, iterator: Iterator) !void {
             const _kind: Entry.Kind = switch (entry.kind) {
                 .Directory => .dir,
                 // This might be wrong!
@@ -207,34 +163,57 @@ pub const FileSystem = struct {
                 .File => .file,
                 else => return,
             };
-            // entry.name only lives for the duration of the iteration
 
-            const name = try strings.StringOrTinyString.initAppendIfNeeded(
-                entry.name,
-                *FileSystem.FilenameStore,
-                &FileSystem.FilenameStore.instance,
-            );
+            const stored = try brk: {
+                if (prev_map) |map| {
+                    var stack_fallback = std.heap.stackFallback(512, allocator);
+                    const stack = stack_fallback.get();
+                    const prehashed = bun.StringHashMapContext.PrehashedCaseInsensitive.init(stack, entry.name);
+                    defer prehashed.deinit(stack);
+                    if (map.getAdapted(entry.name, prehashed)) |existing| {
+                        existing.mutex.lock();
+                        defer existing.mutex.unlock();
+                        existing.dir = dir.dir;
 
-            const name_lowercased = try strings.StringOrTinyString.initLowerCaseAppendIfNeeded(
-                entry.name,
-                *FileSystem.FilenameStore,
-                &FileSystem.FilenameStore.instance,
-            );
+                        existing.need_stat = existing.need_stat or existing.cache.kind != _kind;
+                        // TODO: is this right?
+                        if (existing.cache.kind != _kind) {
+                            existing.cache.kind = _kind;
 
-            const stored = try EntryStore.instance.append(.{
-                .base_ = name,
-                .base_lowercase_ = name_lowercased,
-                .dir = dir.dir,
-                .mutex = Mutex.init(),
-                // Call "stat" lazily for performance. The "@material-ui/icons" package
-                // contains a directory with over 11,000 entries in it and running "stat"
-                // for each entry was a big performance issue for that package.
-                .need_stat = entry.kind == .SymLink,
-                .cache = .{
-                    .symlink = PathString.empty,
-                    .kind = _kind,
-                },
-            });
+                            existing.cache.symlink = PathString.empty;
+                        }
+                        break :brk existing;
+                    }
+                }
+
+                // entry.name only lives for the duration of the iteration
+                const name = try strings.StringOrTinyString.initAppendIfNeeded(
+                    entry.name,
+                    *FileSystem.FilenameStore,
+                    &FileSystem.FilenameStore.instance,
+                );
+
+                const name_lowercased = try strings.StringOrTinyString.initLowerCaseAppendIfNeeded(
+                    entry.name,
+                    *FileSystem.FilenameStore,
+                    &FileSystem.FilenameStore.instance,
+                );
+
+                break :brk EntryStore.instance.append(.{
+                    .base_ = name,
+                    .base_lowercase_ = name_lowercased,
+                    .dir = dir.dir,
+                    .mutex = Mutex.init(),
+                    // Call "stat" lazily for performance. The "@material-ui/icons" package
+                    // contains a directory with over 11,000 entries in it and running "stat"
+                    // for each entry was a big performance issue for that package.
+                    .need_stat = entry.kind == .SymLink,
+                    .cache = .{
+                        .symlink = PathString.empty,
+                        .kind = _kind,
+                    },
+                });
+            };
 
             const stored_name = stored.base();
 
@@ -253,12 +232,16 @@ pub const FileSystem = struct {
             }
         }
 
-        pub fn init(dir: string) DirEntry {
+        pub fn init(dir: string, generation: bun.Generation) DirEntry {
             if (comptime FeatureFlags.verbose_fs) {
                 Output.prettyln("\n  {s}", .{dir});
             }
 
-            return .{ .dir = dir, .data = .{} };
+            return .{
+                .dir = dir,
+                .data = .{},
+                .generation = generation,
+            };
         }
 
         pub const Err = struct {
@@ -402,21 +385,21 @@ pub const FileSystem = struct {
             file,
         };
 
-        pub fn kind(entry: *Entry, fs: *Implementation) Kind {
+        pub fn kind(entry: *Entry, fs: *Implementation, store_fd: bool) Kind {
             if (entry.need_stat) {
                 entry.need_stat = false;
                 // This is technically incorrect, but we are choosing not to handle errors here
-                entry.cache = fs.kind(entry.dir, entry.base(), entry.cache.fd) catch return entry.cache.kind;
+                entry.cache = fs.kind(entry.dir, entry.base(), entry.cache.fd, store_fd) catch return entry.cache.kind;
             }
             return entry.cache.kind;
         }
 
-        pub fn symlink(entry: *Entry, fs: *Implementation) string {
+        pub fn symlink(entry: *Entry, fs: *Implementation, store_fd: bool) string {
             if (entry.need_stat) {
                 entry.need_stat = false;
                 // This is technically incorrect, but we are choosing not to handle errors here
                 // This error can happen if the file was deleted between the time the directory was scanned and the time it was read
-                entry.cache = fs.kind(entry.dir, entry.base(), entry.cache.fd) catch return "";
+                entry.cache = fs.kind(entry.dir, entry.base(), entry.cache.fd, store_fd) catch return "";
             }
             return entry.cache.symlink.slice();
         }
@@ -559,6 +542,38 @@ pub const FileSystem = struct {
             return (try std.fs.cwd().openIterableDir(tmpdir_path, .{
                 .access_sub_paths = true,
             })).dir;
+        }
+
+        pub fn entriesAt(this: *RealFS, index: allocators.IndexType, generation: bun.Generation) ?*EntriesOption {
+            var existing = this.entries.atIndex(index) orelse return null;
+            if (existing.* == .entries) {
+                if (existing.entries.generation < generation) {
+                    var handle = std.fs.Dir.openIterableDir(std.fs.cwd(), existing.entries.dir, .{}) catch |err| {
+                        existing.entries.data.clearAndFree(bun.fs_allocator);
+
+                        return this.readDirectoryError(existing.entries.dir, err) catch unreachable;
+                    };
+                    defer handle.close();
+
+                    const new_entry = this.readdir(
+                        false,
+                        &existing.entries.data,
+                        existing.entries.dir,
+                        generation,
+                        handle.dir,
+
+                        void,
+                        void{},
+                    ) catch |err| {
+                        existing.entries.data.clearAndFree(bun.fs_allocator);
+                        return this.readDirectoryError(existing.entries.dir, err) catch unreachable;
+                    };
+                    existing.entries.data.clearAndFree(bun.fs_allocator);
+                    existing.entries.* = new_entry;
+                }
+            }
+
+            return existing;
         }
 
         pub fn getDefaultTempDir() string {
@@ -813,25 +828,31 @@ pub const FileSystem = struct {
 
         fn readdir(
             fs: *RealFS,
+            store_fd: bool,
+            prev_map: ?*DirEntry.EntryMap,
             _dir: string,
+            generation: bun.Generation,
             handle: std.fs.Dir,
             comptime Iterator: type,
             iterator: Iterator,
         ) !DirEntry {
             _ = fs;
+
             var iter = (std.fs.IterableDir{ .dir = handle }).iterate();
-            var dir = DirEntry.init(_dir);
+            var dir = DirEntry.init(_dir, generation);
             const allocator = bun.fs_allocator;
             errdefer dir.deinit(allocator);
 
-            if (FeatureFlags.store_file_descriptors) {
+            if (store_fd) {
                 FileSystem.setMaxFd(handle.fd);
                 dir.fd = handle.fd;
             }
 
             while (try iter.next()) |_entry| {
-                try dir.addEntry(_entry, allocator, Iterator, iterator);
+                try dir.addEntry(prev_map, _entry, allocator, Iterator, iterator);
             }
+
+            debug("readdir({d}, {s}) = {d}", .{ handle.fd, _dir, dir.data.count() });
 
             return dir;
         }
@@ -854,11 +875,25 @@ pub const FileSystem = struct {
 
         threadlocal var temp_entries_option: EntriesOption = undefined;
 
-        pub fn readDirectory(fs: *RealFS, _dir: string, _handle: ?std.fs.Dir) !*EntriesOption {
-            return readDirectoryWithIterator(fs, _dir, _handle, void, {});
+        pub fn readDirectory(
+            fs: *RealFS,
+            _dir: string,
+            _handle: ?std.fs.Dir,
+            generation: bun.Generation,
+            store_fd: bool,
+        ) !*EntriesOption {
+            return readDirectoryWithIterator(fs, _dir, _handle, generation, store_fd, void, {});
         }
 
-        pub fn readDirectoryWithIterator(fs: *RealFS, _dir: string, _handle: ?std.fs.Dir, comptime Iterator: type, iterator: Iterator) !*EntriesOption {
+        // One of the learnings here
+        //
+        //   Closing file descriptors yields significant performance benefits on Linux
+        //
+        // It was literally a 300% performance improvement to bundling.
+        // https://twitter.com/jarredsumner/status/1655787337027309568
+        // https://twitter.com/jarredsumner/status/1655714084569120770
+        // https://twitter.com/jarredsumner/status/1655464485245845506
+        pub fn readDirectoryWithIterator(fs: *RealFS, _dir: string, _handle: ?std.fs.Dir, generation: bun.Generation, store_fd: bool, comptime Iterator: type, iterator: Iterator) !*EntriesOption {
             var dir = _dir;
             var cache_result: ?allocators.Result = null;
             if (comptime FeatureFlags.enable_entry_cache) {
@@ -869,13 +904,18 @@ pub const FileSystem = struct {
                     fs.entries_mutex.unlock();
                 }
             }
+            var in_place: ?*DirEntry = null;
 
             if (comptime FeatureFlags.enable_entry_cache) {
                 cache_result = try fs.entries.getOrPut(dir);
 
                 if (cache_result.?.hasCheckedIfExists()) {
                     if (fs.entries.atIndex(cache_result.?.index)) |cached_result| {
-                        return cached_result;
+                        if (cached_result.* != .entries or (cached_result.* == .entries and cached_result.entries.generation >= generation)) {
+                            return cached_result;
+                        }
+
+                        in_place = cached_result.entries;
                     }
                 }
             }
@@ -883,28 +923,43 @@ pub const FileSystem = struct {
             var handle = _handle orelse try fs.openDir(dir);
 
             defer {
-                if (_handle == null and fs.needToCloseFiles()) {
+                if (_handle == null and (!store_fd or fs.needToCloseFiles())) {
                     handle.close();
                 }
             }
 
             // if we get this far, it's a real directory, so we can just store the dir name.
             if (_handle == null) {
-                dir = try DirnameStore.instance.append(string, _dir);
+                dir = try if (in_place) |existing|
+                    existing.dir
+                else
+                    DirnameStore.instance.append(string, _dir);
             }
 
             // Cache miss: read the directory entries
             var entries = fs.readdir(
+                store_fd,
+                if (in_place) |existing| &existing.data else null,
                 dir,
+                generation,
                 handle,
+
                 Iterator,
                 iterator,
             ) catch |err| {
+                if (in_place) |existing| existing.data.clearAndFree(bun.fs_allocator);
+
                 return fs.readDirectoryError(dir, err) catch unreachable;
             };
 
             if (comptime FeatureFlags.enable_entry_cache) {
-                var entries_ptr = bun.fs_allocator.create(DirEntry) catch unreachable;
+                var entries_ptr = in_place orelse bun.fs_allocator.create(DirEntry) catch unreachable;
+                if (in_place) |original| {
+                    original.data.clearAndFree(bun.fs_allocator);
+                }
+                if (store_fd and entries.fd == 0)
+                    entries.fd = handle.fd;
+
                 entries_ptr.* = entries;
                 const result = EntriesOption{
                     .entries = entries_ptr,
@@ -1041,7 +1096,13 @@ pub const FileSystem = struct {
             return File{ .path = Path.init(path), .contents = file_contents };
         }
 
-        pub fn kind(fs: *RealFS, _dir: string, base: string, existing_fd: StoredFileDescriptorType) !Entry.Cache {
+        pub fn kind(
+            fs: *RealFS,
+            _dir: string,
+            base: string,
+            existing_fd: StoredFileDescriptorType,
+            store_fd: bool,
+        ) !Entry.Cache {
             var dir = _dir;
             var combo = [2]string{ dir, base };
             var outpath: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -1062,11 +1123,16 @@ pub const FileSystem = struct {
             var symlink: []const u8 = "";
 
             if (is_symlink) {
-                var file = if (existing_fd != 0) std.fs.File{ .handle = existing_fd } else try std.fs.openFileAbsoluteZ(absolute_path_c, .{ .mode = .read_only });
+                var file = try if (existing_fd != 0)
+                    std.fs.File{ .handle = existing_fd }
+                else if (store_fd)
+                    std.fs.openFileAbsoluteZ(absolute_path_c, .{ .mode = .read_only })
+                else
+                    bun.openFileForPath(absolute_path_c);
                 setMaxFd(file.handle);
 
                 defer {
-                    if (fs.needToCloseFiles() and existing_fd == 0) {
+                    if ((!store_fd or fs.needToCloseFiles()) and existing_fd == 0) {
                         file.close();
                     } else if (comptime FeatureFlags.store_file_descriptors) {
                         cache.fd = file.handle;

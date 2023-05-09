@@ -1490,7 +1490,7 @@ pub const BundleV2 = struct {
 
         while (true) {
             while (instance.queue.pop()) |completion| {
-                generateInNewThread(completion) catch |err| {
+                generateInNewThread(completion, instance.generation) catch |err| {
                     completion.result = .{ .err = err };
                     var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch unreachable;
                     concurrent_task.* = JSC.ConcurrentTask{
@@ -1502,6 +1502,7 @@ pub const BundleV2 = struct {
                 };
                 any = true;
             }
+            instance.generation +|= 1;
 
             if (any) {
                 bun.Mimalloc.mi_collect(false);
@@ -1513,12 +1514,14 @@ pub const BundleV2 = struct {
     pub const BundleThread = struct {
         waker: bun.AsyncIO.Waker,
         queue: bun.UnboundedQueue(JSBundleCompletionTask, .next) = .{},
+        generation: bun.Generation = 0,
         pub var created = false;
         pub var instance: *BundleThread = undefined;
     };
 
     fn generateInNewThread(
         completion: *JSBundleCompletionTask,
+        generation: bun.Generation,
     ) !void {
         var heap = try ThreadlocalArena.init();
         defer heap.deinit();
@@ -1552,6 +1555,7 @@ pub const BundleV2 = struct {
         );
         bundler.options.jsx = config.jsx;
 
+        bundler.options.loaders = try options.loadersFromTransformOptions(allocator, config.loaders, config.target);
         bundler.options.entry_naming = config.names.entry_point.data;
         bundler.options.chunk_naming = config.names.chunk.data;
         bundler.options.asset_naming = config.names.asset.data;
@@ -1564,6 +1568,7 @@ pub const BundleV2 = struct {
         bundler.options.minify_identifiers = config.minify.identifiers;
         bundler.options.inlining = config.minify.syntax;
         bundler.options.source_map = config.source_map;
+        bundler.resolver.generation = generation;
 
         try bundler.configureDefines();
         bundler.configureLinker();
@@ -1746,6 +1751,11 @@ pub const BundleV2 = struct {
     }
 
     // TODO: remove ResolveQueue
+    //
+    // Moving this to the Bundle thread was a significant perf improvement on Linux for first builds
+    //
+    // The problem is that module resolution has many mutexes.
+    // The downside is cached resolutions are faster to do in threads since they only lock very briefly.
     fn runResolutionForParseTask(parse_result: *ParseTask.Result, this: *BundleV2) ResolveQueue {
         var ast = &parse_result.value.success.ast;
         const source = &parse_result.value.success.source;

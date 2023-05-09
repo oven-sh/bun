@@ -93,6 +93,8 @@ pub const Run = struct {
             b.options.macro_remap = macros;
         }
 
+        b.resolver.store_fd = ctx.debug.hot_reload != .none;
+
         b.configureRouter(false) catch {
             if (Output.enable_ansi_colors_stderr) {
                 vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};

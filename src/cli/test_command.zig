@@ -230,7 +230,7 @@ const Scanner = struct {
     };
 
     fn readDirWithName(this: *Scanner, name: string, handle: ?std.fs.Dir) !*FileSystem.RealFS.EntriesOption {
-        return try this.fs.fs.readDirectoryWithIterator(name, handle, *Scanner, this);
+        return try this.fs.fs.readDirectoryWithIterator(name, handle, 0, true, *Scanner, this);
     }
 
     pub fn scan(this: *Scanner, path_literal: string) void {
@@ -306,7 +306,7 @@ const Scanner = struct {
     pub fn next(this: *Scanner, entry: *FileSystem.Entry, fd: bun.StoredFileDescriptorType) void {
         const name = entry.base_lowercase();
         this.has_iterated = true;
-        switch (entry.kind(&this.fs.fs)) {
+        switch (entry.kind(&this.fs.fs, true)) {
             .dir => {
                 if ((name.len > 0 and name[0] == '.') or strings.eqlComptime(name, "node_modules")) {
                     return;
@@ -403,6 +403,7 @@ pub const TestCommand = struct {
         var vm = try JSC.VirtualMachine.init(ctx.allocator, ctx.args, null, ctx.log, env_loader);
         vm.argv = ctx.passthrough;
         vm.preload = ctx.preloads;
+        vm.bundler.resolver.store_fd = true;
 
         try vm.bundler.configureDefines();
         vm.bundler.options.rewrite_jest_for_tests = true;

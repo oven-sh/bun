@@ -1750,6 +1750,11 @@ pub const BundleV2 = struct {
     }
 
     // TODO: remove ResolveQueue
+    //
+    // Moving this to the Bundle thread was a significant perf improvement on Linux for first builds
+    //
+    // The problem is that module resolution has many mutexes.
+    // The downside is cached resolutions are faster to do in threads since they only lock very briefly.
     fn runResolutionForParseTask(parse_result: *ParseTask.Result, this: *BundleV2) ResolveQueue {
         var ast = &parse_result.value.success.ast;
         const source = &parse_result.value.success.source;

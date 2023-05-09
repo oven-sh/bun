@@ -885,6 +885,14 @@ pub const FileSystem = struct {
             return readDirectoryWithIterator(fs, _dir, _handle, generation, store_fd, void, {});
         }
 
+        // One of the learnings here
+        //
+        //   Closing file descriptors yields significant performance benefits on Linux
+        //
+        // It was literally a 300% performance improvement to bundling.
+        // https://twitter.com/jarredsumner/status/1655787337027309568
+        // https://twitter.com/jarredsumner/status/1655714084569120770
+        // https://twitter.com/jarredsumner/status/1655464485245845506
         pub fn readDirectoryWithIterator(fs: *RealFS, _dir: string, _handle: ?std.fs.Dir, generation: bun.Generation, store_fd: bool, comptime Iterator: type, iterator: Iterator) !*EntriesOption {
             var dir = _dir;
             var cache_result: ?allocators.Result = null;

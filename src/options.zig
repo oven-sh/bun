@@ -793,6 +793,27 @@ pub const Loader = enum(u8) {
         .{ "text", Loader.text },
     });
 
+    pub const api_names = bun.ComptimeStringMap(Api.Loader, .{
+        .{ "js", Api.Loader.js },
+        .{ "mjs", Api.Loader.js },
+        .{ "cjs", Api.Loader.js },
+        .{ "cts", Api.Loader.ts },
+        .{ "mts", Api.Loader.ts },
+        .{ "jsx", Api.Loader.jsx },
+        .{ "ts", Api.Loader.ts },
+        .{ "tsx", Api.Loader.tsx },
+        .{ "css", Api.Loader.css },
+        .{ "file", Api.Loader.file },
+        .{ "json", Api.Loader.json },
+        .{ "toml", Api.Loader.toml },
+        .{ "wasm", Api.Loader.wasm },
+        .{ "node", Api.Loader.napi },
+        .{ "dataurl", Api.Loader.dataurl },
+        .{ "base64", Api.Loader.base64 },
+        .{ "txt", Api.Loader.text },
+        .{ "text", Api.Loader.text },
+    });
+
     pub fn fromString(slice_: string) ?Loader {
         var slice = slice_;
         if (slice.len > 0 and slice[0] == '.') {

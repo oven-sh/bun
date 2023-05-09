@@ -50,7 +50,7 @@ pub const JSBundler = struct {
         target: Target = Target.browser,
         entry_points: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         hot: bool = false,
-        define: bun.StringMap = bun.StringMap.init(bun.default_allocator, true),
+        define: bun.StringMap = bun.StringMap.init(bun.default_allocator, false),
         loaders: ?Api.LoaderMap = null,
         dir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         outdir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
@@ -230,58 +230,51 @@ pub const JSBundler = struct {
                     var val = JSC.ZigString.init("");
                     property_value.toZigString(&val, globalThis);
                     if (val.len == 0) {
-                        val = JSC.ZigString.init("\"\"");
+                        val = JSC.ZigString.fromUTF8("\"\"");
                     }
 
-                    try this.define.insert(prop.slice(), val.slice());
+                    const key = prop.toOwnedSlice(bun.default_allocator) catch @panic("OOM");
+
+                    // value is always cloned
+                    const value = val.toSlice(bun.default_allocator);
+                    defer value.deinit();
+
+                    // .insert clones the value, but not the key
+                    try this.define.insert(key, value.slice());
                 }
             }
 
             if (try config.getObject(globalThis, "loader")) |loaders| {
-                if (!loaders.isUndefinedOrNull()) {
-                    if (!loaders.isObject()) {
-                        globalThis.throwInvalidArguments("loader must be an object", .{});
+                var loader_iter = JSC.JSPropertyIterator(.{
+                    .skip_empty_name = true,
+                    .include_value = true,
+                }).init(globalThis, loaders.asObjectRef());
+                defer loader_iter.deinit();
+
+                var loader_names = try allocator.alloc(string, loader_iter.len);
+                errdefer allocator.free(loader_names);
+                var loader_values = try allocator.alloc(Api.Loader, loader_iter.len);
+                errdefer allocator.free(loader_values);
+
+                while (loader_iter.next()) |prop| {
+                    if (!prop.hasPrefixChar('.') or prop.len < 2) {
+                        globalThis.throwInvalidArguments("loader property names must be file extensions, such as '.txt'", .{});
                         return error.JSException;
                     }
 
-                    var loader_iter = JSC.JSPropertyIterator(.{
-                        .skip_empty_name = true,
-                        .include_value = true,
-                    }).init(globalThis, loaders.asObjectRef());
-                    defer loader_iter.deinit();
-
-                    var loader_names = try allocator.alloc(string, loader_iter.len);
-                    var loader_values = try allocator.alloc(Api.Loader, loader_iter.len);
-
-                    while (loader_iter.next()) |prop| {
-                        if (prop.len == 0 or prop.ptr[0] != '.') {
-                            globalThis.throwInvalidArguments("loader property names must be file extensions, such as '.txt'", .{});
-                            return error.JSException;
-                        }
-
-                        loader_names[loader_iter.i] = prop.slice();
-                        var property_value = loader_iter.value;
-                        var value_type = property_value.jsType();
-                        if (!value_type.isStringLike()) {
-                            globalThis.throwInvalidArguments("loader \"{s}\" must be a string", .{prop});
-                            return error.JSException;
-                        }
-
-                        var val = JSC.ZigString.init("");
-                        property_value.toZigString(&val, globalThis);
-                        if (options.Loader.fromString(val.slice())) |loader| {
-                            loader_values[loader_iter.i] = loader.toAPI();
-                        } else {
-                            globalThis.throwInvalidArguments("loader \"{s}\" is not a valid loader", .{val});
-                            return error.JSException;
-                        }
-                    }
-
-                    this.loaders = Api.LoaderMap{
-                        .extensions = loader_names,
-                        .loaders = loader_values,
-                    };
+                    loader_values[loader_iter.i] = try loader_iter.value.toEnumFromMap(
+                        globalThis,
+                        "loader",
+                        Api.Loader,
+                        options.Loader.api_names,
+                    );
+                    loader_names[loader_iter.i] = prop.toOwnedSlice(bun.default_allocator) catch @panic("OOM");
                 }
+
+                this.loaders = Api.LoaderMap{
+                    .extensions = loader_names,
+                    .loaders = loader_values,
+                };
             }
 
             if (try config.getArray(globalThis, "plugins")) |array| {
@@ -440,6 +433,13 @@ pub const JSBundler = struct {
             self.dir.deinit();
             self.serve.deinit(allocator);
             self.server_components.deinit(allocator);
+            if (self.loaders) |loaders| {
+                for (loaders.extensions) |ext| {
+                    bun.default_allocator.free(ext);
+                }
+                bun.default_allocator.free(loaders.loaders);
+                bun.default_allocator.free(loaders.extensions);
+            }
             self.names.deinit();
             self.outdir.deinit();
             self.public_path.deinit();

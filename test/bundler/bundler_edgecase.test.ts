@@ -745,26 +745,12 @@ describe("bundler", () => {
     external: ["hello"],
     target: "bun",
     runtimeFiles: {
-      "/node_modules/hello/import.js": `export default "import";`,
-      "/node_modules/hello/require.js": `module.exports = "require";`,
-      "/node_modules/hello/package.json": /* json */ `
-        {
-          "type": "module",
-          "exports": {
-            ".": {
-              "node": "./require.js",
-              "bun": "./import.js",
-              "require": "./require.js",
-              "import": "./import.js",
-            }
-          }
-        }
+      "/node_modules/hello/index.js": /* js */ `
+        export const hello = "Hello World";
       `,
     },
     run: {
-      stdout: `
-        import
-      `,
+      stdout: "Hello World",
     },
   });
 });

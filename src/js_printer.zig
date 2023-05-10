@@ -4062,7 +4062,11 @@ fn NewPrinter(
                     p.printBody(s.body);
                 },
                 .s_label => |s| {
-                    p.printIndent();
+                    if (!p.options.minify_whitespace and p.options.indent > 0) {
+                        p.addSourceMapping(stmt.loc);
+                        p.printIndent();
+                    }
+                    p.printSpaceBeforeIdentifier();
                     p.printSymbol(s.name.ref orelse Global.panic("Internal error: expected label to have a name {any}", .{s}));
                     p.print(":");
                     p.printBody(s.stmt);

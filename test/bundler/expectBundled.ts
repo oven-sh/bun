@@ -383,7 +383,9 @@ function expectBundled(
 
   if (bundling === false) {
     // https://github.com/oven-sh/bun/issues/2821
-    external = ["*"];
+    if (!ESBUILD) {
+      external = ["*"];
+    }
   }
   if (!ESBUILD && format !== "esm") {
     throw new Error("formats besides esm not implemented in bun build");

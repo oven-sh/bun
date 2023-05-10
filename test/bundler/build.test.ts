@@ -120,30 +120,30 @@ describe("Bun.build", () => {
   });
 
   test("BuildArtifact with assets", async () => {
-    const x = await Bun.build({
-      entrypoints: [join(import.meta.dir, "./fixtures/with-assets/index.js")],
-      loader: {
-        ".png": "file",
-      },
-    });
-    const indexBlob = x.outputs.get("/index.js")!;
-    expect(indexBlob).toBeTruthy();
-    expect(indexBlob instanceof Blob).toBe(true);
-    expect(indexBlob.type).toBe("text/javascript;charset=utf-8");
-    expect(indexBlob.size).toBeGreaterThan(1);
-    expect(indexBlob.path).toBe("/index.js");
-    expect(indexBlob.hash).toBeTruthy();
-    expect(indexBlob.hash).toMatchSnapshot();
-    expect(indexBlob.kind).toBe("entry-point");
-    expect(indexBlob.loader).toBe("jsx");
-    expect(indexBlob.sourcemap).toBe(null);
+    // const x = await Bun.build({
+    //   entrypoints: [join(import.meta.dir, "./fixtures/with-assets/index.js")],
+    //   loader: {
+    //     ".png": "file",
+    //   },
+    // });
+    // const indexBlob = x.outputs.get("/index.js")!;
+    // expect(indexBlob).toBeTruthy();
+    // expect(indexBlob instanceof Blob).toBe(true);
+    // expect(indexBlob.type).toBe("text/javascript;charset=utf-8");
+    // expect(indexBlob.size).toBeGreaterThan(1);
+    // expect(indexBlob.path).toBe("/index.js");
+    // expect(indexBlob.hash).toBeTruthy();
+    // expect(indexBlob.hash).toMatchSnapshot();
+    // expect(indexBlob.kind).toBe("entry-point");
+    // expect(indexBlob.loader).toBe("jsx");
+    // expect(indexBlob.sourcemap).toBe(null);
     throw new Error("test was not fully written");
   });
 
   test("errors are returned as an array", async () => {
-    const x = await Bun.build({
-      entrypoints: [join(import.meta.dir, "does-not-exist.ts")],
-    });
+    // const x = await Bun.build({
+    //   entrypoints: [join(import.meta.dir, "does-not-exist.ts")],
+    // });
     throw new Error("test was not fully written");
   });
 });

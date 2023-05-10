@@ -1026,6 +1026,7 @@ describe("bundler", () => {
             }
           }
         }
+        console.log(Foo, Bar)
       `,
     },
     bundling: false,

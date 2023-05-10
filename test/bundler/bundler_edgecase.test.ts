@@ -753,4 +753,16 @@ describe("bundler", () => {
       stdout: "Hello World",
     },
   });
+  itBundled("edgecase/AssetPublicPath", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import hello from "./hello.file";
+        console.log(hello);
+      `,
+      "/hello.file": "Hello World",
+    },
+    outdir: "/out",
+    publicPath: "/www",
+    run: {},
+  });
 });

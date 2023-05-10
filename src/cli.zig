@@ -204,7 +204,7 @@ pub const Arguments = struct {
         clap.parseParam("--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--server-components              Enable React Server Components (experimental)") catch unreachable,
-        clap.parseParam("--transform                      Single file transform, do not bundle") catch unreachable,
+        clap.parseParam("--transpile                      Transpile file only, do not bundle") catch unreachable,
     };
 
     // TODO: update test completions

@@ -1,7 +1,3 @@
-{% callout %}
-**Note** — Available in the Bun v0.6.0 nightly. Run `bun upgrade --canary` to try it out.
-{% /callout %}
-
 Bun's fast native bundler is now in beta. It can be used via the `bun build` CLI command or the `Bun.build()` JavaScript API.
 
 {% codetabs group="a" %}
@@ -320,7 +316,7 @@ Depending on the target, Bun will apply different module resolution rules and op
 ---
 
 - `node`
-- For generating bundles that are intended to be run by Node.js. Prioritizes the `"node"` export condition when resolving imports. In the future, this will automatically polyfill the `Bun` global and other built-in `bun:*` modules, though this is not yet implemented.
+- For generating bundles that are intended to be run by Node.js. Prioritizes the `"node"` export condition when resolving imports, and outputs `.mjs`. In the future, this will automatically polyfill the `Bun` global and other built-in `bun:*` modules, though this is not yet implemented.
 
 {% /table %}
 
@@ -344,7 +340,7 @@ await Bun.build({
 $ bun build ./index.tsx --outdir ./out --format esm
 ```
 
-{% /codetabs %} -->
+{% /codetabs %}
 
 <!-- ### `bundling`
 
@@ -479,7 +475,7 @@ n/a
 
 Bun implements a univeral plugin system for both Bun's runtime and bundler. Refer to the [plugin documentation](/docs/bundler/plugins) for complete documentation.
 
-### `manifest`
+<!-- ### `manifest`
 
 Whether to return a build manifest in the result of `Bun.build`.
 
@@ -538,7 +534,7 @@ export type ImportKind =
 
 {% /details %}
 
-By design, the manifest is a simple JSON object that can easily be serialized or written to disk. It is also compatible with esbuild's [`metafile`](https://esbuild.github.io/api/#metafile) format.
+By design, the manifest is a simple JSON object that can easily be serialized or written to disk. It is also compatible with esbuild's [`metafile`](https://esbuild.github.io/api/#metafile) format. -->
 
 ### `sourcemap`
 
@@ -860,7 +856,7 @@ $ bun build ./index.tsx --outdir ./out --entry-naming "[dir]/[name].[ext]" --chu
 
 {% /codetabs %}
 
-<!-- ### `root`
+### `root`
 
 The root directory of the project.
 
@@ -949,7 +945,7 @@ By specifying `.` as `root`, the generated file structure will look like this:
   └── pages
     └── index.js
     └── settings.js
-``` -->
+```
 
 ### `publicPath`
 
@@ -1060,15 +1056,17 @@ $ bun build ./index.tsx --outdir ./out --loader .png:dataurl --loader .txt:file
 
 ```ts
 interface Bun {
-  build(options: BuildOptions): Promise<{
-    outputs: Array<{ path: string; result: Blob | BunFile }>;
-    manifest?: BuildManifest;
-  }>;
+  build(options: BuildOptions): Promise<BuildOutput>;
+}
+
+interface BuildOutput {
+  outputs: BuildArtifact[];
 }
 
 interface BuildOptions {
   entrypoints: string[]; // required
   outdir?: string; // default: no write (in-memory only)
+  format?: "esm"; // later: "cjs" | "iife"
   target?: "browser" | "bun" | "node"; // "browser"
   splitting?: boolean; // true
   plugins?: BunPlugin[]; // [] // See https://bun.sh/docs/bundler/plugins
@@ -1094,6 +1092,20 @@ interface BuildOptions {
       };
 }
 
+type Loader =
+  | "js"
+  | "jsx"
+  | "ts"
+  | "tsx"
+  | "json"
+  | "toml"
+  | "file"
+  | "napi"
+  | "wasm"
+  | "text";
+```
+
+<!-- 
 interface BuildManifest {
   inputs: {
     [path: string]: {
@@ -1120,5 +1132,4 @@ interface BuildManifest {
       exports: string[];
     };
   };
-}
-```
+} -->

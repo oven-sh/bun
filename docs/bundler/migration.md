@@ -31,7 +31,7 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `--bundle`
 - n/a
-- Not necessary, `bun build` always bundles.
+- Bun always bundles, use `--transpile` to disable this behavior.
 
 ---
 
@@ -101,7 +101,7 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `--platform`
 - `--target`
-- Renamed to `--target` for consistency with tsconfig
+- Renamed to `--target` for consistency with tsconfig. Does not support `neutral`.
 
 ---
 
@@ -476,7 +476,7 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `bundle`
 - n/a
-- Always `true`
+- Always `true`. Use [`Bun.Transpiler`](/docs/api/transpiler) to transpile without bundling.
 
 ---
 
@@ -769,7 +769,7 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `platform`
 - `target`
-- Supports `"bun"`, `"node"`, and `"browser"` (the default)
+- Supports `"bun"`, `"node"` and `"browser"` (the default). Does not support `"neutral"`.
 
 ---
 

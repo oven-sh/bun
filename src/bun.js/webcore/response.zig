@@ -940,6 +940,7 @@ pub const Fetch = struct {
         callframe: *JSC.CallFrame,
     ) callconv(.C) js.JSObjectRef {
         const arguments = callframe.arguments(2);
+
         var args = @ptrCast([*]const JSC.C.JSValueRef, callframe.argumentsPtr())[0..arguments.len];
 
         var exception_val = [_]JSC.C.JSValueRef{null};

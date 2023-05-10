@@ -1165,9 +1165,9 @@ pub const Class = NewClass(
         .sleepSync = .{
             .rfn = &sleepSync,
         },
-        .fetch = .{
-            .rfn = &Fetch.call,
-        },
+        // .fetch = .{
+        //     .rfn = &Fetch.call,
+        // },
         .getImportedStyles = .{
             .rfn = &Bun.getImportedStyles,
         },

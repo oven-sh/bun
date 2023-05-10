@@ -3393,6 +3393,13 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         if (JSObject* prototype = object->classRef()->prototype(this))
             object->setPrototypeDirect(vm, prototype);
 
+
+        {
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "fetch"_s);
+            object->putDirectNativeFunction(vm, this, identifier, 2, functionFetch, ImplementationVisibility::Public, NoIntrinsic,
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        }
+
         {
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "escapeHTML"_s);
             static ClassInfo escapeHTMLClassInfo = *object->classInfo();

@@ -1132,4 +1132,5 @@ it("#874", () => {
 
 it("#2794", () => {
   expect(typeof globalThis.fetch.bind).toBe("function");
+  expect(typeof Bun.fetch.bind).toBe("function");
 });

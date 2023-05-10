@@ -1130,6 +1130,6 @@ it("#874", () => {
   expect(new Request({ url: "https://example.com" }).url).toBe("https://example.com");
 });
 
-it("#2794", ()=> {
+it("#2794", () => {
   expect(typeof globalThis.fetch.bind).toBe("function");
-})
+});

@@ -432,6 +432,13 @@ pub const Msg = struct {
         };
     }
 
+    pub fn toJS(this: *const Msg, globalObject: *bun.JSC.JSGlobalObject, allocator: std.mem.Allocator) JSC.JSValue {
+        return switch (this.metadata) {
+            .build => JSC.BuildError.create(globalObject, allocator, this).?.value(),
+            .resolve => JSC.ResolveError.create(globalObject, allocator, this, "").?.value(),
+        };
+    }
+
     pub fn count(this: *const Msg, builder: *StringBuilder) void {
         this.data.count(builder);
         if (this.notes) |notes| {
@@ -727,6 +734,20 @@ pub const Log = struct {
                 return agg;
             },
         }
+    }
+
+    pub fn toJSArray(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator) JSC.JSValue {
+        const msgs: []const Msg = this.msgs.items;
+        var errors_stack: [256]*anyopaque = undefined;
+
+        const count = @intCast(u16, @min(msgs.len, errors_stack.len));
+        var arr = JSC.JSValue.createEmptyArray(global, count);
+
+        for (msgs[0..count], 0..) |msg, i| {
+            arr.putIndex(global, @intCast(u32, i), msg.toJS(global, allocator));
+        }
+
+        return arr;
     }
 
     pub fn cloneTo(self: *Log, other: *Log) !void {

@@ -477,7 +477,7 @@ pub const Arguments = struct {
         ctx.bundler_options.minify_identifiers = minify_flag or args.flag("--minify-identifiers");
 
         if (cmd == .BuildCommand) {
-            ctx.bundler_options.transform_only = args.flag("--transform");
+            ctx.bundler_options.transform_only = args.flag("--transpile");
 
             if (args.option("--outdir")) |outdir| {
                 if (outdir.len > 0) {

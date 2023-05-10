@@ -51,7 +51,7 @@ describe("bundler", () => {
   });
   itBundled("edgecase/BunPluginTreeShakeImport", {
     notImplemented: true,
-    // This only appears at runtime and not with bun build, even with --transform
+    // This only appears at runtime and not with bun build, even with --transpile
     files: {
       "/entry.ts": /* js */ `
         import { A, B } from "./somewhere-else";

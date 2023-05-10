@@ -1020,11 +1020,8 @@ declare module "bun" {
   }
 
   function build(config: BuildConfig): Promise<{
-    outputs: Map<
-      string,
-      BuildArtifact | AssetBuildArtifact | SourceMapBuildArtifact
-    >;
-    logs: Array<BuildError | ResolveError>;
+    outputs: Array<BuildArtifact | AssetBuildArtifact | SourceMapBuildArtifact>;
+    errors: Array<BuildError | ResolveError>;
   }>;
 
   /**

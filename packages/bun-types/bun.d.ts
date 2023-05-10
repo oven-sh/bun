@@ -2564,7 +2564,6 @@ declare module "bun" {
     | "file"
     | "napi"
     | "wasm"
-    | "dataurl"
     | "text";
 
   interface PluginConstraints {

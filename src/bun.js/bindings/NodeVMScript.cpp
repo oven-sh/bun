@@ -1,6 +1,6 @@
 #include "root.h"
 
-#include "VMModuleScript.h"
+#include "NodeVMScript.h"
 #include "JavaScriptCore/JSObjectInlines.h"
 #include "wtf/text/ExternalStringImpl.h"
 
@@ -42,21 +42,21 @@ static EncodedJSValue constructScript(JSGlobalObject* globalObject, CallFrame* c
     String source = sourceArg.isUndefined() ? emptyString() : sourceArg.toWTFString(globalObject);
 
     auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-    Structure* structure = zigGlobalObject->VMModuleScriptStructure();
-    if (zigGlobalObject->VMModuleScript() != newTarget) {
+    Structure* structure = zigGlobalObject->NodeVMScriptStructure();
+    if (zigGlobalObject->NodeVMScript() != newTarget) {
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSObject* targetObj = asObject(newTarget);
         auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(getFunctionRealm(globalObject, targetObj));
         RETURN_IF_EXCEPTION(scope, {});
         structure = InternalFunction::createSubclassStructure(
-            globalObject, targetObj, functionGlobalObject->VMModuleScriptStructure());
+            globalObject, targetObj, functionGlobalObject->NodeVMScriptStructure());
         scope.release();
     }
-    VMModuleScript* script = VMModuleScript::create(vm, globalObject, structure, source);
+    NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, source);
     return JSValue::encode(JSValue(script));
 }
 
-static EncodedJSValue runInContext(JSGlobalObject* globalObject, VMModuleScript* script, JSObject* globalThis, JSScope* scope, JSValue optionsArg)
+static EncodedJSValue runInContext(JSGlobalObject* globalObject, NodeVMScript* script, JSObject* globalThis, JSScope* scope, JSValue optionsArg)
 {
     auto& vm = globalObject->vm();
 
@@ -100,7 +100,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject* globalObject, Call
     auto& vm = globalObject->vm();
 
     JSValue thisValue = callFrame->thisValue();
-    auto* script = jsDynamicCast<VMModuleScript*>(thisValue);
+    auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
     if (UNLIKELY(!script)) {
         auto scope = DECLARE_THROW_SCOPE(vm);
         return throwVMTypeError(globalObject, scope, "Script.prototype.runInContext can only be called on a Script object"_s);
@@ -130,7 +130,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject* globalObject, 
 {
     auto& vm = globalObject->vm();
     JSValue thisValue = callFrame->thisValue();
-    auto* script = jsDynamicCast<VMModuleScript*>(thisValue);
+    auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
     if (UNLIKELY(!script)) {
         auto scope = DECLARE_THROW_SCOPE(vm);
         return throwVMTypeError(globalObject, scope, "Script.prototype.runInThisContext can only be called on a Script object"_s);
@@ -186,13 +186,13 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_isContext, (JSGlobalObject* globalObject, Call
     return JSValue::encode(jsBoolean(isContext));
 }
 
-class VMModuleScriptPrototype final : public JSNonFinalObject {
+class NodeVMScriptPrototype final : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
 
-    static VMModuleScriptPrototype* create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
+    static NodeVMScriptPrototype* create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
     {
-        VMModuleScriptPrototype* ptr = new (NotNull, allocateCell<VMModuleScriptPrototype>(vm)) VMModuleScriptPrototype(vm, structure);
+        NodeVMScriptPrototype* ptr = new (NotNull, allocateCell<NodeVMScriptPrototype>(vm)) NodeVMScriptPrototype(vm, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -209,14 +209,14 @@ public:
     }
 
 private:
-    VMModuleScriptPrototype(VM& vm, Structure* structure)
+    NodeVMScriptPrototype(VM& vm, Structure* structure)
         : Base(vm, structure)
     {
     }
 
     void finishCreation(VM&);
 };
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(VMModuleScriptPrototype, VMModuleScriptPrototype::Base);
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(NodeVMScriptPrototype, NodeVMScriptPrototype::Base);
 
 static const struct HashTableValue scriptPrototypeTableValues[] = {
    { "cachedDataRejected"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, scriptGetCachedDataRejected, nullptr } },
@@ -226,57 +226,57 @@ static const struct HashTableValue scriptPrototypeTableValues[] = {
    { "sourceMapURL"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, scriptGetSourceMapURL, nullptr } },
 };
 
-const ClassInfo VMModuleScriptPrototype::s_info = { "Script"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(VMModuleScriptPrototype) };
-const ClassInfo VMModuleScript::s_info = { "Script"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(VMModuleScript) };
-const ClassInfo VMModuleScriptConstructor::s_info = { "Script"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(VMModuleScriptConstructor) };
+const ClassInfo NodeVMScriptPrototype::s_info = { "Script"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMScriptPrototype) };
+const ClassInfo NodeVMScript::s_info = { "Script"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMScript) };
+const ClassInfo NodeVMScriptConstructor::s_info = { "Script"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMScriptConstructor) };
 
-VMModuleScriptConstructor::VMModuleScriptConstructor(VM& vm, Structure* structure)
-    : VMModuleScriptConstructor::Base(vm, structure, scriptConstructorCall, scriptConstructorConstruct)
+NodeVMScriptConstructor::NodeVMScriptConstructor(VM& vm, Structure* structure)
+    : NodeVMScriptConstructor::Base(vm, structure, scriptConstructorCall, scriptConstructorConstruct)
 {
 }
 
-VMModuleScriptConstructor* VMModuleScriptConstructor::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, JSObject* prototype)
+NodeVMScriptConstructor* NodeVMScriptConstructor::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, JSObject* prototype)
 {
-    VMModuleScriptConstructor* ptr = new (NotNull, allocateCell<VMModuleScriptConstructor>(vm)) VMModuleScriptConstructor(vm, structure);
+    NodeVMScriptConstructor* ptr = new (NotNull, allocateCell<NodeVMScriptConstructor>(vm)) NodeVMScriptConstructor(vm, structure);
     ptr->finishCreation(vm, prototype);
     return ptr;
 }
 
-void VMModuleScriptConstructor::finishCreation(VM& vm, JSObject* prototype)
+void NodeVMScriptConstructor::finishCreation(VM& vm, JSObject* prototype)
 {
     Base::finishCreation(vm, 1, "Script"_s, PropertyAdditionMode::WithStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     ASSERT(inherits(info()));
 }
 
-void VMModuleScriptPrototype::finishCreation(VM& vm)
+void NodeVMScriptPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, VMModuleScript::info(), scriptPrototypeTableValues, *this);
+    reifyStaticProperties(vm, NodeVMScript::info(), scriptPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
-JSObject* VMModuleScript::createPrototype(VM& vm, JSGlobalObject* globalObject)
+JSObject* NodeVMScript::createPrototype(VM& vm, JSGlobalObject* globalObject)
 {
-    return VMModuleScriptPrototype::create(vm, globalObject, VMModuleScriptPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+    return NodeVMScriptPrototype::create(vm, globalObject, NodeVMScriptPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
 }
 
-VMModuleScript* VMModuleScript::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, String source)
+NodeVMScript* NodeVMScript::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, String source)
 {
-    VMModuleScript* ptr = new (NotNull, allocateCell<VMModuleScript>(vm)) VMModuleScript(vm, structure, source);
+    NodeVMScript* ptr = new (NotNull, allocateCell<NodeVMScript>(vm)) NodeVMScript(vm, structure, source);
     ptr->finishCreation(vm);
     return ptr;
 }
 
-void VMModuleScript::finishCreation(VM& vm)
+void NodeVMScript::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 }
 
-void VMModuleScript::destroy(JSCell* cell)
+void NodeVMScript::destroy(JSCell* cell)
 {
-    static_cast<VMModuleScript*>(cell)->VMModuleScript::~VMModuleScript();
+    static_cast<NodeVMScript*>(cell)->NodeVMScript::~NodeVMScript();
 }
 
 }

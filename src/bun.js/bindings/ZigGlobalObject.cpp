@@ -107,7 +107,7 @@
 #include "ReadableStreamBuiltins.h"
 #include "BunJSCModule.h"
 #include "ModuleLoader.h"
-#include "VMModuleScript.h"
+#include "NodeVMScript.h"
 
 #include "ZigGeneratedClasses.h"
 #include "JavaScriptCore/DateInstance.h"
@@ -1304,7 +1304,7 @@ JSC:
             auto* obj = constructEmptyObject(globalObject);
             obj->putDirect(
                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "Script"_s)),
-                reinterpret_cast<Zig::GlobalObject*>(globalObject)->VMModuleScript(), 0);
+                reinterpret_cast<Zig::GlobalObject*>(globalObject)->NodeVMScript(), 0);
             obj->putDirect(
                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createContext"_s)),
                 JSC::JSFunction::create(vm, globalObject, 0, "createContext"_s, vmModule_createContext, ImplementationVisibility::Public), 0);
@@ -2876,13 +2876,13 @@ void GlobalObject::finishCreation(VM& vm)
             init.setStructure(Zig::JSFFIFunction::createStructure(init.vm, init.global, init.global->functionPrototype()));
         });
 
-    m_VMModuleScriptClassStructure.initLater(
+    m_NodeVMScriptClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
-            auto prototype = VMModuleScript::createPrototype(init.vm, init.global);
-            auto* structure = VMModuleScript::createStructure(init.vm, init.global, prototype);
-            auto* constructorStructure = VMModuleScriptConstructor::createStructure(
+            auto prototype = NodeVMScript::createPrototype(init.vm, init.global);
+            auto* structure = NodeVMScript::createStructure(init.vm, init.global, prototype);
+            auto* constructorStructure = NodeVMScriptConstructor::createStructure(
                 init.vm, init.global, init.global->m_functionPrototype.get());
-            auto* constructor = VMModuleScriptConstructor::create(
+            auto* constructor = NodeVMScriptConstructor::create(
                 init.vm, init.global, constructorStructure, prototype);
             init.setPrototype(prototype);
             init.setStructure(structure);
@@ -3691,7 +3691,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSStringDecoderClassStructure.visit(visitor);
     thisObject->m_NapiClassStructure.visit(visitor);
     thisObject->m_JSBufferClassStructure.visit(visitor);
-    thisObject->m_VMModuleScriptClassStructure.visit(visitor);
+    thisObject->m_NodeVMScriptClassStructure.visit(visitor);
 
     thisObject->m_pendingVirtualModuleResultStructure.visit(visitor);
     thisObject->m_performMicrotaskFunction.visit(visitor);

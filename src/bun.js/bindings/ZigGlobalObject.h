@@ -229,9 +229,9 @@ public:
     JSC::JSObject* JSReadableState() { return m_JSReadableStateClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue JSReadableStatePrototype() { return m_JSReadableStateClassStructure.prototypeInitializedOnMainThread(this); }
 
-    JSC::Structure* VMModuleScriptStructure() { return m_VMModuleScriptClassStructure.getInitializedOnMainThread(this); }
-    JSC::JSObject* VMModuleScript() { return m_VMModuleScriptClassStructure.constructorInitializedOnMainThread(this); }
-    JSC::JSValue VMModuleScriptPrototype() { return m_VMModuleScriptClassStructure.prototypeInitializedOnMainThread(this); }
+    JSC::Structure* NodeVMScriptStructure() { return m_NodeVMScriptClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* NodeVMScript() { return m_NodeVMScriptClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue NodeVMScriptPrototype() { return m_NodeVMScriptClassStructure.prototypeInitializedOnMainThread(this); }
 
     JSC::JSMap* readableStreamNativeMap() { return m_lazyReadableStreamPrototypeMap.getInitializedOnMainThread(this); }
     JSC::JSMap* requireMap() { return m_requireMap.getInitializedOnMainThread(this); }
@@ -429,7 +429,7 @@ private:
     LazyClassStructure m_NapiClassStructure;
     LazyClassStructure m_callSiteStructure;
     LazyClassStructure m_JSBufferClassStructure;
-    LazyClassStructure m_VMModuleScriptClassStructure;
+    LazyClassStructure m_NodeVMScriptClassStructure;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.

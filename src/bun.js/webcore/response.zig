@@ -609,18 +609,6 @@ pub const Fetch = struct {
         break :brk errors;
     };
 
-    // pub const Class = NewClass(
-    //     void,
-    //     .{ .name = "fetch" },
-    //     .{
-    //         .call = .{
-    //             .rfn = Fetch.call,
-    //             .ts = d.ts{},
-    //         },
-    //     },
-    //     .{},
-    // );
-
     comptime {
         if (!JSC.is_bindgen) {
             @export(Fetch.jsFunction, .{ .name = "Bun__fetch" });

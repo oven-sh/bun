@@ -1758,44 +1758,93 @@ describe("bundler", () => {
       expect(api.readFile("/out.js").trim()).toBe("");
     },
   });
-  itBundled("ts/SiblingNamespace", {
+  itBundled("ts/SiblingNamespaceLet", {
+    notImplemented: true,
     files: {
       "/let.ts": /* ts */ `
         export namespace x { export let y = 123 }
         export namespace x { export let z = y }
       `,
+    },
+    entryPoints: ["/let.ts"],
+    bundling: false,
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import assert from 'assert'
+        const m = (await import('./out.js')).x
+        assert(m.x === m.z, "it worked")
+      `,
+    },
+  });
+  itBundled("ts/SiblingNamespaceFunction", {
+    notImplemented: true,
+    files: {
       "/function.ts": /* ts */ `
         export namespace x { export function y() {} }
         export namespace x { export let z = y }
       `,
-      "/class.ts": /* ts */ `
+    },
+    entryPoints: ["/function.ts"],
+    bundling: false,
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import assert from 'assert'
+        const m = (await import('./out.js')).x
+        assert(m.x === m.z, "it worked worked")
+      `,
+    },
+  });
+  itBundled("ts/SiblingNamespaceClass", {
+    notImplemented: true,
+    files: {
+      "/let.ts": /* ts */ `
         export namespace x { export class y {} }
         export namespace x { export let z = y }
       `,
+    },
+    entryPoints: ["/function.ts"],
+    bundling: false,
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import assert from 'assert'
+        const m = (await import('./out.js')).x
+        assert(m.x === m.z, "it worked worked")
+      `,
+    },
+  });
+  itBundled("ts/SiblingNamespaceNamespace", {
+    notImplemented: true,
+    files: {
       "/namespace.ts": /* ts */ `
         export namespace x { export namespace y { 0 } }
         export namespace x { export let z = y }
       `,
+    },
+    entryPoints: ["/namespace.ts"],
+    bundling: false,
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import assert from 'assert'
+        const m = (await import('./out.js')).x
+        assert(m.x === m.z, "it worked worked")
+      `,
+    },
+  });
+  itBundled("ts/SiblingNamespaceEnum", {
+    notImplemented: true,
+    files: {
       "/enum.ts": /* ts */ `
         export namespace x { export enum y {} }
         export namespace x { export let z = y }
       `,
     },
-    entryPoints: ["/let.ts", "/function.ts", "/class.ts", "/namespace.ts", "/enum.ts"],
+    entryPoints: ["/enum.ts"],
     bundling: false,
     runtimeFiles: {
       "/test.js": /* js */ `
         import assert from 'assert'
-        const test_let = (await import('./let.js')).x
-        assert(test_let.x === test_let.x, "let.ts worked")
-        const test_function = (await import('./function.js')).x
-        assert(test_function.x === test_function.x, "function.ts worked")
-        const test_class = (await import('./class.js')).x
-        assert(test_class.x === test_class.x, "class.ts worked")
-        const test_namespace = (await import('./namespace.js')).x
-        assert(test_namespace.x === test_namespace.x, "namespace.ts worked")
-        const test_enum = (await import('./enum.js')).x
-        assert(test_enum.x === test_enum.x, "enum.ts worked")
+        const m = (await import('./out.js')).x
+        assert(m.x === m.z, "it worked.ts worked")
       `,
     },
   });

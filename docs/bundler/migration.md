@@ -1,3 +1,7 @@
+{% callout %}
+**Note** — Available in the Bun v0.6.0 nightly. Run `bun upgrade --canary` to try it out.
+{% /callout %}
+
 Bun's bundler API is inspired heavily by [esbuild](https://esbuild.github.io/). Migrating to Bun's bundler from esbuild should be relatively painless. This guide will briefly explain why you might consider migrating to Bun's bundler and provide a side-by-side API comparison reference for those who are already familiar with esbuild's API.
 
 There are a few behavioral differences to note.

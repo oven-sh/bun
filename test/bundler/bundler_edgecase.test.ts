@@ -636,4 +636,16 @@ describe("bundler", () => {
       `,
     },
   });
+  itBundled("edgecase/AbsolutePathShouldNotResolveAsRelative", {
+    notImplemented: true,
+    files: {
+      "/entry.js": /* js */ `
+        console.log(1);
+      `,
+    },
+    entryPointsRaw: ["/entry.js"],
+    bundleErrors: {
+      "<bun>": ['ModuleNotFound resolving "/entry.js" (entry point)'],
+    },
+  });
 });

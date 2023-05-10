@@ -305,7 +305,7 @@ describe("bundler", () => {
       `,
       "/src/images/image.png": `x`,
     },
-    outbase: "/src",
+    root: "/src",
     outdir: "/out",
     outputPaths: ["/out/entries/entry.js"],
     loader: {
@@ -336,7 +336,7 @@ describe("bundler", () => {
       `,
       "/src/images/image.png": `x`,
     },
-    outbase: "/src",
+    root: "/src",
     assetNaming: "[dir]/[name]-[hash]",
     outdir: "/out",
     outputPaths: ["/out/entries/entry.js"],
@@ -358,7 +358,7 @@ describe("bundler", () => {
       "/src/images/image.png": `x`,
       "/src/uploads/file.txt": `y`,
     },
-    outbase: "/src",
+    root: "/src",
     assetNaming: "[ext]/[name]-[hash]",
   });
   itBundled("loader/FileRelativePathAssetNamesCSS", {
@@ -371,7 +371,7 @@ describe("bundler", () => {
       `,
       "/src/images/image.png": `x`,
     },
-    outbase: "/src",
+    root: "/src",
     assetNaming: "[dir]/[name]-[hash]",
   });
   itBundled("loader/FilePublicPathJS", {
@@ -383,7 +383,7 @@ describe("bundler", () => {
       `,
       "/src/images/image.png": `x`,
     },
-    outbase: "/src",
+    root: "/src",
     publicPath: "https://example.com",
   });
   itBundled("loader/FilePublicPathCSS", {
@@ -396,7 +396,7 @@ describe("bundler", () => {
       `,
       "/src/images/image.png": `x`,
     },
-    outbase: "/src",
+    root: "/src",
     publicPath: "https://example.com",
   });
   itBundled("loader/FilePublicPathAssetNamesJS", {
@@ -408,7 +408,7 @@ describe("bundler", () => {
       `,
       "/src/images/image.png": `x`,
     },
-    outbase: "/src",
+    root: "/src",
     publicPath: "https://example.com",
     assetNaming: "[dir]/[name]-[hash]",
   });
@@ -422,7 +422,7 @@ describe("bundler", () => {
       `,
       "/src/images/image.png": `x`,
     },
-    outbase: "/src",
+    root: "/src",
     publicPath: "https://example.com",
     assetNaming: "[dir]/[name]-[hash]",
   });
@@ -438,7 +438,7 @@ describe("bundler", () => {
       "/src/shared/common.png": `x`,
     },
     entryPoints: ["/src/entries/entry.js", "/src/entries/other/entry.js"],
-    outbase: "/src",
+    root: "/src",
   });
   itBundled("loader/FileOneSourceTwoDifferentOutputPathsCSS", {
     // GENERATED
@@ -453,7 +453,7 @@ describe("bundler", () => {
       "/src/shared/common.png": `x`,
     },
     entryPoints: ["/src/entries/entry.css", "/src/entries/other/entry.css"],
-    outbase: "/src",
+    root: "/src",
   });
   itBundled("loader/JSONNoBundle", {
     // GENERATED
@@ -690,7 +690,7 @@ describe("bundler", () => {
       `,
       "/Users/user/project/assets/some.file": `stuff`,
     },
-    outbase: "/Users/user/project",
+    root: "/Users/user/project",
   });
   itBundled("loader/CopyWithBundleFromCSS", {
     // GENERATED
@@ -702,7 +702,7 @@ describe("bundler", () => {
       `,
       "/Users/user/project/assets/some.file": `stuff`,
     },
-    outbase: "/Users/user/project",
+    root: "/Users/user/project",
   });
   itBundled("loader/CopyWithBundleEntryPoint", {
     // GENERATED
@@ -723,7 +723,7 @@ describe("bundler", () => {
       "/Users/user/project/src/entry.css",
       "/Users/user/project/assets/some.file",
     ],
-    outbase: "/Users/user/project",
+    root: "/Users/user/project",
   });
   itBundled("loader/CopyWithTransform", {
     // GENERATED
@@ -732,7 +732,7 @@ describe("bundler", () => {
       "/Users/user/project/assets/some.file": `stuff`,
     },
     entryPoints: ["/Users/user/project/src/entry.js", "/Users/user/project/assets/some.file"],
-    outbase: "/Users/user/project",
+    root: "/Users/user/project",
     mode: "passthrough",
   });
   itBundled("loader/CopyWithFormat", {
@@ -743,7 +743,7 @@ describe("bundler", () => {
     },
     entryPoints: ["/Users/user/project/src/entry.js", "/Users/user/project/assets/some.file"],
     format: "iife",
-    outbase: "/Users/user/project",
+    root: "/Users/user/project",
     mode: "convertformat",
   });
   itBundled("loader/JSXAutomaticNoNameCollision", {

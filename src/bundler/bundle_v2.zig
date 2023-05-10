@@ -8606,7 +8606,7 @@ const LinkerContext = struct {
 
                 const rel_path = std.fmt.allocPrint(c.allocator, "{any}", .{chunk.template}) catch unreachable;
                 if ((try path_names_map.getOrPut(rel_path)).found_existing) {
-                    try c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "two files share the same output path: {s}", .{rel_path});
+                    try c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Multiple files share the same output path: {s}", .{rel_path});
                     return error.DuplicateOutputPath;
                 }
 

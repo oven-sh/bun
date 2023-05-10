@@ -1134,3 +1134,13 @@ it("#2794", () => {
   expect(typeof globalThis.fetch.bind).toBe("function");
   expect(typeof Bun.fetch.bind).toBe("function");
 });
+
+it("invalid header doesnt crash", () => {
+  expect(() =>
+    fetch("http://example.com", {
+      headers: {
+        ["lol!!!!!" + "emoji" + "😀"]: "hello",
+      },
+    }),
+  ).toThrow();
+});

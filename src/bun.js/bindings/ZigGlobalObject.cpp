@@ -118,6 +118,8 @@
 #include "JavaScriptCore/RemoteInspectorServer.h"
 #endif
 
+extern "C" JSC::EncodedJSValue Bun__fetch(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+
 using JSGlobalObject
     = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
@@ -2969,13 +2971,6 @@ extern "C" void Bun__setOnEachMicrotaskTick(JSC::VM* vm, void* ptr, void (*callb
     });
 }
 
-
-
-static JSC_DEFINE_HOST_FUNCTION(functionFetch, 
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    return JSC::JSValue::encode(Bun__fetch(globalObject, callFrame));
-}
 // This implementation works the same as setTimeout(myFunction, 0)
 // TODO: make it more efficient
 // https://developer.mozilla.org/en-US/docs/Web/API/Window/setImmediate
@@ -3131,7 +3126,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { JSC::Identifier::fromString(vm, "fetch"_s),
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 2,
-                "fetch"_s, functionFetch, ImplementationVisibility::Public),
+                "fetch"_s, Bun__fetch, ImplementationVisibility::Public),
             JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { queueMicrotaskIdentifier,
@@ -3393,11 +3388,11 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         if (JSObject* prototype = object->classRef()->prototype(this))
             object->setPrototypeDirect(vm, prototype);
 
-
         {
+            // on the Bun object we make this read-only so that it is the "safer" one to use
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "fetch"_s);
-            object->putDirectNativeFunction(vm, this, identifier, 2, functionFetch, ImplementationVisibility::Public, NoIntrinsic,
-                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+            object->putDirectNativeFunction(vm, this, identifier, 2, Bun__fetch, ImplementationVisibility::Public, NoIntrinsic,
+                JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
         }
 
         {

@@ -1359,14 +1359,12 @@ it("should add dependencies to workspaces directly", async () => {
     workspaces: ["moo"],
   });
   await writeFile(join(add_dir, "package.json"), foo_package);
-  await writeFile(
-    join(package_dir, "package.json"),
-    JSON.stringify({
-      name: "bar",
-      version: "0.2.0",
-      workspaces: ["moo"],
-    }),
-  );
+  const bar_package = JSON.stringify({
+    name: "bar",
+    version: "0.2.0",
+    workspaces: ["moo"],
+  });
+  await writeFile(join(package_dir, "package.json"), bar_package);
   await mkdir(join(package_dir, "moo"));
   await writeFile(
     join(package_dir, "moo", "package.json"),
@@ -1399,12 +1397,20 @@ it("should add dependencies to workspaces directly", async () => {
   ]);
   expect(await exited).toBe(0);
   expect(await readdirSorted(join(package_dir))).toEqual(["bunfig.toml", "moo", "package.json"]);
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(bar_package);
   expect(await readdirSorted(join(package_dir, "moo"))).toEqual([
     "bun.lockb",
     "bunfig.toml",
     "node_modules",
     "package.json",
   ]);
+  expect(await file(join(package_dir, "moo", "package.json")).json()).toEqual({
+    name: "moo",
+    version: "0.3.0",
+    dependencies: {
+      foo: `file:${add_path}`,
+    },
+  });
   expect(await readdirSorted(join(package_dir, "moo", "node_modules"))).toEqual([".cache", "foo"]);
   expect(await readdirSorted(join(package_dir, "moo", "node_modules", "foo"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "moo", "node_modules", "foo", "package.json")).text()).toEqual(foo_package);

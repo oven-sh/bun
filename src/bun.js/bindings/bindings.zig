@@ -3284,6 +3284,18 @@ pub const JSValue = enum(JSValueReprInt) {
         }
 
         if (comptime @hasDecl(ZigType, "fromJS") and @TypeOf(ZigType.fromJS) == fn (JSC.JSValue) ?*ZigType) {
+            if (comptime ZigType == JSC.WebCore.Blob) {
+                if (ZigType.fromJS(value)) |blob| {
+                    return blob;
+                }
+
+                if (JSC.API.BuildArtifact.fromJS(value)) |build| {
+                    return &build.blob;
+                }
+
+                return null;
+            }
+
             return ZigType.fromJS(value);
         }
 

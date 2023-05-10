@@ -525,6 +525,498 @@ void JSBlob::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSBlob);
+class JSBuildArtifactPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSBuildArtifactPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSBuildArtifactPrototype* ptr = new (NotNull, JSC::allocateCell<JSBuildArtifactPrototype>(vm)) JSBuildArtifactPrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSBuildArtifactPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+extern "C" void BuildArtifactClass__finalize(void*);
+
+extern "C" EncodedJSValue BuildArtifactPrototype__getArrayBuffer(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(BuildArtifactPrototype__arrayBufferCallback);
+
+extern "C" JSC::EncodedJSValue BuildArtifactPrototype__getHash(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BuildArtifactPrototype__hashGetterWrap);
+
+extern "C" EncodedJSValue BuildArtifactPrototype__getJSON(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(BuildArtifactPrototype__jsonCallback);
+
+extern "C" JSC::EncodedJSValue BuildArtifactPrototype__getOutputKind(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BuildArtifactPrototype__kindGetterWrap);
+
+extern "C" JSC::EncodedJSValue BuildArtifactPrototype__getLoader(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BuildArtifactPrototype__loaderGetterWrap);
+
+extern "C" JSC::EncodedJSValue BuildArtifactPrototype__getPath(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BuildArtifactPrototype__pathGetterWrap);
+
+extern "C" JSC::EncodedJSValue BuildArtifactPrototype__getSize(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BuildArtifactPrototype__sizeGetterWrap);
+
+extern "C" EncodedJSValue BuildArtifactPrototype__getSlice(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(BuildArtifactPrototype__sliceCallback);
+
+extern "C" JSC::EncodedJSValue BuildArtifactPrototype__getSourceMap(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BuildArtifactPrototype__sourcemapGetterWrap);
+
+extern "C" EncodedJSValue BuildArtifactPrototype__getStream(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(BuildArtifactPrototype__streamCallback);
+
+extern "C" EncodedJSValue BuildArtifactPrototype__getText(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(BuildArtifactPrototype__textCallback);
+
+extern "C" JSC::EncodedJSValue BuildArtifactPrototype__getMimeType(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BuildArtifactPrototype__typeGetterWrap);
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBuildArtifactPrototype, JSBuildArtifactPrototype::Base);
+
+static const HashTableValue JSBuildArtifactPrototypeTableValues[] = {
+    { "arrayBuffer"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BuildArtifactPrototype__arrayBufferCallback, 0 } },
+    { "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BuildArtifactPrototype__hashGetterWrap, 0 } },
+    { "json"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BuildArtifactPrototype__jsonCallback, 0 } },
+    { "kind"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BuildArtifactPrototype__kindGetterWrap, 0 } },
+    { "loader"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BuildArtifactPrototype__loaderGetterWrap, 0 } },
+    { "path"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BuildArtifactPrototype__pathGetterWrap, 0 } },
+    { "size"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BuildArtifactPrototype__sizeGetterWrap, 0 } },
+    { "slice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BuildArtifactPrototype__sliceCallback, 2 } },
+    { "sourcemap"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BuildArtifactPrototype__sourcemapGetterWrap, 0 } },
+    { "stream"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BuildArtifactPrototype__streamCallback, 1 } },
+    { "text"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BuildArtifactPrototype__textCallback, 0 } },
+    { "type"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BuildArtifactPrototype__typeGetterWrap, 0 } }
+};
+
+const ClassInfo JSBuildArtifactPrototype::s_info = { "BuildArtifact"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBuildArtifactPrototype) };
+
+JSC_DEFINE_HOST_FUNCTION(BuildArtifactPrototype__arrayBufferCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSBuildArtifact* thisObject = jsDynamicCast<JSBuildArtifact*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return BuildArtifactPrototype__getArrayBuffer(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BuildArtifactPrototype__hashGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBuildArtifact* thisObject = jsCast<JSBuildArtifact*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_hash.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        BuildArtifactPrototype__getHash(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_hash.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void BuildArtifactPrototype__hashSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSBuildArtifact*>(JSValue::decode(thisValue));
+    thisObject->m_hash.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue BuildArtifactPrototype__hashGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSBuildArtifact*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_hash.get());
+}
+
+JSC_DEFINE_HOST_FUNCTION(BuildArtifactPrototype__jsonCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSBuildArtifact* thisObject = jsDynamicCast<JSBuildArtifact*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return BuildArtifactPrototype__getJSON(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BuildArtifactPrototype__kindGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBuildArtifact* thisObject = jsCast<JSBuildArtifact*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_kind.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        BuildArtifactPrototype__getOutputKind(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_kind.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void BuildArtifactPrototype__kindSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSBuildArtifact*>(JSValue::decode(thisValue));
+    thisObject->m_kind.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue BuildArtifactPrototype__kindGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSBuildArtifact*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_kind.get());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BuildArtifactPrototype__loaderGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBuildArtifact* thisObject = jsCast<JSBuildArtifact*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_loader.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        BuildArtifactPrototype__getLoader(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_loader.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void BuildArtifactPrototype__loaderSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSBuildArtifact*>(JSValue::decode(thisValue));
+    thisObject->m_loader.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue BuildArtifactPrototype__loaderGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSBuildArtifact*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_loader.get());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BuildArtifactPrototype__pathGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBuildArtifact* thisObject = jsCast<JSBuildArtifact*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_path.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        BuildArtifactPrototype__getPath(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_path.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void BuildArtifactPrototype__pathSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSBuildArtifact*>(JSValue::decode(thisValue));
+    thisObject->m_path.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue BuildArtifactPrototype__pathGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSBuildArtifact*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_path.get());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BuildArtifactPrototype__sizeGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBuildArtifact* thisObject = jsCast<JSBuildArtifact*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BuildArtifactPrototype__getSize(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(BuildArtifactPrototype__sliceCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSBuildArtifact* thisObject = jsDynamicCast<JSBuildArtifact*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return BuildArtifactPrototype__getSlice(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BuildArtifactPrototype__sourcemapGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBuildArtifact* thisObject = jsCast<JSBuildArtifact*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_sourcemap.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        BuildArtifactPrototype__getSourceMap(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_sourcemap.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void BuildArtifactPrototype__sourcemapSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSBuildArtifact*>(JSValue::decode(thisValue));
+    thisObject->m_sourcemap.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue BuildArtifactPrototype__sourcemapGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSBuildArtifact*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_sourcemap.get());
+}
+
+JSC_DEFINE_HOST_FUNCTION(BuildArtifactPrototype__streamCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSBuildArtifact* thisObject = jsDynamicCast<JSBuildArtifact*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return BuildArtifactPrototype__getStream(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(BuildArtifactPrototype__textCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSBuildArtifact* thisObject = jsDynamicCast<JSBuildArtifact*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return BuildArtifactPrototype__getText(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BuildArtifactPrototype__typeGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBuildArtifact* thisObject = jsCast<JSBuildArtifact*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_type.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        BuildArtifactPrototype__getMimeType(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_type.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void BuildArtifactPrototype__typeSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSBuildArtifact*>(JSValue::decode(thisValue));
+    thisObject->m_type.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue BuildArtifactPrototype__typeGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSBuildArtifact*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_type.get());
+}
+
+void JSBuildArtifactPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSBuildArtifact::info(), JSBuildArtifactPrototypeTableValues, *this);
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+JSBuildArtifact::~JSBuildArtifact()
+{
+    if (m_ctx) {
+        BuildArtifactClass__finalize(m_ctx);
+    }
+}
+void JSBuildArtifact::destroy(JSCell* cell)
+{
+    static_cast<JSBuildArtifact*>(cell)->JSBuildArtifact::~JSBuildArtifact();
+}
+
+const ClassInfo JSBuildArtifact::s_info = { "BuildArtifact"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBuildArtifact) };
+
+void JSBuildArtifact::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSBuildArtifact* JSBuildArtifact::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSBuildArtifact* ptr = new (NotNull, JSC::allocateCell<JSBuildArtifact>(vm)) JSBuildArtifact(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* BuildArtifact__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (decodedValue.isEmpty() || !decodedValue.isCell())
+        return nullptr;
+
+    JSC::JSCell* cell = decodedValue.asCell();
+    JSBuildArtifact* object = JSC::jsDynamicCast<JSBuildArtifact*>(cell);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool BuildArtifact__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSBuildArtifact* object = JSC::jsDynamicCast<JSBuildArtifact*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t BuildArtifact__ptrOffset = JSBuildArtifact::offsetOfWrapped();
+
+void JSBuildArtifact::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSBuildArtifact*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSBuildArtifact::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSBuildArtifactPrototype::create(vm, globalObject, JSBuildArtifactPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue BuildArtifact__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSBuildArtifactStructure();
+    JSBuildArtifact* instance = JSBuildArtifact::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+template<typename Visitor>
+void JSBuildArtifact::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSBuildArtifact* thisObject = jsCast<JSBuildArtifact*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    visitor.append(thisObject->m_hash);
+    visitor.append(thisObject->m_kind);
+    visitor.append(thisObject->m_loader);
+    visitor.append(thisObject->m_path);
+    visitor.append(thisObject->m_sourcemap);
+    visitor.append(thisObject->m_type);
+}
+
+DEFINE_VISIT_CHILDREN(JSBuildArtifact);
+
+template<typename Visitor>
+void JSBuildArtifact::visitAdditionalChildren(Visitor& visitor)
+{
+    JSBuildArtifact* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    visitor.append(thisObject->m_hash);
+    visitor.append(thisObject->m_kind);
+    visitor.append(thisObject->m_loader);
+    visitor.append(thisObject->m_path);
+    visitor.append(thisObject->m_sourcemap);
+    visitor.append(thisObject->m_type);
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSBuildArtifact);
+
+template<typename Visitor>
+void JSBuildArtifact::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSBuildArtifact* thisObject = jsCast<JSBuildArtifact*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSBuildArtifact);
 class JSCryptoHasherPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;

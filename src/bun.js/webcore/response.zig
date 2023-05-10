@@ -936,40 +936,19 @@ pub const Fetch = struct {
     };
 
     pub fn jsFunction(
-        globalThis: *JSC.JSGlobalObject,
+        ctx: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) js.JSObjectRef {
-        const arguments = callframe.arguments(2);
-
-        var args = @ptrCast([*]const JSC.C.JSValueRef, callframe.argumentsPtr())[0..arguments.len];
-
         var exception_val = [_]JSC.C.JSValueRef{null};
         var exception: JSC.C.ExceptionRef = &exception_val;
-
-        const result = Fetch.call(
-            undefined, // will be ignored
-            globalThis,
-            undefined, // will be ignored
-            undefined, // will be ignored
-            args,
-            exception,
-        );
-
-        if (exception.* != null) {
-            globalThis.throwValue(JSC.JSValue.c(exception.*));
+        defer {
+            if (exception.* != null) {
+                ctx.throwValue(JSC.JSValue.c(exception.*));
+            }
         }
-        return result;
-    }
 
-    pub fn call(
-        _: void,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) js.JSObjectRef {
-        var globalThis = ctx.ptr();
+        const globalThis = ctx.ptr();
+        const arguments = callframe.arguments(2);
 
         if (arguments.len == 0) {
             const err = JSC.toTypeError(.ERR_MISSING_ARGS, fetch_error_no_args, .{}, ctx);
@@ -980,8 +959,7 @@ pub const Fetch = struct {
         var method = Method.GET;
         var script_ctx = globalThis.bunVM();
 
-        var args = JSC.Node.ArgumentsSlice.from(script_ctx, arguments);
-        defer args.deinit();
+        var args = JSC.Node.ArgumentsSlice.init(script_ctx, arguments.ptr[0..arguments.len]);
 
         var url = ZigURL{};
         var first_arg = args.nextEat().?;
@@ -1000,8 +978,7 @@ pub const Fetch = struct {
         var url_proxy_buffer: []const u8 = undefined;
 
         if (first_arg.as(Request)) |request| {
-            if (arguments.len >= 2) {
-                const options = arguments[1].?.value();
+            if (args.nextEat()) |options| {
                 if (options.isObject() or options.jsType() == .DOMWrapper) {
                     if (options.fastGet(ctx.ptr(), .method)) |method_| {
                         var slice_ = method_.toSlice(ctx.ptr(), getAllocator(ctx));
@@ -1139,8 +1116,7 @@ pub const Fetch = struct {
                 }
             }
         } else if (first_arg.toStringOrNull(globalThis)) |jsstring| {
-            if (arguments.len >= 2) {
-                const options = arguments[1].?.value();
+            if (args.nextEat()) |options| {
                 if (options.isObject() or options.jsType() == .DOMWrapper) {
                     if (options.fastGet(ctx.ptr(), .method)) |method_| {
                         var slice_ = method_.toSlice(ctx.ptr(), getAllocator(ctx));
@@ -1325,7 +1301,7 @@ pub const Fetch = struct {
                 url_proxy_buffer = url.href;
             }
         } else {
-            const fetch_error = fetch_type_error_strings.get(js.JSValueGetType(ctx, arguments[0]));
+            const fetch_error = fetch_type_error_strings.get(js.JSValueGetType(ctx, first_arg.asRef()));
             const err = JSC.toTypeError(.ERR_INVALID_ARG_TYPE, "{s}", .{fetch_error}, ctx);
             exception.* = err.asObjectRef();
             return null;

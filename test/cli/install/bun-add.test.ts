@@ -1351,3 +1351,67 @@ it("should add dependency without duplication (GitHub)", async () => {
   );
   await access(join(package_dir, "bun.lockb"));
 });
+
+it("should add dependencies to workspaces directly", async () => {
+  const foo_package = JSON.stringify({
+    name: "foo",
+    version: "0.1.0",
+    workspaces: ["moo"],
+  });
+  await writeFile(join(add_dir, "package.json"), foo_package);
+  const bar_package = JSON.stringify({
+    name: "bar",
+    version: "0.2.0",
+    workspaces: ["moo"],
+  });
+  await writeFile(join(package_dir, "package.json"), bar_package);
+  await mkdir(join(package_dir, "moo"));
+  await writeFile(
+    join(package_dir, "moo", "package.json"),
+    JSON.stringify({
+      name: "moo",
+      version: "0.3.0",
+    }),
+  );
+  await writeFile(join(package_dir, "moo", "bunfig.toml"), await file(join(package_dir, "bunfig.toml")).text());
+  const add_path = relative(join(package_dir, "moo"), add_dir);
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", `file:${add_path}`],
+    cwd: join(package_dir, "moo"),
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    ` installed foo@${add_path}`,
+    "",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(await readdirSorted(join(package_dir))).toEqual(["bunfig.toml", "moo", "package.json"]);
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(bar_package);
+  expect(await readdirSorted(join(package_dir, "moo"))).toEqual([
+    "bun.lockb",
+    "bunfig.toml",
+    "node_modules",
+    "package.json",
+  ]);
+  expect(await file(join(package_dir, "moo", "package.json")).json()).toEqual({
+    name: "moo",
+    version: "0.3.0",
+    dependencies: {
+      foo: `file:${add_path}`,
+    },
+  });
+  expect(await readdirSorted(join(package_dir, "moo", "node_modules"))).toEqual([".cache", "foo"]);
+  expect(await readdirSorted(join(package_dir, "moo", "node_modules", "foo"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "moo", "node_modules", "foo", "package.json")).text()).toEqual(foo_package);
+});

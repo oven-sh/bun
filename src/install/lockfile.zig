@@ -2456,17 +2456,16 @@ pub const Package = extern struct {
         };
     }
 
-    fn processWorkspaceNamesArray(
-        workspace_names: *bun.StringArrayHashMap(string),
+    pub fn processWorkspaceNamesArray(
+        workspace_names: *bun.StringMap,
         allocator: Allocator,
         log: *logger.Log,
         arr: *JSAst.E.Array,
         source: *const logger.Source,
         loc: logger.Loc,
-        string_builder: *StringBuilder,
+        string_builder: ?*StringBuilder,
     ) !u32 {
-        workspace_names.* = bun.StringArrayHashMap(string).init(allocator);
-        workspace_names.ensureTotalCapacity(arr.items.len) catch unreachable;
+        if (arr.items.len == 0) return 0;
 
         var fallback = std.heap.stackFallback(1024, allocator);
         var workspace_allocator = fallback.get();
@@ -2516,6 +2515,8 @@ pub const Package = extern struct {
                     \\TODO fancy glob patterns. For now, try something like "packages/*"
                 ) catch {};
                 continue;
+            } else if (string_builder == null) {
+                input_path = Path.joinAbsStringBuf(source.path.name.dir, filepath_buf, &[_]string{input_path}, .auto);
             }
 
             const workspace_entry = processWorkspaceName(
@@ -2561,15 +2562,13 @@ pub const Package = extern struct {
 
             if (workspace_entry.name.len == 0) continue;
 
-            string_builder.count(workspace_entry.name);
-            string_builder.count(input_path);
-            string_builder.cap += bun.MAX_PATH_BYTES;
-
-            var result = try workspace_names.getOrPut(input_path);
-            if (!result.found_existing) {
-                result.key_ptr.* = try allocator.dupe(u8, input_path);
-                result.value_ptr.* = try allocator.dupe(u8, workspace_entry.name);
+            if (string_builder) |builder| {
+                builder.count(workspace_entry.name);
+                builder.count(input_path);
+                builder.cap += bun.MAX_PATH_BYTES;
             }
+
+            try workspace_names.insert(input_path, workspace_entry.name);
         }
 
         if (asterisked_workspace_paths.items.len > 0) {
@@ -2579,9 +2578,12 @@ pub const Package = extern struct {
             defer allocator.destroy(second_buf);
 
             for (asterisked_workspace_paths.items) |user_path| {
-                var dir_prefix = strings.withoutLeadingSlash(user_path);
-                dir_prefix = user_path[0 .. strings.indexOfChar(dir_prefix, '*') orelse continue];
+                var dir_prefix = if (string_builder) |_|
+                    strings.withoutLeadingSlash(user_path)
+                else
+                    Path.joinAbsStringBuf(source.path.name.dir, filepath_buf, &[_]string{user_path}, .auto);
 
+                dir_prefix = dir_prefix[0 .. strings.indexOfChar(dir_prefix, '*') orelse continue];
                 if (dir_prefix.len == 0 or
                     strings.eqlComptime(dir_prefix, ".") or
                     strings.eqlComptime(dir_prefix, "./"))
@@ -2687,25 +2689,20 @@ pub const Package = extern struct {
 
                     if (workspace_entry.name.len == 0) continue;
 
-                    string_builder.count(workspace_entry.name);
-                    second_buf_fixed.reset();
-                    const relative = std.fs.path.relative(
-                        second_buf_fixed.allocator(),
-                        Fs.FileSystem.instance.top_level_dir,
-                        bun.span(entry_path),
-                    ) catch unreachable;
+                    const workspace_path: string = if (string_builder) |builder| brk: {
+                        second_buf_fixed.reset();
+                        const relative = std.fs.path.relative(
+                            second_buf_fixed.allocator(),
+                            Fs.FileSystem.instance.top_level_dir,
+                            bun.span(entry_path),
+                        ) catch unreachable;
+                        builder.count(workspace_entry.name);
+                        builder.count(relative);
+                        builder.cap += bun.MAX_PATH_BYTES;
+                        break :brk relative;
+                    } else bun.span(entry_path);
 
-                    string_builder.count(relative);
-                    string_builder.cap += bun.MAX_PATH_BYTES;
-
-                    var result = try workspace_names.getOrPut(relative);
-                    if (!result.found_existing) {
-                        result.value_ptr.* = try allocator.dupe(
-                            u8,
-                            workspace_entry.name,
-                        );
-                        result.key_ptr.* = try allocator.dupe(u8, relative);
-                    }
+                    try workspace_names.insert(workspace_path, workspace_entry.name);
                 }
             }
         }
@@ -2869,14 +2866,8 @@ pub const Package = extern struct {
             break :brk out_groups;
         };
 
-        var workspace_names = bun.StringArrayHashMap(string).init(allocator);
-        defer {
-            for (workspace_names.values(), workspace_names.keys()) |name, path| {
-                allocator.free(name);
-                allocator.free(path);
-            }
-            workspace_names.deinit();
-        }
+        var workspace_names = bun.StringMap.init(allocator, true);
+        defer workspace_names.deinit();
 
         inline for (dependency_groups) |group| {
             if (json.asProperty(group.prop)) |dependencies_q| brk: {
@@ -2891,8 +2882,6 @@ pub const Package = extern struct {
                             , .{group.prop}) catch {};
                             return error.InvalidPackageJSON;
                         }
-                        if (arr.items.len == 0) break :brk;
-
                         total_dependencies_count += try processWorkspaceNamesArray(
                             &workspace_names,
                             allocator,
@@ -2916,8 +2905,6 @@ pub const Package = extern struct {
                             //
                             if (obj.get("packages")) |packages_query| {
                                 if (packages_query.data == .e_array) {
-                                    if (packages_query.data.e_array.items.len == 0) break :brk;
-
                                     total_dependencies_count += try processWorkspaceNamesArray(
                                         &workspace_names,
                                         allocator,

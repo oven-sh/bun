@@ -48,7 +48,7 @@ namespace WebCore {
 const JSC::ConstructAbility s_bundlerPluginRunOnResolvePluginsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_bundlerPluginRunOnResolvePluginsCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_bundlerPluginRunOnResolvePluginsCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_bundlerPluginRunOnResolvePluginsCodeLength = 3593;
+const int s_bundlerPluginRunOnResolvePluginsCodeLength = 3619;
 static const JSC::Intrinsic s_bundlerPluginRunOnResolvePluginsCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_bundlerPluginRunOnResolvePluginsCode =
     "(function (\n" \
@@ -86,7 +86,9 @@ const char* const s_bundlerPluginRunOnResolvePluginsCode =
     "          path: inputPath,\n" \
     "          importer,\n" \
     "          namespace: inputNamespace,\n" \
+    "          //\n" \
     "          kind,\n" \
+    "          //\n" \
     "        });\n" \
     "\n" \
     "        while (\n" \
@@ -353,7 +355,7 @@ const char* const s_bundlerPluginRunSetupFunctionCode =
 const JSC::ConstructAbility s_bundlerPluginRunOnLoadPluginsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_bundlerPluginRunOnLoadPluginsCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_bundlerPluginRunOnLoadPluginsCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_bundlerPluginRunOnLoadPluginsCodeLength = 2740;
+const int s_bundlerPluginRunOnLoadPluginsCodeLength = 2766;
 static const JSC::Intrinsic s_bundlerPluginRunOnLoadPluginsCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_bundlerPluginRunOnLoadPluginsCode =
     "(function (internalID, path, namespace, defaultLoaderId) {\n" \
@@ -402,6 +404,8 @@ const char* const s_bundlerPluginRunOnLoadPluginsCode =
     "        var result = callback({\n" \
     "          path,\n" \
     "          namespace,\n" \
+    "          //\n" \
+    "          //\n" \
     "          loader: defaultLoader,\n" \
     "        });\n" \
     "\n" \

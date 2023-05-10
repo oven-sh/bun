@@ -33,6 +33,7 @@ declare module "bun:test" {
    */
   export type Describe = {
     (label: string, fn: () => void): void;
+    skip: (label: string, fn: () => void) => void
   };
   /**
    * Describes a group of related tests.

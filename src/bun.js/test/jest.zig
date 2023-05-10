@@ -3306,6 +3306,7 @@ pub const DescribeScope = struct {
     current_test_id: TestRunner.Test.ID = 0,
     value: JSValue = .zero,
     done: bool = false,
+    skipped: bool = false,
     skipped_counter: u32 = 0,
 
     pub fn isAllSkipped(this: *const DescribeScope) bool {
@@ -3388,6 +3389,7 @@ pub const DescribeScope = struct {
             .afterEach = .{ .rfn = createCallback(.afterEach), .name = "afterEach" },
             .beforeAll = .{ .rfn = createCallback(.beforeAll), .name = "beforeAll" },
             .beforeEach = .{ .rfn = createCallback(.beforeEach), .name = "beforeEach" },
+            .skip = skip,
         },
         .{
             .expect = .{ .get = createExpect, .name = "expect" },
@@ -3484,6 +3486,17 @@ pub const DescribeScope = struct {
         return this.execCallback(ctx, hook);
     }
 
+    pub fn skip(
+        this: *DescribeScope,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSObjectRef {
+        return this.runDescribe(ctx, null, null, arguments, exception, true);
+    }
+
     pub fn describe(
         this: *DescribeScope,
         ctx: js.JSContextRef,
@@ -3491,6 +3504,18 @@ pub const DescribeScope = struct {
         _: js.JSObjectRef,
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
+    ) js.JSObjectRef {
+        return runDescribe(this, ctx, null, null, arguments, exception, false);
+    }
+
+    fn runDescribe(
+        this: *DescribeScope,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+        skipped: bool,
     ) js.JSObjectRef {
         if (arguments.len == 0 or arguments.len > 2) {
             JSError(getAllocator(ctx), "describe() requires 1-2 arguments", .{}, ctx, exception);
@@ -3518,6 +3543,7 @@ pub const DescribeScope = struct {
             .label = (label.toSlice(allocator).cloneIfNeeded(allocator) catch unreachable).slice(),
             .parent = active,
             .file_id = this.file_id,
+            .skipped = skipped,
         };
         var new_this = DescribeScope.Class.make(ctx, scope);
 
@@ -3753,7 +3779,7 @@ pub const TestRunnerTask = struct {
         var test_: TestScope = this.describe.tests.items[test_id];
         describe.current_test_id = test_id;
         var globalThis = this.globalThis;
-        if (test_.skipped) {
+        if (test_.skipped or describe.skipped) {
             this.processTestResult(globalThis, .{ .skip = {} }, test_, test_id, describe);
             this.deinit();
             return false;

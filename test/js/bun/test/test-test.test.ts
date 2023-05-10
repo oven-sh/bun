@@ -13,7 +13,7 @@ it("shouldn't crash when async test runner callback throws", async () => {
     await 1;
     throw "##123##";
   });
- 
+
   afterEach(async () => {
     await 1;
     console.error("#[Test passed successfully]");
@@ -2611,4 +2611,52 @@ it("should return non-zero exit code for invalid syntax", async () => {
   } finally {
     await rm(test_dir, { force: true, recursive: true });
   }
+});
+
+describe("skip test inner", () => {
+  it("should pass", () => {
+    expect(2 + 2).toBe(4);
+  });
+
+  describe.skip("should skip", () => {
+    it("should throw", () => {
+      throw new Error("This should not throw. `.skip` is broken");
+    });
+  });
+});
+
+describe.skip("skip test outer", () => {
+  it("should throw", () => {
+    throw new Error("This should not throw. `.skip` is broken");
+  });
+});
+
+describe("skip test inner 2", () => {
+  it("should pass", () => {
+    expect(2 + 2).toBe(4);
+  });
+
+  describe.skip("should skip", () => {
+    it("should throw", () => {
+      throw new Error("This should not throw. `.skip` is broken");
+    });
+  });
+});
+
+describe.skip(() => {
+  it("should throw", () => {
+    throw new Error("This should not throw. `.skip` is broken");
+  });
+})
+
+describe(() => {
+  it("should pass", () => {
+    expect(2 + 2).toBe(4);
+  });
+
+  describe.skip("should skip", () => {
+    it("should throw", () => {
+      throw new Error("This should not throw. `.skip` is broken");
+    });
+  });
 });

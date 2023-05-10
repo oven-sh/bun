@@ -999,12 +999,31 @@ declare module "bun" {
     path: string;
     loader: Loader;
     hash: string | null;
-    kind: "chunk" | "asset" | "entry-point";
+    kind: "entry-point" | "chunk";
     sourcemap: BuildArtifact | null;
   }
 
+  interface SourceMapBuildArtifact extends Blob {
+    path: string;
+    loader: Loader;
+    hash: null;
+    kind: "sourecemap";
+    sourcemap: null;
+  }
+
+  interface AssetBuildArtifact extends Blob {
+    path: string;
+    loader: Loader;
+    hash: string;
+    kind: "asset";
+    sourcemap: null;
+  }
+
   function build(config: BuildConfig): Promise<{
-    outputs: Map<string, BuildArtifact>;
+    outputs: Map<
+      string,
+      BuildArtifact | AssetBuildArtifact | SourceMapBuildArtifact
+    >;
     logs: Array<BuildError | ResolveError>;
   }>;
 

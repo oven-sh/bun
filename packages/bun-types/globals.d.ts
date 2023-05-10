@@ -652,7 +652,7 @@ declare class Blob implements BlobInterface {
   formData(): Promise<FormData>;
 
   type: string;
-  size: number;
+  readonly size: number;
 }
 
 interface ResponseInit {

@@ -6603,10 +6603,28 @@ fn NewParser_(
                 }
 
                 // Check for collisions that would prevent to hoisting "var" symbols up to the enclosing function scope
-                if (scope.parent != null) {
+                if (scope.parent) |parent_scope| {
                     nextMember: while (iter.next()) |res| {
                         const value = res.value_ptr.*;
                         var symbol: *Symbol = &symbols[value.ref.innerIndex()];
+
+                        const name = symbol.original_name;
+
+                        const hash: u64 = Scope.getMemberHash(name);
+
+                        if (parent_scope.kind == .catch_binding and symbol.kind != .hoisted) {
+                            if (parent_scope.getMemberWithHash(name, hash)) |existing_member| {
+                                p.log.addSymbolAlreadyDeclaredError(
+                                    p.allocator,
+                                    p.source,
+                                    symbol.original_name,
+                                    value.loc,
+                                    existing_member.loc,
+                                ) catch unreachable;
+                                continue :nextMember;
+                            }
+                        }
+
                         if (!symbol.isHoisted()) {
                             continue :nextMember;
                         }
@@ -6651,10 +6669,6 @@ fn NewParser_(
                             symbol = &symbols[hoisted_ref.innerIndex()];
                             is_sloppy_mode_block_level_fn_stmt = true;
                         }
-
-                        const name = symbol.original_name;
-
-                        const hash: u64 = Scope.getMemberHash(name);
 
                         while (__scope) |_scope| {
                             const scope_kind = _scope.kind;
@@ -9131,7 +9145,7 @@ fn NewParser_(
 
                     if (p.lexer.token == .t_catch) {
                         const catch_loc = p.lexer.loc();
-                        _ = try p.pushScopeForParsePass(.block, catch_loc);
+                        _ = try p.pushScopeForParsePass(.catch_binding, catch_loc);
                         try p.lexer.next();
                         var binding: ?js_ast.Binding = null;
 
@@ -11134,27 +11148,7 @@ fn NewParser_(
                 if (comptime !is_generated) {
                     switch (scope.canMergeSymbols(symbol.kind, kind, is_typescript_enabled)) {
                         .forbidden => {
-                            var notes = try p.allocator.alloc(logger.Data, 1);
-                            notes[0] =
-                                logger.rangeData(
-                                p.source,
-                                js_lexer.rangeOfIdentifier(p.source, existing.loc),
-                                std.fmt.allocPrint(
-                                    p.allocator,
-                                    "{s} was originally declared here",
-                                    .{symbol.original_name},
-                                ) catch unreachable,
-                            );
-
-                            p.log.addRangeErrorFmtWithNotes(
-                                p.source,
-                                js_lexer.rangeOfIdentifier(p.source, loc),
-                                p.allocator,
-                                notes,
-                                "\"{s}\" has already been declared",
-                                .{symbol.original_name},
-                            ) catch unreachable;
-
+                            try p.log.addSymbolAlreadyDeclaredError(p.allocator, p.source, symbol.original_name, loc, existing.loc);
                             return existing.ref;
                         },
                         .keep_existing => {
@@ -18227,7 +18221,7 @@ fn NewParser_(
                     p.popScope();
 
                     if (data.catch_) |*catch_| {
-                        p.pushScopeForVisitPass(.block, catch_.loc) catch unreachable;
+                        p.pushScopeForVisitPass(.catch_binding, catch_.loc) catch unreachable;
                         {
                             if (catch_.binding) |catch_binding| {
                                 p.visitBinding(catch_binding, null);

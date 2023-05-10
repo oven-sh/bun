@@ -479,8 +479,10 @@ pub const CellType = enum(u8) {
     JSWeakMapType = 69,
     JSWeakSetType = 70,
     WebAssemblyModuleType = 71,
-    StringObjectType = 72,
-    DerivedStringObjectType = 73,
+    WebAssemblyInstanceType = 72,
+    WebAssemblyGCObjectType = 73,
+    StringObjectType = 74,
+    DerivedStringObjectType = 75,
 
     MaxJSType = 255,
     _,

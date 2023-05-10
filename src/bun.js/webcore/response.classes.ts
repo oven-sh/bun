@@ -137,12 +137,21 @@ export default [
         getter: "getType",
       },
 
-      size: {
-        getter: "getSize",
+      // TODO: Move this to a separate `File` object or BunFile
+      // This is *not* spec-compliant.
+      name: {
+        getter: "getName",
+        cache: true,
       },
 
+      // TODO: Move this to a separate `File` object or BunFile
+      // This is *not* spec-compliant.
       lastModified: {
         getter: "getLastModified",
+      },
+
+      size: {
+        getter: "getSize",
       },
 
       writer: {

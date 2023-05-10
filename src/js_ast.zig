@@ -2445,7 +2445,7 @@ pub const E = struct {
 
             if (parts.items.len == 0) {
                 parts.deinit();
-
+                head.data.e_string.resovleRopeIfNeeded(allocator);
                 return head;
             }
 
@@ -6564,6 +6564,7 @@ pub const Scope = struct {
         function_args,
         function_body,
         class_static_init,
+        catch_binding,
 
         pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
             return try std.json.stringify(@tagName(self), opts, o);

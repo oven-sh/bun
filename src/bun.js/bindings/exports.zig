@@ -2125,6 +2125,9 @@ pub const ZigConsoleClient = struct {
                     } else if (value.as(JSC.WebCore.Request)) |request| {
                         request.writeFormat(ZigConsoleClient.Formatter, this, writer_, enable_ansi_colors) catch {};
                         return;
+                    } else if (value.as(JSC.API.BuildArtifact)) |build| {
+                        build.writeFormat(ZigConsoleClient.Formatter, this, writer_, enable_ansi_colors) catch {};
+                        return;
                     } else if (value.as(JSC.WebCore.Blob)) |blob| {
                         blob.writeFormat(ZigConsoleClient.Formatter, this, writer_, enable_ansi_colors) catch {};
                         return;

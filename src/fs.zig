@@ -882,7 +882,7 @@ pub const FileSystem = struct {
             generation: bun.Generation,
             store_fd: bool,
         ) !*EntriesOption {
-            return readDirectoryWithIterator(fs, _dir, _handle, generation, store_fd, void, {});
+            return fs.readDirectoryWithIterator(_dir, _handle, generation, store_fd, void, {});
         }
 
         // One of the learnings here

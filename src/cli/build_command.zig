@@ -203,7 +203,7 @@ pub const BuildCommand = struct {
                     var output_dir = this_bundler.options.output_dir;
                     if (ctx.bundler_options.outfile.len > 0 and output_files.len == 1 and output_files[0].value == .buffer) {
                         output_dir = std.fs.path.dirname(ctx.bundler_options.outfile) orelse ".";
-                        output_files[0].input.text = std.fs.path.basename(ctx.bundler_options.outfile);
+                        output_files[0].path = std.fs.path.basename(ctx.bundler_options.outfile);
                     }
 
                     if (ctx.bundler_options.outfile.len == 0 and output_files.len == 1 and ctx.bundler_options.outdir.len == 0) {
@@ -219,14 +219,14 @@ pub const BuildCommand = struct {
                     var all_paths = try ctx.allocator.alloc([]const u8, output_files.len);
                     var max_path_len: usize = 0;
                     for (all_paths, output_files) |*dest, src| {
-                        dest.* = src.input.text;
+                        dest.* = src.path;
                     }
 
                     var from_path = resolve_path.longestCommonPath(all_paths);
 
                     for (output_files) |f| {
                         max_path_len = std.math.max(
-                            std.math.max(from_path.len, f.input.text.len) + 2 - from_path.len,
+                            std.math.max(from_path.len, f.path.len) + 2 - from_path.len,
                             max_path_len,
                         );
                     }
@@ -245,17 +245,17 @@ pub const BuildCommand = struct {
                         switch (f.value) {
                             // Nothing to do in this case
                             .saved => {
-                                rel_path = f.input.text;
-                                if (f.input.text.len > from_path.len) {
-                                    rel_path = resolve_path.relative(from_path, f.input.text);
+                                rel_path = f.path;
+                                if (f.path.len > from_path.len) {
+                                    rel_path = resolve_path.relative(from_path, f.path);
                                 }
                             },
 
                             // easy mode: write the buffer
                             .buffer => |value| {
-                                rel_path = f.input.text;
-                                if (f.input.text.len > from_path.len) {
-                                    rel_path = resolve_path.relative(from_path, f.input.text);
+                                rel_path = f.path;
+                                if (f.path.len > from_path.len) {
+                                    rel_path = resolve_path.relative(from_path, f.path);
                                     if (std.fs.path.dirname(rel_path)) |parent| {
                                         if (parent.len > root_path.len) {
                                             try root_dir.dir.makePath(parent);
@@ -265,7 +265,7 @@ pub const BuildCommand = struct {
                                 try root_dir.dir.writeFile(rel_path, value.bytes);
                             },
                             .move => |value| {
-                                const primary = f.input.text[from_path.len..];
+                                const primary = f.path[from_path.len..];
                                 bun.copy(u8, filepath_buf[2..], primary);
                                 rel_path = filepath_buf[0 .. primary.len + 2];
                                 rel_path = value.pathname;

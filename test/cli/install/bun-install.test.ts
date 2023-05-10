@@ -3936,3 +3936,220 @@ it("should deduplicate devDependencies from folder", async () => {
   expect(await file(join(package_dir, "node_modules", "moo", "package.json")).text()).toEqual(moo_package);
   await access(join(package_dir, "bun.lockb"));
 });
+
+it("should install dependencies in root package of workspace", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.1.0",
+      workspaces: ["moo"],
+    }),
+  );
+  await mkdir(join(package_dir, "moo"));
+  const moo_package = JSON.stringify({
+    name: "moo",
+    version: "0.2.0",
+    dependencies: {
+      bar: "^0.0.2",
+    },
+  });
+  await writeFile(join(package_dir, "moo", "package.json"), moo_package);
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: join(package_dir, "moo"),
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + moo@workspace:moo",
+    "",
+    " 2 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar", "moo"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
+  expect(await readdirSorted(join(package_dir, "node_modules", "moo"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "moo", "package.json")).text()).toEqual(moo_package);
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should install dependencies in root package of workspace (*)", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.1.0",
+      workspaces: ["*"],
+    }),
+  );
+  await mkdir(join(package_dir, "moo"));
+  const moo_package = JSON.stringify({
+    name: "moo",
+    version: "0.2.0",
+    dependencies: {
+      bar: "^0.0.2",
+    },
+  });
+  await writeFile(join(package_dir, "moo", "package.json"), moo_package);
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: join(package_dir, "moo"),
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + moo@workspace:moo",
+    "",
+    " 2 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar", "moo"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
+  expect(await readdirSorted(join(package_dir, "node_modules", "moo"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "moo", "package.json")).text()).toEqual(moo_package);
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should ignore invalid workspaces from parent directory", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  const foo_package = JSON.stringify({
+    name: "foo",
+    version: "0.1.0",
+    workspaces: ["moz"],
+  });
+  await writeFile(join(package_dir, "package.json"), foo_package);
+  await mkdir(join(package_dir, "moo"));
+  await writeFile(join(package_dir, "moo", "bunfig.toml"), await file(join(package_dir, "bunfig.toml")).text());
+  const moo_package = JSON.stringify({
+    name: "moo",
+    version: "0.2.0",
+    dependencies: {
+      bar: "^0.0.2",
+    },
+  });
+  await writeFile(join(package_dir, "moo", "package.json"), moo_package);
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: join(package_dir, "moo"),
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + bar@0.0.2",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir))).toEqual(["bunfig.toml", "moo", "package.json"]);
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(foo_package);
+  expect(await readdirSorted(join(package_dir, "moo"))).toEqual([
+    "bun.lockb",
+    "bunfig.toml",
+    "node_modules",
+    "package.json",
+  ]);
+  expect(await file(join(package_dir, "moo", "package.json")).text()).toEqual(moo_package);
+  expect(await readdirSorted(join(package_dir, "moo", "node_modules"))).toEqual([".cache", "bar"]);
+  expect(await readdirSorted(join(package_dir, "moo", "node_modules", "bar"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "moo", "node_modules", "bar", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
+});
+
+it("should handle --cwd", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  const foo_package = JSON.stringify({
+    name: "foo",
+    version: "0.1.0",
+  });
+  await writeFile(join(package_dir, "package.json"), foo_package);
+  await mkdir(join(package_dir, "moo"));
+  await writeFile(join(package_dir, "moo", "bunfig.toml"), await file(join(package_dir, "bunfig.toml")).text());
+  const moo_package = JSON.stringify({
+    name: "moo",
+    version: "0.2.0",
+    dependencies: {
+      bar: "^0.0.2",
+    },
+  });
+  await writeFile(join(package_dir, "moo", "package.json"), moo_package);
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--cwd", "moo"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + bar@0.0.2",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir))).toEqual(["bunfig.toml", "moo", "package.json"]);
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(foo_package);
+  expect(await readdirSorted(join(package_dir, "moo"))).toEqual([
+    "bun.lockb",
+    "bunfig.toml",
+    "node_modules",
+    "package.json",
+  ]);
+  expect(await file(join(package_dir, "moo", "package.json")).text()).toEqual(moo_package);
+  expect(await readdirSorted(join(package_dir, "moo", "node_modules"))).toEqual([".cache", "bar"]);
+  expect(await readdirSorted(join(package_dir, "moo", "node_modules", "bar"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "moo", "node_modules", "bar", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
+});

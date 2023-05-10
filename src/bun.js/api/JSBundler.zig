@@ -983,3 +983,232 @@ pub const JSBundler = struct {
         }
     };
 };
+
+const Blob = JSC.WebCore.Blob;
+pub const BuildArtifact = struct {
+    pub usingnamespace JSC.Codegen.JSBuildArtifact;
+
+    blob: JSC.WebCore.Blob,
+    loader: options.Loader = .file,
+    path: []const u8 = "",
+    hash: u64 = std.math.maxInt(u64),
+    output_kind: OutputKind,
+    sourcemap: JSC.Strong = .{},
+
+    pub const OutputKind = enum {
+        chunk,
+        asset,
+        @"entry-point",
+        @"component-manifest",
+        sourcemap,
+    };
+
+    pub fn deinit(this: *BuildArtifact) void {
+        this.blob.deinit();
+        this.sourcemap.deinit();
+
+        bun.default_allocator.free(this.path);
+    }
+
+    pub fn getText(
+        this: *BuildArtifact,
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        return @call(.always_inline, Blob.getText, .{ &this.blob, globalThis, callframe });
+    }
+
+    pub fn getJSON(
+        this: *BuildArtifact,
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        return @call(.always_inline, Blob.getJSON, .{ &this.blob, globalThis, callframe });
+    }
+    pub fn getArrayBuffer(
+        this: *BuildArtifact,
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        return @call(.always_inline, Blob.getArrayBuffer, .{ &this.blob, globalThis, callframe });
+    }
+    pub fn getSlice(
+        this: *BuildArtifact,
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        return @call(.always_inline, Blob.getSlice, .{ &this.blob, globalThis, callframe });
+    }
+    pub fn getType(
+        this: *BuildArtifact,
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return @call(.always_inline, Blob.getType, .{ &this.blob, globalThis });
+    }
+
+    pub fn getStream(
+        this: *BuildArtifact,
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        return @call(.always_inline, Blob.getStream, .{
+            &this.blob,
+            globalThis,
+            callframe,
+        });
+    }
+
+    pub fn getPath(
+        this: *BuildArtifact,
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return ZigString.fromUTF8(this.path).toValueGC(globalThis);
+    }
+
+    pub fn getLoader(
+        this: *BuildArtifact,
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return ZigString.fromUTF8(@tagName(this.loader)).toValueGC(globalThis);
+    }
+
+    pub fn getHash(
+        this: *BuildArtifact,
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSValue {
+        var buf: [512]u8 = undefined;
+        const out = std.fmt.bufPrint(&buf, "{any}", .{options.PathTemplate.hashFormatter(this.hash)}) catch @panic("Unexpected");
+        return ZigString.init(out).toValueGC(globalThis);
+    }
+
+    pub fn getSize(this: *BuildArtifact, globalObject: *JSC.JSGlobalObject) callconv(.C) JSValue {
+        return @call(.always_inline, Blob.getSize, .{ &this.blob, globalObject });
+    }
+
+    pub fn getMimeType(this: *BuildArtifact, globalObject: *JSC.JSGlobalObject) callconv(.C) JSValue {
+        return @call(.always_inline, Blob.getType, .{ &this.blob, globalObject });
+    }
+
+    pub fn getOutputKind(this: *BuildArtifact, globalObject: *JSC.JSGlobalObject) callconv(.C) JSValue {
+        return ZigString.init(@tagName(this.output_kind)).toValueGC(globalObject);
+    }
+
+    pub fn getSourceMap(this: *BuildArtifact, _: *JSC.JSGlobalObject) callconv(.C) JSValue {
+        if (this.sourcemap.get()) |value| {
+            return value;
+        }
+
+        return JSC.JSValue.jsNull();
+    }
+
+    pub fn finalize(this: *BuildArtifact) callconv(.C) void {
+        this.deinit();
+
+        bun.default_allocator.destroy(this);
+    }
+
+    pub fn writeFormat(this: *BuildArtifact, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+        const Writer = @TypeOf(writer);
+
+        try writer.writeAll(comptime Output.prettyFmt("<r>BuildArtifact ", enable_ansi_colors));
+
+        try writer.print(comptime Output.prettyFmt("(<blue>{s}<r>) {{\n", enable_ansi_colors), .{@tagName(this.output_kind)});
+
+        {
+            formatter.indent += 1;
+
+            defer formatter.indent -= 1;
+            try formatter.writeIndent(Writer, writer);
+            try writer.print(
+                comptime Output.prettyFmt(
+                    "<r>path<r>: <green>\"{s}\"<r>",
+                    enable_ansi_colors,
+                ),
+                .{this.path},
+            );
+            formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+            try writer.writeAll("\n");
+
+            try formatter.writeIndent(Writer, writer);
+            try writer.print(
+                comptime Output.prettyFmt(
+                    "<r>loader<r>: <green>\"{s}\"<r>",
+                    enable_ansi_colors,
+                ),
+                .{@tagName(this.loader)},
+            );
+
+            formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+            try writer.writeAll("\n");
+
+            try formatter.writeIndent(Writer, writer);
+
+            try writer.print(
+                comptime Output.prettyFmt(
+                    "<r>kind<r>: <green>\"{s}\"<r>",
+                    enable_ansi_colors,
+                ),
+                .{@tagName(this.output_kind)},
+            );
+
+            if (this.hash != 0) {
+                formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+                try writer.writeAll("\n");
+
+                try formatter.writeIndent(Writer, writer);
+                try writer.print(
+                    comptime Output.prettyFmt(
+                        "<r>hash<r>: <green>\"{any}\"<r>",
+                        enable_ansi_colors,
+                    ),
+                    .{options.PathTemplate.hashFormatter(this.hash)},
+                );
+            }
+
+            formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+            try writer.writeAll("\n");
+
+            try formatter.writeIndent(Writer, writer);
+            formatter.resetLine();
+            try this.blob.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
+
+            if (this.output_kind != .sourcemap) {
+                formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+                try writer.writeAll("\n");
+                try formatter.writeIndent(Writer, writer);
+                try writer.writeAll(
+                    comptime Output.prettyFmt(
+                        "<r>sourcemap<r>: ",
+                        enable_ansi_colors,
+                    ),
+                );
+
+                if (this.sourcemap.get()) |sourcemap_value| {
+                    if (sourcemap_value.as(BuildArtifact)) |sourcemap| {
+                        try sourcemap.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
+                    } else {
+                        try writer.writeAll(
+                            comptime Output.prettyFmt(
+                                "<yellow>null<r>",
+                                enable_ansi_colors,
+                            ),
+                        );
+                    }
+                } else {
+                    try writer.writeAll(
+                        comptime Output.prettyFmt(
+                            "<yellow>null<r>",
+                            enable_ansi_colors,
+                        ),
+                    );
+                }
+            }
+        }
+        try writer.writeAll("\n");
+        try formatter.writeIndent(Writer, writer);
+        try writer.writeAll("}");
+        formatter.resetLine();
+    }
+};
+
+const Output = bun.Output;

@@ -4934,14 +4934,13 @@ pub const PackageManager = struct {
         return initMaybeInstall(ctx, package_json_file_, params, false);
     }
 
-    pub fn initMaybeInstall(
+    fn initMaybeInstall(
         ctx: Command.Context,
         package_json_file_: ?std.fs.File,
         comptime params: []const ParamType,
         comptime is_install: bool,
     ) !*PackageManager {
-        var _ctx = ctx;
-        var cli = try CommandLineArguments.parse(ctx.allocator, params, &_ctx);
+        const cli = try CommandLineArguments.parse(ctx.allocator, params);
 
         if (comptime is_install) {
             if (cli.positionals.len > 1) {
@@ -4949,13 +4948,15 @@ pub const PackageManager = struct {
             }
         }
 
-        return try initWithCLI(_ctx, package_json_file_, cli);
+        var _ctx = ctx;
+        return initWithCLI(&_ctx, package_json_file_, cli, is_install);
     }
 
-    pub fn initWithCLI(
-        ctx: Command.Context,
+    fn initWithCLI(
+        ctx: *Command.Context,
         package_json_file_: ?std.fs.File,
         cli: CommandLineArguments,
+        comptime is_install: bool,
     ) !*PackageManager {
         // assume that spawning a thread will take a lil so we do that asap
         try HTTP.HTTPThread.init();
@@ -4970,7 +4971,7 @@ pub const PackageManager = struct {
         }
 
         var fs = try Fs.FileSystem.init(null);
-        var original_cwd = std.mem.trimRight(u8, fs.top_level_dir, "/");
+        var original_cwd = strings.withoutTrailingSlash(fs.top_level_dir);
 
         bun.copy(u8, &cwd_buf, original_cwd);
 
@@ -4978,46 +4979,95 @@ pub const PackageManager = struct {
         //
         // We will walk up from the cwd, calling chdir on each directory until we find a package.json
         // If we fail to find one, we will report an error saying no packages to install
-        var package_json_file: std.fs.File = undefined;
-
-        if (package_json_file_) |file| {
-            package_json_file = file;
-        } else {
-
-            // can't use orelse due to a stage1 bug
-            package_json_file = std.fs.cwd().openFileZ("package.json", .{ .mode = .read_write }) catch brk: {
-                var this_cwd = original_cwd;
-                outer: while (std.fs.path.dirname(this_cwd)) |parent| {
-                    cwd_buf[parent.len] = 0;
-                    var chdir = cwd_buf[0..parent.len :0];
-
-                    std.os.chdirZ(chdir) catch |err| {
-                        Output.prettyErrorln("Error {s} while chdir - {s}", .{ @errorName(err), bun.span(chdir) });
+        const package_json_file = package_json_file_ orelse brk: {
+            var this_cwd = original_cwd;
+            const child_json = child: {
+                while (true) {
+                    var dir = std.fs.openDirAbsolute(this_cwd, .{}) catch |err| {
+                        Output.prettyErrorln("Error {s} accessing {s}", .{ @errorName(err), this_cwd });
                         Output.flush();
                         return err;
                     };
-
-                    break :brk std.fs.cwd().openFileZ("package.json", .{ .mode = .read_write }) catch {
-                        this_cwd = parent;
-                        continue :outer;
+                    defer dir.close();
+                    break :child dir.openFileZ("package.json", .{ .mode = .read_write }) catch {
+                        if (std.fs.path.dirname(this_cwd)) |parent| {
+                            this_cwd = parent;
+                            continue;
+                        } else {
+                            break;
+                        }
                     };
                 }
-
-                bun.copy(u8, &cwd_buf, original_cwd);
-                cwd_buf[original_cwd.len] = 0;
-                var real_cwd: [:0]u8 = cwd_buf[0..original_cwd.len :0];
-                std.os.chdirZ(real_cwd) catch {};
-
                 return error.MissingPackageJSON;
             };
-        }
 
-        fs.top_level_dir = try std.os.getcwd(&cwd_buf);
+            const child_cwd = this_cwd;
+            // Check if this is a workspace; if so, use root package
+            var found = false;
+            while (std.fs.path.dirname(this_cwd)) |parent| : (this_cwd = parent) {
+                var dir = std.fs.openDirAbsolute(parent, .{}) catch break;
+                defer dir.close();
+                const json_file = dir.openFileZ("package.json", .{ .mode = .read_write }) catch {
+                    continue;
+                };
+                defer if (!found) json_file.close();
+                const json_stat = try json_file.stat();
+                const json_buf = try ctx.allocator.alloc(u8, json_stat.size + 64);
+                defer ctx.allocator.free(json_buf);
+                const json_len = try json_file.preadAll(json_buf, 0);
+                const json_path = try bun.getFdPath(json_file.handle, &package_json_cwd_buf);
+                const json_source = logger.Source.initPathString(json_path, json_buf[0..json_len]);
+                initializeStore();
+                const json = try json_parser.ParseJSONUTF8(&json_source, ctx.log, ctx.allocator);
+                if (json.asProperty("workspaces")) |prop| {
+                    var workspace_names = bun.StringMap.init(ctx.allocator, true);
+                    defer workspace_names.deinit();
+                    const json_array = switch (prop.expr.data) {
+                        .e_array => |arr| arr,
+                        .e_object => |obj| if (obj.get("packages")) |packages| switch (packages.data) {
+                            .e_array => |arr| arr,
+                            else => break,
+                        } else break,
+                        else => break,
+                    };
+                    var log = logger.Log.init(ctx.allocator);
+                    defer log.deinit();
+                    _ = Package.processWorkspaceNamesArray(
+                        &workspace_names,
+                        ctx.allocator,
+                        &log,
+                        json_array,
+                        &json_source,
+                        prop.loc,
+                        null,
+                    ) catch break;
+                    for (workspace_names.keys()) |path| {
+                        if (strings.eql(child_cwd, path)) {
+                            fs.top_level_dir = parent;
+                            if (comptime is_install) {
+                                found = true;
+                                child_json.close();
+                                break :brk json_file;
+                            } else {
+                                break :brk child_json;
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+
+            fs.top_level_dir = child_cwd;
+            break :brk child_json;
+        };
+
+        try std.os.chdir(fs.top_level_dir);
+        try BunArguments.loadConfig(ctx.allocator, cli.config, ctx, .InstallCommand);
+        bun.copy(u8, &cwd_buf, fs.top_level_dir);
         cwd_buf[fs.top_level_dir.len] = '/';
         cwd_buf[fs.top_level_dir.len + 1] = 0;
         fs.top_level_dir = cwd_buf[0 .. fs.top_level_dir.len + 1];
-        bun.copy(u8, &package_json_cwd_buf, fs.top_level_dir);
-        bun.copy(u8, package_json_cwd_buf[fs.top_level_dir.len..], "package.json");
+        package_json_cwd = try bun.getFdPath(package_json_file.handle, &package_json_cwd_buf);
 
         var entries_option = try fs.fs.readDirectory(fs.top_level_dir, null, 0, true);
         var options = Options{
@@ -5285,7 +5335,7 @@ pub const PackageManager = struct {
                 );
 
                 const package_json_source = logger.Source.initPathString(
-                    package_json_cwd_buf[0 .. FileSystem.instance.top_level_dir.len + "package.json".len],
+                    package_json_cwd,
                     current_package_json_buf[0..current_package_json_contents_len],
                 );
                 try lockfile.initEmpty(ctx.allocator);
@@ -5449,7 +5499,7 @@ pub const PackageManager = struct {
                 );
 
                 const package_json_source = logger.Source.initPathString(
-                    package_json_cwd_buf[0 .. FileSystem.instance.top_level_dir.len + "package.json".len],
+                    package_json_cwd,
                     current_package_json_buf[0..current_package_json_contents_len],
                 );
                 try lockfile.initEmpty(ctx.allocator);
@@ -5640,11 +5690,7 @@ pub const PackageManager = struct {
             }
         };
 
-        pub fn parse(
-            allocator: std.mem.Allocator,
-            comptime params: []const ParamType,
-            ctx: *Command.Context,
-        ) !CommandLineArguments {
+        pub fn parse(allocator: std.mem.Allocator, comptime params: []const ParamType) !CommandLineArguments {
             var diag = clap.Diagnostic{};
 
             var args = clap.parse(clap.Help, params, .{
@@ -5692,8 +5738,6 @@ pub const PackageManager = struct {
             if (args.option("--config")) |opt| {
                 cli.config = opt;
             }
-
-            try BunArguments.loadConfig(allocator, cli.config, ctx, .InstallCommand);
 
             cli.link_native_bins = args.options("--link-native-bins");
 
@@ -6057,7 +6101,7 @@ pub const PackageManager = struct {
         );
 
         const package_json_source = logger.Source.initPathString(
-            package_json_cwd_buf[0 .. FileSystem.instance.top_level_dir.len + "package.json".len],
+            package_json_cwd,
             current_package_json_buf[0..current_package_json_contents_len],
         );
 
@@ -6295,11 +6339,10 @@ pub const PackageManager = struct {
 
     var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     var package_json_cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var package_json_cwd: string = "";
 
-    pub inline fn install(
-        ctx: Command.Context,
-    ) !void {
-        var manager = PackageManager.initMaybeInstall(ctx, null, &install_params, true) catch |err| {
+    pub inline fn install(ctx: Command.Context) !void {
+        var manager = initMaybeInstall(ctx, null, &install_params, true) catch |err| {
             if (err == error.SwitchToBunAdd) {
                 return add(ctx);
             }
@@ -7165,10 +7208,7 @@ pub const PackageManager = struct {
 
         // Step 2. Parse the package.json file
         //
-        var package_json_source = logger.Source.initPathString(
-            package_json_cwd_buf[0 .. FileSystem.instance.top_level_dir.len + "package.json".len],
-            package_json_contents,
-        );
+        var package_json_source = logger.Source.initPathString(package_json_cwd, package_json_contents);
 
         switch (load_lockfile_result) {
             .err => |cause| {
@@ -7399,7 +7439,7 @@ pub const PackageManager = struct {
             try manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
         }
 
-        if (manager.log.errors > 0) Global.crash();
+        if (manager.log.hasErrors()) Global.crash();
 
         const needs_clean_lockfile = had_any_diffs or needs_new_lockfile or manager.package_json_updates.len > 0;
         var did_meta_hash_change = needs_clean_lockfile;
@@ -7434,51 +7474,48 @@ pub const PackageManager = struct {
         // 2. There is a determinism issue in the file where alignment bytes might be garbage data
         //    This is a bug that needs to be fixed, however we can work around it for now
         //    by avoiding saving the lockfile
-        if (manager.options.do.save_lockfile and (did_meta_hash_change or
-            manager.lockfile.isEmpty() or
-            manager.options.enable.force_save_lockfile))
-        {
-            save: {
-                if (manager.lockfile.isEmpty()) {
-                    if (!manager.options.dry_run) {
-                        std.fs.cwd().deleteFileZ(manager.options.save_lockfile_path) catch |err| brk: {
-                            // we don't care
-                            if (err == error.FileNotFound) {
-                                if (had_any_diffs) break :save;
-                                break :brk;
-                            }
+        if (manager.options.do.save_lockfile and
+            (did_meta_hash_change or manager.lockfile.isEmpty() or manager.options.enable.force_save_lockfile))
+        save: {
+            if (manager.lockfile.isEmpty()) {
+                if (!manager.options.dry_run) {
+                    std.fs.cwd().deleteFileZ(manager.options.save_lockfile_path) catch |err| brk: {
+                        // we don't care
+                        if (err == error.FileNotFound) {
+                            if (had_any_diffs) break :save;
+                            break :brk;
+                        }
 
-                            if (log_level != .silent) Output.prettyErrorln("\n <red>error: {s} deleting empty lockfile", .{@errorName(err)});
-                            break :save;
-                        };
-                    }
-                    if (!manager.options.global) {
-                        if (log_level != .silent) Output.prettyErrorln("No packages! Deleted empty lockfile", .{});
-                    }
-
-                    break :save;
+                        if (log_level != .silent) Output.prettyErrorln("\n <red>error: {s} deleting empty lockfile", .{@errorName(err)});
+                        break :save;
+                    };
+                }
+                if (!manager.options.global) {
+                    if (log_level != .silent) Output.prettyErrorln("No packages! Deleted empty lockfile", .{});
                 }
 
-                var node: *Progress.Node = undefined;
+                break :save;
+            }
 
-                if (comptime log_level.showProgress()) {
-                    node = manager.progress.start(ProgressStrings.save(), 0);
-                    manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
-                    node.activate();
+            var node: *Progress.Node = undefined;
 
-                    manager.progress.refresh();
-                }
+            if (comptime log_level.showProgress()) {
+                node = manager.progress.start(ProgressStrings.save(), 0);
+                manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
+                node.activate();
 
-                manager.lockfile.saveToDisk(manager.options.save_lockfile_path);
-                if (comptime log_level.showProgress()) {
-                    node.end();
-                    manager.progress.refresh();
-                    manager.progress.root.end();
-                    manager.progress = .{};
-                } else if (comptime log_level != .silent) {
-                    Output.prettyErrorln(" Saved lockfile", .{});
-                    Output.flush();
-                }
+                manager.progress.refresh();
+            }
+
+            manager.lockfile.saveToDisk(manager.options.save_lockfile_path);
+            if (comptime log_level.showProgress()) {
+                node.end();
+                manager.progress.refresh();
+                manager.progress.root.end();
+                manager.progress = .{};
+            } else if (comptime log_level != .silent) {
+                Output.prettyErrorln(" Saved lockfile", .{});
+                Output.flush();
             }
         }
 

@@ -90,6 +90,7 @@
 #include "DOMFormData.h"
 #include "JSDOMFormData.h"
 #include "ZigGeneratedClasses.h"
+#include "JavaScriptCore/JSMapInlines.h"
 
 template<typename UWSResponse>
 static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
@@ -4120,4 +4121,32 @@ CPP_DECL JSC__JSValue WebCore__DOMFormData__create(JSC__JSGlobalObject* arg0)
 CPP_DECL WebCore__DOMFormData* WebCore__DOMFormData__fromJS(JSC__JSValue JSValue1)
 {
     return WebCoreCast<WebCore::JSDOMFormData, WebCore__DOMFormData>(JSValue1);
+}
+
+#pragma mark - JSC::JSMap
+
+CPP_DECL JSC__JSValue JSC__JSMap__create(JSC__JSGlobalObject* arg0)
+{
+    JSC::JSMap* map = JSC::JSMap::create(arg0->vm(), arg0->mapStructure());
+    return JSC::JSValue::encode(map);
+}
+CPP_DECL JSC__JSValue JSC__JSMap__get_(JSC__JSMap* map, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue2);
+
+    return JSC::JSValue::encode(map->get(arg1, value));
+}
+CPP_DECL bool JSC__JSMap__has(JSC__JSMap* map, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue2);
+    return map->has(arg1, value);
+}
+CPP_DECL bool JSC__JSMap__remove(JSC__JSMap* map, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue2);
+    return map->remove(arg1, value);
+}
+CPP_DECL void JSC__JSMap__set(JSC__JSMap* map, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2, JSC__JSValue JSValue3)
+{
+    map->set(arg1, JSC::JSValue::decode(JSValue2), JSC::JSValue::decode(JSValue3));
 }

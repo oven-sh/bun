@@ -2760,6 +2760,60 @@ pub const JSArrayIterator = struct {
     }
 };
 
+pub const JSMap = opaque {
+    pub const shim = Shimmer("JSC", "JSMap", @This());
+    pub const Type = JSMap;
+    const cppFn = shim.cppFn;
+
+    pub const include = "JavaScriptCore/JSMap.h";
+    pub const name = "JSC::JSMap";
+    pub const namespace = "JSC";
+
+    pub fn create(globalObject: *JSGlobalObject) JSValue {
+        return cppFn("create", .{globalObject});
+    }
+
+    pub fn set(this: *JSMap, globalObject: *JSGlobalObject, key: JSValue, value: JSValue) void {
+        return cppFn("set", .{ this, globalObject, key, value });
+    }
+
+    pub fn get_(this: *JSMap, globalObject: *JSGlobalObject, key: JSValue) JSValue {
+        return cppFn("get", .{ this, globalObject, key });
+    }
+
+    pub fn get(this: *JSMap, globalObject: *JSGlobalObject, key: JSValue) ?JSValue {
+        const value = get_(this, globalObject, key);
+        if (value.isEmpty()) {
+            return null;
+        }
+        return value;
+    }
+
+    pub fn has(this: *JSMap, globalObject: *JSGlobalObject, key: JSValue) bool {
+        return cppFn("has", .{ this, globalObject, key });
+    }
+
+    pub fn remove(this: *JSMap, globalObject: *JSGlobalObject, key: JSValue) bool {
+        return cppFn("remove", .{ this, globalObject, key });
+    }
+
+    pub fn fromJS(value: JSValue) ?*JSMap {
+        if (value.jsTypeLoose() == .JSMap) {
+            return bun.cast(*JSMap, value.asEncoded().asPtr.?);
+        }
+
+        return null;
+    }
+
+    pub const Extern = [_][]const u8{
+        "create",
+        "set",
+        "get_",
+        "has",
+        "remove",
+    };
+};
+
 pub const JSValueReprInt = i64;
 pub const JSValue = enum(JSValueReprInt) {
     zero = 0,

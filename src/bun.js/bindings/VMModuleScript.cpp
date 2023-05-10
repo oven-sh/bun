@@ -159,6 +159,11 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject* globalObject, 
     }
     JSObject* context = asObject(contextArg);
 
+    PropertyDescriptor descriptor;
+    descriptor.setWritable(false);
+    descriptor.setEnumerable(false);
+    descriptor.setValue(context);
+    JSObject::defineOwnProperty(context, globalObject, Identifier::fromString(vm, "globalThis"_s), descriptor, true);
     JSScope* contextScope = JSWithScope::create(vm, globalObject, globalObject->globalScope(), context);
 
     auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);

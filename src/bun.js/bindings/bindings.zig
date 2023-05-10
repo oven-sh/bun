@@ -2883,6 +2883,8 @@ pub const JSValue = enum(JSValueReprInt) {
         JSWeakMap,
         JSWeakSet,
         WebAssemblyModule,
+        WebAssemblyInstance,
+        WebAssemblyGCObject,
         // Start StringObject s.
         StringObject,
         DerivedStringObject,
@@ -2940,6 +2942,8 @@ pub const JSValue = enum(JSValueReprInt) {
                 .Uint8Array,
                 .Uint8ClampedArray,
                 .WebAssemblyModule,
+                .WebAssemblyInstance,
+                .WebAssemblyGCObject,
                 => true,
                 else => false,
             };

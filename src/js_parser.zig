@@ -6609,11 +6609,11 @@ fn NewParser_(
                         var symbol: *Symbol = &symbols[value.ref.innerIndex()];
 
                         const name = symbol.original_name;
-
-                        const hash: u64 = Scope.getMemberHash(name);
+                        var hash: ?u64 = null;
 
                         if (parent_scope.kind == .catch_binding and symbol.kind != .hoisted) {
-                            if (parent_scope.getMemberWithHash(name, hash)) |existing_member| {
+                            hash = Scope.getMemberHash(name);
+                            if (parent_scope.getMemberWithHash(name, hash.?)) |existing_member| {
                                 p.log.addSymbolAlreadyDeclaredError(
                                     p.allocator,
                                     p.source,
@@ -6670,6 +6670,8 @@ fn NewParser_(
                             is_sloppy_mode_block_level_fn_stmt = true;
                         }
 
+                        if (hash == null) hash = Scope.getMemberHash(name);
+
                         while (__scope) |_scope| {
                             const scope_kind = _scope.kind;
 
@@ -6687,7 +6689,7 @@ fn NewParser_(
                                 symbol.must_not_be_renamed = true;
                             }
 
-                            if (_scope.getMemberWithHash(name, hash)) |member_in_scope| {
+                            if (_scope.getMemberWithHash(name, hash.?)) |member_in_scope| {
                                 var existing_symbol: *Symbol = &symbols[member_in_scope.ref.innerIndex()];
                                 const existing_kind = existing_symbol.kind;
 
@@ -6704,7 +6706,7 @@ fn NewParser_(
                                 {
                                     // Silently merge this symbol into the existing symbol
                                     symbol.link = member_in_scope.ref;
-                                    var entry = _scope.getOrPutMemberWithHash(p.allocator, name, hash) catch unreachable;
+                                    var entry = _scope.getOrPutMemberWithHash(p.allocator, name, hash.?) catch unreachable;
                                     entry.value_ptr.* = value;
                                     entry.key_ptr.* = name;
                                     continue :nextMember;
@@ -6745,7 +6747,7 @@ fn NewParser_(
                             }
 
                             if (_scope.kindStopsHoisting()) {
-                                var entry = _scope.getOrPutMemberWithHash(allocator, name, hash) catch unreachable;
+                                var entry = _scope.getOrPutMemberWithHash(allocator, name, hash.?) catch unreachable;
                                 entry.value_ptr.* = value;
                                 entry.key_ptr.* = name;
                                 break;

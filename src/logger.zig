@@ -1131,6 +1131,24 @@ pub const Log = struct {
         try self.addMsg(.{ .kind = .err, .data = rangeData(_source, Range{ .loc = loc }, text) });
     }
 
+    pub fn addSymbolAlreadyDeclaredError(self: *Log, allocator: std.mem.Allocator, source: *const Source, name: string, new_loc: Loc, old_loc: Loc) !void {
+        var notes = try allocator.alloc(Data, 1);
+        notes[0] = rangeData(
+            source,
+            source.rangeOfIdentifier(old_loc),
+            try std.fmt.allocPrint(allocator, "\"{s}\" was originally declared here", .{name}),
+        );
+
+        try self.addRangeErrorFmtWithNotes(
+            source,
+            source.rangeOfIdentifier(new_loc),
+            allocator,
+            notes,
+            "\"{s}\" has already been declared",
+            .{name},
+        );
+    }
+
     pub fn printForLogLevel(self: *Log, to: anytype) !void {
         if (Output.enable_ansi_colors) {
             return self.printForLogLevelWithEnableAnsiColors(to, true);

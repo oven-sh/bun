@@ -3310,7 +3310,7 @@ pub const DescribeScope = struct {
     skipped_counter: u32 = 0,
 
     pub fn isAllSkipped(this: *const DescribeScope) bool {
-        return @as(usize, this.skipped_counter) >= this.tests.items.len;
+        return this.skipped or @as(usize, this.skipped_counter) >= this.tests.items.len;
     }
 
     pub fn push(new: *DescribeScope) void {
@@ -3543,7 +3543,7 @@ pub const DescribeScope = struct {
             .label = (label.toSlice(allocator).cloneIfNeeded(allocator) catch unreachable).slice(),
             .parent = active,
             .file_id = this.file_id,
-            .skipped = skipped,
+            .skipped = skipped or active.skipped,
         };
         var new_this = DescribeScope.Class.make(ctx, scope);
 
@@ -3635,7 +3635,7 @@ pub const DescribeScope = struct {
         this.pending_tests.unset(test_id);
 
         if (!skipped) {
-            const afterEach = this.execCallback(globalThis, .afterEach);
+            const afterEach = this.runCallback(globalThis, .afterEach);
             if (!afterEach.isEmpty()) {
                 globalThis.bunVM().runErrorHandler(afterEach, null);
             }

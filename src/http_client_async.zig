@@ -1628,7 +1628,7 @@ pub fn doRedirect(this: *HTTPClient) void {
     std.debug.assert(this.redirect_type == FetchRedirect.Follow);
 
     if (this.remaining_redirect_count == 0) {
-        this.fail(error.TooManyredirect_type);
+        this.fail(error.TooManyredirect);
         return;
     }
     this.state.reset();

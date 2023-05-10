@@ -28,7 +28,7 @@ if [ -n "$2" ]; then
 fi
 
 export FORCE_COLOR=1
-$BUN test bundler_{browser,cjs2esm,edgecase,jsx,minify,plugin,string} esbuild/ 2>&1 \
+$BUN test bundler_ esbuild/ 2>&1 \
   | perl -ne 'print unless /^\e\[0m$/' \
   | grep -v -P '\x1b\[0m\x1b\[33m-\x1b\[2m \x1b\[0m\x1b\[2mbundler' --text \
   | grep -v ".test.ts:$" --text \

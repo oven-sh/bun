@@ -98,7 +98,7 @@ pub const GlobalClasses = [_]type{
     BuildError.Class,
     ResolveError.Class,
 
-    Fetch.Class,
+    // Fetch.Class,
     js_ast.Macro.JSNode.BunJSXCallbackFunction,
 
     WebCore.Crypto.Prototype,

@@ -2969,6 +2969,13 @@ extern "C" void Bun__setOnEachMicrotaskTick(JSC::VM* vm, void* ptr, void (*callb
     });
 }
 
+
+
+static JSC_DEFINE_HOST_FUNCTION(functionFetch, 
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return JSC::JSValue::encode(Bun__fetch(globalObject, callFrame));
+}
 // This implementation works the same as setTimeout(myFunction, 0)
 // TODO: make it more efficient
 // https://developer.mozilla.org/en-US/docs/Web/API/Window/setImmediate
@@ -3118,9 +3125,14 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     auto& builtinNames = WebCore::builtinNames(vm);
 
     WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
-    extraStaticGlobals.reserveCapacity(42);
+    extraStaticGlobals.reserveCapacity(43);
 
     JSC::Identifier queueMicrotaskIdentifier = JSC::Identifier::fromString(vm, "queueMicrotask"_s);
+    extraStaticGlobals.uncheckedAppend(
+        GlobalPropertyInfo { JSC::Identifier::fromString(vm, "fetch"_s),
+            JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 2,
+                "fetch"_s, functionFetch, ImplementationVisibility::Public),
+            JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { queueMicrotaskIdentifier,
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 2,
@@ -3380,6 +3392,13 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
             jsClass, nullptr);
         if (JSObject* prototype = object->classRef()->prototype(this))
             object->setPrototypeDirect(vm, prototype);
+
+
+        {
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "fetch"_s);
+            object->putDirectNativeFunction(vm, this, identifier, 2, functionFetch, ImplementationVisibility::Public, NoIntrinsic,
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        }
 
         {
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "escapeHTML"_s);

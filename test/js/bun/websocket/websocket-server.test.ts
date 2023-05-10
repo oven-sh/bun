@@ -984,4 +984,122 @@ describe("websocket server", () => {
     expect(serverCounter).toBe(sendQueue.length);
     server.stop(true);
   });
+  it("can close with reason and code #2631", done => {
+    let server = Bun.serve({
+      websocket: {
+        message(ws) {
+          ws.close(2000, "test");
+        },
+        open(ws) {
+          try {
+            expect(ws.remoteAddress).toBe("127.0.0.1");
+          } catch (e) {
+            done(e);
+          }
+        },
+        close(ws, code, reason) {
+          try {
+            expect(code).toBe(2000);
+            expect(reason).toBe("test");
+            done();
+          } catch (e) {
+            done(e);
+          }
+        },
+      },
+      fetch(req, server) {
+        if (!server.upgrade(req)) {
+          return new Response(null, { status: 404 });
+        }
+      },
+      port: 0,
+    });
+
+    let z = new WebSocket(`ws://${server.hostname}:${server.port}`);
+    z.addEventListener("open", () => {
+      z.send("test");
+    });
+    z.addEventListener("close", () => {
+      server.stop();
+    });
+  });
+
+  it("can close with code and without reason #2631", done => {
+    let server = Bun.serve({
+      websocket: {
+        message(ws) {
+          ws.close(2000);
+        },
+        open(ws) {
+          try {
+            expect(ws.remoteAddress).toBe("127.0.0.1");
+          } catch (e) {
+            done(e);
+          }
+        },
+        close(ws, code, reason) {
+          try {
+            expect(code).toBe(2000);
+            expect(reason).toBe("");
+            done();
+          } catch (e) {
+            done(e);
+          }
+        },
+      },
+      fetch(req, server) {
+        if (!server.upgrade(req)) {
+          return new Response(null, { status: 404 });
+        }
+      },
+      port: 0,
+    });
+
+    let z = new WebSocket(`ws://${server.hostname}:${server.port}`);
+    z.addEventListener("open", () => {
+      z.send("test");
+    });
+    z.addEventListener("close", () => {
+      server.stop();
+    });
+  });
+  it("can close without reason or code #2631", done => {
+    let server = Bun.serve({
+      websocket: {
+        message(ws) {
+          ws.close();
+        },
+        open(ws) {
+          try {
+            expect(ws.remoteAddress).toBe("127.0.0.1");
+          } catch (e) {
+            done(e);
+          }
+        },
+        close(ws, code, reason) {
+          try {
+            expect(code).toBe(1006);
+            expect(reason).toBe("");
+            done();
+          } catch (e) {
+            done(e);
+          }
+        },
+      },
+      fetch(req, server) {
+        if (!server.upgrade(req)) {
+          return new Response(null, { status: 404 });
+        }
+      },
+      port: 0,
+    });
+
+    let z = new WebSocket(`ws://${server.hostname}:${server.port}`);
+    z.addEventListener("open", () => {
+      z.send("test");
+    });
+    z.addEventListener("close", () => {
+      server.stop();
+    });
+  });
 });

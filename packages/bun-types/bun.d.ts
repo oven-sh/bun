@@ -995,11 +995,18 @@ declare module "bun" {
     //     };
   }
 
-  type BuildResult<T = Blob> = {
-    outputs: Array<{ path: string; result: T }>;
-  };
+  interface BuildArtifact extends Blob {
+    path: string;
+    loader: Loader;
+    hash: string | null;
+    kind: "chunk" | "asset" | "entry-point";
+    sourcemap: BuildArtifact | null;
+  }
 
-  function build(config: BuildConfig): Promise<BuildResult<Blob>>;
+  function build(config: BuildConfig): Promise<{
+    outputs: Map<string, BuildArtifact>;
+    logs: Array<BuildError | ResolveError>;
+  }>;
 
   /**
    * **0** means the message was **dropped**

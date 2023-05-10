@@ -3267,6 +3267,15 @@ pub const Blob = struct {
                         } else {
                             return blob.dupe();
                         }
+                    } else if (top_value.as(JSC.API.BuildArtifact)) |build| {
+                        if (comptime move) {
+                            // I don't think this case should happen?
+                            var blob = build.blob;
+                            blob.transfer();
+                            return blob;
+                        } else {
+                            return build.blob.dupe();
+                        }
                     }
                 },
 

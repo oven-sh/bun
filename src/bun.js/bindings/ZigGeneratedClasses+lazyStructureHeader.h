@@ -4,6 +4,12 @@ JSC::Structure* JSBlobStructure() { return m_JSBlob.getInitializedOnMainThread(t
   JSC::LazyClassStructure m_JSBlob;
   bool hasJSBlobSetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_JSBlobSetterValue;
+JSC::Structure* JSBuildArtifactStructure() { return m_JSBuildArtifact.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSBuildArtifactConstructor() { return m_JSBuildArtifact.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSBuildArtifactPrototype() { return m_JSBuildArtifact.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSBuildArtifact;
+  bool hasJSBuildArtifactSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSBuildArtifactSetterValue;
 JSC::Structure* JSCryptoHasherStructure() { return m_JSCryptoHasher.getInitializedOnMainThread(this); }
         JSC::JSObject* JSCryptoHasherConstructor() { return m_JSCryptoHasher.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSCryptoHasherPrototype() { return m_JSCryptoHasher.prototypeInitializedOnMainThread(this); }

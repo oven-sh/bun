@@ -1984,10 +1984,15 @@ pub const TransformOptions = struct {
 // This saves us from allocating a buffer
 pub const OutputFile = struct {
     loader: Loader,
+    input_loader: Loader = .js,
     input: Fs.Path,
     value: Value,
     size: usize = 0,
     mtime: ?i128 = null,
+    hash: u64 = 0,
+    source_map_index: u32 = std.math.maxInt(u32),
+    output_kind: JSC.API.BuildArtifact.OutputKind = .chunk,
+    path: []const u8 = "",
 
     // Depending on:
     // - The target
@@ -2002,28 +2007,6 @@ pub const OutputFile = struct {
         is_outdir: bool = false,
         close_handle_on_complete: bool = false,
         autowatch: bool = true,
-
-        pub fn toJS(this: FileOperation, globalObject: *JSC.JSGlobalObject, loader: Loader) JSC.JSValue {
-            var file_blob = JSC.WebCore.Blob.Store.initFile(
-                if (this.fd != 0) JSC.Node.PathOrFileDescriptor{
-                    .fd = this.fd,
-                } else JSC.Node.PathOrFileDescriptor{
-                    .path = JSC.Node.PathLike{ .string = bun.PathString.init(globalObject.allocator().dupe(u8, this.pathname) catch unreachable) },
-                },
-                loader.toMimeType(),
-                globalObject.allocator(),
-            ) catch |err| {
-                Output.panic("error: Unable to create file blob: \"{s}\"", .{@errorName(err)});
-            };
-
-            var blob = globalObject.allocator().create(JSC.WebCore.Blob) catch unreachable;
-            blob.* = JSC.WebCore.Blob.initWithStore(file_blob, globalObject);
-            blob.allocator = globalObject.allocator();
-            blob.globalThis = globalObject;
-            blob.content_type = loader.toMimeType().value;
-
-            return blob.toJS(globalObject);
-        }
 
         pub fn fromFile(fd: FileDescriptorType, pathname: string) FileOperation {
             return .{
@@ -2107,11 +2090,64 @@ pub const OutputFile = struct {
         return res;
     }
 
-    pub fn initBuf(buf: []const u8, allocator: std.mem.Allocator, pathname: string, loader: Loader) OutputFile {
+    pub const Options = struct {
+        loader: Loader,
+        input_loader: Loader,
+        hash: ?u64 = null,
+        source_map_index: ?u32 = null,
+        output_path: string,
+        size: ?usize = null,
+        input_path: []const u8 = "",
+        output_kind: JSC.API.BuildArtifact.OutputKind = .chunk,
+        data: union(enum) {
+            buffer: struct {
+                allocator: std.mem.Allocator,
+                data: []const u8,
+            },
+            file: struct {
+                file: std.fs.File,
+                size: usize,
+                dir: std.fs.Dir,
+            },
+            saved: usize,
+        },
+    };
+
+    pub fn init(options: Options) OutputFile {
+        return OutputFile{
+            .loader = options.loader,
+            .input_loader = options.input_loader,
+            .input = Fs.Path.init(options.input_path),
+            .path = options.output_path,
+            .size = options.size orelse switch (options.data) {
+                .buffer => |buf| buf.data.len,
+                .file => |file| file.size,
+                .saved => 0,
+            },
+            .hash = options.hash orelse 0,
+            .output_kind = options.output_kind,
+            .source_map_index = options.source_map_index orelse std.math.maxInt(u32),
+            .value = switch (options.data) {
+                .buffer => |buffer| Value{ .buffer = .{ .allocator = buffer.allocator, .bytes = buffer.data } },
+                .file => |file| Value{
+                    .copy = brk: {
+                        var op = FileOperation.fromFile(file.file.handle, options.output_path);
+                        op.dir = file.dir.fd;
+                        break :brk op;
+                    },
+                },
+                .saved => Value{ .saved = .{} },
+            },
+        };
+    }
+
+    pub fn initBuf(buf: []const u8, allocator: std.mem.Allocator, pathname: string, loader: Loader, hash: ?u64, source_map_index: ?u32) OutputFile {
         return .{
             .loader = loader,
             .input = Fs.Path.init(pathname),
             .size = buf.len,
+            .hash = hash orelse 0,
+            .source_map_index = source_map_index orelse std.math.maxInt(u32),
             .value = .{
                 .buffer = .{
                     .bytes = buf,
@@ -2152,18 +2188,65 @@ pub const OutputFile = struct {
 
     pub fn toJS(
         this: *OutputFile,
-        owned_pathname: []const u8,
+        owned_pathname: ?[]const u8,
         globalObject: *JSC.JSGlobalObject,
     ) bun.JSC.JSValue {
         return switch (this.value) {
-            .pending => @panic("Unexpected pending output file"),
+            .move, .pending => @panic("Unexpected pending output file"),
             .noop => JSC.JSValue.undefined,
-            .move => this.value.move.toJS(globalObject, this.loader),
-            .copy => this.value.copy.toJS(globalObject, this.loader),
-            .saved => SavedFile.toJS(globalObject, owned_pathname, this.size),
+            .copy => |copy| brk: {
+                var build_output = bun.default_allocator.create(JSC.API.BuildArtifact) catch @panic("Unable to allocate Artifact");
+                var file_blob = JSC.WebCore.Blob.Store.initFile(
+                    if (copy.fd != 0)
+                        JSC.Node.PathOrFileDescriptor{
+                            .fd = copy.fd,
+                        }
+                    else
+                        JSC.Node.PathOrFileDescriptor{
+                            .path = JSC.Node.PathLike{ .string = bun.PathString.init(globalObject.allocator().dupe(u8, copy.pathname) catch unreachable) },
+                        },
+                    this.loader.toMimeType(),
+                    globalObject.allocator(),
+                ) catch |err| {
+                    Output.panic("error: Unable to create file blob: \"{s}\"", .{@errorName(err)});
+                };
+
+                build_output.* = JSC.API.BuildArtifact{
+                    .blob = JSC.WebCore.Blob.initWithStore(file_blob, globalObject),
+                    .hash = this.hash,
+                    .loader = this.input_loader,
+                    .output_kind = this.output_kind,
+                    .path = bun.default_allocator.dupe(u8, copy.pathname) catch @panic("Failed to allocate path"),
+                };
+
+                break :brk build_output.toJS(globalObject);
+            },
+            .saved => brk: {
+                var build_output = bun.default_allocator.create(JSC.API.BuildArtifact) catch @panic("Unable to allocate Artifact");
+                const path_to_use = owned_pathname orelse this.input.text;
+
+                var file_blob = JSC.WebCore.Blob.Store.initFile(
+                    JSC.Node.PathOrFileDescriptor{
+                        .path = JSC.Node.PathLike{ .string = bun.PathString.init(owned_pathname orelse (bun.default_allocator.dupe(u8, this.input.text) catch unreachable)) },
+                    },
+                    this.loader.toMimeType(),
+                    globalObject.allocator(),
+                ) catch |err| {
+                    Output.panic("error: Unable to create file blob: \"{s}\"", .{@errorName(err)});
+                };
+
+                build_output.* = JSC.API.BuildArtifact{
+                    .blob = JSC.WebCore.Blob.initWithStore(file_blob, globalObject),
+                    .hash = this.hash,
+                    .loader = this.input_loader,
+                    .output_kind = this.output_kind,
+                    .path = bun.default_allocator.dupe(u8, path_to_use) catch @panic("Failed to allocate path"),
+                };
+
+                break :brk build_output.toJS(globalObject);
+            },
             .buffer => |buffer| brk: {
-                var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
-                blob.* = JSC.WebCore.Blob.init(@constCast(buffer.bytes), buffer.allocator, globalObject);
+                var blob = JSC.WebCore.Blob.init(@constCast(buffer.bytes), buffer.allocator, globalObject);
                 if (blob.store) |store| {
                     store.mime_type = this.loader.toMimeType();
                     blob.content_type = store.mime_type.value;
@@ -2171,10 +2254,17 @@ pub const OutputFile = struct {
                     blob.content_type = this.loader.toMimeType().value;
                 }
 
-                blob.allocator = bun.default_allocator;
-                const blob_jsvalue = blob.toJS(globalObject);
-                blob_jsvalue.ensureStillAlive();
-                break :brk blob_jsvalue;
+                blob.size = @truncate(JSC.WebCore.Blob.SizeType, buffer.bytes.len);
+
+                var build_output = bun.default_allocator.create(JSC.API.BuildArtifact) catch @panic("Unable to allocate Artifact");
+                build_output.* = JSC.API.BuildArtifact{
+                    .blob = blob,
+                    .hash = this.hash,
+                    .loader = this.input_loader,
+                    .output_kind = this.output_kind,
+                    .path = owned_pathname orelse bun.default_allocator.dupe(u8, this.input.text) catch unreachable,
+                };
+                break :brk build_output.toJS(globalObject);
             },
         };
     }
@@ -2691,7 +2781,7 @@ pub const PathTemplate = struct {
                 .ext => try writer.writeAll(self.placeholder.ext),
                 .hash => {
                     if (self.placeholder.hash) |hash| {
-                        try writer.print("{any}", .{bun.fmt.hexIntLower(hash)});
+                        try writer.print("{any}", .{(hashFormatter(hash))});
                     }
                 },
             }
@@ -2700,6 +2790,8 @@ pub const PathTemplate = struct {
 
         try writer.writeAll(remain);
     }
+
+    pub const hashFormatter = bun.fmt.hexIntLower;
 
     pub const Placeholder = struct {
         dir: []const u8 = "",

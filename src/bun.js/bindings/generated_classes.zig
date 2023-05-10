@@ -149,6 +149,237 @@ pub const JSBlob = struct {
         }
     }
 };
+pub const JSBuildArtifact = struct {
+    const BuildArtifact = Classes.BuildArtifact;
+    const GetterType = fn (*BuildArtifact, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*BuildArtifact, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*BuildArtifact, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*BuildArtifact, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*BuildArtifact, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*BuildArtifact {
+        JSC.markBinding(@src());
+        return BuildArtifact__fromJS(value);
+    }
+
+    extern fn BuildArtifactPrototype__hashSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn BuildArtifactPrototype__hashGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `BuildArtifact.hash` setter
+    /// This value will be visited by the garbage collector.
+    pub fn hashSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        BuildArtifactPrototype__hashSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `BuildArtifact.hash` getter
+    /// This value will be visited by the garbage collector.
+    pub fn hashGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = BuildArtifactPrototype__hashGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn BuildArtifactPrototype__kindSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn BuildArtifactPrototype__kindGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `BuildArtifact.kind` setter
+    /// This value will be visited by the garbage collector.
+    pub fn kindSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        BuildArtifactPrototype__kindSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `BuildArtifact.kind` getter
+    /// This value will be visited by the garbage collector.
+    pub fn kindGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = BuildArtifactPrototype__kindGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn BuildArtifactPrototype__loaderSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn BuildArtifactPrototype__loaderGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `BuildArtifact.loader` setter
+    /// This value will be visited by the garbage collector.
+    pub fn loaderSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        BuildArtifactPrototype__loaderSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `BuildArtifact.loader` getter
+    /// This value will be visited by the garbage collector.
+    pub fn loaderGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = BuildArtifactPrototype__loaderGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn BuildArtifactPrototype__pathSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn BuildArtifactPrototype__pathGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `BuildArtifact.path` setter
+    /// This value will be visited by the garbage collector.
+    pub fn pathSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        BuildArtifactPrototype__pathSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `BuildArtifact.path` getter
+    /// This value will be visited by the garbage collector.
+    pub fn pathGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = BuildArtifactPrototype__pathGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn BuildArtifactPrototype__sourcemapSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn BuildArtifactPrototype__sourcemapGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `BuildArtifact.sourcemap` setter
+    /// This value will be visited by the garbage collector.
+    pub fn sourcemapSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        BuildArtifactPrototype__sourcemapSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `BuildArtifact.sourcemap` getter
+    /// This value will be visited by the garbage collector.
+    pub fn sourcemapGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = BuildArtifactPrototype__sourcemapGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn BuildArtifactPrototype__typeSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn BuildArtifactPrototype__typeGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `BuildArtifact.type` setter
+    /// This value will be visited by the garbage collector.
+    pub fn typeSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        BuildArtifactPrototype__typeSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `BuildArtifact.type` getter
+    /// This value will be visited by the garbage collector.
+    pub fn typeGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = BuildArtifactPrototype__typeGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Create a new instance of BuildArtifact
+    pub fn toJS(this: *BuildArtifact, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = BuildArtifact__create(globalObject, this);
+            std.debug.assert(value__.as(BuildArtifact).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return BuildArtifact__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of BuildArtifact.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*BuildArtifact) bool {
+        JSC.markBinding(@src());
+        return BuildArtifact__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *BuildArtifact, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(BuildArtifact__dangerouslySetPtr(value, null));
+    }
+
+    extern fn BuildArtifact__fromJS(JSC.JSValue) ?*BuildArtifact;
+    extern fn BuildArtifact__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn BuildArtifact__create(globalObject: *JSC.JSGlobalObject, ptr: ?*BuildArtifact) JSC.JSValue;
+
+    extern fn BuildArtifact__dangerouslySetPtr(JSC.JSValue, ?*BuildArtifact) bool;
+
+    comptime {
+        if (@TypeOf(BuildArtifact.finalize) != (fn (*BuildArtifact) callconv(.C) void)) {
+            @compileLog("BuildArtifact.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(BuildArtifact.getArrayBuffer) != CallbackType)
+            @compileLog("Expected BuildArtifact.getArrayBuffer to be a callback but received " ++ @typeName(@TypeOf(BuildArtifact.getArrayBuffer)));
+        if (@TypeOf(BuildArtifact.getHash) != GetterType)
+            @compileLog("Expected BuildArtifact.getHash to be a getter");
+
+        if (@TypeOf(BuildArtifact.getJSON) != CallbackType)
+            @compileLog("Expected BuildArtifact.getJSON to be a callback but received " ++ @typeName(@TypeOf(BuildArtifact.getJSON)));
+        if (@TypeOf(BuildArtifact.getOutputKind) != GetterType)
+            @compileLog("Expected BuildArtifact.getOutputKind to be a getter");
+
+        if (@TypeOf(BuildArtifact.getLoader) != GetterType)
+            @compileLog("Expected BuildArtifact.getLoader to be a getter");
+
+        if (@TypeOf(BuildArtifact.getPath) != GetterType)
+            @compileLog("Expected BuildArtifact.getPath to be a getter");
+
+        if (@TypeOf(BuildArtifact.getSize) != GetterType)
+            @compileLog("Expected BuildArtifact.getSize to be a getter");
+
+        if (@TypeOf(BuildArtifact.getSlice) != CallbackType)
+            @compileLog("Expected BuildArtifact.getSlice to be a callback but received " ++ @typeName(@TypeOf(BuildArtifact.getSlice)));
+        if (@TypeOf(BuildArtifact.getSourceMap) != GetterType)
+            @compileLog("Expected BuildArtifact.getSourceMap to be a getter");
+
+        if (@TypeOf(BuildArtifact.getStream) != CallbackType)
+            @compileLog("Expected BuildArtifact.getStream to be a callback but received " ++ @typeName(@TypeOf(BuildArtifact.getStream)));
+        if (@TypeOf(BuildArtifact.getText) != CallbackType)
+            @compileLog("Expected BuildArtifact.getText to be a callback but received " ++ @typeName(@TypeOf(BuildArtifact.getText)));
+        if (@TypeOf(BuildArtifact.getMimeType) != GetterType)
+            @compileLog("Expected BuildArtifact.getMimeType to be a getter");
+
+        if (!JSC.is_bindgen) {
+            @export(BuildArtifact.finalize, .{ .name = "BuildArtifactClass__finalize" });
+            @export(BuildArtifact.getArrayBuffer, .{ .name = "BuildArtifactPrototype__getArrayBuffer" });
+            @export(BuildArtifact.getHash, .{ .name = "BuildArtifactPrototype__getHash" });
+            @export(BuildArtifact.getJSON, .{ .name = "BuildArtifactPrototype__getJSON" });
+            @export(BuildArtifact.getLoader, .{ .name = "BuildArtifactPrototype__getLoader" });
+            @export(BuildArtifact.getMimeType, .{ .name = "BuildArtifactPrototype__getMimeType" });
+            @export(BuildArtifact.getOutputKind, .{ .name = "BuildArtifactPrototype__getOutputKind" });
+            @export(BuildArtifact.getPath, .{ .name = "BuildArtifactPrototype__getPath" });
+            @export(BuildArtifact.getSize, .{ .name = "BuildArtifactPrototype__getSize" });
+            @export(BuildArtifact.getSlice, .{ .name = "BuildArtifactPrototype__getSlice" });
+            @export(BuildArtifact.getSourceMap, .{ .name = "BuildArtifactPrototype__getSourceMap" });
+            @export(BuildArtifact.getStream, .{ .name = "BuildArtifactPrototype__getStream" });
+            @export(BuildArtifact.getText, .{ .name = "BuildArtifactPrototype__getText" });
+        }
+    }
+};
 pub const JSCryptoHasher = struct {
     const CryptoHasher = Classes.CryptoHasher;
     const GetterType = fn (*CryptoHasher, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
@@ -3893,6 +4124,7 @@ pub const JSTranspiler = struct {
 
 comptime {
     _ = JSBlob;
+    _ = JSBuildArtifact;
     _ = JSCryptoHasher;
     _ = JSDirent;
     _ = JSExpect;

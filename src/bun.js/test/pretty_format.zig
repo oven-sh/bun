@@ -1227,6 +1227,9 @@ pub const JestPrettyFormat = struct {
                     } else if (value.as(JSC.WebCore.Request)) |request| {
                         request.writeFormat(Formatter, this, writer_, enable_ansi_colors) catch {};
                         return;
+                    } else if (value.as(JSC.API.BuildArtifact)) |build| {
+                        build.writeFormat(Formatter, this, writer_, enable_ansi_colors) catch {};
+                        return;
                     } else if (value.as(JSC.WebCore.Blob)) |blob| {
                         blob.writeFormat(Formatter, this, writer_, enable_ansi_colors) catch {};
                         return;

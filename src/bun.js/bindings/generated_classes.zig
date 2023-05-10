@@ -37,6 +37,28 @@ pub const JSBlob = struct {
         return Blob__fromJS(value);
     }
 
+    extern fn BlobPrototype__nameSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn BlobPrototype__nameGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Blob.name` setter
+    /// This value will be visited by the garbage collector.
+    pub fn nameSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        BlobPrototype__nameSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `Blob.name` getter
+    /// This value will be visited by the garbage collector.
+    pub fn nameGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = BlobPrototype__nameGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
     /// Get the Blob constructor value.
     /// This loads lazily from the global object.
     pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
@@ -93,6 +115,9 @@ pub const JSBlob = struct {
         if (@TypeOf(Blob.getLastModified) != GetterType)
             @compileLog("Expected Blob.getLastModified to be a getter");
 
+        if (@TypeOf(Blob.getName) != GetterType)
+            @compileLog("Expected Blob.getName to be a getter");
+
         if (@TypeOf(Blob.getSize) != GetterType)
             @compileLog("Expected Blob.getSize to be a getter");
 
@@ -114,6 +139,7 @@ pub const JSBlob = struct {
             @export(Blob.getFormData, .{ .name = "BlobPrototype__getFormData" });
             @export(Blob.getJSON, .{ .name = "BlobPrototype__getJSON" });
             @export(Blob.getLastModified, .{ .name = "BlobPrototype__getLastModified" });
+            @export(Blob.getName, .{ .name = "BlobPrototype__getName" });
             @export(Blob.getSize, .{ .name = "BlobPrototype__getSize" });
             @export(Blob.getSlice, .{ .name = "BlobPrototype__getSlice" });
             @export(Blob.getStream, .{ .name = "BlobPrototype__getStream" });

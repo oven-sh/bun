@@ -2544,6 +2544,25 @@ pub const Blob = struct {
         return ZigString.Empty.toValue(globalThis);
     }
 
+    // TODO: Move this to a separate `File` object or BunFile
+    pub fn getName(
+        this: *Blob,
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSValue {
+        if (this.store) |store| {
+            if (store.data == .file) {
+                if (store.data.file.pathlike == .path) {
+                    return ZigString.fromUTF8(store.data.file.pathlike.path.slice()).toValueGC(globalThis);
+                }
+
+                // we shouldn't return Number here.
+            }
+        }
+
+        return JSC.JSValue.jsUndefined();
+    }
+
+    // TODO: Move this to a separate `File` object or BunFile
     pub fn getLastModified(
         this: *Blob,
         _: *JSC.JSGlobalObject,

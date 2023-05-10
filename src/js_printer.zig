@@ -983,6 +983,9 @@ fn NewPrinter(
                     p.printNewline();
                     p.options.indent += 1;
                     p.printStmt(stmt) catch unreachable;
+                    if (stmt.data == .s_expr and stmt.data.s_expr.value.data == .e_missing) {
+                        p.printSemicolonIfNeeded();
+                    }
                     p.options.unindent();
                 },
             }
@@ -4059,7 +4062,11 @@ fn NewPrinter(
                     p.printBody(s.body);
                 },
                 .s_label => |s| {
-                    p.printIndent();
+                    if (!p.options.minify_whitespace and p.options.indent > 0) {
+                        p.addSourceMapping(stmt.loc);
+                        p.printIndent();
+                    }
+                    p.printSpaceBeforeIdentifier();
                     p.printSymbol(s.name.ref orelse Global.panic("Internal error: expected label to have a name {any}", .{s}));
                     p.print(":");
                     p.printBody(s.stmt);

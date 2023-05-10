@@ -244,11 +244,13 @@ pub const length = struct {
                     return simdutf__utf8_length_from_utf16le(input.ptr, input.len);
                 }
                 pub fn be(input: []const u16) usize {
+                    JSC.markBinding(@src());
                     return simdutf__utf8_length_from_utf16be(input.ptr, input.len);
                 }
             };
 
             pub fn utf32(input: []const u32) usize {
+                JSC.markBinding(@src());
                 return simdutf__utf8_length_from_utf32(input.ptr, input.len);
             }
         };
@@ -258,14 +260,17 @@ pub const length = struct {
         pub const from = struct {
             pub const utf8 = struct {
                 pub fn le(input: []const u8) usize {
+                    JSC.markBinding(@src());
                     return simdutf__utf16_length_from_utf8(input.ptr, input.len);
                 }
                 pub fn be(input: []const u8) usize {
+                    JSC.markBinding(@src());
                     return simdutf__utf16_length_from_utf8(input.ptr, input.len);
                 }
             };
 
             pub fn utf32(input: []const u32) usize {
+                JSC.markBinding(@src());
                 return simdutf__utf16_length_from_utf32(input.ptr, input.len);
             }
         };
@@ -275,6 +280,7 @@ pub const length = struct {
         pub const from = struct {
             pub const utf8 = struct {
                 pub fn le(input: []const u8) usize {
+                    JSC.markBinding(@src());
                     return simdutf__utf32_length_from_utf8(input.ptr, input.len);
                 }
                 pub fn be(input: []const u8) usize {
@@ -284,9 +290,11 @@ pub const length = struct {
 
             pub const utf16 = struct {
                 pub fn le(input: []const u16) usize {
+                    JSC.markBinding(@src());
                     return simdutf__utf32_length_from_utf16le(input.ptr, input.len);
                 }
                 pub fn be(input: []const u16) usize {
+                    JSC.markBinding(@src());
                     return simdutf__utf32_length_from_utf16be(input.ptr, input.len);
                 }
             };

@@ -1385,10 +1385,14 @@ pub const StringMap = struct {
 
         entry.value_ptr.* = try self.map.allocator.dupe(u8, value);
     }
-
     pub const put = insert;
+
     pub fn get(self: *const StringMap, key: []const u8) ?[]const u8 {
         return self.map.get(key);
+    }
+
+    pub fn sort(self: *StringMap, sort_ctx: anytype) void {
+        self.map.sort(sort_ctx);
     }
 
     pub fn deinit(self: *StringMap) void {

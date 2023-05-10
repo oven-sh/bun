@@ -15,3 +15,11 @@ test("rebuilding busts the directory entries cache", () => {
 
   expect(exitCode).toBe(0);
 });
+
+test("outdir + reading out blobs", async () => {
+  const x = await Bun.build({
+    entrypoints: [import.meta.path],
+    outdir: "/tmp/bun-build-test-read-out",
+  });
+  await [...x.outputs.values()][0].text();
+});

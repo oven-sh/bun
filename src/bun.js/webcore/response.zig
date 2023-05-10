@@ -609,17 +609,23 @@ pub const Fetch = struct {
         break :brk errors;
     };
 
-    pub const Class = NewClass(
-        void,
-        .{ .name = "fetch" },
-        .{
-            .call = .{
-                .rfn = Fetch.call,
-                .ts = d.ts{},
-            },
-        },
-        .{},
-    );
+    // pub const Class = NewClass(
+    //     void,
+    //     .{ .name = "fetch" },
+    //     .{
+    //         .call = .{
+    //             .rfn = Fetch.call,
+    //             .ts = d.ts{},
+    //         },
+    //     },
+    //     .{},
+    // );
+
+    comptime {
+        if (!JSC.is_bindgen) {
+            @export(Fetch.jsFunction, .{ .name = "Bun__fetch" });
+        }
+    }
 
     pub const FetchTasklet = struct {
         const log = Output.scoped(.FetchTasklet, false);
@@ -928,6 +934,31 @@ pub const Fetch = struct {
             task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task));
         }
     };
+
+    pub fn jsFunction(
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) js.JSObjectRef {
+        const arguments = callframe.arguments(3);
+        var args = @ptrCast([*]const JSC.C.JSValueRef, callframe.argumentsPtr())[0..arguments.len];
+
+        var exception_val = [_]JSC.C.JSValueRef{null};
+        var exception: JSC.C.ExceptionRef = &exception_val;
+
+        const result = Fetch.call(
+            undefined, // will be ignored
+            globalThis,
+            undefined, // will be ignored
+            undefined, // will be ignored
+            args,
+            exception,
+        );
+
+        if (exception.* != null) {
+            globalThis.throwValue(JSC.JSValue.c(exception.*));
+        }
+        return result;
+    }
 
     pub fn call(
         _: void,

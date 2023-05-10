@@ -5001,9 +5001,9 @@ pub const PackageManager = struct {
                 return error.MissingPackageJSON;
             };
 
+            const child_cwd = this_cwd;
             // Check if this is a workspace; if so, use root package
             if (comptime is_install) {
-                const child_cwd = this_cwd;
                 var found = false;
                 while (std.fs.path.dirname(this_cwd)) |parent| {
                     var dir = std.fs.openDirAbsolute(parent, .{}) catch break;
@@ -5036,7 +5036,7 @@ pub const PackageManager = struct {
                             } else break,
                             else => break,
                         };
-                        _ = try Package.processWorkspaceNamesArray(
+                        _ = Package.processWorkspaceNamesArray(
                             &workspace_names,
                             ctx.allocator,
                             ctx.log,
@@ -5044,30 +5044,28 @@ pub const PackageManager = struct {
                             &json_source,
                             prop.loc,
                             null,
-                        );
+                        ) catch break;
                         for (workspace_names.keys()) |path| {
                             if (strings.eql(child_cwd, path)) {
                                 found = true;
                                 child_json.close();
+                                fs.top_level_dir = parent;
                                 break :brk json_file;
                             }
                         }
                         break;
                     }
+                    this_cwd = parent;
                 }
             }
 
+            fs.top_level_dir = child_cwd;
             break :brk child_json;
         };
 
-        fs.top_level_dir = try bun.getFdPath(package_json_file.handle, &cwd_buf);
-        if (std.fs.path.dirname(fs.top_level_dir)) |dir| {
-            fs.top_level_dir = dir;
-            try std.os.chdir(dir);
-            try BunArguments.loadConfig(ctx.allocator, cli.config, ctx, .InstallCommand);
-        } else {
-            return error.MissingPackageJSON;
-        }
+        try std.os.chdir(fs.top_level_dir);
+        try BunArguments.loadConfig(ctx.allocator, cli.config, ctx, .InstallCommand);
+        bun.copy(u8, &cwd_buf, fs.top_level_dir);
         cwd_buf[fs.top_level_dir.len] = '/';
         cwd_buf[fs.top_level_dir.len + 1] = 0;
         fs.top_level_dir = cwd_buf[0 .. fs.top_level_dir.len + 1];

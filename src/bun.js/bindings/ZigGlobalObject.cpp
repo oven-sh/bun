@@ -3125,12 +3125,12 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     auto& builtinNames = WebCore::builtinNames(vm);
 
     WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
-    extraStaticGlobals.reserveCapacity(42);
+    extraStaticGlobals.reserveCapacity(43);
 
     JSC::Identifier queueMicrotaskIdentifier = JSC::Identifier::fromString(vm, "queueMicrotask"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { JSC::Identifier::fromString(vm, "fetch"_s),
-            JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
+            JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 2,
                 "fetch"_s, functionFetch, ImplementationVisibility::Public),
             JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
     extraStaticGlobals.uncheckedAppend(

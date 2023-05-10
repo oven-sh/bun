@@ -839,7 +839,6 @@ void JSCryptoHasher::visitAdditionalChildren(Visitor& visitor)
 
     visitor.append(thisObject->m_algorithms);
     visitor.append(thisObject->m_algorithm);
-    ;
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(JSCryptoHasher);
@@ -1289,7 +1288,6 @@ void JSDirent::visitAdditionalChildren(Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
 
     visitor.append(thisObject->m_name);
-    ;
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(JSDirent);
@@ -2389,8 +2387,6 @@ void JSExpect::visitAdditionalChildren(Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     visitor.append(thisObject->m_capturedValue);
     visitor.append(thisObject->m_resultValue);
-
-    ;
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(JSExpect);
@@ -2558,8 +2554,6 @@ void JSExpectAny::visitAdditionalChildren(Visitor& visitor)
     JSExpectAny* thisObject = this;
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     visitor.append(thisObject->m_constructorValue);
-
-    ;
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(JSExpectAny);
@@ -2983,7 +2977,6 @@ void JSFileSystemRouter::visitAdditionalChildren(Visitor& visitor)
     visitor.append(thisObject->m_origin);
     visitor.append(thisObject->m_routes);
     visitor.append(thisObject->m_style);
-    ;
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(JSFileSystemRouter);
@@ -3352,7 +3345,6 @@ void JSListener::visitAdditionalChildren(Visitor& visitor)
 
     visitor.append(thisObject->m_hostname);
     visitor.append(thisObject->m_unix);
-    ;
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(JSListener);
@@ -4425,7 +4417,6 @@ void JSMatchedRoute::visitAdditionalChildren(Visitor& visitor)
     visitor.append(thisObject->m_pathname);
     visitor.append(thisObject->m_query);
     visitor.append(thisObject->m_scriptSrc);
-    ;
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(JSMatchedRoute);
@@ -7002,7 +6993,6 @@ void JSRequest::visitAdditionalChildren(Visitor& visitor)
     visitor.append(thisObject->m_headers);
     visitor.append(thisObject->m_signal);
     visitor.append(thisObject->m_url);
-    ;
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(JSRequest);
@@ -7638,7 +7628,6 @@ void JSResponse::visitAdditionalChildren(Visitor& visitor)
     visitor.append(thisObject->m_headers);
     visitor.append(thisObject->m_statusText);
     visitor.append(thisObject->m_url);
-    ;
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(JSResponse);
@@ -10187,7 +10176,6 @@ void JSServerWebSocket::visitAdditionalChildren(Visitor& visitor)
 
     visitor.append(thisObject->m_data);
     visitor.append(thisObject->m_remoteAddress);
-    ;
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(JSServerWebSocket);
@@ -11077,7 +11065,6 @@ void JSStats::visitAdditionalChildren(Visitor& visitor)
     visitor.append(thisObject->m_atime);
     visitor.append(thisObject->m_ctime);
     visitor.append(thisObject->m_mtime);
-    ;
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(JSStats);
@@ -12954,7 +12941,6 @@ void JSTextDecoder::visitAdditionalChildren(Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
 
     visitor.append(thisObject->m_encoding);
-    ;
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(JSTextDecoder);

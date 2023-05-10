@@ -986,7 +986,7 @@ void ${name}::visitAdditionalChildren(Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     ${values}
     ${DEFINE_VISIT_CHILDREN_LIST}
-    ${hasPendingActivity ? "visitor.addOpaqueRoot(this->wrapped())" : ""};
+    ${hasPendingActivity ? "visitor.addOpaqueRoot(this->wrapped());" : ""}
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(${name});

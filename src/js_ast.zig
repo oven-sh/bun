@@ -2445,7 +2445,7 @@ pub const E = struct {
 
             if (parts.items.len == 0) {
                 parts.deinit();
-
+                head.data.e_string.resovleRopeIfNeeded(allocator);
                 return head;
             }
 

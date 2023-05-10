@@ -803,8 +803,8 @@ pub const AnyWebSocket = union(enum) {
     }
     pub fn end(this: AnyWebSocket, code: i32, message: []const u8) void {
         switch (this) {
-            .tcp => uws_ws_end(1, this.tcp.raw(), code, message.ptr, message.len),
-            .ssl => uws_ws_end(0, this.ssl.raw(), code, message.ptr, message.len),
+            .tcp => uws_ws_end(0, this.tcp.raw(), code, message.ptr, message.len),
+            .ssl => uws_ws_end(1, this.ssl.raw(), code, message.ptr, message.len),
         }
     }
     pub fn cork(this: AnyWebSocket, ctx: anytype, comptime callback: anytype) void {

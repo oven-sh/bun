@@ -6691,7 +6691,7 @@ fn NewParser_(
                                     // Silently merge this symbol into the existing symbol
                                     symbol.link = member_in_scope.ref;
                                     var entry = _scope.getOrPutMemberWithHash(p.allocator, name, hash) catch unreachable;
-                                    entry.value_ptr.* = value;
+                                    entry.value_ptr.* = member_in_scope;
                                     entry.key_ptr.* = name;
                                     continue :nextMember;
                                 }

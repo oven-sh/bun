@@ -1573,6 +1573,7 @@ pub const BundleV2 = struct {
         bundler.options.inlining = config.minify.syntax;
         bundler.options.source_map = config.source_map;
         bundler.resolver.generation = generation;
+        bundler.options.code_splitting = config.code_splitting;
 
         try bundler.configureDefines();
         bundler.configureLinker();

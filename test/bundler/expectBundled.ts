@@ -826,7 +826,7 @@ const build = await Bun.build(options);
 if (build.logs) {
   throw build.logs;
 }
-for (const blob of build.outputs) {
+for (const [key, blob] of build.outputs) {
   await Bun.write(path.join(options.outdir, blob.path), blob.result);
 }
 `;

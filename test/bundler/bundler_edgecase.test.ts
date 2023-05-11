@@ -765,4 +765,42 @@ describe("bundler", () => {
     publicPath: "/www",
     run: {},
   });
+  itBundled("edgecase/BreakInCatch", {
+    files: {
+      "/entry.ts": /* ts */ `
+        a: {
+          try {
+            throw 123;
+          } catch (error) {
+            break a;
+          }
+          console.log("FAILED");
+        }
+        console.log("PASSED");
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: `PASSED`,
+    },
+  });
+  itBundled("edgecase/IfRequireTwice", {
+    files: {
+      "/entry.js": /* js */ `
+        import { version } from './react';
+        console.log(version);
+      `,
+      "/react.js": /* js */ `
+        const a = require('./library.js');
+        exports.version = a.version;
+      `,
+      "/library.js": /* js */ `
+        exports.version = '0.6.0';
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: `0.6.0`,
+    },
+  });
 });

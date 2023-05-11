@@ -1,0 +1,10 @@
+{
+  "dependencies": {
+    "puppeteer": "^20.2.0",
+    "react": "next",
+    "react-dom": "next"
+  },
+  "scripts": {
+    "postinstall": "node ./node_modules/puppeteer/install.js"
+  }
+}

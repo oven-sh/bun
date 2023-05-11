@@ -3028,15 +3028,19 @@ pub const NodeFS = struct {
         prefix_buf[len..][0..6].* = "XXXXXX".*;
         prefix_buf[len..][6] = 0;
 
-        const rc = C.mkdtemp(prefix_buf);
-        switch (std.c.getErrno(@ptrToInt(rc))) {
-            .SUCCESS => {},
-            else => |errno| return .{ .err = Syscall.Error{ .errno = @truncate(Syscall.Error.Int, @enumToInt(errno)), .syscall = .mkdtemp } },
-        }
+        // The mkdtemp() function returns  a  pointer  to  the  modified  template
+        // string  on  success, and NULL on failure, in which case errno is set to
+        // indicate the error
 
-        return .{
-            .result = JSC.ZigString.dupeForJS(bun.sliceTo(rc.?, 0), bun.default_allocator) catch unreachable,
-        };
+        const rc = C.mkdtemp(prefix_buf);
+        if (rc) |ptr| {
+            return .{
+                .result = JSC.ZigString.dupeForJS(bun.sliceTo(ptr, 0), bun.default_allocator) catch unreachable,
+            };
+        }
+        // std.c.getErrno(rc) returns SUCCESS if rc is null so we call std.c._errno() directly
+        const errno = @intToEnum(std.c.E, std.c._errno().*);
+        return .{ .err = Syscall.Error{ .errno = @truncate(Syscall.Error.Int, @enumToInt(errno)), .syscall = .mkdtemp } };
     }
     pub fn open(this: *NodeFS, args: Arguments.Open, comptime flavor: Flavor) Maybe(Return.Open) {
         switch (comptime flavor) {

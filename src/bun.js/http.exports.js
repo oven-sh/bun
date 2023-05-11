@@ -925,7 +925,7 @@ export class ClientRequest extends OutgoingMessage {
   #fetchRequest;
   #signal = null;
   [kAbortController] = null;
-
+  #timeoutTimer = null;
   #options;
   #finished;
 
@@ -1183,7 +1183,7 @@ export class ClientRequest extends OutgoingMessage {
     this.#reusedSocket = false;
     this.#host = host;
     this.#protocol = protocol;
-
+    this.#timeoutTimer = null;
     const headersArray = ArrayIsArray(headers);
     if (!headersArray) {
       var headers = options.headers;
@@ -1258,9 +1258,25 @@ export class ClientRequest extends OutgoingMessage {
   setNoDelay(noDelay = true) {
     __DEBUG__ && debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setNoDelay is a no-op");
   }
+  [kClearTimeout]() {
+    if (this.#timeoutTimer) {
+      clearTimeout(this.#timeoutTimer);
+      this.#timeoutTimer = null;
+    }
+  }
 
-  setTimeout(timeout, callback) {
-    __DEBUG__ && debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setTimeout is a no-op");
+  setTimeout(msecs, callback) {
+    if (this.#timeoutTimer) return this;
+    if (callback) {
+      this.on("timeout", callback);
+    }
+
+    this.#timeoutTimer = setTimeout(async () => {
+      this.#timeoutTimer = null;
+      this[kAbortController]?.abort();
+      this.emit("timeout");
+    }, msecs);
+
     return this;
   }
 }

@@ -488,7 +488,6 @@ describe("node:http", () => {
     it("should return response with lowercase headers", done => {
       runTest(done, (server, serverPort, done) => {
         const req = request(`http://localhost:${serverPort}/lowerCaseHeaders`, res => {
-          console.log(res.headers);
           expect(res.headers["content-type"]).toBe("text/plain");
           expect(res.headers["x-custom-header"]).toBe("custom_value");
           done();
@@ -593,6 +592,7 @@ describe("node:http", () => {
         Bun.sleep(10).then(() => {
           res.writeHead(200, { "Content-Type": "text/plain" });
           res.end("Hello World");
+          server.close();
         });
       });
       server.listen({ port: 0 }, (_err, host, port) => {

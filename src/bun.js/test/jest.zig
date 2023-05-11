@@ -435,9 +435,9 @@ pub const TestRunner = struct {
         this.tests.items(.status)[test_id] = .pass;
         this.callback.onTestPass(this.callback, test_id, file, label, expectations, elapsed_ns, parent);
     }
-    pub fn reportFailure(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, parent: ?*DescribeScope) void {
+    pub fn reportFailure(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*DescribeScope) void {
         this.tests.items(.status)[test_id] = .fail;
-        this.callback.onTestFail(this.callback, test_id, file, label, expectations, 0, parent);
+        this.callback.onTestFail(this.callback, test_id, file, label, expectations, elapsed_ns, parent);
     }
 
     pub fn reportSkip(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope) void {
@@ -3617,7 +3617,7 @@ pub const DescribeScope = struct {
             const beforeAll = this.runCallback(ctx, .beforeAll);
             if (!beforeAll.isEmpty()) {
                 while (i < end) {
-                    Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, this);
+                    Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this);
                     i += 1;
                 }
                 this.tests.clearAndFree(allocator);
@@ -3806,7 +3806,7 @@ pub const TestRunnerTask = struct {
             const beforeEach = this.describe.runCallback(globalThis, .beforeEach);
 
             if (!beforeEach.isEmpty()) {
-                Jest.runner.?.reportFailure(test_id, this.source_file_path, label, 0, this.describe);
+                Jest.runner.?.reportFailure(test_id, this.source_file_path, label, 0, 0, this.describe);
                 globalThis.bunVM().runErrorHandler(beforeEach, null);
                 return false;
             }
@@ -3894,7 +3894,17 @@ pub const TestRunnerTask = struct {
                     0,
                 describe,
             ),
-            .fail => |count| Jest.runner.?.reportFailure(test_id, this.source_file_path, test_.label, count, describe),
+            .fail => |count| Jest.runner.?.reportFailure(
+                test_id,
+                this.source_file_path,
+                test_.label,
+                count,
+                if (test_elapsed_timer) |timer|
+                    timer.read()
+                else
+                    0,
+                describe,
+            ),
             .skip => Jest.runner.?.reportSkip(test_id, this.source_file_path, test_.label, describe),
             .pending => @panic("Unexpected pending test"),
         }

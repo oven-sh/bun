@@ -244,8 +244,8 @@ export class Server extends EventEmitter {
     }
     this.#server = undefined;
     if (typeof optionalCallback === "function") this.once("close", optionalCallback);
-    this.emit("close");
     server.stop();
+    this.emit("close");
   }
 
   address() {

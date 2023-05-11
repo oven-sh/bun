@@ -60,9 +60,9 @@ var shared_response_headers_buf: [256]picohttp.Header = undefined;
 const end_of_chunked_http1_1_encoding_response_body = "0\r\n\r\n";
 
 pub const FetchRedirect = enum(u8) {
-    follow = 0,
-    manual = 1,
-    @"error" = 2,
+    follow,
+    manual,
+    @"error",
 
     pub const Map = bun.ComptimeStringMap(FetchRedirect, .{
         .{ "follow", .follow },

@@ -140,13 +140,18 @@ function* run({ cmds, file }) {
     const spawnElapsed = performance.now() - spawnStart;
     stdout = stdout.toString();
     try {
+      const json = JSON.parse(stdout.trim());
       yield {
         file: file,
         benchmarkID,
-        result: JSON.parse(stdout.trim()),
+        result: json,
         runtime: runtime,
         timestamp,
         elapsed: spawnElapsed,
+        runtimeVersion: (runtime === "bun"
+          ? `${Bun.version}-${Bun.revision}`
+          : String(json?.runtime).split(" ").at(1)
+        ).replace(/^v/, ""),
       };
     } catch (e) {
       console.error("Failing file", file);
@@ -166,8 +171,9 @@ for (let result of scan()) {
   for (let {
     runtime,
     benchmarkID,
+    runtimeVersion,
     result: { benchmarks },
   } of run(result)) {
-    console.log({ runtime, id: benchmarkID, benchmarks });
+    console.log({ runtime, runtimeVersion, id: benchmarkID, benchmarks });
   }
 }

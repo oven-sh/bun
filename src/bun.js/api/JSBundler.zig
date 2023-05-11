@@ -981,6 +981,8 @@ pub const BuildArtifact = struct {
         asset,
         @"entry-point",
         @"component-manifest",
+        @"use client",
+        @"use server",
         sourcemap,
     };
 

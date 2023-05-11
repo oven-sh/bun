@@ -2938,6 +2938,15 @@ const EntryPoint = struct {
         /// Created via an import of a "use server" file
         react_server_component,
 
+        pub fn OutputKind(this: Kind) JSC.API.BuildArtifact.OutputKind {
+            return switch (this) {
+                .user_specified => .@"entry-point",
+                .react_client_component => .@"use client",
+                .react_server_component => .@"use server",
+                else => .chunk,
+            };
+        }
+
         pub inline fn isEntryPoint(this: Kind) bool {
             return this != .none;
         }
@@ -4942,7 +4951,7 @@ const LinkerContext = struct {
                                     to_common_js_uses += 1;
                                 }
                             }
-                        } else if (kind == .stmt and other_export_kind.isESMWithDynamicFallback()) {
+                        } else if (kind == .stmt and export_kind == .esm_with_dynamic_fallback) {
                             // This is an import of a module that has a dynamic export fallback
                             // object. In that case we need to depend on that object in case
                             // something ends up needing to use it later. This could potentially
@@ -8863,7 +8872,10 @@ const LinkerContext = struct {
                             .hash = chunk.isolated_hash,
                             .loader = .js,
                             .input_path = input_path,
-                            .output_kind = if (chunk.entry_point.is_entry_point) .@"entry-point" else .chunk,
+                            .output_kind = if (chunk.entry_point.is_entry_point)
+                                c.graph.files.items(.entry_point_kind)[chunk.entry_point.source_index].OutputKind()
+                            else
+                                .chunk,
                             .input_loader = if (chunk.entry_point.is_entry_point) c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index] else .js,
                             .output_path = chunk.final_rel_path,
                             .source_map_index = if (sourcemap_output_file != null)
@@ -9140,7 +9152,10 @@ const LinkerContext = struct {
                     else
                         .js,
                     .hash = chunk.isolated_hash,
-                    .output_kind = if (chunk.entry_point.is_entry_point) .@"entry-point" else .chunk,
+                    .output_kind = if (chunk.entry_point.is_entry_point)
+                        c.graph.files.items(.entry_point_kind)[chunk.entry_point.source_index].OutputKind()
+                    else
+                        .chunk,
                     .loader = .js,
                     .source_map_index = if (source_map_output_file != null)
                         @truncate(u32, output_files.items.len + 1)

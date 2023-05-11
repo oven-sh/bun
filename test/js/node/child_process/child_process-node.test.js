@@ -245,13 +245,18 @@ describe("child_process cwd", () => {
     child.stdout.on("data", chunk => {
       data += chunk;
     });
+
     child.stdout.on("close", () => {
-      if (typeof expectData === "string") {
-        strictEqual(data?.trim(), expectData);
-      } else {
-        expect(data).toBeTruthy();
+      try {
+        if (typeof expectData === "string") {
+          strictEqual(data?.trim(), expectData);
+        } else {
+          expect(data).toBeTruthy();
+        }
+        setTimeout(closeDone, 2);
+      } catch (err) {
+        setTimeout(() => closeDone(err), 2);
       }
-      setTimeout(closeDone, 2);
     });
 
     return child;

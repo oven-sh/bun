@@ -2357,7 +2357,7 @@ pub const ParseTask = struct {
     threadlocal var override_file_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
     fn getEmptyAST(log: *Logger.Log, bundler: *Bundler, opts: js_parser.Parser.Options, allocator: std.mem.Allocator, source: Logger.Source) !JSAst {
-        const root = Expr.init(E.Undefined, E.Undefined{}, Logger.Loc.Empty);
+        const root = Expr.init(E.Object, E.Object{}, Logger.Loc.Empty);
         return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
     }
 

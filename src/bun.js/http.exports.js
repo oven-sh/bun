@@ -1002,34 +1002,39 @@ export class ClientRequest extends OutgoingMessage {
     var method = this.#method,
       body = this.#body;
 
-    this.#fetchRequest = fetch(
-      `${this.#protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}${this.#path}`,
-      {
-        method,
-        headers: this.getHeaders(),
-        body: body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS" ? body : undefined,
-        redirect: "manual",
-        verbose: Boolean(__DEBUG__),
-        signal: this[kAbortController].signal,
-      },
-    )
-      .then(response => {
-        var res = (this.#res = new IncomingMessage(response, {
-          type: "response",
-          [kInternalRequest]: this,
-        }));
-        this.emit("response", res);
-      })
-      .catch(err => {
-        if (__DEBUG__) globalReportError(err);
-        this.emit("error", err);
-      })
-      .finally(() => {
-        this.#fetchRequest = null;
-        this[kClearTimeout]();
-      });
-
-    callback();
+    try {
+      this.#fetchRequest = fetch(
+        `${this.#protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}${this.#path}`,
+        {
+          method,
+          headers: this.getHeaders(),
+          body: body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS" ? body : undefined,
+          redirect: "manual",
+          verbose: Boolean(__DEBUG__),
+          signal: this[kAbortController].signal,
+        },
+      )
+        .then(response => {
+          var res = (this.#res = new IncomingMessage(response, {
+            type: "response",
+            [kInternalRequest]: this,
+          }));
+          this.emit("response", res);
+        })
+        .catch(err => {
+          if (__DEBUG__) globalReportError(err);
+          this.emit("error", err);
+        })
+        .finally(() => {
+          this.#fetchRequest = null;
+          this[kClearTimeout]();
+        });
+    } catch (err) {
+      if (__DEBUG__) globalReportError(err);
+      this.emit("error", err);
+    } finally {
+      callback();
+    }
   }
 
   get aborted() {

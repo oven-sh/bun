@@ -217,13 +217,11 @@ The behavior described in this table can be overridden with [plugins](/docs/bund
 
 {% codetabs group="a" %}
 
-```ts#JavaScript
+```ts #JavaScript
 const result = await Bun.build({
   entrypoints: ['./index.ts']
-}); // => Promise
-
-await result;
-// => { outputs: Array<{ path: string; result: Blob }> }
+});
+// => { success: boolean, outputs: BuildArtifact[], logs: BuildMessage[] }
 ```
 
 ```bash#CLI
@@ -245,35 +243,36 @@ const result = await Bun.build({
   entrypoints: ['./index.ts'],
   outdir: './out'
 });
-
-result;
-// => { outputs: Array<{ path: string; result: BunFile }> }
+// => { success: boolean, outputs: BuildArtifact[], logs: BuildMessage[] }
 ```
 
 ```bash#CLI
 $ bun build --entrypoints ./index.ts --outdir ./out
-# the bundle will be printed to stdout
-# ...
+# a summary of bundled files will be printed to stdout
 ```
 
 {% /codetabs %}
 
-When `outdir` is specified:
+If `outdir` is not passed to the JavaScript API, bundled code will not be written to disk. Bundled files are returned in an array of `BuildArtifact` objects. These objects are Blobs with extra properties.
 
-- The JavaScript API will write the generated bundles to the appropriate location in `outdir`. The result of the `Bun.build()` call will contain `BunFile` instances corresponding to the new files.
+```ts
+const result = await Bun.build({
+  entrypoints: ['./index.ts']
+});
 
-  ```ts
-  const result = await Bun.build({
-    /* ... */
-  });
-  // => { outputs: Array<{ path: string; result: BunFile }> }
+for (const result of result.outputs) {
+  // Can be consumed as blobs
+  await result.text();
 
-  for (const { path, result } of result.outputs) {
-    console.log(`Wrote file: ${path}`);
-  }
-  ```
+  // Bun will set Content-Type and Etag headers
+  new Response(result);
 
-- The CLI will print a summary of the written files. The bundled code will not be written to `stdout`.
+  // Can be written manually, but you should use `outdir` in this case.
+  Bun.write(path.join("out", result.path), result);
+}
+```
+
+When `outdir` is set, the `.path` on `BuildArtifact` will be the absolute path to where it was written to.
 
 ### `target`
 
@@ -328,7 +327,7 @@ Currently the bundler only supports one module format: `"esm"`. Support for `"cj
 
 {% codetabs %}
 
-```ts#Bun.build
+```ts#JavaScript
 await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
@@ -1051,6 +1050,52 @@ $ bun build ./index.tsx --outdir ./out --loader .png:dataurl --loader .txt:file
 ```
 
 {% /codetabs %}
+
+
+## Error handling
+
+`Bun.build` only throws if invalid options are provided. You should read the `success` and `logs` properties of the result to determine whether the build was successful.
+
+```ts
+const result = await Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+});
+
+if(!result.success) {
+  console.error("Build failed");
+  for (const message of result.logs) {
+    // Bun will pretty print the message object
+    console.error(message);
+  }
+}
+```
+
+Each message is either a `BuildMessage` or `ResolveMessage` object, which can be used to trace what problems happened in the build.
+
+```ts
+class BuildMessage {
+  name: string;
+  position?: Position;
+  message: string;
+  level: "error" | "warning" | "info" | "debug" | "verbose";
+}
+
+class ResolveMessage extends BuildMessage {
+  code: string;
+  referrer: string;
+  specifier: string;
+  importKind: ImportKind;
+}
+```
+
+If you want to throw an error from a failed build, consider passing the logs to an `AggregateError`. If uncaught, Bun will pretty print the contained messages nicely.
+
+```ts
+if (!result.success) {
+  throw new AggregateError(result.logs, "Build failed");
+}
+```
 
 ## Reference
 

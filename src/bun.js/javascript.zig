@@ -2528,7 +2528,7 @@ pub const ResolveMessage = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(@tagName(this.msg.metadata.resolve.import_kind)).toValue(ctx.ptr()).asRef();
+        return ZigString.init(this.msg.metadata.resolve.import_kind.label()).toValue(ctx.ptr()).asRef();
     }
 
     pub fn getReferrer(

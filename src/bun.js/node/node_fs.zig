@@ -3039,7 +3039,8 @@ pub const NodeFS = struct {
             };
         }
         // std.c.getErrno(rc) returns SUCCESS if rc is null so we call std.c._errno() directly
-        return .{ .err = Syscall.Error{ .errno = @truncate(Syscall.Error.Int, std.c._errno().*), .syscall = .mkdtemp } };
+        const errno = @intToEnum(std.c.E, std.c._errno().*);
+        return .{ .err = Syscall.Error{ .errno = @truncate(Syscall.Error.Int, @enumToInt(errno)), .syscall = .mkdtemp } };
     }
     pub fn open(this: *NodeFS, args: Arguments.Open, comptime flavor: Flavor) Maybe(Return.Open) {
         switch (comptime flavor) {

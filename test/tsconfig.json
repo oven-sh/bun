@@ -43,9 +43,5 @@
       ]
     }
   },
-  "exclude": [
-    "fixtures",
-    "snapshots",
-    "js/deno"
-  ]
+  "exclude": ["bundler/fixtures", "snapshots", "js/deno"]
 }

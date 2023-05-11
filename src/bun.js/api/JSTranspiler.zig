@@ -200,7 +200,7 @@ pub const TransformTask = struct {
             const error_value: JSValue = brk: {
                 if (this.err) |err| {
                     if (!this.log.hasAny()) {
-                        break :brk JSC.JSValue.fromRef(JSC.BuildError.create(
+                        break :brk JSC.JSValue.fromRef(JSC.BuildMessage.create(
                             this.global,
                             bun.default_allocator,
                             logger.Msg{

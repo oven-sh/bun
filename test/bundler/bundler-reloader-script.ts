@@ -27,7 +27,7 @@ closeSync(maxfd);
 const { outputs: second } = await Bun.build({
   entrypoints: [input],
 });
-const text = await second?.[0]?.result?.text();
+const text = await second.values().next().value?.text();
 
 if (!text?.includes?.(" = 1")) {
   throw new Error("Expected text to include ' = 1', but received\n\n" + text);

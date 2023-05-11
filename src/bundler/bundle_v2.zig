@@ -1201,32 +1201,28 @@ pub const BundleV2 = struct {
             switch (this.result) {
                 .pending => unreachable,
                 .err => {
+                    root_obj.put(globalThis, JSC.ZigString.static("outputs"), JSC.JSValue.createEmptyArray(globalThis, 0));
                     root_obj.put(
                         globalThis,
-                        JSC.ZigString.static("outputs"),
-                        JSC.JSMap.create(
-                            globalThis,
-                        ),
+                        JSC.ZigString.static("success"),
+                        JSC.JSValue.jsBoolean(false),
                     );
-
                     root_obj.put(
                         globalThis,
                         JSC.ZigString.static("logs"),
-                        this.log.toJS(globalThis, bun.default_allocator, "Errors while building"),
+                        this.log.toJSArray(globalThis, bun.default_allocator),
                     );
                 },
                 .value => |*build| {
                     var output_files: []options.OutputFile = build.output_files.items;
-                    const output_files_js = JSC.JSMap.create(globalThis);
+                    const output_files_js = JSC.JSValue.createEmptyArray(globalThis, output_files.len);
                     if (output_files_js == .zero) {
                         @panic("Unexpected pending JavaScript exception in JSBundleCompletionTask.onComplete. This is a bug in Bun.");
                     }
 
-                    var outputs = JSC.JSMap.fromJS(output_files_js) orelse @panic("Unexpected pending JavaScript exception in JSBundleCompletionTask.onComplete. This is a bug in Bun.");
-
                     defer build.output_files.deinit();
                     var to_assign_on_sourcemap: JSC.JSValue = .zero;
-                    for (output_files) |*output_file| {
+                    for (output_files, 0..) |*output_file, i| {
                         defer bun.default_allocator.free(output_file.input.text);
                         defer bun.default_allocator.free(output_file.path);
                         const result = output_file.toJS(
@@ -1268,23 +1264,19 @@ pub const BundleV2 = struct {
                             to_assign_on_sourcemap = result;
                         }
 
-                        outputs.set(
-                            globalThis,
-                            JSC.ZigString.fromUTF8(output_file.input.text).toValueGC(globalThis),
-                            result,
-                        );
+                        output_files_js.putIndex(globalThis, @intCast(u32, i), result);
                     }
 
+                    root_obj.put(globalThis, JSC.ZigString.static("outputs"), output_files_js);
                     root_obj.put(
                         globalThis,
-                        JSC.ZigString.static("outputs"),
-                        output_files_js,
+                        JSC.ZigString.static("success"),
+                        JSC.JSValue.jsBoolean(true),
                     );
-
                     root_obj.put(
                         globalThis,
                         JSC.ZigString.static("logs"),
-                        this.log.toJS(globalThis, bun.default_allocator, "Errors while building"),
+                        this.log.toJSArray(globalThis, bun.default_allocator),
                     );
                 },
             }

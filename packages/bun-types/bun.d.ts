@@ -105,7 +105,7 @@ declare module "bun" {
   /**
    * Synchronously resolve a `moduleId` as though it were imported from `parent`
    *
-   * On failure, throws a `ResolveError`
+   * On failure, throws a `ResolveMessage`
    */
   // tslint:disable-next-line:unified-signatures
   export function resolveSync(moduleId: string, parent: string): string;
@@ -113,7 +113,7 @@ declare module "bun" {
   /**
    * Resolve a `moduleId` as though it were imported from `parent`
    *
-   * On failure, throws a `ResolveError`
+   * On failure, throws a `ResolveMessage`
    *
    * For now, use the sync version. There is zero performance benefit to using this async version. It exists for future-proofing.
    */
@@ -1019,13 +1019,13 @@ declare module "bun" {
     sourcemap: null;
   }
 
-  function build(config: BuildConfig): Promise<{
-    outputs: Map<
-      string,
-      BuildArtifact | AssetBuildArtifact | SourceMapBuildArtifact
-    >;
-    logs: Array<BuildError | ResolveError>;
-  }>;
+  interface BuildOutput {
+    outputs: Array<BuildArtifact | AssetBuildArtifact | SourceMapBuildArtifact>;
+    success: boolean;
+    logs: Array<BuildMessage | ResolveMessage>;
+  }
+
+  function build(config: BuildConfig): Promise<BuildOutput>;
 
   /**
    * **0** means the message was **dropped**
@@ -2542,7 +2542,13 @@ declare module "bun" {
 
   export type Target =
     /**
-     * The default environment when using `bun run` or `bun` to load a script
+     * For generating bundles that are intended to be run by the Bun runtime. In many cases,
+     * it isn't necessary to bundle server-side code; you can directly execute the source code
+     * without modification. However, bundling your server code can reduce startup times and
+     * improve running performance.
+     *
+     * All bundles generated with `target: "bun"` are marked with a special `// @bun` pragma, which
+     * indicates to the Bun runtime that there's no need to re-transpile the file before execution.
      */
     | "bun"
     /**
@@ -2553,6 +2559,7 @@ declare module "bun" {
      * The plugin will be applied to browser builds
      */
     | "browser";
+
   /** https://bun.sh/docs/bundler/loaders */
   type Loader =
     | "js"
@@ -2564,7 +2571,6 @@ declare module "bun" {
     | "file"
     | "napi"
     | "wasm"
-    | "dataurl"
     | "text";
 
   interface PluginConstraints {

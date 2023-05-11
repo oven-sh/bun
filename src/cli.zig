@@ -204,7 +204,7 @@ pub const Arguments = struct {
         clap.parseParam("--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--server-components              Enable React Server Components (experimental)") catch unreachable,
-        clap.parseParam("--transform                      Single file transform, do not bundle") catch unreachable,
+        clap.parseParam("--transpile                      Transpile file only, do not bundle") catch unreachable,
     };
 
     // TODO: update test completions
@@ -477,7 +477,7 @@ pub const Arguments = struct {
         ctx.bundler_options.minify_identifiers = minify_flag or args.flag("--minify-identifiers");
 
         if (cmd == .BuildCommand) {
-            ctx.bundler_options.transform_only = args.flag("--transform");
+            ctx.bundler_options.transform_only = args.flag("--transpile");
 
             if (args.option("--outdir")) |outdir| {
                 if (outdir.len > 0) {

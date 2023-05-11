@@ -1265,14 +1265,14 @@ pub const JestPrettyFormat = struct {
                         if (CAPI.JSObjectGetPrivate(value.asRef())) |private_data_ptr| {
                             const priv_data = JSPrivateDataPtr.from(private_data_ptr);
                             switch (priv_data.tag()) {
-                                .BuildError => {
-                                    const build_error = priv_data.as(JS.BuildError);
-                                    build_error.msg.writeFormat(writer_, enable_ansi_colors) catch {};
+                                .BuildMessage => {
+                                    const build_log = priv_data.as(JS.BuildMessage);
+                                    build_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
                                     return;
                                 },
-                                .ResolveError => {
-                                    const resolve_error = priv_data.as(JS.ResolveError);
-                                    resolve_error.msg.writeFormat(writer_, enable_ansi_colors) catch {};
+                                .ResolveMessage => {
+                                    const resolve_log = priv_data.as(JS.ResolveMessage);
+                                    resolve_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
                                     return;
                                 },
                                 else => {},

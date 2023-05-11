@@ -1,7 +1,7 @@
 import fs from "fs";
 import { it, expect, describe } from "bun:test";
 import path from "path";
-import { gcTick, withoutAggressiveGC } from "harness";
+import { gcTick, withoutAggressiveGC, bunExe } from "harness";
 import { tmpdir } from "os";
 
 it("Bun.write blob", async () => {
@@ -292,6 +292,17 @@ it.skip("Bun.write('output.html', HTMLRewriter.transform(Bun.file)))", async don
 });
 
 it("#2674", async () => {
-  const str = "a".repeat(300000);
-  expect(await Bun.write(Bun.stdout, str)).toBe(300000);
+  const file = path.join(import.meta.dir, "big-stdout.js");
+
+  const { stderr, stdout, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "run", file],
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  console.log(stderr?.toString());
+  const text = stdout?.toString();
+  expect(text?.length).toBeGreaterThanOrEqual(300000);
+  const error = stderr?.toString();
+  expect(error?.length).toBeFalsy();
+  expect(exitCode).toBe(0);
 });

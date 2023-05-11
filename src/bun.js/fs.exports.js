@@ -157,9 +157,15 @@ export var access = function access(...args) {
 function callbackify(fsFunction, args) {
   try {
     const result = fsFunction.apply(fs, args.slice(0, args.length - 1));
-    queueMicrotask(() => args[args.length - 1](null, result));
+    const callback = args[args.length - 1];
+    if (typeof callback === "function") {
+      queueMicrotask(() => callback(null, result));
+    }
   } catch (e) {
-    queueMicrotask(() => args[args.length - 1](e));
+    const callback = args[args.length - 1];
+    if (typeof callback === "function") {
+      queueMicrotask(() => callback(e));
+    }
   }
 }
 

@@ -22,6 +22,7 @@ import fs, {
   promises,
   unlinkSync,
   mkdtempSync,
+  mkdtemp,
   constants,
   Dirent,
   Stats,
@@ -156,6 +157,22 @@ it("mkdtempSync() empty name", () => {
   expect(existsSync(tempdir + "/non-ascii-👍.txt")).toBe(false);
   rmdirSync(tempdir);
   expect(existsSync(tempdir)).toBe(false);
+});
+
+it("mkdtempSync() non-exist dir #2568", () => {
+  try{
+    expect(mkdtempSync("/tmp/hello/world")).toBeFalsy();
+  } catch(err: any){
+    expect(err?.errno).toBe(-2);
+  }
+});
+
+it("mkdtemp() non-exist dir #2568", (done) => {
+  mkdtemp("/tmp/hello/world", (err, folder)=> {
+    expect(err?.errno).toBe(-2);
+    expect(folder).toBeUndefined();
+    done();
+  })
 });
 
 it("readdirSync on import.meta.dir with trailing slash", () => {

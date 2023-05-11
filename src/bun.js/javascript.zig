@@ -2488,7 +2488,7 @@ pub const ResolveMessage = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.static(comptime @as(string, @tagName(JSC.Node.ErrorCode.ERR_MODULE_NOT_FOUND))).toValue(ctx).asObjectRef();
+        return ZigString.static(comptime @as(string, @tagName(JSC.Node.ErrorCode.ERR_MODULE_NOT_FOUND))).toValueGC(ctx).asObjectRef();
     }
 
     pub fn getPosition(
@@ -2528,7 +2528,7 @@ pub const ResolveMessage = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(this.msg.metadata.resolve.import_kind.label()).toValue(ctx.ptr()).asRef();
+        return ZigString.init(this.msg.metadata.resolve.import_kind.label()).toValueGC(ctx.ptr()).asRef();
     }
 
     pub fn getReferrer(
@@ -2552,7 +2552,7 @@ pub const ResolveMessage = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.static("ResolveMessage").toValue(ctx.ptr()).asRef();
+        return ZigString.static("ResolveMessage").toValueGC(ctx.ptr()).asRef();
     }
 
     pub fn getLevel(
@@ -2562,7 +2562,7 @@ pub const ResolveMessage = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(this.msg.kind.string()).toValue(ctx.ptr()).asRef();
+        return ZigString.init(this.msg.kind.string()).toValueGC(ctx.ptr()).asRef();
     }
 
     pub fn finalize(this: *ResolveMessage) void {
@@ -2731,7 +2731,7 @@ pub const BuildMessage = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(this.msg.data.text).toValue(ctx.ptr()).asRef();
+        return ZigString.init(this.msg.data.text).toValueGC(ctx.ptr()).asRef();
     }
 
     pub fn getName(
@@ -2741,7 +2741,7 @@ pub const BuildMessage = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.static("BuildMessage").toValue(ctx.ptr()).asRef();
+        return ZigString.static("BuildMessage").toValueGC(ctx.ptr()).asRef();
     }
 
     pub fn getLevel(
@@ -2751,7 +2751,7 @@ pub const BuildMessage = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(this.msg.kind.string()).toValue(ctx.ptr()).asRef();
+        return ZigString.init(this.msg.kind.string()).toValueGC(ctx.ptr()).asRef();
     }
 };
 

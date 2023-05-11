@@ -2796,7 +2796,7 @@ pub const TOML = struct {
         }
         var source = logger.Source.initPathString("input.toml", input);
         var parse_result = TOMLParser.parse(&source, &log, allocator) catch {
-            exception.* = log.toJSError(ctx.ptr(), default_allocator, "Failed to parse toml").asObjectRef();
+            exception.* = log.toJS(ctx.ptr(), default_allocator, "Failed to parse toml").asObjectRef();
             return null;
         };
 
@@ -2804,7 +2804,7 @@ pub const TOML = struct {
         var buffer_writer = try js_printer.BufferWriter.init(allocator);
         var writer = js_printer.BufferPrinter.init(buffer_writer);
         _ = js_printer.printJSON(*js_printer.BufferPrinter, &writer, parse_result, &source) catch {
-            exception.* = log.toJSError(ctx.ptr(), default_allocator, "Failed to print toml").asObjectRef();
+            exception.* = log.toJS(ctx.ptr(), default_allocator, "Failed to print toml").asObjectRef();
             return null;
         };
 

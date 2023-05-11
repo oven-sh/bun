@@ -707,7 +707,7 @@ pub const Log = struct {
         });
     }
 
-    pub fn toJSError(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, fmt: string) JSC.JSValue {
+    pub fn toJS(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, fmt: string) JSC.JSValue {
         const msgs: []const Msg = this.msgs.items;
         var errors_stack: [256]*anyopaque = undefined;
 

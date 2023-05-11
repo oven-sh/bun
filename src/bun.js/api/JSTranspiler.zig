@@ -210,7 +210,7 @@ pub const TransformTask = struct {
                     }
                 }
 
-                break :brk this.log.toJSError(this.global, bun.default_allocator, "Transform failed");
+                break :brk this.log.toJS(this.global, bun.default_allocator, "Transform failed");
             };
 
             promise.reject(this.global, error_value);
@@ -749,7 +749,7 @@ pub fn constructor(
 
     if ((transpiler_options.log.warnings + transpiler_options.log.errors) > 0) {
         globalThis.throwValue(
-            transpiler_options.log.toJSError(globalThis.ptr(), allocator, "Failed to create transpiler"),
+            transpiler_options.log.toJS(globalThis.ptr(), allocator, "Failed to create transpiler"),
         );
 
         return null;
@@ -766,7 +766,7 @@ pub fn constructor(
     ) catch |err| {
         if ((log.warnings + log.errors) > 0) {
             globalThis.throwValue(
-                log.toJSError(globalThis.ptr(), allocator, "Failed to create transpiler"),
+                log.toJS(globalThis.ptr(), allocator, "Failed to create transpiler"),
             );
 
             return null;
@@ -781,7 +781,7 @@ pub fn constructor(
     bundler.configureDefines() catch |err| {
         if ((log.warnings + log.errors) > 0) {
             globalThis.throwValue(
-                log.toJSError(globalThis.ptr(), allocator, "Failed to load define"),
+                log.toJS(globalThis.ptr(), allocator, "Failed to load define"),
             );
 
             return null;
@@ -938,7 +938,7 @@ pub fn scan(
 
     const parse_result = getParseResult(this, arena.allocator(), code, loader, Bundler.MacroJSValueType.zero) orelse {
         if ((this.bundler.log.warnings + this.bundler.log.errors) > 0) {
-            globalThis.throwValue(this.bundler.log.toJSError(globalThis, globalThis.allocator(), "Parse error"));
+            globalThis.throwValue(this.bundler.log.toJS(globalThis, globalThis.allocator(), "Parse error"));
             return .zero;
         }
 
@@ -947,7 +947,7 @@ pub fn scan(
     };
 
     if ((this.bundler.log.warnings + this.bundler.log.errors) > 0) {
-        globalThis.throwValue(this.bundler.log.toJSError(globalThis, globalThis.allocator(), "Parse error"));
+        globalThis.throwValue(this.bundler.log.toJS(globalThis, globalThis.allocator(), "Parse error"));
         return .zero;
     }
 
@@ -1127,7 +1127,7 @@ pub fn transformSync(
         if (comptime JSC.is_bindgen) Bundler.MacroJSValueType.zero else js_ctx_value,
     ) orelse {
         if ((this.bundler.log.warnings + this.bundler.log.errors) > 0) {
-            globalThis.throwValue(this.bundler.log.toJSError(globalThis, globalThis.allocator(), "Parse error"));
+            globalThis.throwValue(this.bundler.log.toJS(globalThis, globalThis.allocator(), "Parse error"));
             return .zero;
         }
 
@@ -1136,7 +1136,7 @@ pub fn transformSync(
     };
 
     if ((this.bundler.log.warnings + this.bundler.log.errors) > 0) {
-        globalThis.throwValue(this.bundler.log.toJSError(globalThis, globalThis.allocator(), "Parse error"));
+        globalThis.throwValue(this.bundler.log.toJS(globalThis, globalThis.allocator(), "Parse error"));
         return .zero;
     }
 
@@ -1309,7 +1309,7 @@ pub fn scanImports(
     ) catch |err| {
         defer this.scan_pass_result.reset();
         if ((log.warnings + log.errors) > 0) {
-            globalThis.throwValue(log.toJSError(globalThis, globalThis.allocator(), "Failed to scan imports"));
+            globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "Failed to scan imports"));
             return .zero;
         }
 
@@ -1320,7 +1320,7 @@ pub fn scanImports(
     defer this.scan_pass_result.reset();
 
     if ((log.warnings + log.errors) > 0) {
-        globalThis.throwValue(log.toJSError(globalThis, globalThis.allocator(), "Failed to scan imports"));
+        globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "Failed to scan imports"));
         return .zero;
     }
 

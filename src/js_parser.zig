@@ -6593,12 +6593,14 @@ fn NewParser_(
                 var iter = scope.members.iterator();
                 const allocator = p.allocator;
                 var symbols = p.symbols.items;
-                const orig_capacity = p.symbols.capacity;
-                // assert we don't modify the symbols array while iterating
+
                 defer {
                     if (comptime Environment.allow_assert) {
-                        assert(orig_capacity == p.symbols.capacity);
+                        // we call `.newSymbol` in this function
+                        // we need to avoid using a potentially re-sized array
+                        // so we assert that the array is in sync
                         assert(symbols.ptr == p.symbols.items.ptr);
+                        assert(symbols.len == p.symbols.items.len);
                     }
                 }
 

@@ -1030,7 +1030,7 @@ pub const Fetch = struct {
                     }
 
                     if (options.getOptionalEnum(ctx, "redirect", FetchRedirect) catch {
-                        return null;
+                        return .zero;
                     }) |redirect_value| {
                         redirect_type = redirect_value;
                     }
@@ -1160,7 +1160,7 @@ pub const Fetch = struct {
                     }
 
                     if (options.getOptionalEnum(ctx, "redirect", FetchRedirect) catch {
-                        return null;
+                        return .zero;
                     }) |redirect_value| {
                         redirect_type = redirect_value;
                     }

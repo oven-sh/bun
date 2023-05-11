@@ -7141,9 +7141,12 @@ fn NewParser_(
                 p.popScope();
             }
 
-            return p.s(S.Function{
-                .func = func,
-            }, func.open_parens_loc);
+            return p.s(
+                S.Function{
+                    .func = func,
+                },
+                loc,
+            );
         }
 
         fn popAndDiscardScope(p: *P, scope_index: usize) void {

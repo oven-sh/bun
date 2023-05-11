@@ -985,6 +985,7 @@ describe("websocket server", () => {
     server.stop(true);
   });
   it("can close with reason and code #2631", done => {
+    let timeout: any;
     let server = Bun.serve({
       websocket: {
         message(ws) {
@@ -994,6 +995,7 @@ describe("websocket server", () => {
           try {
             expect(ws.remoteAddress).toBe("127.0.0.1");
           } catch (e) {
+            clearTimeout(timeout);
             done(e);
           }
         },
@@ -1001,8 +1003,10 @@ describe("websocket server", () => {
           try {
             expect(code).toBe(2000);
             expect(reason).toBe("test");
+            clearTimeout(timeout);
             done();
           } catch (e) {
+            clearTimeout(timeout);
             done(e);
           }
         },
@@ -1022,9 +1026,15 @@ describe("websocket server", () => {
     z.addEventListener("close", () => {
       server.stop();
     });
+
+    timeout = setTimeout(() => {
+      done(new Error("Did not close in time"));
+      server.stop(true);
+    }, 1000);
   });
 
   it("can close with code and without reason #2631", done => {
+    let timeout: any;
     let server = Bun.serve({
       websocket: {
         message(ws) {
@@ -1035,9 +1045,12 @@ describe("websocket server", () => {
             expect(ws.remoteAddress).toBe("127.0.0.1");
           } catch (e) {
             done(e);
+            clearTimeout(timeout);
           }
         },
         close(ws, code, reason) {
+          clearTimeout(timeout);
+
           try {
             expect(code).toBe(2000);
             expect(reason).toBe("");
@@ -1062,8 +1075,14 @@ describe("websocket server", () => {
     z.addEventListener("close", () => {
       server.stop();
     });
+
+    timeout = setTimeout(() => {
+      done(new Error("Did not close in time"));
+      server.stop(true);
+    }, 1000);
   });
   it("can close without reason or code #2631", done => {
+    let timeout: any;
     let server = Bun.serve({
       websocket: {
         message(ws) {
@@ -1073,10 +1092,12 @@ describe("websocket server", () => {
           try {
             expect(ws.remoteAddress).toBe("127.0.0.1");
           } catch (e) {
+            clearTimeout(timeout);
             done(e);
           }
         },
         close(ws, code, reason) {
+          clearTimeout(timeout);
           try {
             expect(code).toBe(1006);
             expect(reason).toBe("");
@@ -1101,5 +1122,10 @@ describe("websocket server", () => {
     z.addEventListener("close", () => {
       server.stop();
     });
+
+    timeout = setTimeout(() => {
+      done(new Error("Did not close in time"));
+      server.stop(true);
+    }, 1000);
   });
 });

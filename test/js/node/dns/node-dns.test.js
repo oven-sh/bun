@@ -134,6 +134,14 @@ test("dns.lookup (example.com)", done => {
   });
 });
 
+test("dns.lookup (example.com) with { all: true } #2675", done => {
+  dns.lookup("example.com", { all: true }, (err, address, family) => {
+    expect(err).toBeNull();
+    expect(Array.isArray(address)).toBe(true);
+    done(err);
+  });
+});
+
 test("dns.lookup (localhost)", done => {
   dns.lookup("localhost", (err, address, family) => {
     expect(err).toBeNull();

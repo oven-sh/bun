@@ -1,5 +1,5 @@
 // so it can run in environments without node module resolution
-import { bench, run } from "mitata";
+import { bench, run } from "./runner.mjs";
 
 import crypto from "node:crypto";
 

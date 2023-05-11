@@ -201,8 +201,8 @@ pub const Subprocess = struct {
                     };
                 },
                 .path => Readable{ .ignore = {} },
-                .blob, .fd => Readable{ .fd = @intCast(bun.FileDescriptor, fd) },
-                else => unreachable,
+                // TODO: array_buffer must be implemented yet but this will allow to proceed without faulting like in v0.5.9
+                .array_buffer, .blob, .fd => Readable{ .fd = @intCast(bun.FileDescriptor, fd) },
             };
         }
 

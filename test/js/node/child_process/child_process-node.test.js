@@ -230,7 +230,6 @@ describe("child_process cwd", () => {
   function testCwd(options, { expectPidType, expectCode = 0, expectData }, done = () => {}) {
     const createDone = createDoneDotAll(done);
     const { mustCall } = createCallCheckCtx(createDone(1500));
-    const exitDone = createDone(5000);
 
     const child = spawn(...common.pwdCommand, options);
 
@@ -244,19 +243,7 @@ describe("child_process cwd", () => {
       data += chunk;
     });
 
-    // TODO: Test exit events
-    // // Can't assert callback, as stayed in to API:
-    // // _The 'exit' event may or may not fire after an error has occurred._
-    child.on("exit", (code, signal) => {
-      try {
-        strictEqual(code, expectCode);
-        exitDone();
-      } catch (err) {
-        exitDone(err);
-      }
-    });
-
-    child.on(
+    child.stdout.on(
       "close",
       mustCall(() => {
         expectData && strictEqual(data.trim(), expectData);
@@ -374,9 +361,12 @@ describe("child_process default options", () => {
 
 describe("child_process double pipe", () => {
   it("should allow two pipes to be used at once", done => {
-    // const { mustCallAtLeast, mustCall } = createCallCheckCtx(done);
-    const mustCallAtLeast = fn => fn;
-    const mustCall = fn => fn;
+    const createDone = createDoneDotAll(done);
+    const { mustCall, mustCallAtLeast } = createCallCheckCtx(createDone(3000));
+    const sedExitDone = createDone(3000);
+    const echoExitDone = createDone(3000);
+    const grepExitDone = createDone(3000);
+
     let grep, sed, echo;
     grep = spawn("grep", ["o"], { stdio: ["pipe", "pipe", "pipe"] });
     sed = spawn("sed", ["s/o/O/"]);
@@ -386,7 +376,7 @@ describe("child_process double pipe", () => {
     grep.stdout.on(
       "data",
       mustCallAtLeast(data => {
-        debug(`grep stdout ${data.length}`);
+        console.log(`grep stdout ${data.length}`);
         if (!sed.stdin.write(data)) {
           grep.stdout.pause();
         }
@@ -435,6 +425,7 @@ describe("child_process double pipe", () => {
       "exit",
       mustCall(() => {
         debug("echo exit");
+        echoExitDone();
       }),
     );
 
@@ -442,11 +433,12 @@ describe("child_process double pipe", () => {
       "exit",
       mustCall(() => {
         debug("grep exit");
+        grepExitDone();
       }),
     );
 
-    sed.on(
-      "exit",
+    sed.stdout.on(
+      "close",
       mustCall(() => {
         debug("sed exit");
       }),
@@ -474,7 +466,7 @@ describe("child_process double pipe", () => {
       mustCall(() => {
         debug("result: " + result);
         strictEqual(result, `hellO\nnOde\nwOrld\n`);
-        done();
+        sedExitDone();
       }),
     );
   });

@@ -5,6 +5,7 @@ const RequestContext = @import("../../http.zig").RequestContext;
 const MimeType = @import("../../http.zig").MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = @import("root").bun.HTTP;
+const FetchRedirect = HTTPClient.FetchRedirect;
 const NetworkThread = HTTPClient.NetworkThread;
 const AsyncIO = NetworkThread.AsyncIO;
 const JSC = @import("root").bun.JSC;
@@ -609,17 +610,11 @@ pub const Fetch = struct {
         break :brk errors;
     };
 
-    pub const Class = NewClass(
-        void,
-        .{ .name = "fetch" },
-        .{
-            .call = .{
-                .rfn = Fetch.call,
-                .ts = d.ts{},
-            },
-        },
-        .{},
-    );
+    comptime {
+        if (!JSC.is_bindgen) {
+            _ = Bun__fetch;
+        }
+    }
 
     pub const FetchTasklet = struct {
         const log = Output.scoped(.FetchTasklet, false);
@@ -853,9 +848,9 @@ pub const Fetch = struct {
                 FetchTasklet.callback,
             ).init(
                 fetch_tasklet,
-            ), proxy, if (fetch_tasklet.signal != null) &fetch_tasklet.aborted else null, fetch_options.hostname);
+            ), proxy, if (fetch_tasklet.signal != null) &fetch_tasklet.aborted else null, fetch_options.hostname, fetch_options.redirect_type);
 
-            if (!fetch_options.follow_redirects) {
+            if (fetch_options.redirect_type != FetchRedirect.follow) {
                 fetch_tasklet.http.?.client.remaining_redirect_count = 0;
             }
 
@@ -890,7 +885,7 @@ pub const Fetch = struct {
             disable_keepalive: bool,
             url: ZigURL,
             verbose: bool = false,
-            follow_redirects: bool = true,
+            redirect_type: FetchRedirect = FetchRedirect.follow,
             proxy: ?ZigURL = null,
             url_proxy_buffer: []const u8 = "",
             signal: ?*JSC.WebCore.AbortSignal = null,
@@ -929,27 +924,33 @@ pub const Fetch = struct {
         }
     };
 
-    pub fn call(
-        _: void,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) js.JSObjectRef {
-        var globalThis = ctx.ptr();
+    pub export fn Bun__fetch(
+        ctx: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        JSC.markBinding(@src());
+
+        var exception_val = [_]JSC.C.JSValueRef{null};
+        var exception: JSC.C.ExceptionRef = &exception_val;
+        defer {
+            if (exception.* != null) {
+                ctx.throwValue(JSC.JSValue.c(exception.*));
+            }
+        }
+
+        const globalThis = ctx.ptr();
+        const arguments = callframe.arguments(2);
 
         if (arguments.len == 0) {
             const err = JSC.toTypeError(.ERR_MISSING_ARGS, fetch_error_no_args, .{}, ctx);
-            return JSPromise.rejectedPromiseValue(globalThis, err).asRef();
+            return JSPromise.rejectedPromiseValue(globalThis, err);
         }
 
         var headers: ?Headers = null;
         var method = Method.GET;
         var script_ctx = globalThis.bunVM();
 
-        var args = JSC.Node.ArgumentsSlice.from(script_ctx, arguments);
-        defer args.deinit();
+        var args = JSC.Node.ArgumentsSlice.init(script_ctx, arguments.ptr[0..arguments.len]);
 
         var url = ZigURL{};
         var first_arg = args.nextEat().?;
@@ -960,7 +961,7 @@ pub const Fetch = struct {
         var disable_keepalive = false;
         var verbose = script_ctx.log.level.atLeast(.debug);
         var proxy: ?ZigURL = null;
-        var follow_redirects = true;
+        var redirect_type: FetchRedirect = FetchRedirect.follow;
         var signal: ?*JSC.WebCore.AbortSignal = null;
         // Custom Hostname
         var hostname: ?[]u8 = null;
@@ -968,8 +969,7 @@ pub const Fetch = struct {
         var url_proxy_buffer: []const u8 = undefined;
 
         if (first_arg.as(Request)) |request| {
-            if (arguments.len >= 2) {
-                const options = arguments[1].?.value();
+            if (args.nextEat()) |options| {
                 if (options.isObject() or options.jsType() == .DOMWrapper) {
                     if (options.fastGet(ctx.ptr(), .method)) |method_| {
                         var slice_ = method_.toSlice(ctx.ptr(), getAllocator(ctx));
@@ -1015,7 +1015,7 @@ pub const Fetch = struct {
                                 bun.default_allocator.free(host);
                             }
                             // an error was thrown
-                            return JSC.JSValue.jsUndefined().asObjectRef();
+                            return JSC.JSValue.jsUndefined();
                         }
                     } else {
                         body = request.body.value.useAsAnyBlob();
@@ -1029,10 +1029,10 @@ pub const Fetch = struct {
                         }
                     }
 
-                    if (options.get(ctx, "redirect")) |redirect_value| {
-                        if (redirect_value.getZigString(globalThis).eqlComptime("manual")) {
-                            follow_redirects = false;
-                        }
+                    if (options.getOptionalEnum(ctx, "redirect", FetchRedirect) catch {
+                        return .zero;
+                    }) |redirect_value| {
+                        redirect_type = redirect_value;
                     }
 
                     if (options.get(ctx, "keepalive")) |keepalive_value| {
@@ -1060,7 +1060,7 @@ pub const Fetch = struct {
                                 url_proxy_buffer = url.href;
                                 proxy = ZigURL{}; //empty proxy
                             } else {
-                                var proxy_str = proxy_arg.toStringOrNull(globalThis) orelse return null;
+                                var proxy_str = proxy_arg.toStringOrNull(globalThis) orelse return .zero;
                                 // proxy + url 1 allocation
                                 var proxy_url_zig = proxy_str.getZigString(globalThis);
 
@@ -1071,7 +1071,7 @@ pub const Fetch = struct {
                                 } else {
                                     var buffer = getAllocator(ctx).alloc(u8, request.url.len + proxy_url_zig.len) catch {
                                         JSC.JSError(bun.default_allocator, "Out of memory", .{}, ctx, exception);
-                                        return null;
+                                        return .zero;
                                     };
                                     @memcpy(buffer.ptr, request.url.ptr, request.url.len);
                                     var proxy_url_slice = buffer[request.url.len..];
@@ -1107,8 +1107,7 @@ pub const Fetch = struct {
                 }
             }
         } else if (first_arg.toStringOrNull(globalThis)) |jsstring| {
-            if (arguments.len >= 2) {
-                const options = arguments[1].?.value();
+            if (args.nextEat()) |options| {
                 if (options.isObject() or options.jsType() == .DOMWrapper) {
                     if (options.fastGet(ctx.ptr(), .method)) |method_| {
                         var slice_ = method_.toSlice(ctx.ptr(), getAllocator(ctx));
@@ -1132,7 +1131,7 @@ pub const Fetch = struct {
                         } else {
                             // Converting the headers failed; return null and
                             //  let the set exception get thrown
-                            return null;
+                            return .zero;
                         }
                     }
 
@@ -1148,7 +1147,7 @@ pub const Fetch = struct {
                                 bun.default_allocator.free(host);
                             }
                             // an error was thrown
-                            return JSC.JSValue.jsUndefined().asObjectRef();
+                            return JSC.JSValue.jsUndefined();
                         }
                     }
 
@@ -1160,10 +1159,10 @@ pub const Fetch = struct {
                         }
                     }
 
-                    if (options.get(ctx, "redirect")) |redirect_value| {
-                        if (redirect_value.getZigString(globalThis).eqlComptime("manual")) {
-                            follow_redirects = false;
-                        }
+                    if (options.getOptionalEnum(ctx, "redirect", FetchRedirect) catch {
+                        return .zero;
+                    }) |redirect_value| {
+                        redirect_type = redirect_value;
                     }
 
                     if (options.get(ctx, "keepalive")) |keepalive_value| {
@@ -1194,7 +1193,7 @@ pub const Fetch = struct {
                                 if (hostname) |host| {
                                     bun.default_allocator.free(host);
                                 }
-                                return JSPromise.rejectedPromiseValue(globalThis, err).asRef();
+                                return JSPromise.rejectedPromiseValue(globalThis, err);
                             }
 
                             if (proxy_arg.isNull()) {
@@ -1206,28 +1205,28 @@ pub const Fetch = struct {
                                         bun.default_allocator.free(host);
                                     }
                                     JSC.JSError(bun.default_allocator, "Out of memory", .{}, ctx, exception);
-                                    return null;
+                                    return .zero;
                                 };
                                 url = ZigURL.parse(url_slice.slice());
                                 url_proxy_buffer = url.href;
                                 proxy = ZigURL{}; //empty proxy
 
                             } else {
-                                var proxy_str = proxy_arg.toStringOrNull(globalThis) orelse return null;
+                                var proxy_str = proxy_arg.toStringOrNull(globalThis) orelse return .zero;
                                 var proxy_url_zig = proxy_str.getZigString(globalThis);
 
                                 // proxy is actual 0 len so ignores it
                                 if (proxy_url_zig.len == 0) {
                                     const url_slice = url_zig.toSlice(bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {
                                         JSC.JSError(bun.default_allocator, "Out of memory", .{}, ctx, exception);
-                                        return null;
+                                        return .zero;
                                     };
                                     url = ZigURL.parse(url_slice.slice());
                                     url_proxy_buffer = url.href;
                                 } else {
                                     var buffer = getAllocator(ctx).alloc(u8, url_zig.len + proxy_url_zig.len) catch {
                                         JSC.JSError(bun.default_allocator, "Out of memory", .{}, ctx, exception);
-                                        return null;
+                                        return .zero;
                                     };
                                     @memcpy(buffer.ptr, url_zig.ptr, url_zig.len);
                                     var proxy_url_slice = buffer[url_zig.len..];
@@ -1242,12 +1241,12 @@ pub const Fetch = struct {
                             //no proxy only url
                             var url_slice = jsstring.toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {
                                 JSC.JSError(bun.default_allocator, "Out of memory", .{}, ctx, exception);
-                                return null;
+                                return .zero;
                             };
 
                             if (url_slice.len == 0) {
                                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
-                                return JSPromise.rejectedPromiseValue(globalThis, err).asRef();
+                                return JSPromise.rejectedPromiseValue(globalThis, err);
                             }
 
                             url = ZigURL.parse(url_slice.slice());
@@ -1261,7 +1260,7 @@ pub const Fetch = struct {
                                 bun.default_allocator.free(host);
                             }
                             JSC.JSError(bun.default_allocator, "Out of memory", .{}, ctx, exception);
-                            return null;
+                            return .zero;
                         };
 
                         if (url_slice.len == 0) {
@@ -1270,7 +1269,7 @@ pub const Fetch = struct {
                             if (hostname) |host| {
                                 bun.default_allocator.free(host);
                             }
-                            return JSPromise.rejectedPromiseValue(globalThis, err).asRef();
+                            return JSPromise.rejectedPromiseValue(globalThis, err);
                         }
 
                         url = ZigURL.parse(url_slice.slice());
@@ -1281,22 +1280,22 @@ pub const Fetch = struct {
                 //no proxy only url
                 var url_slice = jsstring.toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {
                     JSC.JSError(bun.default_allocator, "Out of memory", .{}, ctx, exception);
-                    return null;
+                    return .zero;
                 };
 
                 if (url_slice.len == 0) {
                     const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
-                    return JSPromise.rejectedPromiseValue(globalThis, err).asRef();
+                    return JSPromise.rejectedPromiseValue(globalThis, err);
                 }
 
                 url = ZigURL.parse(url_slice.slice());
                 url_proxy_buffer = url.href;
             }
         } else {
-            const fetch_error = fetch_type_error_strings.get(js.JSValueGetType(ctx, arguments[0]));
+            const fetch_error = fetch_type_error_strings.get(js.JSValueGetType(ctx, first_arg.asRef()));
             const err = JSC.toTypeError(.ERR_INVALID_ARG_TYPE, "{s}", .{fetch_error}, ctx);
             exception.* = err.asObjectRef();
-            return null;
+            return .zero;
         }
 
         var promise = JSPromise.Strong.init(globalThis);
@@ -1304,19 +1303,19 @@ pub const Fetch = struct {
 
         if (url.isEmpty()) {
             const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
-            return JSPromise.rejectedPromiseValue(globalThis, err).asRef();
+            return JSPromise.rejectedPromiseValue(globalThis, err);
         }
 
         if (url.protocol.len > 0) {
             if (!(url.isHTTP() or url.isHTTPS())) {
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "protocol must be http: or https:", .{}, ctx);
-                return JSPromise.rejectedPromiseValue(globalThis, err).asRef();
+                return JSPromise.rejectedPromiseValue(globalThis, err);
             }
         }
 
         if (!method.hasRequestBody() and body.size() > 0) {
             const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_unexpected_body, .{}, ctx);
-            return JSPromise.rejectedPromiseValue(globalThis, err).asRef();
+            return JSPromise.rejectedPromiseValue(globalThis, err);
         }
 
         // var resolve = FetchTasklet.FetchResolver.Class.make(ctx: js.JSContextRef, ptr: *ZigType)
@@ -1333,7 +1332,7 @@ pub const Fetch = struct {
                 .timeout = std.time.ns_per_hour,
                 .disable_keepalive = disable_keepalive,
                 .disable_timeout = disable_timeout,
-                .follow_redirects = follow_redirects,
+                .redirect_type = redirect_type,
                 .verbose = verbose,
                 .proxy = proxy,
                 .url_proxy_buffer = url_proxy_buffer,
@@ -1343,7 +1342,7 @@ pub const Fetch = struct {
             },
             promise_val,
         ) catch unreachable;
-        return promise_val.asRef();
+        return promise_val;
     }
 };
 

@@ -343,6 +343,27 @@ describe("fetch", () => {
     expect(response.redirected).toBe(true);
   });
 
+  it('redirect: "error" #2819', async () => {
+    startServer({
+      fetch(req) {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: "https://example.com",
+          },
+        });
+      },
+    });
+    try {
+      const response = await fetch(`http://${server.hostname}:${server.port}`, {
+        redirect: "error",
+      });
+      expect(response).toBeUndefined();
+    } catch (err: any) {
+      expect(err.code).toBe("UnexpectedRedirect");
+    }
+  });
+
   it("provide body", async () => {
     startServer({
       fetch(req) {
@@ -1128,4 +1149,19 @@ it("#874", () => {
   expect(new Request(new Request("https://example.com"), {}).url).toBe("https://example.com");
   expect(new Request(new Request("https://example.com")).url).toBe("https://example.com");
   expect(new Request({ url: "https://example.com" }).url).toBe("https://example.com");
+});
+
+it("#2794", () => {
+  expect(typeof globalThis.fetch.bind).toBe("function");
+  expect(typeof Bun.fetch.bind).toBe("function");
+});
+
+it("invalid header doesnt crash", () => {
+  expect(() =>
+    fetch("http://example.com", {
+      headers: {
+        ["lol!!!!!" + "emoji" + "😀"]: "hello",
+      },
+    }),
+  ).toThrow();
 });

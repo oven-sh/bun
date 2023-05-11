@@ -348,6 +348,8 @@ pub const DiffFormatter = struct {
 };
 
 const ArrayIdentityContext = @import("../../identity_context.zig").ArrayIdentityContext;
+pub var test_elapsed_timer: ?*std.time.Timer = null;
+
 pub const TestRunner = struct {
     tests: TestRunner.Test.List = .{},
     log: *logger.Log,
@@ -421,7 +423,7 @@ pub const TestRunner = struct {
     pub const Callback = struct {
         pub const OnUpdateCount = *const fn (this: *Callback, delta: u32, total: u32) void;
         pub const OnTestStart = *const fn (this: *Callback, test_id: Test.ID) void;
-        pub const OnTestUpdate = *const fn (this: *Callback, test_id: Test.ID, file: string, label: string, expectations: u32, parent: ?*DescribeScope) void;
+        pub const OnTestUpdate = *const fn (this: *Callback, test_id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*DescribeScope) void;
         onUpdateCount: OnUpdateCount,
         onTestStart: OnTestStart,
         onTestPass: OnTestUpdate,
@@ -429,18 +431,18 @@ pub const TestRunner = struct {
         onTestSkip: OnTestUpdate,
     };
 
-    pub fn reportPass(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, parent: ?*DescribeScope) void {
+    pub fn reportPass(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*DescribeScope) void {
         this.tests.items(.status)[test_id] = .pass;
-        this.callback.onTestPass(this.callback, test_id, file, label, expectations, parent);
+        this.callback.onTestPass(this.callback, test_id, file, label, expectations, elapsed_ns, parent);
     }
-    pub fn reportFailure(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, parent: ?*DescribeScope) void {
+    pub fn reportFailure(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*DescribeScope) void {
         this.tests.items(.status)[test_id] = .fail;
-        this.callback.onTestFail(this.callback, test_id, file, label, expectations, parent);
+        this.callback.onTestFail(this.callback, test_id, file, label, expectations, elapsed_ns, parent);
     }
 
     pub fn reportSkip(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope) void {
         this.tests.items(.status)[test_id] = .skip;
-        this.callback.onTestSkip(this.callback, test_id, file, label, 0, parent);
+        this.callback.onTestSkip(this.callback, test_id, file, label, 0, 0, parent);
     }
 
     pub fn addTestCount(this: *TestRunner, count: u32) u32 {
@@ -3129,6 +3131,12 @@ pub const TestScope = struct {
             .parent = DescribeScope.active,
         }) catch unreachable;
 
+        if (test_elapsed_timer == null) create_tiemr: {
+            var timer = bun.default_allocator.create(std.time.Timer) catch unreachable;
+            timer.* = std.time.Timer.start() catch break :create_tiemr;
+            test_elapsed_timer = timer;
+        }
+
         return this;
     }
 
@@ -3195,6 +3203,10 @@ pub const TestScope = struct {
         const callback_length = JSValue.fromRef(callback).getLengthOfArray(vm.global);
 
         var initial_value = JSValue.zero;
+        if (test_elapsed_timer) |timer| {
+            timer.reset();
+        }
+
         if (callback_length > 0) {
             const callback_func = JSC.NewFunctionWithData(
                 vm.global,
@@ -3306,10 +3318,11 @@ pub const DescribeScope = struct {
     current_test_id: TestRunner.Test.ID = 0,
     value: JSValue = .zero,
     done: bool = false,
+    skipped: bool = false,
     skipped_counter: u32 = 0,
 
     pub fn isAllSkipped(this: *const DescribeScope) bool {
-        return @as(usize, this.skipped_counter) >= this.tests.items.len;
+        return this.skipped or @as(usize, this.skipped_counter) >= this.tests.items.len;
     }
 
     pub fn push(new: *DescribeScope) void {
@@ -3388,6 +3401,7 @@ pub const DescribeScope = struct {
             .afterEach = .{ .rfn = createCallback(.afterEach), .name = "afterEach" },
             .beforeAll = .{ .rfn = createCallback(.beforeAll), .name = "beforeAll" },
             .beforeEach = .{ .rfn = createCallback(.beforeEach), .name = "beforeEach" },
+            .skip = skip,
         },
         .{
             .expect = .{ .get = createExpect, .name = "expect" },
@@ -3484,6 +3498,17 @@ pub const DescribeScope = struct {
         return this.execCallback(ctx, hook);
     }
 
+    pub fn skip(
+        this: *DescribeScope,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSObjectRef {
+        return this.runDescribe(ctx, null, null, arguments, exception, true);
+    }
+
     pub fn describe(
         this: *DescribeScope,
         ctx: js.JSContextRef,
@@ -3491,6 +3516,18 @@ pub const DescribeScope = struct {
         _: js.JSObjectRef,
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
+    ) js.JSObjectRef {
+        return runDescribe(this, ctx, null, null, arguments, exception, false);
+    }
+
+    fn runDescribe(
+        this: *DescribeScope,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+        skipped: bool,
     ) js.JSObjectRef {
         if (arguments.len == 0 or arguments.len > 2) {
             JSError(getAllocator(ctx), "describe() requires 1-2 arguments", .{}, ctx, exception);
@@ -3518,6 +3555,7 @@ pub const DescribeScope = struct {
             .label = (label.toSlice(allocator).cloneIfNeeded(allocator) catch unreachable).slice(),
             .parent = active,
             .file_id = this.file_id,
+            .skipped = skipped or active.skipped,
         };
         var new_this = DescribeScope.Class.make(ctx, scope);
 
@@ -3579,7 +3617,7 @@ pub const DescribeScope = struct {
             const beforeAll = this.runCallback(ctx, .beforeAll);
             if (!beforeAll.isEmpty()) {
                 while (i < end) {
-                    Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, this);
+                    Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this);
                     i += 1;
                 }
                 this.tests.clearAndFree(allocator);
@@ -3609,7 +3647,7 @@ pub const DescribeScope = struct {
         this.pending_tests.unset(test_id);
 
         if (!skipped) {
-            const afterEach = this.execCallback(globalThis, .afterEach);
+            const afterEach = this.runCallback(globalThis, .afterEach);
             if (!afterEach.isEmpty()) {
                 globalThis.bunVM().runErrorHandler(afterEach, null);
             }
@@ -3753,7 +3791,7 @@ pub const TestRunnerTask = struct {
         var test_: TestScope = this.describe.tests.items[test_id];
         describe.current_test_id = test_id;
         var globalThis = this.globalThis;
-        if (test_.skipped) {
+        if (test_.skipped or describe.skipped) {
             this.processTestResult(globalThis, .{ .skip = {} }, test_, test_id, describe);
             this.deinit();
             return false;
@@ -3768,7 +3806,7 @@ pub const TestRunnerTask = struct {
             const beforeEach = this.describe.runCallback(globalThis, .beforeEach);
 
             if (!beforeEach.isEmpty()) {
-                Jest.runner.?.reportFailure(test_id, this.source_file_path, label, 0, this.describe);
+                Jest.runner.?.reportFailure(test_id, this.source_file_path, label, 0, 0, this.describe);
                 globalThis.bunVM().runErrorHandler(beforeEach, null);
                 return false;
             }
@@ -3845,8 +3883,28 @@ pub const TestRunnerTask = struct {
 
     fn processTestResult(this: *TestRunnerTask, globalThis: *JSC.JSGlobalObject, result: Result, test_: TestScope, test_id: u32, describe: *DescribeScope) void {
         switch (result) {
-            .pass => |count| Jest.runner.?.reportPass(test_id, this.source_file_path, test_.label, count, describe),
-            .fail => |count| Jest.runner.?.reportFailure(test_id, this.source_file_path, test_.label, count, describe),
+            .pass => |count| Jest.runner.?.reportPass(
+                test_id,
+                this.source_file_path,
+                test_.label,
+                count,
+                if (test_elapsed_timer) |timer|
+                    timer.read()
+                else
+                    0,
+                describe,
+            ),
+            .fail => |count| Jest.runner.?.reportFailure(
+                test_id,
+                this.source_file_path,
+                test_.label,
+                count,
+                if (test_elapsed_timer) |timer|
+                    timer.read()
+                else
+                    0,
+                describe,
+            ),
             .skip => Jest.runner.?.reportSkip(test_id, this.source_file_path, test_.label, describe),
             .pending => @panic("Unexpected pending test"),
         }

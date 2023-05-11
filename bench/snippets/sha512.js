@@ -1,4 +1,4 @@
-import { bench, run } from "mitata";
+import { bench, run } from "./runner.mjs";
 import { SHA512 } from "bun";
 
 bench('SHA512.hash("hello world")', () => {

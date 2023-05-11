@@ -1,4 +1,4 @@
-import { bench, run } from "mitata";
+import { bench, run } from "./runner.mjs";
 import { write } from "bun";
 import { openSync } from "fs";
 

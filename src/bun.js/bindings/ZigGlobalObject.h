@@ -1,5 +1,8 @@
+// ** WARNING **
 // This header is included in nearly every file.
-// Be very cautious of sticking your #include in this file.
+// Be very cautious of sticking your #include in this file
+// or adding anything into this file other than LazyClassStructure or LazyProperty
+// ** WARNING **
 // TODO: rename this to BunGlobalObject
 #pragma once
 
@@ -48,6 +51,7 @@ extern "C" void Bun__reportUnhandledError(JSC__JSGlobalObject*, JSC::EncodedJSVa
 // defined in ModuleLoader.cpp
 extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultReject(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
+
 // #include "EventTarget.h"
 
 // namespace WebCore {

@@ -99,7 +99,7 @@ pub const CommandLineReporter = struct {
         // var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
     }
 
-    fn printTestLine(label: string, parent: ?*jest.DescribeScope, comptime skip: bool, writer: anytype) void {
+    fn printTestLine(label: string, elapsed_ns: u64, parent: ?*jest.DescribeScope, comptime skip: bool, writer: anytype) void {
         var scopes_stack = std.BoundedArray(*jest.DescribeScope, 64).init(0) catch unreachable;
         var parent_ = parent;
 
@@ -144,10 +144,19 @@ pub const CommandLineReporter = struct {
         else
             writer.print(comptime Output.prettyFmt(" {s}", false), .{display_label}) catch unreachable;
 
+        if (elapsed_ns > (std.time.ns_per_us * 10)) {
+            writer.print(" {any}", .{
+                Output.ElapsedFormatter{
+                    .colors = Output.enable_ansi_colors_stderr,
+                    .duration_ns = elapsed_ns,
+                },
+            }) catch unreachable;
+        }
+
         writer.writeAll("\n") catch unreachable;
     }
 
-    pub fn handleTestPass(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, parent: ?*jest.DescribeScope) void {
+    pub fn handleTestPass(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
         var writer_: std.fs.File.Writer = Output.errorWriter();
         var buffered_writer = std.io.bufferedWriter(writer_);
         var writer = buffered_writer.writer();
@@ -157,14 +166,14 @@ pub const CommandLineReporter = struct {
 
         writeTestStatusLine(.pass, &writer);
 
-        printTestLine(label, parent, false, writer);
+        printTestLine(label, elapsed_ns, parent, false, writer);
 
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.pass;
         this.summary.pass += 1;
         this.summary.expectations += expectations;
     }
 
-    pub fn handleTestFail(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, parent: ?*jest.DescribeScope) void {
+    pub fn handleTestFail(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
         var writer_: std.fs.File.Writer = Output.errorWriter();
         var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
 
@@ -174,7 +183,7 @@ pub const CommandLineReporter = struct {
         var writer = this.failures_to_repeat_buf.writer(bun.default_allocator);
 
         writeTestStatusLine(.fail, &writer);
-        printTestLine(label, parent, false, writer);
+        printTestLine(label, elapsed_ns, parent, false, writer);
 
         writer_.writeAll(this.failures_to_repeat_buf.items[initial_length..]) catch unreachable;
         Output.flush();
@@ -185,7 +194,7 @@ pub const CommandLineReporter = struct {
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.fail;
     }
 
-    pub fn handleTestSkip(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, parent: ?*jest.DescribeScope) void {
+    pub fn handleTestSkip(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
         var writer_: std.fs.File.Writer = Output.errorWriter();
         var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
 
@@ -197,7 +206,7 @@ pub const CommandLineReporter = struct {
             var writer = this.skips_to_repeat_buf.writer(bun.default_allocator);
 
             writeTestStatusLine(.skip, &writer);
-            printTestLine(label, parent, true, writer);
+            printTestLine(label, elapsed_ns, parent, true, writer);
 
             writer_.writeAll(this.skips_to_repeat_buf.items[initial_length..]) catch unreachable;
             Output.flush();

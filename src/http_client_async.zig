@@ -59,6 +59,18 @@ var shared_response_headers_buf: [256]picohttp.Header = undefined;
 
 const end_of_chunked_http1_1_encoding_response_body = "0\r\n\r\n";
 
+pub const FetchRedirect = enum(u8) {
+    follow,
+    manual,
+    @"error",
+
+    pub const Map = bun.ComptimeStringMap(FetchRedirect, .{
+        .{ "follow", .follow },
+        .{ "manual", .manual },
+        .{ "error", .@"error" },
+    });
+};
+
 const ProxySSLData = struct {
     buffer: std.ArrayList(u8),
     partial: bool,
@@ -1011,7 +1023,7 @@ allocator: std.mem.Allocator,
 verbose: bool = Environment.isTest,
 remaining_redirect_count: i8 = default_redirect_count,
 allow_retry: bool = false,
-follow_redirects: bool = true,
+redirect_type: FetchRedirect = FetchRedirect.follow,
 redirect: ?*URLBufferPool.Node = null,
 timeout: usize = 0,
 progress_node: ?*std.Progress.Node = null,
@@ -1264,6 +1276,7 @@ pub const AsyncHTTP = struct {
         http_proxy: ?URL,
         signal: ?*std.atomic.Atomic(bool),
         hostname: ?[]u8,
+        redirect_type: FetchRedirect,
     ) AsyncHTTP {
         var this = AsyncHTTP{ .allocator = allocator, .url = url, .method = method, .request_headers = headers, .request_header_buf = headers_buf, .request_body = request_body, .response_buffer = response_buffer, .completion_callback = callback, .http_proxy = http_proxy, .async_http_id = if (signal != null) async_http_id.fetchAdd(1, .Monotonic) else 0 };
 
@@ -1271,6 +1284,7 @@ pub const AsyncHTTP = struct {
         this.client.async_http_id = this.async_http_id;
         this.client.timeout = timeout;
         this.client.http_proxy = this.http_proxy;
+        this.client.redirect_type = redirect_type;
         this.timeout = timeout;
 
         if (http_proxy) |proxy| {
@@ -1337,8 +1351,8 @@ pub const AsyncHTTP = struct {
         return this;
     }
 
-    pub fn initSync(allocator: std.mem.Allocator, method: Method, url: URL, headers: Headers.Entries, headers_buf: string, response_buffer: *MutableString, request_body: []const u8, timeout: usize, http_proxy: ?URL, hostname: ?[]u8) AsyncHTTP {
-        return @This().init(allocator, method, url, headers, headers_buf, response_buffer, request_body, timeout, undefined, http_proxy, null, hostname);
+    pub fn initSync(allocator: std.mem.Allocator, method: Method, url: URL, headers: Headers.Entries, headers_buf: string, response_buffer: *MutableString, request_body: []const u8, timeout: usize, http_proxy: ?URL, hostname: ?[]u8, redirect_type: FetchRedirect) AsyncHTTP {
+        return @This().init(allocator, method, url, headers, headers_buf, response_buffer, request_body, timeout, undefined, http_proxy, null, hostname, redirect_type);
     }
 
     fn reset(this: *AsyncHTTP) !void {
@@ -1617,7 +1631,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
 pub fn doRedirect(this: *HTTPClient) void {
     var body_out_str = this.state.body_out_str.?;
     this.remaining_redirect_count -|= 1;
-    std.debug.assert(this.follow_redirects);
+    std.debug.assert(this.redirect_type == FetchRedirect.follow);
 
     if (this.remaining_redirect_count == 0) {
         this.fail(error.TooManyRedirects);
@@ -2713,119 +2727,122 @@ pub fn handleResponseMetadata(
     }
 
     const is_redirect = this.state.pending_response.status_code >= 300 and this.state.pending_response.status_code <= 399;
+    if (is_redirect) {
+        if (this.redirect_type == FetchRedirect.follow and location.len > 0 and this.remaining_redirect_count > 0) {
+            switch (this.state.pending_response.status_code) {
+                302, 301, 307, 308, 303 => {
+                    if (strings.indexOf(location, "://")) |i| {
+                        var url_buf = URLBufferPool.get(default_allocator);
 
-    if (is_redirect and this.follow_redirects and location.len > 0 and this.remaining_redirect_count > 0) {
-        switch (this.state.pending_response.status_code) {
-            302, 301, 307, 308, 303 => {
-                if (strings.indexOf(location, "://")) |i| {
-                    var url_buf = URLBufferPool.get(default_allocator);
-
-                    const is_protocol_relative = i == 0;
-                    const protocol_name = if (is_protocol_relative) this.url.displayProtocol() else location[0..i];
-                    const is_http = strings.eqlComptime(protocol_name, "http");
-                    if (is_http or strings.eqlComptime(protocol_name, "https")) {} else {
-                        return error.UnsupportedRedirectProtocol;
-                    }
-
-                    if ((protocol_name.len * @as(usize, @boolToInt(is_protocol_relative))) + location.len > url_buf.data.len) {
-                        return error.RedirectURLTooLong;
-                    }
-
-                    deferred_redirect.* = this.redirect;
-                    var url_buf_len = location.len;
-                    if (is_protocol_relative) {
-                        if (is_http) {
-                            url_buf.data[0.."http".len].* = "http".*;
-                            bun.copy(u8, url_buf.data["http".len..], location);
-                            url_buf_len += "http".len;
-                        } else {
-                            url_buf.data[0.."https".len].* = "https".*;
-                            bun.copy(u8, url_buf.data["https".len..], location);
-                            url_buf_len += "https".len;
+                        const is_protocol_relative = i == 0;
+                        const protocol_name = if (is_protocol_relative) this.url.displayProtocol() else location[0..i];
+                        const is_http = strings.eqlComptime(protocol_name, "http");
+                        if (is_http or strings.eqlComptime(protocol_name, "https")) {} else {
+                            return error.UnsupportedRedirectProtocol;
                         }
+
+                        if ((protocol_name.len * @as(usize, @boolToInt(is_protocol_relative))) + location.len > url_buf.data.len) {
+                            return error.RedirectURLTooLong;
+                        }
+
+                        deferred_redirect.* = this.redirect;
+                        var url_buf_len = location.len;
+                        if (is_protocol_relative) {
+                            if (is_http) {
+                                url_buf.data[0.."http".len].* = "http".*;
+                                bun.copy(u8, url_buf.data["http".len..], location);
+                                url_buf_len += "http".len;
+                            } else {
+                                url_buf.data[0.."https".len].* = "https".*;
+                                bun.copy(u8, url_buf.data["https".len..], location);
+                                url_buf_len += "https".len;
+                            }
+                        } else {
+                            bun.copy(u8, &url_buf.data, location);
+                        }
+
+                        this.url = URL.parse(url_buf.data[0..url_buf_len]);
+                        this.redirect = url_buf;
+                    } else if (strings.hasPrefixComptime(location, "//")) {
+                        var url_buf = URLBufferPool.get(default_allocator);
+
+                        const protocol_name = this.url.displayProtocol();
+
+                        if (protocol_name.len + 1 + location.len > url_buf.data.len) {
+                            return error.RedirectURLTooLong;
+                        }
+
+                        deferred_redirect.* = this.redirect;
+                        var url_buf_len = location.len;
+
+                        if (strings.eqlComptime(protocol_name, "http")) {
+                            url_buf.data[0.."http:".len].* = "http:".*;
+                            bun.copy(u8, url_buf.data["http:".len..], location);
+                            url_buf_len += "http:".len;
+                        } else {
+                            url_buf.data[0.."https:".len].* = "https:".*;
+                            bun.copy(u8, url_buf.data["https:".len..], location);
+                            url_buf_len += "https:".len;
+                        }
+
+                        this.url = URL.parse(url_buf.data[0..url_buf_len]);
+                        this.redirect = url_buf;
                     } else {
-                        bun.copy(u8, &url_buf.data, location);
+                        var url_buf = URLBufferPool.get(default_allocator);
+                        const original_url = this.url;
+                        const port = original_url.getPortAuto();
+
+                        if (port == original_url.getDefaultPort()) {
+                            this.url = URL.parse(std.fmt.bufPrint(
+                                &url_buf.data,
+                                "{s}://{s}{s}",
+                                .{ original_url.displayProtocol(), original_url.displayHostname(), location },
+                            ) catch return error.RedirectURLTooLong);
+                        } else {
+                            this.url = URL.parse(std.fmt.bufPrint(
+                                &url_buf.data,
+                                "{s}://{s}:{d}{s}",
+                                .{ original_url.displayProtocol(), original_url.displayHostname(), port, location },
+                            ) catch return error.RedirectURLTooLong);
+                        }
+
+                        deferred_redirect.* = this.redirect;
+                        this.redirect = url_buf;
                     }
 
-                    this.url = URL.parse(url_buf.data[0..url_buf_len]);
-                    this.redirect = url_buf;
-                } else if (strings.hasPrefixComptime(location, "//")) {
-                    var url_buf = URLBufferPool.get(default_allocator);
-
-                    const protocol_name = this.url.displayProtocol();
-
-                    if (protocol_name.len + 1 + location.len > url_buf.data.len) {
-                        return error.RedirectURLTooLong;
+                    // Note: RFC 1945 and RFC 2068 specify that the client is not allowed to change
+                    // the method on the redirected request. However, most existing user agent
+                    // implementations treat 302 as if it were a 303 response, performing a GET on
+                    // the Location field-value regardless of the original request method. The
+                    // status codes 303 and 307 have been added for servers that wish to make
+                    // unambiguously clear which kind of reaction is expected of the client.
+                    if (response.status_code == 302) {
+                        switch (this.method) {
+                            .GET, .HEAD => {},
+                            else => {
+                                this.method = .GET;
+                            },
+                        }
                     }
 
-                    deferred_redirect.* = this.redirect;
-                    var url_buf_len = location.len;
-
-                    if (strings.eqlComptime(protocol_name, "http")) {
-                        url_buf.data[0.."http:".len].* = "http:".*;
-                        bun.copy(u8, url_buf.data["http:".len..], location);
-                        url_buf_len += "http:".len;
-                    } else {
-                        url_buf.data[0.."https:".len].* = "https:".*;
-                        bun.copy(u8, url_buf.data["https:".len..], location);
-                        url_buf_len += "https:".len;
+                    // https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/303
+                    if (response.status_code == 303 and this.method != .HEAD) {
+                        this.method = .GET;
                     }
 
-                    this.url = URL.parse(url_buf.data[0..url_buf_len]);
-                    this.redirect = url_buf;
-                } else {
-                    var url_buf = URLBufferPool.get(default_allocator);
-                    const original_url = this.url;
-                    const port = original_url.getPortAuto();
-
-                    if (port == original_url.getDefaultPort()) {
-                        this.url = URL.parse(std.fmt.bufPrint(
-                            &url_buf.data,
-                            "{s}://{s}{s}",
-                            .{ original_url.displayProtocol(), original_url.displayHostname(), location },
-                        ) catch return error.RedirectURLTooLong);
-                    } else {
-                        this.url = URL.parse(std.fmt.bufPrint(
-                            &url_buf.data,
-                            "{s}://{s}:{d}{s}",
-                            .{ original_url.displayProtocol(), original_url.displayHostname(), port, location },
-                        ) catch return error.RedirectURLTooLong);
-                    }
-
-                    deferred_redirect.* = this.redirect;
-                    this.redirect = url_buf;
-                }
-
-                // Note: RFC 1945 and RFC 2068 specify that the client is not allowed to change
-                // the method on the redirected request. However, most existing user agent
-                // implementations treat 302 as if it were a 303 response, performing a GET on
-                // the Location field-value regardless of the original request method. The
-                // status codes 303 and 307 have been added for servers that wish to make
-                // unambiguously clear which kind of reaction is expected of the client.
-                if (response.status_code == 302) {
-                    switch (this.method) {
-                        .GET, .HEAD => {},
-                        else => {
-                            this.method = .GET;
-                        },
-                    }
-                }
-
-                // https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/303
-                if (response.status_code == 303 and this.method != .HEAD) {
-                    this.method = .GET;
-                }
-
-                return error.Redirect;
-            },
-            else => {},
+                    return error.Redirect;
+                },
+                else => {},
+            }
+        } else if (this.redirect_type == FetchRedirect.@"error") {
+            return error.UnexpectedRedirect;
+        } else if (this.redirect_type == FetchRedirect.manual) {
+            this.state.response_stage = if (this.state.transfer_encoding == .chunked) .body_chunk else .body;
+            return false;
         }
     }
 
     this.state.response_stage = if (this.state.transfer_encoding == .chunked) .body_chunk else .body;
-
-    if (is_redirect and !this.follow_redirects)
-        return true;
 
     return this.method.hasBody() and (this.state.body_size > 0 or this.state.transfer_encoding == .chunked);
 }

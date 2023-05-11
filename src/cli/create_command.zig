@@ -1852,7 +1852,7 @@ pub const Example = struct {
 
         // ensure very stable memory address
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
-        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, api_url, header_entries, headers_buf, mutable, "", 60 * std.time.ns_per_min, http_proxy, null);
+        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, api_url, header_entries, headers_buf, mutable, "", 60 * std.time.ns_per_min, http_proxy, null, HTTP.FetchRedirect.follow);
         async_http.client.progress_node = progress;
         const response = try async_http.sendSync(true);
 
@@ -1916,7 +1916,7 @@ pub const Example = struct {
 
         // ensure very stable memory address
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
-        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy, null);
+        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy, null, HTTP.FetchRedirect.follow);
         async_http.client.progress_node = progress;
         var response = try async_http.sendSync(true);
 
@@ -1992,7 +1992,7 @@ pub const Example = struct {
 
         http_proxy = env_loader.getHttpProxy(parsed_tarball_url);
 
-        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, parsed_tarball_url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy, null);
+        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, parsed_tarball_url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy, null, HTTP.FetchRedirect.follow);
         async_http.client.progress_node = progress;
 
         refresher.maybeRefresh();
@@ -2022,7 +2022,7 @@ pub const Example = struct {
         var mutable = try ctx.allocator.create(MutableString);
         mutable.* = try MutableString.init(ctx.allocator, 2048);
 
-        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy, null);
+        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy, null, HTTP.FetchRedirect.follow);
 
         if (Output.enable_ansi_colors) {
             async_http.client.progress_node = progress_node;

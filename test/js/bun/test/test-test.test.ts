@@ -13,7 +13,7 @@ it("shouldn't crash when async test runner callback throws", async () => {
     await 1;
     throw "##123##";
   });
- 
+
   afterEach(async () => {
     await 1;
     console.error("#[Test passed successfully]");
@@ -2611,4 +2611,150 @@ it("should return non-zero exit code for invalid syntax", async () => {
   } finally {
     await rm(test_dir, { force: true, recursive: true });
   }
+});
+
+describe("skip test inner", () => {
+  it("should pass", () => {
+    expect(2 + 2).toBe(4);
+  });
+
+  describe.skip("skip", () => {
+    it("should throw", () => {
+      throw new Error("This should not throw. `.skip` is broken");
+    });
+
+    describe("skip non-skipped inner", () => {
+      it("should throw", () => {
+        throw new Error("This should not throw. `.skip` is broken");
+      });
+    });
+  });
+});
+
+describe.skip("skip test outer", () => {
+  it("should throw", () => {
+    throw new Error("This should not throw. `.skip` is broken");
+  });
+
+  describe("skip non-skipped inner", () => {
+    it("should throw", () => {
+      throw new Error("This should not throw. `.skip` is broken");
+    });
+  });
+
+  describe("skip nested non-skipped inner", () => {
+    describe("skip", () => {
+      it("should throw", () => {
+        throw new Error("This should not throw. `.skip` is broken");
+      });
+    });
+  });
+});
+
+describe("skip test inner 2", () => {
+  it("should pass", () => {
+    expect(2 + 2).toBe(4);
+  });
+
+  describe.skip("skip", () => {
+    it("should throw", () => {
+      throw new Error("This should not throw. `.skip` is broken");
+    });
+  });
+});
+
+describe.skip("skip beforeEach", () => {
+  beforeEach(() => {
+    throw new Error("should not run `beforeEach`");
+  });
+
+  it("should throw", () => {
+    throw new Error("This should not throw. `.skip` is broken");
+  });
+});
+
+describe("nested beforeEach and afterEach", () => {
+  let value = 0;
+
+  beforeEach(() => {
+    value += 1;
+  });
+
+  afterEach(() => {
+    value += 1;
+  });
+
+  describe("runs beforeEach", () => {
+    it("should update value", () => {
+      expect(value).toBe(1);
+    });
+  });
+
+  describe.skip("skips", () => {
+    it("should throw", async () => {
+      throw new Error("This should not throw. `.skip` is broken");
+    });
+  });
+
+  describe.skip("skips async", () => {
+    it("should throw", async () => {
+      throw new Error("This should not throw. `.skip` is broken");
+    });
+  });
+
+  describe("runs beforeEach again", () => {
+    it("should have value as 3", () => {
+      expect(value).toBe(3);
+    });
+  });
+});
+
+describe.skip("skip afterEach", () => {
+  afterEach(() => {
+    throw new Error("should not run `afterEach`");
+  });
+
+  it("should throw", () => {
+    throw new Error("This should not throw. `.skip` is broken");
+  });
+});
+
+describe.skip("skip beforeAll", () => {
+  beforeAll(() => {
+    throw new Error("should not run `beforeAll`");
+  });
+
+  it("should throw", () => {
+    throw new Error("This should not throw. `.skip` is broken");
+  });
+});
+
+describe.skip("skip afterAll", () => {
+  afterAll(() => {
+    throw new Error("should not run `afterAll`");
+  });
+
+  it("should throw", () => {
+    throw new Error("This should not throw. `.skip` is broken");
+  });
+});
+
+// no labels
+
+describe.skip(() => {
+  it("should throw", () => {
+    throw new Error("This should not throw. `.skip` is broken");
+  });
+});
+
+describe(() => {
+  it("should pass", () => {
+    expect(2 + 2).toBe(4);
+  });
+
+  describe.skip("skip", () => {
+    it("should throw", () => {
+      throw new Error("This should not throw. `.skip` is broken");
+    });
+  });
 });

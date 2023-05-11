@@ -1,7 +1,9 @@
-import { bench, run } from "mitata";
-import { openSync } from "fs";
-import { writeFile } from "fs/promises";
-import { writeSync as write } from "fs";
+// @runtime node, bun, deno
+import { bench, run } from "./runner.mjs";
+import { Buffer } from "node:buffer";
+import { openSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
+import { writeSync as write } from "node:fs";
 
 bench("writeFile(/tmp/foo.txt, short string)", async () => {
   await writeFile("/tmp/foo.txt", "short string", "utf8");

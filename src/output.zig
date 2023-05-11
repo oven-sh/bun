@@ -251,6 +251,36 @@ pub fn flush() void {
     }
 }
 
+pub const ElapsedFormatter = struct {
+    colors: bool,
+    duration_ns: u64 = 0,
+
+    pub fn format(self: ElapsedFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer_: anytype) !void {
+        switch (self.duration_ns) {
+            0...std.time.ns_per_ms * 10 => {
+                const fmt_str = "<r><d>[{d:>.2}ms<r><d>]<r>";
+                switch (self.colors) {
+                    inline else => |colors| try writer_.print(comptime prettyFmt(fmt_str, colors), .{@intToFloat(f64, self.duration_ns) / std.time.ns_per_ms}),
+                }
+            },
+            std.time.ns_per_ms * 8_000...std.math.maxInt(u64) => {
+                const fmt_str = "<r><d>[<r><yellow>{d:>.2}ms<r><d>]<r>";
+
+                switch (self.colors) {
+                    inline else => |colors| try writer_.print(comptime prettyFmt(fmt_str, colors), .{@intToFloat(f64, self.duration_ns) / std.time.ns_per_ms}),
+                }
+            },
+            else => {
+                const fmt_str = "<r><d>[<b>{d:>.2}ms<r><d>]<r>";
+
+                switch (self.colors) {
+                    inline else => |colors| try writer_.print(comptime prettyFmt(fmt_str, colors), .{@intToFloat(f64, self.duration_ns) / std.time.ns_per_ms}),
+                }
+            },
+        }
+    }
+};
+
 inline fn printElapsedToWithCtx(elapsed: f64, comptime printerFn: anytype, comptime has_ctx: bool, ctx: anytype) void {
     switch (@floatToInt(i64, @round(elapsed))) {
         0...1500 => {

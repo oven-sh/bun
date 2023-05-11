@@ -118,6 +118,8 @@
 #include "JavaScriptCore/RemoteInspectorServer.h"
 #endif
 
+extern "C" JSC::EncodedJSValue Bun__fetch(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+
 using JSGlobalObject
     = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
@@ -3118,9 +3120,14 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     auto& builtinNames = WebCore::builtinNames(vm);
 
     WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
-    extraStaticGlobals.reserveCapacity(42);
+    extraStaticGlobals.reserveCapacity(43);
 
     JSC::Identifier queueMicrotaskIdentifier = JSC::Identifier::fromString(vm, "queueMicrotask"_s);
+    extraStaticGlobals.uncheckedAppend(
+        GlobalPropertyInfo { JSC::Identifier::fromString(vm, "fetch"_s),
+            JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 2,
+                "fetch"_s, Bun__fetch, ImplementationVisibility::Public),
+            JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { queueMicrotaskIdentifier,
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 2,
@@ -3380,6 +3387,13 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
             jsClass, nullptr);
         if (JSObject* prototype = object->classRef()->prototype(this))
             object->setPrototypeDirect(vm, prototype);
+
+        {
+            // on the Bun object we make this read-only so that it is the "safer" one to use
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "fetch"_s);
+            object->putDirectNativeFunction(vm, this, identifier, 2, Bun__fetch, ImplementationVisibility::Public, NoIntrinsic,
+                JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        }
 
         {
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "escapeHTML"_s);

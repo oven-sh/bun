@@ -336,30 +336,43 @@ extern "C"
     }
   }
 
-  void uws_app_listen_with_config(int ssl, uws_app_t *app, const char *host,
-                                  uint16_t port, int32_t options,
+  void uws_app_listen_with_config(int ssl, uws_app_t *app,
+                                  LIBUS_SOCKET_DESCRIPTOR fd, uint16_t port,
+                                  const char *host, int32_t options,
                                   uws_listen_handler handler, void *user_data)
   {
     std::string hostname = host && host[0] ? std::string(host, strlen(host)) : "";
+
+    /* branching is getting untidy */
     if (ssl)
     {
-      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->listen(
-          hostname, port, options,
-          [handler, user_data](struct us_listen_socket_t *listen_socket)
-          {
-            handler((struct us_listen_socket_t *)listen_socket, user_data);
-          });
+        uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+        if (fd) {
+            uwsApp->listen(
+                options,
+                [handler, user_data](struct us_listen_socket_t *listen_socket) {
+                    handler((struct us_listen_socket_t *)listen_socket, user_data);
+                },
+                fd);
+        } else {
+            uwsApp->listen(hostname, port, options, [handler, user_data](struct us_listen_socket_t *listen_socket)
+                           { handler((struct us_listen_socket_t *)listen_socket, user_data); });
+        }
     }
     else
     {
-      uWS::App *uwsApp = (uWS::App *)app;
-      uwsApp->listen(
-          hostname, port, options,
-          [handler, user_data](struct us_listen_socket_t *listen_socket)
-          {
-            handler((struct us_listen_socket_t *)listen_socket, user_data);
-          });
+        uWS::App *uwsApp = (uWS::App *)app;
+        if (fd) {
+            uwsApp->listen(
+                options,
+                [handler, user_data](struct us_listen_socket_t *listen_socket) {
+                    handler((struct us_listen_socket_t *)listen_socket, user_data);
+                },
+                fd);
+        } else {
+            uwsApp->listen(hostname, port, options, [handler, user_data](struct us_listen_socket_t *listen_socket)
+                           { handler((struct us_listen_socket_t *)listen_socket, user_data); });
+        }
     }
   }
 

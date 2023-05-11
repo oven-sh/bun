@@ -92,6 +92,7 @@ const DateTime = bun.DateTime;
 const linux = std.os.linux;
 
 pub const ServerConfig = struct {
+    fd: ?uws.socket_t = null,
     port: u16 = 0,
     hostname: [*:0]const u8 = "localhost",
 
@@ -554,6 +555,12 @@ pub const ServerConfig = struct {
                     }
                     return args;
                 }
+            }
+
+            if (arg.getTruthy(global, "fd")) |fd_| {
+                args.fd = @intCast(
+                    i32,
+                    fd_.coerce(i32, global));
             }
 
             if (arg.getTruthy(global, "port")) |port_| {
@@ -5206,6 +5213,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             }
 
             this.app.listenWithConfig(*ThisServer, this, onListen, .{
+                .fd = this.config.fd orelse 0,
                 .port = this.config.port,
                 .host = host,
                 .options = 0,

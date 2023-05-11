@@ -2980,7 +2980,12 @@ pub const Parser = struct {
                         // we have to hoist them to the top of the file, even when not bundling
                         //
                         // we might also need to do this for classes but i'm not sure yet.
-                        try p.appendPart(&before, sliced.items);
+                        try p.appendPart(&parts, sliced.items);
+
+                        if (parts.items.len > 0) {
+                            before.append(parts.getLast()) catch unreachable;
+                            parts.items.len -= 1;
+                        }
                     },
                     .s_class => |class| {
                         // Move class export statements to the top of the file if we can
@@ -6607,7 +6612,7 @@ fn NewParser_(
                 // Check for collisions that would prevent to hoisting "var" symbols up to the enclosing function scope
                 if (scope.parent) |parent_scope| {
                     nextMember: while (iter.next()) |res| {
-                        const value = res.value_ptr.*;
+                        var value = res.value_ptr.*;
                         var symbol: *Symbol = &symbols[value.ref.innerIndex()];
 
                         const name = symbol.original_name;
@@ -6623,12 +6628,12 @@ fn NewParser_(
                                     value.loc,
                                     existing_member.loc,
                                 ) catch unreachable;
-                                continue :nextMember;
+                                continue;
                             }
                         }
 
                         if (!symbol.isHoisted()) {
-                            continue :nextMember;
+                            continue;
                         }
 
                         var __scope = scope.parent;
@@ -6665,9 +6670,8 @@ fn NewParser_(
                             const hoisted_ref = p.newSymbol(.hoisted, symbol.original_name) catch unreachable;
                             symbols = p.symbols.items;
                             scope.generated.push(p.allocator, hoisted_ref) catch unreachable;
-                            p.hoisted_ref_for_sloppy_mode_block_fn.put(p.allocator, original_member_ref, hoisted_ref) catch unreachable;
-
-                            res.value_ptr.ref = hoisted_ref;
+                            p.hoisted_ref_for_sloppy_mode_block_fn.put(p.allocator, value.ref, hoisted_ref) catch unreachable;
+                            value.ref = hoisted_ref;
                             symbol = &symbols[hoisted_ref.innerIndex()];
                             is_sloppy_mode_block_level_fn_stmt = true;
                         }
@@ -6739,13 +6743,16 @@ fn NewParser_(
                                             // Never mind about this, turns out it's not needed after all
                                             _ = p.hoisted_ref_for_sloppy_mode_block_fn.remove(original_member_ref);
                                         }
-                                        continue :nextMember;
                                     }
-
-                                    // If this is a catch identifier, silently merge the existing symbol
-                                    // into this symbol but continue hoisting past this catch scope
-                                    existing_symbol.link = member_in_scope.ref;
+                                    continue :nextMember;
                                 }
+
+                                // If this is a catch identifier, silently merge the existing symbol
+                                // into this symbol but continue hoisting past this catch scope
+                                existing_symbol.link = value.ref;
+                                var entry = _scope.getOrPutMemberWithHash(p.allocator, name, hash.?) catch unreachable;
+                                entry.value_ptr.* = value;
+                                entry.key_ptr.* = name;
                             }
 
                             if (_scope.kindStopsHoisting()) {
@@ -14442,12 +14449,6 @@ fn NewParser_(
                     }
                 }
                 p.relocated_top_level_vars.clearRetainingCapacity();
-
-                // Follow links because "var" declarations may be merged due to hoisting
-
-                // while (true) {
-                //     const link = p.symbols.items[local.ref.innerIndex()].link;
-                // }
             }
 
             if (partStmts.items.len > 0) {
@@ -17206,6 +17207,18 @@ fn NewParser_(
             }
         }
 
+        fn selectLocalKind(p: *P, kind: S.Local.Kind) S.Local.Kind {
+            if (p.options.bundle and p.current_scope.parent == null) {
+                return .k_var;
+            }
+
+            if (p.options.bundle and kind == .k_const and p.options.features.minify_syntax) {
+                return .k_let;
+            }
+
+            return kind;
+        }
+
         fn maybeRelocateVarsToTopLevel(p: *P, decls: []const G.Decl, mode: RelocateVars.Mode) RelocateVars {
             // Only do this when the scope is not already top-level and when we're not inside a function.
             if (p.current_scope == p.module_scope) {
@@ -17886,7 +17899,8 @@ fn NewParser_(
                     // We must relocate vars in order to safely handle removing if/else depending on NODE_ENV.
                     // Edgecase:
                     //  `export var` is skipped because it's unnecessary. That *should* be a noop, but it loses the `is_export` flag if we're in HMR.
-                    if (data.kind == .k_var and !data.is_export) {
+                    const kind = p.selectLocalKind(data.kind);
+                    if (kind == .k_var and !data.is_export) {
                         const relocated = p.maybeRelocateVarsToTopLevel(data.decls.slice(), .normal);
                         if (relocated.ok) {
                             if (relocated.stmt) |new_stmt| {
@@ -19236,9 +19250,7 @@ fn NewParser_(
                             dec.value = p.visitExpr(val);
                         }
                     }
-                    // st.kind = .k_var;
-                    //         		s.Decls = p.lowerObjectRestInDecls(s.Decls)
-                    // s.Kind = p.selectLocalKind(s.Kind)
+                    st.kind = p.selectLocalKind(st.kind);
                 },
                 else => {
                     p.panic("Unexpected stmt in visitForLoopInit: {any}", .{stmt});
@@ -19946,7 +19958,6 @@ fn NewParser_(
                             },
                             else => {
                                 non_fn_stmts.append(stmt) catch unreachable;
-                                continue;
                             },
                         }
                     }

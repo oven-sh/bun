@@ -160,19 +160,19 @@ it("mkdtempSync() empty name", () => {
 });
 
 it("mkdtempSync() non-exist dir #2568", () => {
-  try{
+  try {
     expect(mkdtempSync("/tmp/hello/world")).toBeFalsy();
-  } catch(err: any){
+  } catch (err: any) {
     expect(err?.errno).toBe(-2);
   }
 });
 
-it("mkdtemp() non-exist dir #2568", (done) => {
-  mkdtemp("/tmp/hello/world", (err, folder)=> {
+it("mkdtemp() non-exist dir #2568", done => {
+  mkdtemp("/tmp/hello/world", (err, folder) => {
     expect(err?.errno).toBe(-2);
     expect(folder).toBeUndefined();
     done();
-  })
+  });
 });
 
 it("readdirSync on import.meta.dir with trailing slash", () => {

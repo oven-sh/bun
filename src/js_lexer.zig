@@ -3220,7 +3220,8 @@ fn latin1IdentifierContinueLength(name: []const u8) usize {
                         std.debug.assert(isIdentifierContinue(c));
                     }
 
-                    std.debug.assert(!isIdentifierContinue(vec[first]));
+                    if (vec[first] < 128)
+                        std.debug.assert(!isIdentifierContinue(vec[first]));
                 }
 
                 return @as(usize, first) +

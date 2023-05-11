@@ -225,11 +225,11 @@ describe("ChildProcess spawn bad stdio", () => {
 describe("child_process cwd", () => {
   // Spawns 'pwd' with given options, then test
   // - whether the child pid is undefined or number,
-  // - whether the exit code equals expectCode,
   // - optionally whether the trimmed stdout result matches expectData
-  function testCwd(options, { expectPidType, expectCode = 0, expectData }, done = () => {}) {
+  function testCwd(options, { expectPidType, expectData }, done = () => {}) {
     const createDone = createDoneDotAll(done);
-    const { mustCall } = createCallCheckCtx(createDone(1500));
+    const closeDone = createDone(1500);
+    const exitDone = createDone(1500);
 
     const child = spawn(...common.pwdCommand, options);
 
@@ -237,18 +237,22 @@ describe("child_process cwd", () => {
 
     child.stdout.setEncoding("utf8");
 
+    child.on("close", () => {
+      process.nextTick(exitDone);
+    });
     // No need to assert callback since `data` is asserted.
     let data = "";
     child.stdout.on("data", chunk => {
       data += chunk;
     });
-
-    child.stdout.on(
-      "close",
-      mustCall(() => {
-        expectData && strictEqual(data.trim(), expectData);
-      }),
-    );
+    child.stdout.on("close", () => {
+      if (typeof expectData === "string") {
+        strictEqual(data?.trim(), expectData);
+      } else {
+        expect(data).toBeTruthy();
+      }
+      setTimeout(closeDone, 2);
+    });
 
     return child;
   }
@@ -293,40 +297,37 @@ describe("child_process cwd", () => {
   //   // }
   // });
 
-  // it("should work for valid given cwd", done => {
-  //   const tmpdir = { path: platformTmpDir };
-  //   const createDone = createDoneDotAll(done);
+  it("should work for valid given cwd", done => {
+    const tmpdir = { path: platformTmpDir };
+    const createDone = createDoneDotAll(done);
 
-  //   // Assume these exist, and 'pwd' gives us the right directory back
-  //   testCwd(
-  //     { cwd: tmpdir.path },
-  //     {
-  //       expectPidType: "number",
-  //       expectCode: 0,
-  //       expectData: platformTmpDir,
-  //     },
-  //     createDone(1500),
-  //   );
-  //   const shouldExistDir = "/dev";
-  //   testCwd(
-  //     { cwd: shouldExistDir },
-  //     {
-  //       expectPidType: "number",
-  //       expectCode: 0,
-  //       expectData: shouldExistDir,
-  //     },
-  //     createDone(1500),
-  //   );
-  //   testCwd(
-  //     { cwd: Bun.pathToFileURL(tmpdir.path) },
-  //     {
-  //       expectPidType: "number",
-  //       expectCode: 0,
-  //       expectData: platformTmpDir,
-  //     },
-  //     createDone(1500),
-  //   );
-  // });
+    // Assume these exist, and 'pwd' gives us the right directory back
+    testCwd(
+      { cwd: tmpdir.path },
+      {
+        expectPidType: "number",
+        expectData: platformTmpDir,
+      },
+      createDone(1500),
+    );
+    const shouldExistDir = "/dev";
+    testCwd(
+      { cwd: shouldExistDir },
+      {
+        expectPidType: "number",
+        expectData: shouldExistDir,
+      },
+      createDone(1500),
+    );
+    testCwd(
+      { cwd: Bun.pathToFileURL(tmpdir.path) },
+      {
+        expectPidType: "number",
+        expectData: platformTmpDir,
+      },
+      createDone(1500),
+    );
+  });
 
   //TODO: on macOS M1 { errno: -32, code: 'EPIPE', syscall: 'write' }
   it.skip("shouldn't try to chdir to an invalid cwd", done => {

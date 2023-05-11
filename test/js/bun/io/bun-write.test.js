@@ -290,3 +290,8 @@ it.skip("Bun.write('output.html', HTMLRewriter.transform(Bun.file)))", async don
   expect(await Bun.file(outpath).text()).toBe("<div><blink>it worked!</blink></div>");
   done();
 });
+
+it.skip("#2674", async () => {
+  const str = "a".repeat(300000);
+  expect(await Bun.write(Bun.stdout, str)).toBe(300000);
+});

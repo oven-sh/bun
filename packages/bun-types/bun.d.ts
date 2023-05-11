@@ -105,7 +105,7 @@ declare module "bun" {
   /**
    * Synchronously resolve a `moduleId` as though it were imported from `parent`
    *
-   * On failure, throws a `ResolveError`
+   * On failure, throws a `ResolveMessage`
    */
   // tslint:disable-next-line:unified-signatures
   export function resolveSync(moduleId: string, parent: string): string;
@@ -113,7 +113,7 @@ declare module "bun" {
   /**
    * Resolve a `moduleId` as though it were imported from `parent`
    *
-   * On failure, throws a `ResolveError`
+   * On failure, throws a `ResolveMessage`
    *
    * For now, use the sync version. There is zero performance benefit to using this async version. It exists for future-proofing.
    */
@@ -1019,10 +1019,13 @@ declare module "bun" {
     sourcemap: null;
   }
 
-  function build(config: BuildConfig): Promise<{
+  interface BuildOutput {
     outputs: Array<BuildArtifact | AssetBuildArtifact | SourceMapBuildArtifact>;
-    errors: Array<BuildError | ResolveError>;
-  }>;
+    success: boolean;
+    logs: Array<BuildMessage | ResolveMessage>;
+  }
+
+  function build(config: BuildConfig): Promise<BuildOutput>;
 
   /**
    * **0** means the message was **dropped**

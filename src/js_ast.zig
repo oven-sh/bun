@@ -9699,7 +9699,7 @@ pub const Macro = struct {
                                         node.updateSymbolsMap(Visitor, this.visitor);
                                         return _entry.value_ptr.*;
                                     },
-                                    .ResolveError, .BuildError => {
+                                    .ResolveMessage, .BuildMessage => {
                                         this.macro.vm.runErrorHandler(value, null);
                                         return error.MacroFailed;
                                     },

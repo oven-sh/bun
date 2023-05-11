@@ -95,8 +95,8 @@ pub const GlobalClasses = [_]type{
     Bun.Class,
     WebCore.Crypto.Class,
     EventListenerMixin.addEventListener(VirtualMachine),
-    BuildError.Class,
-    ResolveError.Class,
+    BuildMessage.Class,
+    ResolveMessage.Class,
 
     // Fetch.Class,
     js_ast.Macro.JSNode.BunJSXCallbackFunction,
@@ -1219,7 +1219,7 @@ pub const VirtualMachine = struct {
                     }
                 }
 
-                const printed = ResolveError.fmt(
+                const printed = ResolveMessage.fmt(
                     jsc_vm.allocator,
                     specifier.slice(),
                     source.slice(),
@@ -1239,7 +1239,7 @@ pub const VirtualMachine = struct {
             };
 
             {
-                res.* = ErrorableZigString.err(err, @ptrCast(*anyopaque, ResolveError.create(global, VirtualMachine.get().allocator, msg, source.slice())));
+                res.* = ErrorableZigString.err(err, @ptrCast(*anyopaque, ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source.slice())));
             }
 
             return;
@@ -1349,7 +1349,7 @@ pub const VirtualMachine = struct {
                     };
                 };
                 {
-                    ret.* = ErrorableResolvedSource.err(err, @ptrCast(*anyopaque, BuildError.create(globalThis, globalThis.allocator(), msg)));
+                    ret.* = ErrorableResolvedSource.err(err, @ptrCast(*anyopaque, BuildMessage.create(globalThis, globalThis.allocator(), msg)));
                 }
                 return;
             },
@@ -1357,8 +1357,8 @@ pub const VirtualMachine = struct {
             1 => {
                 const msg = log.msgs.items[0];
                 ret.* = ErrorableResolvedSource.err(err, switch (msg.metadata) {
-                    .build => BuildError.create(globalThis, globalThis.allocator(), msg).?,
-                    .resolve => ResolveError.create(
+                    .build => BuildMessage.create(globalThis, globalThis.allocator(), msg).?,
+                    .resolve => ResolveMessage.create(
                         globalThis,
                         globalThis.allocator(),
                         msg,
@@ -1374,8 +1374,8 @@ pub const VirtualMachine = struct {
 
                 for (log.msgs.items, 0..) |msg, i| {
                     errors[i] = switch (msg.metadata) {
-                        .build => BuildError.create(globalThis, globalThis.allocator(), msg).?,
-                        .resolve => ResolveError.create(
+                        .build => BuildMessage.create(globalThis, globalThis.allocator(), msg).?,
+                        .resolve => ResolveMessage.create(
                             globalThis,
                             globalThis.allocator(),
                             msg,
@@ -1638,8 +1638,8 @@ pub const VirtualMachine = struct {
 
     // When the Error-like object is one of our own, it's best to rely on the object directly instead of serializing it to a ZigException.
     // This is for:
-    // - BuildError
-    // - ResolveError
+    // - BuildMessage
+    // - ResolveMessage
     // If there were multiple errors, it could be contained in an AggregateError.
     // In that case, this function becomes recursive.
     // In all other cases, we will convert it to a ZigException.
@@ -1737,9 +1737,9 @@ pub const VirtualMachine = struct {
         const private_data_ptr = JSPrivateDataPtr.from(value);
 
         switch (private_data_ptr.tag()) {
-            .BuildError => {
+            .BuildMessage => {
                 defer Output.flush();
-                var build_error = private_data_ptr.as(BuildError);
+                var build_error = private_data_ptr.as(BuildMessage);
                 if (!build_error.logged) {
                     build_error.msg.writeFormat(writer, allow_ansi_color) catch {};
                     writer.writeAll("\n") catch {};
@@ -1753,9 +1753,9 @@ pub const VirtualMachine = struct {
                 }
                 return true;
             },
-            .ResolveError => {
+            .ResolveMessage => {
                 defer Output.flush();
-                var resolve_error = private_data_ptr.as(ResolveError);
+                var resolve_error = private_data_ptr.as(ResolveMessage);
                 if (!resolve_error.logged) {
                     resolve_error.msg.writeFormat(writer, allow_ansi_color) catch {};
                     resolve_error.logged = true;
@@ -2350,7 +2350,7 @@ pub const EventListenerMixin = struct {
     }
 };
 
-pub const ResolveError = struct {
+pub const ResolveMessage = struct {
     msg: logger.Msg,
     allocator: std.mem.Allocator,
     referrer: ?Fs.Path = null,
@@ -2375,8 +2375,8 @@ pub const ResolveError = struct {
         }
     }
 
-    pub fn toStringFn(this: *ResolveError, ctx: js.JSContextRef) js.JSValueRef {
-        var text = std.fmt.allocPrint(default_allocator, "ResolveError: {s}", .{this.msg.data.text}) catch return null;
+    pub fn toStringFn(this: *ResolveMessage, ctx: js.JSContextRef) js.JSValueRef {
+        var text = std.fmt.allocPrint(default_allocator, "ResolveMessage: {s}", .{this.msg.data.text}) catch return null;
         var str = ZigString.init(text);
         str.setOutputEncoding();
         if (str.isUTF8()) {
@@ -2390,7 +2390,7 @@ pub const ResolveError = struct {
 
     pub fn toString(
         // this
-        this: *ResolveError,
+        this: *ResolveMessage,
         ctx: js.JSContextRef,
         // function
         _: js.JSObjectRef,
@@ -2406,8 +2406,8 @@ pub const ResolveError = struct {
         switch (kind) {
             js.JSType.kJSTypeString => {
                 if (js.JSObjectGetPrivate(obj)) |priv| {
-                    if (JSPrivateDataPtr.from(priv).is(ResolveError)) {
-                        var this = JSPrivateDataPtr.from(priv).as(ResolveError);
+                    if (JSPrivateDataPtr.from(priv).is(ResolveMessage)) {
+                        var this = JSPrivateDataPtr.from(priv).as(ResolveMessage);
                         return this.toStringFn(ctx);
                     }
                 }
@@ -2419,9 +2419,9 @@ pub const ResolveError = struct {
     }
 
     pub const Class = NewClass(
-        ResolveError,
+        ResolveMessage,
         .{
-            .name = "ResolveError",
+            .name = "ResolveMessage",
             .read_only = true,
         },
         .{
@@ -2457,6 +2457,10 @@ pub const ResolveError = struct {
                 .get = getPosition,
                 .ro = true,
             },
+            .level = .{
+                .get = getLevel,
+                .ro = true,
+            },
         },
     );
 
@@ -2466,8 +2470,8 @@ pub const ResolveError = struct {
         msg: logger.Msg,
         referrer: string,
     ) js.JSObjectRef {
-        var resolve_error = allocator.create(ResolveError) catch unreachable;
-        resolve_error.* = ResolveError{
+        var resolve_error = allocator.create(ResolveMessage) catch unreachable;
+        resolve_error.* = ResolveMessage{
             .msg = msg.clone(allocator) catch unreachable,
             .allocator = allocator,
             .referrer = Fs.Path.init(referrer),
@@ -2478,7 +2482,7 @@ pub const ResolveError = struct {
     }
 
     pub fn getCode(
-        _: *ResolveError,
+        _: *ResolveMessage,
         ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSStringRef,
@@ -2488,17 +2492,17 @@ pub const ResolveError = struct {
     }
 
     pub fn getPosition(
-        this: *ResolveError,
+        this: *ResolveMessage,
         ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return BuildError.generatePositionObject(this.msg, ctx);
+        return BuildMessage.generatePositionObject(this.msg, ctx);
     }
 
     pub fn getMessage(
-        this: *ResolveError,
+        this: *ResolveMessage,
         ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSStringRef,
@@ -2508,7 +2512,7 @@ pub const ResolveError = struct {
     }
 
     pub fn getSpecifier(
-        this: *ResolveError,
+        this: *ResolveMessage,
         ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSStringRef,
@@ -2518,7 +2522,7 @@ pub const ResolveError = struct {
     }
 
     pub fn getImportKind(
-        this: *ResolveError,
+        this: *ResolveMessage,
         ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSStringRef,
@@ -2528,7 +2532,7 @@ pub const ResolveError = struct {
     }
 
     pub fn getReferrer(
-        this: *ResolveError,
+        this: *ResolveMessage,
         ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSStringRef,
@@ -2542,31 +2546,41 @@ pub const ResolveError = struct {
     }
 
     pub fn getName(
-        _: *ResolveError,
+        _: *ResolveMessage,
         ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.static("ResolveError").toValue(ctx.ptr()).asRef();
+        return ZigString.static("ResolveMessage").toValue(ctx.ptr()).asRef();
     }
 
-    pub fn finalize(this: *ResolveError) void {
+    pub fn getLevel(
+        this: *ResolveMessage,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        return ZigString.init(this.msg.kind.string()).toValue(ctx.ptr()).asRef();
+    }
+
+    pub fn finalize(this: *ResolveMessage) void {
         this.msg.deinit(bun.default_allocator);
     }
 };
 
-pub const BuildError = struct {
+pub const BuildMessage = struct {
     msg: logger.Msg,
     // resolve_result: Resolver.Result,
     allocator: std.mem.Allocator,
     logged: bool = false,
 
     pub const Class = NewClass(
-        BuildError,
-        .{ .name = "BuildError", .read_only = true, .ts = .{
+        BuildMessage,
+        .{ .name = "BuildMessage", .read_only = true, .ts = .{
             .class = .{
-                .name = "BuildError",
+                .name = "BuildMessage",
             },
         } },
         .{
@@ -2587,11 +2601,15 @@ pub const BuildError = struct {
                 .get = getPosition,
                 .ro = true,
             },
+            .level = .{
+                .get = getLevel,
+                .ro = true,
+            },
         },
     );
 
-    pub fn toStringFn(this: *BuildError, ctx: js.JSContextRef) js.JSValueRef {
-        var text = std.fmt.allocPrint(default_allocator, "BuildError: {s}", .{this.msg.data.text}) catch return null;
+    pub fn toStringFn(this: *BuildMessage, ctx: js.JSContextRef) js.JSValueRef {
+        var text = std.fmt.allocPrint(default_allocator, "BuildMessage: {s}", .{this.msg.data.text}) catch return null;
         var str = ZigString.init(text);
         str.setOutputEncoding();
         if (str.isUTF8()) {
@@ -2605,7 +2623,7 @@ pub const BuildError = struct {
 
     pub fn toString(
         // this
-        this: *BuildError,
+        this: *BuildMessage,
         ctx: js.JSContextRef,
         // function
         _: js.JSObjectRef,
@@ -2621,8 +2639,8 @@ pub const BuildError = struct {
         switch (kind) {
             js.JSType.kJSTypeString => {
                 if (js.JSObjectGetPrivate(obj)) |priv| {
-                    if (JSPrivateDataPtr.from(priv).is(BuildError)) {
-                        var this = JSPrivateDataPtr.from(priv).as(BuildError);
+                    if (JSPrivateDataPtr.from(priv).is(BuildMessage)) {
+                        var this = JSPrivateDataPtr.from(priv).as(BuildMessage);
                         return this.toStringFn(ctx);
                     }
                 }
@@ -2639,8 +2657,8 @@ pub const BuildError = struct {
         msg: logger.Msg,
         // resolve_result: *const Resolver.Result,
     ) js.JSObjectRef {
-        var build_error = allocator.create(BuildError) catch unreachable;
-        build_error.* = BuildError{
+        var build_error = allocator.create(BuildMessage) catch unreachable;
+        build_error.* = BuildMessage{
             .msg = msg.clone(allocator) catch unreachable,
             // .resolve_result = resolve_result.*,
             .allocator = allocator,
@@ -2652,7 +2670,7 @@ pub const BuildError = struct {
     }
 
     pub fn getPosition(
-        this: *BuildError,
+        this: *BuildMessage,
         ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSStringRef,
@@ -2707,7 +2725,7 @@ pub const BuildError = struct {
     }
 
     pub fn getMessage(
-        this: *BuildError,
+        this: *BuildMessage,
         ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSStringRef,
@@ -2716,15 +2734,24 @@ pub const BuildError = struct {
         return ZigString.init(this.msg.data.text).toValue(ctx.ptr()).asRef();
     }
 
-    const BuildErrorName = "BuildError";
     pub fn getName(
-        _: *BuildError,
+        _: *BuildMessage,
         ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(BuildErrorName).toValue(ctx.ptr()).asRef();
+        return ZigString.static("BuildMessage").toValue(ctx.ptr()).asRef();
+    }
+
+    pub fn getLevel(
+        this: *BuildMessage,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        return ZigString.init(this.msg.kind.string()).toValue(ctx.ptr()).asRef();
     }
 };
 

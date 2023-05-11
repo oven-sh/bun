@@ -1059,10 +1059,6 @@ interface Bun {
   build(options: BuildOptions): Promise<BuildOutput>;
 }
 
-interface BuildOutput {
-  outputs: BuildArtifact[];
-}
-
 interface BuildOptions {
   entrypoints: string[]; // required
   outdir?: string; // default: no write (in-memory only)
@@ -1090,6 +1086,20 @@ interface BuildOptions {
         whitespace?: boolean;
         syntax?: boolean;
       };
+}
+
+interface BuildOutput {
+  outputs: BuildArtifact[];
+  success: boolean;
+  logs: Array<BuildMessage | ResolveMessage>;
+}
+
+interface BuildArtifact extends Blob {
+  path: string;
+  loader: Loader;
+  hash?: string;
+  kind: "entry-point" | "chunk" | "asset" | "sourecemap";
+  sourcemap?: BuildArtifact;
 }
 
 type Loader =

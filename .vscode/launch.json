@@ -6,7 +6,7 @@
       "request": "launch",
       "name": "bun test",
       "program": "bun-debug",
-      "args": ["wiptest", "${file}"],
+      "args": ["test", "${file}"],
       "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1"
@@ -30,7 +30,7 @@
       "request": "launch",
       "name": "bun test (all)",
       "program": "bun-debug",
-      "args": ["wiptest"],
+      "args": ["test"],
       "cwd": "${workspaceFolder}/test",
       "env": {
         "FORCE_COLOR": "1",
@@ -201,7 +201,7 @@
         "--splitting",
         "bun",
         "/Users/jarred/Code/bun-rsc/components/Message.tsx",
-        "/Users/jarred/Code/bun-rsc/components/Button.tsx",
+        "/Users/jarred/Code/bun-rsc/components/Button.tsx"
       ],
       "cwd": "/Users/jarred/Code/bun-rsc",
       "console": "internalConsole",

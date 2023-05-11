@@ -1204,7 +1204,12 @@ pub const BundleV2 = struct {
                     root_obj.put(globalThis, JSC.ZigString.static("outputs"), JSC.JSValue.createEmptyArray(globalThis, 0));
                     root_obj.put(
                         globalThis,
-                        JSC.ZigString.static("errors"),
+                        JSC.ZigString.static("success"),
+                        JSC.JSValue.jsBoolean(false),
+                    );
+                    root_obj.put(
+                        globalThis,
+                        JSC.ZigString.static("logs"),
                         this.log.toJSArray(globalThis, bun.default_allocator),
                     );
                 },
@@ -1265,7 +1270,12 @@ pub const BundleV2 = struct {
                     root_obj.put(globalThis, JSC.ZigString.static("outputs"), output_files_js);
                     root_obj.put(
                         globalThis,
-                        JSC.ZigString.static("errors"),
+                        JSC.ZigString.static("success"),
+                        JSC.JSValue.jsBoolean(true),
+                    );
+                    root_obj.put(
+                        globalThis,
+                        JSC.ZigString.static("logs"),
                         this.log.toJSArray(globalThis, bun.default_allocator),
                     );
                 },

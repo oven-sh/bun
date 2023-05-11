@@ -241,7 +241,7 @@ pub const FileSystemRouter = struct {
 
         var path_to_use = (root_dir_path.cloneWithTrailingSlash(allocator) catch unreachable).slice();
         var root_dir_info = vm.bundler.resolver.readDirInfo(path_to_use) catch {
-            globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "reading root directory"));
+            globalThis.throwValue(log.toJSError(globalThis, globalThis.allocator(), "reading root directory"));
             origin_str.deinit();
             arena.deinit();
             globalThis.allocator().destroy(arena);
@@ -259,7 +259,7 @@ pub const FileSystemRouter = struct {
             .asset_prefix_path = asset_prefix_slice.slice(),
         }) catch unreachable;
         router.loadRoutes(&log, root_dir_info, Resolver, &vm.bundler.resolver, router.config.dir) catch {
-            globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "loading routes"));
+            globalThis.throwValue(log.toJSError(globalThis, globalThis.allocator(), "loading routes"));
             origin_str.deinit();
             arena.deinit();
             globalThis.allocator().destroy(arena);
@@ -271,7 +271,7 @@ pub const FileSystemRouter = struct {
         }
 
         if (log.errors + log.warnings > 0) {
-            globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "loading routes"));
+            globalThis.throwValue(log.toJSError(globalThis, globalThis.allocator(), "loading routes"));
             origin_str.deinit();
             arena.deinit();
             globalThis.allocator().destroy(arena);
@@ -310,7 +310,7 @@ pub const FileSystemRouter = struct {
         defer vm.bundler.resolver.log = orig_log;
 
         var root_dir_info = vm.bundler.resolver.readDirInfo(this.router.config.dir) catch {
-            globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "reading root directory"));
+            globalThis.throwValue(log.toJSError(globalThis, globalThis.allocator(), "reading root directory"));
             return .zero;
         } orelse {
             globalThis.throw("Unable to find directory: {s}", .{this.router.config.dir});
@@ -325,7 +325,7 @@ pub const FileSystemRouter = struct {
             .asset_prefix_path = this.router.config.asset_prefix_path,
         }) catch unreachable;
         router.loadRoutes(&log, root_dir_info, Resolver, &vm.bundler.resolver, router.config.dir) catch {
-            globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "loading routes"));
+            globalThis.throwValue(log.toJSError(globalThis, globalThis.allocator(), "loading routes"));
 
             arena.deinit();
             globalThis.allocator().destroy(arena);

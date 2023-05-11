@@ -221,12 +221,30 @@ export class Server extends EventEmitter {
     if (callback) this.on("request", callback);
   }
 
-  close() {
-    if (this.#server) {
-      this.emit("close");
-      this.#server.stop();
-      this.#server = undefined;
+  closeAllConnections() {
+    const server = this.#server;
+    if (!server) {
+      return;
     }
+    this.#server = undefined;
+    server.stop(true);
+    this.emit("close");
+  }
+
+  closeIdleConnections() {
+    // not actually implemented
+  }
+
+  close(optionalCallback) {
+    const server = this.#server;
+    if (!server) {
+      if (typeof optionalCallback === "function") process.nextTick(new Error("Server is not running"));
+      return;
+    }
+    this.#server = undefined;
+    if (typeof optionalCallback === "function") this.once("close", optionalCallback);
+    this.emit("close");
+    server.stop();
   }
 
   address() {

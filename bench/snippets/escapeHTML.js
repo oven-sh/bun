@@ -1,5 +1,5 @@
-import { group } from "mitata";
-import { bench, run } from "mitata";
+import { group } from "./runner.mjs";
+import { bench, run } from "./runner.mjs";
 import { encode as htmlEntityEncode } from "html-entities";
 import { escape as heEscape } from "he";
 

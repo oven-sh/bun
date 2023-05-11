@@ -5,6 +5,7 @@ const RequestContext = @import("../../http.zig").RequestContext;
 const MimeType = @import("../../http.zig").MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = @import("root").bun.HTTP;
+const FetchRedirect = HTTPClient.FetchRedirect;
 const NetworkThread = HTTPClient.NetworkThread;
 const AsyncIO = NetworkThread.AsyncIO;
 const JSC = @import("root").bun.JSC;
@@ -847,9 +848,9 @@ pub const Fetch = struct {
                 FetchTasklet.callback,
             ).init(
                 fetch_tasklet,
-            ), proxy, if (fetch_tasklet.signal != null) &fetch_tasklet.aborted else null, fetch_options.hostname);
+            ), proxy, if (fetch_tasklet.signal != null) &fetch_tasklet.aborted else null, fetch_options.hostname, fetch_options.redirect_type);
 
-            if (!fetch_options.follow_redirects) {
+            if (fetch_options.redirect_type != FetchRedirect.follow) {
                 fetch_tasklet.http.?.client.remaining_redirect_count = 0;
             }
 
@@ -884,7 +885,7 @@ pub const Fetch = struct {
             disable_keepalive: bool,
             url: ZigURL,
             verbose: bool = false,
-            follow_redirects: bool = true,
+            redirect_type: FetchRedirect = FetchRedirect.follow,
             proxy: ?ZigURL = null,
             url_proxy_buffer: []const u8 = "",
             signal: ?*JSC.WebCore.AbortSignal = null,
@@ -960,7 +961,7 @@ pub const Fetch = struct {
         var disable_keepalive = false;
         var verbose = script_ctx.log.level.atLeast(.debug);
         var proxy: ?ZigURL = null;
-        var follow_redirects = true;
+        var redirect_type: FetchRedirect = FetchRedirect.follow;
         var signal: ?*JSC.WebCore.AbortSignal = null;
         // Custom Hostname
         var hostname: ?[]u8 = null;
@@ -1028,10 +1029,10 @@ pub const Fetch = struct {
                         }
                     }
 
-                    if (options.get(ctx, "redirect")) |redirect_value| {
-                        if (redirect_value.getZigString(globalThis).eqlComptime("manual")) {
-                            follow_redirects = false;
-                        }
+                    if (options.getOptionalEnum(ctx, "redirect", FetchRedirect) catch {
+                        return .zero;
+                    }) |redirect_value| {
+                        redirect_type = redirect_value;
                     }
 
                     if (options.get(ctx, "keepalive")) |keepalive_value| {
@@ -1158,10 +1159,10 @@ pub const Fetch = struct {
                         }
                     }
 
-                    if (options.get(ctx, "redirect")) |redirect_value| {
-                        if (redirect_value.getZigString(globalThis).eqlComptime("manual")) {
-                            follow_redirects = false;
-                        }
+                    if (options.getOptionalEnum(ctx, "redirect", FetchRedirect) catch {
+                        return .zero;
+                    }) |redirect_value| {
+                        redirect_type = redirect_value;
                     }
 
                     if (options.get(ctx, "keepalive")) |keepalive_value| {
@@ -1331,7 +1332,7 @@ pub const Fetch = struct {
                 .timeout = std.time.ns_per_hour,
                 .disable_keepalive = disable_keepalive,
                 .disable_timeout = disable_timeout,
-                .follow_redirects = follow_redirects,
+                .redirect_type = redirect_type,
                 .verbose = verbose,
                 .proxy = proxy,
                 .url_proxy_buffer = url_proxy_buffer,

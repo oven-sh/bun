@@ -6558,13 +6558,13 @@ pub const Scope = struct {
         label,
         class_name,
         class_body,
+        catch_binding,
 
         // The scopes below stop hoisted variables from extending into parent scopes
         entry, // This is a module, TypeScript enum, or TypeScript namespace
         function_args,
         function_body,
         class_static_init,
-        catch_binding,
 
         pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
             return try std.json.stringify(@tagName(self), opts, o);

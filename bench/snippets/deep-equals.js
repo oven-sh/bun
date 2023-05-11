@@ -1,4 +1,4 @@
-import { bench, group, run } from "mitata";
+import { bench, group, run } from "./runner.mjs";
 import fastDeepEquals from "fast-deep-equal/es6/index";
 // const Date = globalThis.Date;
 

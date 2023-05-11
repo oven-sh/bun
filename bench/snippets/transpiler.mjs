@@ -1,7 +1,7 @@
 import { readFileSync } from "fs";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
-import { bench, run, group } from "mitata";
+import { bench, run, group } from "./runner.mjs";
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
 const esbuild_ = require("esbuild/lib/main");

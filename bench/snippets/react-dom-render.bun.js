@@ -1,4 +1,4 @@
-import { bench, group, run } from "mitata";
+import { bench, group, run } from "./runner.mjs";
 import { renderToReadableStream } from "react-dom/server.browser";
 import { renderToReadableStream as renderToReadableStreamBun } from "react-dom/server";
 

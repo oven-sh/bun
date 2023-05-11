@@ -343,6 +343,27 @@ describe("fetch", () => {
     expect(response.redirected).toBe(true);
   });
 
+  it('redirect: "error" #2819', async () => {
+    startServer({
+      fetch(req) {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: "https://example.com",
+          },
+        });
+      },
+    });
+    try {
+      const response = await fetch(`http://${server.hostname}:${server.port}`, {
+        redirect: "error",
+      });
+      expect(response).toBeUndefined();
+    } catch (err: any) {
+      expect(err.code).toBe("UnexpectedRedirect");
+    }
+  });
+
   it("provide body", async () => {
     startServer({
       fetch(req) {

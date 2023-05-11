@@ -16,8 +16,15 @@ function lookup(domain, options, callback) {
   }
 
   dns.lookup(domain, options).then(
-    ([{ address, family }]) => {
-      callback(null, address, family);
+    res => {
+      res.sort((a, b) => a.family - b.family);
+
+      if (options?.all) {
+        callback(null, res.map(mapLookupAll));
+      } else {
+        const [{ address, family }] = res;
+        callback(null, address, family);
+      }
     },
     error => {
       callback(error);
@@ -453,6 +460,16 @@ const promisifyLookup = res => {
   return { address, family };
 };
 
+const mapLookupAll = res => {
+  const { address, family } = res;
+  return { address, family };
+};
+
+const promisifyLookupAll = res => {
+  res.sort((a, b) => a.family - b.family);
+  return res.map(mapLookupAll);
+};
+
 const mapResolveX = a => a.address;
 
 const promisifyResolveX = res => {
@@ -462,6 +479,9 @@ const promisifyResolveX = res => {
 // promisified versions
 export const promises = {
   lookup(domain, options) {
+    if (options?.all) {
+      return dns.lookup(domain, options).then(promisifyLookupAll);
+    }
     return dns.lookup(domain, options).then(promisifyLookup);
   },
 

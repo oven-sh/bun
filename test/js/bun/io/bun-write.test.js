@@ -1,7 +1,7 @@
 import fs from "fs";
 import { it, expect, describe } from "bun:test";
 import path from "path";
-import { gcTick, withoutAggressiveGC, bunExe } from "harness";
+import { gcTick, withoutAggressiveGC, bunExe, bunEnv } from "harness";
 import { tmpdir } from "os";
 
 it("Bun.write blob", async () => {
@@ -296,12 +296,13 @@ it("#2674", async () => {
 
   const { stderr, stdout, exitCode } = Bun.spawnSync({
     cmd: [bunExe(), "run", file],
+    env: bunEnv,
     stderr: "pipe",
     stdout: "pipe",
   });
   console.log(stderr?.toString());
   const text = stdout?.toString();
-  expect(text?.length).toBeGreaterThanOrEqual(300000);
+  expect(text?.length).toBe(300000);
   const error = stderr?.toString();
   expect(error?.length).toBeFalsy();
   expect(exitCode).toBe(0);

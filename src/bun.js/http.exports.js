@@ -238,7 +238,8 @@ export class Server extends EventEmitter {
   close(optionalCallback) {
     const server = this.#server;
     if (!server) {
-      if (typeof optionalCallback === "function") process.nextTick(new Error("Server is not running"));
+      if (typeof optionalCallback === "function")
+        process.nextTick(optionalCallback, new Error("Server is not running"));
       return;
     }
     this.#server = undefined;

@@ -1,4 +1,4 @@
-// @platform bun,node,deno
+// @runtime bun,node,deno
 import { spawnSync } from "node:child_process";
 import { bench, run } from "./runner.mjs";
 

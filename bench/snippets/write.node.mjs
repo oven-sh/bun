@@ -1,4 +1,4 @@
-// @platform node, bun, deno
+// @runtime node, bun, deno
 import { bench, run } from "./runner.mjs";
 import { Buffer } from "node:buffer";
 import { openSync } from "node:fs";

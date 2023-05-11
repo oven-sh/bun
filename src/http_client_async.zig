@@ -60,9 +60,15 @@ var shared_response_headers_buf: [256]picohttp.Header = undefined;
 const end_of_chunked_http1_1_encoding_response_body = "0\r\n\r\n";
 
 pub const FetchRedirect = enum(u8) {
-    Follow = 0,
-    Manual = 1,
-    Error = 2,
+    follow = 0,
+    manual = 1,
+    @"error" = 2,
+
+    pub const Map = bun.ComptimeStringMap(FetchRedirect, .{
+        .{ "follow", .follow },
+        .{ "manual", .manual },
+        .{ "error", .@"error" },
+    });
 };
 
 const ProxySSLData = struct {
@@ -1017,7 +1023,7 @@ allocator: std.mem.Allocator,
 verbose: bool = Environment.isTest,
 remaining_redirect_count: i8 = default_redirect_count,
 allow_retry: bool = false,
-redirect_type: FetchRedirect = FetchRedirect.Follow,
+redirect_type: FetchRedirect = FetchRedirect.follow,
 redirect: ?*URLBufferPool.Node = null,
 timeout: usize = 0,
 progress_node: ?*std.Progress.Node = null,
@@ -1625,7 +1631,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
 pub fn doRedirect(this: *HTTPClient) void {
     var body_out_str = this.state.body_out_str.?;
     this.remaining_redirect_count -|= 1;
-    std.debug.assert(this.redirect_type == FetchRedirect.Follow);
+    std.debug.assert(this.redirect_type == FetchRedirect.follow);
 
     if (this.remaining_redirect_count == 0) {
         this.fail(error.TooManyRedirects);
@@ -2722,7 +2728,7 @@ pub fn handleResponseMetadata(
 
     const is_redirect = this.state.pending_response.status_code >= 300 and this.state.pending_response.status_code <= 399;
     if (is_redirect) {
-        if (this.redirect_type == FetchRedirect.Follow and location.len > 0 and this.remaining_redirect_count > 0) {
+        if (this.redirect_type == FetchRedirect.follow and location.len > 0 and this.remaining_redirect_count > 0) {
             switch (this.state.pending_response.status_code) {
                 302, 301, 307, 308, 303 => {
                     if (strings.indexOf(location, "://")) |i| {
@@ -2828,9 +2834,9 @@ pub fn handleResponseMetadata(
                 },
                 else => {},
             }
-        } else if (this.redirect_type == FetchRedirect.Error) {
+        } else if (this.redirect_type == FetchRedirect.@"error") {
             return error.UnexpectedRedirect;
-        } else if (this.redirect_type == FetchRedirect.Manual) {
+        } else if (this.redirect_type == FetchRedirect.manual) {
             this.state.response_stage = if (this.state.transfer_encoding == .chunked) .body_chunk else .body;
             return false;
         }

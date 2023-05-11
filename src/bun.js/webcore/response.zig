@@ -554,6 +554,7 @@ pub const Fetch = struct {
     pub const fetch_error_no_args = "fetch() expects a string but received no arguments.";
     pub const fetch_error_blank_url = "fetch() URL must not be a blank string.";
     pub const fetch_error_unexpected_body = "fetch() request with GET/HEAD/OPTIONS method cannot have body.";
+    pub const fetch_error_redirect = "fetch() redirect must be one of: \"follow\", \"error\", \"manual\".";
     const JSTypeErrorEnum = std.enums.EnumArray(JSType, string);
     pub const fetch_type_error_names: JSTypeErrorEnum = brk: {
         var errors = JSTypeErrorEnum.initUndefined();
@@ -850,7 +851,7 @@ pub const Fetch = struct {
                 fetch_tasklet,
             ), proxy, if (fetch_tasklet.signal != null) &fetch_tasklet.aborted else null, fetch_options.hostname, fetch_options.redirect_type);
 
-            if (fetch_options.redirect_type != FetchRedirect.Follow) {
+            if (fetch_options.redirect_type != FetchRedirect.follow) {
                 fetch_tasklet.http.?.client.remaining_redirect_count = 0;
             }
 
@@ -885,7 +886,7 @@ pub const Fetch = struct {
             disable_keepalive: bool,
             url: ZigURL,
             verbose: bool = false,
-            redirect_type: FetchRedirect = FetchRedirect.Follow,
+            redirect_type: FetchRedirect = FetchRedirect.follow,
             proxy: ?ZigURL = null,
             url_proxy_buffer: []const u8 = "",
             signal: ?*JSC.WebCore.AbortSignal = null,
@@ -961,7 +962,7 @@ pub const Fetch = struct {
         var disable_keepalive = false;
         var verbose = script_ctx.log.level.atLeast(.debug);
         var proxy: ?ZigURL = null;
-        var redirect_type: FetchRedirect = FetchRedirect.Follow;
+        var redirect_type: FetchRedirect = FetchRedirect.follow;
         var signal: ?*JSC.WebCore.AbortSignal = null;
         // Custom Hostname
         var hostname: ?[]u8 = null;
@@ -1029,13 +1030,12 @@ pub const Fetch = struct {
                         }
                     }
 
-                    if (options.get(ctx, "redirect")) |redirect_value| {
-                        const redirect = redirect_value.getZigString(globalThis);
-                        if (redirect.eqlComptime("manual")) {
-                            redirect_type = FetchRedirect.Manual;
-                        } else if (redirect.eqlComptime("error")) {
-                            redirect_type = FetchRedirect.Error;
-                        }
+                    if (options.getOptionalEnum(ctx, "redirect", FetchRedirect) catch {
+                        const err = JSC.toTypeError(.ERR_INVALID_ARG_TYPE, "{s}", .{fetch_error_redirect}, ctx);
+                        exception.* = err.asObjectRef();
+                        return null;
+                    }) |redirect_value| {
+                        redirect_type = redirect_value;
                     }
 
                     if (options.get(ctx, "keepalive")) |keepalive_value| {
@@ -1162,13 +1162,12 @@ pub const Fetch = struct {
                         }
                     }
 
-                    if (options.get(ctx, "redirect")) |redirect_value| {
-                        const redirect = redirect_value.getZigString(globalThis);
-                        if (redirect.eqlComptime("manual")) {
-                            redirect_type = FetchRedirect.Manual;
-                        } else if (redirect.eqlComptime("error")) {
-                            redirect_type = FetchRedirect.Error;
-                        }
+                    if (options.getOptionalEnum(ctx, "redirect", FetchRedirect) catch {
+                        const err = JSC.toTypeError(.ERR_INVALID_ARG_TYPE, "{s}", .{fetch_error_redirect}, ctx);
+                        exception.* = err.asObjectRef();
+                        return null;
+                    }) |redirect_value| {
+                        redirect_type = redirect_value;
                     }
 
                     if (options.get(ctx, "keepalive")) |keepalive_value| {

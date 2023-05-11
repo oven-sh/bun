@@ -13,6 +13,11 @@ const runtimes = {
   deno: process.env.DENO ?? Bun.which("deno"),
 };
 
+if (process.env.BUN_ONLY) {
+  delete runtimes.node;
+  delete runtimes.deno;
+}
+
 function getEntry(sourceContents, file) {
   const targetLineStart = sourceContents.indexOf("// @runtime ");
   if (targetLineStart === -1) {
@@ -166,14 +171,56 @@ function* run({ cmds, file }) {
   }
 }
 
+const db = Database.open(process.RUNNER_DB_PATH ?? `runs-${process.platform}-${process.arch}.db`);
+db.run(`CREATE TABLE IF NOT EXISTS runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    runtime TEXT NOT NULL,
+    runtimeVersion TEXT NOT NULL,
+    benchmarkID TEXT NOT NULL,
+    timestamp INTEGER NOT NULL,
+    elapsed REAL NOT NULL,
+    benchmarks JSON NOT NULL);`);
+db.run(`CREATE INDEX IF NOT EXISTS runs_benchmarkID ON runs (benchmarkID);`);
+db.run(`CREATE INDEX IF NOT EXISTS runs_timestamp ON runs (timestamp);`);
+db.run(`CREATE INDEX IF NOT EXISTS runs_runtime ON runs (runtime);`);
+db.run(`CREATE INDEX IF NOT EXISTS runs_runtimeVersion ON runs (runtimeVersion);`);
+
 // TODO: finish this
 for (let result of scan()) {
+  var prevBenchmarkID = null;
   for (let {
     runtime,
     benchmarkID,
     runtimeVersion,
+    timestamp,
+    elapsed,
+    file,
     result: { benchmarks },
   } of run(result)) {
-    console.log({ runtime, runtimeVersion, id: benchmarkID, benchmarks });
+    if (prevBenchmarkID !== benchmarkID) {
+      console.log("\n" + `${benchmarkID}:`);
+    }
+
+    console.log(
+      " ",
+      `[${Math.round(elapsed)}ms]`,
+      "Executed",
+      JSON.stringify(benchmarkID),
+      "in",
+      runtime,
+      runtimeVersion,
+      "(" + file + ")",
+    );
+    prevBenchmarkID = benchmarkID;
+    db.run(
+      `INSERT INTO runs (runtime, runtimeVersion, benchmarkID, timestamp, elapsed, benchmarks) VALUES (
+        ?, ?, ?, ?, ?, ?)`,
+      runtime,
+      runtimeVersion,
+      benchmarkID,
+      timestamp,
+      elapsed,
+      JSON.stringify(benchmarks),
+    );
   }
 }

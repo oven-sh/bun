@@ -3307,40 +3307,62 @@ pub const Parser = struct {
                     }
                 }
             }
-        } else if (p.options.bundle and parts.items.len == 0)
-        // If the file only contains "export * from './blah'
-        // we pretend the file never existed in the first place.
-        // the semantic difference here is in export default statements
-        export_star_redirect: {
-            // note: export_star_import_records are not filled in yet
-            if (before.items.len > 0 and p.import_records.items.len == 1) {
-                var export_star_redirect: ?js_ast.Result = null;
-                for (before.items) |part| {
-                    for (part.stmts) |stmt| {
-                        switch (stmt.data) {
-                            .s_export_star => |star| {
-                                if (star.alias != null) {
-                                    break :export_star_redirect;
-                                }
+        } else if (p.options.bundle and parts.items.len == 0) {
+            // This flag is disabled because it breaks circular export * as from
+            //
+            //  entry.js:
+            //
+            //    export * from './foo';
+            //
+            //  foo.js:
+            //
+            //    export const foo = 123
+            //    export * as ns from './foo'
+            //
+            if (comptime FeatureFlags.export_star_redirect) {
+                // If the file only contains "export * from './blah'
+                // we pretend the file never existed in the first place.
+                // the semantic difference here is in export default statements
+                // note: export_star_import_records are not filled in yet
 
-                                export_star_redirect = js_ast.Result{
-                                    .ast = .{
-                                        .allocator = p.allocator,
-                                        .import_records = ImportRecord.List.init(p.import_records.items),
-                                        .redirect_import_record_index = star.import_record_index,
-                                        .named_imports = p.named_imports,
-                                        .named_exports = p.named_exports,
+                if (before.items.len > 0 and p.import_records.items.len == 1) {
+                    var export_star_redirect: ?*S.ExportStar = brk: {
+                        var export_star: ?*S.ExportStar = null;
+                        for (before.items) |part| {
+                            for (part.stmts) |stmt| {
+                                switch (stmt.data) {
+                                    .s_export_star => |star| {
+                                        if (star.alias != null) {
+                                            break :brk null;
+                                        }
+
+                                        if (export_star != null) {
+                                            break :brk null;
+                                        }
+
+                                        export_star = star;
                                     },
-                                };
-                            },
-                            .s_empty, .s_comment => {},
-                            else => break :export_star_redirect,
+                                    .s_empty, .s_comment => {},
+                                    else => {
+                                        break :brk null;
+                                    },
+                                }
+                            }
                         }
-                    }
-                }
+                        break :brk export_star;
+                    };
 
-                if (export_star_redirect) |redirect| {
-                    return redirect;
+                    if (export_star_redirect) |star| {
+                        return js_ast.Result{
+                            .ast = .{
+                                .allocator = p.allocator,
+                                .import_records = ImportRecord.List.init(p.import_records.items),
+                                .redirect_import_record_index = star.import_record_index,
+                                .named_imports = p.named_imports,
+                                .named_exports = p.named_exports,
+                            },
+                        };
+                    }
                 }
             }
         }

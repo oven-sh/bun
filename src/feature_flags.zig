@@ -168,3 +168,5 @@ pub const boundary_based_chunking = true;
 pub const source_map_debug_id = true;
 
 pub const alignment_tweak = false;
+
+pub const export_star_redirect = false;

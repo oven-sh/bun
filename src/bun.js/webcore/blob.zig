@@ -1177,6 +1177,22 @@ pub const Blob = struct {
                         return;
                     }
 
+                    if (@hasField(This, "file_store")) {
+                        const pathlike = this.file_store.pathlike;
+                        if (pathlike == .fd) {
+                            this.opened_fd = pathlike.fd;
+                            Callback(this, this.opened_fd);
+                            return;
+                        }
+                    } else {
+                        const pathlike = this.file_blob.store.?.data.file.pathlike;
+                        if (pathlike == .fd) {
+                            this.opened_fd = pathlike.fd;
+                            Callback(this, this.opened_fd);
+                            return;
+                        }
+                    }
+
                     if (comptime Environment.isMac) {
                         Callback(this, this.getFdMac());
                     } else {

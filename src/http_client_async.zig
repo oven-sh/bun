@@ -2835,14 +2835,13 @@ pub fn handleResponseMetadata(
                 else => {},
             }
         } else if (this.redirect_type == FetchRedirect.@"error") {
+            // error out if redirect is not allowed
             return error.UnexpectedRedirect;
-        } else if (this.redirect_type == FetchRedirect.manual) {
-            this.state.response_stage = if (this.state.transfer_encoding == .chunked) .body_chunk else .body;
-            return false;
         }
     }
 
+    // if is no redirect or if is redirect == "manual" just proceed
     this.state.response_stage = if (this.state.transfer_encoding == .chunked) .body_chunk else .body;
-
+    // if no body is expected we should stop processing
     return this.method.hasBody() and (this.state.body_size > 0 or this.state.transfer_encoding == .chunked);
 }

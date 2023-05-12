@@ -80,7 +80,7 @@ Bun implements the following globals.
 
 ---
 
-- `BuildError`
+- `BuildMessage`
 - Bun
 - &nbsp;
 
@@ -272,7 +272,7 @@ Bun implements the following globals.
 
 ---
 
-- `ResolveError`
+- `ResolveMessage`
 - Bun
 - &nbsp;
 

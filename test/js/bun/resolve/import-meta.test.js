@@ -43,7 +43,7 @@ it("require with a query string works on dynamically created content", () => {
     try {
       require("./bar.js?query=123.js");
     } catch (e) {
-      expect(e.name).toBe("ResolveError");
+      expect(e.name).toBe("ResolveMessage");
     }
 
     mkdirSync("/tmp/bun-test-import-meta-dynamic-dir", { recursive: true });

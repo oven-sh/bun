@@ -1,3 +1,7 @@
+{% callout %}
+**Note** — Available in the Bun v0.6.0 nightly. Run `bun upgrade --canary` to try it out.
+{% /callout %}
+
 Bun's bundler API is inspired heavily by [esbuild](https://esbuild.github.io/). Migrating to Bun's bundler from esbuild should be relatively painless. This guide will briefly explain why you might consider migrating to Bun's bundler and provide a side-by-side API comparison reference for those who are already familiar with esbuild's API.
 
 There are a few behavioral differences to note.
@@ -31,7 +35,7 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `--bundle`
 - n/a
-- Not necessary, `bun build` always bundles.
+- Bun always bundles, use `--transpile` to disable this behavior.
 
 ---
 
@@ -101,7 +105,7 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `--platform`
 - `--target`
-- Renamed to `--target` for consistency with tsconfig
+- Renamed to `--target` for consistency with tsconfig. Does not support `neutral`.
 
 ---
 
@@ -137,7 +141,7 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `--allow-overwrite`
 - n/a
-- Overwriting is always allowed
+- Overwriting is never allowed
 
 ---
 
@@ -449,7 +453,7 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `allowOverwrite`
 - n/a
-- Always `true`
+- Always `false`
 
 ---
 
@@ -476,7 +480,7 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `bundle`
 - n/a
-- Always `true`
+- Always `true`. Use [`Bun.Transpiler`](/docs/api/transpiler) to transpile without bundling.
 
 ---
 
@@ -769,7 +773,7 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `platform`
 - `target`
-- Supports `"bun"`, `"node"`, and `"browser"` (the default)
+- Supports `"bun"`, `"node"` and `"browser"` (the default). Does not support `"neutral"`.
 
 ---
 

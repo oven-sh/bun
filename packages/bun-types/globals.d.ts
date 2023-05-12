@@ -252,13 +252,13 @@ interface ImportMeta {
   /**
    * Resolve a module ID the same as if you imported it
    *
-   * On failure, throws a `ResolveError`
+   * On failure, throws a `ResolveMessage`
    */
   resolve(moduleId: string): Promise<string>;
   /**
    * Resolve a `moduleId` as though it were imported from `parent`
    *
-   * On failure, throws a `ResolveError`
+   * On failure, throws a `ResolveMessage`
    */
   // tslint:disable-next-line:unified-signatures
   resolve(moduleId: string, parent: string): Promise<string>;
@@ -2864,12 +2864,12 @@ interface Position {
   offset: number;
 }
 
-interface ResolveError {
+declare class ResolveMessage {
+  readonly name: "ResolveMessage";
   readonly position: Position | null;
   readonly code: string;
   readonly message: string;
   readonly referrer: string;
-  readonly name: string;
   readonly specifier: string;
   readonly importKind:
     | "entry_point"
@@ -2882,23 +2882,27 @@ interface ResolveError {
     | "at_conditional"
     | "url"
     | "internal";
+  readonly level: "error" | "warning" | "info" | "debug" | "verbose";
 
   toString(): string;
 }
 
-declare var ResolveError: {
-  readonly protoype: ResolveError;
-};
-
-interface BuildError {
+declare class BuildMessage {
+  readonly name: "BuildMessage";
   readonly position: Position | null;
   readonly message: string;
-  readonly name: string;
+  readonly level: "error" | "warning" | "info" | "debug" | "verbose";
 }
 
-declare var BuildError: {
-  readonly protoype: BuildError;
-};
+/**
+ * @deprecated Renamed to `BuildMessage`
+ */
+declare var BuildError: typeof BuildMessage;
+
+/**
+ * @deprecated Renamed to `ResolveMessage`
+ */
+declare var ResolveError: typeof ResolveMessage;
 
 // Declare "static" methods in Error
 interface ErrorConstructor {

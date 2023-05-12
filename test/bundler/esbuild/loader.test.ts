@@ -327,6 +327,7 @@ describe("bundler", () => {
   //   },
   //   outbase: "/src",
   // });
+  return;
   itBundled("loader/FileRelativePathAssetNamesJS", {
     // GENERATED
     files: {

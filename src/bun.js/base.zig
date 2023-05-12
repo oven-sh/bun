@@ -11,8 +11,8 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const JavaScript = @import("./javascript.zig");
-const ResolveError = JavaScript.ResolveError;
-const BuildError = JavaScript.BuildError;
+const ResolveMessage = JavaScript.ResolveMessage;
+const BuildMessage = JavaScript.BuildMessage;
 const JSC = @import("root").bun.JSC;
 const WebCore = @import("./webcore.zig");
 const Test = @import("./test/jest.zig");
@@ -2200,7 +2200,7 @@ const MD5_SHA1 = JSC.API.Bun.Crypto.MD5_SHA1;
 const FFI = JSC.FFI;
 pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     AttributeIterator,
-    BuildError,
+    BuildMessage,
     Comment,
     DebugServer,
     DebugSSLServer,
@@ -2215,7 +2215,7 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     LazyPropertiesObject,
 
     ModuleNamespace,
-    ResolveError,
+    ResolveMessage,
     Router,
     Server,
 

@@ -381,9 +381,8 @@ function expectBundled(
   if (bundleWarnings === true) bundleWarnings = {};
   const useOutFile = outfile ? true : outdir ? false : entryPoints.length === 1;
 
-  if (bundling === false) {
-    // https://github.com/oven-sh/bun/issues/2821
-    external = ["*"];
+  if (bundling === false && entryPoints.length > 1) {
+    throw new Error("bundling:false only supports a single entry point");
   }
   if (!ESBUILD && format !== "esm") {
     throw new Error("formats besides esm not implemented in bun build");
@@ -516,6 +515,7 @@ function expectBundled(
               "build",
               ...entryPaths,
               ...(entryPointsRaw ?? []),
+              bundling === false ? "--transpile" : [],
               outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
               define && Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
               `--target=${target}`,

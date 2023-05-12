@@ -172,18 +172,28 @@ function* run({ cmds, file }) {
 }
 
 const db = Database.open(process.RUNNER_DB_PATH ?? `runs-${process.platform}-${process.arch}.db`);
-db.run(`CREATE TABLE IF NOT EXISTS runs (
+db.run(`CREATE TABLE IF NOT EXISTS benchmarkResults (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    results TEXT NOT NULL
+);`);
+db.run(`
+CREATE TABLE IF NOT EXISTS runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     runtime TEXT NOT NULL,
     runtimeVersion TEXT NOT NULL,
     benchmarkID TEXT NOT NULL,
     timestamp INTEGER NOT NULL,
     elapsed REAL NOT NULL,
-    benchmarks JSON NOT NULL);`);
+    benchmarkResultID INTEGER NOT NULL
+);
+
+
+`);
 db.run(`CREATE INDEX IF NOT EXISTS runs_benchmarkID ON runs (benchmarkID);`);
 db.run(`CREATE INDEX IF NOT EXISTS runs_timestamp ON runs (timestamp);`);
 db.run(`CREATE INDEX IF NOT EXISTS runs_runtime ON runs (runtime);`);
 db.run(`CREATE INDEX IF NOT EXISTS runs_runtimeVersion ON runs (runtimeVersion);`);
+db.run(`CREATE INDEX IF NOT EXISTS runs_benchmarkResultID ON runs (benchmarkResultID);`);
 
 // TODO: finish this
 for (let result of scan()) {
@@ -199,6 +209,7 @@ for (let result of scan()) {
   } of run(result)) {
     if (prevBenchmarkID !== benchmarkID) {
       console.log("\n" + `${benchmarkID}:`);
+      prevBenchmarkID = benchmarkID;
     }
 
     console.log(
@@ -211,16 +222,23 @@ for (let result of scan()) {
       runtimeVersion,
       "(" + file + ")",
     );
-    prevBenchmarkID = benchmarkID;
+    const { id: benchmarkResultID } = db
+      .query(
+        `
+        INSERT INTO benchmarkResults (results) VALUES (?) RETURNING id
+      `,
+      )
+      .get(JSON.stringify(benchmarks));
     db.run(
-      `INSERT INTO runs (runtime, runtimeVersion, benchmarkID, timestamp, elapsed, benchmarks) VALUES (
+      `
+      INSERT INTO runs (runtime, runtimeVersion, benchmarkID, timestamp, elapsed, benchmarkResultID) VALUES (
         ?, ?, ?, ?, ?, ?)`,
       runtime,
       runtimeVersion,
       benchmarkID,
       timestamp,
       elapsed,
-      JSON.stringify(benchmarks),
+      benchmarkResultID,
     );
   }
 }

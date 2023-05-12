@@ -41,7 +41,7 @@ const Runtime = @import("./runtime.zig").Runtime;
 const URL = @import("url.zig").URL;
 const JSC = @import("root").bun.JSC;
 const PluginRunner = bun.bundler.PluginRunner;
-pub const CSSResolveError = error{ResolveError};
+pub const CSSResolveError = error{ResolveMessage};
 
 pub const OnImportCallback = *const fn (resolve_result: *const Resolver.Result, import_record: *ImportRecord, origin: URL) void;
 
@@ -795,7 +795,7 @@ pub const Linker = struct {
 
             else => {},
         }
-        if (had_resolve_errors) return error.ResolveError;
+        if (had_resolve_errors) return error.ResolveMessage;
         result.ast.externals = try externals.toOwnedSlice();
 
         //     if (result.ast.needs_runtime and (result.ast.runtime_import_record_id == null or import_records.items.len == 0)) {

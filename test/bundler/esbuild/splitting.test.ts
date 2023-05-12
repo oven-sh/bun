@@ -65,6 +65,16 @@ describe("bundler", () => {
     assertNotPresent: {
       "/out/entry.js": "123",
     },
+    onAfterBundle(api) {
+      const files = readdirSync(api.outdir);
+      assert.strictEqual(
+        files.length,
+        2,
+        "should have 2 files: entry.js and foo-[hash].js, found [" + files.join(", ") + "]",
+      );
+      assert(files.includes("entry.js"), "has entry.js");
+      assert(!files.includes("foo.js"), "does not have foo.js");
+    },
     run: {
       file: "/out/entry.js",
       stdout: "123",

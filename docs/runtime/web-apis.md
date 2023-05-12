@@ -69,8 +69,7 @@ The following Web APIs are partially or completely supported.
 ---
 
 - Errors
-- [`reportError`](https://developer.mozilla.org/en-US/docs/Web/API/reportError) [`ResolveError`](https://developer.mozilla.org/en-US/docs/Web/API/ResolveError)
-  [`BuildError`](https://developer.mozilla.org/en-US/docs/Web/API/BuildError)
+- [`reportError`](https://developer.mozilla.org/en-US/docs/Web/API/reportError)
 
 ---
 

@@ -209,24 +209,36 @@ pub const JSBundler = struct {
                 if (naming.isString()) {
                     if (try config.getOptional(globalThis, "naming", ZigString.Slice)) |slice| {
                         defer slice.deinit();
+                        if (!strings.hasPrefixComptime(slice.slice(), "./")) {
+                            this.names.owned_entry_point.appendSliceExact("./") catch unreachable;
+                        }
                         this.names.owned_entry_point.appendSliceExact(slice.slice()) catch unreachable;
                         this.names.entry_point.data = this.names.owned_entry_point.list.items;
                     }
                 } else if (naming.isObject()) {
                     if (try naming.getOptional(globalThis, "entry", ZigString.Slice)) |slice| {
                         defer slice.deinit();
+                        if (!strings.hasPrefixComptime(slice.slice(), "./")) {
+                            this.names.owned_entry_point.appendSliceExact("./") catch unreachable;
+                        }
                         this.names.owned_entry_point.appendSliceExact(slice.slice()) catch unreachable;
                         this.names.entry_point.data = this.names.owned_entry_point.list.items;
                     }
 
                     if (try naming.getOptional(globalThis, "chunk", ZigString.Slice)) |slice| {
                         defer slice.deinit();
+                        if (!strings.hasPrefixComptime(slice.slice(), "./")) {
+                            this.names.owned_chunk.appendSliceExact("./") catch unreachable;
+                        }
                         this.names.owned_chunk.appendSliceExact(slice.slice()) catch unreachable;
                         this.names.chunk.data = this.names.owned_chunk.list.items;
                     }
 
                     if (try naming.getOptional(globalThis, "asset", ZigString.Slice)) |slice| {
                         defer slice.deinit();
+                        if (!strings.hasPrefixComptime(slice.slice(), "./")) {
+                            this.names.owned_asset.appendSliceExact("./") catch unreachable;
+                        }
                         this.names.owned_asset.appendSliceExact(slice.slice()) catch unreachable;
                         this.names.asset.data = this.names.owned_asset.list.items;
                     }
@@ -1000,6 +1012,8 @@ pub const BuildArtifact = struct {
         asset,
         @"entry-point",
         @"component-manifest",
+        @"use client",
+        @"use server",
         sourcemap,
     };
 

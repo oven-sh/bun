@@ -1201,32 +1201,28 @@ pub const BundleV2 = struct {
             switch (this.result) {
                 .pending => unreachable,
                 .err => {
+                    root_obj.put(globalThis, JSC.ZigString.static("outputs"), JSC.JSValue.createEmptyArray(globalThis, 0));
                     root_obj.put(
                         globalThis,
-                        JSC.ZigString.static("outputs"),
-                        JSC.JSMap.create(
-                            globalThis,
-                        ),
+                        JSC.ZigString.static("success"),
+                        JSC.JSValue.jsBoolean(false),
                     );
-
                     root_obj.put(
                         globalThis,
                         JSC.ZigString.static("logs"),
-                        this.log.toJS(globalThis, bun.default_allocator, "Errors while building"),
+                        this.log.toJSArray(globalThis, bun.default_allocator),
                     );
                 },
                 .value => |*build| {
                     var output_files: []options.OutputFile = build.output_files.items;
-                    const output_files_js = JSC.JSMap.create(globalThis);
+                    const output_files_js = JSC.JSValue.createEmptyArray(globalThis, output_files.len);
                     if (output_files_js == .zero) {
                         @panic("Unexpected pending JavaScript exception in JSBundleCompletionTask.onComplete. This is a bug in Bun.");
                     }
 
-                    var outputs = JSC.JSMap.fromJS(output_files_js) orelse @panic("Unexpected pending JavaScript exception in JSBundleCompletionTask.onComplete. This is a bug in Bun.");
-
                     defer build.output_files.deinit();
                     var to_assign_on_sourcemap: JSC.JSValue = .zero;
-                    for (output_files) |*output_file| {
+                    for (output_files, 0..) |*output_file, i| {
                         defer bun.default_allocator.free(output_file.input.text);
                         defer bun.default_allocator.free(output_file.path);
                         const result = output_file.toJS(
@@ -1268,23 +1264,19 @@ pub const BundleV2 = struct {
                             to_assign_on_sourcemap = result;
                         }
 
-                        outputs.set(
-                            globalThis,
-                            JSC.ZigString.fromUTF8(output_file.input.text).toValueGC(globalThis),
-                            result,
-                        );
+                        output_files_js.putIndex(globalThis, @intCast(u32, i), result);
                     }
 
+                    root_obj.put(globalThis, JSC.ZigString.static("outputs"), output_files_js);
                     root_obj.put(
                         globalThis,
-                        JSC.ZigString.static("outputs"),
-                        output_files_js,
+                        JSC.ZigString.static("success"),
+                        JSC.JSValue.jsBoolean(true),
                     );
-
                     root_obj.put(
                         globalThis,
                         JSC.ZigString.static("logs"),
-                        this.log.toJS(globalThis, bun.default_allocator, "Errors while building"),
+                        this.log.toJSArray(globalThis, bun.default_allocator),
                     );
                 },
             }
@@ -2946,6 +2938,15 @@ const EntryPoint = struct {
 
         /// Created via an import of a "use server" file
         react_server_component,
+
+        pub fn OutputKind(this: Kind) JSC.API.BuildArtifact.OutputKind {
+            return switch (this) {
+                .user_specified => .@"entry-point",
+                .react_client_component => .@"use client",
+                .react_server_component => .@"use server",
+                else => .chunk,
+            };
+        }
 
         pub inline fn isEntryPoint(this: Kind) bool {
             return this != .none;
@@ -4959,7 +4960,7 @@ const LinkerContext = struct {
                                     to_common_js_uses += 1;
                                 }
                             }
-                        } else if (kind == .stmt and other_export_kind.isESMWithDynamicFallback()) {
+                        } else if (kind == .stmt and export_kind == .esm_with_dynamic_fallback) {
                             // This is an import of a module that has a dynamic export fallback
                             // object. In that case we need to depend on that object in case
                             // something ends up needing to use it later. This could potentially
@@ -8887,7 +8888,10 @@ const LinkerContext = struct {
                             .hash = chunk.isolated_hash,
                             .loader = .js,
                             .input_path = input_path,
-                            .output_kind = if (chunk.entry_point.is_entry_point) .@"entry-point" else .chunk,
+                            .output_kind = if (chunk.entry_point.is_entry_point)
+                                c.graph.files.items(.entry_point_kind)[chunk.entry_point.source_index].OutputKind()
+                            else
+                                .chunk,
                             .input_loader = if (chunk.entry_point.is_entry_point) c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index] else .js,
                             .output_path = chunk.final_rel_path,
                             .source_map_index = if (sourcemap_output_file != null)
@@ -9124,7 +9128,10 @@ const LinkerContext = struct {
                     else
                         .js,
                     .hash = chunk.isolated_hash,
-                    .output_kind = if (chunk.entry_point.is_entry_point) .@"entry-point" else .chunk,
+                    .output_kind = if (chunk.entry_point.is_entry_point)
+                        c.graph.files.items(.entry_point_kind)[chunk.entry_point.source_index].OutputKind()
+                    else
+                        .chunk,
                     .loader = .js,
                     .source_map_index = if (source_map_output_file != null)
                         @truncate(u32, output_files.items.len + 1)

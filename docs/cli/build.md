@@ -1,7 +1,3 @@
-{% callout %}
-**Note** — Available in the Bun v0.6.0 nightly. Run `bun upgrade --canary` to try it out.
-{% /callout %}
-
 Bun's fast native bundler is now in beta. It can be used via the `bun build` CLI command or the `Bun.build()` JavaScript API.
 
 {% codetabs group="a" %}
@@ -221,13 +217,11 @@ The behavior described in this table can be overridden with [plugins](/docs/bund
 
 {% codetabs group="a" %}
 
-```ts#JavaScript
+```ts #JavaScript
 const result = await Bun.build({
   entrypoints: ['./index.ts']
-}); // => Promise
-
-await result;
-// => { outputs: Array<{ path: string; result: Blob }> }
+});
+// => { success: boolean, outputs: BuildArtifact[], logs: BuildMessage[] }
 ```
 
 ```bash#CLI
@@ -249,35 +243,36 @@ const result = await Bun.build({
   entrypoints: ['./index.ts'],
   outdir: './out'
 });
-
-result;
-// => { outputs: Array<{ path: string; result: BunFile }> }
+// => { success: boolean, outputs: BuildArtifact[], logs: BuildMessage[] }
 ```
 
 ```bash#CLI
 $ bun build --entrypoints ./index.ts --outdir ./out
-# the bundle will be printed to stdout
-# ...
+# a summary of bundled files will be printed to stdout
 ```
 
 {% /codetabs %}
 
-When `outdir` is specified:
+If `outdir` is not passed to the JavaScript API, bundled code will not be written to disk. Bundled files are returned in an array of `BuildArtifact` objects. These objects are Blobs with extra properties.
 
-- The JavaScript API will write the generated bundles to the appropriate location in `outdir`. The result of the `Bun.build()` call will contain `BunFile` instances corresponding to the new files.
+```ts
+const result = await Bun.build({
+  entrypoints: ['./index.ts']
+});
 
-  ```ts
-  const result = await Bun.build({
-    /* ... */
-  });
-  // => { outputs: Array<{ path: string; result: BunFile }> }
+for (const result of result.outputs) {
+  // Can be consumed as blobs
+  await result.text();
 
-  for (const { path, result } of result.outputs) {
-    console.log(`Wrote file: ${path}`);
-  }
-  ```
+  // Bun will set Content-Type and Etag headers
+  new Response(result);
 
-- The CLI will print a summary of the written files. The bundled code will not be written to `stdout`.
+  // Can be written manually, but you should use `outdir` in this case.
+  Bun.write(path.join("out", result.path), result);
+}
+```
+
+When `outdir` is set, the `.path` on `BuildArtifact` will be the absolute path to where it was written to.
 
 ### `target`
 
@@ -320,7 +315,7 @@ Depending on the target, Bun will apply different module resolution rules and op
 ---
 
 - `node`
-- For generating bundles that are intended to be run by Node.js. Prioritizes the `"node"` export condition when resolving imports. In the future, this will automatically polyfill the `Bun` global and other built-in `bun:*` modules, though this is not yet implemented.
+- For generating bundles that are intended to be run by Node.js. Prioritizes the `"node"` export condition when resolving imports, and outputs `.mjs`. In the future, this will automatically polyfill the `Bun` global and other built-in `bun:*` modules, though this is not yet implemented.
 
 {% /table %}
 
@@ -332,7 +327,7 @@ Currently the bundler only supports one module format: `"esm"`. Support for `"cj
 
 {% codetabs %}
 
-```ts#Bun.build
+```ts#JavaScript
 await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
@@ -344,7 +339,7 @@ await Bun.build({
 $ bun build ./index.tsx --outdir ./out --format esm
 ```
 
-{% /codetabs %} -->
+{% /codetabs %}
 
 <!-- ### `bundling`
 
@@ -479,7 +474,7 @@ n/a
 
 Bun implements a univeral plugin system for both Bun's runtime and bundler. Refer to the [plugin documentation](/docs/bundler/plugins) for complete documentation.
 
-### `manifest`
+<!-- ### `manifest`
 
 Whether to return a build manifest in the result of `Bun.build`.
 
@@ -538,7 +533,7 @@ export type ImportKind =
 
 {% /details %}
 
-By design, the manifest is a simple JSON object that can easily be serialized or written to disk. It is also compatible with esbuild's [`metafile`](https://esbuild.github.io/api/#metafile) format.
+By design, the manifest is a simple JSON object that can easily be serialized or written to disk. It is also compatible with esbuild's [`metafile`](https://esbuild.github.io/api/#metafile) format. -->
 
 ### `sourcemap`
 
@@ -860,7 +855,7 @@ $ bun build ./index.tsx --outdir ./out --entry-naming "[dir]/[name].[ext]" --chu
 
 {% /codetabs %}
 
-<!-- ### `root`
+### `root`
 
 The root directory of the project.
 
@@ -949,7 +944,7 @@ By specifying `.` as `root`, the generated file structure will look like this:
   └── pages
     └── index.js
     └── settings.js
-``` -->
+```
 
 ### `publicPath`
 
@@ -1056,19 +1051,63 @@ $ bun build ./index.tsx --outdir ./out --loader .png:dataurl --loader .txt:file
 
 {% /codetabs %}
 
+
+## Error handling
+
+`Bun.build` only throws if invalid options are provided. You should read the `success` and `logs` properties of the result to determine whether the build was successful.
+
+```ts
+const result = await Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+});
+
+if(!result.success) {
+  console.error("Build failed");
+  for (const message of result.logs) {
+    // Bun will pretty print the message object
+    console.error(message);
+  }
+}
+```
+
+Each message is either a `BuildMessage` or `ResolveMessage` object, which can be used to trace what problems happened in the build.
+
+```ts
+class BuildMessage {
+  name: string;
+  position?: Position;
+  message: string;
+  level: "error" | "warning" | "info" | "debug" | "verbose";
+}
+
+class ResolveMessage extends BuildMessage {
+  code: string;
+  referrer: string;
+  specifier: string;
+  importKind: ImportKind;
+}
+```
+
+If you want to throw an error from a failed build, consider passing the logs to an `AggregateError`. If uncaught, Bun will pretty print the contained messages nicely.
+
+```ts
+if (!result.success) {
+  throw new AggregateError(result.logs, "Build failed");
+}
+```
+
 ## Reference
 
 ```ts
 interface Bun {
-  build(options: BuildOptions): Promise<{
-    outputs: Array<{ path: string; result: Blob | BunFile }>;
-    manifest?: BuildManifest;
-  }>;
+  build(options: BuildOptions): Promise<BuildOutput>;
 }
 
 interface BuildOptions {
   entrypoints: string[]; // required
   outdir?: string; // default: no write (in-memory only)
+  format?: "esm"; // later: "cjs" | "iife"
   target?: "browser" | "bun" | "node"; // "browser"
   splitting?: boolean; // true
   plugins?: BunPlugin[]; // [] // See https://bun.sh/docs/bundler/plugins
@@ -1094,6 +1133,34 @@ interface BuildOptions {
       };
 }
 
+interface BuildOutput {
+  outputs: BuildArtifact[];
+  success: boolean;
+  logs: Array<BuildMessage | ResolveMessage>;
+}
+
+interface BuildArtifact extends Blob {
+  path: string;
+  loader: Loader;
+  hash?: string;
+  kind: "entry-point" | "chunk" | "asset" | "sourecemap";
+  sourcemap?: BuildArtifact;
+}
+
+type Loader =
+  | "js"
+  | "jsx"
+  | "ts"
+  | "tsx"
+  | "json"
+  | "toml"
+  | "file"
+  | "napi"
+  | "wasm"
+  | "text";
+```
+
+<!-- 
 interface BuildManifest {
   inputs: {
     [path: string]: {
@@ -1120,5 +1187,4 @@ interface BuildManifest {
       exports: string[];
     };
   };
-}
-```
+} -->

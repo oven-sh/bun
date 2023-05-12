@@ -207,7 +207,7 @@ pub const BuildCommand = struct {
                     }
 
                     if (ctx.bundler_options.outfile.len == 0 and output_files.len == 1 and ctx.bundler_options.outdir.len == 0) {
-                        // if --transform is passed, it won't have an output dir
+                        // if --transpile is passed, it won't have an output dir
                         if (output_files[0].value == .buffer)
                             try writer.writeAll(output_files[0].value.buffer.bytes);
                         break :dump;

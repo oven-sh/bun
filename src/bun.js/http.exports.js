@@ -221,12 +221,31 @@ export class Server extends EventEmitter {
     if (callback) this.on("request", callback);
   }
 
-  close() {
-    if (this.#server) {
-      this.emit("close");
-      this.#server.stop();
-      this.#server = undefined;
+  closeAllConnections() {
+    const server = this.#server;
+    if (!server) {
+      return;
     }
+    this.#server = undefined;
+    server.stop(true);
+    this.emit("close");
+  }
+
+  closeIdleConnections() {
+    // not actually implemented
+  }
+
+  close(optionalCallback) {
+    const server = this.#server;
+    if (!server) {
+      if (typeof optionalCallback === "function")
+        process.nextTick(optionalCallback, new Error("Server is not running"));
+      return;
+    }
+    this.#server = undefined;
+    if (typeof optionalCallback === "function") this.once("close", optionalCallback);
+    server.stop();
+    this.emit("close");
   }
 
   address() {
@@ -925,7 +944,7 @@ export class ClientRequest extends OutgoingMessage {
   #fetchRequest;
   #signal = null;
   [kAbortController] = null;
-
+  #timeoutTimer = null;
   #options;
   #finished;
 
@@ -984,34 +1003,39 @@ export class ClientRequest extends OutgoingMessage {
     var method = this.#method,
       body = this.#body;
 
-    this.#fetchRequest = fetch(
-      `${this.#protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}${this.#path}`,
-      {
-        method,
-        headers: this.getHeaders(),
-        body: body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS" ? body : undefined,
-        redirect: "manual",
-        verbose: Boolean(__DEBUG__),
-        signal: this[kAbortController].signal,
-      },
-    )
-      .then(response => {
-        var res = (this.#res = new IncomingMessage(response, {
-          type: "response",
-          [kInternalRequest]: this,
-        }));
-        this.emit("response", res);
-      })
-      .catch(err => {
-        if (__DEBUG__) globalReportError(err);
-        this.emit("error", err);
-      })
-      .finally(() => {
-        this.#fetchRequest = null;
-        this[kClearTimeout]();
-      });
-
-    callback();
+    try {
+      this.#fetchRequest = fetch(
+        `${this.#protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}${this.#path}`,
+        {
+          method,
+          headers: this.getHeaders(),
+          body: body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS" ? body : undefined,
+          redirect: "manual",
+          verbose: Boolean(__DEBUG__),
+          signal: this[kAbortController].signal,
+        },
+      )
+        .then(response => {
+          var res = (this.#res = new IncomingMessage(response, {
+            type: "response",
+            [kInternalRequest]: this,
+          }));
+          this.emit("response", res);
+        })
+        .catch(err => {
+          if (__DEBUG__) globalReportError(err);
+          this.emit("error", err);
+        })
+        .finally(() => {
+          this.#fetchRequest = null;
+          this[kClearTimeout]();
+        });
+    } catch (err) {
+      if (__DEBUG__) globalReportError(err);
+      this.emit("error", err);
+    } finally {
+      callback();
+    }
   }
 
   get aborted() {
@@ -1183,7 +1207,7 @@ export class ClientRequest extends OutgoingMessage {
     this.#reusedSocket = false;
     this.#host = host;
     this.#protocol = protocol;
-
+    this.#timeoutTimer = null;
     const headersArray = ArrayIsArray(headers);
     if (!headersArray) {
       var headers = options.headers;
@@ -1258,9 +1282,25 @@ export class ClientRequest extends OutgoingMessage {
   setNoDelay(noDelay = true) {
     __DEBUG__ && debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setNoDelay is a no-op");
   }
+  [kClearTimeout]() {
+    if (this.#timeoutTimer) {
+      clearTimeout(this.#timeoutTimer);
+      this.#timeoutTimer = null;
+    }
+  }
 
-  setTimeout(timeout, callback) {
-    __DEBUG__ && debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setTimeout is a no-op");
+  setTimeout(msecs, callback) {
+    if (this.#timeoutTimer) return this;
+    if (callback) {
+      this.on("timeout", callback);
+    }
+
+    this.#timeoutTimer = setTimeout(async () => {
+      this.#timeoutTimer = null;
+      this[kAbortController]?.abort();
+      this.emit("timeout");
+    }, msecs);
+
     return this;
   }
 }

@@ -3185,10 +3185,6 @@ pub const Parser = struct {
             //     else
             //         module.exports = require('./foo.dev.js')
             //
-            //   ESM:
-            //
-            //     export * from 'react';
-            //
             if (parts.items.len == 1 and parts.items[0].stmts.len == 1) {
                 var part = &parts.items[0];
                 var stmt: Stmt = part.stmts[0];
@@ -3219,23 +3215,6 @@ pub const Parser = struct {
                                 };
                             }
                         }
-                    }
-                } else if (p.esm_export_keyword.len > 0) {
-                    switch (stmt.data) {
-                        .s_export_star => |star| {
-                            if (star.alias == null) {
-                                return js_ast.Result{
-                                    .ast = .{
-                                        .allocator = p.allocator,
-                                        .import_records = ImportRecord.List.init(p.import_records.items),
-                                        .redirect_import_record_index = star.import_record_index,
-                                        .named_imports = p.named_imports,
-                                        .named_exports = p.named_exports,
-                                    },
-                                };
-                            }
-                        },
-                        else => {},
                     }
                 }
             }
@@ -3326,6 +3305,42 @@ pub const Parser = struct {
                             }
                         }
                     }
+                }
+            }
+        } else if (p.options.bundle and parts.items.len == 0)
+        // If the file only contains "export * from './blah'
+        // we pretend the file never existed in the first place.
+        // the semantic difference here is in export default statements
+        export_star_redirect: {
+            // note: export_star_import_records are not filled in yet
+            if (before.items.len > 0 and p.import_records.items.len == 1) {
+                var export_star_redirect: ?js_ast.Result = null;
+                for (before.items) |part| {
+                    for (part.stmts) |stmt| {
+                        switch (stmt.data) {
+                            .s_export_star => |star| {
+                                if (star.alias != null) {
+                                    break :export_star_redirect;
+                                }
+
+                                export_star_redirect = js_ast.Result{
+                                    .ast = .{
+                                        .allocator = p.allocator,
+                                        .import_records = ImportRecord.List.init(p.import_records.items),
+                                        .redirect_import_record_index = star.import_record_index,
+                                        .named_imports = p.named_imports,
+                                        .named_exports = p.named_exports,
+                                    },
+                                };
+                            },
+                            .s_empty, .s_comment => {},
+                            else => break :export_star_redirect,
+                        }
+                    }
+                }
+
+                if (export_star_redirect) |redirect| {
+                    return redirect;
                 }
             }
         }

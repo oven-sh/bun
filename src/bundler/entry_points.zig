@@ -191,7 +191,7 @@ pub const ServerEntryPoint = struct {
                     \\var entryNamespace = start;
                     \\var cjs = start?.default;
                     \\if (cjs && typeof cjs ===  'function' && cjsSymbol in cjs) {{
-                    \\  // if you module.exports = (class {}), don't call it
+                    \\  // if you module.exports = (class {{}}), don't call it
                     \\  entryNamespace = ("prototype" in cjs) ? cjs : cjs();
                     \\}}
                     \\if (typeof entryNamespace?.then === 'function') {{
@@ -234,7 +234,7 @@ pub const ServerEntryPoint = struct {
                 \\var entryNamespace = start;
                 \\var cjs = start?.default;
                 \\if (cjs && typeof cjs ===  'function' && cjsSymbol in cjs) {{
-                \\  // if you module.exports = (class {}), don't call it
+                \\  // if you module.exports = (class {{}}), don't call it
                 \\  entryNamespace = ("prototype" in cjs) ? cjs : cjs();
                 \\}}
                 \\if (typeof entryNamespace?.then === 'function') {{

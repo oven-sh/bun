@@ -9145,30 +9145,32 @@ const LinkerContext = struct {
                 .result => {},
             }
 
-            output_files.appendAssumeCapacity(options.OutputFile.init(
-                options.OutputFile.Options{
-                    .output_path = bun.default_allocator.dupe(u8, chunk.final_rel_path) catch unreachable,
-                    .input_path = input_path,
-                    .input_loader = if (chunk.entry_point.is_entry_point)
-                        c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index]
-                    else
-                        .js,
-                    .hash = chunk.isolated_hash,
-                    .output_kind = if (chunk.entry_point.is_entry_point)
-                        c.graph.files.items(.entry_point_kind)[chunk.entry_point.source_index].OutputKind()
-                    else
-                        .chunk,
-                    .loader = .js,
-                    .source_map_index = if (source_map_output_file != null)
-                        @truncate(u32, output_files.items.len + 1)
-                    else
-                        null,
-                    .size = @truncate(u32, code_result.buffer.len),
-                    .data = .{
-                        .saved = 0,
+            output_files.appendAssumeCapacity(
+                options.OutputFile.init(
+                    options.OutputFile.Options{
+                        .output_path = bun.default_allocator.dupe(u8, chunk.final_rel_path) catch unreachable,
+                        .input_path = input_path,
+                        .input_loader = if (chunk.entry_point.is_entry_point)
+                            c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index]
+                        else
+                            .js,
+                        .hash = chunk.isolated_hash,
+                        .output_kind = if (chunk.entry_point.is_entry_point)
+                            c.graph.files.items(.entry_point_kind)[chunk.entry_point.source_index].OutputKind()
+                        else
+                            .chunk,
+                        .loader = .js,
+                        .source_map_index = if (source_map_output_file != null)
+                            @truncate(u32, output_files.items.len + 1)
+                        else
+                            null,
+                        .size = @truncate(u32, code_result.buffer.len),
+                        .data = .{
+                            .saved = 0,
+                        },
                     },
-                },
-            ));
+                ),
+            );
 
             if (source_map_output_file) |sourcemap_file| {
                 output_files.appendAssumeCapacity(sourcemap_file);

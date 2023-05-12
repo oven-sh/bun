@@ -80,7 +80,7 @@ plugin(
 // application code
 ```
 
-Bun's plugin API is based on [esbuild](https://esbuild.github.io/plugins). Only a subset of the esbuild API is implemented, but some esbuild plugins "just work" in Bun, like the official [MDX loader](https://mdxjs.com/packages/esbuild/):
+Bun's plugin API is based on [esbuild](https://esbuild.github.io/plugins). Only [a subset](/docs/bundler/migration#plugin-api) of the esbuild API is implemented, but some esbuild plugins "just work" in Bun, like the official [MDX loader](https://mdxjs.com/packages/esbuild/):
 
 ```jsx
 import { plugin } from "bun";
@@ -272,6 +272,31 @@ import MySvelteComponent from "./component.svelte";
 console.log(mySvelteComponent.render());
 ```
 
+## Reading `Bun.build`'s config
+
+Plugins can read and write to the [build config](/docs/cli/build#api) with `build.config`.
+
+```ts
+Bun.build({
+  entrypoints: ["./app.ts"],
+  outdir: "./dist",
+  sourcemap: 'external',
+  plugins: [
+    {
+      name: 'demo',
+      setup(build) {
+        console.log(build.config.sourcemap); // "external"
+
+        build.config.minify = true; // enable minification
+
+        // `plugins` is readonly
+        console.log(`Number of plugins: ${build.config.plugins.length}`); 
+      }
+    }
+  ],
+});
+```
+
 ## Reference
 
 ```ts
@@ -295,6 +320,7 @@ type PluginBuilder = {
       exports?: Record<string, any>;
     },
   ) => void;
+  config: BuildConfig;
 };
 
 type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "object";

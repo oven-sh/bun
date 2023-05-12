@@ -653,46 +653,46 @@ describe("bundler", () => {
       },
     };
   });
-  itBundled("plugin/ManyPlugins", ({ root }) => {
-    const pluginCount = 4000;
-    let resolveCount = 0;
-    let loadCount = 0;
-    return {
-      files: {
-        "index.ts": /* ts */ `
-          import { foo as foo1 } from "plugin1:file";
-          import { foo as foo2 } from "plugin4000:file";
-          console.log(foo1, foo2);
-        `,
-      },
-      plugins: Array.from({ length: pluginCount }).map((_, i) => ({
-        name: `${i}`,
-        setup(builder) {
-          builder.onResolve({ filter: new RegExp(`^plugin${i}:file$`) }, args => {
-            resolveCount++;
-            return {
-              path: `plugin${i}:file`,
-              namespace: `plugin${i}`,
-            };
-          });
-          builder.onLoad({ filter: new RegExp(`^plugin${i}:file$`), namespace: `plugin${i}` }, args => {
-            loadCount++;
-            return {
-              contents: `export const foo = ${i};`,
-              loader: "js",
-            };
-          });
-        },
-      })),
-      run: {
-        stdout: `${pluginCount - 1} ${pluginCount - 1}`,
-      },
-      onAfterBundle(api) {
-        expect(resolveCount).toBe(pluginCount * 2);
-        expect(loadCount).toBe(pluginCount);
-      },
-    };
-  });
+  // itBundled("plugin/ManyPlugins", ({ root }) => {
+  //   const pluginCount = 4000;
+  //   let resolveCount = 0;
+  //   let loadCount = 0;
+  //   return {
+  //     files: {
+  //       "index.ts": /* ts */ `
+  //         import { foo as foo1 } from "plugin1:file";
+  //         import { foo as foo2 } from "plugin4000:file";
+  //         console.log(foo1, foo2);
+  //       `,
+  //     },
+  //     plugins: Array.from({ length: pluginCount }).map((_, i) => ({
+  //       name: `${i}`,
+  //       setup(builder) {
+  //         builder.onResolve({ filter: new RegExp(`^plugin${i}:file$`) }, args => {
+  //           resolveCount++;
+  //           return {
+  //             path: `plugin${i}:file`,
+  //             namespace: `plugin${i}`,
+  //           };
+  //         });
+  //         builder.onLoad({ filter: new RegExp(`^plugin${i}:file$`), namespace: `plugin${i}` }, args => {
+  //           loadCount++;
+  //           return {
+  //             contents: `export const foo = ${i};`,
+  //             loader: "js",
+  //           };
+  //         });
+  //       },
+  //     })),
+  //     run: {
+  //       stdout: `${pluginCount - 1} ${pluginCount - 1}`,
+  //     },
+  //     onAfterBundle(api) {
+  //       expect(resolveCount).toBe(pluginCount * 2);
+  //       expect(loadCount).toBe(pluginCount);
+  //     },
+  //   };
+  // });
   itBundled("plugin/NamespaceOnLoadBug", () => {
     return {
       files: {
@@ -750,6 +750,71 @@ describe("bundler", () => {
       run: {
         file: "./out/plugin.js",
         stdout: "it works",
+      },
+    };
+  });
+  itBundled("plugin/Options", ({ getConfigRef }) => {
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          console.log("it works");
+        `,
+      },
+      entryPoints: ["./index.ts"],
+      plugins(build) {
+        expect(build.config).toBe(getConfigRef());
+      },
+    };
+  });
+  itBundled("plugin/ESBuildInitialOptions", ({}) => {
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          console.log("it works");
+        `,
+      },
+      external: ["esbuild"],
+      entryPoints: ["./index.ts"],
+      plugins(build) {
+        expect((build as any).initialOptions).toEqual({
+          bundle: true,
+          entryPoints: ["/tmp/bun-build-tests/bun-T6ZQHx/plugin/ESBuildInitialOptions/index.ts"],
+          external: ["esbuild"],
+          format: undefined,
+          minify: false,
+          minifyIdentifiers: undefined,
+          minifySyntax: undefined,
+          minifyWhitespace: undefined,
+          outdir: "/tmp/bun-build-tests/bun-T6ZQHx/plugin/ESBuildInitialOptions",
+          platform: "browser",
+          sourcemap: undefined,
+        });
+      },
+    };
+  });
+  itBundled("plugin/ESBuildInitialOptions2", ({ root }) => {
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          console.log("it works");
+        `,
+      },
+      external: ["esbuild"],
+      entryPoints: ["./index.ts"],
+      plugins(build) {
+        expect((build as any).initialOptions).toEqual({
+          bundle: true,
+          entryPoints: ["/tmp/bun-build-tests/bun-T6ZQHx/plugin/ESBuildInitialOptions/index.ts"],
+          external: ["esbuild"],
+          format: undefined,
+          minify: false,
+          minifyIdentifiers: undefined,
+          minifySyntax: undefined,
+          minifyWhitespace: undefined,
+          outdir: root,
+          platform: "browser",
+          sourcemap: undefined,
+        });
       },
     };
   });

@@ -83,6 +83,108 @@ pub const JSBundler = struct {
             errdefer this.deinit(allocator);
             errdefer if (plugins.*) |plugin| plugin.deinit();
 
+            // Plugins must be resolved first as they are allowed to mutate the config JSValue
+            if (try config.getArray(globalThis, "plugins")) |array| {
+                var iter = array.arrayIterator(globalThis);
+                while (iter.next()) |plugin| {
+                    if (try plugin.getObject(globalThis, "SECRET_SERVER_COMPONENTS_INTERNALS")) |internals| {
+                        if (internals.get(globalThis, "router")) |router_value| {
+                            if (router_value.as(JSC.API.FileSystemRouter) != null) {
+                                this.server_components.router.set(globalThis, router_value);
+                            } else {
+                                globalThis.throwInvalidArguments("Expected router to be a Bun.FileSystemRouter", .{});
+                                return error.JSError;
+                            }
+                        }
+
+                        const directive_object = (try internals.getObject(globalThis, "directive")) orelse {
+                            globalThis.throwInvalidArguments("Expected directive to be an object", .{});
+                            return error.JSError;
+                        };
+
+                        if (try directive_object.getArray(globalThis, "client")) |client_names_array| {
+                            var array_iter = client_names_array.arrayIterator(globalThis);
+                            while (array_iter.next()) |client_name| {
+                                var slice = client_name.toSliceOrNull(globalThis) orelse {
+                                    globalThis.throwInvalidArguments("Expected directive.client to be an array of strings", .{});
+                                    return error.JSException;
+                                };
+                                defer slice.deinit();
+                                try this.server_components.client.append(allocator, OwnedString.initCopy(allocator, slice.slice()) catch unreachable);
+                            }
+                        } else {
+                            globalThis.throwInvalidArguments("Expected directive.client to be an array of strings", .{});
+                            return error.JSException;
+                        }
+
+                        if (try directive_object.getArray(globalThis, "server")) |server_names_array| {
+                            var array_iter = server_names_array.arrayIterator(globalThis);
+                            while (array_iter.next()) |server_name| {
+                                var slice = server_name.toSliceOrNull(globalThis) orelse {
+                                    globalThis.throwInvalidArguments("Expected directive.server to be an array of strings", .{});
+                                    return error.JSException;
+                                };
+                                defer slice.deinit();
+                                try this.server_components.server.append(allocator, OwnedString.initCopy(allocator, slice.slice()) catch unreachable);
+                            }
+                        } else {
+                            globalThis.throwInvalidArguments("Expected directive.server to be an array of strings", .{});
+                            return error.JSException;
+                        }
+
+                        continue;
+                    }
+
+                    // var decl = PluginDeclaration{
+                    //     .name = OwnedString.initEmpty(allocator),
+                    //     .setup = .{},
+                    // };
+                    // defer decl.deinit();
+
+                    if (plugin.getOptional(globalThis, "name", ZigString.Slice) catch null) |slice| {
+                        defer slice.deinit();
+                        if (slice.len == 0) {
+                            globalThis.throwInvalidArguments("Expected plugin to have a non-empty name", .{});
+                            return error.JSError;
+                        }
+                    } else {
+                        globalThis.throwInvalidArguments("Expected plugin to have a name", .{});
+                        return error.JSError;
+                    }
+
+                    const function = (plugin.getFunction(globalThis, "setup") catch null) orelse {
+                        globalThis.throwInvalidArguments("Expected plugin to have a setup() function", .{});
+                        return error.JSError;
+                    };
+
+                    var bun_plugins: *Plugin = plugins.* orelse brk: {
+                        plugins.* = Plugin.create(
+                            globalThis,
+                            switch (this.target) {
+                                .bun, .bun_macro => JSC.JSGlobalObject.BunPluginTarget.bun,
+                                .node => JSC.JSGlobalObject.BunPluginTarget.node,
+                                else => .browser,
+                            },
+                        );
+                        break :brk plugins.*.?;
+                    };
+
+                    var plugin_result = bun_plugins.addPlugin(function, config);
+
+                    if (!plugin_result.isEmptyOrUndefinedOrNull()) {
+                        if (plugin_result.asAnyPromise()) |promise| {
+                            globalThis.bunVM().waitForPromise(promise);
+                            plugin_result = promise.result(globalThis.vm());
+                        }
+                    }
+
+                    if (plugin_result.toError()) |err| {
+                        globalThis.throwValue(err);
+                        return error.JSError;
+                    }
+                }
+            }
+
             if (try config.getOptionalEnum(globalThis, "target", options.Target)) |target| {
                 this.target = target;
             }
@@ -287,107 +389,6 @@ pub const JSBundler = struct {
                     .extensions = loader_names,
                     .loaders = loader_values,
                 };
-            }
-
-            if (try config.getArray(globalThis, "plugins")) |array| {
-                var iter = array.arrayIterator(globalThis);
-                while (iter.next()) |plugin| {
-                    if (try plugin.getObject(globalThis, "SECRET_SERVER_COMPONENTS_INTERNALS")) |internals| {
-                        if (internals.get(globalThis, "router")) |router_value| {
-                            if (router_value.as(JSC.API.FileSystemRouter) != null) {
-                                this.server_components.router.set(globalThis, router_value);
-                            } else {
-                                globalThis.throwInvalidArguments("Expected router to be a Bun.FileSystemRouter", .{});
-                                return error.JSError;
-                            }
-                        }
-
-                        const directive_object = (try internals.getObject(globalThis, "directive")) orelse {
-                            globalThis.throwInvalidArguments("Expected directive to be an object", .{});
-                            return error.JSError;
-                        };
-
-                        if (try directive_object.getArray(globalThis, "client")) |client_names_array| {
-                            var array_iter = client_names_array.arrayIterator(globalThis);
-                            while (array_iter.next()) |client_name| {
-                                var slice = client_name.toSliceOrNull(globalThis) orelse {
-                                    globalThis.throwInvalidArguments("Expected directive.client to be an array of strings", .{});
-                                    return error.JSException;
-                                };
-                                defer slice.deinit();
-                                try this.server_components.client.append(allocator, OwnedString.initCopy(allocator, slice.slice()) catch unreachable);
-                            }
-                        } else {
-                            globalThis.throwInvalidArguments("Expected directive.client to be an array of strings", .{});
-                            return error.JSException;
-                        }
-
-                        if (try directive_object.getArray(globalThis, "server")) |server_names_array| {
-                            var array_iter = server_names_array.arrayIterator(globalThis);
-                            while (array_iter.next()) |server_name| {
-                                var slice = server_name.toSliceOrNull(globalThis) orelse {
-                                    globalThis.throwInvalidArguments("Expected directive.server to be an array of strings", .{});
-                                    return error.JSException;
-                                };
-                                defer slice.deinit();
-                                try this.server_components.server.append(allocator, OwnedString.initCopy(allocator, slice.slice()) catch unreachable);
-                            }
-                        } else {
-                            globalThis.throwInvalidArguments("Expected directive.server to be an array of strings", .{});
-                            return error.JSException;
-                        }
-
-                        continue;
-                    }
-
-                    // var decl = PluginDeclaration{
-                    //     .name = OwnedString.initEmpty(allocator),
-                    //     .setup = .{},
-                    // };
-                    // defer decl.deinit();
-
-                    if (plugin.getOptional(globalThis, "name", ZigString.Slice) catch null) |slice| {
-                        defer slice.deinit();
-                        if (slice.len == 0) {
-                            globalThis.throwInvalidArguments("Expected plugin to have a non-empty name", .{});
-                            return error.JSError;
-                        }
-                    } else {
-                        globalThis.throwInvalidArguments("Expected plugin to have a name", .{});
-                        return error.JSError;
-                    }
-
-                    const function = (plugin.getFunction(globalThis, "setup") catch null) orelse {
-                        globalThis.throwInvalidArguments("Expected plugin to have a setup() function", .{});
-                        return error.JSError;
-                    };
-
-                    var bun_plugins: *Plugin = plugins.* orelse brk: {
-                        plugins.* = Plugin.create(
-                            globalThis,
-                            switch (this.target) {
-                                .bun, .bun_macro => JSC.JSGlobalObject.BunPluginTarget.bun,
-                                .node => JSC.JSGlobalObject.BunPluginTarget.node,
-                                else => .browser,
-                            },
-                        );
-                        break :brk plugins.*.?;
-                    };
-
-                    var plugin_result = bun_plugins.addPlugin(function);
-
-                    if (!plugin_result.isEmptyOrUndefinedOrNull()) {
-                        if (plugin_result.asAnyPromise()) |promise| {
-                            globalThis.bunVM().waitForPromise(promise);
-                            plugin_result = promise.result(globalThis.vm());
-                        }
-                    }
-
-                    if (plugin_result.toError()) |err| {
-                        globalThis.throwValue(err);
-                        return error.JSError;
-                    }
-                }
             }
 
             return this;
@@ -911,11 +912,12 @@ pub const JSBundler = struct {
         pub fn addPlugin(
             this: *Plugin,
             object: JSC.JSValue,
+            config: JSC.JSValue,
         ) JSValue {
             JSC.markBinding(@src());
             const tracer = bun.tracy.traceNamed(@src(), "JSBundler.addPlugin");
             defer tracer.end();
-            return JSBundlerPlugin__runSetupFunction(this, object);
+            return JSBundlerPlugin__runSetupFunction(this, object, config);
         }
 
         pub fn deinit(this: *Plugin) void {
@@ -933,6 +935,7 @@ pub const JSBundler = struct {
 
         extern fn JSBundlerPlugin__runSetupFunction(
             *Plugin,
+            JSC.JSValue,
             JSC.JSValue,
         ) JSValue;
 

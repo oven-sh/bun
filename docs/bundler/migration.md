@@ -6,7 +6,7 @@ Bun's bundler API is inspired heavily by [esbuild](https://esbuild.github.io/). 
 
 There are a few behavioral differences to note.
 
-- **Bundling by default**. Unlike esbuild, Bun _always bundles by default_. This is why the `--bundle` flag isn't necessary in the Bun example. To transpile each file individually, use [`Bun.Transpiler`](/docs/api/transpiler.md).
+- **Bundling by default**. Unlike esbuild, Bun _always bundles by default_. This is why the `--bundle` flag isn't necessary in the Bun example. To transpile each file individually, use [`Bun.Transpiler`](/docs/api/transpiler).
 - **It's just a bundler**. Unlike esbuild, Bun's bundler does not include a built-in development server or file watcher. It's just a bundler. The bundler is intended for use in conjunction with `Bun.serve` and other runtime APIs to achieve the same effect. As such, all options relating to HTTP/file watching are not applicable.
 
 ## Performance

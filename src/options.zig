@@ -1467,14 +1467,14 @@ pub const BundleOptions = struct {
     }
 
     pub const default_unwrap_commonjs_packages = [_]string{
-        "__bun-test-unwrap-commonjs__",
         "react",
-        "react-client",
-        "react-dom",
         "react-is",
-        "react-refresh",
-        "react-server",
+        "react-dom",
         "scheduler",
+        "react-client",
+        "react-server",
+        "react-refresh",
+        "__bun-test-unwrap-commonjs__",
     };
 
     pub inline fn cssImportBehavior(this: *const BundleOptions) Api.CssInJsBehavior {

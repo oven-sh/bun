@@ -467,7 +467,7 @@ describe("bundler", () => {
         stdout: "this string should exist once this string should exist once",
       },
       onAfterBundle(api) {
-        expect(importers.sort()).toEqual([root + "/one.ts", root + "/two.ts"]);
+        expect(importers.sort()).toEqual([root + "/one.ts", root + "/two.ts"].sort());
         expect(onResolveCount).toBe(2);
         const contents = api.readFile("/out.js");
         expect([...contents.matchAll(/this string should exist once/g)].length).toBe(1);

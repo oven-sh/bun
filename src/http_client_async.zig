@@ -2717,13 +2717,13 @@ pub fn handleResponseMetadata(
     }
 
     if (this.proxy_tunneling and this.proxy_tunnel == null) {
-        //proxy denied connection
-        if (this.state.pending_response.status_code != 200) {
-            return error.ConnectionRefused;
+        if (this.state.pending_response.status_code == 200) {
+            //signal to continue the proxing
+            return true;
         }
 
-        //signal to continue the proxing
-        return true;
+        //proxy denied connection so return proxy result (407, 403 etc)
+        this.proxy_tunneling = false;
     }
 
     const is_redirect = this.state.pending_response.status_code >= 300 and this.state.pending_response.status_code <= 399;

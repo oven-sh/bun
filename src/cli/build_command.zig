@@ -187,8 +187,14 @@ pub const BuildCommand = struct {
                     }
 
                     var root_path = output_dir;
-                    const root_dir = try std.fs.cwd().makeOpenPathIterable(root_path, .{});
-                    if (root_path.len == 0 and ctx.args.entry_points.len == 1) root_path = std.fs.path.dirname(ctx.args.entry_points[0]) orelse ".";
+                    if (root_path.len == 0 and ctx.args.entry_points.len == 1)
+                        root_path = std.fs.path.dirname(ctx.args.entry_points[0]) orelse ".";
+
+                    const root_dir = if (root_path.len == 0 or strings.eqlComptime(root_path, "."))
+                        std.fs.IterableDir{ .dir = std.fs.cwd() }
+                    else
+                        try std.fs.cwd().makeOpenPathIterable(root_path, .{});
+
                     var all_paths = try ctx.allocator.alloc([]const u8, output_files.len);
                     var max_path_len: usize = 0;
                     for (all_paths, output_files) |*dest, src| {

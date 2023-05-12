@@ -965,19 +965,6 @@ pub const Bundler = struct {
             .value = undefined,
         };
 
-        var file: std.fs.File = undefined;
-
-        if (Outstream == std.fs.Dir) {
-            const output_dir = outstream;
-
-            if (std.fs.path.dirname(file_path.pretty)) |dirname| {
-                try output_dir.makePath(dirname);
-            }
-            file = try output_dir.createFile(file_path.pretty, .{});
-        } else {
-            file = outstream;
-        }
-
         switch (loader) {
             .jsx, .tsx, .js, .ts, .json, .toml, .text => {
                 var result = bundler.parse(
@@ -1016,42 +1003,47 @@ pub const Bundler = struct {
                         );
                 }
 
+                var buffer_writer = try js_printer.BufferWriter.init(bundler.allocator);
+                var writer = js_printer.BufferPrinter.init(buffer_writer);
+
                 output_file.size = switch (bundler.options.target) {
                     .browser, .node => try bundler.print(
                         result,
-                        js_printer.FileWriter,
-                        js_printer.NewFileWriter(file),
+                        *js_printer.BufferPrinter,
+                        &writer,
                         .esm,
                     ),
                     .bun, .bun_macro => try bundler.print(
                         result,
-                        js_printer.FileWriter,
-                        js_printer.NewFileWriter(file),
+                        *js_printer.BufferPrinter,
+                        &writer,
                         .esm_ascii,
                     ),
                 };
-
-                var file_op = options.OutputFile.FileOperation.fromFile(file.handle, file_path.pretty);
-
-                file_op.fd = file.handle;
-
-                file_op.is_tmpdir = false;
-
-                if (Outstream == std.fs.Dir) {
-                    file_op.dir = outstream.fd;
-
-                    if (bundler.fs.fs.needToCloseFiles()) {
-                        file.close();
-                        file_op.fd = 0;
-                    }
-                }
-
-                output_file.value = .{ .move = file_op };
+                output_file.value = .{
+                    .buffer = .{
+                        .allocator = bundler.allocator,
+                        .bytes = writer.ctx.written,
+                    },
+                };
             },
             .dataurl, .base64 => {
                 Output.panic("TODO: dataurl, base64", .{}); // TODO
             },
             .css => {
+                var file: std.fs.File = undefined;
+
+                if (Outstream == std.fs.Dir) {
+                    const output_dir = outstream;
+
+                    if (std.fs.path.dirname(file_path.pretty)) |dirname| {
+                        try output_dir.makePath(dirname);
+                    }
+                    file = try output_dir.createFile(file_path.pretty, .{});
+                } else {
+                    file = outstream;
+                }
+
                 const CSSBuildContext = struct {
                     origin: URL,
                 };

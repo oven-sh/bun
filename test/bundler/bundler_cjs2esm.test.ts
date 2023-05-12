@@ -145,6 +145,7 @@ describe("bundler", () => {
         console.log(foo);
       `,
       "/node_modules/lib/index.js": /* js */ `
+        // if the branch is unknown, we have to include both.
         if (globalThis.USE_PROD) {
           module.exports = require('./library.prod.js')
         } else {
@@ -160,7 +161,11 @@ describe("bundler", () => {
       `,
     },
     cjs2esm: {
-      unhandled: ["/node_modules/lib/index.js"],
+      unhandled: [
+        "/node_modules/lib/index.js",
+        "/node_modules/lib/library.prod.js",
+        "/node_modules/lib/library.dev.js",
+      ],
     },
     run: {
       stdout: "development",

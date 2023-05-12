@@ -3177,6 +3177,7 @@ pub const Parser = struct {
         if (p.options.bundle and parts.items.len < 4 and parts.items.len > 0) {
 
             // Specially handle modules shaped like this:
+            //
             //   CommonJS:
             //
             //    if (process.env.NODE_ENV === 'production')
@@ -3199,11 +3200,8 @@ pub const Parser = struct {
                             const bin = value.data.e_binary;
                             const left = bin.left;
                             const right = bin.right;
-                            const to_convert = &p.imports_to_convert_from_require.items[0];
                             if (bin.op == .bin_assign and
-                                (right.data == .e_require_string
-                            // or  right.data == .e_identifier and to_convert.namespace.ref.?.eql(right.data.e_identifier.ref)
-                            ) and
+                                right.data == .e_require_string and
                                 left.data == .e_dot and
                                 strings.eqlComptime(left.data.e_dot.name, "exports") and
                                 left.data.e_dot.target.data == .e_identifier and
@@ -3214,7 +3212,7 @@ pub const Parser = struct {
                                     .ast = js_ast.Ast{
                                         .allocator = p.allocator,
                                         .import_records = ImportRecord.List.init(p.import_records.items),
-                                        .redirect_import_record_index = to_convert.import_record_id,
+                                        .redirect_import_record_index = right.data.e_require_string.import_record_index,
                                         .named_imports = p.named_imports,
                                         .named_exports = p.named_exports,
                                     },

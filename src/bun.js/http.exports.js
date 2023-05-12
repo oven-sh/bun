@@ -1,5 +1,5 @@
 const { EventEmitter } = import.meta.require("node:events");
-const { Readable, Writable } = import.meta.require("node:stream");
+const { Readable, Writable, Duplex } = import.meta.require("node:stream");
 const { URL } = import.meta.require("node:url");
 const { newArrayWithSize, String, Object, Array } = import.meta.primordials;
 
@@ -40,16 +40,85 @@ var _globalAgent;
 var _defaultHTTPSAgent;
 var kInternalRequest = Symbol("kInternalRequest");
 
-var FakeSocket = class Socket {
-  on() {
+var FakeSocket = class Socket extends Duplex {
+  bytesRead = 0;
+  bytesWritten = 0;
+  connecting = false;
+  remoteAddress = null;
+  localAddress = "127.0.0.1";
+  remotePort;
+  timeout = 0;
+
+  isServer = false;
+
+  address() {
+    return {
+      address: this.localAddress,
+      family: this.localFamily,
+      port: this.localPort,
+    };
+  }
+
+  get bufferSize() {
+    return this.writableLength;
+  }
+
+  connect(port, host, connectListener) {
     return this;
   }
-  off() {}
-  addListener() {
+
+  _destroy(err, callback) {}
+
+  _final(callback) {}
+
+  get localAddress() {
+    return "127.0.0.1";
+  }
+
+  get localFamily() {
+    return "IPv4";
+  }
+
+  get localPort() {
+    return 80;
+  }
+
+  get pending() {
+    return this.connecting;
+  }
+
+  _read(size) {}
+
+  get readyState() {
+    if (this.connecting) return "opening";
+    if (this.readable) {
+      return this.writable ? "open" : "readOnly";
+    } else {
+      return this.writable ? "writeOnly" : "closed";
+    }
+  }
+
+  ref() {}
+
+  get remoteFamily() {
+    return "IPv4";
+  }
+
+  resetAndDestroy() {}
+
+  setKeepAlive(enable = false, initialDelay = 0) {}
+
+  setNoDelay(noDelay = true) {
     return this;
   }
-  removeListener() {}
-  removeAllListeners() {}
+
+  setTimeout(timeout, callback) {
+    return this;
+  }
+
+  unref() {}
+
+  _write(chunk, encoding, callback) {}
 };
 
 export function createServer(options, callback) {
@@ -376,7 +445,10 @@ export class IncomingMessage extends Readable {
     this.complete = !!this.#noBody;
 
     this.#bodyStream = null;
-    this.#fakeSocket = undefined;
+    const socket = new FakeSocket();
+    socket.remoteAddress = url.hostname;
+    socket.remotePort = url.port;
+    this.#fakeSocket = socket;
 
     this.url = url.pathname + url.search;
     this.#nodeReq = nodeReq;

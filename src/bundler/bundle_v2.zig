@@ -2137,6 +2137,10 @@ pub const BundleV2 = struct {
                         new_input_file.source.index = Index.source(graph.input_files.len);
                         new_input_file.source.path = new_task.path;
                         new_input_file.source.key_path = new_input_file.source.path;
+
+                        // We need to ensure the loader is set or else importstar_ts/ReExportTypeOnlyFileES6 will fail.
+                        new_input_file.loader = loader;
+
                         existing.value_ptr.* = new_input_file.source.index.get();
                         new_task.source_index = new_input_file.source.index;
 

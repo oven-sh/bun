@@ -2357,8 +2357,8 @@ pub const ParseTask = struct {
 
     threadlocal var override_file_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-    fn getEmptyAST(log: *Logger.Log, bundler: *Bundler, opts: js_parser.Parser.Options, allocator: std.mem.Allocator, source: Logger.Source) !JSAst {
-        const root = Expr.init(E.Object, E.Object{}, Logger.Loc.Empty);
+    fn getEmptyAST(log: *Logger.Log, bundler: *Bundler, opts: js_parser.Parser.Options, allocator: std.mem.Allocator, source: Logger.Source, comptime RootType: type) !JSAst {
+        const root = Expr.init(RootType, RootType{}, Logger.Loc.Empty);
         return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
     }
 
@@ -2385,8 +2385,16 @@ pub const ParseTask = struct {
                     &source,
                 )) |res|
                     JSAst.init(res.ast)
-                else
-                    try getEmptyAST(log, bundler, opts, allocator, source);
+                else switch (opts.module_type == .esm) {
+                    inline else => |as_undefined| try getEmptyAST(
+                        log,
+                        bundler,
+                        opts,
+                        allocator,
+                        source,
+                        if (as_undefined) E.Undefined else E.Object,
+                    ),
+                };
             },
             .json => {
                 const trace = tracer(@src(), "ParseJSON");
@@ -2585,8 +2593,16 @@ pub const ParseTask = struct {
 
         var ast: JSAst = if (!is_empty)
             try getAST(log, bundler, opts, allocator, resolver, source, loader, task.ctx.unique_key, &unique_key_for_additional_file)
-        else
-            try getEmptyAST(log, bundler, opts, allocator, source);
+        else switch (opts.module_type == .esm) {
+            inline else => |as_undefined| try getEmptyAST(
+                log,
+                bundler,
+                opts,
+                allocator,
+                source,
+                if (as_undefined) E.Undefined else E.Object,
+            ),
+        };
 
         ast.target = target;
         if (ast.parts.len <= 1) {

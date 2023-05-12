@@ -72,7 +72,6 @@ describe("bundler", () => {
         }
       `,
     },
-    bundling: false,
     minifySyntax: true,
     target: "bun",
     run: { file: "/entry.ts" },
@@ -190,7 +189,6 @@ describe("bundler", () => {
         console.log(foo);
       `,
     },
-    bundling: false,
   });
   itBundled("edgecase/ImportNamespaceAndDefault", {
     files: {
@@ -198,17 +196,15 @@ describe("bundler", () => {
         import def2, * as ns2 from './c'
         console.log(def2, JSON.stringify(ns2))
       `,
-    },
-    bundling: false,
-    runtimeFiles: {
       "/c.js": /* js */ `
-        export default 1
         export const ns = 2
         export const def2 = 3
+        export default 1
       `,
     },
+    runtimeFiles: {},
     run: {
-      stdout: '1 {"def2":3,"default":1,"ns":2}',
+      stdout: '1 {"ns":2,"default":1,"def2":3}',
     },
   });
   itBundled("edgecase/ExternalES6ConvertedToCommonJSSimplified", {

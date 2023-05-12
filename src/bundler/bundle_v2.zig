@@ -728,6 +728,10 @@ pub const BundleV2 = struct {
         generator.bundler.log.msgs.allocator = generator.graph.allocator;
         generator.bundler.log.clone_line_text = true;
 
+        // We don't expose a way to disable this right now.
+        generator.bundler.options.tree_shaking = true;
+        generator.bundler.resolver.opts.tree_shaking = true;
+
         generator.linker.resolver = &generator.bundler.resolver;
         generator.linker.graph.code_splitting = bundler.options.code_splitting;
         generator.graph.code_splitting = bundler.options.code_splitting;
@@ -2567,7 +2571,7 @@ pub const ParseTask = struct {
         opts.features.minify_identifiers = bundler.options.minify_identifiers;
         opts.features.should_fold_typescript_constant_expressions = opts.features.inlining or loader.isTypeScript();
 
-        opts.tree_shaking = task.tree_shaking;
+        opts.tree_shaking = if (source.index.isRuntime()) true else bundler.options.tree_shaking;
         opts.module_type = task.module_type;
         opts.features.unwrap_commonjs_packages = bundler.options.unwrap_commonjs_packages;
 

@@ -736,6 +736,7 @@ pub const BundleV2 = struct {
         generator.linker.options.minify_identifiers = bundler.options.minify_identifiers;
         generator.linker.options.minify_whitespace = bundler.options.minify_whitespace;
         generator.linker.options.source_maps = bundler.options.source_map;
+        generator.linker.options.tree_shaking = bundler.options.tree_shaking;
 
         var pool = try generator.graph.allocator.create(ThreadPool);
         if (enable_reloading) {

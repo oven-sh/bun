@@ -173,8 +173,8 @@ for (let [gcTick, label] of [
         gcTick();
         const text = new TextDecoder().decode(stdout);
         const text2 = new TextDecoder().decode(stdout_buffer);
-        expect(text.trim()).toBe("hello world");
-        expect(text2.trim()).toBe("hello world");
+        expect(text).toBe("hello world");
+        expect(text2).toBe("hello world");
         gcTick();
       });
 
@@ -189,8 +189,40 @@ for (let [gcTick, label] of [
         gcTick();
         const text = new TextDecoder().decode(stdout);
         const text2 = new TextDecoder().decode(stdout_buffer);
-        expect(text.trim()).toBe("hello");
-        expect(text2.trim()).toBe("hello");
+        expect(text).toBe("hello");
+        expect(text2).toBe("hello");
+        gcTick();
+      });
+
+      it("Uint8Array works as stdout when is the exactly size than output", () => {
+        gcTick();
+        const stdout_buffer = new Uint8Array(12);
+        const { stdout } = spawnSync(["echo", "hello world"], {
+          stdout: stdout_buffer,
+          stderr: null,
+          stdin: null,
+        });
+        gcTick();
+        const text = new TextDecoder().decode(stdout);
+        const text2 = new TextDecoder().decode(stdout_buffer);
+        expect(text).toBe("hello world\n");
+        expect(text2).toBe("hello world\n");
+        gcTick();
+      });
+
+      it("Uint8Array works as stdout when is larger than output", () => {
+        gcTick();
+        const stdout_buffer = new Uint8Array(15);
+        const { stdout } = spawnSync(["echo", "hello world"], {
+          stdout: stdout_buffer,
+          stderr: null,
+          stdin: null,
+        });
+        gcTick();
+        const text = new TextDecoder().decode(stdout);
+        const text2 = new TextDecoder().decode(stdout_buffer);
+        expect(text).toBe("hello world\n");
+        expect(text2).toBe("hello world\n\u0000\u0000\u0000");
         gcTick();
       });
 

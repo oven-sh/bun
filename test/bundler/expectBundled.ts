@@ -639,7 +639,6 @@ function expectBundled(
           delete bundlerEnv[key];
         }
       }
-
       const { stdout, stderr, success, exitCode } = Bun.spawnSync({
         cmd,
         cwd: root,
@@ -652,19 +651,26 @@ function expectBundled(
         if (!ESBUILD) {
           const errorText = stderr.toString("utf-8");
           const errorRegex = /^error: (.*?)\n(?:.*?\n\s*\^\s*\n(.*?)\n)?/gms;
-          const allErrors = [...errorText.matchAll(errorRegex)]
-            .map(([_str1, error, source]) => {
-              if (!source) {
-                if (error === "FileNotFound") {
-                  return null;
-                }
-                return { error, file: "<bun>" };
-              }
-              const [_str2, fullFilename, line, col] = source.match(/bun-build-tests\/(.*):(\d+):(\d+)/)!;
-              const file = fullFilename.slice(id.length + path.basename(outBase).length + 1);
-              return { error, file, line, col };
-            })
-            .filter(Boolean) as any[];
+          var skip = false;
+          if (errorText.includes("----- bun meta -----")) {
+            skip = true;
+          }
+          const allErrors = skip
+            ? []
+            : ([...errorText.matchAll(errorRegex)]
+                .map(([_str1, error, source]) => {
+                  if (!source) {
+                    if (error === "FileNotFound") {
+                      return null;
+                    }
+                    return { error, file: "<bun>" };
+                  }
+                  const [_str2, fullFilename, line, col] = source?.match?.(/bun-build-tests\/(.*):(\d+):(\d+)/) ?? [];
+                  const file = fullFilename?.slice?.(id.length + path.basename(outBase).length + 1);
+
+                  return { error, file, line, col };
+                })
+                .filter(Boolean) as any[]);
 
           if (allErrors.length === 0) {
             console.log(errorText);
@@ -1097,7 +1103,7 @@ for (const [key, blob] of build.outputs) {
       const matches = [...outfiletext.matchAll(regex)].map(match => "/" + match[1]);
       const expectedMatches = cjs2esm === true ? [] : cjs2esm.unhandled ?? [];
       try {
-        expect(matches).toEqual(expectedMatches);
+        expect(matches.sort()).toEqual(expectedMatches.sort());
       } catch (error) {
         if (matches.length === expectedMatches.length) {
           console.error(`cjs2esm check failed.`);

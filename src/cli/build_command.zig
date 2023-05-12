@@ -59,10 +59,10 @@ pub const BuildCommand = struct {
         this_bundler.resolver.opts.entry_naming = ctx.bundler_options.entry_naming;
         this_bundler.resolver.opts.chunk_naming = ctx.bundler_options.chunk_naming;
         this_bundler.resolver.opts.asset_naming = ctx.bundler_options.asset_naming;
-        this_bundler.options.output_dir = ctx.bundler_options.outdir;
-        this_bundler.resolver.opts.output_dir = ctx.bundler_options.outdir;
+
         this_bundler.options.react_server_components = ctx.bundler_options.react_server_components;
         this_bundler.resolver.opts.react_server_components = ctx.bundler_options.react_server_components;
+
         this_bundler.options.code_splitting = ctx.bundler_options.code_splitting;
         this_bundler.resolver.opts.code_splitting = ctx.bundler_options.code_splitting;
 
@@ -83,6 +83,33 @@ pub const BuildCommand = struct {
 
         this_bundler.options.output_dir = ctx.bundler_options.outdir;
         this_bundler.resolver.opts.output_dir = ctx.bundler_options.outdir;
+
+        var src_root_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        const src_root_dir: string = brk1: {
+            const path = brk2: {
+                if (ctx.bundler_options.root_dir.len > 0) {
+                    break :brk2 ctx.bundler_options.root_dir;
+                }
+
+                if (this_bundler.options.entry_points.len == 1) {
+                    break :brk2 std.fs.path.dirname(this_bundler.options.entry_points[0]) orelse ".";
+                }
+
+                break :brk2 resolve_path.getIfExistsLongestCommonPath(this_bundler.options.entry_points) orelse ".";
+            };
+
+            var dir = std.fs.cwd().openDir(path, .{}) catch |err| {
+                Output.prettyErrorln("<r>error<r>: {s}: failed to open root directory: {s}", .{ @errorName(err), path });
+                Global.exit(1);
+                return;
+            };
+            defer dir.close();
+
+            break :brk1 try bun.getFdPath(dir.fd, &src_root_dir_buf);
+        };
+
+        this_bundler.options.root_dir = src_root_dir;
+        this_bundler.resolver.opts.root_dir = src_root_dir;
 
         this_bundler.options.react_server_components = ctx.bundler_options.react_server_components;
         this_bundler.resolver.opts.react_server_components = ctx.bundler_options.react_server_components;

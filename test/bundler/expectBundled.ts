@@ -133,7 +133,7 @@ export interface BundlerTestInput {
     factory?: string; // for classic
     fragment?: string; // for classic
   };
-  outbase?: string;
+  root?: string;
   /** Defaults to `/out.js` */
   outfile?: string;
   /** Defaults to `/out` */
@@ -340,7 +340,7 @@ function expectBundled(
     minifyWhitespace,
     notImplemented,
     onAfterBundle,
-    outbase,
+    root: outbase,
     outdir,
     outfile,
     outputPaths,
@@ -405,9 +405,6 @@ function expectBundled(
   if (!ESBUILD && unsupportedCSSFeatures && unsupportedCSSFeatures.length) {
     throw new Error("unsupportedCSSFeatures not implemented in bun build");
   }
-  if (!ESBUILD && outbase) {
-    throw new Error("outbase/root not implemented in bun build");
-  }
   if (!ESBUILD && keepNames) {
     throw new Error("keepNames not implemented in bun build");
   }
@@ -463,8 +460,12 @@ function expectBundled(
     }
 
     if (outdir) {
-      entryNaming ??= "[name].[ext]";
+      entryNaming ??= "[dir]/[name].[ext]";
       chunkNaming ??= "[name]-[hash].[ext]";
+    }
+
+    if (outbase) {
+      outbase = path.join(root, outbase);
     }
 
     // Option validation
@@ -536,12 +537,12 @@ function expectBundled(
               jsx.importSource && ["--jsx-import-source", jsx.importSource],
               // metafile && `--manifest=${metafile}`,
               sourceMap && `--sourcemap=${sourceMap}`,
-              entryNaming && entryNaming !== "[name].[ext]" && [`--entry-naming`, entryNaming],
+              entryNaming && entryNaming !== "[dir]/[name].[ext]" && [`--entry-naming`, entryNaming],
               chunkNaming && chunkNaming !== "[name]-[hash].[ext]" && [`--chunk-naming`, chunkNaming],
-              assetNaming && assetNaming !== "[name]-[hash].[ext]" && [`--asset-naming`, chunkNaming],
+              assetNaming && assetNaming !== "[name]-[hash].[ext]" && [`--asset-naming`, assetNaming],
               splitting && `--splitting`,
               serverComponents && "--server-components",
-              outbase && `--outbase=${outbase}`,
+              outbase && `--root=${outbase}`,
               // inject && inject.map(x => ["--inject", path.join(root, x)]),
               // jsx.preserve && "--jsx=preserve",
               // legalComments && `--legal-comments=${legalComments}`,
@@ -569,7 +570,9 @@ function expectBundled(
               jsx.factory && `--jsx-factory=${jsx.factory}`,
               jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
               env?.NODE_ENV !== "production" && `--jsx-dev`,
-              entryNaming && entryNaming !== "[name].[ext]" && `--entry-names=${entryNaming.replace(/\.\[ext]$/, "")}`,
+              entryNaming &&
+                entryNaming !== "[dir]/[name].[ext]" &&
+                `--entry-names=${entryNaming.replace(/\.\[ext]$/, "")}`,
               chunkNaming &&
                 chunkNaming !== "[name]-[hash].[ext]" &&
                 `--chunk-names=${chunkNaming.replace(/\.\[ext]$/, "")}`,
@@ -582,7 +585,7 @@ function expectBundled(
               legalComments && `--legal-comments=${legalComments}`,
               splitting && `--splitting`,
               treeShaking && `--tree-shaking`,
-              outbase && `--outbase=${path.join(root, outbase)}`,
+              outbase && `--outbase=${outbase}`,
               keepNames && `--keep-names`,
               mainFields && `--main-fields=${mainFields.join(",")}`,
               loader && Object.entries(loader).map(([k, v]) => `--loader:${k}=${v}`),
@@ -1031,7 +1034,7 @@ for (const [key, blob] of build.outputs) {
       }
     } else {
       // entryNames makes it so we cannot predict the output file
-      if (!entryNaming || entryNaming === "[name].[ext]") {
+      if (!entryNaming || entryNaming === "[dir]/[name].[ext]") {
         for (const fullpath of outputPaths) {
           if (!existsSync(fullpath)) {
             throw new Error("Bundle was not written to disk: " + fullpath);

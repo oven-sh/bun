@@ -1599,6 +1599,7 @@ pub const BundleV2 = struct {
         bundler.options.public_path = config.public_path.list.items;
 
         bundler.options.output_dir = config.outdir.toOwnedSliceLeaky();
+        bundler.options.root_dir = config.rootdir.toOwnedSliceLeaky();
         bundler.options.minify_syntax = config.minify.syntax;
         bundler.options.minify_whitespace = config.minify.whitespace;
         bundler.options.minify_identifiers = config.minify.identifiers;
@@ -3865,7 +3866,15 @@ const LinkerContext = struct {
                 const pathname = Fs.PathName.init(this.graph.entry_points.items(.output_path)[chunk.entry_point.entry_point_id].slice());
                 chunk.template.placeholder.name = pathname.base;
                 chunk.template.placeholder.ext = "js";
-                chunk.template.placeholder.dir = pathname.dir;
+
+                var dir = std.fs.cwd().openDir(pathname.dir, .{}) catch |err| {
+                    try this.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{s}: failed to open entry point directory: {s}", .{ @errorName(err), pathname.dir });
+                    return error.FailedToOpenEntryPointDirectory;
+                };
+                defer dir.close();
+
+                var real_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                chunk.template.placeholder.dir = try resolve_path.relativeAlloc(this.allocator, this.resolver.opts.root_dir, try bun.getFdPath(dir.fd, &real_path_buf));
             } else {
                 chunk.template = PathTemplate.chunk;
                 if (this.resolver.opts.chunk_naming.len > 0)
@@ -8653,7 +8662,8 @@ const LinkerContext = struct {
 
         // TODO: enforceNoCyclicChunkImports()
         {
-
+            var path_names_map = bun.StringHashMap(void).init(c.allocator);
+            defer path_names_map.deinit();
             // Compute the final hashes of each chunk. This can technically be done in
             // parallel but it probably doesn't matter so much because we're not hashing
             // that much data.
@@ -8661,7 +8671,13 @@ const LinkerContext = struct {
                 // TODO: non-isolated-hash
                 chunk.template.placeholder.hash = chunk.isolated_hash;
 
-                chunk.final_rel_path = std.fmt.allocPrint(c.allocator, "{any}", .{chunk.template}) catch unreachable;
+                const rel_path = std.fmt.allocPrint(c.allocator, "{any}", .{chunk.template}) catch unreachable;
+                if ((try path_names_map.getOrPut(rel_path)).found_existing) {
+                    try c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Multiple files share the same output path: {s}", .{rel_path});
+                    return error.DuplicateOutputPath;
+                }
+
+                chunk.final_rel_path = rel_path;
             }
         }
 
@@ -8962,43 +8978,6 @@ const LinkerContext = struct {
             return err;
         };
         defer root_dir.close();
-        const from_path: []const u8 = brk: {
-            var all_paths = c.allocator.alloc(
-                []const u8,
-                chunks.len +
-                    @as(
-                    usize,
-                    @boolToInt(
-                        react_client_components_manifest.len > 0,
-                    ),
-                ) +
-                    c.parse_graph.additional_output_files.items.len,
-            ) catch unreachable;
-            defer c.allocator.free(all_paths);
-
-            var remaining_paths = all_paths;
-
-            for (all_paths[0..chunks.len], chunks) |*dest, src| {
-                dest.* = src.final_rel_path;
-            }
-            remaining_paths = remaining_paths[chunks.len..];
-
-            if (react_client_components_manifest.len > 0) {
-                remaining_paths[0] = components_manifest_path;
-                remaining_paths = remaining_paths[1..];
-            }
-
-            for (remaining_paths, c.parse_graph.additional_output_files.items) |*dest, output_file| {
-                dest.* = output_file.input.text;
-            }
-
-            remaining_paths = remaining_paths[c.parse_graph.additional_output_files.items.len..];
-
-            std.debug.assert(remaining_paths.len == 0);
-
-            break :brk resolve_path.longestCommonPath(all_paths);
-        };
-
         // Optimization: when writing to disk, we can re-use the memory
         var max_heap_allocator: bun.MaxHeapAllocator = undefined;
         defer max_heap_allocator.deinit();
@@ -9023,19 +9002,16 @@ const LinkerContext = struct {
             defer max_heap_allocator.reset();
 
             var rel_path = chunk.final_rel_path;
-            if (rel_path.len > from_path.len) {
-                rel_path = resolve_path.relative(from_path, rel_path);
-                if (std.fs.path.dirname(rel_path)) |parent| {
-                    if (parent.len > root_path.len) {
-                        root_dir.dir.makePath(parent) catch |err| {
-                            c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{s} creating outdir {} while saving chunk {}", .{
-                                @errorName(err),
-                                bun.fmt.quote(parent),
-                                bun.fmt.quote(chunk.final_rel_path),
-                            }) catch unreachable;
-                            return err;
-                        };
-                    }
+            if (std.fs.path.dirname(rel_path)) |rel_parent| {
+                if (rel_parent.len > 0) {
+                    root_dir.dir.makePath(rel_parent) catch |err| {
+                        c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{s} creating outdir {} while saving chunk {}", .{
+                            @errorName(err),
+                            bun.fmt.quote(rel_parent),
+                            bun.fmt.quote(chunk.final_rel_path),
+                        }) catch unreachable;
+                        return err;
+                    };
                 }
             }
 

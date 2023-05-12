@@ -4043,8 +4043,8 @@ describe("bundler", () => {
       "/a/b/c.js": `console.log('c')`,
       "/a/b/d.js": `console.log('d')`,
     },
-    entryPoints: ["/a/b/c.js", "/a/b/d.js"],
-    outbase: "/",
+    entryPointsRaw: ["/a/b/c.js", "/a/b/d.js"],
+    root: "/",
     onAfterBundle(api) {
       api.assertFileExists("/out/a/b/c.js");
       api.assertFileExists("/out/a/b/d.js");
@@ -4930,7 +4930,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     format: "esm",
-    outbase: "/some/nested/directory",
+    root: "/some/nested/directory",
   });
   const relocateFiles = {
     "/top-level.js": /* js */ `
@@ -5279,7 +5279,7 @@ describe("bundler", () => {
   //     "/src/lib/shared.js": `console.log('shared')`,
   //   },
   //   entryPoints: ["/src/entries/entry1.js", "/src/entries/entry2.js"],
-  //   outbase: "/src",
+  //   root: "/src",
   //   splitting: true,
   //   entryNaming: "main/[ext]/[name]-[hash].[ext]",
   // });

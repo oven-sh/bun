@@ -196,6 +196,7 @@ pub const Arguments = struct {
         clap.parseParam("--format <STR>                   Specifies the module format to build to. Only esm is supported.") catch unreachable,
         clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
         clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
+        clap.parseParam("--root <STR>                     Root directory used for multiple entry points") catch unreachable,
         clap.parseParam("--splitting                      Enable code splitting") catch unreachable,
         // clap.parseParam("--manifest <STR>                 Write JSON manifest") catch unreachable,
         // clap.parseParam("--public-path <STR>              A prefix to be appended to any import paths in bundled code") catch unreachable,
@@ -486,6 +487,12 @@ pub const Arguments = struct {
             } else if (args.option("--outfile")) |outfile| {
                 if (outfile.len > 0) {
                     ctx.bundler_options.outfile = outfile;
+                }
+            }
+
+            if (args.option("--root")) |root_dir| {
+                if (root_dir.len > 0) {
+                    ctx.bundler_options.root_dir = root_dir;
                 }
             }
 
@@ -936,7 +943,8 @@ pub const Command = struct {
         pub const BundlerOptions = struct {
             outdir: []const u8 = "",
             outfile: []const u8 = "",
-            entry_naming: []const u8 = "./[name].[ext]",
+            root_dir: []const u8 = "",
+            entry_naming: []const u8 = "[dir]/[name].[ext]",
             chunk_naming: []const u8 = "./[name]-[hash].[ext]",
             asset_naming: []const u8 = "./[name]-[hash].[ext]",
             react_server_components: bool = false,

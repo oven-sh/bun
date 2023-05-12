@@ -202,7 +202,7 @@ const char* const s_bundlerPluginRunOnResolvePluginsCode =
 const JSC::ConstructAbility s_bundlerPluginRunSetupFunctionCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_bundlerPluginRunSetupFunctionCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_bundlerPluginRunSetupFunctionCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_bundlerPluginRunSetupFunctionCodeLength = 4405;
+const int s_bundlerPluginRunSetupFunctionCodeLength = 4551;
 static const JSC::Intrinsic s_bundlerPluginRunSetupFunctionCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_bundlerPluginRunSetupFunctionCode =
     "(function (setup, config) {\n" \
@@ -271,6 +271,10 @@ const char* const s_bundlerPluginRunSetupFunctionCode =
     "    @throwTypeError(\"On-dispose callbacks are not implemented yet. See https:/\\/github.com/oven-sh/bun/issues/2771\");\n" \
     "  }\n" \
     "\n" \
+    "  function onDispose(callback) {\n" \
+    "    @throwTypeError(\"build.resolve() is not implemented yet. See https:/\\/github.com/oven-sh/bun/issues/2771\");\n" \
+    "  }\n" \
+    "\n" \
     "  const processSetupResult = () => {\n" \
     "    var anyOnLoad = false,\n" \
     "      anyOnResolve = false;\n" \
@@ -333,19 +337,19 @@ const char* const s_bundlerPluginRunSetupFunctionCode =
     "    onLoad,\n" \
     "    onResolve,\n" \
     "    onStart,\n" \
+    "    resolve,\n" \
     "    //\n" \
     "    initialOptions: {\n" \
+    "      ...config,\n" \
     "      bundle: true,\n" \
-    "      entryPoints: config.entrypoints ?? config.entryPoints,\n" \
-    "      external: config.external,\n" \
-    "      format: config.format,\n" \
+    "      entryPoints: config.entrypoints ?? config.entryPoints ?? [],\n" \
     "      minify: typeof config.minify === 'boolean' ? config.minify : false,\n" \
     "      minifyIdentifiers: config.minify === true || config.minify?.identifiers,\n" \
     "      minifyWhitespace: config.minify === true || config.minify?.whitespace,\n" \
     "      minifySyntax: config.minify  === true || config.minify?.syntax,\n" \
-    "      outdir: config.outdir,\n" \
-    "      platform: config.target,\n" \
-    "      sourcemap: config.sourcemap,\n" \
+    "      outbase: config.root,\n" \
+    "      platform: config.target === 'bun' ? 'node' : config.target,\n" \
+    "      root: undefined,\n" \
     "    },\n" \
     "    esbuild: {},\n" \
     "  });\n" \

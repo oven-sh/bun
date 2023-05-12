@@ -315,7 +315,7 @@ function runSetupFunction(setup, config) {
     initialOptions: {
       ...config,
       bundle: true,
-      entryPoints: config.entrypoints ?? config.entryPoints,
+      entryPoints: config.entrypoints ?? config.entryPoints ?? [],
       minify: typeof config.minify === 'boolean' ? config.minify : false,
       minifyIdentifiers: config.minify === true || config.minify?.identifiers,
       minifyWhitespace: config.minify === true || config.minify?.whitespace,

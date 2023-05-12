@@ -7697,10 +7697,11 @@ const LinkerContext = struct {
                             }
 
                             if (record.calls_runtime_re_export_fn) {
+                                const other_source_index = record.source_index.get();
                                 const target: Expr = brk: {
-                                    if (c.graph.ast.items(.exports_kind)[source_index].isESMWithDynamicFallback()) {
+                                    if (c.graph.ast.items(.exports_kind)[other_source_index].isESMWithDynamicFallback()) {
                                         // Prefix this module with "__reExport(exports, otherExports, module.exports)"
-                                        break :brk Expr.initIdentifier(c.graph.ast.items(.exports_ref)[source_index], stmt.loc);
+                                        break :brk Expr.initIdentifier(c.graph.ast.items(.exports_ref)[other_source_index], stmt.loc);
                                     }
 
                                     break :brk Expr.init(
@@ -9673,12 +9674,12 @@ const LinkerContext = struct {
                     if (named_import.namespace_ref != null and named_import.namespace_ref.?.isValid()) {
                         if (result.kind == .normal) {
                             result.kind = .normal_and_namespace;
-                            result.namespace_ref = named_import.namespace_ref.?;
+                            result.namespace_ref = next_tracker.import_ref;
                             result.alias = named_import.alias.?;
                         } else {
                             result = .{
                                 .kind = .namespace,
-                                .namespace_ref = named_import.namespace_ref.?,
+                                .namespace_ref = next_tracker.import_ref,
                                 .alias = named_import.alias.?,
                             };
                         }

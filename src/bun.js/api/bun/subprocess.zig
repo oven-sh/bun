@@ -1360,7 +1360,7 @@ pub const Subprocess = struct {
                 globalThis.throw("out of memory", .{});
                 return .zero;
             },
-            // stdout and stderr only uses allocator and default_max_buffer_size if they are pipes and buffer mode
+            // stdout and stderr only uses allocator and default_max_buffer_size if they are pipes and not a array buffer
             .stdout = Readable.init(stdio[std.os.STDOUT_FILENO], stdout_pipe[0], jsc_vm.allocator, default_max_buffer_size),
             .stderr = Readable.init(stdio[std.os.STDERR_FILENO], stderr_pipe[0], jsc_vm.allocator, default_max_buffer_size),
             .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},

@@ -533,11 +533,15 @@ pub const Options = struct {
         self.indent -|= 1;
     }
 
-    pub fn requireOrImportMetaForSource(self: *const Options, id: u32) RequireOrImportMeta {
+    pub fn requireOrImportMetaForSource(
+        self: *const Options,
+        id: u32,
+        was_unwrapped_require: bool,
+    ) RequireOrImportMeta {
         if (self.require_or_import_meta_for_source_callback.ctx == null)
             return .{};
 
-        return self.require_or_import_meta_for_source_callback.call(id);
+        return self.require_or_import_meta_for_source_callback.call(id, was_unwrapped_require);
     }
 };
 
@@ -548,20 +552,21 @@ pub const RequireOrImportMeta = struct {
     wrapper_ref: Ref = Ref.None,
     exports_ref: Ref = Ref.None,
     is_wrapper_async: bool = false,
+    was_unwrapped_require: bool = false,
 
     pub const Callback = struct {
-        const Fn = fn (*anyopaque, u32) RequireOrImportMeta;
+        const Fn = fn (*anyopaque, u32, bool) RequireOrImportMeta;
 
         ctx: ?*anyopaque = null,
         callback: *const Fn = undefined,
 
-        pub fn call(self: Callback, id: u32) RequireOrImportMeta {
-            return self.callback(self.ctx.?, id);
+        pub fn call(self: Callback, id: u32, was_unwrapped_require: bool) RequireOrImportMeta {
+            return self.callback(self.ctx.?, id, was_unwrapped_require);
         }
 
         pub fn init(
             comptime Type: type,
-            comptime callback: (fn (t: *Type, id: u32) RequireOrImportMeta),
+            comptime callback: (fn (t: *Type, id: u32, was_unwrapped_require: bool) RequireOrImportMeta),
             ctx: *Type,
         ) Callback {
             return Callback{
@@ -863,7 +868,7 @@ fn NewPrinter(
                 p.print("=");
                 p.printSpaceBeforeIdentifier();
                 if (comptime Statement == void) {
-                    p.printRequireOrImportExpr(import.import_record_index, &.{}, Level.lowest, ExprFlag.None());
+                    p.printRequireOrImportExpr(import.import_record_index, false, &.{}, Level.lowest, ExprFlag.None());
                 } else {
                     p.print(statement);
                 }
@@ -877,7 +882,7 @@ fn NewPrinter(
                 p.printSymbol(default.ref.?);
                 if (comptime Statement == void) {
                     p.@"print = "();
-                    p.printRequireOrImportExpr(import.import_record_index, &.{}, Level.lowest, ExprFlag.None());
+                    p.printRequireOrImportExpr(import.import_record_index, false, &.{}, Level.lowest, ExprFlag.None());
                 } else {
                     p.@"print = "();
                     p.print(statement);
@@ -919,7 +924,7 @@ fn NewPrinter(
 
                 if (import.star_name_loc == null and import.default_name == null) {
                     if (comptime Statement == void) {
-                        p.printRequireOrImportExpr(import.import_record_index, &.{}, Level.lowest, ExprFlag.None());
+                        p.printRequireOrImportExpr(import.import_record_index, false, &.{}, Level.lowest, ExprFlag.None());
                     } else {
                         p.print(statement);
                     }
@@ -1688,6 +1693,7 @@ fn NewPrinter(
         pub fn printRequireOrImportExpr(
             p: *Printer,
             import_record_index: u32,
+            was_unwrapped_require: bool,
             leading_interior_comments: []G.Comment,
             level_: Level,
             flags: ExprFlag.Set,
@@ -1722,7 +1728,7 @@ fn NewPrinter(
             }
 
             if (record.source_index.isValid()) {
-                var meta = p.options.requireOrImportMetaForSource(record.source_index.get());
+                var meta = p.options.requireOrImportMetaForSource(record.source_index.get(), was_unwrapped_require);
 
                 // Don't need the namespace object if the result is unused anyway
                 if (flags.contains(.expr_result_is_unused)) {
@@ -1767,26 +1773,32 @@ fn NewPrinter(
                     p.print("(");
                 }
 
-                // Call the wrapper
-                p.printSpaceBeforeIdentifier();
-                p.printSymbol(meta.wrapper_ref);
-                p.print("()");
+                if (!meta.was_unwrapped_require) {
 
-                // Return the namespace object if this is an ESM file
-                if (meta.exports_ref.isValid()) {
-                    p.print(",");
-                    p.printSpace();
+                    // Call the wrapper
+                    p.printSpaceBeforeIdentifier();
+                    p.printSymbol(meta.wrapper_ref);
+                    p.print("()");
 
-                    // Wrap this with a call to "__toCommonJS()" if this is an ESM file
-                    const wrap_with_to_cjs = record.wrap_with_to_commonjs;
-                    if (wrap_with_to_cjs) {
-                        p.printSymbol(p.options.to_commonjs_ref);
-                        p.print("(");
+                    // Return the namespace object if this is an ESM file
+                    if (meta.exports_ref.isValid()) {
+                        p.print(",");
+                        p.printSpace();
+
+                        // Wrap this with a call to "__toCommonJS()" if this is an ESM file
+                        const wrap_with_to_cjs = record.wrap_with_to_commonjs;
+                        if (wrap_with_to_cjs) {
+                            p.printSymbol(p.options.to_commonjs_ref);
+                            p.print("(");
+                        }
+                        p.printSymbol(meta.exports_ref);
+                        if (wrap_with_to_cjs) {
+                            p.print(")");
+                        }
                     }
-                    p.printSymbol(meta.exports_ref);
-                    if (wrap_with_to_cjs) {
-                        p.print(")");
-                    }
+                } else {
+                    if (!meta.exports_ref.isNull())
+                        p.printSymbol(meta.exports_ref);
                 }
 
                 if (wrap_with_to_esm) {
@@ -2118,7 +2130,7 @@ fn NewPrinter(
                     }
 
                     if (!rewrite_esm_to_cjs or !p.importRecord(e.import_record_index).is_legacy_bundled) {
-                        p.printRequireOrImportExpr(e.import_record_index, &([_]G.Comment{}), level, flags);
+                        p.printRequireOrImportExpr(e.import_record_index, e.unwrapped_id != std.math.maxInt(u32), &([_]G.Comment{}), level, flags);
                     }
                 },
                 .e_require_resolve_string => |e| {
@@ -2174,7 +2186,7 @@ fn NewPrinter(
                             p.print(")");
                         }
                     } else {
-                        p.printRequireOrImportExpr(e.import_record_index, e.leading_interior_comments, level, flags);
+                        p.printRequireOrImportExpr(e.import_record_index, false, e.leading_interior_comments, level, flags);
                     }
                 },
                 .e_dot => |e| {

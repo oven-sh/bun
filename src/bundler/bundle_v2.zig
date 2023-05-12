@@ -8533,15 +8533,18 @@ const LinkerContext = struct {
     fn requireOrImportMetaForSource(
         c: *LinkerContext,
         source_index: Index.Int,
+        was_unwrapped_require: bool,
     ) js_printer.RequireOrImportMeta {
         const flags = c.graph.meta.items(.flags)[source_index];
         return .{
-            .exports_ref = if (flags.wrap == .esm)
+            .exports_ref = if (flags.wrap == .esm or (was_unwrapped_require and c.graph.ast.items(.flags)[source_index].force_cjs_to_esm))
                 c.graph.ast.items(.exports_ref)[source_index]
             else
                 Ref.None,
             .is_wrapper_async = flags.is_async_or_has_async_dependency,
             .wrapper_ref = c.graph.ast.items(.wrapper_ref)[source_index],
+
+            .was_unwrapped_require = was_unwrapped_require and c.graph.ast.items(.flags)[source_index].force_cjs_to_esm,
         };
     }
 

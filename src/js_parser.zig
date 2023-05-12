@@ -3108,6 +3108,7 @@ pub const Parser = struct {
                     before.appendAssumeCapacity(.{
                         .stmts = stmts_,
                         .declared_symbols = declared_symbols,
+                        .tag = .import_to_convert_from_require,
                         .can_be_removed_if_unused = p.stmtsCanBeRemovedIfUnused(stmts_),
                     });
                 }
@@ -3173,7 +3174,8 @@ pub const Parser = struct {
             }
         }
 
-        if (p.options.bundle and parts.items.len == 1) {
+        if (p.options.bundle and parts.items.len < 4 and parts.items.len > 0) {
+
             // Specially handle modules shaped like this:
             //   CommonJS:
             //
@@ -3186,8 +3188,8 @@ pub const Parser = struct {
             //
             //     export * from 'react';
             //
-            var part = &parts.items[0];
-            if (part.stmts.len == 1) {
+            if (parts.items.len == 1 and parts.items[0].stmts.len == 1) {
+                var part = &parts.items[0];
                 var stmt: Stmt = part.stmts[0];
                 if (p.symbols.items[p.module_ref.innerIndex()].use_count_estimate == 1) {
                     if (stmt.data == .s_expr) {
@@ -3197,18 +3199,22 @@ pub const Parser = struct {
                             const bin = value.data.e_binary;
                             const left = bin.left;
                             const right = bin.right;
+                            const to_convert = &p.imports_to_convert_from_require.items[0];
                             if (bin.op == .bin_assign and
-                                right.data == .e_require_string and
+                                (right.data == .e_require_string
+                            // or  right.data == .e_identifier and to_convert.namespace.ref.?.eql(right.data.e_identifier.ref)
+                            ) and
                                 left.data == .e_dot and
                                 strings.eqlComptime(left.data.e_dot.name, "exports") and
                                 left.data.e_dot.target.data == .e_identifier and
                                 left.data.e_dot.target.data.e_identifier.ref.eql(p.module_ref))
                             {
+                                part.symbol_uses = .{};
                                 return js_ast.Result{
                                     .ast = js_ast.Ast{
                                         .allocator = p.allocator,
                                         .import_records = ImportRecord.List.init(p.import_records.items),
-                                        .redirect_import_record_index = right.data.e_require_string.import_record_index,
+                                        .redirect_import_record_index = to_convert.import_record_id,
                                         .named_imports = p.named_imports,
                                         .named_exports = p.named_exports,
                                     },
@@ -3234,56 +3240,91 @@ pub const Parser = struct {
                         else => {},
                     }
                 }
-            } else if (p.commonjs_named_exports_deoptimized and
+            }
+
+            if (p.commonjs_named_exports_deoptimized and
                 p.unwrap_all_requires and
                 p.imports_to_convert_from_require.items.len == 1 and
                 p.import_records.items.len == 1 and
-                part.stmts.len < 4 and
                 p.symbols.items[p.module_ref.innerIndex()].use_count_estimate == 1)
             {
-                // Specially handle modules shaped like this:
-                //
-                //    doSomeStuff();
-                //    module.exports = require('./foo.js');
-                //
-                for (part.stmts) |*stmt| {
-                    if (stmt.data == .s_expr) {
-                        const value: Expr = stmt.data.s_expr.value;
+                for (parts.items) |*part| {
+                    // Specially handle modules shaped like this:
+                    //
+                    //    doSomeStuff();
+                    //    module.exports = require('./foo.js');
+                    //
+                    // An example is react-dom/index.js, which does a DCE check.
+                    if (part.stmts.len > 1) break;
 
-                        if (value.data == .e_binary) {
-                            const bin = value.data.e_binary;
-                            const left = bin.left;
-                            const right = bin.right;
-                            if (bin.op == .bin_assign and
-                                right.data == .e_require_string and
-                                left.data == .e_dot and
-                                strings.eqlComptime(left.data.e_dot.name, "exports") and
-                                left.data.e_dot.target.data == .e_identifier and
-                                left.data.e_dot.target.data.e_identifier.ref.eql(p.module_ref))
-                            {
-                                p.export_star_import_records.append(
-                                    p.allocator,
-                                    right.data.e_require_string.import_record_index,
-                                ) catch unreachable;
-                                stmt.* = Stmt.alloc(
-                                    S.ExportStar,
-                                    S.ExportStar{
-                                        .import_record_index = right.data.e_require_string.import_record_index,
-                                        .namespace_ref = p.imports_to_convert_from_require.items[
+                    for (part.stmts, 0..) |*stmt, j| {
+                        if (stmt.data == .s_expr) {
+                            const value: Expr = stmt.data.s_expr.value;
+
+                            if (value.data == .e_binary) {
+                                var bin = value.data.e_binary;
+                                while (true) {
+                                    const left = bin.left;
+                                    const right = bin.right;
+
+                                    if (bin.op == .bin_assign and
+                                        right.data == .e_require_string and
+                                        left.data == .e_dot and
+                                        strings.eqlComptime(left.data.e_dot.name, "exports") and
+                                        left.data.e_dot.target.data == .e_identifier and
+                                        left.data.e_dot.target.data.e_identifier.ref.eql(p.module_ref))
+                                    {
+                                        p.export_star_import_records.append(
+                                            p.allocator,
+                                            right.data.e_require_string.import_record_index,
+                                        ) catch unreachable;
+                                        const namespace_ref = p.imports_to_convert_from_require.items[
                                             right.data.e_require_string.unwrapped_id
-                                        ].namespace.ref.?,
-                                    },
-                                    stmt.loc,
-                                );
-                                part.import_record_indices.push(p.allocator, right.data.e_require_string.import_record_index) catch unreachable;
-                                p.symbols.items[p.module_ref.innerIndex()].use_count_estimate = 0;
-                                _ = part.symbol_uses.swapRemove(p.module_ref);
-                                if (p.esm_export_keyword.len == 0) {
-                                    p.esm_export_keyword.loc = stmt.loc;
-                                    p.esm_export_keyword.len = 5;
+                                        ].namespace.ref.?;
+
+                                        part.stmts = brk: {
+                                            var new_stmts = try StmtList.initCapacity(p.allocator, part.stmts.len + 1);
+                                            new_stmts.appendSliceAssumeCapacity(part.stmts[0..j]);
+
+                                            new_stmts.appendAssumeCapacity(Stmt.alloc(
+                                                S.ExportStar,
+                                                S.ExportStar{
+                                                    .import_record_index = right.data.e_require_string.import_record_index,
+                                                    .namespace_ref = namespace_ref,
+                                                },
+                                                stmt.loc,
+                                            ));
+                                            new_stmts.appendSliceAssumeCapacity(part.stmts[j + 1 ..]);
+                                            break :brk new_stmts.items;
+                                        };
+
+                                        part.import_record_indices.push(p.allocator, right.data.e_require_string.import_record_index) catch unreachable;
+                                        p.symbols.items[p.module_ref.innerIndex()].use_count_estimate = 0;
+                                        p.symbols.items[namespace_ref.innerIndex()].use_count_estimate -|= 1;
+                                        _ = part.symbol_uses.swapRemove(namespace_ref);
+
+                                        for (before.items, 0..) |before_part, i| {
+                                            if (before_part.tag == .import_to_convert_from_require) {
+                                                _ = before.swapRemove(i);
+                                                break;
+                                            }
+                                        }
+
+                                        if (p.esm_export_keyword.len == 0) {
+                                            p.esm_export_keyword.loc = stmt.loc;
+                                            p.esm_export_keyword.len = 5;
+                                        }
+                                        p.commonjs_named_exports_deoptimized = false;
+                                        break;
+                                    }
+
+                                    if (right.data == .e_binary) {
+                                        bin = right.data.e_binary;
+                                        continue;
+                                    }
+
+                                    break;
                                 }
-                                p.commonjs_named_exports_deoptimized = false;
-                                break;
                             }
                         }
                     }
@@ -5083,6 +5124,7 @@ fn NewParser_(
                         }) catch unreachable;
                         p.import_items_for_namespace.put(p.allocator, namespace_ref, ImportItemForNamespaceMap.init(p.allocator)) catch unreachable;
                         p.ignoreUsage(p.require_ref);
+                        p.recordUsage(namespace_ref);
                         return p.newExpr(
                             E.RequireString{
                                 .import_record_index = import_record_index,

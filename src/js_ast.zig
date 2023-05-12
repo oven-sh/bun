@@ -6328,6 +6328,7 @@ pub const Part = struct {
         bun_test,
         dead_due_to_inlining,
         commonjs_named_export,
+        import_to_convert_from_require,
     };
 
     pub const SymbolUseMap = std.ArrayHashMapUnmanaged(Ref, Symbol.Use, RefHashCtx, false);

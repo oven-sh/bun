@@ -189,20 +189,24 @@ pub const Subprocess = struct {
             }
         };
 
-        pub fn init(stdio: Stdio, fd: i32, _: *JSC.JSGlobalObject) Readable {
+        pub fn init(stdio: Stdio, fd: i32, allocator: std.mem.Allocator, max_size: u32) Readable {
             return switch (stdio) {
                 .inherit => Readable{ .inherit = {} },
                 .ignore => Readable{ .ignore = {} },
                 .pipe => brk: {
                     break :brk .{
                         .pipe = .{
-                            .buffer = undefined,
+                            .buffer = BufferedOutput.initWithAllocator(allocator, fd, max_size),
                         },
                     };
                 },
                 .path => Readable{ .ignore = {} },
                 .blob, .fd => Readable{ .fd = @intCast(bun.FileDescriptor, fd) },
-                else => unreachable,
+                .array_buffer => Readable{
+                    .pipe = .{
+                        .buffer = BufferedOutput.initWithSlice(fd, stdio.array_buffer.slice()),
+                    },
+                },
             };
         }
 
@@ -564,7 +568,7 @@ pub const Subprocess = struct {
     pub const BufferedOutput = struct {
         internal_buffer: bun.ByteList = .{},
         fifo: JSC.WebCore.FIFO = undefined,
-        auto_sizer: JSC.WebCore.AutoSizer = undefined,
+        auto_sizer: ?JSC.WebCore.AutoSizer = null,
         status: Status = .{
             .pending = {},
         },
@@ -584,13 +588,25 @@ pub const Subprocess = struct {
             };
         }
 
-        pub fn setup(this: *BufferedOutput, allocator: std.mem.Allocator, fd: bun.FileDescriptor, max_size: u32) void {
-            this.* = init(fd);
+        pub fn initWithSlice(fd: bun.FileDescriptor, slice: []u8) BufferedOutput {
+            return BufferedOutput{
+                // fixed capacity
+                .internal_buffer = bun.ByteList.initWithBuffer(slice),
+                .auto_sizer = null,
+                .fifo = JSC.WebCore.FIFO{
+                    .fd = fd,
+                },
+            };
+        }
+
+        pub fn initWithAllocator(allocator: std.mem.Allocator, fd: bun.FileDescriptor, max_size: u32) BufferedOutput {
+            var this = init(fd);
             this.auto_sizer = .{
                 .max = max_size,
                 .allocator = allocator,
                 .buffer = &this.internal_buffer,
             };
+            return this;
         }
 
         pub fn onRead(this: *BufferedOutput, result: JSC.WebCore.StreamResult) void {
@@ -625,45 +641,79 @@ pub const Subprocess = struct {
         }
 
         pub fn readAll(this: *BufferedOutput) void {
-            while (@as(usize, this.internal_buffer.len) < this.auto_sizer.max and this.status == .pending) {
-                var stack_buffer: [8096]u8 = undefined;
-                var stack_buf: []u8 = stack_buffer[0..];
-                var buf_to_use = stack_buf;
-                var available = this.internal_buffer.available();
-                if (available.len >= stack_buf.len) {
-                    buf_to_use = available;
-                }
+            if (this.auto_sizer) |auto_sizer| {
+                while (@as(usize, this.internal_buffer.len) < auto_sizer.max and this.status == .pending) {
+                    var stack_buffer: [8096]u8 = undefined;
+                    var stack_buf: []u8 = stack_buffer[0..];
+                    var buf_to_use = stack_buf;
+                    var available = this.internal_buffer.available();
+                    if (available.len >= stack_buf.len) {
+                        buf_to_use = available;
+                    }
 
-                const result = this.fifo.read(buf_to_use, this.fifo.to_read);
+                    const result = this.fifo.read(buf_to_use, this.fifo.to_read);
 
-                switch (result) {
-                    .pending => {
-                        this.watch();
-                        return;
-                    },
-                    .err => |err| {
-                        this.status = .{ .err = err };
-                        this.fifo.close();
-
-                        return;
-                    },
-                    .done => {
-                        this.status = .{ .done = {} };
-                        this.fifo.close();
-                        return;
-                    },
-                    .read => |slice| {
-                        if (slice.ptr == stack_buf.ptr) {
-                            this.internal_buffer.append(this.auto_sizer.allocator, slice) catch @panic("out of memory");
-                        } else {
-                            this.internal_buffer.len += @truncate(u32, slice.len);
-                        }
-
-                        if (slice.len < buf_to_use.len) {
+                    switch (result) {
+                        .pending => {
                             this.watch();
                             return;
-                        }
-                    },
+                        },
+                        .err => |err| {
+                            this.status = .{ .err = err };
+                            this.fifo.close();
+
+                            return;
+                        },
+                        .done => {
+                            this.status = .{ .done = {} };
+                            this.fifo.close();
+                            return;
+                        },
+                        .read => |slice| {
+                            if (slice.ptr == stack_buf.ptr) {
+                                this.internal_buffer.append(auto_sizer.allocator, slice) catch @panic("out of memory");
+                            } else {
+                                this.internal_buffer.len += @truncate(u32, slice.len);
+                            }
+
+                            if (slice.len < buf_to_use.len) {
+                                this.watch();
+                                return;
+                            }
+                        },
+                    }
+                }
+            } else {
+                while (this.internal_buffer.len < this.internal_buffer.cap and this.status == .pending) {
+                    var buf_to_use = this.internal_buffer.available();
+
+                    const result = this.fifo.read(buf_to_use, this.fifo.to_read);
+
+                    switch (result) {
+                        .pending => {
+                            this.watch();
+                            return;
+                        },
+                        .err => |err| {
+                            this.status = .{ .err = err };
+                            this.fifo.close();
+
+                            return;
+                        },
+                        .done => {
+                            this.status = .{ .done = {} };
+                            this.fifo.close();
+                            return;
+                        },
+                        .read => |slice| {
+                            this.internal_buffer.len += @truncate(u32, slice.len);
+
+                            if (slice.len < buf_to_use.len) {
+                                this.watch();
+                                return;
+                            }
+                        },
+                    }
                 }
             }
         }
@@ -689,7 +739,9 @@ pub const Subprocess = struct {
                     // also no data at all
                     if (this.internal_buffer.len == 0) {
                         if (this.internal_buffer.cap > 0) {
-                            this.internal_buffer.deinitWithAllocator(this.auto_sizer.allocator);
+                            if (this.auto_sizer) |auto_sizer| {
+                                this.internal_buffer.deinitWithAllocator(auto_sizer.allocator);
+                            }
                         }
                         // so we return an empty stream
                         return JSC.WebCore.ReadableStream.fromJS(
@@ -1308,22 +1360,15 @@ pub const Subprocess = struct {
                 globalThis.throw("out of memory", .{});
                 return .zero;
             },
-            .stdout = Readable.init(stdio[std.os.STDOUT_FILENO], stdout_pipe[0], globalThis),
-            .stderr = Readable.init(stdio[std.os.STDERR_FILENO], stderr_pipe[0], globalThis),
+            // stdout and stderr only uses allocator and default_max_buffer_size if they are pipes and buffer mode
+            .stdout = Readable.init(stdio[std.os.STDOUT_FILENO], stdout_pipe[0], jsc_vm.allocator, default_max_buffer_size),
+            .stderr = Readable.init(stdio[std.os.STDERR_FILENO], stderr_pipe[0], jsc_vm.allocator, default_max_buffer_size),
             .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
             .is_sync = is_sync,
         };
 
         if (subprocess.stdin == .pipe) {
             subprocess.stdin.pipe.signal = JSC.WebCore.Signal.init(&subprocess.stdin);
-        }
-
-        if (subprocess.stdout == .pipe and subprocess.stdout.pipe == .buffer) {
-            subprocess.stdout.pipe.buffer.setup(jsc_vm.allocator, stdout_pipe[0], default_max_buffer_size);
-        }
-
-        if (subprocess.stderr == .pipe and subprocess.stderr.pipe == .buffer) {
-            subprocess.stderr.pipe.buffer.setup(jsc_vm.allocator, stderr_pipe[0], default_max_buffer_size);
         }
 
         const out = if (comptime !is_sync)

@@ -97,6 +97,14 @@ pub fn BabyList(comptime Type: type) type {
             };
         }
 
+        pub inline fn initWithBuffer(items: []Type) ListType {
+            return ListType{
+                .ptr = items.ptr,
+                .len = 0,
+                .cap = @truncate(u32, items.len),
+            };
+        }
+
         pub inline fn init(items: []const Type) ListType {
             @setRuntimeSafety(false);
             return ListType{

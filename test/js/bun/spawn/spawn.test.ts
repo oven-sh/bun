@@ -162,6 +162,38 @@ for (let [gcTick, label] of [
         }
       });
 
+      it("ArrayBuffer works as stdout", () => {
+        gcTick();
+        const stdout_buffer = new Uint8Array(11);
+        const { stdout } = spawnSync(["echo", "hello world"], {
+          stdout: stdout_buffer,
+          stderr: null,
+          stdin: null,
+        });
+        gcTick();
+        const text = new TextDecoder().decode(stdout);
+        const text2 = new TextDecoder().decode(stdout_buffer);
+        expect(text.trim()).toBe("hello world");
+        expect(text2.trim()).toBe("hello world");
+        gcTick();
+      });
+
+      it("ArrayBuffer works as stdout when is smaller than output", () => {
+        gcTick();
+        const stdout_buffer = new Uint8Array(5);
+        const { stdout } = spawnSync(["echo", "hello world"], {
+          stdout: stdout_buffer,
+          stderr: null,
+          stdin: null,
+        });
+        gcTick();
+        const text = new TextDecoder().decode(stdout);
+        const text2 = new TextDecoder().decode(stdout_buffer);
+        expect(text.trim()).toBe("hello");
+        expect(text2.trim()).toBe("hello");
+        gcTick();
+      });
+
       it("Blob works as stdin", async () => {
         rmSync("/tmp/out.123.txt", { force: true });
         gcTick();

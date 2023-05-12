@@ -17757,6 +17757,9 @@ fn NewParser_(
                                             if (symbol.kind == .unbound) {
                                                 if (p.local_type_names.get(symbol.original_name)) |local_type| {
                                                     if (local_type) {
+                                                        // the name points to a type
+                                                        // don't try to declare this symbol
+                                                        data.default_name.ref = null;
                                                         return;
                                                     }
                                                 }

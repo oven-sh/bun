@@ -4338,6 +4338,13 @@ const LinkerContext = struct {
                                 exports_kind[other_file] = .cjs;
                                 flags[other_file].wrap = .cjs;
                             }
+
+                            if (record.contains_default_alias and
+                                other_flags.force_cjs_to_esm)
+                            {
+                                exports_kind[other_file] = .cjs;
+                                flags[other_file].wrap = .cjs;
+                            }
                         },
                         ImportKind.require =>
                         // Files that are imported with require() must be CommonJS modules
@@ -4525,8 +4532,6 @@ const LinkerContext = struct {
                 defer trace.end();
                 var wrapper_part_indices = this.graph.meta.items(.wrapper_part_index);
                 var imports_to_bind = this.graph.meta.items(.imports_to_bind);
-                var to_mark_as_esm_with_dynamic_fallback = std.AutoArrayHashMap(u32, void).init(this.allocator);
-                defer to_mark_as_esm_with_dynamic_fallback.deinit();
                 for (reachable) |source_index_| {
                     const source_index = source_index_.get();
                     const id = source_index;
@@ -4542,7 +4547,6 @@ const LinkerContext = struct {
                             named_imports_,
                             &imports_to_bind[id],
                             source_index,
-                            &to_mark_as_esm_with_dynamic_fallback,
                         );
 
                         if (this.log.errors > 0) {
@@ -4579,12 +4583,6 @@ const LinkerContext = struct {
                         &wrapper_part_indices[id],
                         source_index,
                     );
-                }
-
-                // When we hit an unknown import on a file that started as CommonJS
-                // We make it an ESM file with dynamic fallback.
-                for (to_mark_as_esm_with_dynamic_fallback.keys()) |id| {
-                    this.graph.ast.items(.exports_kind)[id] = .esm_with_dynamic_fallback;
                 }
             }
 
@@ -4869,6 +4867,7 @@ const LinkerContext = struct {
                     var to_common_js_uses: u32 = 0;
                     var runtime_require_uses: u32 = 0;
 
+                    // Imports of wrapped files must depend on the wrapper
                     for (part.import_record_indices.slice()) |import_record_index| {
                         var record = &import_records[import_record_index];
                         const kind = record.kind;
@@ -9560,7 +9559,6 @@ const LinkerContext = struct {
         c: *LinkerContext,
         init_tracker: *ImportTracker,
         re_exports: *std.ArrayList(js_ast.Dependency),
-        to_mark_as_esm_with_dynamic_fallback: *std.AutoArrayHashMap(u32, void),
     ) MatchImport {
         var tracker = init_tracker;
         var ambiguous_results = std.ArrayList(MatchImport).init(c.allocator);
@@ -9653,38 +9651,13 @@ const LinkerContext = struct {
                     // We don't do a runtime error since that CJS would have returned undefined.
                     const named_import: js_ast.NamedImport = named_imports[prev_source_index].get(prev_import_ref).?;
 
-                    // For code like this:
-                    //
-                    //     import React from 'react';
-                    //
-                    // Normally, this would be rewritten to:
-                    //
-                    //    const React = import_react().default;
-                    //
-                    // Instead, we rewrite to
-                    //
-                    //    const React = import_react();
-                    //
-                    // But it means we now definitely need to wrap the module.
-                    //
-                    // We want to keep doing this transform though for each file
-                    // so defer marking the export kind as esm_with_fallback until after
-                    // we've visited every import.
-                    to_mark_as_esm_with_dynamic_fallback.put(other_id, {}) catch unreachable;
-
                     if (named_import.namespace_ref != null and named_import.namespace_ref.?.isValid()) {
-                        if (strings.eqlComptime(named_import.alias orelse "", "default")) {
-                            result.kind = .normal;
-                            // Referencing the exports_ref directly feels wrong.
-                            // TODO: revisit this.
-                            result.ref = c.graph.ast.items(.exports_ref)[other_id];
-                            result.name_loc = named_import.alias_loc orelse Logger.Loc.Empty;
-                        } else {
-                            result.kind = .normal_and_namespace;
-                            result.namespace_ref = c.graph.ast.items(.exports_ref)[other_id];
-                            result.alias = named_import.alias.?;
-                            result.name_loc = named_import.alias_loc orelse Logger.Loc.Empty;
-                        }
+                        const symbol = c.graph.symbols.get(prev_import_ref).?;
+                        symbol.import_item_status = .missing;
+                        result.kind = .normal_and_namespace;
+                        result.namespace_ref = prev_import_ref;
+                        result.alias = named_import.alias.?;
+                        result.name_loc = named_import.alias_loc orelse Logger.Loc.Empty;
                     }
                 },
 
@@ -9764,7 +9737,7 @@ const LinkerContext = struct {
 
                             var old_cycle_detector = c.cycle_detector;
                             c.cycle_detector = c.swap_cycle_detector;
-                            var ambig = c.matchImportWithExport(&ambiguous_tracker.data, re_exports, to_mark_as_esm_with_dynamic_fallback);
+                            var ambig = c.matchImportWithExport(&ambiguous_tracker.data, re_exports);
                             c.cycle_detector.clearRetainingCapacity();
                             c.swap_cycle_detector = c.cycle_detector;
                             c.cycle_detector = old_cycle_detector;
@@ -10101,7 +10074,8 @@ const LinkerContext = struct {
         }
 
         // Missing re-exports in TypeScript files are indistinguishable from types
-        if (named_import.is_exported and c.parse_graph.input_files.items(.loader)[other_source_index].isTypeScript()) {
+        const other_loader = c.parse_graph.input_files.items(.loader)[other_id];
+        if (named_import.is_exported and other_loader.isTypeScript()) {
             return .{
                 .value = .{},
                 .status = .probably_typescript_type,
@@ -10123,7 +10097,6 @@ const LinkerContext = struct {
         named_imports_ptr: *JSAst.NamedImports,
         imports_to_bind: *RefImportData,
         source_index: Index.Int,
-        to_mark_as_esm_with_dynamic_fallback: *std.AutoArrayHashMap(u32, void),
     ) void {
         var named_imports = named_imports_ptr.cloneWithAllocator(c.allocator) catch unreachable;
         defer named_imports_ptr.* = named_imports;
@@ -10159,7 +10132,6 @@ const LinkerContext = struct {
             var result = c.matchImportWithExport(
                 &import_tracker.data,
                 &re_exports,
-                to_mark_as_esm_with_dynamic_fallback,
             );
 
             switch (result.kind) {

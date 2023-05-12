@@ -65,7 +65,7 @@ extern const JSC::ImplementationVisibility s_bundlerPluginRunOnLoadPluginsCodeIm
 
 #define WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_DATA(macro) \
     macro(runOnResolvePlugins, bundlerPluginRunOnResolvePlugins, 5) \
-    macro(runSetupFunction, bundlerPluginRunSetupFunction, 1) \
+    macro(runSetupFunction, bundlerPluginRunSetupFunction, 2) \
     macro(runOnLoadPlugins, bundlerPluginRunOnLoadPlugins, 4) \
 
 #define WEBCORE_BUILTIN_BUNDLERPLUGIN_RUNONRESOLVEPLUGINS 1

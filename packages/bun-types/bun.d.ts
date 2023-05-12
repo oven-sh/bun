@@ -2749,9 +2749,9 @@ declare module "bun" {
       callback: OnResolveCallback,
     ): void;
     /**
-     * The current target environment
+     * The config object passed to `Bun.build` as is.
      */
-    target: Target;
+    config: Omit<BuildConfig, "plugins">;
   }
 
   interface BunPlugin {
@@ -2789,7 +2789,7 @@ declare module "bun" {
        * }));
        * ```
        */
-      builder: PluginBuilder,
+      build: PluginBuilder,
     ): void | Promise<void>;
   }
 

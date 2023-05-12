@@ -270,6 +270,12 @@ export interface BundlerTestRunOptions {
 /** given when you do itBundled('id', (this object) => BundlerTestInput) */
 export interface BundlerTestWrappedAPI {
   root: string;
+  getConfigRef: () => BuildConfig;
+}
+
+let configRef: BuildConfig;
+function getConfigRef() {
+  return configRef;
 }
 
 export interface BundlerTestRef {
@@ -837,15 +843,16 @@ for (const [key, blob] of build.outputs) {
           }
         }
 
+        configRef = buildConfig;
         const build = await Bun.build(buildConfig);
+        configRef = null!;
         Bun.gc(true);
 
-        const buildLogs = (build as any).logs;
+        const buildLogs = build.logs.filter(x => x.level === "error");
 
-        if (buildLogs) {
-          const rawErrors = buildLogs instanceof AggregateError ? buildLogs.errors : [buildLogs];
+        if (buildLogs.length) {
           const allErrors: ErrorMeta[] = [];
-          for (const error of rawErrors) {
+          for (const error of buildLogs) {
             const str = error.message ?? String(error);
             if (str.startsWith("\u001B[2mexpect(") || str.startsWith("expect(")) {
               throw error;
@@ -1269,7 +1276,7 @@ export function itBundled(
 ): BundlerTestRef {
   if (typeof opts === "function") {
     const fn = opts;
-    opts = opts({ root: path.join(outBase, id.replaceAll("/", path.sep)) });
+    opts = opts({ root: path.join(outBase, id.replaceAll("/", path.sep)), getConfigRef });
     // @ts-expect-error
     opts._referenceFn = fn;
   }

@@ -178,7 +178,7 @@ function runOnResolvePlugins(
   }
 }
 
-function runSetupFunction(setup) {
+function runSetupFunction(setup, config) {
   "use strict";
   var onLoadPlugins = new Map(),
     onResolvePlugins = new Map();
@@ -244,6 +244,10 @@ function runSetupFunction(setup) {
     @throwTypeError("On-dispose callbacks are not implemented yet. See https:/\/github.com/oven-sh/bun/issues/2771");
   }
 
+  function onDispose(callback) {
+    @throwTypeError("build.resolve() is not implemented yet. See https:/\/github.com/oven-sh/bun/issues/2771");
+  }
+
   const processSetupResult = () => {
     var anyOnLoad = false,
       anyOnResolve = false;
@@ -300,11 +304,27 @@ function runSetupFunction(setup) {
   };
 
   var setupResult = setup({
+    config,
     onDispose,
     onEnd,
     onLoad,
     onResolve,
     onStart,
+    resolve,
+    // esbuild's options argument is different, we provide some interop
+    initialOptions: {
+      ...config,
+      bundle: true,
+      entryPoints: config.entrypoints ?? config.entryPoints,
+      minify: typeof config.minify === 'boolean' ? config.minify : false,
+      minifyIdentifiers: config.minify === true || config.minify?.identifiers,
+      minifyWhitespace: config.minify === true || config.minify?.whitespace,
+      minifySyntax: config.minify  === true || config.minify?.syntax,
+      outbase: config.root,
+      platform: config.target === 'bun' ? 'node' : config.target,
+      root: undefined,
+    },
+    esbuild: {},
   });
 
   if (setupResult && @isPromise(setupResult)) {

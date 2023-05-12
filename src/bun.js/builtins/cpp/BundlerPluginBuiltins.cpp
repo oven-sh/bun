@@ -202,10 +202,10 @@ const char* const s_bundlerPluginRunOnResolvePluginsCode =
 const JSC::ConstructAbility s_bundlerPluginRunSetupFunctionCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_bundlerPluginRunSetupFunctionCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_bundlerPluginRunSetupFunctionCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_bundlerPluginRunSetupFunctionCodeLength = 3794;
+const int s_bundlerPluginRunSetupFunctionCodeLength = 4405;
 static const JSC::Intrinsic s_bundlerPluginRunSetupFunctionCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_bundlerPluginRunSetupFunctionCode =
-    "(function (setup) {\n" \
+    "(function (setup, config) {\n" \
     "  \"use strict\";\n" \
     "  var onLoadPlugins = new Map(),\n" \
     "    onResolvePlugins = new Map();\n" \
@@ -327,11 +327,27 @@ const char* const s_bundlerPluginRunSetupFunctionCode =
     "  };\n" \
     "\n" \
     "  var setupResult = setup({\n" \
+    "    config,\n" \
     "    onDispose,\n" \
     "    onEnd,\n" \
     "    onLoad,\n" \
     "    onResolve,\n" \
     "    onStart,\n" \
+    "    //\n" \
+    "    initialOptions: {\n" \
+    "      bundle: true,\n" \
+    "      entryPoints: config.entrypoints ?? config.entryPoints,\n" \
+    "      external: config.external,\n" \
+    "      format: config.format,\n" \
+    "      minify: typeof config.minify === 'boolean' ? config.minify : false,\n" \
+    "      minifyIdentifiers: config.minify === true || config.minify?.identifiers,\n" \
+    "      minifyWhitespace: config.minify === true || config.minify?.whitespace,\n" \
+    "      minifySyntax: config.minify  === true || config.minify?.syntax,\n" \
+    "      outdir: config.outdir,\n" \
+    "      platform: config.target,\n" \
+    "      sourcemap: config.sourcemap,\n" \
+    "    },\n" \
+    "    esbuild: {},\n" \
     "  });\n" \
     "\n" \
     "  if (setupResult && @isPromise(setupResult)) {\n" \

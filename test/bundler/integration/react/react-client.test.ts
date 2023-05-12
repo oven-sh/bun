@@ -13,22 +13,15 @@ const modes = [
 const nodeEnvs = ["development", "production"];
 const combinations = nodeEnvs.flatMap(nodeEnv => modes.map(mode => ({ options: mode, nodeEnv })));
 
-describe("integration, react client", () => {
+describe("bundler integration, react client", () => {
   for (const {
     options: { label, args },
     nodeEnv,
   } of combinations) {
     test(label + ", NODE_ENV=" + nodeEnv, async () => {
-      const out = path.join(import.meta.dir, "react/dist/client/" + label + "-" + nodeEnv);
+      const out = path.join(import.meta.dir, "dist/client/" + label + "-" + nodeEnv);
       const x = Bun.spawnSync(
-        [
-          bunExe(),
-          "build",
-          ...(args ?? []),
-          "--outdir=" + out,
-          "--splitting",
-          path.join(import.meta.dir, "react/index.jsx"),
-        ],
+        [bunExe(), "build", ...(args ?? []), "--outdir=" + out, "--splitting", path.join(import.meta.dir, "index.jsx")],
         {
           // cwd: import.meta.dir + "/react",
           env: nodeEnv ? { NODE_ENV: nodeEnv } : undefined,
@@ -38,7 +31,7 @@ describe("integration, react client", () => {
         console.error(x.stderr.toString());
         throw new Error("Failed to build");
       }
-      const proc = Bun.spawn(["node", path.join(import.meta.dir, "react/puppeteer.mjs"), out], {
+      const proc = Bun.spawn(["node", path.join(import.meta.dir, "puppeteer.mjs"), out], {
         cwd: path.join(import.meta.dir, "react"),
       });
       await proc.exited;

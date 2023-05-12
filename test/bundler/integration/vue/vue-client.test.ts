@@ -13,35 +13,39 @@ const modes = [
 const nodeEnvs = ["development", "production"];
 const combinations = nodeEnvs.flatMap(nodeEnv => modes.map(mode => ({ options: mode, nodeEnv })));
 
-describe("integration, react SSR", () => {
+describe("bundler integration, vue client", () => {
   for (const {
     options: { label, args },
     nodeEnv,
   } of combinations) {
     test(label + ", NODE_ENV=" + nodeEnv, async () => {
-      const out = path.join(import.meta.dir, "react/dist/ssr/" + label + "-" + nodeEnv);
+      const out = path.join(import.meta.dir, "react/dist/client/" + label + "-" + nodeEnv);
       const x = Bun.spawnSync(
         [
           bunExe(),
           "build",
           ...(args ?? []),
-          "--target=bun",
           "--outdir=" + out,
-          path.join(import.meta.dir, "react/ssr_test.jsx"),
+          "--splitting",
+          path.join(import.meta.dir, "/index.jsx"),
         ],
         {
           // cwd: import.meta.dir + "/react",
           env: nodeEnv ? { NODE_ENV: nodeEnv } : undefined,
         },
       );
-      const proc = Bun.spawnSync(["bun", path.join(out, "ssr-print.js")], {
+      if (x.exitCode !== 0) {
+        console.error(x.stderr.toString());
+        throw new Error("Failed to build");
+      }
+      const proc = Bun.spawn(["node", path.join(import.meta.dir, "puppeteer.mjs"), out], {
         cwd: path.join(import.meta.dir, "react"),
       });
-      if (!proc.success) {
-        console.error(proc.stderr.toString());
-        throw new Error("Process failed");
-      }
-      expect(proc.stdout).toMatchSnapshot("Output");
+      await proc.exited;
+      expect(proc.exitCode).toBe(0);
+      const output = JSON.parse(await new Response(proc.stdout).text());
+      expect(output.logs).toMatchSnapshot("Browser console logs");
+      expect(output.domSnapshots).toMatchSnapshot("DOM Snapshots");
     });
   }
 });

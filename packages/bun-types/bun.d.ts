@@ -1007,7 +1007,7 @@ declare module "bun" {
     path: string;
     loader: Loader;
     hash: null;
-    kind: "sourecemap";
+    kind: "sourcemap";
     sourcemap: null;
   }
 
@@ -2751,7 +2751,7 @@ declare module "bun" {
     /**
      * The config object passed to `Bun.build` as is. Can be mutated.
      */
-    config: BuildConfig & { plugins: BunPlugin[]; };
+    config: BuildConfig & { plugins: BunPlugin[] };
   }
 
   interface BunPlugin {

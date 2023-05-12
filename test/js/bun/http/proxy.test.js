@@ -116,9 +116,9 @@ it("proxy non-TLS auth can fail", async () => {
   {
     try {
       const response = await fetch(url, { verbose: true, proxy: `http://localhost:${auth_proxy.port}` });
-      expect(response.statusText).toBe("Proxy Authentication Required");
+      expect(response.status).toBe(407);
     } catch (err) {
-      expect(err).toBe("Proxy Authentication Required");
+      expect(true).toBeFalsy();
     }
   }
 
@@ -128,9 +128,9 @@ it("proxy non-TLS auth can fail", async () => {
         verbose: true,
         proxy: `http://squid_user:asdf123@localhost:${auth_proxy.port}`,
       });
-      expect(response.statusText).toBe("Forbidden");
+      expect(response.status).toBe(403);
     } catch (err) {
-      expect(err).toBe("Forbidden");
+      expect(true).toBeFalsy();
     }
   }
 });

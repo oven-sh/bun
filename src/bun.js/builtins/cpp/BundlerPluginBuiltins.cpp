@@ -202,7 +202,7 @@ const char* const s_bundlerPluginRunOnResolvePluginsCode =
 const JSC::ConstructAbility s_bundlerPluginRunSetupFunctionCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_bundlerPluginRunSetupFunctionCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_bundlerPluginRunSetupFunctionCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_bundlerPluginRunSetupFunctionCodeLength = 4551;
+const int s_bundlerPluginRunSetupFunctionCodeLength = 4549;
 static const JSC::Intrinsic s_bundlerPluginRunSetupFunctionCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_bundlerPluginRunSetupFunctionCode =
     "(function (setup, config) {\n" \
@@ -271,7 +271,7 @@ const char* const s_bundlerPluginRunSetupFunctionCode =
     "    @throwTypeError(\"On-dispose callbacks are not implemented yet. See https:/\\/github.com/oven-sh/bun/issues/2771\");\n" \
     "  }\n" \
     "\n" \
-    "  function onDispose(callback) {\n" \
+    "  function resolve(callback) {\n" \
     "    @throwTypeError(\"build.resolve() is not implemented yet. See https:/\\/github.com/oven-sh/bun/issues/2771\");\n" \
     "  }\n" \
     "\n" \

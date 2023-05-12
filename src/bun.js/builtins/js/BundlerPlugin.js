@@ -244,7 +244,7 @@ function runSetupFunction(setup, config) {
     @throwTypeError("On-dispose callbacks are not implemented yet. See https:/\/github.com/oven-sh/bun/issues/2771");
   }
 
-  function onDispose(callback) {
+  function resolve(callback) {
     @throwTypeError("build.resolve() is not implemented yet. See https:/\/github.com/oven-sh/bun/issues/2771");
   }
 

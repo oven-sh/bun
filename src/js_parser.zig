@@ -6670,6 +6670,10 @@ fn NewParser_(
             // p.resolveGeneratedSymbol(&p.jsx_filename);
         }
 
+        fn willUseNumberRenamer(p: *P) bool {
+            return p.options.bundle;
+        }
+
         fn hoistSymbols(p: *P, scope: *js_ast.Scope) void {
             if (!scope.kindStopsHoisting()) {
                 var iter = scope.members.iterator();
@@ -6720,7 +6724,8 @@ fn NewParser_(
                         var is_sloppy_mode_block_level_fn_stmt = false;
                         const original_member_ref = value.ref;
 
-                        if (symbol.kind == .hoisted_function) {
+                        // TODO: always use the number renamer
+                        if (p.willUseNumberRenamer() and symbol.kind == .hoisted_function) {
                             // Block-level function declarations behave like "let" in strict mode
                             if (scope.strict_mode != .sloppy_mode) {
                                 continue;

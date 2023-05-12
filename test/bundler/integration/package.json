@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "esbuild": "^0.17.18",
     "esbuild-plugin-vue-next": "^0.1.4",
     "puppeteer": "^20.2.0",
     "react": "next",

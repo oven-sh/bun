@@ -4319,7 +4319,8 @@ const LinkerContext = struct {
                         {
                             if (other_kind == .esm) {
                                 flags[other_file].wrap = .esm;
-                            } else if (!other_flags.force_cjs_to_esm) {
+                            } else {
+                                // TODO: introduce a NamedRequire for require("./foo").Bar AST nodes to support tree-shaking those.
                                 flags[other_file].wrap = .cjs;
                                 exports_kind[other_file] = .cjs;
                             }
@@ -4330,7 +4331,8 @@ const LinkerContext = struct {
                                 // returns a promise, so the imported file must be a CommonJS module
                                 if (exports_kind[other_file] == .esm) {
                                     flags[other_file].wrap = .esm;
-                                } else if (!other_flags.force_cjs_to_esm) {
+                                } else {
+                                    // TODO: introduce a NamedRequire for require("./foo").Bar AST nodes to support tree-shaking those.
                                     flags[other_file].wrap = .cjs;
                                     exports_kind[other_file] = .cjs;
                                 }

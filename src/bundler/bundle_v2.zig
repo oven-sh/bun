@@ -8591,7 +8591,7 @@ const LinkerContext = struct {
             try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, ctx, generateJSRenamer, chunks);
         }
 
-        {
+        if (c.source_maps.tasks.len > 0) {
             debug(" START {d} source maps", .{chunks.len});
             defer debug("  DONE {d} source maps", .{chunks.len});
             c.source_maps.wait_group.wait();

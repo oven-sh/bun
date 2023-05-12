@@ -2749,9 +2749,9 @@ declare module "bun" {
       callback: OnResolveCallback,
     ): void;
     /**
-     * The config object passed to `Bun.build` as is.
+     * The config object passed to `Bun.build` as is. Can be mutated.
      */
-    config: Omit<BuildConfig, "plugins">;
+    config: BuildConfig & { plugins: BunPlugin[]; };
   }
 
   interface BunPlugin {

@@ -34,7 +34,7 @@ describe("integration, react SSR", () => {
           env: nodeEnv ? { NODE_ENV: nodeEnv } : undefined,
         },
       );
-      const proc = Bun.spawnSync(["bun", path.join(out, "ssr_test.js")], {
+      const proc = Bun.spawnSync(["bun", path.join(out, "ssr-print.js")], {
         cwd: path.join(import.meta.dir, "react"),
       });
       if (!proc.success) {

@@ -21,6 +21,57 @@ describe("bundler", () => {
       stdout: "foo",
     },
   });
+  itBundled("cjs2esm/ImportNamedFromExportStarCJSModuleRef", {
+    files: {
+      "/entry.js": /* js */ `
+        import { foo } from './foo';
+        console.log(foo);
+      `,
+      "/foo.js": /* js */ `
+        export * from './bar.cjs';
+      `,
+      "/bar.cjs": /* js */ `
+        module.exports.foo = 'bar';
+      `,
+    },
+    run: {
+      stdout: "bar",
+    },
+  });
+  itBundled("cjs2esm/ImportNamedFromExportStarCJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import { foo } from './foo';
+        console.log(foo);
+      `,
+      "/foo.js": /* js */ `
+        export * from './bar.cjs';
+      `,
+      "/bar.cjs": /* js */ `
+        exports.foo = 'bar';
+      `,
+    },
+    run: {
+      stdout: "bar",
+    },
+  });
+  itBundled("cjs2esm/BadNamedImportNamedReExportedFromCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import {bad} from './foo';
+        console.log(bad);
+      `,
+      "/foo.js": /* js */ `
+        export {bad} from './bar.cjs';
+      `,
+      "/bar.cjs": /* js */ `
+        exports.foo = 'bar';
+      `,
+    },
+    run: {
+      stdout: "undefined",
+    },
+  });
   itBundled("cjs2esm/ExportsFunction", {
     files: {
       "/entry.js": /* js */ `

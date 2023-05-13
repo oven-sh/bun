@@ -2169,6 +2169,104 @@ pub const Expect = struct {
         return .zero;
     }
 
+    pub fn toBeCloseTo(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalObject);
+
+        const thisValue = callFrame.this();
+        const thisArguments = callFrame.arguments(2);
+        const arguments = thisArguments.ptr[0..thisArguments.len];
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toBeCloseTo() requires at least 1 argument. Expected value must be a number", .{});
+            return .zero;
+        }
+
+        const expected_ = arguments[0];
+        if (!expected_.isNumber()) {
+            globalObject.throwInvalidArgumentType("toBeCloseTo", "expected", "number");
+            return .zero;
+        }
+
+        var precision: f64 = 2.0;
+        if (arguments.len > 1) {
+            const precision_ = arguments[1];
+            if (!precision_.isNumber()) {
+                globalObject.throwInvalidArgumentType("toBeCloseTo", "precision", "number");
+                return .zero;
+            }
+
+            precision = precision_.asNumber();
+        }
+
+        const received_: JSC.JSValue = Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+
+        if (!received_.isNumber()) {
+            globalObject.throwInvalidArgumentType("expect", "received", "number");
+            return .zero;
+        }
+
+        var expected = expected_.asNumber();
+        var received = received_.asNumber();
+
+        if (std.math.isNegativeInf(expected)) {
+            expected = -expected;
+        }
+
+        if (std.math.isNegativeInf(received)) {
+            received = -received;
+        }
+
+        if (std.math.isPositiveInf(expected) and std.math.isPositiveInf(received)) {
+            return thisValue;
+        }
+
+        const expected_diff = std.math.pow(f64, 10, -precision) / 2;
+        const actual_diff = std.math.fabs(received - expected);
+        var pass = actual_diff < expected_diff;
+
+        const not = this.op.contains(.not);
+        if (not) pass = !pass;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+
+        const expected_fmt = expected_.toFmt(globalObject, &formatter);
+        const received_fmt = received_.toFmt(globalObject, &formatter);
+
+        const expected_line = "Expected: <green>{any}<r>\n";
+        const received_line = "Received: <red>{any}<r>\n";
+        const expected_precision = "Expected precision: {d}\n";
+        const expected_difference = "Expected difference: \\< <green>{d}<r>\n";
+        const received_difference = "Received difference: <red>{d}<r>\n";
+
+        const suffix_fmt = "\n\n" ++ expected_line ++ received_line ++ "\n" ++ expected_precision ++ expected_difference ++ received_difference;
+
+        if (not) {
+            const fmt = comptime getSignature("toBeCloseTo", "<green>expected<r>, precision", true) ++ suffix_fmt;
+            if (Output.enable_ansi_colors) {
+                globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, received_fmt, precision, expected_diff, actual_diff });
+                return .zero;
+            }
+
+            globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, received_fmt, precision, expected_diff, actual_diff });
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeCloseTo", "<green>expected<r>, precision", false) ++ suffix_fmt;
+
+        if (Output.enable_ansi_colors) {
+            globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, received_fmt, precision, expected_diff, actual_diff });
+            return .zero;
+        }
+
+        globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, received_fmt, precision, expected_diff, actual_diff });
+        return .zero;
+    }
+
     pub fn toBeOdd(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         defer this.postMatch(globalObject);
 
@@ -2948,7 +3046,6 @@ pub const Expect = struct {
     pub const toHaveReturnedWith = notImplementedJSCFn;
     pub const toHaveLastReturnedWith = notImplementedJSCFn;
     pub const toHaveNthReturnedWith = notImplementedJSCFn;
-    pub const toBeCloseTo = notImplementedJSCFn;
     pub const toContainEqual = notImplementedJSCFn;
     pub const toMatchObject = notImplementedJSCFn;
     pub const toMatchInlineSnapshot = notImplementedJSCFn;

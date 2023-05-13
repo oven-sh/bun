@@ -738,7 +738,7 @@ pub const VirtualMachine = struct {
             Api.TransformOptions{
                 .target = .bun,
             },
-            null,
+            existing_bundle,
             null,
         );
         var vm = VMHolder.vm.?;
@@ -753,7 +753,7 @@ pub const VirtualMachine = struct {
             .node_modules = bundler.options.node_modules_bundle,
             .log = log,
             .flush_list = std.ArrayList(string).init(allocator),
-            .blobs = null,
+            .blobs = if (_args.serve orelse false) try Blob.Group.init(allocator) else null,
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(allocator),
             .source_mappings = undefined,
@@ -774,7 +774,7 @@ pub const VirtualMachine = struct {
         vm.event_loop = &vm.regular_event_loop;
 
         vm.bundler.macro_context = null;
-        vm.bundler.resolver.store_fd = false;
+        vm.bundler.resolver.store_fd = store_fd;
 
         vm.bundler.resolver.onWakePackageManager = .{
             .context = &vm.modules,
@@ -786,6 +786,10 @@ pub const VirtualMachine = struct {
         try vm.bundler.configureFramework(false);
 
         vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
+
+        if (_args.serve orelse false) {
+            vm.bundler.linker.onImportCSS = Bun.onImportCSS;
+        }
 
         var global_classes: [GlobalClasses.len]js.JSClassRef = undefined;
         inline for (GlobalClasses, 0..) |Class, i| {
@@ -3133,10 +3137,10 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                             break :brk path_string.slice();
                                         } else {
                                             var file_path_without_trailing_slash = std.mem.trimRight(u8, file_path, std.fs.path.sep_str);
-                                            @memcpy(&_on_file_update_path_buf, file_path_without_trailing_slash);
+                                            @memcpy(&_on_file_update_path_buf, file_path_without_trailing_slash.ptr, file_path_without_trailing_slash.len);
                                             _on_file_update_path_buf[file_path_without_trailing_slash.len] = std.fs.path.sep;
 
-                                            @memcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len + 1 ..], changed_name);
+                                            @memcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len + 1 ..].ptr, changed_name.ptr, changed_name.len);
                                             const path_slice = _on_file_update_path_buf[0 .. file_path_without_trailing_slash.len + changed_name.len + 1];
                                             file_hash = @This().Watcher.getHash(path_slice);
                                             break :brk path_slice;

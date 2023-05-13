@@ -237,7 +237,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
         pub fn init(this: *@This()) !void {
             var opts: uws.us_socket_context_options_t = undefined;
-            @memset(@ptrCast([*]u8, &opts)[0..@sizeOf(uws.us_socket_context_options_t)], 0);
+            @memset(@ptrCast([*]u8, &opts), 0, @sizeOf(uws.us_socket_context_options_t));
             this.us_socket_context = uws.us_create_socket_context(ssl_int, http_thread.loop, @sizeOf(usize), opts).?;
             if (comptime ssl) {
                 this.sslCtx().setup();
@@ -271,7 +271,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     socket.timeout(300);
 
                     pending.http_socket = socket;
-                    @memcpy(&pending.hostname_buf, hostname);
+                    @memcpy(&pending.hostname_buf, hostname.ptr, hostname.len);
                     pending.hostname_len = @truncate(u8, hostname.len);
                     pending.port = port;
 
@@ -695,7 +695,7 @@ pub fn onOpen(
             var hostname_needs_free = false;
             if (!strings.isIPAddress(_hostname)) {
                 if (_hostname.len < temp_hostname.len) {
-                    @memcpy(&temp_hostname, _hostname);
+                    @memcpy(&temp_hostname, _hostname.ptr, _hostname.len);
                     temp_hostname[_hostname.len] = 0;
                     hostname = temp_hostname[0.._hostname.len :0];
                 } else {
@@ -1775,7 +1775,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                 var remain = list.items.ptr[list.items.len..list.capacity];
                 const wrote = @min(remain.len, this.state.request_body.len);
                 std.debug.assert(wrote > 0);
-                @memcpy(remain, this.state.request_body[0..wrote]);
+                @memcpy(remain.ptr, this.state.request_body.ptr, wrote);
                 list.items.len += wrote;
             }
 
@@ -1891,7 +1891,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                 var remain = list.items.ptr[list.items.len..list.capacity];
                 const wrote = @min(remain.len, this.state.request_body.len);
                 std.debug.assert(wrote > 0);
-                @memcpy(remain, this.state.request_body[0..wrote]);
+                @memcpy(remain.ptr, this.state.request_body.ptr, wrote);
                 list.items.len += wrote;
             }
 
@@ -2607,7 +2607,7 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
         buffer = bun.constStrToU8(incoming_data);
     } else {
         buffer = single_packet_small_buffer[0..incoming_data.len];
-        @memcpy(buffer, incoming_data);
+        @memcpy(buffer.ptr, incoming_data.ptr, incoming_data.len);
     }
 
     var bytes_decoded = incoming_data.len;

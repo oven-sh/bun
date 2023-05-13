@@ -50,7 +50,7 @@ pub const BufferVectorized = struct {
 
         switch (written) {
             0 => {},
-            1 => {},
+            1 => @memset(buf.ptr, buf[0], buf.len),
             else => {
                 var contents = buf[0..written];
                 buf = buf[written..];

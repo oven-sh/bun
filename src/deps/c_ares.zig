@@ -488,7 +488,7 @@ pub const Channel = opaque {
                 break :brk null;
             }
             const len = @min(host.len, host_buf.len - 1);
-            @memcpy(host_buf[0..len], host);
+            @memcpy(&host_buf, host.ptr, len);
             host_buf[len] = 0;
             break :brk host_buf[0..len :0].ptr;
         };
@@ -516,7 +516,7 @@ pub const Channel = opaque {
                 break :brk null;
             }
             const len = @min(name_buf.len, name_buf.len - 1);
-            @memcpy(name_buf[0..len], name);
+            @memcpy(&name_buf, name.ptr, len);
             name_buf[len] = 0;
             break :brk name_buf[0..len :0];
         };

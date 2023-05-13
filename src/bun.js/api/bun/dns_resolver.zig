@@ -285,7 +285,7 @@ pub const GetAddrInfo = struct {
 
     pub fn toCAres(this: GetAddrInfo) bun.c_ares.AddrInfo_hints {
         var hints: bun.c_ares.AddrInfo_hints = undefined;
-        @memset(std.mem.asBytes(&hints), 0);
+        @memset(std.mem.asBytes(&hints), 0, @sizeOf(bun.c_ares.AddrInfo_hints));
 
         hints.ai_family = this.options.family.toLibC();
         hints.ai_socktype = this.options.socktype.toLibC();
@@ -320,7 +320,7 @@ pub const GetAddrInfo = struct {
             }
 
             var hints: std.c.addrinfo = undefined;
-            @memset(std.mem.asBytes(&hints), 0);
+            @memset(std.mem.asBytes(&hints), 0, @sizeOf(std.c.addrinfo));
 
             hints.family = this.family.toLibC();
             hints.socktype = this.socktype.toLibC();

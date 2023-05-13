@@ -303,7 +303,7 @@ pub fn MultiArrayList(comptime S: type) type {
                         // We use memset here for more efficient codegen in safety-checked,
                         // valgrind-enabled builds. Otherwise the valgrind client request
                         // will be repeated for every element.
-                        @memset(dest_slice[0..byte_count], undefined);
+                        @memset(@ptrCast([*]u8, dest_slice.ptr), undefined, byte_count);
                     }
                 }
                 self.len = new_len;
@@ -475,7 +475,7 @@ pub fn MultiArrayList(comptime S: type) type {
         pub fn zero(this: *Self) void {
             var allocated = this.allocatedBytes();
             if (allocated.len > 0) {
-                @memset(allocated, 0);
+                @memset(allocated.ptr, 0, allocated.len);
             }
         }
 

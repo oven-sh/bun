@@ -1081,7 +1081,7 @@ pub const Chunk = struct {
             filename = filename[FileSystem.instance.top_level_dir.len - 1 ..];
         } else if (filename.len > 0 and filename[0] != '/') {
             filename_buf[0] = '/';
-            @memcpy(filename_buf[1..][0..filename.len], filename);
+            @memcpy(filename_buf[1..], filename.ptr, filename.len);
             filename = filename_buf[0 .. filename.len + 1];
         }
 
@@ -1383,9 +1383,10 @@ pub const DebugIDFormatter = struct {
 
         const wrote = std.fmt.bufPrint(&buf, "{}", .{formatter}) catch unreachable;
         @memset(
-            buf[wrote.len..][0 .. buf.len - wrote.len],
+            buf[wrote.len..].ptr,
             // fill the remaining with B
             'B',
+            buf.len - wrote.len,
         );
         try writer.writeAll(&buf);
     }

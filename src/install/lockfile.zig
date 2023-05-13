@@ -3345,7 +3345,7 @@ pub const Package = extern struct {
 
             inline for (FieldsEnum.fields) |field| {
                 var bytes = std.mem.sliceAsBytes(sliced.items(@field(Lockfile.Package.List.Field, field.name)));
-                @memcpy(bytes, stream.buffer[stream.pos..][0..bytes.len]);
+                @memcpy(bytes.ptr, stream.buffer[stream.pos..].ptr, bytes.len);
                 stream.pos += bytes.len;
             }
 

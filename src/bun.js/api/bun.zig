@@ -1612,7 +1612,7 @@ pub const Crypto = struct {
 
     fn createCryptoError(globalThis: *JSC.JSGlobalObject, err_code: u32) JSValue {
         var outbuf: [128 + 1 + "BoringSSL error: ".len]u8 = undefined;
-        @memset(&outbuf, 0);
+        @memset(&outbuf, 0, outbuf.len);
         outbuf[0.."BoringSSL error: ".len].* = "BoringSSL error: ".*;
         var message_buf = outbuf["BoringSSL error: ".len..];
 

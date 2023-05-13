@@ -261,7 +261,7 @@ pub const Websocket = struct {
     }
 
     pub fn read(self: *Websocket) !WebsocketDataFrame {
-        @memset(&self.buf[0..self.buf.len], 0);
+        @memset(&self.buf, 0, self.buf.len);
 
         // Read and retry if we hit the end of the stream buffer
         var start = try self.stream.read(&self.buf);

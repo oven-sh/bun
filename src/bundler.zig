@@ -1590,7 +1590,7 @@ pub const Bundler = struct {
         // All non-absolute paths are ./paths
         if (path_to_use[0] != '/' and path_to_use[0] != '.') {
             tmp_buildfile_buf3[0..2].* = "./".*;
-            @memcpy(tmp_buildfile_buf3[2..][0..path_to_use.len], path_to_use);
+            @memcpy(tmp_buildfile_buf3[2..], path_to_use.ptr, path_to_use.len);
             path_to_use = tmp_buildfile_buf3[0 .. 2 + path_to_use.len];
         }
 

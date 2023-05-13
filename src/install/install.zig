@@ -1317,11 +1317,11 @@ const PackageInstall = struct {
                         },
                         // but each file in the directory is a symlink
                         .File => {
-                            @memcpy(remain, entry.path);
+                            @memcpy(remain.ptr, entry.path.ptr, entry.path.len);
                             remain[entry.path.len] = 0;
                             var from_path = buf[0 .. cache_dir_offset + entry.path.len :0];
 
-                            @memcpy(dest_remaining, entry.path);
+                            @memcpy(dest_remaining.ptr, entry.path.ptr, entry.path.len);
                             dest_remaining[entry.path.len] = 0;
                             var to_path = dest_buf[0 .. dest_dir_offset + entry.path.len :0];
 
@@ -6491,7 +6491,7 @@ pub const PackageManager = struct {
                     if (folder.len == 0 or (folder.len == 1 and folder[0] == '.')) {
                         installer.cache_dir_subpath = ".";
                     } else {
-                        @memcpy(&this.folder_path_buf, folder);
+                        @memcpy(&this.folder_path_buf, folder.ptr, folder.len);
                         this.folder_path_buf[folder.len] = 0;
                         installer.cache_dir_subpath = this.folder_path_buf[0..folder.len :0];
                     }
@@ -6511,7 +6511,7 @@ pub const PackageManager = struct {
                     if (folder.len == 0 or (folder.len == 1 and folder[0] == '.')) {
                         installer.cache_dir_subpath = ".";
                     } else {
-                        @memcpy(&this.folder_path_buf, folder);
+                        @memcpy(&this.folder_path_buf, folder.ptr, folder.len);
                         this.folder_path_buf[folder.len] = 0;
                         installer.cache_dir_subpath = this.folder_path_buf[0..folder.len :0];
                     }
@@ -6552,13 +6552,13 @@ pub const PackageManager = struct {
                         const global_link_dir = this.manager.globalLinkDirPath() catch unreachable;
                         var ptr = &this.folder_path_buf;
                         var remain: []u8 = this.folder_path_buf[0..];
-                        @memcpy(ptr, global_link_dir);
+                        @memcpy(ptr, global_link_dir.ptr, global_link_dir.len);
                         remain = remain[global_link_dir.len..];
                         if (global_link_dir[global_link_dir.len - 1] != std.fs.path.sep) {
                             remain[0] = std.fs.path.sep;
                             remain = remain[1..];
                         }
-                        @memcpy(remain.ptr, folder);
+                        @memcpy(remain.ptr, folder.ptr, folder.len);
                         remain = remain[folder.len..];
                         remain[0] = 0;
                         const len = @ptrToInt(remain.ptr) - @ptrToInt(ptr);

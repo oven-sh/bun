@@ -48,7 +48,7 @@ pub const PackageManagerCommand = struct {
     pub fn printHash(ctx: Command.Context, lockfile_: []const u8) !void {
         @setCold(true);
         var lockfile_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
-        @memcpy(&lockfile_buffer, lockfile_);
+        @memcpy(&lockfile_buffer, lockfile_.ptr, lockfile_.len);
         lockfile_buffer[lockfile_.len] = 0;
         var lockfile = lockfile_buffer[0..lockfile_.len :0];
         var pm = try PackageManager.init(ctx, null, &PackageManager.install_params);

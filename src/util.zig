@@ -237,7 +237,7 @@ pub fn fromSlice(
         if (comptime std.meta.trait.isIndexable(DefaultType) and (std.meta.trait.isSlice(DefaultType) or std.meta.trait.is(.Array)(DefaultType))) {
             var in = std.mem.sliceAsBytes(default);
             var out = std.mem.sliceAsBytes(slice);
-            @memcpy(out[0..in.len], in);
+            @memcpy(out.ptr, in.ptr, in.len);
         } else {
             @compileError("Needs a more specific type to copy from");
         }

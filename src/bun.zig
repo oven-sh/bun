@@ -485,7 +485,7 @@ pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
         @ptrToInt(output.ptr) + output.len > @ptrToInt(input.ptr));
 
     if (!does_input_or_output_overlap) {
-        @memcpy(output[0..input.len], input);
+        @memcpy(output.ptr, input.ptr, input.len);
     } else {
         C.memmove(output.ptr, input.ptr, input.len);
     }
@@ -961,7 +961,7 @@ pub fn ComptimeEnumMap(comptime T: type) type {
 /// Ignores default struct values.
 pub fn zero(comptime Type: type) Type {
     var out: [@sizeOf(Type)]u8 align(@alignOf(Type)) = undefined;
-    @memset(@ptrCast([*]u8, &out)[0..out.len], 0);
+    @memset(@ptrCast([*]u8, &out), 0, out.len);
     return @bitCast(Type, out);
 }
 pub const c_ares = @import("./deps/c_ares.zig");

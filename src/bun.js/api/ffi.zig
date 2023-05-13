@@ -866,7 +866,7 @@ pub const FFI = struct {
                 c: u8,
                 byte_count: usize,
             ) callconv(.C) void {
-                @memset(dest[0..byte_count], c);
+                @memset(dest, c, byte_count);
             }
 
             noinline fn memcpy(
@@ -874,7 +874,7 @@ pub const FFI = struct {
                 noalias source: [*]const u8,
                 byte_count: usize,
             ) callconv(.C) void {
-                @memcpy(dest, source[0..byte_count]);
+                @memcpy(dest, source, byte_count);
             }
 
             pub fn define(state: *TCC.TCCState) void {

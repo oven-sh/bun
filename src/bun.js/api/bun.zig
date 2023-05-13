@@ -3005,9 +3005,10 @@ pub const Timer = struct {
             return JSValue.jsUndefined();
         }
 
-        pub fn doRefresh(this: *TimerObject, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+        pub fn doRefresh(this: *TimerObject, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
             // TODO: this is not the optimal way to do this but it works, we should revisit this and optimize it
             // like truly resetting the timer instead of removing and re-adding when possible
+            const this_value = callframe.this();
 
             if (this.has_cleaned_up or this.id == -1) {
                 return JSValue.jsUndefined();
@@ -3056,7 +3057,7 @@ pub const Timer = struct {
                     vm.enqueueTask(JSC.Task.init(&job.task));
 
                     map.put(vm.allocator, this.id, null) catch unreachable;
-                    return this.toJS(globalThis);
+                    return this_value;
                 }
 
                 var timeout = Timeout{
@@ -3091,7 +3092,7 @@ pub const Timer = struct {
                     this.interval,
                     @as(i32, @boolToInt(this.kind == .setInterval)) * this.interval,
                 );
-                return this.toJS(globalThis);
+                return this_value;
             }
             return JSValue.jsUndefined();
         }

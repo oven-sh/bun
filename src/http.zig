@@ -2000,9 +2000,8 @@ pub const RequestContext = struct {
                                 // we never end up using all those bytes
                                 if (handler.message_buffer.list.items.len > 0) {
                                     @memset(
-                                        handler.message_buffer.list.items.ptr,
+                                        handler.message_buffer.list.items[0..@min(handler.message_buffer.list.items.len, 128)],
                                         0,
-                                        @min(handler.message_buffer.list.items.len, 128),
                                     );
                                 }
                                 const build_result = handler.builder.build(request_id, cmd.timestamp, arena.allocator()) catch |err| {
@@ -3387,10 +3386,10 @@ pub const Server = struct {
                                         break :brk path_string.slice();
                                     } else {
                                         var file_path_without_trailing_slash = std.mem.trimRight(u8, file_path, std.fs.path.sep_str);
-                                        @memcpy(&_on_file_update_path_buf, file_path_without_trailing_slash.ptr, file_path_without_trailing_slash.len);
+                                        @memcpy(_on_file_update_path_buf[0..file_path_without_trailing_slash.len], file_path_without_trailing_slash);
                                         _on_file_update_path_buf[file_path_without_trailing_slash.len] = std.fs.path.sep;
 
-                                        @memcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len + 1 ..].ptr, changed_name.ptr, changed_name.len);
+                                        @memcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len + 1 ..][0..changed_name.len], changed_name);
                                         const path_slice = _on_file_update_path_buf[0 .. file_path_without_trailing_slash.len + changed_name.len + 1];
                                         file_hash = Watcher.getHash(path_slice);
                                         break :brk path_slice;

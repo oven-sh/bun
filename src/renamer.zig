@@ -520,7 +520,7 @@ pub const NumberRenamer = struct {
             const prev_cap = inner.len;
             inner.ensureUnusedCapacity(r.allocator, new_len - prev_cap) catch unreachable;
             const to_write = inner.ptr[prev_cap..inner.cap];
-            @memset(std.mem.sliceAsBytes(to_write).ptr, 0, std.mem.sliceAsBytes(to_write).len);
+            @memset(std.mem.sliceAsBytes(to_write), 0);
         }
         inner.len = new_len;
         inner.mut(ref.innerIndex()).* = name;
@@ -554,7 +554,7 @@ pub const NumberRenamer = struct {
                 symbols.dump();
         }
 
-        @memset(std.mem.sliceAsBytes(renamer.names).ptr, 0, std.mem.sliceAsBytes(renamer.names).len);
+        @memset(std.mem.sliceAsBytes(renamer.names), 0);
 
         return renamer;
     }

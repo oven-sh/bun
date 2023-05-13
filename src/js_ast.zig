@@ -156,7 +156,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
                 if (comptime Environment.isDebug) {
                     // ensure we crash if we use a freed value
                     var bytes = std.mem.asBytes(&b.items);
-                    @memset(bytes, undefined, bytes.len);
+                    @memset(bytes, undefined);
                 }
                 b.used = 0;
             }

@@ -3256,7 +3256,7 @@ const LinkerGraph = struct {
         var entry_point_kinds = files.items(.entry_point_kind);
         {
             var kinds = std.mem.sliceAsBytes(entry_point_kinds);
-            @memset(kinds.ptr, 0, kinds.len);
+            @memset(kinds, 0);
         }
 
         // Setup entry points
@@ -3268,7 +3268,7 @@ const LinkerGraph = struct {
             var path_strings: []bun.PathString = this.entry_points.items(.output_path);
             {
                 var output_was_auto_generated = std.mem.sliceAsBytes(this.entry_points.items(.output_path_was_auto_generated));
-                @memset(output_was_auto_generated.ptr, 0, output_was_auto_generated.len);
+                @memset(output_was_auto_generated, 0);
             }
 
             for (entry_points, path_strings, source_indices) |i, *path_string, *source_index| {
@@ -3389,7 +3389,7 @@ const LinkerGraph = struct {
             var stable_source_indices = try this.allocator.alloc(Index, sources.len + 1);
 
             // set it to max value so that if we access an invalid one, it crashes
-            @memset(std.mem.sliceAsBytes(stable_source_indices).ptr, 255, std.mem.sliceAsBytes(stable_source_indices).len);
+            @memset(std.mem.sliceAsBytes(stable_source_indices), 255);
 
             for (this.reachable_files, 0..) |source_index, i| {
                 stable_source_indices[source_index.get()] = Index.source(i);
@@ -10695,7 +10695,7 @@ pub const Chunk = struct {
                         shift.after.add(data_offset);
 
                         if (data.len > 0)
-                            @memcpy(remain.ptr, data.ptr, data.len);
+                            @memcpy(remain[0..data.len], data);
 
                         remain = remain[data.len..];
 
@@ -10727,13 +10727,13 @@ pub const Chunk = struct {
                                 );
 
                                 if (cheap_normalizer[0].len > 0) {
-                                    @memcpy(remain.ptr, cheap_normalizer[0].ptr, cheap_normalizer[0].len);
+                                    @memcpy(remain, cheap_normalizer[0]);
                                     remain = remain[cheap_normalizer[0].len..];
                                     shift.after.advance(cheap_normalizer[0]);
                                 }
 
                                 if (cheap_normalizer[1].len > 0) {
-                                    @memcpy(remain.ptr, cheap_normalizer[1].ptr, cheap_normalizer[1].len);
+                                    @memcpy(remain, cheap_normalizer[1]);
                                     remain = remain[cheap_normalizer[1].len..];
                                     shift.after.advance(cheap_normalizer[1]);
                                 }
@@ -10844,7 +10844,7 @@ pub const Chunk = struct {
                         const data = piece.data();
 
                         if (data.len > 0)
-                            @memcpy(remain.ptr, data.ptr, data.len);
+                            @memcpy(remain, data);
 
                         remain = remain[data.len..];
 
@@ -10866,12 +10866,12 @@ pub const Chunk = struct {
                                 );
 
                                 if (cheap_normalizer[0].len > 0) {
-                                    @memcpy(remain.ptr, cheap_normalizer[0].ptr, cheap_normalizer[0].len);
+                                    @memcpy(remain, cheap_normalizer[0]);
                                     remain = remain[cheap_normalizer[0].len..];
                                 }
 
                                 if (cheap_normalizer[1].len > 0) {
-                                    @memcpy(remain.ptr, cheap_normalizer[1].ptr, cheap_normalizer[1].len);
+                                    @memcpy(remain, cheap_normalizer[1]);
                                     remain = remain[cheap_normalizer[1].len..];
                                 }
                             },

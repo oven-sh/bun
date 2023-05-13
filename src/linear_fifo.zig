@@ -111,7 +111,7 @@ pub fn LinearFifo(
             }
             { // set unused area to undefined
                 const unused = mem.sliceAsBytes(self.buf[self.count..]);
-                @memset(unused.ptr, undefined, unused.len);
+                @memset(unused, undefined);
             }
         }
 
@@ -137,7 +137,7 @@ pub fn LinearFifo(
                 if (self.count > 0) {
                     var new_bytes = std.mem.sliceAsBytes(buf);
                     var old_bytes = std.mem.sliceAsBytes(self.readableSlice(0));
-                    @memcpy(new_bytes.ptr, old_bytes.ptr, old_bytes.len);
+                    @memcpy(new_bytes, old_bytes);
                     self.allocator.free(self.buf);
                 }
                 self.head = 0;
@@ -187,12 +187,12 @@ pub fn LinearFifo(
                 const slice = self.readableSliceMut(0);
                 if (slice.len >= count) {
                     const unused = mem.sliceAsBytes(slice[0..count]);
-                    @memset(unused.ptr, undefined, unused.len);
+                    @memset(unused[0..unused.len], undefined);
                 } else {
                     const unused = mem.sliceAsBytes(slice[0..]);
-                    @memset(unused.ptr, undefined, unused.len);
+                    @memset(unused[0..unused.len], undefined);
                     const unused2 = mem.sliceAsBytes(self.readableSliceMut(slice.len)[0 .. count - slice.len]);
-                    @memset(unused2.ptr, undefined, unused2.len);
+                    @memset(unused2[0..unused2.len], undefined);
                 }
             }
 

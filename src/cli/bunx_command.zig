@@ -81,7 +81,7 @@ pub const BunxCommand = struct {
     fn getBinNameFromProjectDirectory(bundler: *bun.Bundler, dir_fd: std.os.fd_t, package_name: []const u8) ![]const u8 {
         var subpath: [bun.MAX_PATH_BYTES]u8 = undefined;
         subpath[0.."node_modules/".len].* = "node_modules/".*;
-        @memcpy(subpath["node_modules/".len..], package_name.ptr, package_name.len);
+        @memcpy(subpath["node_modules/".len..][0..package_name.len], package_name);
         subpath["node_modules/".len + package_name.len] = std.fs.path.sep;
         subpath["node_modules/".len + package_name.len + 1 ..][0.."package.json".len].* = "package.json".*;
         subpath["node_modules/".len + package_name.len + 1 + "package.json".len] = 0;

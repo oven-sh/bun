@@ -261,7 +261,7 @@ pub const GenerateHeader = struct {
     pub const GeneratePlatform = struct {
         var osversion_name: [32]u8 = undefined;
         pub fn forMac() Analytics.Platform {
-            @memset(&osversion_name, 0, osversion_name.len);
+            @memset(osversion_name[0..osversion_name.len], 0);
 
             var platform = Analytics.Platform{ .os = Analytics.OperatingSystem.macos, .version = &[_]u8{}, .arch = platform_arch };
             var len = osversion_name.len - 1;

@@ -391,7 +391,7 @@ pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf
         return .ok;
     }
     const to_copy = @min(zig_str.len, buf_.len);
-    @memcpy(buf, zig_str.slice().ptr, to_copy);
+    @memcpy(buf[0..to_copy], zig_str.slice().ptr[0..to_copy]);
     buf[to_copy] = 0;
     // if zero terminated, report the length of the string without the null
     result.* = to_copy;
@@ -455,7 +455,7 @@ pub export fn napi_get_value_string_utf8(env: napi_env, value: napi_value, buf_p
     }
 
     const to_copy = @min(zig_str.len, buf_.len);
-    @memcpy(buf, zig_str.slice().ptr, to_copy);
+    @memcpy(buf[0..to_copy], zig_str.slice().ptr[0..to_copy]);
     buf[to_copy] = 0;
     if (result_ptr) |result| {
         result.* = @intCast(@TypeOf(result.*), to_copy);
@@ -513,7 +513,7 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value: napi_value, buf_
     }
 
     const to_copy = @min(zig_str.len, buf_.len) * 2;
-    @memcpy(std.mem.sliceAsBytes(buf_).ptr, std.mem.sliceAsBytes(zig_str.utf16SliceAligned()).ptr, to_copy);
+    @memcpy(std.mem.sliceAsBytes(buf_)[0..to_copy], std.mem.sliceAsBytes(zig_str.utf16SliceAligned()).ptr[0..to_copy]);
     buf[to_copy] = 0;
     // if zero terminated, report the length of the string without the null
     if (result_ptr) |result| {
@@ -790,7 +790,8 @@ pub export fn napi_create_arraybuffer(env: napi_env, byte_length: usize, data: [
     log("napi_create_arraybuffer", .{});
     var typed_array = JSC.C.JSObjectMakeTypedArray(env.ref(), .kJSTypedArrayTypeArrayBuffer, byte_length, TODO_EXCEPTION);
     var array_buffer = JSValue.c(typed_array).asArrayBuffer(env) orelse return genericFailure();
-    @memcpy(array_buffer.ptr, data, @min(array_buffer.len, @truncate(u32, byte_length)));
+    const to_copy = @min(array_buffer.len, @truncate(u32, byte_length));
+    @memcpy(array_buffer.ptr[0..to_copy], data[0..to_copy]);
     result.* = JSValue.c(typed_array);
     return .ok;
 }
@@ -1174,7 +1175,7 @@ pub export fn napi_create_buffer_copy(env: napi_env, length: usize, data: [*]u8,
     var buffer = JSC.JSValue.createBufferFromLength(env, length);
     if (buffer.asArrayBuffer(env)) |array_buf| {
         if (length > 0) {
-            @memcpy(array_buf.slice().ptr, data, length);
+            @memcpy(array_buf.slice().ptr[0..length], data[0..length]);
         }
         if (result_data) |ptr| {
             ptr.* = if (length > 0) array_buf.ptr else null;

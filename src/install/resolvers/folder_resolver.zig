@@ -97,7 +97,7 @@ pub const FolderResolution = union(Tag) {
                     if (path.len > 0) {
                         const offset = path.len -| @as(usize, @boolToInt(path[path.len -| 1] == std.fs.path.sep));
                         if (offset > 0)
-                            @memcpy(remain.ptr, path.ptr, offset);
+                            @memcpy(remain[0..offset], path.ptr[0..offset]);
                         remain = remain[offset..];
                         if (normalized.len > 0) {
                             if ((path[path.len - 1] != std.fs.path.sep) and (normalized[0] != std.fs.path.sep)) {

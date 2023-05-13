@@ -138,7 +138,7 @@ pub const ServerConfig = struct {
 
         pub fn asUSockets(this_: ?SSLConfig) uws.us_bun_socket_context_options_t {
             var ctx_opts: uws.us_bun_socket_context_options_t = undefined;
-            @memset(@ptrCast([*]u8, &ctx_opts), 0, @sizeOf(uws.us_bun_socket_context_options_t));
+            @memset(@ptrCast([*]u8, &ctx_opts)[0..@sizeOf(uws.us_bun_socket_context_options_t)], 0);
 
             if (this_) |ssl_config| {
                 if (ssl_config.key_file_name != null)
@@ -2763,7 +2763,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         const prev_len = bytes.items.len;
                         bytes.items.len = total;
                         var slice = bytes.items[prev_len..];
-                        @memcpy(slice.ptr, chunk.ptr, chunk.len);
+                        @memcpy(slice, chunk);
                         body.value = .{
                             .InternalBlob = .{
                                 .bytes = bytes.toManaged(this.allocator),
@@ -4849,7 +4849,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                         if (reason.len == 0) {
                             break;
                         }
-                        @memcpy(output_buf[written..].ptr, reason.ptr, reason.len);
+                        @memcpy(output_buf[written..], reason);
                         written += reason.len;
                     }
 
@@ -4860,7 +4860,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                         if (reason.len > 0) {
                             output_buf[written..][0.." via ".len].* = " via ".*;
                             written += " via ".len;
-                            @memcpy(output_buf[written..].ptr, reason.ptr, reason.len);
+                            @memcpy(output_buf[written..], reason);
                             written += reason.len;
                         }
                     }
@@ -4872,7 +4872,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                         if (reason.len > 0) {
                             output_buf[written..][0] = ' ';
                             written += 1;
-                            @memcpy(output_buf[written..].ptr, reason.ptr, reason.len);
+                            @memcpy(output_buf[written..], reason);
                             written += reason.len;
                         }
                     }

@@ -180,6 +180,7 @@ it("setTimeout should refresh N times", done => {
   }, 50);
 
   setTimeout(() => {
+    clearTimeout(timer);
     expect(count).toBeGreaterThanOrEqual(5);
     done();
   }, 300);

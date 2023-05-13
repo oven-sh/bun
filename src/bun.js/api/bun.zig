@@ -3010,7 +3010,8 @@ pub const Timer = struct {
             // like truly resetting the timer instead of removing and re-adding when possible
             const this_value = callframe.this();
 
-            if (this.has_cleaned_up or this.id == -1) {
+            // setImmediate does not support refreshing and we do not support refreshing after cleanup
+            if (this.has_cleaned_up or this.id == -1 or this.kind == .setImmediate) {
                 return JSValue.jsUndefined();
             }
             const vm = globalThis.bunVM();

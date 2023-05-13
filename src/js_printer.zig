@@ -988,7 +988,7 @@ fn NewPrinter(
                     p.printNewline();
                     p.options.indent += 1;
                     p.printStmt(stmt) catch unreachable;
-                    if (stmt.data == .s_expr and stmt.data.s_expr.value.data == .e_missing) {
+                    if (stmt.isMissingExpr()) {
                         p.printSemicolonIfNeeded();
                     }
                     p.options.unindent();
@@ -4936,10 +4936,19 @@ fn NewPrinter(
                             p.printIndent();
                         }
                     }
+
+                    if (s.yes.isMissingExpr()) {
+                        p.printSemicolonIfNeeded();
+                    }
                 },
             }
 
             if (s.no) |no_block| {
+                if (no_block.isMissingExpr() and p.options.minify_syntax) {
+                    p.printSemicolonIfNeeded();
+                    return;
+                }
+
                 p.printSemicolonIfNeeded();
                 p.printSpaceBeforeIdentifier();
                 p.print("else");
@@ -4957,6 +4966,9 @@ fn NewPrinter(
                         p.printNewline();
                         p.options.indent += 1;
                         p.printStmt(no_block) catch unreachable;
+                        if (no_block.isMissingExpr()) {
+                            p.printSemicolonIfNeeded();
+                        }
                         p.options.unindent();
                     },
                 }

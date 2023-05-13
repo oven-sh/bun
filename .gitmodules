@@ -65,3 +65,7 @@ fetchRecurseSubmodules = false
 [submodule "src/deps/c-ares"]
 	path = src/deps/c-ares
 	url = https://github.com/c-ares/c-ares.git
+[submodule "src/deps/LIEF"]
+	path = src/deps/LIEF
+	url = git@github.com:lief-project/LIEF.git
+	ignore = dirty

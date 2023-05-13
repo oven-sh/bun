@@ -8,3 +8,4 @@ src/bun.js/bindings/sqlite/sqlite3_local.h linguist-vendored
 *.zig text eol=lf
 src/bun.js/bindings/simdutf.cpp linguist-vendored
 src/bun.js/bindings/simdutf.h linguist-vendored
+src/deps/LIEF linguist-vendored

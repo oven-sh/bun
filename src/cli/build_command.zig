@@ -35,6 +35,7 @@ const BundleV2 = @import("../bundler/bundle_v2.zig").BundleV2;
 var estimated_input_lines_of_code_: usize = undefined;
 
 pub const BuildCommand = struct {
+    extern "C" fn inject_into_macho(ptr: [*]u8, len: usize, section_name: [*:0]const u8) i32;
     pub fn exec(
         ctx: Command.Context,
     ) !void {
@@ -75,7 +76,35 @@ pub const BuildCommand = struct {
         this_bundler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         this_bundler.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
 
-        if (this_bundler.options.entry_points.len > 1 and ctx.bundler_options.outdir.len == 0) {
+        if (ctx.bundler_options.compile) {
+            if (ctx.bundler_options.code_splitting) {
+                Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with --code-splitting", .{});
+                Global.exit(1);
+                return;
+            }
+
+            if (this_bundler.options.entry_points.len > 1) {
+                Output.prettyErrorln("<r><red>error<r><d>:<r> multiple entry points are not supported with --compile", .{});
+                Global.exit(1);
+                return;
+            }
+
+            if (ctx.bundler_options.outdir.len > 0) {
+                Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with --outdir", .{});
+                Global.exit(1);
+                return;
+            }
+
+            if (ctx.bundler_options.outfile.len == 0) {
+                ctx.bundler_options.outfile = std.fs.path.basename(this_bundler.options.entry_points[0]);
+            }
+
+            if (ctx.bundler_options.transform_only) {
+                Output.prettyErrorln("<r><red>error<r><d>:<r> --compile does not support --transform", .{});
+                Global.exit(1);
+                return;
+            }
+        } else if (this_bundler.options.entry_points.len > 1 and ctx.bundler_options.outdir.len == 0) {
             Output.prettyErrorln("error: to use multiple entry points, specify --outdir", .{});
             Global.exit(1);
             return;
@@ -206,11 +235,13 @@ pub const BuildCommand = struct {
                         output_files[0].path = std.fs.path.basename(ctx.bundler_options.outfile);
                     }
 
-                    if (ctx.bundler_options.outfile.len == 0 and output_files.len == 1 and ctx.bundler_options.outdir.len == 0) {
-                        // if --transpile is passed, it won't have an output dir
-                        if (output_files[0].value == .buffer)
-                            try writer.writeAll(output_files[0].value.buffer.bytes);
-                        break :dump;
+                    if (!ctx.bundler_options.compile) {
+                        if (ctx.bundler_options.outfile.len == 0 and output_files.len == 1 and ctx.bundler_options.outdir.len == 0) {
+                            // if --transpile is passed, it won't have an output dir
+                            if (output_files[0].value == .buffer)
+                                try writer.writeAll(output_files[0].value.buffer.bytes);
+                            break :dump;
+                        }
                     }
 
                     var root_path = output_dir;
@@ -268,7 +299,51 @@ pub const BuildCommand = struct {
                                         }
                                     }
                                 }
-                                try root_dir.dir.writeFile(rel_path, value.bytes);
+
+                                if (ctx.bundler_options.compile) {
+                                    const fd = inject_into_macho(@constCast(value.bytes.ptr), value.bytes.len, "__BUN");
+                                    if (fd == -1) {
+                                        Output.prettyErrorln("<r><red>error<r><d>:<r> failed to inject into macho", .{});
+                                        Global.exit(1);
+                                        return;
+                                    }
+
+                                    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                                    const temp_location = bun.getFdPath(fd, &buf) catch |err| {
+                                        Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get path for fd: {s}", .{@errorName(err)});
+                                        Global.exit(1);
+                                        return;
+                                    };
+
+                                    if (comptime Environment.isMac) {
+                                        var signer = std.ChildProcess.init(
+                                            &.{
+                                                "codesign",
+                                                "--sign",
+                                                "-",
+                                                temp_location,
+                                            },
+                                            bun.default_allocator,
+                                        );
+                                        signer.stdout_behavior = .Inherit;
+                                        signer.stderr_behavior = .Inherit;
+                                        signer.stdin_behavior = .Inherit;
+                                        _ = signer.spawnAndWait() catch |err| {
+                                            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to codesign executablez: {s}", .{@errorName(err)});
+                                            Global.exit(1);
+                                            return;
+                                        };
+                                    }
+
+                                    std.os.unlinkat(root_dir.dir.fd, rel_path, 0) catch {};
+                                    std.os.renameat(std.fs.cwd().fd, temp_location, root_dir.dir.fd, rel_path) catch |err| {
+                                        Output.prettyErrorln("<r><red>error<r><d>:<r> failed to rename {s} to {s}: {s}", .{ temp_location, rel_path, @errorName(err) });
+                                        Global.exit(1);
+                                        return;
+                                    };
+                                } else {
+                                    try root_dir.dir.writeFile(rel_path, value.bytes);
+                                }
                             },
                             .move => |value| {
                                 const primary = f.path[from_path.len..];

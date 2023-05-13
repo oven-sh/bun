@@ -89,6 +89,8 @@ fn invalidTarget(diag: *clap.Diagnostic, _target: []const u8) noreturn {
     diag.report(Output.errorWriter(), error.InvalidTarget) catch {};
     std.process.exit(1);
 }
+extern "C" fn postject_find_resource(name: [*:0]const u8, size: *usize) ?[*:0]const u8;
+
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
         const option_loader = options.Loader.fromString(in) orelse return error.InvalidLoader;
@@ -206,6 +208,7 @@ pub const Arguments = struct {
         clap.parseParam("--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--server-components              Enable React Server Components (experimental)") catch unreachable,
         clap.parseParam("--transpile                      Transpile file only, do not bundle") catch unreachable,
+        clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code") catch unreachable,
     };
 
     // TODO: update test completions
@@ -663,6 +666,9 @@ pub const Arguments = struct {
 
         switch (comptime cmd) {
             .BuildCommand => {
+                if (args.flag("--compile")) {
+                    ctx.bundler_options.compile = true;
+                }
                 // if (args.option("--resolve")) |_resolve| {
                 //     switch (ResolveMatcher.match(_resolve)) {
                 //         ResolveMatcher.case("disable") => {
@@ -953,6 +959,8 @@ pub const Command = struct {
             minify_syntax: bool = false,
             minify_whitespace: bool = false,
             minify_identifiers: bool = false,
+
+            compile: bool = false,
         };
 
         const _ctx = Command.Context{

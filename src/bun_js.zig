@@ -60,7 +60,7 @@ pub const Run = struct {
         }
 
         run = .{
-            .vm = try VirtualMachine.initWithModuleGraph(arena.allocator(), log, graph_ptr),
+            .vm = try VirtualMachine.initWithModuleGraph(arena.allocator(), ctx.log, graph_ptr),
             .arena = arena,
             .ctx = ctx,
             .entry_path = entry_path,

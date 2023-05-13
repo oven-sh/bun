@@ -503,6 +503,60 @@ ENV LIB_ICU_PATH=${WEBKIT_DIR}/lib
 
 RUN --mount=type=cache,target=/ccache cd $BUN_DIR && make sqlite
 
+FROM bun-base as zstd
+
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
+
+ARG CPU_TARGET
+ENV CPU_TARGET=${CPU_TARGET}
+
+ENV CCACHE_DIR=/ccache
+
+COPY Makefile ${BUN_DIR}/Makefile
+COPY src/deps/zstd ${BUN_DIR}/src/deps/zstd
+COPY .prettierrc.cjs ${BUN_DIR}/.prettierrc.cjs
+
+WORKDIR $BUN_DIR
+
+ENV JSC_BASE_DIR=${WEBKIT_DIR}
+ENV LIB_ICU_PATH=${WEBKIT_DIR}/lib
+
+RUN --mount=type=cache,target=/ccache cd $BUN_DIR && make zstd
+
+FROM bun-base as lief
+
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
+
+ARG CPU_TARGET
+ENV CPU_TARGET=${CPU_TARGET}
+
+ENV CCACHE_DIR=/ccache
+
+COPY Makefile ${BUN_DIR}/Makefile
+COPY src/deps/LIEF ${BUN_DIR}/src/deps/LIEF
+COPY .prettierrc.cjs ${BUN_DIR}/.prettierrc.cjs
+
+WORKDIR $BUN_DIR
+
+ENV JSC_BASE_DIR=${WEBKIT_DIR}
+ENV LIB_ICU_PATH=${WEBKIT_DIR}/lib
+
+RUN --mount=type=cache,target=/ccache cd $BUN_DIR && make lief
+
 FROM scratch as build_release_cpp
 
 COPY --from=compile_cpp /tmp/*.o /
@@ -535,6 +589,8 @@ COPY --from=lolhtml ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=mimalloc ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/
 COPY --from=picohttp ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/
 COPY --from=sqlite ${BUN_DEPS_OUT_DIR}/*.o  ${BUN_DEPS_OUT_DIR}/
+COPY --from=zstd ${BUN_DEPS_OUT_DIR}/*.a  ${BUN_DEPS_OUT_DIR}/
+COPY --from=lief ${BUN_DEPS_OUT_DIR}/*.a  ${BUN_DEPS_OUT_DIR}/
 COPY --from=tinycc ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=uws ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=uws ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/

@@ -344,7 +344,7 @@ LINUX_INCLUDE_DIRS := $(ALL_JSC_INCLUDE_DIRS) \
 UWS_INCLUDE_DIR := -I$(BUN_DEPS_DIR)/uws/uSockets/src -I$(BUN_DEPS_DIR)/uws/src -I$(BUN_DEPS_DIR)
 
 
-INCLUDE_DIRS := $(UWS_INCLUDE_DIR) -I$(BUN_DEPS_DIR)/mimalloc/include -I$(BUN_DEPS_DIR)/LIEF/include -Isrc/napi -I$(BUN_DEPS_DIR)/boringssl/include -I$(BUN_DEPS_DIR)/c-ares/include
+INCLUDE_DIRS := $(UWS_INCLUDE_DIR) -I$(BUN_DEPS_DIR)/mimalloc/include -I$(BUN_DEPS_DIR)/zstd/include -I$(BUN_DEPS_DIR)/LIEF/include -Isrc/napi -I$(BUN_DEPS_DIR)/boringssl/include -I$(BUN_DEPS_DIR)/c-ares/include
 
 
 ifeq ($(OS_NAME),linux)
@@ -453,6 +453,7 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MINIMUM_ARCHIVE_FILES) \
 		-lusockets \
 		-lcares \
 		-lLIEF \
+		-lzstd \
 		$(BUN_DEPS_OUT_DIR)/libuwsockets.o
 
 ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO)
@@ -637,6 +638,9 @@ compile-ffi-test:
 
 sqlite:
 
+.PHONY: zstd
+zstd:
+	cd $(BUN_DEPS_DIR)/zstd && rm -rf build-cmake-debug && cmake $(CMAKE_FLAGS) -DZSTD_BUILD_STATIC=ON -B build-cmake-debug -S build/cmake -G Ninja && ninja -C build-cmake-debug && cp build-cmake-debug/lib/libzstd.a $(BUN_DEPS_OUT_DIR)/libzstd.a
 
 .PHONY: libarchive
 libarchive:
@@ -1892,7 +1896,7 @@ cold-jsc-start:
 		misctools/cold-jsc-start.cpp -o cold-jsc-start
 
 .PHONY: vendor-without-npm
-vendor-without-npm: node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws tinycc c-ares lief
+vendor-without-npm: node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws tinycc c-ares lief zstd
 
 .PHONY: vendor-without-check
 vendor-without-check: npm-install vendor-without-npm

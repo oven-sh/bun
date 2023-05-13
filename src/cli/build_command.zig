@@ -98,8 +98,13 @@ pub const BuildCommand = struct {
 
             if (outfile.len == 0) {
                 outfile = std.fs.path.basename(this_bundler.options.entry_points[0]);
-                while (strings.eqlComptime(outfile, "index")) {
-                    outfile = std.fs.path.basename(std.fs.path.dirname(this_bundler.options.entry_points[0]) orelse break);
+                const ext = std.fs.path.extname(outfile);
+                if (ext.len > 0) {
+                    outfile = outfile[0 .. outfile.len - ext.len];
+                }
+
+                if (strings.eqlComptime(outfile, "index")) {
+                    outfile = std.fs.path.basename(std.fs.path.dirname(this_bundler.options.entry_points[0]));
                 }
             }
 

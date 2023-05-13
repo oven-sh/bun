@@ -2990,13 +2990,109 @@ pub const Timer = struct {
         id: i32 = -1,
         kind: Timeout.Kind = .setTimeout,
         ref_count: u16 = 1,
+        // we need this information because we can refresh it after it has ended
+        arguments: JSC.Strong = .{},
+        callback: JSC.Strong = .{},
+        interval: i32 = 0,
+        // we do not allow the timer to be refreshed after we call clearInterval/clearTimeout
+        has_cleaned_up: bool = false,
 
         pub usingnamespace JSC.Codegen.JSTimeout;
 
         pub fn doRef(this: *TimerObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
             if (this.ref_count > 0)
                 this.ref_count +|= 1;
+            return JSValue.jsUndefined();
+        }
 
+        pub fn doRefresh(this: *TimerObject, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+            // TODO: this is not the optimal way to do this but it works, we should revisit this and optimize it
+            // like truly resetting the timer instead of removing and re-adding when possible
+
+            if (this.has_cleaned_up or this.id == -1) {
+                return JSValue.jsUndefined();
+            }
+            const vm = globalThis.bunVM();
+            var map = vm.timer.maps.get(this.kind);
+
+            // reschedule the event
+            if (this.callback.get()) |callback| {
+                callback.ensureStillAlive();
+
+                const id: Timeout.ID = .{
+                    .id = this.id,
+                    .kind = this.kind,
+                };
+
+                if (this.kind == .setTimeout and this.interval == 0) {
+                    var cb: CallbackJob = .{
+                        .callback = JSC.Strong.create(callback, globalThis),
+                        .globalThis = globalThis,
+                        .id = this.id,
+                        .kind = this.kind,
+                    };
+
+                    if (this.arguments.get()) |arguments| {
+                        arguments.ensureStillAlive();
+                        cb.arguments = JSC.Strong.create(arguments, globalThis);
+                    }
+
+                    var job = vm.allocator.create(CallbackJob) catch @panic(
+                        "Out of memory while allocating Timeout",
+                    );
+
+                    job.* = cb;
+                    job.task = CallbackJob.Task.init(job);
+                    job.ref.ref(vm);
+
+                    // cancel the current event if exists before re-adding it
+                    if (map.fetchSwapRemove(this.id)) |timer| {
+                        if (timer.value != null) {
+                            var value = timer.value.?;
+                            value.deinit();
+                        }
+                    }
+
+                    vm.enqueueTask(JSC.Task.init(&job.task));
+
+                    map.put(vm.allocator, this.id, null) catch unreachable;
+                    return this.toJS(globalThis);
+                }
+
+                var timeout = Timeout{
+                    .callback = JSC.Strong.create(callback, globalThis),
+                    .globalThis = globalThis,
+                    .timer = uws.Timer.create(
+                        vm.uws_event_loop.?,
+                        id,
+                    ),
+                };
+
+                if (this.arguments.get()) |arguments| {
+                    arguments.ensureStillAlive();
+                    timeout.arguments = JSC.Strong.create(arguments, globalThis);
+                }
+
+                timeout.poll_ref.ref(vm);
+
+                // cancel the current event if exists before re-adding it
+                if (map.fetchSwapRemove(this.id)) |timer| {
+                    if (timer.value != null) {
+                        var value = timer.value.?;
+                        value.deinit();
+                    }
+                }
+
+                map.put(vm.allocator, this.id, timeout) catch unreachable;
+
+                timeout.timer.set(
+                    id,
+                    Timeout.run,
+                    this.interval,
+                    @as(i32, @boolToInt(this.kind == .setInterval)) * this.interval,
+                );
+                return this.toJS(globalThis);
+            }
             return JSValue.jsUndefined();
         }
 
@@ -3022,7 +3118,13 @@ pub const Timer = struct {
             return JSValue.jsNumber(this.id);
         }
 
+        pub fn markHasClear(this: *TimerObject) void {
+            this.has_cleaned_up = true;
+        }
+
         pub fn finalize(this: *TimerObject) callconv(.C) void {
+            this.callback.deinit();
+            this.arguments.deinit();
             bun.default_allocator.destroy(this);
         }
     };
@@ -3143,19 +3245,12 @@ pub const Timer = struct {
         id: i32,
         globalThis: *JSGlobalObject,
         callback: JSValue,
-        countdown: JSValue,
+        interval: i32,
         arguments_array_or_zero: JSValue,
         repeat: bool,
     ) !void {
         JSC.markBinding(@src());
         var vm = globalThis.bunVM();
-
-        // We don't deal with nesting levels directly
-        // but we do set the minimum timeout to be 1ms for repeating timers
-        const interval: i32 = @max(
-            countdown.coerce(i32, globalThis),
-            if (repeat) @as(i32, 1) else 0,
-        );
 
         const kind: Timeout.Kind = if (repeat) .setInterval else .setTimeout;
 
@@ -3228,13 +3323,21 @@ pub const Timer = struct {
         const id = globalThis.bunVM().timer.last_id;
         globalThis.bunVM().timer.last_id +%= 1;
 
-        Timer.set(id, globalThis, callback, countdown, arguments, false) catch
+        const interval: i32 = @max(
+            countdown.coerce(i32, globalThis),
+            0,
+        );
+
+        Timer.set(id, globalThis, callback, interval, arguments, false) catch
             return JSValue.jsUndefined();
 
         var timer = globalThis.allocator().create(TimerObject) catch unreachable;
         timer.* = .{
             .id = id,
             .kind = .setTimeout,
+            .callback = JSC.Strong.create(callback, globalThis),
+            .arguments = JSC.Strong.create(arguments, globalThis),
+            .interval = interval,
         };
 
         return timer.toJS(globalThis);
@@ -3249,13 +3352,22 @@ pub const Timer = struct {
         const id = globalThis.bunVM().timer.last_id;
         globalThis.bunVM().timer.last_id +%= 1;
 
-        Timer.set(id, globalThis, callback, countdown, arguments, true) catch
+        // We don't deal with nesting levels directly
+        // but we do set the minimum timeout to be 1ms for repeating timers
+        const interval: i32 = @max(
+            countdown.coerce(i32, globalThis),
+            1,
+        );
+        Timer.set(id, globalThis, callback, interval, arguments, true) catch
             return JSValue.jsUndefined();
 
         var timer = globalThis.allocator().create(TimerObject) catch unreachable;
         timer.* = .{
             .id = id,
             .kind = .setInterval,
+            .callback = JSC.Strong.create(callback, globalThis),
+            .arguments = JSC.Strong.create(arguments, globalThis),
+            .interval = interval,
         };
 
         return timer.toJS(globalThis);
@@ -3275,6 +3387,7 @@ pub const Timer = struct {
                 }
 
                 if (TimerObject.fromJS(timer_id_value)) |timer_obj| {
+                    timer_obj.markHasClear();
                     break :brk timer_obj.id;
                 }
 

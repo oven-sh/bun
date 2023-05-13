@@ -4030,10 +4030,13 @@ pub const JSTimeout = struct {
             @compileLog("Expected Timeout.hasRef to be a callback but received " ++ @typeName(@TypeOf(Timeout.hasRef)));
         if (@TypeOf(Timeout.doRef) != CallbackType)
             @compileLog("Expected Timeout.doRef to be a callback but received " ++ @typeName(@TypeOf(Timeout.doRef)));
+        if (@TypeOf(Timeout.doRefresh) != CallbackType)
+            @compileLog("Expected Timeout.doRefresh to be a callback but received " ++ @typeName(@TypeOf(Timeout.doRefresh)));
         if (@TypeOf(Timeout.doUnref) != CallbackType)
             @compileLog("Expected Timeout.doUnref to be a callback but received " ++ @typeName(@TypeOf(Timeout.doUnref)));
         if (!JSC.is_bindgen) {
             @export(Timeout.doRef, .{ .name = "TimeoutPrototype__doRef" });
+            @export(Timeout.doRefresh, .{ .name = "TimeoutPrototype__doRefresh" });
             @export(Timeout.doUnref, .{ .name = "TimeoutPrototype__doUnref" });
             @export(Timeout.finalize, .{ .name = "TimeoutClass__finalize" });
             @export(Timeout.hasRef, .{ .name = "TimeoutPrototype__hasRef" });

@@ -69,3 +69,7 @@ fetchRecurseSubmodules = false
 	path = src/deps/LIEF
 	url = git@github.com:lief-project/LIEF.git
 	ignore = dirty
+[submodule "src/deps/zstd"]
+	path = src/deps/zstd
+	url = git@github.com:facebook/zstd.git
+	ignore = dirty

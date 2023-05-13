@@ -273,7 +273,7 @@ pub const BuildCommand = struct {
                     }
 
                     if (ctx.bundler_options.compile) {
-                        try bun.StandaloneModuleGraph.toExecutable(allocator, output_files, root_dir, ctx.bundler_options.outfile);
+                        // try bun.StandaloneModuleGraph.toExecutable(allocator, output_files, root_dir, ctx.bundler_options.outfile);
                         break :dump;
                     }
 

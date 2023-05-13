@@ -35,7 +35,6 @@ const BundleV2 = @import("../bundler/bundle_v2.zig").BundleV2;
 var estimated_input_lines_of_code_: usize = undefined;
 
 pub const BuildCommand = struct {
-    extern "C" fn inject_into_macho(ptr: [*]u8, len: usize, section_name: [*:0]const u8) i32;
     pub fn exec(
         ctx: Command.Context,
     ) !void {
@@ -54,6 +53,8 @@ pub const BuildCommand = struct {
             Global.exit(1);
             return;
         }
+        var outfile = ctx.bundler_options.outfile;
+
         this_bundler.options.entry_naming = ctx.bundler_options.entry_naming;
         this_bundler.options.chunk_naming = ctx.bundler_options.chunk_naming;
         this_bundler.options.asset_naming = ctx.bundler_options.asset_naming;
@@ -95,8 +96,11 @@ pub const BuildCommand = struct {
                 return;
             }
 
-            if (ctx.bundler_options.outfile.len == 0) {
-                ctx.bundler_options.outfile = std.fs.path.basename(this_bundler.options.entry_points[0]);
+            if (outfile.len == 0) {
+                outfile = std.fs.path.basename(this_bundler.options.entry_points[0]);
+                while (strings.eqlComptime(outfile, "index")) {
+                    outfile = std.fs.path.basename(std.fs.path.dirname(this_bundler.options.entry_points[0]) orelse break);
+                }
             }
 
             if (ctx.bundler_options.transform_only) {
@@ -230,13 +234,13 @@ pub const BuildCommand = struct {
                     defer Output.flush();
                     var writer = Output.writer();
                     var output_dir = this_bundler.options.output_dir;
-                    if (ctx.bundler_options.outfile.len > 0 and output_files.len == 1 and output_files[0].value == .buffer) {
-                        output_dir = std.fs.path.dirname(ctx.bundler_options.outfile) orelse ".";
-                        output_files[0].path = std.fs.path.basename(ctx.bundler_options.outfile);
+                    if (outfile.len > 0 and output_files.len == 1 and output_files[0].value == .buffer) {
+                        output_dir = std.fs.path.dirname(outfile) orelse ".";
+                        output_files[0].path = std.fs.path.basename(outfile);
                     }
 
                     if (!ctx.bundler_options.compile) {
-                        if (ctx.bundler_options.outfile.len == 0 and output_files.len == 1 and ctx.bundler_options.outdir.len == 0) {
+                        if (outfile.len == 0 and output_files.len == 1 and ctx.bundler_options.outdir.len == 0) {
                             // if --transpile is passed, it won't have an output dir
                             if (output_files[0].value == .buffer)
                                 try writer.writeAll(output_files[0].value.buffer.bytes);
@@ -266,6 +270,11 @@ pub const BuildCommand = struct {
                             std.math.max(from_path.len, f.path.len) + 2 - from_path.len,
                             max_path_len,
                         );
+                    }
+
+                    if (ctx.bundler_options.compile) {
+                        try bun.StandaloneModuleGraph.toExecutable(allocator, output_files, root_dir, ctx.bundler_options.outfile);
+                        break :dump;
                     }
 
                     // On posix, file handles automatically close on process exit by the OS
@@ -300,50 +309,7 @@ pub const BuildCommand = struct {
                                     }
                                 }
 
-                                if (ctx.bundler_options.compile) {
-                                    const fd = inject_into_macho(@constCast(value.bytes.ptr), value.bytes.len, "__BUN");
-                                    if (fd == -1) {
-                                        Output.prettyErrorln("<r><red>error<r><d>:<r> failed to inject into macho", .{});
-                                        Global.exit(1);
-                                        return;
-                                    }
-
-                                    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                                    const temp_location = bun.getFdPath(fd, &buf) catch |err| {
-                                        Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get path for fd: {s}", .{@errorName(err)});
-                                        Global.exit(1);
-                                        return;
-                                    };
-
-                                    if (comptime Environment.isMac) {
-                                        var signer = std.ChildProcess.init(
-                                            &.{
-                                                "codesign",
-                                                "--sign",
-                                                "-",
-                                                temp_location,
-                                            },
-                                            bun.default_allocator,
-                                        );
-                                        signer.stdout_behavior = .Inherit;
-                                        signer.stderr_behavior = .Inherit;
-                                        signer.stdin_behavior = .Inherit;
-                                        _ = signer.spawnAndWait() catch |err| {
-                                            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to codesign executablez: {s}", .{@errorName(err)});
-                                            Global.exit(1);
-                                            return;
-                                        };
-                                    }
-
-                                    std.os.unlinkat(root_dir.dir.fd, rel_path, 0) catch {};
-                                    std.os.renameat(std.fs.cwd().fd, temp_location, root_dir.dir.fd, rel_path) catch |err| {
-                                        Output.prettyErrorln("<r><red>error<r><d>:<r> failed to rename {s} to {s}: {s}", .{ temp_location, rel_path, @errorName(err) });
-                                        Global.exit(1);
-                                        return;
-                                    };
-                                } else {
-                                    try root_dir.dir.writeFile(rel_path, value.bytes);
-                                }
+                                try root_dir.dir.writeFile(rel_path, value.bytes);
                             },
                             .move => |value| {
                                 const primary = f.path[from_path.len..];

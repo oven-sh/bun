@@ -1062,7 +1062,7 @@ pub const Fetch = struct {
                             } else {
                                 var proxy_str = proxy_arg.toStringOrNull(globalThis) orelse return .zero;
                                 // proxy + url 1 allocation
-                                var proxy_url_zig = proxy_str.getZigString(globalThis);
+                                var proxy_url_zig = proxy_str.toSlice(globalThis);
 
                                 // ignore proxy if it is len = 0
                                 if (proxy_url_zig.len == 0) {
@@ -1073,9 +1073,9 @@ pub const Fetch = struct {
                                         JSC.JSError(bun.default_allocator, "Out of memory", .{}, ctx, exception);
                                         return .zero;
                                     };
-                                    @memcpy(buffer.ptr, request.url.ptr, request.url.len);
+                                    @memcpy(buffer, request.url);
                                     var proxy_url_slice = buffer[request.url.len..];
-                                    @memcpy(proxy_url_slice.ptr, proxy_url_zig.ptr, proxy_url_zig.len);
+                                    @memcpy(proxy_url_slice, proxy_url_zig.slice());
 
                                     url = ZigURL.parse(buffer[0..request.url.len]);
                                     proxy = ZigURL.parse(proxy_url_slice);
@@ -1228,9 +1228,12 @@ pub const Fetch = struct {
                                         JSC.JSError(bun.default_allocator, "Out of memory", .{}, ctx, exception);
                                         return .zero;
                                     };
-                                    @memcpy(buffer.ptr, url_zig.ptr, url_zig.len);
+                                    var url_safe = url_zig.toSlice(globalThis);
+                                    defer url_safe.deinit();
+                                    @memcpy(buffer, url_safe.slice());
                                     var proxy_url_slice = buffer[url_zig.len..];
-                                    @memcpy(proxy_url_slice.ptr, proxy_url_zig.ptr, proxy_url_zig.len);
+                                    var proxy_url_zig_slice = proxy_url_zig.toSlice(globalThis);
+                                    @memcpy(proxy_url_slice, proxy_url_zig_slice.slice());
 
                                     url = ZigURL.parse(buffer[0..url_zig.len]);
                                     proxy = ZigURL.parse(proxy_url_slice);

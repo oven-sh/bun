@@ -247,10 +247,10 @@ pub fn main() anyerror!void {
         var digest2: DigestType = undefined;
         var digest3: DigestType = undefined;
         var digest4: DigestType = undefined;
-        @memset(&digest1, 0, @sizeOf(DigestType));
-        @memset(&digest2, 0, @sizeOf(DigestType));
-        @memset(&digest3, 0, @sizeOf(DigestType));
-        @memset(&digest4, 0, @sizeOf(DigestType));
+        @memset(std.mem.asBytes(&digest1), 0);
+        @memset(std.mem.asBytes(&digest2), 0);
+        @memset(std.mem.asBytes(&digest3), 0);
+        @memset(std.mem.asBytes(&digest4), 0);
         defer {
             std.mem.doNotOptimizeAway(&digest1);
             std.mem.doNotOptimizeAway(&digest2);
@@ -331,4 +331,3 @@ pub fn main() anyerror!void {
 //     std.crypto.hash.sha2.Sha256.hash(value, &hash2, .{});
 //     try std.testing.expectEqual(hash, hash2);
 // }
-

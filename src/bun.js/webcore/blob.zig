@@ -539,7 +539,7 @@ pub const Blob = struct {
             return JSPromise.resolvedPromiseValue(ctx.ptr(), cloned.toJS(ctx)).asObjectRef();
         } else if (destination_type == .bytes and source_type == .file) {
             var fake_call_frame: [8]JSC.JSValue = undefined;
-            @memset(@ptrCast([*]u8, &fake_call_frame), 0, @sizeOf(@TypeOf(fake_call_frame)));
+            @memset(@ptrCast([*]u8, &fake_call_frame)[0..@sizeOf(@TypeOf(fake_call_frame))], 0);
             const blob_value =
                 source_blob.getSlice(ctx, @ptrCast(*JSC.CallFrame, &fake_call_frame));
 
@@ -3689,10 +3689,10 @@ pub const InlineBlob = extern struct {
         var bytes_slice = inline_blob.bytes[0..total];
 
         if (first.len > 0)
-            @memcpy(bytes_slice.ptr, first.ptr, first.len);
+            @memcpy(bytes_slice, first);
 
         if (second.len > 0)
-            @memcpy(bytes_slice.ptr + first.len, second.ptr, second.len);
+            @memcpy(bytes_slice[first.len..], second);
 
         inline_blob.len = @truncate(@TypeOf(inline_blob.len), total);
         return inline_blob;
@@ -3707,7 +3707,7 @@ pub const InlineBlob = extern struct {
         };
 
         if (data.len > 0)
-            @memcpy(&blob.bytes, data.ptr, data.len);
+            @memcpy(&blob.bytes, data);
         return blob;
     }
 

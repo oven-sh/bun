@@ -37,14 +37,94 @@ const VirtualMachine = JSC.VirtualMachine;
 
 var run: Run = undefined;
 pub const Run = struct {
-    file: std.fs.File,
     ctx: Command.Context,
     vm: *VirtualMachine,
     entry_path: string,
     arena: Arena = undefined,
     any_unhandled: bool = false,
 
+    pub fn bootStandalone(ctx_: Command.Context, entry_path: string, graph: bun.StandaloneModuleGraph) !void {
+        var ctx = ctx_;
+        JSC.markBinding(@src());
+        bun.JSC.initialize();
+
+        var graph_ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
+        graph_ptr.* = graph;
+
+        js_ast.Expr.Data.Store.create(default_allocator);
+        js_ast.Stmt.Data.Store.create(default_allocator);
+        var arena = try Arena.init();
+
+        if (!ctx.debug.loaded_bunfig) {
+            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+        }
+
+        run = .{
+            .vm = try VirtualMachine.initWithModuleGraph(arena.allocator(), log, graph_ptr),
+            .arena = arena,
+            .ctx = ctx,
+            .entry_path = entry_path,
+        };
+
+        var vm = run.vm;
+        var b = &vm.bundler;
+        vm.preload = ctx.preloads;
+        vm.argv = ctx.passthrough;
+        vm.arena = &run.arena;
+        vm.allocator = arena.allocator();
+
+        b.options.install = ctx.install;
+        b.resolver.opts.install = ctx.install;
+        b.resolver.opts.global_cache = ctx.debug.global_cache;
+        b.resolver.opts.prefer_offline_install = (ctx.debug.offline_mode_setting orelse .online) == .offline;
+        b.resolver.opts.prefer_latest_install = (ctx.debug.offline_mode_setting orelse .online) == .latest;
+        b.options.global_cache = b.resolver.opts.global_cache;
+        b.options.prefer_offline_install = b.resolver.opts.prefer_offline_install;
+        b.options.prefer_latest_install = b.resolver.opts.prefer_latest_install;
+        b.resolver.env_loader = b.env;
+
+        b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
+        b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
+        b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
+        b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
+
+        // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
+
+        if (ctx.debug.macros) |macros| {
+            b.options.macro_remap = macros;
+        }
+
+        b.configureRouter(false) catch {
+            if (Output.enable_ansi_colors_stderr) {
+                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+            } else {
+                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+            }
+            Output.prettyErrorln("\n", .{});
+            Global.exit(1);
+        };
+        b.configureDefines() catch {
+            if (Output.enable_ansi_colors_stderr) {
+                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+            } else {
+                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+            }
+            Output.prettyErrorln("\n", .{});
+            Global.exit(1);
+        };
+
+        AsyncHTTP.loadEnv(vm.allocator, vm.log, b.env);
+
+        vm.loadExtraEnv();
+        vm.is_main_thread = true;
+        JSC.VirtualMachine.is_main_thread_vm = true;
+
+        var callback = OpaqueWrap(Run, Run.start);
+        vm.global.vm().holdAPILock(&run, callback);
+    }
+
     pub fn boot(ctx_: Command.Context, file: std.fs.File, entry_path: string) !void {
+        _ = file;
         var ctx = ctx_;
         JSC.markBinding(@src());
         bun.JSC.initialize();
@@ -66,7 +146,6 @@ pub const Run = struct {
                 null,
                 ctx.debug.hot_reload != .none,
             ),
-            .file = file,
             .arena = arena,
             .ctx = ctx,
             .entry_path = entry_path,

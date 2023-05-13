@@ -35,9 +35,83 @@ pub const SourceMapState = struct {
 };
 
 sources: [][]const u8 = &[_][]u8{},
-sources_content: [][]SourceContent,
+sources_content: []string,
 mapping: Mapping.List = .{},
 allocator: std.mem.Allocator,
+
+pub fn parse(
+    allocator: std.mem.Allocator,
+    json_source: *const Logger.Source,
+    log: *Logger.Log,
+) !SourceMap {
+    var json = try bun.JSON.ParseJSONUTF8(json_source, log, allocator);
+    var mappings = bun.sourcemap.Mapping.List{};
+
+    if (json.get("version")) |version| {
+        if (version.data != .e_number or version.data.e_number.value != 3.0) {
+            return error.@"Unsupported sourcemap version";
+        }
+    }
+
+    if (json.get("mappings")) |mappings_str| {
+        if (mappings_str.data != .e_string) {
+            return error.@"Invalid sourcemap mappings";
+        }
+
+        var parsed = bun.sourcemap.Mapping.parse(allocator, try mappings_str.data.e_string.toUTF8(allocator), null, std.math.maxInt(i32));
+        if (parsed == .fail) {
+            try log.addMsg(bun.logger.Msg{
+                .data = parsed.fail.toData("sourcemap.json"),
+                .kind = .err,
+            });
+            return error.@"Failed to parse sourcemap mappings";
+        }
+
+        mappings = parsed.success;
+    }
+
+    var sources = std.ArrayList(bun.string).init(allocator);
+    var sources_content = std.ArrayList(string).init(allocator);
+
+    if (json.get("sourcesContent")) |mappings_str| {
+        if (mappings_str.data != .e_array) {
+            return error.@"Invalid sourcemap sources";
+        }
+
+        try sources_content.ensureTotalCapacityPrecise(mappings_str.data.e_array.items.len);
+        for (mappings_str.data.e_array.items.slice()) |source| {
+            if (source.data != .e_string) {
+                return error.@"Invalid sourcemap source";
+            }
+
+            try source.data.e_string.toUTF8(allocator);
+            sources_content.appendAssumeCapacity(source.data.e_string.slice());
+        }
+    }
+
+    if (json.get("sources")) |mappings_str| {
+        if (mappings_str.data != .e_array) {
+            return error.@"Invalid sourcemap sources";
+        }
+
+        try sources.ensureTotalCapacityPrecise(mappings_str.data.e_array.items.len);
+        for (mappings_str.data.e_array.items.slice()) |source| {
+            if (source.data != .e_string) {
+                return error.@"Invalid sourcemap source";
+            }
+
+            try source.data.e_string.toUTF8(allocator);
+            sources.appendAssumeCapacity(source.data.e_string.slice());
+        }
+    }
+
+    return SourceMap{
+        .mapping = mappings,
+        .allocator = allocator,
+        .sources_content = sources_content.items,
+        .sources = sources.items,
+    };
+}
 
 pub const Mapping = struct {
     generated: LineColumnOffset,

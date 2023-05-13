@@ -53,6 +53,36 @@ pub fn append(this: *StringBuilder, slice: string) string {
     return result;
 }
 
+pub fn add(this: *StringBuilder, len: usize) bun.StringPointer {
+    if (comptime Environment.allow_assert) {
+        assert(this.len <= this.cap); // didn't count everything
+        assert(this.ptr != null); // must call allocate first
+    }
+
+    const start = this.len;
+    this.len += len;
+
+    if (comptime Environment.allow_assert) assert(this.len <= this.cap);
+
+    return bun.StringPointer{ .offset = @truncate(u32, start), .length = @truncate(u32, len) };
+}
+pub fn appendCount(this: *StringBuilder, slice: string) bun.StringPointer {
+    if (comptime Environment.allow_assert) {
+        assert(this.len <= this.cap); // didn't count everything
+        assert(this.ptr != null); // must call allocate first
+    }
+
+    const start = this.len;
+    bun.copy(u8, this.ptr.?[this.len..this.cap], slice);
+    const result = this.ptr.?[this.len..this.cap][0..slice.len];
+    _ = result;
+    this.len += slice.len;
+
+    if (comptime Environment.allow_assert) assert(this.len <= this.cap);
+
+    return bun.StringPointer{ .offset = @truncate(u32, start), .length = @truncate(u32, slice.len) };
+}
+
 pub fn fmt(this: *StringBuilder, comptime str: string, args: anytype) string {
     if (comptime Environment.allow_assert) {
         assert(this.len <= this.cap); // didn't count everything

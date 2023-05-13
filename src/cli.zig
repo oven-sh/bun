@@ -89,7 +89,6 @@ fn invalidTarget(diag: *clap.Diagnostic, _target: []const u8) noreturn {
     diag.report(Output.errorWriter(), error.InvalidTarget) catch {};
     std.process.exit(1);
 }
-extern "C" fn postject_find_resource(name: [*:0]const u8, size: *usize) ?[*:0]const u8;
 
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
@@ -1125,6 +1124,24 @@ pub const Command = struct {
             // _ = TestCommand;
             // _ = UpgradeCommand;
             // _ = BunxCommand;
+        }
+
+        if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
+            var ctx = Command.Context{
+                .args = std.mem.zeroes(Api.TransformOptions),
+                .log = log,
+                .start_time = start_time,
+                .allocator = bun.default_allocator,
+            };
+
+            ctx.args.target = Api.Target.bun;
+
+            try @import("./bun_js.zig").Run.bootStandalone(
+                ctx,
+                graph.entryPoint().name,
+                graph,
+            );
+            return;
         }
 
         const tag = which();

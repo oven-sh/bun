@@ -1509,3 +1509,7 @@ pub fn openFileForPath(path_: [:0]const u8) !std.fs.File {
 }
 
 pub const Generation = u16;
+
+pub const zstd = @import("./deps/zstd.zig");
+pub const StringPointer = Schema.Api.StringPointer;
+pub const StandaloneModuleGraph = @import("./standalone_bun.zig").StandaloneModuleGraph;

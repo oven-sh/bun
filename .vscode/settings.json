@@ -77,6 +77,7 @@
     "src/deps/lol-html": true,
     "src/deps/c-ares": true,
     "src/deps/tinycc": true,
+    "src/deps/zstd": true,
     "test/snippets/package-json-exports/_node_modules_copy": true
   },
   "C_Cpp.files.exclude": {

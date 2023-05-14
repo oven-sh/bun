@@ -2077,6 +2077,16 @@ pub const ModuleLoader = struct {
                 .source_url = ZigString.init(specifier),
                 .hash = 0,
             };
+        } else if (jsc_vm.standalone_module_graph) |graph| {
+            if (graph.files.get(specifier)) |file| {
+                return ResolvedSource{
+                    .allocator = null,
+                    .source_code = ZigString.init(file.contents),
+                    .specifier = ZigString.init(specifier),
+                    .source_url = ZigString.init(specifier),
+                    .hash = 0,
+                };
+            }
         }
 
         return null;

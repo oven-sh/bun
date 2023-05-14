@@ -361,6 +361,7 @@ pub const VirtualMachine = struct {
     pending_unref_counter: i32 = 0,
     preload: []const string = &[_][]const u8{},
     unhandled_pending_rejection_to_capture: ?*JSC.JSValue = null,
+    standalone_module_graph: ?*bun.StandaloneModuleGraph = null,
 
     hot_reload: bun.CLI.Command.HotReload = .none,
 
@@ -721,6 +722,92 @@ pub const VirtualMachine = struct {
 
     pub inline fn isLoaded() bool {
         return VMHolder.vm != null;
+    }
+
+    pub fn initWithModuleGraph(
+        allocator: std.mem.Allocator,
+        log: *logger.Log,
+        graph: *bun.StandaloneModuleGraph,
+    ) !*VirtualMachine {
+        VMHolder.vm = try allocator.create(VirtualMachine);
+        var console = try allocator.create(ZigConsoleClient);
+        console.* = ZigConsoleClient.init(Output.errorWriter(), Output.writer());
+        const bundler = try Bundler.init(
+            allocator,
+            log,
+            std.mem.zeroes(Api.TransformOptions),
+            null,
+            null,
+        );
+        var vm = VMHolder.vm.?;
+
+        vm.* = VirtualMachine{
+            .global = undefined,
+            .allocator = allocator,
+            .entry_point = ServerEntryPoint{},
+            .event_listeners = EventListenerMixin.Map.init(allocator),
+            .bundler = bundler,
+            .console = console,
+            .node_modules = bundler.options.node_modules_bundle,
+            .log = log,
+            .flush_list = std.ArrayList(string).init(allocator),
+            .blobs = null,
+            .origin = bundler.options.origin,
+            .saved_source_map_table = SavedSourceMap.HashTable.init(allocator),
+            .source_mappings = undefined,
+            .macros = MacroMap.init(allocator),
+            .macro_entry_points = @TypeOf(vm.macro_entry_points).init(allocator),
+            .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
+            .origin_timestamp = getOriginTimestamp(),
+            .ref_strings = JSC.RefString.Map.init(allocator),
+            .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
+            .standalone_module_graph = graph,
+        };
+        vm.source_mappings = .{ .map = &vm.saved_source_map_table };
+        vm.regular_event_loop.tasks = EventLoop.Queue.init(
+            default_allocator,
+        );
+        vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
+        vm.regular_event_loop.concurrent_tasks = .{};
+        vm.event_loop = &vm.regular_event_loop;
+
+        vm.bundler.macro_context = null;
+        vm.bundler.resolver.store_fd = false;
+
+        vm.bundler.resolver.onWakePackageManager = .{
+            .context = &vm.modules,
+            .handler = ModuleLoader.AsyncModule.Queue.onWakeHandler,
+            .onDependencyError = JSC.ModuleLoader.AsyncModule.Queue.onDependencyError,
+        };
+
+        vm.bundler.resolver.standalone_module_graph = graph;
+
+        // Avoid reading from tsconfig.json & package.json when we're in standalone mode
+        vm.bundler.configureLinkerWithAutoJSX(false);
+        try vm.bundler.configureFramework(false);
+
+        vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
+
+        var global_classes: [GlobalClasses.len]js.JSClassRef = undefined;
+        inline for (GlobalClasses, 0..) |Class, i| {
+            global_classes[i] = Class.get().*;
+        }
+        vm.global = ZigGlobalObject.create(
+            &global_classes,
+            @intCast(i32, global_classes.len),
+            vm.console,
+        );
+        vm.regular_event_loop.global = vm.global;
+        vm.regular_event_loop.virtual_machine = vm;
+
+        if (source_code_printer == null) {
+            var writer = try js_printer.BufferWriter.init(allocator);
+            source_code_printer = allocator.create(js_printer.BufferPrinter) catch unreachable;
+            source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
+            source_code_printer.?.ctx.append_null_byte = false;
+        }
+
+        return vm;
     }
 
     pub fn init(
@@ -1196,6 +1283,7 @@ pub const VirtualMachine = struct {
             res.* = ErrorableZigString.ok(ZigString.init(hardcoded.path));
             return;
         }
+
         var old_log = jsc_vm.log;
         var log = logger.Log.init(jsc_vm.allocator);
         defer log.deinit();

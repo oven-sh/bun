@@ -521,7 +521,7 @@ function expectBundled(
               "build",
               ...entryPaths,
               ...(entryPointsRaw ?? []),
-              bundling === false ? "--transpile" : [],
+              bundling === false ? "--no-bundle" : [],
               outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
               define && Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
               `--target=${target}`,

@@ -1989,6 +1989,7 @@ pub const OutputFile = struct {
     input: Fs.Path,
     value: Value,
     size: usize = 0,
+    size_without_sourcemap: usize = 0,
     mtime: ?i128 = null,
     hash: u64 = 0,
     source_map_index: u32 = std.math.maxInt(u32),
@@ -2099,6 +2100,7 @@ pub const OutputFile = struct {
         output_path: string,
         size: ?usize = null,
         input_path: []const u8 = "",
+        display_size: u32 = 0,
         output_kind: JSC.API.BuildArtifact.OutputKind = .chunk,
         data: union(enum) {
             buffer: struct {
@@ -2125,6 +2127,7 @@ pub const OutputFile = struct {
                 .file => |file| file.size,
                 .saved => 0,
             },
+            .size_without_sourcemap = options.display_size,
             .hash = options.hash orelse 0,
             .output_kind = options.output_kind,
             .source_map_index = options.source_map_index orelse std.math.maxInt(u32),

@@ -50,6 +50,11 @@ Bun statically links these libraries:
 
 ---
 
+- [`zstd`](https://github.com/facebook/zstd)
+- dual-licensed under the BSD License or GPLv2 license
+
+---
+
 - [`simdutf`](https://github.com/simdutf/simdutf)
 - Apache 2.0
 

@@ -167,6 +167,8 @@ pub const Result = struct {
 
     is_external: bool = false,
 
+    is_standalone_module: bool = false,
+
     // This is true when the package was loaded from within the node_modules directory.
     is_from_node_modules: bool = false,
 
@@ -484,6 +486,8 @@ pub const Resolver = struct {
     onWakePackageManager: PackageManager.WakeHandler = .{},
     env_loader: ?*DotEnv.Loader = null,
     store_fd: bool = false,
+
+    standalone_module_graph: ?*bun.StandaloneModuleGraph = null,
 
     // These are sets that represent various conditions for the "exports" field
     // in package.json.
@@ -814,6 +818,23 @@ pub const Resolver = struct {
             };
         }
 
+        if (r.standalone_module_graph) |graph| {
+            if (strings.hasPrefixComptime(import_path, "compiled://")) {
+                if (graph.files.contains(import_path)) {
+                    return .{
+                        .success = Result{
+                            .import_kind = kind,
+                            .path_pair = PathPair{
+                                .primary = Path.init(import_path),
+                            },
+                            .is_standalone_module = true,
+                            .module_type = .esm,
+                        },
+                    };
+                }
+            }
+        }
+
         if (DataURL.parse(import_path)) |_data_url| {
             const data_url: DataURL = _data_url;
             // "import 'data:text/javascript,console.log(123)';"
@@ -862,7 +883,7 @@ pub const Resolver = struct {
         var tmp = r.resolveWithoutSymlinks(source_dir, import_path, kind, global_cache);
         switch (tmp) {
             .success => |*result| {
-                if (!strings.eqlComptime(result.path_pair.primary.namespace, "node"))
+                if (!strings.eqlComptime(result.path_pair.primary.namespace, "node") and !result.is_standalone_module)
                     r.finalizeResult(result, kind) catch |err| return .{ .failure = err };
 
                 r.flushDebugLogs(.success) catch {};

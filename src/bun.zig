@@ -161,7 +161,7 @@ pub const fmt = struct {
                 try fmt.formatFloatDecimal(new_value / 1000.0, .{ .precision = 2 }, writer);
                 return writer.writeAll(" KB");
             } else {
-                try fmt.formatFloatDecimal(new_value, .{ .precision = if (std.math.approxEqAbs(f64, new_value, @trunc(new_value), 0.100)) @as(usize, 0) else @as(usize, 2) }, writer);
+                try fmt.formatFloatDecimal(new_value, .{ .precision = if (std.math.approxEqAbs(f64, new_value, @trunc(new_value), 0.100)) @as(usize, 1) else @as(usize, 2) }, writer);
             }
 
             const buf = switch (1000) {
@@ -1509,3 +1509,7 @@ pub fn openFileForPath(path_: [:0]const u8) !std.fs.File {
 }
 
 pub const Generation = u16;
+
+pub const zstd = @import("./deps/zstd.zig");
+pub const StringPointer = Schema.Api.StringPointer;
+pub const StandaloneModuleGraph = @import("./standalone_bun.zig").StandaloneModuleGraph;

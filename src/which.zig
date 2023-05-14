@@ -33,8 +33,10 @@ pub fn which(buf: *[bun.MAX_PATH_BYTES]u8, path: []const u8, cwd: []const u8, bi
         //   /foo/bar/baz as a path and you're in /home/jarred?
     }
 
-    if (isValid(buf, std.mem.trimRight(u8, cwd, std.fs.path.sep_str), bin)) |len| {
-        return buf[0..len :0];
+    if (cwd.len > 0) {
+        if (isValid(buf, std.mem.trimRight(u8, cwd, std.fs.path.sep_str), bin)) |len| {
+            return buf[0..len :0];
+        }
     }
 
     var path_iter = std.mem.tokenize(u8, path, ":");

@@ -344,7 +344,7 @@ LINUX_INCLUDE_DIRS := $(ALL_JSC_INCLUDE_DIRS) \
 UWS_INCLUDE_DIR := -I$(BUN_DEPS_DIR)/uws/uSockets/src -I$(BUN_DEPS_DIR)/uws/src -I$(BUN_DEPS_DIR)
 
 
-INCLUDE_DIRS := $(UWS_INCLUDE_DIR) -I$(BUN_DEPS_DIR)/mimalloc/include -I$(BUN_DEPS_DIR)/zstd/include -I$(BUN_DEPS_DIR)/LIEF/include -Isrc/napi -I$(BUN_DEPS_DIR)/boringssl/include -I$(BUN_DEPS_DIR)/c-ares/include
+INCLUDE_DIRS := $(UWS_INCLUDE_DIR) -I$(BUN_DEPS_DIR)/mimalloc/include -I$(BUN_DEPS_DIR)/zstd/include -Isrc/napi -I$(BUN_DEPS_DIR)/boringssl/include -I$(BUN_DEPS_DIR)/c-ares/include
 
 
 ifeq ($(OS_NAME),linux)
@@ -452,7 +452,6 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MINIMUM_ARCHIVE_FILES) \
 		-ltcc \
 		-lusockets \
 		-lcares \
-		-lLIEF \
 		-lzstd \
 		$(BUN_DEPS_OUT_DIR)/libuwsockets.o
 
@@ -913,41 +912,6 @@ bun-codesign-release-local:
 bun-codesign-release-local-debug:
 
 
-LIEF_MACHO = OFF
-LIEF_ELF = OFF
-LIEF_PE = OFF
-
-ifeq ($(OS_NAME),darwin)
-LIEF_MACHO = ON
-endif
-
-ifeq ($(OS_NAME),linux)
-LIEF_ELF = ON
-endif
-
-.PHONY: lief
-lief:
-	cd $(BUN_DEPS_DIR)/LIEF && (make clean || echo "") && \
-	CXX=$(CXX) CC=$(CC) cmake \
-		-DBUILD_SHARED_LIBS=OFF \
-		-DCMAKE_CXX_COMPILER=$(REAL_CXX) \
-		-DCMAKE_AR=$(AR) \
-		-DLIEF_USE_CCACHE=OFF \
-		-DLIEF_MACHO=$(LIEF_MACHO) \
-		-DLIEF_ELF=$(LIEF_ELF) \
-		-DLIEF_PE=$(LIEF_PE) \
-		-DLIEF_OAT=OFF \
-		-DLIEF_DEX=OFF \
-		-DLIEF_VDEX=OFF \
-		-DLIEF_ART=OFF \
-		-DCMAKE_BUILD_TYPE=MinSizeRel \
-		-DLIEF_ENABLE_JSON=OFF \
-		-DLIEF_EXAMPLES=OFF \
-		-DLIEF_TESTS=OFF \
-		-DLIEF_DOC=OFF \
-		-DLIEF_INSTALL=$(BUN_DEPS_OUT_DIR) \
-		-DCMAKE_RANLIB=$(which llvm-15-ranlib 2>/dev/null || which llvm-ranlib 2>/dev/null) && \
-	CXX=$(CXX) CC=$(CC) make -j$(CPUS) && cp libLIEF.a $(BUN_DEPS_OUT_DIR)/libLIEF.a
 .PHONY: jsc
 jsc: jsc-build jsc-copy-headers jsc-bindings
 .PHONY: jsc-build
@@ -1896,7 +1860,7 @@ cold-jsc-start:
 		misctools/cold-jsc-start.cpp -o cold-jsc-start
 
 .PHONY: vendor-without-npm
-vendor-without-npm: node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws tinycc c-ares lief zstd
+vendor-without-npm: node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws tinycc c-ares zstd
 
 .PHONY: vendor-without-check
 vendor-without-check: npm-install vendor-without-npm

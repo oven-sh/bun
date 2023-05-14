@@ -48,7 +48,7 @@ pub const BuildCommand = struct {
         this_bundler.options.source_map = options.SourceMapOption.fromApi(ctx.args.source_map);
         this_bundler.resolver.opts.source_map = options.SourceMapOption.fromApi(ctx.args.source_map);
 
-        if (this_bundler.options.source_map == .external and ctx.bundler_options.outdir.len == 0) {
+        if (this_bundler.options.source_map == .external and ctx.bundler_options.outdir.len == 0 and !ctx.bundler_options.compile) {
             Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use an external source map without --outdir", .{});
             Global.exit(1);
             return;
@@ -79,7 +79,7 @@ pub const BuildCommand = struct {
 
         if (ctx.bundler_options.compile) {
             if (ctx.bundler_options.code_splitting) {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with --code-splitting", .{});
+                Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with --splitting", .{});
                 Global.exit(1);
                 return;
             }
@@ -96,6 +96,9 @@ pub const BuildCommand = struct {
                 return;
             }
 
+            // We never want to hit the filesystem for these files
+            this_bundler.options.public_path = "compiled://root/";
+
             if (outfile.len == 0) {
                 outfile = std.fs.path.basename(this_bundler.options.entry_points[0]);
                 const ext = std.fs.path.extension(outfile);
@@ -109,11 +112,13 @@ pub const BuildCommand = struct {
             }
 
             if (ctx.bundler_options.transform_only) {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> --compile does not support --transform", .{});
+                Output.prettyErrorln("<r><red>error<r><d>:<r> --compile does not support --no-bundle", .{});
                 Global.exit(1);
                 return;
             }
-        } else if (this_bundler.options.entry_points.len > 1 and ctx.bundler_options.outdir.len == 0) {
+        }
+
+        if (this_bundler.options.entry_points.len > 1 and ctx.bundler_options.outdir.len == 0) {
             Output.prettyErrorln("error: to use multiple entry points, specify --outdir", .{});
             Global.exit(1);
             return;
@@ -278,7 +283,7 @@ pub const BuildCommand = struct {
                     }
 
                     if (ctx.bundler_options.compile) {
-                        try bun.StandaloneModuleGraph.toExecutable(allocator, output_files, root_dir, ctx.bundler_options.outfile);
+                        try bun.StandaloneModuleGraph.toExecutable(allocator, output_files, root_dir, this_bundler.options.public_path, outfile);
                         break :dump;
                     }
 

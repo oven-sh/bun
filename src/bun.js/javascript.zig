@@ -780,7 +780,10 @@ pub const VirtualMachine = struct {
             .onDependencyError = JSC.ModuleLoader.AsyncModule.Queue.onDependencyError,
         };
 
-        vm.bundler.configureLinker();
+        vm.bundler.resolver.standalone_module_graph = graph;
+
+        // Avoid reading from tsconfig.json & package.json when we're in standalone mode
+        vm.bundler.configureLinkerWithAutoJSX(false);
         try vm.bundler.configureFramework(false);
 
         vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
@@ -1279,13 +1282,6 @@ pub const VirtualMachine = struct {
 
             res.* = ErrorableZigString.ok(ZigString.init(hardcoded.path));
             return;
-        }
-
-        if (jsc_vm.standalone_module_graph) |graph| {
-            if (graph.files.get(specifier.slice())) |file| {
-                res.* = ErrorableZigString.ok(ZigString.init(file.name));
-                return;
-            }
         }
 
         var old_log = jsc_vm.log;

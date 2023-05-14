@@ -98,6 +98,25 @@ pub fn fmt(this: *StringBuilder, comptime str: string, args: anytype) string {
     return out;
 }
 
+pub fn fmtAppendCount(this: *StringBuilder, comptime str: string, args: anytype) bun.StringPointer {
+    if (comptime Environment.allow_assert) {
+        assert(this.len <= this.cap); // didn't count everything
+        assert(this.ptr != null); // must call allocate first
+    }
+
+    var buf = this.ptr.?[this.len..this.cap];
+    const out = std.fmt.bufPrint(buf, str, args) catch unreachable;
+    const off = this.len;
+    this.len += out.len;
+
+    if (comptime Environment.allow_assert) assert(this.len <= this.cap);
+
+    return bun.StringPointer{
+        .offset = @truncate(u32, off),
+        .length = @truncate(u32, out.len),
+    };
+}
+
 pub fn fmtCount(this: *StringBuilder, comptime str: string, args: anytype) void {
     this.cap += std.fmt.count(str, args);
 }
@@ -108,4 +127,12 @@ pub fn allocatedSlice(this: *StringBuilder) []u8 {
         assert(this.cap > 0);
     }
     return ptr[0..this.cap];
+}
+
+pub fn writable(this: *StringBuilder) []u8 {
+    var ptr = this.ptr orelse return &[_]u8{};
+    if (comptime Environment.allow_assert) {
+        assert(this.cap > 0);
+    }
+    return ptr[this.len..this.cap];
 }

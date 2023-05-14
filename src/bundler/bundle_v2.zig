@@ -332,6 +332,7 @@ pub const BundleV2 = struct {
     bun_watcher: ?*Watcher.Watcher = null,
     plugins: ?*JSC.API.JSBundler.Plugin = null,
     completion: ?*JSBundleCompletionTask = null,
+    source_code_length: usize = 0,
 
     // There is a race condition where an onResolve plugin may schedule a task on the bundle thread before it's parsing task completes
     resolve_tasks_waiting_for_import_source_index: std.AutoArrayHashMapUnmanaged(Index.Int, BabyList(struct { to_source_index: Index, import_record_index: u32 })) = .{},
@@ -993,6 +994,9 @@ pub const BundleV2 = struct {
         event_loop: EventLoop,
         unique_key: u64,
         enable_reloading: bool,
+        reachable_files_count: *usize,
+        minify_duration: *u64,
+        source_code_size: *u64,
     ) !std.ArrayList(options.OutputFile) {
         var this = try BundleV2.init(bundler, allocator, event_loop, enable_reloading, null, null);
         this.unique_key = unique_key;
@@ -1009,6 +1013,9 @@ pub const BundleV2 = struct {
 
         this.waitForParse();
 
+        minify_duration.* = @intCast(u64, @divTrunc(@truncate(i64, std.time.nanoTimestamp()) - @truncate(i64, bun.CLI.start_time), @as(i64, std.time.ns_per_ms)));
+        source_code_size.* = this.source_code_length;
+
         if (this.graph.use_directive_entry_points.len > 0) {
             if (this.bundler.log.msgs.items.len > 0) {
                 return error.BuildFailed;
@@ -1023,6 +1030,7 @@ pub const BundleV2 = struct {
         }
 
         const reachable_files = try this.findReachableFiles();
+        reachable_files_count.* = reachable_files.len -| 1; // - 1 for the runtime
 
         try this.processFilesToCopy(reachable_files);
 
@@ -2098,6 +2106,10 @@ pub const BundleV2 = struct {
                 // Warning: this array may resize in this function call
                 // do not reuse it.
                 graph.input_files.items(.source)[result.source.index.get()] = result.source;
+                this.source_code_length += if (!result.source.index.isRuntime())
+                    result.source.contents.len
+                else
+                    @as(usize, 0);
                 graph.input_files.items(.unique_key_for_additional_file)[result.source.index.get()] = result.unique_key_for_additional_file;
                 graph.input_files.items(.content_hash_for_additional_file)[result.source.index.get()] = result.content_hash_for_additional_file;
 
@@ -8834,20 +8846,25 @@ const LinkerContext = struct {
         if (root_path.len > 0) {
             try c.writeOutputFilesToDisk(root_path, chunks, react_client_components_manifest, &output_files);
         } else {
+
             // In-memory build
             for (chunks) |*chunk| {
+                var display_size: usize = 0;
+
                 const _code_result = if (c.options.source_maps != .none) chunk.intermediate_output.codeWithSourceMapShifts(
                     null,
                     c.parse_graph,
                     c.resolver.opts.public_path,
                     chunk,
                     chunks,
+                    &display_size,
                 ) else chunk.intermediate_output.code(
                     null,
                     c.parse_graph,
                     c.resolver.opts.public_path,
                     chunk,
                     chunks,
+                    &display_size,
                 );
 
                 var code_result = _code_result catch @panic("Failed to allocate memory for output file");
@@ -8918,6 +8935,7 @@ const LinkerContext = struct {
                             .hash = chunk.isolated_hash,
                             .loader = .js,
                             .input_path = input_path,
+                            .display_size = @truncate(u32, display_size),
                             .output_kind = if (chunk.entry_point.is_entry_point)
                                 c.graph.files.items(.entry_point_kind)[chunk.entry_point.source_index].OutputKind()
                             else
@@ -9014,7 +9032,7 @@ const LinkerContext = struct {
                     };
                 }
             }
-
+            var display_size: usize = 0;
             const _code_result = if (c.options.source_maps != .none)
                 chunk.intermediate_output.codeWithSourceMapShifts(
                     code_allocator,
@@ -9022,6 +9040,7 @@ const LinkerContext = struct {
                     c.resolver.opts.public_path,
                     chunk,
                     chunks,
+                    &display_size,
                 )
             else
                 chunk.intermediate_output.code(
@@ -9030,6 +9049,7 @@ const LinkerContext = struct {
                     c.resolver.opts.public_path,
                     chunk,
                     chunks,
+                    &display_size,
                 );
 
             var code_result = _code_result catch @panic("Failed to allocate memory for output chunk");
@@ -9169,6 +9189,7 @@ const LinkerContext = struct {
                         else
                             null,
                         .size = @truncate(u32, code_result.buffer.len),
+                        .display_size = @truncate(u32, display_size),
                         .data = .{
                             .saved = 0,
                         },
@@ -10635,6 +10656,7 @@ pub const Chunk = struct {
             import_prefix: []const u8,
             chunk: *Chunk,
             chunks: []Chunk,
+            display_size: ?*usize,
         ) !CodeResult {
             const additional_files = graph.input_files.items(.additional_files);
             const unique_key_for_additional_files = graph.input_files.items(.unique_key_for_additional_file);
@@ -10676,6 +10698,10 @@ pub const Chunk = struct {
                             },
                             .none => {},
                         }
+                    }
+
+                    if (display_size) |amt| {
+                        amt.* = count;
                     }
 
                     const debug_id_len = if (comptime FeatureFlags.source_map_debug_id)
@@ -10767,6 +10793,10 @@ pub const Chunk = struct {
 
                     const allocator = allocator_to_use orelse allocatorForSize(joiny.len);
 
+                    if (display_size) |amt| {
+                        amt.* = joiny.len;
+                    }
+
                     const buffer = brk: {
                         if (comptime FeatureFlags.source_map_debug_id) {
                             // This comment must go before the //# sourceMappingURL comment
@@ -10801,6 +10831,7 @@ pub const Chunk = struct {
             import_prefix: []const u8,
             chunk: *Chunk,
             chunks: []Chunk,
+            display_size: *usize,
         ) !CodeResult {
             const additional_files = graph.input_files.items(.additional_files);
             switch (this) {
@@ -10837,6 +10868,7 @@ pub const Chunk = struct {
                         }
                     }
 
+                    display_size.* = count;
                     var total_buf = try (allocator_to_use orelse allocatorForSize(count)).alloc(u8, count);
                     var remain = total_buf;
 
@@ -10890,6 +10922,9 @@ pub const Chunk = struct {
                 .joiner => |joiner_| {
                     // TODO: make this safe
                     var joiny = joiner_;
+
+                    display_size.* = joiny.len;
+
                     return .{
                         .buffer = try joiny.done((allocator_to_use orelse allocatorForSize(joiny.len))),
                         .shifts = &[_]sourcemap.SourceMapShifts{},

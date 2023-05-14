@@ -36,12 +36,17 @@ var estimated_input_lines_of_code_: usize = undefined;
 
 pub const BuildCommand = struct {
     pub fn exec(
-        ctx: Command.Context,
+        ctx_: Command.Context,
     ) !void {
         Global.configureAllocator(.{ .long_running = true });
+        var ctx = ctx_;
         var allocator = ctx.allocator;
         var log = ctx.log;
         estimated_input_lines_of_code_ = 0;
+        if (ctx.bundler_options.compile) {
+            // set this early so that externals are set up correctly and define is right
+            ctx.args.target = .bun;
+        }
 
         var this_bundler = try bundler.Bundler.init(allocator, log, ctx.args, null, null);
 
@@ -97,6 +102,7 @@ pub const BuildCommand = struct {
             }
 
             // We never want to hit the filesystem for these files
+            // This "compiled" protocol is specially handled by the module resolver.
             this_bundler.options.public_path = "compiled://root/";
 
             if (outfile.len == 0) {
@@ -115,6 +121,7 @@ pub const BuildCommand = struct {
                 }
             }
 
+            // If argv[0] is "bun" or "bunx", we don't check if the binary is standalone
             if (strings.eqlComptime(outfile, "bun") or strings.eqlComptime(outfile, "bunx")) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for --outfile", .{});
                 Global.exit(1);
@@ -203,6 +210,10 @@ pub const BuildCommand = struct {
             return;
         }
 
+        var reachable_file_count: usize = 0;
+        var minify_duration: u64 = 0;
+        var input_code_length: u64 = 0;
+
         const output_files: []options.OutputFile = brk: {
             if (ctx.bundler_options.transform_only) {
                 this_bundler.options.import_path_format = .relative;
@@ -235,6 +246,9 @@ pub const BuildCommand = struct {
                 bun.JSC.AnyEventLoop.init(ctx.allocator),
                 std.crypto.random.int(u64),
                 ctx.debug.hot_reload == .watch,
+                &reachable_file_count,
+                &minify_duration,
+                &input_code_length,
             ) catch |err| {
                 if (log.msgs.items.len > 0) {
                     try log.printForLogLevel(Output.errorWriter());
@@ -249,6 +263,7 @@ pub const BuildCommand = struct {
         };
 
         {
+            var write_summary = false;
             {
                 dump: {
                     defer Output.flush();
@@ -293,6 +308,77 @@ pub const BuildCommand = struct {
                     }
 
                     if (ctx.bundler_options.compile) {
+                        const bundled_end = std.time.nanoTimestamp();
+                        const minified = this_bundler.options.minify_identifiers or this_bundler.options.minify_whitespace or this_bundler.options.minify_syntax;
+                        const padding_buf = [_]u8{' '} ** 16;
+
+                        const bundle_until_now = @divTrunc(@truncate(i64, bundled_end - bun.CLI.start_time), @as(i64, std.time.ns_per_ms));
+
+                        const bundle_elapsed = if (minified)
+                            bundle_until_now - @intCast(i64, @truncate(u63, minify_duration))
+                        else
+                            bundle_until_now;
+
+                        const minified_digit_count: usize = switch (minify_duration) {
+                            0...9 => 3,
+                            10...99 => 2,
+                            100...999 => 1,
+                            1000...9999 => 0,
+                            else => 0,
+                        };
+                        if (minified) {
+                            Output.pretty("{s}", .{padding_buf[0..@intCast(usize, minified_digit_count)]});
+                            Output.printElapsedStdoutTrim(@intToFloat(f64, minify_duration));
+                            const output_size = brk: {
+                                var total_size: u64 = 0;
+                                for (output_files) |f| {
+                                    if (f.loader == .js) {
+                                        total_size += f.size_without_sourcemap;
+                                    }
+                                }
+
+                                break :brk total_size;
+                            };
+                            // this isn't an exact size
+                            // we may inject sourcemaps or comments or import paths
+                            const delta: i64 = @truncate(i64, @intCast(i65, input_code_length) - @intCast(i65, output_size));
+                            if (delta > 1024) {
+                                Output.prettyln(
+                                    "  <green>minify<r>  -{} <d>(estimate)<r>",
+                                    .{
+                                        bun.fmt.size(@intCast(usize, delta)),
+                                    },
+                                );
+                            } else if (-delta > 1024) {
+                                Output.prettyln(
+                                    "  <b>minify<r>   +{} <d>(estimate)<r>",
+                                    .{
+                                        bun.fmt.size(@intCast(usize, -delta)),
+                                    },
+                                );
+                            } else {
+                                Output.prettyln("  <b>minify<r>", .{});
+                            }
+                        }
+
+                        const bundle_elapsed_digit_count: usize = switch (bundle_elapsed) {
+                            0...9 => 3,
+                            10...99 => 2,
+                            100...999 => 1,
+                            1000...9999 => 0,
+                            else => 0,
+                        };
+
+                        Output.pretty("{s}", .{padding_buf[0..@intCast(usize, bundle_elapsed_digit_count)]});
+                        Output.printElapsedStdoutTrim(@intToFloat(f64, bundle_elapsed));
+                        Output.prettyln(
+                            "  <green>bundle<r>  {d} modules",
+                            .{
+                                reachable_file_count,
+                            },
+                        );
+
+                        Output.flush();
                         try bun.StandaloneModuleGraph.toExecutable(
                             allocator,
                             output_files,
@@ -300,6 +386,23 @@ pub const BuildCommand = struct {
                             this_bundler.options.public_path,
                             outfile,
                         );
+                        const compiled_elapsed = @divTrunc(@truncate(i64, std.time.nanoTimestamp() - bundled_end), @as(i64, std.time.ns_per_ms));
+                        const compiled_elapsed_digit_count: isize = switch (compiled_elapsed) {
+                            0...9 => 3,
+                            10...99 => 2,
+                            100...999 => 1,
+                            1000...9999 => 0,
+                            else => 0,
+                        };
+
+                        Output.pretty("{s}", .{padding_buf[0..@intCast(usize, compiled_elapsed_digit_count)]});
+
+                        Output.printElapsedStdoutTrim(@intToFloat(f64, compiled_elapsed));
+
+                        Output.prettyln(" <green>compile<r>  <b><blue>{s}<r>", .{
+                            outfile,
+                        });
+
                         break :dump;
                     }
 
@@ -364,8 +467,15 @@ pub const BuildCommand = struct {
                         try std.fmt.formatFloatDecimal(size, .{ .precision = 2 }, writer);
                         try writer.writeAll(" KB\n");
                     }
+
+                    write_summary = true;
+                }
+                if (write_summary) {
+                    Output.printStartEndStdout(bun.CLI.start_time, std.time.nanoTimestamp());
+                    Output.prettyln(" <green>Build<r>", .{});
                 }
             }
+
             try log.printForLogLevel(Output.errorWriter());
             exitOrWatch(0, ctx.debug.hot_reload == .watch);
         }

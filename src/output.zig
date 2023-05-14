@@ -317,6 +317,22 @@ pub fn printElapsedStdout(elapsed: f64) void {
     printElapsedToWithCtx(elapsed, Output.pretty, false, {});
 }
 
+pub fn printElapsedStdoutTrim(elapsed: f64) void {
+    switch (@floatToInt(i64, @round(elapsed))) {
+        0...1500 => {
+            const fmt = "<r><d>[<b>{d:>}ms<r><d>]<r>";
+            const args = .{elapsed};
+            pretty(fmt, args);
+        },
+        else => {
+            const fmt = "<r><d>[<b>{d:>}s<r><d>]<r>";
+            const args = .{elapsed / 1000.0};
+
+            pretty(fmt, args);
+        },
+    }
+}
+
 pub fn printStartEnd(start: i128, end: i128) void {
     const elapsed = @divTrunc(@truncate(i64, end - start), @as(i64, std.time.ns_per_ms));
     printElapsed(@intToFloat(f64, elapsed));

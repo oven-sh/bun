@@ -50,31 +50,37 @@ pub const StandaloneModuleGraph = struct {
     };
 
     pub const Offsets = extern struct {
-        byte_count: usize align(1) = 0,
-        entry_point_id: u32 align(1) = 0,
-        modules_ptr: bun.StringPointer align(1) = .{},
+        byte_count: usize = 0,
+        entry_point_id: u32 = 0,
+        modules_ptr: bun.StringPointer = .{},
     };
 
     const header = "\n--- Bun's module graph ---\n";
 
     pub fn fromBytes(allocator: std.mem.Allocator, raw_bytes: []const u8) !StandaloneModuleGraph {
-        if (raw_bytes.len == 0) return StandaloneModuleGraph{};
+        if (raw_bytes.len == 0) return StandaloneModuleGraph{
+            .files = bun.StringArrayHashMap(File).init(allocator),
+        };
 
         if (raw_bytes.len < header.len) {
             return error.@"Corrupted module graph: missing header";
         }
 
-        if (!bun.strings.eqlComptime(header, raw_bytes[0..header.len])) {
+        if (!bun.strings.eqlComptime(raw_bytes[0..header.len], header)) {
             return error.@"Corrupted module graph: invalid header";
         }
 
-        const offsets: Offsets = @ptrCast(*const Offsets, &raw_bytes[raw_bytes.len - @sizeOf(Offsets) ..].ptr[0..@sizeOf(Offsets)]).*;
+        // We aren't aligning it, so we must copy
+        var offset_bytes = raw_bytes[header.len..][0..@sizeOf(Offsets)];
+        var offsets: Offsets = undefined;
+        @memcpy(std.mem.asBytes(&offsets), offset_bytes, @sizeOf(Offsets));
+
         if (offsets.byte_count > raw_bytes.len) {
             return error.@"Corrupted module graph: invalid byte count (exceeds segment size)";
         }
-
         const modules_list_bytes = raw_bytes[offsets.modules_ptr.offset..][0..offsets.modules_ptr.length];
-        const modules_list: []const CompiledModuleGraphFile = @ptrCast([]const CompiledModuleGraphFile, modules_list_bytes);
+        const modules_list = std.mem.bytesAsSlice(CompiledModuleGraphFile, modules_list_bytes);
+
         var modules = bun.StringArrayHashMap(File).init(allocator);
         try modules.ensureTotalCapacity(modules_list.len);
         for (modules_list) |module| {
@@ -90,8 +96,9 @@ pub const StandaloneModuleGraph = struct {
                 },
             );
         }
+
         return StandaloneModuleGraph{
-            .bytes = offsets.byte_count,
+            .bytes = raw_bytes[0..offsets.byte_count],
             .files = modules,
             .entry_point_id = offsets.entry_point_id,
         };
@@ -177,7 +184,7 @@ pub const StandaloneModuleGraph = struct {
             string_builder.count(output_file.path);
             if (output_file.value == .buffer) {
                 if (output_file.output_kind == .sourcemap) {
-                    string_builder.count(bun.zstd.compressBound(output_file.value.buffer.bytes.len));
+                    string_builder.cap += bun.zstd.compressBound(output_file.value.buffer.bytes.len);
                 } else {
                     if (entry_point_id == null) {
                         if (output_file.output_kind == .@"entry-point") {
@@ -191,7 +198,7 @@ pub const StandaloneModuleGraph = struct {
             }
         }
 
-        if (module_count == 0 or entry_point_id == null) return &[]u8{};
+        if (module_count == 0 or entry_point_id == null) return &[_]u8{};
 
         string_builder.cap += @sizeOf(CompiledModuleGraphFile) * output_files.len;
         string_builder.cap += header.len;
@@ -204,7 +211,7 @@ pub const StandaloneModuleGraph = struct {
         try string_builder.allocate(allocator);
 
         _ = string_builder.append(header);
-        var offsets: *Offsets = @ptrCast(*Offsets, &string_builder.allocatedSlice()[string_builder.len..].ptr[0..@sizeOf(Offsets)]);
+        var offsets = std.mem.bytesAsValue(Offsets, string_builder.allocatedSlice()[string_builder.len..][0..@sizeOf(Offsets)]);
         offsets.entry_point_id = @truncate(u32, entry_point_id.?);
 
         var modules = try std.ArrayList(CompiledModuleGraphFile).initCapacity(allocator, module_count);
@@ -234,7 +241,7 @@ pub const StandaloneModuleGraph = struct {
             modules.appendAssumeCapacity(module);
         }
 
-        offsets.modules_ptr = string_builder.appendCount(std.mem.asBytes(modules.items));
+        offsets.modules_ptr = string_builder.appendCount(std.mem.sliceAsBytes(modules.items));
         offsets.byte_count = string_builder.len;
 
         return string_builder.ptr.?[0..offsets.byte_count];

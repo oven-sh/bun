@@ -98,13 +98,13 @@ pub const BuildCommand = struct {
 
             if (outfile.len == 0) {
                 outfile = std.fs.path.basename(this_bundler.options.entry_points[0]);
-                const ext = std.fs.path.extname(outfile);
+                const ext = std.fs.path.extension(outfile);
                 if (ext.len > 0) {
                     outfile = outfile[0 .. outfile.len - ext.len];
                 }
 
                 if (strings.eqlComptime(outfile, "index")) {
-                    outfile = std.fs.path.basename(std.fs.path.dirname(this_bundler.options.entry_points[0]));
+                    outfile = std.fs.path.basename(std.fs.path.dirname(this_bundler.options.entry_points[0]) orelse "index");
                 }
             }
 
@@ -246,7 +246,7 @@ pub const BuildCommand = struct {
 
                     if (!ctx.bundler_options.compile) {
                         if (outfile.len == 0 and output_files.len == 1 and ctx.bundler_options.outdir.len == 0) {
-                            // if --transpile is passed, it won't have an output dir
+                            // if --no-bundle is passed, it won't have an output dir
                             if (output_files[0].value == .buffer)
                                 try writer.writeAll(output_files[0].value.buffer.bytes);
                             break :dump;

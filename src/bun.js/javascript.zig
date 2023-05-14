@@ -727,7 +727,7 @@ pub const VirtualMachine = struct {
     pub fn initWithModuleGraph(
         allocator: std.mem.Allocator,
         log: *logger.Log,
-        graph: bun.StandaloneModuleGraph,
+        graph: *bun.StandaloneModuleGraph,
     ) !*VirtualMachine {
         VMHolder.vm = try allocator.create(VirtualMachine);
         var console = try allocator.create(ZigConsoleClient);
@@ -735,10 +735,8 @@ pub const VirtualMachine = struct {
         const bundler = try Bundler.init(
             allocator,
             log,
-            Api.TransformOptions{
-                .target = .bun,
-            },
-            existing_bundle,
+            std.mem.zeroes(Api.TransformOptions),
+            null,
             null,
         );
         var vm = VMHolder.vm.?;
@@ -753,7 +751,7 @@ pub const VirtualMachine = struct {
             .node_modules = bundler.options.node_modules_bundle,
             .log = log,
             .flush_list = std.ArrayList(string).init(allocator),
-            .blobs = if (_args.serve orelse false) try Blob.Group.init(allocator) else null,
+            .blobs = null,
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(allocator),
             .source_mappings = undefined,
@@ -774,7 +772,7 @@ pub const VirtualMachine = struct {
         vm.event_loop = &vm.regular_event_loop;
 
         vm.bundler.macro_context = null;
-        vm.bundler.resolver.store_fd = store_fd;
+        vm.bundler.resolver.store_fd = false;
 
         vm.bundler.resolver.onWakePackageManager = .{
             .context = &vm.modules,
@@ -786,10 +784,6 @@ pub const VirtualMachine = struct {
         try vm.bundler.configureFramework(false);
 
         vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
-
-        if (_args.serve orelse false) {
-            vm.bundler.linker.onImportCSS = Bun.onImportCSS;
-        }
 
         var global_classes: [GlobalClasses.len]js.JSClassRef = undefined;
         inline for (GlobalClasses, 0..) |Class, i| {
@@ -1289,7 +1283,7 @@ pub const VirtualMachine = struct {
 
         if (jsc_vm.standalone_module_graph) |graph| {
             if (graph.files.get(specifier.slice())) |file| {
-                res.* = ErrorableZigString.ok(ZigString.init(file.path));
+                res.* = ErrorableZigString.ok(ZigString.init(file.name));
                 return;
             }
         }

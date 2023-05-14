@@ -193,7 +193,7 @@ pub const ZSTD_DDict_s = struct_ZSTD_DDict_s;
 //                                   int compressionLevel);
 pub fn compress(dest: []u8, src: []const u8, level: ?i32) Result {
     const result = ZSTD_compress(dest.ptr, dest.len, src.ptr, src.len, level orelse ZSTD_defaultCLevel());
-    if (ZSTD_isError(result)) return .{ .err = bun.sliceTo(ZSTD_getErrorName(result), 0) };
+    if (ZSTD_isError(result) != 0) return .{ .err = bun.sliceTo(ZSTD_getErrorName(result), 0) };
     return .{ .success = result };
 }
 
@@ -211,7 +211,7 @@ pub fn compressBound(srcSize: usize) usize {
 //   const void* src, size_t compressedSize);
 pub fn decompress(dest: []u8, src: []const u8) Result {
     const result = ZSTD_decompress(dest.ptr, dest.len, src.ptr, src.len);
-    if (ZSTD_isError(result)) return .{ .err = bun.sliceTo(ZSTD_getErrorName(result), 0) };
+    if (ZSTD_isError(result) != 0) return .{ .err = bun.sliceTo(ZSTD_getErrorName(result), 0) };
     return .{ .success = result };
 }
 

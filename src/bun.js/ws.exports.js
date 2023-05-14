@@ -391,28 +391,27 @@ class BunWebSocketMocked extends EventEmitter {
 
   #drain(ws) {
     this.#ws = ws;
-    while (this.#enquedMessages.length) {
-      const [data, start] = this.#enquedMessages[0];
-      const length = data.length - start;
-      const written = ws.send(data.slice(start));
-      if (written == -1) {
-        // backpressure wait until next drain event
+    // while (this.#enquedMessages.length) {
+    const [data, start] = this.#enquedMessages[0];
+    const length = data.length - start;
+    const written = ws.send(data.slice(start));
+    if (written == -1) {
+      // backpressure wait until next drain event
+      return;
+    }
+
+    if (written !== length) {
+      if (written !== 0) {
+        // not all data was written
+        this.#enquedMessages[0][1] += written;
+        this.#bufferedAmount -= written;
         return;
       }
-
-      if (written < length) {
-        if (written !== 0) {
-          // not all data was written
-          this.#enquedMessages[0][1] += written;
-          this.#bufferedAmount -= written;
-          return;
-        }
-        // message failed to send
-        this.emit("error", new Error("Failed to send message"));
-      }
-      this.#bufferedAmount -= length;
-      this.#enquedMessages.shift();
+      // message failed to send
+      this.emit("error", new Error("Failed to send message"));
     }
+    this.#bufferedAmount -= length;
+    this.#enquedMessages.shift();
   }
 
   send(data) {
@@ -421,13 +420,14 @@ class BunWebSocketMocked extends EventEmitter {
     }
     const written = this.#ws.send(data);
     if (written == -1) {
-      // backpressure
       const length = data.length;
+      // backpressure
       this.#enquedMessages.push([data, length]);
       this.#bufferedAmount += length;
       return;
     }
-    if (written < data.length) {
+
+    if (written !== data.length) {
       if (written !== 0) {
         // not all data was written
         const length = data.length - written;

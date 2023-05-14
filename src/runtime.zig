@@ -138,7 +138,7 @@ pub const Fallback = struct {
             return ProdSourceContent;
         }
     }
-    pub const version_hash = @embedFile("./fallback.version");
+    pub const version_hash = @import("build_options").fallback_html_version;
     var version_hash_int: u32 = 0;
     pub fn versionHash() u32 {
         if (version_hash_int == 0) {
@@ -263,24 +263,13 @@ pub const Runtime = struct {
         }
     }
 
-    pub const version_hash = @embedFile("./runtime.version");
+    pub const version_hash = @import("build_options").runtime_js_version;
     var version_hash_int: u32 = 0;
     pub fn versionHash() u32 {
         if (version_hash_int == 0) {
-            version_hash_int = @truncate(u32, std.fmt.parseInt(u64, version(), 16) catch unreachable);
+            version_hash_int = @truncate(u32, version_hash);
         }
         return version_hash_int;
-    }
-
-    pub inline fn version() string {
-        return version_hash;
-    }
-
-    const bytecodeCacheFilename = std.fmt.comptimePrint("__runtime.{s}", .{version_hash});
-    var bytecodeCacheFetcher = Fs.BytecodeCacheFetcher{};
-
-    pub fn byteCodeCacheFile(fs: *Fs.FileSystem.RealFS) ?bun.StoredFileDescriptorType {
-        return bytecodeCacheFetcher.fetch(bytecodeCacheFilename, fs);
     }
 
     pub const Features = struct {

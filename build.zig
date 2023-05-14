@@ -71,6 +71,24 @@ const BunBuildOptions = struct {
     sizegen: bool = false,
     base_path: [:0]const u8 = "",
 
+    runtime_js_version: u64 = 0,
+    fallback_html_version: u64 = 0,
+
+    pub fn updateRuntime(this: *BunBuildOptions) anyerror!void {
+        var runtime_out_file = try std.fs.cwd().openFile("src/runtime.out.js", .{ .mode = .read_only });
+        const runtime_hash = std.hash.Wyhash.hash(
+            0,
+            try runtime_out_file.readToEndAlloc(std.heap.page_allocator, try runtime_out_file.getEndPos()),
+        );
+        this.runtime_js_version = runtime_hash;
+        var fallback_out_file = try std.fs.cwd().openFile("src/fallback.out.js", .{ .mode = .read_only });
+        const fallback_hash = std.hash.Wyhash.hash(
+            0,
+            try fallback_out_file.readToEndAlloc(std.heap.page_allocator, try fallback_out_file.getEndPos()),
+        );
+        this.fallback_html_version = fallback_hash;
+    }
+
     pub fn step(this: BunBuildOptions, b: anytype) *std.build.OptionsStep {
         var opts = b.addOptions();
         opts.addOption(@TypeOf(this.canary), "is_canary", this.canary);
@@ -79,6 +97,8 @@ const BunBuildOptions = struct {
         opts.addOption(@TypeOf(this.bindgen), "bindgen", this.bindgen);
         opts.addOption(@TypeOf(this.sizegen), "sizegen", this.sizegen);
         opts.addOption(@TypeOf(this.base_path), "base_path", this.base_path);
+        opts.addOption(@TypeOf(this.runtime_js_version), "runtime_js_version", this.runtime_js_version);
+        opts.addOption(@TypeOf(this.fallback_html_version), "fallback_html_version", this.fallback_html_version);
         return opts;
     }
 };
@@ -104,28 +124,6 @@ const fmt = struct {
         return std.fmt.fmtSliceHexUpper(std.mem.asBytes(&value));
     }
 };
-
-fn updateRuntime() anyerror!void {
-    var runtime_out_file = try std.fs.cwd().openFile("src/runtime.out.js", .{ .mode = .read_only });
-    const runtime_hash = std.hash.Wyhash.hash(
-        0,
-        try runtime_out_file.readToEndAlloc(std.heap.page_allocator, try runtime_out_file.getEndPos()),
-    );
-    const runtime_version_file = std.fs.cwd().createFile("src/runtime.version", .{ .truncate = true }) catch std.debug.panic("Failed to create src/runtime.version", .{});
-    defer runtime_version_file.close();
-    runtime_version_file.writer().print("{any}", .{fmt.hexInt(runtime_hash)}) catch unreachable;
-    var fallback_out_file = try std.fs.cwd().openFile("src/fallback.out.js", .{ .mode = .read_only });
-    const fallback_hash = std.hash.Wyhash.hash(
-        0,
-        try fallback_out_file.readToEndAlloc(std.heap.page_allocator, try fallback_out_file.getEndPos()),
-    );
-
-    const fallback_version_file = std.fs.cwd().createFile("src/fallback.version", .{ .truncate = true }) catch std.debug.panic("Failed to create src/fallback.version", .{});
-
-    fallback_version_file.writer().print("{any}", .{fmt.hexInt(fallback_hash)}) catch unreachable;
-
-    fallback_version_file.close();
-}
 
 var x64 = "x64";
 var optimize: std.builtin.OptimizeMode = undefined;
@@ -193,8 +191,6 @@ pub fn build(b: *Build) !void {
         "src/main_wasm.zig"
     else
         "root.zig";
-
-    updateRuntime() catch {};
 
     const min_version: std.builtin.Version = if (target.getOsTag() != .freestanding)
         target.getOsVersionMin().semver
@@ -270,6 +266,8 @@ pub fn build(b: *Build) !void {
         } else if (arch.isAARCH64() and target.isLinux()) {
             obj.target.cpu_model = .{ .explicit = &std.Target.aarch64.cpu.generic };
         }
+
+        try default_build_options.updateRuntime();
 
         // we have to dump to stderr because stdout is read by zls
         std.io.getStdErr().writer().print("Build {s} v{} - v{} ({s})\n", .{
@@ -454,105 +452,15 @@ pub fn build(b: *Build) !void {
         }
 
         try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
-        try linkObjectFiles(b, headers_obj, target);
 
         headers_step.dependOn(&headers_obj.step);
         headers_obj.addOptions("build_options", default_build_options.step(b));
-
-        // var iter = headers_obj.modules.iterator();
-        // while (iter.next()) |item| {
-        //     const module = @ptrCast(*Module, item.value_ptr);
-        // }
-        // // while (headers_obj.modules.)
-        // for (headers_obj.packages.items) |pkg_| {
-        //     const pkg: std.build.Pkg = pkg_;
-        //     if (std.mem.eql(u8, pkg.name, "clap")) continue;
-        //     var test_ = b.addTestSource(pkg.source);
-
-        //     b
-        //         .test_.setMainPkgPath(obj.main_pkg_path.?);
-        //     try configureObjectStep(b, test_, @TypeOf(target), target, obj.main_pkg_path.?);
-        //     try linkObjectFiles(b, test_, target);
-        //     test_.addOptions("build_options", default_build_options.step(b));
-
-        //     if (pkg.dependencies) |children| {
-        //         test_.packages = std.ArrayList(std.build.Pkg).init(b.allocator);
-        //         try test_.packages.appendSlice(children);
-        //     }
-
-        //     var before = b.addLog("\x1b[" ++ color_map.get("magenta").? ++ "\x1b[" ++ color_map.get("b").? ++ "[{s} tests]" ++ "\x1b[" ++ color_map.get("d").? ++ " ----\n\n" ++ "\x1b[0m", .{pkg.name});
-        //     var after = b.addLog("\x1b[" ++ color_map.get("d").? ++ "–––---\n\n" ++ "\x1b[0m", .{});
-        //     headers_step.dependOn(&before.step);
-        //     headers_step.dependOn(&test_.step);
-        //     headers_step.dependOn(&after.step);
-        // }
     }
 
     b.default_step.dependOn(obj_step);
 }
 
 pub var original_make_fn: ?*const fn (step: *std.build.Step) anyerror!void = null;
-
-// Due to limitations in std.build.Builder
-// we cannot use this with debugging
-// so I am leaving this here for now, with the eventual intent to switch to std.build.Builder
-// but it is dead code
-pub fn linkObjectFiles(b: *Build, obj: *CompileStep, target: anytype) !void {
-    if (target.getOsTag() == .freestanding)
-        return;
-    var dirs_to_search = std.BoundedArray([]const u8, 32).init(0) catch unreachable;
-    const arm_brew_prefix: []const u8 = "/opt/homebrew";
-    const x86_brew_prefix: []const u8 = "/usr/local";
-    try dirs_to_search.append(b.env_map.get("BUN_DEPS_OUT_DIR") orelse b.env_map.get("BUN_DEPS_DIR") orelse @as([]const u8, b.pathFromRoot("src/deps")));
-    if (target.getOsTag() == .macos) {
-        if (target.getCpuArch().isAARCH64()) {
-            try dirs_to_search.append(comptime arm_brew_prefix ++ "/opt/icu4c/lib/");
-        } else {
-            try dirs_to_search.append(comptime x86_brew_prefix ++ "/opt/icu4c/lib/");
-        }
-    }
-
-    if (b.env_map.get("JSC_LIB")) |jsc| {
-        try dirs_to_search.append(jsc);
-    }
-
-    var added = std.AutoHashMap(u64, void).init(b.allocator);
-
-    const files_we_care_about = std.ComptimeStringMap([]const u8, .{
-        .{ "libmimalloc.o", "libmimalloc.o" },
-        .{ "libz.a", "libz.a" },
-        .{ "libarchive.a", "libarchive.a" },
-        .{ "libssl.a", "libssl.a" },
-        .{ "picohttpparser.o", "picohttpparser.o" },
-        .{ "libcrypto.boring.a", "libcrypto.boring.a" },
-        .{ "libicuuc.a", "libicuuc.a" },
-        .{ "libicudata.a", "libicudata.a" },
-        .{ "libicui18n.a", "libicui18n.a" },
-        .{ "libJavaScriptCore.a", "libJavaScriptCore.a" },
-        .{ "libWTF.a", "libWTF.a" },
-        .{ "libbmalloc.a", "libbmalloc.a" },
-        .{ "liblolhtml.a", "liblolhtml.a" },
-        .{ "uSockets.a", "uSockets.a" },
-    });
-
-    for (dirs_to_search.slice()) |deps_path| {
-        var deps_dir = std.fs.cwd().openIterableDir(deps_path, .{}) catch continue;
-        var iterator = deps_dir.iterate();
-        obj.addIncludePath(deps_path);
-        obj.addLibraryPath(deps_path);
-
-        while (iterator.next() catch null) |entr| {
-            const entry: std.fs.IterableDir.Entry = entr;
-            if (files_we_care_about.get(entry.name)) |obj_name| {
-                var has_added = try added.getOrPut(std.hash.Wyhash.hash(0, obj_name));
-                if (!has_added.found_existing) {
-                    var paths = [_][]const u8{ deps_path, obj_name };
-                    obj.addObjectFile(try std.fs.path.join(b.allocator, &paths));
-                }
-            }
-        }
-    }
-}
 
 pub fn configureObjectStep(b: *std.build.Builder, obj: *CompileStep, comptime Target: type, target: Target, main_pkg_path: []const u8) !void {
     obj.setMainPkgPath(main_pkg_path);

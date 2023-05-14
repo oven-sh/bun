@@ -31,6 +31,7 @@ export default [
         length: 1,
       },
     },
+    values: ["arguments", "callback"],
   }),
   define({
     name: "Stats",

@@ -13653,6 +13653,32 @@ JSC_DEFINE_HOST_FUNCTION(TimeoutPrototype__unrefCallback, (JSGlobalObject * lexi
     return TimeoutPrototype__doUnref(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
+extern "C" void TimeoutPrototype__argumentsSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSTimeout*>(JSValue::decode(thisValue));
+    thisObject->m_arguments.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue TimeoutPrototype__argumentsGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSTimeout*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_arguments.get());
+}
+
+extern "C" void TimeoutPrototype__callbackSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSTimeout*>(JSValue::decode(thisValue));
+    thisObject->m_callback.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue TimeoutPrototype__callbackGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSTimeout*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_callback.get());
+}
+
 void JSTimeoutPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
@@ -13737,6 +13763,39 @@ extern "C" EncodedJSValue Timeout__create(Zig::GlobalObject* globalObject, void*
 
     return JSValue::encode(instance);
 }
+
+template<typename Visitor>
+void JSTimeout::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSTimeout* thisObject = jsCast<JSTimeout*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_arguments);
+    visitor.append(thisObject->m_callback);
+}
+
+DEFINE_VISIT_CHILDREN(JSTimeout);
+
+template<typename Visitor>
+void JSTimeout::visitAdditionalChildren(Visitor& visitor)
+{
+    JSTimeout* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    visitor.append(thisObject->m_arguments);
+    visitor.append(thisObject->m_callback);
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSTimeout);
+
+template<typename Visitor>
+void JSTimeout::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSTimeout* thisObject = jsCast<JSTimeout*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSTimeout);
 class JSTranspilerPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;

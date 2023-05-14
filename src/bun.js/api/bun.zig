@@ -2990,14 +2990,26 @@ pub const Timer = struct {
         id: i32 = -1,
         kind: Timeout.Kind = .setTimeout,
         ref_count: u16 = 1,
-        // we need this information because we can refresh it after it has ended
-        arguments: JSC.Strong = .{},
-        callback: JSC.Strong = .{},
         interval: i32 = 0,
         // we do not allow the timer to be refreshed after we call clearInterval/clearTimeout
         has_cleaned_up: bool = false,
 
         pub usingnamespace JSC.Codegen.JSTimeout;
+
+        pub fn init(globalThis: *JSGlobalObject, id: i32, kind: Timeout.Kind, interval: i32, callback: JSValue, arguments: JSValue) JSValue {
+            var timer = globalThis.allocator().create(TimerObject) catch unreachable;
+            timer.* = .{
+                .id = id,
+                .kind = kind,
+                .interval = interval,
+            };
+            var timer_js = timer.toJS(globalThis);
+            timer_js.ensureStillAlive();
+            TimerObject.argumentsSetCached(timer_js, globalThis, arguments);
+            TimerObject.callbackSetCached(timer_js, globalThis, callback);
+            timer_js.ensureStillAlive();
+            return timer_js;
+        }
 
         pub fn doRef(this: *TimerObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
             if (this.ref_count > 0)
@@ -3018,7 +3030,7 @@ pub const Timer = struct {
             var map = vm.timer.maps.get(this.kind);
 
             // reschedule the event
-            if (this.callback.get()) |callback| {
+            if (TimerObject.callbackGetCached(this_value)) |callback| {
                 callback.ensureStillAlive();
 
                 const id: Timeout.ID = .{
@@ -3034,7 +3046,7 @@ pub const Timer = struct {
                         .kind = this.kind,
                     };
 
-                    if (this.arguments.get()) |arguments| {
+                    if (TimerObject.argumentsGetCached(this_value)) |arguments| {
                         arguments.ensureStillAlive();
                         cb.arguments = JSC.Strong.create(arguments, globalThis);
                     }
@@ -3070,7 +3082,7 @@ pub const Timer = struct {
                     ),
                 };
 
-                if (this.arguments.get()) |arguments| {
+                if (TimerObject.argumentsGetCached(this_value)) |arguments| {
                     arguments.ensureStillAlive();
                     timeout.arguments = JSC.Strong.create(arguments, globalThis);
                 }
@@ -3125,8 +3137,6 @@ pub const Timer = struct {
         }
 
         pub fn finalize(this: *TimerObject) callconv(.C) void {
-            this.callback.deinit();
-            this.arguments.deinit();
             bun.default_allocator.destroy(this);
         }
     };
@@ -3333,16 +3343,7 @@ pub const Timer = struct {
         Timer.set(id, globalThis, callback, interval, arguments, false) catch
             return JSValue.jsUndefined();
 
-        var timer = globalThis.allocator().create(TimerObject) catch unreachable;
-        timer.* = .{
-            .id = id,
-            .kind = .setTimeout,
-            .callback = JSC.Strong.create(callback, globalThis),
-            .arguments = JSC.Strong.create(arguments, globalThis),
-            .interval = interval,
-        };
-
-        return timer.toJS(globalThis);
+        return TimerObject.init(globalThis, id, .setTimeout, interval, callback, arguments);
     }
     pub fn setInterval(
         globalThis: *JSGlobalObject,
@@ -3363,16 +3364,7 @@ pub const Timer = struct {
         Timer.set(id, globalThis, callback, interval, arguments, true) catch
             return JSValue.jsUndefined();
 
-        var timer = globalThis.allocator().create(TimerObject) catch unreachable;
-        timer.* = .{
-            .id = id,
-            .kind = .setInterval,
-            .callback = JSC.Strong.create(callback, globalThis),
-            .arguments = JSC.Strong.create(arguments, globalThis),
-            .interval = interval,
-        };
-
-        return timer.toJS(globalThis);
+        return TimerObject.init(globalThis, id, .setInterval, interval, callback, arguments);
     }
 
     pub fn clearTimer(timer_id_value: JSValue, globalThis: *JSGlobalObject, repeats: bool) void {

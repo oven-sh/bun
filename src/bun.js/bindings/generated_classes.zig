@@ -3988,6 +3988,50 @@ pub const JSTimeout = struct {
         return Timeout__fromJS(value);
     }
 
+    extern fn TimeoutPrototype__argumentsSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn TimeoutPrototype__argumentsGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Timeout.arguments` setter
+    /// This value will be visited by the garbage collector.
+    pub fn argumentsSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        TimeoutPrototype__argumentsSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `Timeout.arguments` getter
+    /// This value will be visited by the garbage collector.
+    pub fn argumentsGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = TimeoutPrototype__argumentsGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn TimeoutPrototype__callbackSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn TimeoutPrototype__callbackGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Timeout.callback` setter
+    /// This value will be visited by the garbage collector.
+    pub fn callbackSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        TimeoutPrototype__callbackSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `Timeout.callback` getter
+    /// This value will be visited by the garbage collector.
+    pub fn callbackGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = TimeoutPrototype__callbackGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
     /// Create a new instance of Timeout
     pub fn toJS(this: *Timeout, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());

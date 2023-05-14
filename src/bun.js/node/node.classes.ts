@@ -14,6 +14,10 @@ export default [
         fn: "doRef",
         length: 0,
       },
+      refresh: {
+        fn: "doRefresh",
+        length: 0,
+      },
       unref: {
         fn: "doUnref",
         length: 0,
@@ -27,6 +31,7 @@ export default [
         length: 1,
       },
     },
+    values: ["arguments", "callback"],
   }),
   define({
     name: "Stats",

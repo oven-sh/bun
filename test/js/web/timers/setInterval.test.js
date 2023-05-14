@@ -59,3 +59,17 @@ it("async setInterval", async () => {
     });
   });
 });
+
+it("setInterval if refreshed before run, should reschedule to run later", done => {
+  let start = Date.now();
+  let timer = setInterval(() => {
+    let end = Date.now();
+    clearInterval(timer);
+    expect(end - start).toBeGreaterThanOrEqual(150);
+    done();
+  }, 100);
+
+  setTimeout(() => {
+    timer.refresh();
+  }, 50);
+});

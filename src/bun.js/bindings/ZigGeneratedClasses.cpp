@@ -13556,6 +13556,9 @@ JSC_DECLARE_HOST_FUNCTION(TimeoutPrototype__hasRefCallback);
 extern "C" EncodedJSValue TimeoutPrototype__doRef(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(TimeoutPrototype__refCallback);
 
+extern "C" EncodedJSValue TimeoutPrototype__doRefresh(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TimeoutPrototype__refreshCallback);
+
 extern "C" EncodedJSValue TimeoutPrototype__doUnref(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(TimeoutPrototype__unrefCallback);
 
@@ -13564,6 +13567,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTimeoutPrototype, JSTimeoutPrototype::Base
 static const HashTableValue JSTimeoutPrototypeTableValues[] = {
     { "hasRef"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TimeoutPrototype__hasRefCallback, 0 } },
     { "ref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TimeoutPrototype__refCallback, 0 } },
+    { "refresh"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TimeoutPrototype__refreshCallback, 0 } },
     { "unref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TimeoutPrototype__unrefCallback, 0 } }
 };
 
@@ -13617,6 +13621,22 @@ JSC_DEFINE_HOST_FUNCTION(TimeoutPrototype__refCallback, (JSGlobalObject * lexica
     return TimeoutPrototype__doRef(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
+JSC_DEFINE_HOST_FUNCTION(TimeoutPrototype__refreshCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTimeout* thisObject = jsDynamicCast<JSTimeout*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return TimeoutPrototype__doRefresh(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
 JSC_DEFINE_HOST_FUNCTION(TimeoutPrototype__unrefCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
@@ -13631,6 +13651,32 @@ JSC_DEFINE_HOST_FUNCTION(TimeoutPrototype__unrefCallback, (JSGlobalObject * lexi
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
 
     return TimeoutPrototype__doUnref(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+extern "C" void TimeoutPrototype__argumentsSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSTimeout*>(JSValue::decode(thisValue));
+    thisObject->m_arguments.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue TimeoutPrototype__argumentsGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSTimeout*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_arguments.get());
+}
+
+extern "C" void TimeoutPrototype__callbackSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSTimeout*>(JSValue::decode(thisValue));
+    thisObject->m_callback.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue TimeoutPrototype__callbackGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSTimeout*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_callback.get());
 }
 
 void JSTimeoutPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
@@ -13717,6 +13763,39 @@ extern "C" EncodedJSValue Timeout__create(Zig::GlobalObject* globalObject, void*
 
     return JSValue::encode(instance);
 }
+
+template<typename Visitor>
+void JSTimeout::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSTimeout* thisObject = jsCast<JSTimeout*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_arguments);
+    visitor.append(thisObject->m_callback);
+}
+
+DEFINE_VISIT_CHILDREN(JSTimeout);
+
+template<typename Visitor>
+void JSTimeout::visitAdditionalChildren(Visitor& visitor)
+{
+    JSTimeout* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    visitor.append(thisObject->m_arguments);
+    visitor.append(thisObject->m_callback);
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSTimeout);
+
+template<typename Visitor>
+void JSTimeout::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSTimeout* thisObject = jsCast<JSTimeout*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSTimeout);
 class JSTranspilerPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;

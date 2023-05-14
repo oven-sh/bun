@@ -67,11 +67,11 @@ pub const COPYFILE_SKIP = @as(c_int, 1);
 pub const COPYFILE_QUIT = @as(c_int, 2);
 
 // int clonefileat(int src_dirfd, const char * src, int dst_dirfd, const char * dst, int flags);
-pub extern "c" fn clonefileat(c_int, [*c]const u8, c_int, [*c]const u8, uint32_t: c_int) c_int;
+pub extern "c" fn clonefileat(c_int, [*:0]const u8, c_int, [*:0]const u8, uint32_t: c_int) c_int;
 // int fclonefileat(int srcfd, int dst_dirfd, const char * dst, int flags);
-pub extern "c" fn fclonefileat(c_int, c_int, [*c]const u8, uint32_t: c_int) c_int;
+pub extern "c" fn fclonefileat(c_int, c_int, [*:0]const u8, uint32_t: c_int) c_int;
 // int clonefile(const char * src, const char * dst, int flags);
-pub extern "c" fn clonefile([*c]const u8, [*c]const u8, uint32_t: c_int) c_int;
+pub extern "c" fn clonefile(src: [*:0]const u8, dest: [*:0]const u8, flags: c_int) c_int;
 
 // pub fn stat_absolute(path: [:0]const u8) StatError!Stat {
 //     if (builtin.os.tag == .windows) {

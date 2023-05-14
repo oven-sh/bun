@@ -109,6 +109,16 @@ pub const BuildCommand = struct {
                 if (strings.eqlComptime(outfile, "index")) {
                     outfile = std.fs.path.basename(std.fs.path.dirname(this_bundler.options.entry_points[0]) orelse "index");
                 }
+
+                if (strings.eqlComptime(outfile, "bun")) {
+                    outfile = std.fs.path.basename(std.fs.path.dirname(this_bundler.options.entry_points[0]) orelse "bun");
+                }
+            }
+
+            if (strings.eqlComptime(outfile, "bun") or strings.eqlComptime(outfile, "bunx")) {
+                Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for --outfile", .{});
+                Global.exit(1);
+                return;
             }
 
             if (ctx.bundler_options.transform_only) {
@@ -283,7 +293,13 @@ pub const BuildCommand = struct {
                     }
 
                     if (ctx.bundler_options.compile) {
-                        try bun.StandaloneModuleGraph.toExecutable(allocator, output_files, root_dir, this_bundler.options.public_path, outfile);
+                        try bun.StandaloneModuleGraph.toExecutable(
+                            allocator,
+                            output_files,
+                            root_dir,
+                            this_bundler.options.public_path,
+                            outfile,
+                        );
                         break :dump;
                     }
 

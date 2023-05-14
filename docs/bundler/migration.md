@@ -35,7 +35,7 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `--bundle`
 - n/a
-- Bun always bundles, use `--transpile` to disable this behavior.
+- Bun always bundles, use `--no-bundle` to disable this behavior.
 
 ---
 

@@ -214,14 +214,14 @@ pub const StandaloneModuleGraph = struct {
             }
 
             // otherwise, just copy the file
-            const fd = switch (bun.JSC.Node.Syscall.open(zname, std.os.O.CLOEXEC | std.os.O.RDONLY | std.os.O.CREAT, 0)) {
+            const fd = switch (bun.JSC.Node.Syscall.open(zname, std.os.O.CLOEXEC | std.os.O.WRONLY | std.os.O.CREAT, 0)) {
                 .result => |res| res,
                 .err => |err| {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open temporary file to copy bun into: {s}", .{err.toSystemError().message.slice()});
                     Global.exit(1);
                 },
             };
-            const self_fd = switch (bun.JSC.Node.Syscall.open(self_exeZ, std.os.O.CLOEXEC | std.os.O.WRONLY, 0)) {
+            const self_fd = switch (bun.JSC.Node.Syscall.open(self_exeZ, std.os.O.CLOEXEC | std.os.O.RDONLY, 0)) {
                 .result => |res| res,
                 .err => |err| {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open bun executable to copy from as read-only: {s}", .{err.toSystemError().message.slice()});

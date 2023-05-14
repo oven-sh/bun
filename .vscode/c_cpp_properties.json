@@ -19,7 +19,6 @@
         "${workspaceFolder}/src/bun.js/builtins/cpp",
         "${workspaceFolder}/src/deps/boringssl/include/",
         "${workspaceFolder}/src/deps",
-        "${workspaceFolder}/src/deps/LIEF/include",
         "${workspaceFolder}/src/deps/uws/uSockets/src"
       ],
       "browse": {
@@ -37,7 +36,6 @@
           "${workspaceFolder}/src/bun.js/builtins/*",
           "${workspaceFolder}/src/bun.js/builtins/cpp/*",
           "${workspaceFolder}/src/bun.js/modules/*",
-          "${workspaceFolder}/src/deps/LIEF/include/*/*",
           "${workspaceFolder}/src/deps",
           "${workspaceFolder}/src/deps/boringssl/include/",
           "${workspaceFolder}/src/deps/uws/uSockets/src"

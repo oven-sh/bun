@@ -77,7 +77,6 @@
     "src/deps/lol-html": true,
     "src/deps/c-ares": true,
     "src/deps/tinycc": true,
-    "src/deps/LIEF": true,
     "test/snippets/package-json-exports/_node_modules_copy": true
   },
   "C_Cpp.files.exclude": {
@@ -96,9 +95,7 @@
     "src/bun.js/WebKit/WebCore": true,
     "src/bun.js/WebKit/WebDriver": true,
     "src/bun.js/WebKit/WebKitBuild": true,
-    "src/bun.js/WebKit/WebInspectorUI": true,
-    "src/deps/LIEF/src": true,
-    "src/deps/LIEF/test": true
+    "src/bun.js/WebKit/WebInspectorUI": true
   },
   "[cpp]": {
     "editor.defaultFormatter": "xaver.clang-format"

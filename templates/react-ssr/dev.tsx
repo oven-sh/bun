@@ -2,7 +2,6 @@ import * as path from "path";
 import { statSync } from "fs";
 import type { ServeOptions } from "bun";
 import { renderToReadableStream, renderToString } from "react-dom/server";
-import { build } from "./build";
 
 const PROJECT_ROOT = import.meta.dir;
 const PUBLIC_DIR = path.resolve(PROJECT_ROOT, "public");
@@ -13,18 +12,15 @@ const srcRouter = new Bun.FileSystemRouter({
   style: "nextjs",
 });
 
-await build({
+await Bun.build({
   entrypoints: [import.meta.dir + "/hydrate.tsx", ...Object.values(srcRouter.routes)],
-  outdir: "./.build",
-  platform: "browser",
+  outdir: BUILD_DIR,
+  target: "browser",
   splitting: true,
-  env: {
-    NODE_ENV: "development",
-  },
 });
 
 const buildRouter = new Bun.FileSystemRouter({
-  dir: "./.build",
+  dir: BUILD_DIR,
   style: "nextjs",
 });
 
@@ -49,14 +45,11 @@ export default {
   async fetch(request) {
     const match = srcRouter.match(request);
     if (match) {
-      console.log(match);
       const builtMatch = buildRouter.match(request);
       if (!builtMatch) {
-        // error
         return new Response("Unknown error", { status: 500 });
       }
 
-      console.log(builtMatch);
       const Component = await import(match.filePath);
       const stream = await renderToReadableStream(<Component.default />, {
         bootstrapScriptContent: `globalThis.PATH_TO_PAGE = "/${builtMatch.src}";`,

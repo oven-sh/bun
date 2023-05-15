@@ -13,6 +13,13 @@ code {
 .App {
   text-align: center;
 }
+.App p {
+  margin: 0px;
+  color: white;
+}
+.App a {
+  color: white;
+}
 
 .App-logo {
   height: 150px;
@@ -37,7 +44,7 @@ code {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  font-size: calc(10px + 2vmin);
+  font-size: 12pt;
   color: white;
 }
 

@@ -1,28 +1,23 @@
-# React with Bun runtime
+# React SSR
 
-This is a React project bootstrapped with [bun](https://bun.sh/).
+This is a project demonstrating how to build a simple Bun app with server-side rendering React + client-side hydration.
 
-## Getting Started
-
-### Cloning the repo
+## Getting started
 
 ```sh
-bun create react ./react-bun-app
+bun create react-ssr
+bun install
+bun run dev
 ```
 
-### Development
+This starts the development server in watch mode. Open http://localhost:3000 in your browser to see the result.
 
-First, run the development server.
+## Learn more
 
-```
-bun dev
-```
+The following files are the most important:
 
-Open http://localhost:3000 with your browser to see the result.
-
-You can start editing the page by modifying src/App.jsx. The page auto-updates as you edit the file.
-
-## Learn More
+- `dev.tsx`: Generates a browser build of all `pages` using `Bun.build`, then starts a dev server that handles incoming requests. For paths like `/` and `/settings`, the server will render the appropriate page in `pages` to static HTML and return the result. The returned HTML includes a `<script>` tag that imports a bundled version of `hydrate.tsx`.
+- `hydrate.tsx`: A script that hydrates the static HTML returned by the server.
 
 To learn more about React.js, take a look at the following resources:
 

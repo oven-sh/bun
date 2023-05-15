@@ -3502,6 +3502,7 @@ const LinkerGraph = struct {
         entry_point_kind: EntryPoint.Kind = .none,
 
         line_offset_table: bun.sourcemap.LineOffsetTable.List = .{},
+        quoted_source_contents: string = "",
 
         pub fn isEntryPoint(this: *const File) bool {
             return this.entry_point_kind.isEntryPoint();
@@ -3574,28 +3575,42 @@ const LinkerContext = struct {
     };
 
     pub const SourceMapData = struct {
-        wait_group: sync.WaitGroup = undefined,
-        tasks: []Task = &.{},
+        line_offset_wait_group: sync.WaitGroup = undefined,
+        line_offset_tasks: []Task = &.{},
+
+        quoted_contents_wait_group: sync.WaitGroup = undefined,
+        quoted_contents_tasks: []Task = &.{},
 
         pub const Task = struct {
             ctx: *LinkerContext,
             source_index: Index.Int,
-            thread_task: ThreadPoolLib.Task = .{ .callback = &run },
+            thread_task: ThreadPoolLib.Task = .{ .callback = &runLineOffset },
 
-            pub fn run(thread_task: *ThreadPoolLib.Task) void {
+            pub fn runLineOffset(thread_task: *ThreadPoolLib.Task) void {
                 var task = @fieldParentPtr(Task, "thread_task", thread_task);
                 defer {
                     task.ctx.markPendingTaskDone();
-                    task.ctx.source_maps.wait_group.finish();
+                    task.ctx.source_maps.line_offset_wait_group.finish();
                 }
 
-                SourceMapData.compute(task.ctx, ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", task.ctx)).allocator, task.source_index);
+                SourceMapData.computeLineOffsets(task.ctx, ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", task.ctx)).allocator, task.source_index);
+            }
+
+            pub fn runQuotedSourceContents(thread_task: *ThreadPoolLib.Task) void {
+                var task = @fieldParentPtr(Task, "thread_task", thread_task);
+                defer {
+                    task.ctx.markPendingTaskDone();
+                    task.ctx.source_maps.quoted_contents_wait_group.finish();
+                }
+
+                SourceMapData.computeQuotedSourceContents(task.ctx, ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", task.ctx)).allocator, task.source_index);
             }
         };
 
-        pub fn compute(this: *LinkerContext, allocator: std.mem.Allocator, source_index: Index.Int) void {
+        pub fn computeLineOffsets(this: *LinkerContext, allocator: std.mem.Allocator, source_index: Index.Int) void {
             debug("Computing LineOffsetTable: {d}", .{source_index});
             var line_offset_table: *bun.sourcemap.LineOffsetTable.List = &this.graph.files.items(.line_offset_table)[source_index];
+
             const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
 
             const approximate_line_count = this.graph.ast.items(.approximate_newline_count)[source_index];
@@ -3607,6 +3622,15 @@ const LinkerContext = struct {
                 // We don't support sourcemaps for source files with more than 2^31 lines
                 @intCast(i32, @truncate(u31, approximate_line_count)),
             );
+        }
+
+        pub fn computeQuotedSourceContents(this: *LinkerContext, allocator: std.mem.Allocator, source_index: Index.Int) void {
+            debug("Computing Quoted Source Contents: {d}", .{source_index});
+            var quoted_source_contents: *string = &this.graph.files.items(.quoted_source_contents)[source_index];
+
+            const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
+            var mutable = MutableString.initEmpty(allocator);
+            quoted_source_contents.* = (js_printer.quoteForJSON(source.contents, mutable, false) catch @panic("Out of memory")).list.items;
         }
     };
 
@@ -3677,17 +3701,33 @@ const LinkerContext = struct {
         this: *LinkerContext,
         reachable: []const Index.Int,
     ) void {
-        this.source_maps.wait_group.init();
-        this.source_maps.wait_group.counter = @truncate(u32, reachable.len);
-        this.source_maps.tasks = this.allocator.alloc(SourceMapData.Task, reachable.len) catch unreachable;
+        this.source_maps.line_offset_wait_group.init();
+        this.source_maps.quoted_contents_wait_group.init();
+        this.source_maps.line_offset_wait_group.counter = @truncate(u32, reachable.len);
+        this.source_maps.quoted_contents_wait_group.counter = @truncate(u32, reachable.len);
+        this.source_maps.line_offset_tasks = this.allocator.alloc(SourceMapData.Task, reachable.len) catch unreachable;
+        this.source_maps.quoted_contents_tasks = this.allocator.alloc(SourceMapData.Task, reachable.len) catch unreachable;
+
         var batch = ThreadPoolLib.Batch{};
-        for (reachable, this.source_maps.tasks) |source_index, *task| {
-            task.* = .{
+        var second_batch = ThreadPoolLib.Batch{};
+        for (reachable, this.source_maps.line_offset_tasks, this.source_maps.quoted_contents_tasks) |source_index, *line_offset, *quoted| {
+            line_offset.* = .{
                 .ctx = this,
                 .source_index = source_index,
+                .thread_task = .{ .callback = &SourceMapData.Task.runLineOffset },
             };
-            batch.push(ThreadPoolLib.Batch.from(&task.thread_task));
+            quoted.* = .{
+                .ctx = this,
+                .source_index = source_index,
+                .thread_task = .{ .callback = &SourceMapData.Task.runQuotedSourceContents },
+            };
+            batch.push(ThreadPoolLib.Batch.from(&line_offset.thread_task));
+            second_batch.push(ThreadPoolLib.Batch.from(&quoted.thread_task));
         }
+
+        // line offsets block sooner and are faster to compute, so we should schedule those first
+        batch.push(second_batch);
+
         this.scheduleTasks(batch);
     }
 
@@ -6683,6 +6723,7 @@ const LinkerContext = struct {
 
         var j = Joiner{};
         const sources = c.parse_graph.input_files.items(.source);
+        const quoted_source_map_contents = c.graph.files.items(.quoted_source_contents);
 
         var source_index_to_sources_index = std.AutoHashMap(u32, u32).init(worker.allocator);
         defer source_index_to_sources_index.deinit();
@@ -6723,20 +6764,12 @@ const LinkerContext = struct {
         j.push("],\n  \"sourcesContent\": [\n  ");
 
         if (source_indices.len > 0) {
-            {
-                const contents = sources[source_indices[0]].contents;
-                var quote_buf = try MutableString.init(worker.allocator, contents.len);
-                quote_buf = try js_printer.quoteForJSON(contents, quote_buf, false);
-                j.push(quote_buf.list.items);
-            }
+            j.push(quoted_source_map_contents[source_indices[0]]);
 
             if (source_indices.len > 1) {
                 for (source_indices[1..]) |index| {
-                    const contents = sources[index].contents;
-                    var quote_buf = try MutableString.init(worker.allocator, contents.len + 2 + ", ".len);
-                    quote_buf.appendAssumeCapacity(",\n  ");
-                    quote_buf = try js_printer.quoteForJSON(contents, quote_buf, false);
-                    j.push(quote_buf.list.items);
+                    j.push(",\n  ");
+                    j.push(quoted_source_map_contents[index]);
                 }
             }
         }
@@ -8629,12 +8662,12 @@ const LinkerContext = struct {
             try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, ctx, generateJSRenamer, chunks);
         }
 
-        if (c.source_maps.tasks.len > 0) {
-            debug(" START {d} source maps", .{chunks.len});
-            defer debug("  DONE {d} source maps", .{chunks.len});
-            c.source_maps.wait_group.wait();
-            c.allocator.free(c.source_maps.tasks);
-            c.source_maps.tasks.len = 0;
+        if (c.source_maps.line_offset_tasks.len > 0) {
+            debug(" START {d} source maps (line offset)", .{chunks.len});
+            defer debug("  DONE {d} source maps (line offset)", .{chunks.len});
+            c.source_maps.line_offset_wait_group.wait();
+            c.allocator.free(c.source_maps.line_offset_tasks);
+            c.source_maps.line_offset_tasks.len = 0;
         }
         {
             var chunk_contexts = c.allocator.alloc(GenerateChunkCtx, chunks.len) catch unreachable;
@@ -8677,6 +8710,14 @@ const LinkerContext = struct {
                 wait_group.counter = @truncate(u32, total_count);
                 c.parse_graph.pool.pool.schedule(batch);
                 wait_group.wait();
+            }
+
+            if (c.source_maps.quoted_contents_tasks.len > 0) {
+                debug(" START {d} source maps (quoted contents)", .{chunks.len});
+                defer debug("  DONE {d} source maps (quoted contents)", .{chunks.len});
+                c.source_maps.quoted_contents_wait_group.wait();
+                c.allocator.free(c.source_maps.quoted_contents_tasks);
+                c.source_maps.quoted_contents_tasks.len = 0;
             }
 
             {

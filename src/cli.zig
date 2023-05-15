@@ -1114,6 +1114,13 @@ pub const Command = struct {
             };
 
             ctx.args.target = Api.Target.bun;
+            var argv = try bun.default_allocator.alloc(string, std.os.argv.len -| 1);
+            if (std.os.argv.len > 1) {
+                for (argv, std.os.argv[1..]) |*dest, src| {
+                    dest.* = bun.span(src);
+                }
+            }
+            ctx.passthrough = argv;
 
             try @import("./bun_js.zig").Run.bootStandalone(
                 ctx,

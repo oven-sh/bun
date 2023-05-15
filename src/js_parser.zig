@@ -8611,7 +8611,7 @@ fn NewParser_(
         }
 
         fn parseStmt(p: *P, opts: *ParseStatementOptions) anyerror!Stmt {
-            var loc = p.lexer.loc();
+            const loc = p.lexer.loc();
 
             switch (p.lexer.token) {
                 .t_semicolon => {
@@ -8620,7 +8620,7 @@ fn NewParser_(
                 },
 
                 .t_export => {
-                    var previousExportKeyword = p.esm_export_keyword;
+                    const previous_export_keyword = p.esm_export_keyword;
                     if (opts.is_module_scope) {
                         p.esm_export_keyword = p.lexer.range();
                     } else if (!opts.is_namespace_scope) {
@@ -8756,7 +8756,7 @@ fn NewParser_(
                             }
 
                             if (p.lexer.isContextualKeyword("async")) {
-                                var async_range = p.lexer.range();
+                                const async_range = p.lexer.range();
                                 try p.lexer.next();
                                 var defaultName: js_ast.LocRef = undefined;
                                 if (p.lexer.token == T.t_function and !p.lexer.has_newline_before) {
@@ -8765,7 +8765,7 @@ fn NewParser_(
                                         .is_name_optional = true,
                                         .lexical_decl = .allow_all,
                                     };
-                                    var stmt = try p.parseFnStmt(loc, &stmtOpts, async_range);
+                                    const stmt = try p.parseFnStmt(loc, &stmtOpts, async_range);
                                     if (@as(Stmt.Tag, stmt.data) == .s_type_script) {
                                         // This was just a type annotation
                                         return stmt;
@@ -8783,9 +8783,9 @@ fn NewParser_(
                                 defaultName = try createDefaultName(p, loc);
 
                                 const prefix_expr = try p.parseAsyncPrefixExpr(async_range, Level.comma);
-                                var expr = try p.parseSuffix(prefix_expr, Level.comma, null, Expr.EFlags.none);
+                                const expr = try p.parseSuffix(prefix_expr, Level.comma, null, Expr.EFlags.none);
                                 try p.lexer.expectOrInsertSemicolon();
-                                var value = js_ast.StmtOrExpr{ .expr = expr };
+                                const value = js_ast.StmtOrExpr{ .expr = expr };
                                 p.has_export_default = true;
                                 return p.s(S.ExportDefault{ .default_name = defaultName, .value = value }, loc);
                             }
@@ -9003,10 +9003,10 @@ fn NewParser_(
                         T.t_equals => {
                             // "export = value;"
 
-                            p.esm_export_keyword = previousExportKeyword; // This wasn't an ESM export statement after all
+                            p.esm_export_keyword = previous_export_keyword; // This wasn't an ESM export statement after all
                             if (is_typescript_enabled) {
                                 try p.lexer.next();
-                                var value = try p.parseExpr(.lowest);
+                                const value = try p.parseExpr(.lowest);
                                 try p.lexer.expectOrInsertSemicolon();
                                 return p.s(S.ExportEquals{ .value = value }, loc);
                             }
@@ -9695,9 +9695,8 @@ fn NewParser_(
                 else => {
                     const is_identifier = p.lexer.token == .t_identifier;
                     const name = p.lexer.identifier;
-                    var emiss = E.Missing{};
                     // Parse either an async function, an async expression, or a normal expression
-                    var expr: Expr = Expr{ .loc = loc, .data = Expr.Data{ .e_missing = emiss } };
+                    var expr: Expr = Expr{ .loc = loc, .data = Expr.Data{ .e_missing = .{} } };
                     if (is_identifier and strings.eqlComptime(p.lexer.raw(), "async")) {
                         var async_range = p.lexer.range();
                         try p.lexer.next();
@@ -10331,8 +10330,8 @@ fn NewParser_(
         }
 
         fn parseExprOrLetStmt(p: *P, opts: *ParseStatementOptions) !ExprOrLetStmt {
-            var let_range = p.lexer.range();
-            var raw = p.lexer.raw();
+            const let_range = p.lexer.range();
+            const raw = p.lexer.raw();
             if (p.lexer.token != .t_identifier or !strings.eqlComptime(raw, "let")) {
                 // Output.print("HI", .{});
                 return ExprOrLetStmt{ .stmt_or_expr = js_ast.StmtOrExpr{ .expr = try p.parseExpr(.lowest) } };
@@ -10387,7 +10386,7 @@ fn NewParser_(
         }
 
         fn parseBinding(p: *P) anyerror!Binding {
-            var loc = p.lexer.loc();
+            const loc = p.lexer.loc();
 
             switch (p.lexer.token) {
                 .t_identifier => {

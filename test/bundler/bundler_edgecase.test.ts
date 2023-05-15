@@ -189,6 +189,7 @@ describe("bundler", () => {
         console.log(foo);
       `,
     },
+    external: ["*"],
   });
   itBundled("edgecase/ImportNamespaceAndDefault", {
     files: {
@@ -244,9 +245,9 @@ describe("bundler", () => {
     },
     outdir: "/out",
     loader: {
-      ".a": "file", // segfaults
-      ".b": "text", // InvalidLoader
-      ".c": "toml", // InvalidLoader
+      ".a": "file",
+      ".b": "text",
+      ".c": "toml",
       ".d": "json",
       ".e": "js",
       ".f": "ts",
@@ -772,5 +773,21 @@ describe("bundler", () => {
     outdir: "/out",
     publicPath: "/www",
     run: {},
+  });
+  itBundled("edgecase/ImportDefaultInDirectory", {
+    files: {
+      "/a/file.js": `
+        import def from './def'
+        console.log(def)
+      `,
+      "/a/def.js": `
+        export default 1;
+        console.log('inner');
+      `,
+    },
+    run: {
+      file: "/out.js",
+      stdout: "inner\n1",
+    },
   });
 });

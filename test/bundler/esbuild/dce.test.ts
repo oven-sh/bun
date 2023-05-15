@@ -1052,9 +1052,9 @@ describe("bundler", () => {
       "/node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = (a,b) => [a,b]; export const Fragment = 'F'`,
     },
     jsx: {
-      development: true,
-      automaticRuntime: true,
+      runtime: "automatic",
     },
+    target: "bun",
     dce: true,
     run: {
       stdout: `["F",{"children":[null,{"children":["div",{}]}]}]`,
@@ -1229,7 +1229,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/TreeShakingObjectProperty", {
-    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         let remove1 = { x: 'x' }

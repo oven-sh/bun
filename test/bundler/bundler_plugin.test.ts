@@ -766,7 +766,7 @@ describe("bundler", () => {
       },
     };
   });
-  itBundled("plugin/ESBuildInitialOptions", ({}) => {
+  itBundled("plugin/ESBuildInitialOptions", ({ root }) => {
     return {
       files: {
         "index.ts": /* ts */ `
@@ -776,45 +776,18 @@ describe("bundler", () => {
       external: ["esbuild"],
       entryPoints: ["./index.ts"],
       plugins(build) {
-        expect((build as any).initialOptions).toEqual({
-          bundle: true,
-          entryPoints: ["/tmp/bun-build-tests/bun-T6ZQHx/plugin/ESBuildInitialOptions/index.ts"],
-          external: ["esbuild"],
-          format: undefined,
-          minify: false,
-          minifyIdentifiers: undefined,
-          minifySyntax: undefined,
-          minifyWhitespace: undefined,
-          outdir: "/tmp/bun-build-tests/bun-T6ZQHx/plugin/ESBuildInitialOptions",
-          platform: "browser",
-          sourcemap: undefined,
-        });
-      },
-    };
-  });
-  itBundled("plugin/ESBuildInitialOptions2", ({ root }) => {
-    return {
-      files: {
-        "index.ts": /* ts */ `
-          console.log("it works");
-        `,
-      },
-      external: ["esbuild"],
-      entryPoints: ["./index.ts"],
-      plugins(build) {
-        expect((build as any).initialOptions).toEqual({
-          bundle: true,
-          entryPoints: ["/tmp/bun-build-tests/bun-T6ZQHx/plugin/ESBuildInitialOptions/index.ts"],
-          external: ["esbuild"],
-          format: undefined,
-          minify: false,
-          minifyIdentifiers: undefined,
-          minifySyntax: undefined,
-          minifyWhitespace: undefined,
-          outdir: root,
-          platform: "browser",
-          sourcemap: undefined,
-        });
+        const opts = (build as any).initialOptions;
+        expect(opts.bundle).toEqual(true);
+        expect(opts.entryPoints).toEqual([root + "/index.ts"]);
+        expect(opts.external).toEqual(["esbuild"]);
+        expect(opts.format).toEqual(undefined);
+        expect(opts.minify).toEqual(false);
+        expect(opts.minifyIdentifiers).toEqual(undefined);
+        expect(opts.minifySyntax).toEqual(undefined);
+        expect(opts.minifyWhitespace).toEqual(undefined);
+        expect(opts.outdir).toEqual(root);
+        expect(opts.platform).toEqual("browser");
+        expect(opts.sourcemap).toEqual(undefined);
       },
     };
   });

@@ -2592,7 +2592,7 @@ pub const ParseTask = struct {
             .contents_is_recycled = false,
         };
 
-        const target = use_directive.target(task.known_target orelse bundler.options.target);
+        const target = targetFromHashbang(entry.contents) orelse use_directive.target(task.known_target orelse bundler.options.target);
 
         var opts = js_parser.Parser.Options.init(task.jsx, loader);
         opts.legacy_transform_require_to_import = false;
@@ -11319,4 +11319,17 @@ fn getRedirectId(id: u32) ?u32 {
     }
 
     return id;
+}
+
+fn targetFromHashbang(buffer: []const u8) ?options.Target {
+    if (buffer.len > "#!/usr/bin/env bun".len) {
+        if (strings.hasPrefixComptime(buffer, "#!/usr/bin/env bun")) {
+            switch (buffer["#!/usr/bin/env bun".len]) {
+                '\n', ' ' => return options.Target.bun,
+                else => {},
+            }
+        }
+    }
+
+    return null;
 }

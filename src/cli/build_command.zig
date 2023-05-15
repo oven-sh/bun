@@ -400,6 +400,7 @@ pub const BuildCommand = struct {
                                             },
                                         },
                                         .encoding = .buffer,
+                                        .mode = if (f.is_executable) 0o755 else 0o644,
                                         .dirfd = @intCast(bun.FileDescriptor, root_dir.dir.fd),
                                         .file = .{
                                             .path = JSC.Node.PathLike{

@@ -223,21 +223,49 @@ pub const StandaloneModuleGraph = struct {
             }
 
             // otherwise, just copy the file
-            const fd = switch (Syscall.open(zname, std.os.O.CLOEXEC | std.os.O.WRONLY | std.os.O.CREAT, 0)) {
-                .result => |res| res,
-                .err => |err| {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}", .{err});
-                    Global.exit(1);
-                },
+
+            const fd = brk2: {
+                for (0..3) |retry| {
+                    switch (Syscall.open(zname, std.os.O.CLOEXEC | std.os.O.WRONLY | std.os.O.CREAT, 0)) {
+                        .result => |res| break :brk2 res,
+                        .err => |err| {
+                            if (retry < 2) {
+                                switch (err.getErrno()) {
+                                    // try again
+                                    .PERM, .AGAIN, .BUSY => continue,
+                                    else => {},
+                                }
+                            }
+
+                            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}", .{err});
+                            Global.exit(1);
+                        },
+                    }
+                }
+                unreachable;
             };
-            const self_fd = switch (Syscall.open(self_exeZ, std.os.O.CLOEXEC | std.os.O.RDONLY, 0)) {
-                .result => |res| res,
-                .err => |err| {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open bun executable to copy from as read-only\n{}", .{err});
-                    cleanup(zname, fd);
-                    Global.exit(1);
-                },
+            const self_fd = brk2: {
+                for (0..3) |retry| {
+                    switch (Syscall.open(self_exeZ, std.os.O.CLOEXEC | std.os.O.RDONLY, 0)) {
+                        .result => |res| break :brk2 res,
+                        .err => |err| {
+                            if (retry < 2) {
+                                switch (err.getErrno()) {
+                                    // try again
+                                    .PERM, .AGAIN, .BUSY => continue,
+                                    else => {},
+                                }
+                            }
+
+                            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open bun executable to copy from as read-only\n{}", .{err});
+                            cleanup(zname, fd);
+                            Global.exit(1);
+                        },
+                    }
+                }
+                unreachable;
             };
+
             defer _ = Syscall.close(self_fd);
             bun.copyFile(self_fd, fd) catch |err| {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});

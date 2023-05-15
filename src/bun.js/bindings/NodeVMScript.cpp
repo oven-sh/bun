@@ -100,6 +100,10 @@ static EncodedJSValue runInContext(JSGlobalObject* globalObject, NodeVMScript* s
             return throwVMTypeError(globalObject, scope, "options must be an object"_s);
         }
         JSObject* options = asObject(optionsArg);
+
+        // TODO: displayErrors - Not really sure what this option even does or why it's useful
+        // TODO: timeout - I can't figure out how to make Watchdog work so leaving this for now
+        // TODO: breakOnSigint - Bun doesn't support signal handlers at all yet I believe
     }
 
     auto err_scope = DECLARE_THROW_SCOPE(vm);

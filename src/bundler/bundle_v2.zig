@@ -11327,6 +11327,7 @@ fn getRedirectId(id: u32) ?u32 {
     return id;
 }
 
+// TODO: this needs to also update `define` and `external`. This whole setup needs to be more resilient.
 fn targetFromHashbang(buffer: []const u8) ?options.Target {
     if (buffer.len > "#!/usr/bin/env bun".len) {
         if (strings.hasPrefixComptime(buffer, "#!/usr/bin/env bun")) {

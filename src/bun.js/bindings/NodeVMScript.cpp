@@ -39,7 +39,35 @@ static EncodedJSValue constructScript(JSGlobalObject* globalObject, CallFrame* c
     JSValue callee = callFrame->jsCallee();
     ArgList args(callFrame);
     JSValue sourceArg = args.at(0);
-    String source = sourceArg.isUndefined() ? emptyString() : sourceArg.toWTFString(globalObject);
+    String sourceString = sourceArg.isUndefined() ? emptyString() : sourceArg.toWTFString(globalObject);
+
+    JSValue optionsArg = args.at(1);
+    String filename = ""_s;
+    OrdinalNumber lineOffset, columnOffset;
+    if (!optionsArg.isUndefined()) {
+        if (!optionsArg.isObject()) {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            return throwVMTypeError(globalObject, scope, "options must be an object"_s);
+        }
+        JSObject* options = asObject(optionsArg);
+
+        JSValue filenameOpt = options->get(globalObject, Identifier::fromString(vm, "filename"_s));
+        if (filenameOpt.isString()) {
+            filename = filenameOpt.toWTFString(globalObject);
+        }
+
+        JSValue lineOffsetOpt = options->get(globalObject, Identifier::fromString(vm, "lineOffset"_s));
+        if (lineOffsetOpt.isAnyInt()) {
+            lineOffset = OrdinalNumber::fromZeroBasedInt(lineOffsetOpt.asAnyInt());
+        }
+        JSValue columnOffsetOpt = options->get(globalObject, Identifier::fromString(vm, "columnOffset"_s));
+        if (columnOffsetOpt.isAnyInt()) {
+            columnOffset = OrdinalNumber::fromZeroBasedInt(columnOffsetOpt.asAnyInt());
+        }
+
+        // TODO: cachedData
+        // TODO: importModuleDynamically
+    }
 
     auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     Structure* structure = zigGlobalObject->NodeVMScriptStructure();
@@ -52,6 +80,12 @@ static EncodedJSValue constructScript(JSGlobalObject* globalObject, CallFrame* c
             globalObject, targetObj, functionGlobalObject->NodeVMScriptStructure());
         scope.release();
     }
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    SourceCode source(
+        JSC::StringSourceProvider::create(sourceString, JSC::SourceOrigin(), filename, TextPosition(lineOffset, columnOffset)),
+        lineOffset.zeroBasedInt(), columnOffset.zeroBasedInt());
+    RETURN_IF_EXCEPTION(scope, {});
     NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, source);
     return JSValue::encode(JSValue(script));
 }
@@ -61,13 +95,18 @@ static EncodedJSValue runInContext(JSGlobalObject* globalObject, NodeVMScript* s
     auto& vm = globalObject->vm();
 
     if (!optionsArg.isUndefined()) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        return throwVMError(globalObject, scope, "TODO: options"_s);
+        if (!optionsArg.isObject()) {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            return throwVMTypeError(globalObject, scope, "options must be an object"_s);
+        }
+        JSObject* options = asObject(optionsArg);
     }
 
+    auto err_scope = DECLARE_THROW_SCOPE(vm);
     auto* eval = DirectEvalExecutable::create(
         globalObject, script->source(), DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
         false, false, EvalContextType::None, nullptr, nullptr, ECMAMode::sloppy());
+    RETURN_IF_EXCEPTION(err_scope, {});
 
     return JSValue::encode(vm.interpreter.executeEval(eval, globalThis, scope));
 }
@@ -85,14 +124,13 @@ JSC_DEFINE_HOST_FUNCTION(scriptConstructorConstruct, (JSGlobalObject* globalObje
 JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataRejected, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    return throwVMError(globalObject, scope, "TODO"_s);
+    return JSValue::encode(jsBoolean(true)); // TODO
 }
 JSC_DEFINE_HOST_FUNCTION(scriptCreateCachedData, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    return throwVMError(globalObject, scope, "TODO"_s);
+    return throwVMError(globalObject, scope, "TODO: Script.createCachedData"_s);
 }
 
 JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -140,11 +178,19 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject* globalObject, 
     return runInContext(globalObject, script, globalObject->globalThis(), globalObject->globalScope(), args.at(0));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject* globalObject, EncodedJSValue thisValueEncoded, PropertyName))
 {
     auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    return throwVMError(globalObject, scope, "TODO"_s);
+    JSValue thisValue = JSValue::decode(thisValueEncoded);
+    auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
+    if (UNLIKELY(!script)) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(globalObject, scope, "Script.prototype.sourceMapURL getter can only be called on a Script object"_s);
+    }
+
+    // FIXME: doesn't seem to work? Just returns undefined
+    const auto& url = script->source().provider()->sourceMappingURLDirective();
+    return JSValue::encode(jsString(vm, url));
 }
 
 JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -261,7 +307,7 @@ JSObject* NodeVMScript::createPrototype(VM& vm, JSGlobalObject* globalObject)
     return NodeVMScriptPrototype::create(vm, globalObject, NodeVMScriptPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
 }
 
-NodeVMScript* NodeVMScript::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, String source)
+NodeVMScript* NodeVMScript::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, SourceCode source)
 {
     NodeVMScript* ptr = new (NotNull, allocateCell<NodeVMScript>(vm)) NodeVMScript(vm, structure, source);
     ptr->finishCreation(vm);

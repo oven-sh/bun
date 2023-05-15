@@ -36,7 +36,7 @@ class NodeVMScript final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
 
-    static NodeVMScript* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, String source);
+    static NodeVMScript* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSC::SourceCode source);
 
     DECLARE_EXPORT_INFO;
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -64,10 +64,9 @@ public:
 private:
     JSC::SourceCode m_source;
 
-    NodeVMScript(JSC::VM& vm, JSC::Structure* structure, String source)
+    NodeVMScript(JSC::VM& vm, JSC::Structure* structure, JSC::SourceCode source)
         : Base(vm, structure)
-        // TODO: source location
-        , m_source(JSC::StringSourceProvider::create(source, JSC::SourceOrigin(), ""_s))
+        , m_source(source)
     {
     }
 

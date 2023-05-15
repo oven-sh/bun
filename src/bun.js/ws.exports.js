@@ -679,7 +679,10 @@ class Server extends EventEmitter {
           this._shouldEmitClose = true;
         }
       } else {
-        process.nextTick(emitClose, this);
+        process.nextTick(server => {
+          server._state = CLOSED;
+          server.emit("close");
+        }, this);
       }
     } else {
       const server = this._server;

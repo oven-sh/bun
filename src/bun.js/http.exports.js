@@ -1,4 +1,5 @@
 const { EventEmitter } = import.meta.require("node:events");
+const { isIPv6 } = import.meta.require("node:net");
 const { Readable, Writable, Duplex } = import.meta.require("node:stream");
 const { URL } = import.meta.require("node:url");
 const { newArrayWithSize, String, Object, Array } = import.meta.primordials;
@@ -320,7 +321,14 @@ export class Server extends EventEmitter {
   }
 
   address() {
-    return this.#server?.hostname;
+    if (!this.#server) return null;
+
+    const address = this.#server.hostname;
+    return {
+      address,
+      family: isIPv6(address) ? "IPv6" : "IPv4",
+      port: this.#server.port,
+    };
   }
 
   listen(port, host, onListen) {

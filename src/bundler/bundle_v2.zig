@@ -6492,7 +6492,9 @@ const LinkerContext = struct {
         // Start with the hashbang if there is one. This must be done before the
         // banner because it only works if it's literally the first character.
         if (chunk.isEntryPoint()) {
+            const is_bun = ctx.c.graph.ast.items(.target)[chunk.entry_point.source_index].isBun();
             const hashbang = c.graph.ast.items(.hashbang)[chunk.entry_point.source_index];
+
             if (hashbang.len > 0) {
                 j.push(hashbang);
                 j.push("\n");
@@ -6501,11 +6503,11 @@ const LinkerContext = struct {
                 newline_before_comment = true;
                 is_executable = true;
             }
-        }
 
-        if (chunk.entry_point.is_entry_point and ctx.c.graph.ast.items(.target)[chunk.entry_point.source_index].isBun()) {
-            j.push("// @bun\n");
-            line_offset.advance("// @bun\n");
+            if (is_bun) {
+                j.push("// @bun\n");
+                line_offset.advance("// @bun\n");
+            }
         }
 
         // TODO: banner
@@ -8957,6 +8959,7 @@ const LinkerContext = struct {
                                 .chunk,
                             .input_loader = if (chunk.entry_point.is_entry_point) c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index] else .js,
                             .output_path = chunk.final_rel_path,
+                            .is_executable = chunk.is_executable,
                             .source_map_index = if (sourcemap_output_file != null)
                                 @truncate(u32, output_files.items.len + 1)
                             else
@@ -9174,6 +9177,8 @@ const LinkerContext = struct {
                         },
                     },
                     .encoding = .buffer,
+                    .mode = if (chunk.is_executable) 0o755 else 0o644,
+
                     .dirfd = @intCast(bun.FileDescriptor, root_dir.dir.fd),
                     .file = .{
                         .path = JSC.Node.PathLike{
@@ -9213,6 +9218,7 @@ const LinkerContext = struct {
                             null,
                         .size = @truncate(u32, code_result.buffer.len),
                         .display_size = @truncate(u32, display_size),
+                        .is_executable = chunk.is_executable,
                         .data = .{
                             .saved = 0,
                         },

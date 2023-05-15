@@ -1992,6 +1992,7 @@ pub const OutputFile = struct {
     size_without_sourcemap: usize = 0,
     mtime: ?i128 = null,
     hash: u64 = 0,
+    is_executable: bool = false,
     source_map_index: u32 = std.math.maxInt(u32),
     output_kind: JSC.API.BuildArtifact.OutputKind = .chunk,
     path: []const u8 = "",
@@ -2102,6 +2103,7 @@ pub const OutputFile = struct {
         input_path: []const u8 = "",
         display_size: u32 = 0,
         output_kind: JSC.API.BuildArtifact.OutputKind = .chunk,
+        is_executable: bool = false,
         data: union(enum) {
             buffer: struct {
                 allocator: std.mem.Allocator,
@@ -2131,6 +2133,7 @@ pub const OutputFile = struct {
             .hash = options.hash orelse 0,
             .output_kind = options.output_kind,
             .source_map_index = options.source_map_index orelse std.math.maxInt(u32),
+            .is_executable = options.is_executable,
             .value = switch (options.data) {
                 .buffer => |buffer| Value{ .buffer = .{ .allocator = buffer.allocator, .bytes = buffer.data } },
                 .file => |file| Value{

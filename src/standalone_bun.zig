@@ -275,8 +275,7 @@ pub const StandaloneModuleGraph = struct {
             break :brk fd;
         };
 
-        // Always leave at least one full page of padding at the end of the file.
-        const total_byte_count = brk: {
+        const seek_position = @intCast(u64, brk: {
             const fstat = switch (Syscall.fstat(cloned_executable_fd)) {
                 .result => |res| res,
                 .err => |err| {
@@ -286,25 +285,19 @@ pub const StandaloneModuleGraph = struct {
                 },
             };
 
-            const count = @intCast(usize, @max(fstat.size, 0) + page_size + @intCast(i64, bytes.len) + 8);
+            break :brk @max(fstat.size, 0);
+        });
 
-            std.os.lseek_SET(cloned_executable_fd, 0) catch |err| {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> failed to seek to end of temporary file: {s}", .{@errorName(err)});
-                cleanup(zname, cloned_executable_fd);
-                Global.exit(1);
-            };
+        const total_byte_count = seek_position + bytes.len + 8;
 
-            // grow it by one page + the size of the module graph
-            // https://github.com/oven-sh/bun/issues/2882
-            switch (Syscall.ftruncate(cloned_executable_fd, @intCast(isize, count))) {
-                .result => {},
-                .err => |err| Output.prettyErrorln("<r>An error occurred while compiling Bun executable (specifically, while growing the size to {d} bytes)\n{}", .{ count, err }),
-            }
-            break :brk count;
-        };
-
-        const seek_position = total_byte_count -| bytes.len -| 8;
-
+        // From https://man7.org/linux/man-pages/man2/lseek.2.html
+        //
+        //  lseek() allows the file offset to be set beyond the end of the
+        //  file (but this does not change the size of the file).  If data is
+        //  later written at this point, subsequent reads of the data in the
+        //  gap (a "hole") return null bytes ('\0') until data is actually
+        //  written into the gap.
+        //
         std.os.lseek_SET(cloned_executable_fd, seek_position) catch |err| {
             Output.prettyErrorln(
                 "<r><red>error<r><d>:<r> {s} seeking to end of temporary file (pos: {d})",
@@ -450,7 +443,6 @@ pub const StandaloneModuleGraph = struct {
 
         // Reading the data and making sure it's page-aligned + won't crash due
         // to out of bounds using mmap() is very complicated.
-        // So even though we ensure there is at least one page of padding at the end of the file,
         // we just read the whole thing into memory for now.
         // at the very least
         // if you have not a ton of code, we only do a single read() call

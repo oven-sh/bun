@@ -67,5 +67,5 @@ fetchRecurseSubmodules = false
 	url = https://github.com/c-ares/c-ares.git
 [submodule "src/deps/zstd"]
 	path = src/deps/zstd
-	url = git@github.com:facebook/zstd.git
+	url = https://github.com/facebook/zstd.git
 	ignore = dirty

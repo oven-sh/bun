@@ -1,4 +1,6 @@
 import type { Server } from "socket.io";
+import request from "supertest";
+
 import { io as ioc, ManagerOptions, Socket as ClientSocket, SocketOptions } from "socket.io-client";
 
 export function createClient(
@@ -37,4 +39,42 @@ export function createPartialDone(count: number, done: (err?: Error) => void) {
       done(new Error(`partialDone() called too many times: ${i} > ${count}`));
     }
   };
+}
+
+// TODO: update superagent as latest release now supports promises
+export function eioHandshake(httpServer): Promise<string> {
+  return new Promise(resolve => {
+    request(httpServer)
+      .get("/socket.io/")
+      .query({ transport: "polling", EIO: 4 })
+      .end((err, res) => {
+        const sid = JSON.parse(res.text.substring(1)).sid;
+        resolve(sid);
+      });
+  });
+}
+
+export function eioPush(httpServer, sid: string, body: string): Promise<void> {
+  return new Promise(resolve => {
+    request(httpServer)
+      .post("/socket.io/")
+      .send(body)
+      .query({ transport: "polling", EIO: 4, sid })
+      .expect(200)
+      .end(() => {
+        resolve();
+      });
+  });
+}
+
+export function eioPoll(httpServer, sid): Promise<string> {
+  return new Promise(resolve => {
+    request(httpServer)
+      .get("/socket.io/")
+      .query({ transport: "polling", EIO: 4, sid })
+      .expect(200)
+      .end((err, res) => {
+        resolve(res.text);
+      });
+  });
 }

@@ -1,10 +1,10 @@
+import { describe, it, expect } from "bun:test";
+
 import fs from "fs";
 import { join } from "path";
 import { createClient, createPartialDone, getPort, success, fail } from "./support/util.ts";
-
 import { Server } from "socket.io";
 
-import { describe, it, expect } from "bun:test";
 describe("socket", () => {
   it("should not fire events more than once after manually reconnecting", done => {
     const io = new Server(0);

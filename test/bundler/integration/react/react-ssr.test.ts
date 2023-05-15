@@ -34,8 +34,8 @@ describe("bundler integration, react SSR", () => {
           env: nodeEnv ? { NODE_ENV: nodeEnv } : undefined,
         },
       );
-      const proc = Bun.spawnSync(["bun", path.join(out, "ssr-print.js")], {
-        cwd: path.join(import.meta.dir, "react"),
+      const proc = Bun.spawnSync([bunExe(), path.join(out, "ssr-print.js")], {
+        cwd: path.join(import.meta.dir),
       });
       if (!proc.success) {
         console.error(proc.stderr.toString());

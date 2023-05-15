@@ -32,11 +32,7 @@ export function Layout(props: { title: string; children: React.ReactNode }) {
 
             <div style={{ height: "30px" }}></div>
             <h3>{props.title}</h3>
-            <p>
-              <a className="App-link" href="https://bun.sh/docs" target="_blank" rel="noopener noreferrer">
-                Read the docs →
-              </a>
-            </p>
+
             <div style={{ height: "30px" }}></div>
             {props.children}
           </article>

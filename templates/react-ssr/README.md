@@ -18,10 +18,4 @@ The following files are the most important:
 
 - `dev.tsx`: Generates a browser build of all `pages` using `Bun.build`, then starts a dev server that handles incoming requests. For paths like `/` and `/settings`, the server will render the appropriate page in `pages` to static HTML and return the result. The returned HTML includes a `<script>` tag that imports a bundled version of `hydrate.tsx`.
 - `hydrate.tsx`: A script that hydrates the static HTML returned by the server.
-
-To learn more about React.js, take a look at the following resources:
-
-- [React.js Documentation](https://reactjs.org/docs/getting-started.html) - learn about React.js features.
-- [Learn React.js](https://reactjs.org/tutorial/tutorial.html) - an interactive React.js tutorial.
-
-You can check out the [React.js GitHub repository](https://github.com/facebook/react) - your feedback and contributions are welcome!
+- `pages/*.tsx`: A set of pages. Incoming requests are resolved against this directory using Next.js-style routing.

@@ -2991,15 +2991,14 @@ pub const Parser = struct {
                         // Move class export statements to the top of the file if we can
                         // This automatically resolves some cyclical import issues
                         // https://github.com/kysely-org/kysely/issues/412
-                        // TODO: this breaks code if they have any static variables or properties which reference anything from the parent scope
-                        // we need to fix it before we merge v0.6.0
-                        var list = if (!p.options.bundle and class.class.canBeMoved()) &before else &parts;
+                        const should_move = !p.options.bundle and class.class.canBeMoved();
+
                         var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
                         sliced.items.len = 1;
                         sliced.items[0] = stmt;
                         try p.appendPart(&parts, sliced.items);
 
-                        if (&parts != list) {
+                        if (should_move) {
                             before.append(parts.getLast()) catch unreachable;
                             parts.items.len -= 1;
                         }
@@ -3008,13 +3007,13 @@ pub const Parser = struct {
                         // We move export default statements when we can
                         // This automatically resolves some cyclical import issues in packages like luxon
                         // https://github.com/oven-sh/bun/issues/1961
-                        var list = if (!p.options.bundle and value.canBeMoved()) &before else &parts;
+                        const should_move = !p.options.bundle and value.canBeMoved();
                         var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
                         sliced.items.len = 1;
                         sliced.items[0] = stmt;
                         try p.appendPart(&parts, sliced.items);
 
-                        if (&parts != list) {
+                        if (should_move) {
                             before.append(parts.getLast()) catch unreachable;
                             parts.items.len -= 1;
                         }

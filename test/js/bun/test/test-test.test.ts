@@ -2760,8 +2760,8 @@ describe(() => {
 });
 
 describe("toBeCloseTo", () => {
-  test('should pass, default precision', () => {
-    const testCases =  [
+  test("should pass, default precision", () => {
+    const testCases = [
       [0, 0],
       [0, 0.001],
       [1.23, 1.229],
@@ -2770,14 +2770,14 @@ describe("toBeCloseTo", () => {
       [1.23, 1.234],
       [Infinity, Infinity],
       [-Infinity, -Infinity],
-    ]
+    ];
 
     for (const [a, b] of testCases) {
-      expect(a).toBeCloseTo(b)
+      expect(a).toBeCloseTo(b);
     }
-  })
+  });
 
-  test('`not` should pass, default precision', () => {
+  test("`not` should pass, default precision", () => {
     const testCases = [
       [0, 0.01],
       [1, 1.23],
@@ -2785,34 +2785,34 @@ describe("toBeCloseTo", () => {
       [Infinity, -Infinity],
       [Infinity, 1.23],
       [-Infinity, -1.23],
-    ]
+    ];
 
     for (const [a, b] of testCases) {
-      expect(a).not.toBeCloseTo(b)
+      expect(a).not.toBeCloseTo(b);
     }
-  })
+  });
 
-  test('should pass, custom precision', () => {
+  test("should pass, custom precision", () => {
     const testCases = [
       [0, 0.1, 0],
       [0, 0.0001, 3],
       [0, 0.000004, 5],
       [2.0000002, 2, 5],
-    ]
+    ];
 
     for (const [a, b, precision] of testCases) {
-      expect(a).toBeCloseTo(b, precision)
+      expect(a).toBeCloseTo(b, precision);
     }
-  })
+  });
 
-  test('`not` should pass, custom precision', () => {
+  test("`not` should pass, custom precision", () => {
     const testCases = [
       [3.141592e-7, 3e-7, 8],
       [56789, 51234, -4],
-    ]
+    ];
 
     for (const [a, b, precision] of testCases) {
-      expect(a).not.toBeCloseTo(b, precision)
+      expect(a).not.toBeCloseTo(b, precision);
     }
-  })
+  });
 });

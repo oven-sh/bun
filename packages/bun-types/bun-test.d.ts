@@ -33,7 +33,7 @@ declare module "bun:test" {
    */
   export type Describe = {
     (label: string, fn: () => void): void;
-    skip: (label: string, fn: () => void) => void
+    skip: (label: string, fn: () => void) => void;
   };
   /**
    * Describes a group of related tests.
@@ -242,6 +242,24 @@ declare module "bun:test" {
      * @param expected the expected value
      */
     toBe(expected: T): void;
+    /**
+     * Asserts that value is close to the expected by floating point precision.
+     *
+     * For example, the following fails because arithmetic on decimal (base 10)
+     * values often have rounding errors in limited precision binary (base 2) representation.
+     *
+     * @example
+     * expect(0.2 + 0.1).toBe(0.3); // fails
+     *
+     * Use `toBeCloseTo` to compare floating point numbers for approximate equality.
+     *
+     * @example
+     * expect(0.2 + 0.1).toBeCloseTo(0.3, 5); // passes
+     *
+     * @param expected the expected value
+     * @param numDigits the number of digits to check after the decimal point. Default is `2`
+     */
+    toBeCloseTo(expected: number, numDigits?: number): void;
     /**
      * Asserts that a value is deeply equal to what is expected.
      *

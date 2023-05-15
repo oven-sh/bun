@@ -436,6 +436,17 @@ pub fn readlink(in: [:0]const u8, buf: []u8) Maybe(usize) {
     unreachable;
 }
 
+pub fn ftruncate(fd: fd_t, size: isize) Maybe(void) {
+    while (true) {
+        if (Maybe(void).errnoSys(sys.ftruncate(fd, size), .ftruncate)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return Maybe(void).success;
+    }
+    unreachable;
+}
+
 pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
     while (true) {
         if (Maybe(void).errnoSys(sys.rename(from, to), .rename)) |err| {
@@ -651,6 +662,10 @@ pub const Error = struct {
 
     pub fn fromCode(errno: os.E, syscall: Syscall.Tag) Error {
         return .{ .errno = @truncate(Int, @enumToInt(errno)), .syscall = syscall };
+    }
+
+    pub fn format(self: Error, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+        try self.toSystemError().format(fmt, opts, writer);
     }
 
     pub const oom = fromCode(os.E.NOMEM, .read);

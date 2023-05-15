@@ -332,6 +332,7 @@ pub const BundleV2 = struct {
     bun_watcher: ?*Watcher.Watcher = null,
     plugins: ?*JSC.API.JSBundler.Plugin = null,
     completion: ?*JSBundleCompletionTask = null,
+    source_code_length: usize = 0,
 
     // There is a race condition where an onResolve plugin may schedule a task on the bundle thread before it's parsing task completes
     resolve_tasks_waiting_for_import_source_index: std.AutoArrayHashMapUnmanaged(Index.Int, BabyList(struct { to_source_index: Index, import_record_index: u32 })) = .{},
@@ -603,6 +604,13 @@ pub const BundleV2 = struct {
 
             // Handle onLoad plugins
             if (!this.enqueueOnLoadPluginIfNeeded(task)) {
+                if (loader.shouldCopyForBundling()) {
+                    var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
+                    additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
+                    this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
+                    this.graph.estimated_file_loader_count += 1;
+                }
+
                 this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&task.task));
             }
         } else {
@@ -664,6 +672,13 @@ pub const BundleV2 = struct {
 
         // Handle onLoad plugins as entry points
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
+            if (loader.shouldCopyForBundling()) {
+                var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
+                additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
+                this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
+                this.graph.estimated_file_loader_count += 1;
+            }
+
             batch.push(ThreadPoolLib.Batch.from(&task.task));
         }
 
@@ -993,6 +1008,9 @@ pub const BundleV2 = struct {
         event_loop: EventLoop,
         unique_key: u64,
         enable_reloading: bool,
+        reachable_files_count: *usize,
+        minify_duration: *u64,
+        source_code_size: *u64,
     ) !std.ArrayList(options.OutputFile) {
         var this = try BundleV2.init(bundler, allocator, event_loop, enable_reloading, null, null);
         this.unique_key = unique_key;
@@ -1009,6 +1027,9 @@ pub const BundleV2 = struct {
 
         this.waitForParse();
 
+        minify_duration.* = @intCast(u64, @divTrunc(@truncate(i64, std.time.nanoTimestamp()) - @truncate(i64, bun.CLI.start_time), @as(i64, std.time.ns_per_ms)));
+        source_code_size.* = this.source_code_length;
+
         if (this.graph.use_directive_entry_points.len > 0) {
             if (this.bundler.log.msgs.items.len > 0) {
                 return error.BuildFailed;
@@ -1023,6 +1044,7 @@ pub const BundleV2 = struct {
         }
 
         const reachable_files = try this.findReachableFiles();
+        reachable_files_count.* = reachable_files.len -| 1; // - 1 for the runtime
 
         try this.processFilesToCopy(reachable_files);
 
@@ -1059,8 +1081,8 @@ pub const BundleV2 = struct {
                         template.data = this.bundler.options.asset_naming;
                     const source = &sources[index];
                     var pathname = source.path.name;
-                    // TODO: outbase
-                    const rel = bun.path.relative(this.bundler.fs.top_level_dir, source.path.text);
+
+                    const rel = bun.path.relative(this.bundler.options.root_dir, source.path.text);
                     if (rel.len > 0 and rel[0] != '.')
                         pathname = Fs.PathName.init(rel);
 
@@ -1475,6 +1497,13 @@ pub const BundleV2 = struct {
 
                         // Handle onLoad plugins
                         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
+                            if (loader.shouldCopyForBundling()) {
+                                var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
+                                additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
+                                this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
+                                this.graph.estimated_file_loader_count += 1;
+                            }
+
                             this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&task.task));
                         }
                     } else {
@@ -2098,6 +2127,10 @@ pub const BundleV2 = struct {
                 // Warning: this array may resize in this function call
                 // do not reuse it.
                 graph.input_files.items(.source)[result.source.index.get()] = result.source;
+                this.source_code_length += if (!result.source.index.isRuntime())
+                    result.source.contents.len
+                else
+                    @as(usize, 0);
                 graph.input_files.items(.unique_key_for_additional_file)[result.source.index.get()] = result.unique_key_for_additional_file;
                 graph.input_files.items(.content_hash_for_additional_file)[result.source.index.get()] = result.content_hash_for_additional_file;
 
@@ -2150,15 +2183,15 @@ pub const BundleV2 = struct {
                         graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
                         diff += 1;
 
+                        if (this.enqueueOnLoadPluginIfNeeded(new_task)) {
+                            continue;
+                        }
+
                         if (loader.shouldCopyForBundling()) {
                             var additional_files: *BabyList(AdditionalFile) = &graph.input_files.items(.additional_files)[result.source.index.get()];
                             additional_files.push(this.graph.allocator, .{ .source_index = new_task.source_index.get() }) catch unreachable;
                             new_input_file.side_effects = _resolver.SideEffects.no_side_effects__pure_data;
                             graph.estimated_file_loader_count += 1;
-                        }
-
-                        if (this.enqueueOnLoadPluginIfNeeded(new_task)) {
-                            continue;
                         }
 
                         // schedule as early as possible
@@ -2417,18 +2450,12 @@ pub const ParseTask = struct {
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
             // TODO: css
-            .css, .file => {
+            else => {
                 const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
                 const root = Expr.init(E.String, E.String{
                     .data = unique_key,
                 }, Logger.Loc{ .start = 0 });
                 unique_key_for_additional_file.* = unique_key;
-                return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
-            },
-            else => {
-                const root = Expr.init(E.String, E.String{
-                    .data = source.path.text,
-                }, Logger.Loc{ .start = 0 });
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
         }
@@ -2565,7 +2592,7 @@ pub const ParseTask = struct {
             .contents_is_recycled = false,
         };
 
-        const target = use_directive.target(task.known_target orelse bundler.options.target);
+        const target = targetFromHashbang(entry.contents) orelse use_directive.target(task.known_target orelse bundler.options.target);
 
         var opts = js_parser.Parser.Options.init(task.jsx, loader);
         opts.legacy_transform_require_to_import = false;
@@ -3475,6 +3502,7 @@ const LinkerGraph = struct {
         entry_point_kind: EntryPoint.Kind = .none,
 
         line_offset_table: bun.sourcemap.LineOffsetTable.List = .{},
+        quoted_source_contents: string = "",
 
         pub fn isEntryPoint(this: *const File) bool {
             return this.entry_point_kind.isEntryPoint();
@@ -3547,28 +3575,42 @@ const LinkerContext = struct {
     };
 
     pub const SourceMapData = struct {
-        wait_group: sync.WaitGroup = undefined,
-        tasks: []Task = &.{},
+        line_offset_wait_group: sync.WaitGroup = undefined,
+        line_offset_tasks: []Task = &.{},
+
+        quoted_contents_wait_group: sync.WaitGroup = undefined,
+        quoted_contents_tasks: []Task = &.{},
 
         pub const Task = struct {
             ctx: *LinkerContext,
             source_index: Index.Int,
-            thread_task: ThreadPoolLib.Task = .{ .callback = &run },
+            thread_task: ThreadPoolLib.Task = .{ .callback = &runLineOffset },
 
-            pub fn run(thread_task: *ThreadPoolLib.Task) void {
+            pub fn runLineOffset(thread_task: *ThreadPoolLib.Task) void {
                 var task = @fieldParentPtr(Task, "thread_task", thread_task);
                 defer {
                     task.ctx.markPendingTaskDone();
-                    task.ctx.source_maps.wait_group.finish();
+                    task.ctx.source_maps.line_offset_wait_group.finish();
                 }
 
-                SourceMapData.compute(task.ctx, ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", task.ctx)).allocator, task.source_index);
+                SourceMapData.computeLineOffsets(task.ctx, ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", task.ctx)).allocator, task.source_index);
+            }
+
+            pub fn runQuotedSourceContents(thread_task: *ThreadPoolLib.Task) void {
+                var task = @fieldParentPtr(Task, "thread_task", thread_task);
+                defer {
+                    task.ctx.markPendingTaskDone();
+                    task.ctx.source_maps.quoted_contents_wait_group.finish();
+                }
+
+                SourceMapData.computeQuotedSourceContents(task.ctx, ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", task.ctx)).allocator, task.source_index);
             }
         };
 
-        pub fn compute(this: *LinkerContext, allocator: std.mem.Allocator, source_index: Index.Int) void {
+        pub fn computeLineOffsets(this: *LinkerContext, allocator: std.mem.Allocator, source_index: Index.Int) void {
             debug("Computing LineOffsetTable: {d}", .{source_index});
             var line_offset_table: *bun.sourcemap.LineOffsetTable.List = &this.graph.files.items(.line_offset_table)[source_index];
+
             const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
 
             const approximate_line_count = this.graph.ast.items(.approximate_newline_count)[source_index];
@@ -3580,6 +3622,15 @@ const LinkerContext = struct {
                 // We don't support sourcemaps for source files with more than 2^31 lines
                 @intCast(i32, @truncate(u31, approximate_line_count)),
             );
+        }
+
+        pub fn computeQuotedSourceContents(this: *LinkerContext, allocator: std.mem.Allocator, source_index: Index.Int) void {
+            debug("Computing Quoted Source Contents: {d}", .{source_index});
+            var quoted_source_contents: *string = &this.graph.files.items(.quoted_source_contents)[source_index];
+
+            const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
+            var mutable = MutableString.initEmpty(allocator);
+            quoted_source_contents.* = (js_printer.quoteForJSON(source.contents, mutable, false) catch @panic("Out of memory")).list.items;
         }
     };
 
@@ -3650,17 +3701,33 @@ const LinkerContext = struct {
         this: *LinkerContext,
         reachable: []const Index.Int,
     ) void {
-        this.source_maps.wait_group.init();
-        this.source_maps.wait_group.counter = @truncate(u32, reachable.len);
-        this.source_maps.tasks = this.allocator.alloc(SourceMapData.Task, reachable.len) catch unreachable;
+        this.source_maps.line_offset_wait_group.init();
+        this.source_maps.quoted_contents_wait_group.init();
+        this.source_maps.line_offset_wait_group.counter = @truncate(u32, reachable.len);
+        this.source_maps.quoted_contents_wait_group.counter = @truncate(u32, reachable.len);
+        this.source_maps.line_offset_tasks = this.allocator.alloc(SourceMapData.Task, reachable.len) catch unreachable;
+        this.source_maps.quoted_contents_tasks = this.allocator.alloc(SourceMapData.Task, reachable.len) catch unreachable;
+
         var batch = ThreadPoolLib.Batch{};
-        for (reachable, this.source_maps.tasks) |source_index, *task| {
-            task.* = .{
+        var second_batch = ThreadPoolLib.Batch{};
+        for (reachable, this.source_maps.line_offset_tasks, this.source_maps.quoted_contents_tasks) |source_index, *line_offset, *quoted| {
+            line_offset.* = .{
                 .ctx = this,
                 .source_index = source_index,
+                .thread_task = .{ .callback = &SourceMapData.Task.runLineOffset },
             };
-            batch.push(ThreadPoolLib.Batch.from(&task.thread_task));
+            quoted.* = .{
+                .ctx = this,
+                .source_index = source_index,
+                .thread_task = .{ .callback = &SourceMapData.Task.runQuotedSourceContents },
+            };
+            batch.push(ThreadPoolLib.Batch.from(&line_offset.thread_task));
+            second_batch.push(ThreadPoolLib.Batch.from(&quoted.thread_task));
         }
+
+        // line offsets block sooner and are faster to compute, so we should schedule those first
+        batch.push(second_batch);
+
         this.scheduleTasks(batch);
     }
 
@@ -6465,7 +6532,9 @@ const LinkerContext = struct {
         // Start with the hashbang if there is one. This must be done before the
         // banner because it only works if it's literally the first character.
         if (chunk.isEntryPoint()) {
+            const is_bun = ctx.c.graph.ast.items(.target)[chunk.entry_point.source_index].isBun();
             const hashbang = c.graph.ast.items(.hashbang)[chunk.entry_point.source_index];
+
             if (hashbang.len > 0) {
                 j.push(hashbang);
                 j.push("\n");
@@ -6474,11 +6543,11 @@ const LinkerContext = struct {
                 newline_before_comment = true;
                 is_executable = true;
             }
-        }
 
-        if (chunk.entry_point.is_entry_point and ctx.c.graph.ast.items(.target)[chunk.entry_point.source_index].isBun()) {
-            j.push("// @bun\n");
-            line_offset.advance("// @bun\n");
+            if (is_bun) {
+                j.push("// @bun\n");
+                line_offset.advance("// @bun\n");
+            }
         }
 
         // TODO: banner
@@ -6654,6 +6723,7 @@ const LinkerContext = struct {
 
         var j = Joiner{};
         const sources = c.parse_graph.input_files.items(.source);
+        const quoted_source_map_contents = c.graph.files.items(.quoted_source_contents);
 
         var source_index_to_sources_index = std.AutoHashMap(u32, u32).init(worker.allocator);
         defer source_index_to_sources_index.deinit();
@@ -6694,20 +6764,12 @@ const LinkerContext = struct {
         j.push("],\n  \"sourcesContent\": [\n  ");
 
         if (source_indices.len > 0) {
-            {
-                const contents = sources[source_indices[0]].contents;
-                var quote_buf = try MutableString.init(worker.allocator, contents.len);
-                quote_buf = try js_printer.quoteForJSON(contents, quote_buf, false);
-                j.push(quote_buf.list.items);
-            }
+            j.push(quoted_source_map_contents[source_indices[0]]);
 
             if (source_indices.len > 1) {
                 for (source_indices[1..]) |index| {
-                    const contents = sources[index].contents;
-                    var quote_buf = try MutableString.init(worker.allocator, contents.len + 2 + ", ".len);
-                    quote_buf.appendAssumeCapacity(",\n  ");
-                    quote_buf = try js_printer.quoteForJSON(contents, quote_buf, false);
-                    j.push(quote_buf.list.items);
+                    j.push(",\n  ");
+                    j.push(quoted_source_map_contents[index]);
                 }
             }
         }
@@ -8600,12 +8662,12 @@ const LinkerContext = struct {
             try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, ctx, generateJSRenamer, chunks);
         }
 
-        if (c.source_maps.tasks.len > 0) {
-            debug(" START {d} source maps", .{chunks.len});
-            defer debug("  DONE {d} source maps", .{chunks.len});
-            c.source_maps.wait_group.wait();
-            c.allocator.free(c.source_maps.tasks);
-            c.source_maps.tasks.len = 0;
+        if (c.source_maps.line_offset_tasks.len > 0) {
+            debug(" START {d} source maps (line offset)", .{chunks.len});
+            defer debug("  DONE {d} source maps (line offset)", .{chunks.len});
+            c.source_maps.line_offset_wait_group.wait();
+            c.allocator.free(c.source_maps.line_offset_tasks);
+            c.source_maps.line_offset_tasks.len = 0;
         }
         {
             var chunk_contexts = c.allocator.alloc(GenerateChunkCtx, chunks.len) catch unreachable;
@@ -8648,6 +8710,14 @@ const LinkerContext = struct {
                 wait_group.counter = @truncate(u32, total_count);
                 c.parse_graph.pool.pool.schedule(batch);
                 wait_group.wait();
+            }
+
+            if (c.source_maps.quoted_contents_tasks.len > 0) {
+                debug(" START {d} source maps (quoted contents)", .{chunks.len});
+                defer debug("  DONE {d} source maps (quoted contents)", .{chunks.len});
+                c.source_maps.quoted_contents_wait_group.wait();
+                c.allocator.free(c.source_maps.quoted_contents_tasks);
+                c.source_maps.quoted_contents_tasks.len = 0;
             }
 
             {
@@ -8834,20 +8904,25 @@ const LinkerContext = struct {
         if (root_path.len > 0) {
             try c.writeOutputFilesToDisk(root_path, chunks, react_client_components_manifest, &output_files);
         } else {
+
             // In-memory build
             for (chunks) |*chunk| {
+                var display_size: usize = 0;
+
                 const _code_result = if (c.options.source_maps != .none) chunk.intermediate_output.codeWithSourceMapShifts(
                     null,
                     c.parse_graph,
                     c.resolver.opts.public_path,
                     chunk,
                     chunks,
+                    &display_size,
                 ) else chunk.intermediate_output.code(
                     null,
                     c.parse_graph,
                     c.resolver.opts.public_path,
                     chunk,
                     chunks,
+                    &display_size,
                 );
 
                 var code_result = _code_result catch @panic("Failed to allocate memory for output file");
@@ -8918,12 +8993,14 @@ const LinkerContext = struct {
                             .hash = chunk.isolated_hash,
                             .loader = .js,
                             .input_path = input_path,
+                            .display_size = @truncate(u32, display_size),
                             .output_kind = if (chunk.entry_point.is_entry_point)
                                 c.graph.files.items(.entry_point_kind)[chunk.entry_point.source_index].OutputKind()
                             else
                                 .chunk,
                             .input_loader = if (chunk.entry_point.is_entry_point) c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index] else .js,
                             .output_path = chunk.final_rel_path,
+                            .is_executable = chunk.is_executable,
                             .source_map_index = if (sourcemap_output_file != null)
                                 @truncate(u32, output_files.items.len + 1)
                             else
@@ -8971,10 +9048,18 @@ const LinkerContext = struct {
         const trace = tracer(@src(), "writeOutputFilesToDisk");
         defer trace.end();
         var root_dir = std.fs.cwd().makeOpenPathIterable(root_path, .{}) catch |err| {
-            c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{s} opening outdir {}", .{
-                @errorName(err),
-                bun.fmt.quote(root_path),
-            }) catch unreachable;
+            if (err == error.NotDir) {
+                c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to create output directory {} is a file. Please choose a different outdir or delete {}", .{
+                    bun.fmt.quote(root_path),
+                    bun.fmt.quote(root_path),
+                }) catch unreachable;
+            } else {
+                c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to create output directory {s} {}", .{
+                    @errorName(err),
+                    bun.fmt.quote(root_path),
+                }) catch unreachable;
+            }
+
             return err;
         };
         defer root_dir.close();
@@ -9014,7 +9099,7 @@ const LinkerContext = struct {
                     };
                 }
             }
-
+            var display_size: usize = 0;
             const _code_result = if (c.options.source_maps != .none)
                 chunk.intermediate_output.codeWithSourceMapShifts(
                     code_allocator,
@@ -9022,6 +9107,7 @@ const LinkerContext = struct {
                     c.resolver.opts.public_path,
                     chunk,
                     chunks,
+                    &display_size,
                 )
             else
                 chunk.intermediate_output.code(
@@ -9030,6 +9116,7 @@ const LinkerContext = struct {
                     c.resolver.opts.public_path,
                     chunk,
                     chunks,
+                    &display_size,
                 );
 
             var code_result = _code_result catch @panic("Failed to allocate memory for output chunk");
@@ -9131,6 +9218,8 @@ const LinkerContext = struct {
                         },
                     },
                     .encoding = .buffer,
+                    .mode = if (chunk.is_executable) 0o755 else 0o644,
+
                     .dirfd = @intCast(bun.FileDescriptor, root_dir.dir.fd),
                     .file = .{
                         .path = JSC.Node.PathLike{
@@ -9169,6 +9258,8 @@ const LinkerContext = struct {
                         else
                             null,
                         .size = @truncate(u32, code_result.buffer.len),
+                        .display_size = @truncate(u32, display_size),
+                        .is_executable = chunk.is_executable,
                         .data = .{
                             .saved = 0,
                         },
@@ -10635,6 +10726,7 @@ pub const Chunk = struct {
             import_prefix: []const u8,
             chunk: *Chunk,
             chunks: []Chunk,
+            display_size: ?*usize,
         ) !CodeResult {
             const additional_files = graph.input_files.items(.additional_files);
             const unique_key_for_additional_files = graph.input_files.items(.unique_key_for_additional_file);
@@ -10676,6 +10768,10 @@ pub const Chunk = struct {
                             },
                             .none => {},
                         }
+                    }
+
+                    if (display_size) |amt| {
+                        amt.* = count;
                     }
 
                     const debug_id_len = if (comptime FeatureFlags.source_map_debug_id)
@@ -10767,6 +10863,10 @@ pub const Chunk = struct {
 
                     const allocator = allocator_to_use orelse allocatorForSize(joiny.len);
 
+                    if (display_size) |amt| {
+                        amt.* = joiny.len;
+                    }
+
                     const buffer = brk: {
                         if (comptime FeatureFlags.source_map_debug_id) {
                             // This comment must go before the //# sourceMappingURL comment
@@ -10801,6 +10901,7 @@ pub const Chunk = struct {
             import_prefix: []const u8,
             chunk: *Chunk,
             chunks: []Chunk,
+            display_size: *usize,
         ) !CodeResult {
             const additional_files = graph.input_files.items(.additional_files);
             switch (this) {
@@ -10819,7 +10920,16 @@ pub const Chunk = struct {
                             .chunk, .asset => {
                                 const index = piece.index.index;
                                 const file_path = switch (piece.index.kind) {
-                                    .asset => graph.additional_output_files.items[additional_files[index].last().?.output_file].input.text,
+                                    .asset => brk: {
+                                        const files = additional_files[index];
+                                        if (!(files.len > 0)) {
+                                            Output.panic("Internal error: missing asset file", .{});
+                                        }
+
+                                        const output_file = files.last().?.output_file;
+
+                                        break :brk graph.additional_output_files.items[output_file].path;
+                                    },
                                     .chunk => chunks[index].final_rel_path,
                                     else => unreachable,
                                 };
@@ -10837,6 +10947,7 @@ pub const Chunk = struct {
                         }
                     }
 
+                    display_size.* = count;
                     var total_buf = try (allocator_to_use orelse allocatorForSize(count)).alloc(u8, count);
                     var remain = total_buf;
 
@@ -10852,11 +10963,17 @@ pub const Chunk = struct {
                             .asset, .chunk => {
                                 const index = piece.index.index;
                                 const file_path = switch (piece.index.kind) {
-                                    .asset => graph.additional_output_files.items[additional_files[index].last().?.output_file].input.text,
+                                    .asset => brk: {
+                                        const files = additional_files[index];
+                                        std.debug.assert(files.len > 0);
+
+                                        const output_file = files.last().?.output_file;
+
+                                        break :brk graph.additional_output_files.items[output_file].path;
+                                    },
                                     .chunk => chunks[index].final_rel_path,
                                     else => unreachable,
                                 };
-
                                 const cheap_normalizer = cheapPrefixNormalizer(
                                     import_prefix,
                                     if (from_chunk_dir.len == 0)
@@ -10890,6 +11007,9 @@ pub const Chunk = struct {
                 .joiner => |joiner_| {
                     // TODO: make this safe
                     var joiny = joiner_;
+
+                    display_size.* = joiny.len;
+
                     return .{
                         .buffer = try joiny.done((allocator_to_use orelse allocatorForSize(joiny.len))),
                         .shifts = &[_]sourcemap.SourceMapShifts{},
@@ -11246,4 +11366,18 @@ fn getRedirectId(id: u32) ?u32 {
     }
 
     return id;
+}
+
+// TODO: this needs to also update `define` and `external`. This whole setup needs to be more resilient.
+fn targetFromHashbang(buffer: []const u8) ?options.Target {
+    if (buffer.len > "#!/usr/bin/env bun".len) {
+        if (strings.hasPrefixComptime(buffer, "#!/usr/bin/env bun")) {
+            switch (buffer["#!/usr/bin/env bun".len]) {
+                '\n', ' ' => return options.Target.bun,
+                else => {},
+            }
+        }
+    }
+
+    return null;
 }

@@ -171,3 +171,62 @@ it.skip("order of setTimeouts", done => {
   setTimeout(maybeDone(() => nums.push(4), 1));
   Promise.resolve().then(maybeDone(() => nums.push(1)));
 });
+
+it("setTimeout should refresh N times", done => {
+  let count = 0;
+  let timer = setTimeout(() => {
+    count++;
+    timer.refresh();
+  }, 50);
+
+  setTimeout(() => {
+    clearTimeout(timer);
+    expect(count).toBeGreaterThanOrEqual(5);
+    done();
+  }, 300);
+});
+
+it("setTimeout if refreshed before run, should reschedule to run later", done => {
+  let start = Date.now();
+  let timer = setTimeout(() => {
+    let end = Date.now();
+    expect(end - start).toBeGreaterThanOrEqual(150);
+    done();
+  }, 100);
+
+  setTimeout(() => {
+    timer.refresh();
+  }, 50);
+});
+
+it("setTimeout should refresh after already been run", done => {
+  let count = 0;
+  let timer = setTimeout(() => {
+    count++;
+  }, 50);
+
+  setTimeout(() => {
+    timer.refresh();
+  }, 100);
+
+  setTimeout(() => {
+    expect(count).toBe(2);
+    done();
+  }, 300);
+});
+
+it("setTimeout should not refresh after clearTimeout", done => {
+  let count = 0;
+  let timer = setTimeout(() => {
+    count++;
+  }, 50);
+
+  clearTimeout(timer);
+
+  timer.refresh();
+
+  setTimeout(() => {
+    expect(count).toBe(0);
+    done();
+  }, 100);
+});

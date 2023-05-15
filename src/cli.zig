@@ -89,6 +89,7 @@ fn invalidTarget(diag: *clap.Diagnostic, _target: []const u8) noreturn {
     diag.report(Output.errorWriter(), error.InvalidTarget) catch {};
     std.process.exit(1);
 }
+
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
         const option_loader = options.Loader.fromString(in) orelse return error.InvalidLoader;
@@ -198,14 +199,14 @@ pub const Arguments = struct {
         clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
         clap.parseParam("--root <STR>                     Root directory used for multiple entry points") catch unreachable,
         clap.parseParam("--splitting                      Enable code splitting") catch unreachable,
-        // clap.parseParam("--manifest <STR>                 Write JSON manifest") catch unreachable,
-        // clap.parseParam("--public-path <STR>              A prefix to be appended to any import paths in bundled code") catch unreachable,
+        clap.parseParam("--public-path <STR>              A prefix to be appended to any import paths in bundled code") catch unreachable,
         clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'inline', 'external', or 'none'") catch unreachable,
         clap.parseParam("--entry-naming <STR>             Customize entry point filenames. Defaults to \"[dir]/[name].[ext]\"") catch unreachable,
         clap.parseParam("--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--server-components              Enable React Server Components (experimental)") catch unreachable,
-        clap.parseParam("--transpile                      Transpile file only, do not bundle") catch unreachable,
+        clap.parseParam("--no-bundle                      Transpile file only, do not bundle") catch unreachable,
+        clap.parseParam("--compile                       Generate a standalone Bun executable containing your bundled code") catch unreachable,
     };
 
     // TODO: update test completions
@@ -478,7 +479,11 @@ pub const Arguments = struct {
         ctx.bundler_options.minify_identifiers = minify_flag or args.flag("--minify-identifiers");
 
         if (cmd == .BuildCommand) {
-            ctx.bundler_options.transform_only = args.flag("--transpile");
+            ctx.bundler_options.transform_only = args.flag("--no-bundle");
+
+            if (args.flag("--compile")) {
+                ctx.bundler_options.compile = true;
+            }
 
             if (args.option("--outdir")) |outdir| {
                 if (outdir.len > 0) {
@@ -555,7 +560,14 @@ pub const Arguments = struct {
                         entry_points[0],
                         "build",
                     ) or strings.eqlComptime(entry_points[0], "bun"))) {
-                        entry_points = entry_points[1..];
+                        var out_entry = entry_points[1..];
+                        for (entry_points, 0..) |entry, i| {
+                            if (entry.len > 0) {
+                                out_entry = out_entry[i..];
+                                break;
+                            }
+                        }
+                        entry_points = out_entry;
                     }
                 },
                 .DevCommand => {
@@ -660,34 +672,6 @@ pub const Arguments = struct {
         // const ResolveMatcher = strings.ExactSizeMatcher(8);
 
         opts.resolve = Api.ResolveMode.lazy;
-
-        switch (comptime cmd) {
-            .BuildCommand => {
-                // if (args.option("--resolve")) |_resolve| {
-                //     switch (ResolveMatcher.match(_resolve)) {
-                //         ResolveMatcher.case("disable") => {
-                //             opts.resolve = Api.ResolveMode.disable;
-                //         },
-                //         ResolveMatcher.case("bundle") => {
-                //             opts.resolve = Api.ResolveMode.bundle;
-                //         },
-                //         ResolveMatcher.case("dev") => {
-                //             opts.resolve = Api.ResolveMode.dev;
-                //         },
-                //         ResolveMatcher.case("lazy") => {
-                //             opts.resolve = Api.ResolveMode.lazy;
-                //         },
-                //         else => {
-                //             diag.name.long = "--resolve";
-                //             diag.arg = _resolve;
-                //             try diag.report(Output.errorWriter(), error.InvalidResolveOption);
-                //             std.process.exit(1);
-                //         },
-                //     }
-                // }
-            },
-            else => {},
-        }
 
         const TargetMatcher = strings.ExactSizeMatcher(8);
 
@@ -941,6 +925,8 @@ pub const Command = struct {
         has_loaded_global_config: bool = false,
 
         pub const BundlerOptions = struct {
+            compile: bool = false,
+
             outdir: []const u8 = "",
             outfile: []const u8 = "",
             root_dir: []const u8 = "",
@@ -1117,6 +1103,31 @@ pub const Command = struct {
             // _ = TestCommand;
             // _ = UpgradeCommand;
             // _ = BunxCommand;
+        }
+
+        if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
+            var ctx = Command.Context{
+                .args = std.mem.zeroes(Api.TransformOptions),
+                .log = log,
+                .start_time = start_time,
+                .allocator = bun.default_allocator,
+            };
+
+            ctx.args.target = Api.Target.bun;
+            var argv = try bun.default_allocator.alloc(string, std.os.argv.len -| 1);
+            if (std.os.argv.len > 1) {
+                for (argv, std.os.argv[1..]) |*dest, src| {
+                    dest.* = bun.span(src);
+                }
+            }
+            ctx.passthrough = argv;
+
+            try @import("./bun_js.zig").Run.bootStandalone(
+                ctx,
+                graph.entryPoint().name,
+                graph,
+            );
+            return;
         }
 
         const tag = which();

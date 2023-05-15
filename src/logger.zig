@@ -63,7 +63,9 @@ pub const Kind = enum(i8) {
     }
 };
 
-pub const Loc = packed struct(i32) {
+// Do not mark these as packed
+// https://github.com/ziglang/zig/issues/15715
+pub const Loc = struct {
     start: i32 = -1,
 
     pub inline fn toNullable(loc: *Loc) ?Loc {
@@ -586,7 +588,9 @@ pub const Msg = struct {
     }
 };
 
-pub const Range = packed struct {
+// Do not mark these as packed
+// https://github.com/ziglang/zig/issues/15715
+pub const Range = struct {
     loc: Loc = Loc.Empty,
     len: i32 = 0,
     pub const None = Range{ .loc = Loc.Empty, .len = 0 };

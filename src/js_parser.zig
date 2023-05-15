@@ -1634,29 +1634,25 @@ pub const SideEffects = enum(u1) {
             },
 
             .e_object => {
-                // Arrays with "..." spread expressions can't be unwrapped because the
-                // "..." triggers code evaluation via iterators. In that case, just trim
-                // the other items instead and leave the array expression there.
-
+                // Objects with "..." spread expressions can't be unwrapped because the
+                // "..." triggers code evaluation via getters. In that case, just trim
+                // the other items instead and leave the object expression there.
                 var properties_slice = expr.data.e_object.properties.slice();
                 var end: usize = 0;
-                var any_computed = false;
                 for (properties_slice) |spread| {
                     end = 0;
-                    any_computed = any_computed or spread.flags.contains(.is_computed);
                     if (spread.kind == .spread) {
                         // Spread properties must always be evaluated
                         for (properties_slice) |prop_| {
                             var prop = prop_;
                             if (prop_.kind != .spread) {
-                                if (prop.value != null) {
-                                    if (simpifyUnusedExpr(p, prop.value.?)) |value| {
-                                        prop.value = value;
-                                    } else if (!prop.flags.contains(.is_computed)) {
-                                        continue;
-                                    } else {
-                                        prop.value = p.newExpr(E.Number{ .value = 0.0 }, prop.value.?.loc);
-                                    }
+                                var value = simpifyUnusedExpr(p, prop.value.?);
+                                if (value != null) {
+                                    prop.value = value;
+                                } else if (!prop.flags.contains(.is_computed)) {
+                                    continue;
+                                } else {
+                                    prop.value = p.newExpr(E.Number{ .value = 0.0 }, prop.value.?.loc);
                                 }
                             }
 
@@ -1670,21 +1666,32 @@ pub const SideEffects = enum(u1) {
                     }
                 }
 
-                if (any_computed) {
-                    // Otherwise, the object can be completely removed. We only need to keep any
-                    // object properties with side effects. Apply this simplification recursively.
-                    // for (properties_slice) |prop| {
-                    //     if (prop.flags.is_computed) {
-                    //         // Make sure "ToString" is still evaluated on the key
+                var result = Expr.init(E.Missing, E.Missing{}, expr.loc);
 
-                    //     }
-                    // }
-
-                    // keep this for now because we need better test coverage to do this correctly
-                    return expr;
+                // Otherwise, the object can be completely removed. We only need to keep any
+                // object properties with side effects. Apply this simplification recursively.
+                for (properties_slice) |prop| {
+                    if (prop.flags.contains(.is_computed)) {
+                        // Make sure "ToString" is still evaluated on the key
+                        result = result.joinWithComma(
+                            p.newExpr(
+                                E.Binary{
+                                    .op = .bin_add,
+                                    .left = prop.key.?,
+                                    .right = p.newExpr(E.String{}, prop.key.?.loc),
+                                },
+                                prop.key.?.loc,
+                            ),
+                            p.allocator,
+                        );
+                    }
+                    result = result.joinWithComma(
+                        simpifyUnusedExpr(p, prop.value.?) orelse prop.value.?.toEmpty(),
+                        p.allocator,
+                    );
                 }
 
-                return null;
+                return result;
             },
             .e_array => {
                 var items = expr.data.e_array.items.slice();
@@ -2991,15 +2998,14 @@ pub const Parser = struct {
                         // Move class export statements to the top of the file if we can
                         // This automatically resolves some cyclical import issues
                         // https://github.com/kysely-org/kysely/issues/412
-                        // TODO: this breaks code if they have any static variables or properties which reference anything from the parent scope
-                        // we need to fix it before we merge v0.6.0
-                        var list = if (!p.options.bundle and class.class.canBeMoved()) &before else &parts;
+                        const should_move = !p.options.bundle and class.class.canBeMoved();
+
                         var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
                         sliced.items.len = 1;
                         sliced.items[0] = stmt;
                         try p.appendPart(&parts, sliced.items);
 
-                        if (&parts != list) {
+                        if (should_move) {
                             before.append(parts.getLast()) catch unreachable;
                             parts.items.len -= 1;
                         }
@@ -3008,13 +3014,13 @@ pub const Parser = struct {
                         // We move export default statements when we can
                         // This automatically resolves some cyclical import issues in packages like luxon
                         // https://github.com/oven-sh/bun/issues/1961
-                        var list = if (!p.options.bundle and value.canBeMoved()) &before else &parts;
+                        const should_move = !p.options.bundle and value.canBeMoved();
                         var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
                         sliced.items.len = 1;
                         sliced.items[0] = stmt;
                         try p.appendPart(&parts, sliced.items);
 
-                        if (&parts != list) {
+                        if (should_move) {
                             before.append(parts.getLast()) catch unreachable;
                             parts.items.len -= 1;
                         }
@@ -8612,7 +8618,7 @@ fn NewParser_(
         }
 
         fn parseStmt(p: *P, opts: *ParseStatementOptions) anyerror!Stmt {
-            var loc = p.lexer.loc();
+            const loc = p.lexer.loc();
 
             switch (p.lexer.token) {
                 .t_semicolon => {
@@ -8621,7 +8627,7 @@ fn NewParser_(
                 },
 
                 .t_export => {
-                    var previousExportKeyword = p.esm_export_keyword;
+                    const previous_export_keyword = p.esm_export_keyword;
                     if (opts.is_module_scope) {
                         p.esm_export_keyword = p.lexer.range();
                     } else if (!opts.is_namespace_scope) {
@@ -8757,7 +8763,7 @@ fn NewParser_(
                             }
 
                             if (p.lexer.isContextualKeyword("async")) {
-                                var async_range = p.lexer.range();
+                                const async_range = p.lexer.range();
                                 try p.lexer.next();
                                 var defaultName: js_ast.LocRef = undefined;
                                 if (p.lexer.token == T.t_function and !p.lexer.has_newline_before) {
@@ -8766,7 +8772,7 @@ fn NewParser_(
                                         .is_name_optional = true,
                                         .lexical_decl = .allow_all,
                                     };
-                                    var stmt = try p.parseFnStmt(loc, &stmtOpts, async_range);
+                                    const stmt = try p.parseFnStmt(loc, &stmtOpts, async_range);
                                     if (@as(Stmt.Tag, stmt.data) == .s_type_script) {
                                         // This was just a type annotation
                                         return stmt;
@@ -8784,9 +8790,9 @@ fn NewParser_(
                                 defaultName = try createDefaultName(p, loc);
 
                                 const prefix_expr = try p.parseAsyncPrefixExpr(async_range, Level.comma);
-                                var expr = try p.parseSuffix(prefix_expr, Level.comma, null, Expr.EFlags.none);
+                                const expr = try p.parseSuffix(prefix_expr, Level.comma, null, Expr.EFlags.none);
                                 try p.lexer.expectOrInsertSemicolon();
-                                var value = js_ast.StmtOrExpr{ .expr = expr };
+                                const value = js_ast.StmtOrExpr{ .expr = expr };
                                 p.has_export_default = true;
                                 return p.s(S.ExportDefault{ .default_name = defaultName, .value = value }, loc);
                             }
@@ -9004,10 +9010,10 @@ fn NewParser_(
                         T.t_equals => {
                             // "export = value;"
 
-                            p.esm_export_keyword = previousExportKeyword; // This wasn't an ESM export statement after all
+                            p.esm_export_keyword = previous_export_keyword; // This wasn't an ESM export statement after all
                             if (is_typescript_enabled) {
                                 try p.lexer.next();
-                                var value = try p.parseExpr(.lowest);
+                                const value = try p.parseExpr(.lowest);
                                 try p.lexer.expectOrInsertSemicolon();
                                 return p.s(S.ExportEquals{ .value = value }, loc);
                             }
@@ -9696,9 +9702,8 @@ fn NewParser_(
                 else => {
                     const is_identifier = p.lexer.token == .t_identifier;
                     const name = p.lexer.identifier;
-                    var emiss = E.Missing{};
                     // Parse either an async function, an async expression, or a normal expression
-                    var expr: Expr = Expr{ .loc = loc, .data = Expr.Data{ .e_missing = emiss } };
+                    var expr: Expr = Expr{ .loc = loc, .data = Expr.Data{ .e_missing = .{} } };
                     if (is_identifier and strings.eqlComptime(p.lexer.raw(), "async")) {
                         var async_range = p.lexer.range();
                         try p.lexer.next();
@@ -10332,8 +10337,8 @@ fn NewParser_(
         }
 
         fn parseExprOrLetStmt(p: *P, opts: *ParseStatementOptions) !ExprOrLetStmt {
-            var let_range = p.lexer.range();
-            var raw = p.lexer.raw();
+            const let_range = p.lexer.range();
+            const raw = p.lexer.raw();
             if (p.lexer.token != .t_identifier or !strings.eqlComptime(raw, "let")) {
                 // Output.print("HI", .{});
                 return ExprOrLetStmt{ .stmt_or_expr = js_ast.StmtOrExpr{ .expr = try p.parseExpr(.lowest) } };
@@ -10388,7 +10393,7 @@ fn NewParser_(
         }
 
         fn parseBinding(p: *P) anyerror!Binding {
-            var loc = p.lexer.loc();
+            const loc = p.lexer.loc();
 
             switch (p.lexer.token) {
                 .t_identifier => {
@@ -11372,7 +11377,7 @@ fn NewParser_(
         }
 
         fn parseArrowBody(p: *P, args: []js_ast.G.Arg, data: *FnOrArrowDataParse) !E.Arrow {
-            var arrow_loc = p.lexer.loc();
+            const arrow_loc = p.lexer.loc();
 
             // Newlines are not allowed before "=>"
             if (p.lexer.has_newline_before) {
@@ -11393,7 +11398,7 @@ fn NewParser_(
             data.is_this_disallowed = p.fn_or_arrow_data_parse.is_this_disallowed;
 
             if (p.lexer.token == .t_open_brace) {
-                var body = try p.parseFnBody(data);
+                const body = try p.parseFnBody(data);
                 p.after_arrow_body_loc = p.lexer.loc();
                 return E.Arrow{ .args = args, .body = body };
             }
@@ -16881,7 +16886,7 @@ fn NewParser_(
                     for (ex.properties.slice()) |*property| {
 
                         // The key must still be evaluated if it's computed or a spread
-                        if (property.kind == .spread or property.flags.contains(.is_computed) or property.flags.contains(.is_spread)) {
+                        if (property.kind == .spread or (property.flags.contains(.is_computed) and !property.key.?.isPrimitiveLiteral()) or property.flags.contains(.is_spread)) {
                             return false;
                         }
 
@@ -20639,7 +20644,7 @@ fn NewParser_(
             // Remove the last child from the parent scope
             const last = parent.children.len - 1;
             if (comptime Environment.allow_assert) assert(parent.children.ptr[last] == to_flatten);
-            _ = parent.children.popOrNull();
+            parent.children.len -|= 1;
 
             for (to_flatten.children.slice()) |item| {
                 item.parent = parent;

@@ -1575,6 +1575,13 @@ public:
     }
 
     void finishCreation(JSC::VM&);
+
+    DECLARE_VISIT_CHILDREN;
+    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
+
+    mutable JSC::WriteBarrier<JSC::Unknown> m_arguments;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_callback;
 };
 
 class JSTranspiler final : public JSC::JSDestructibleObject {

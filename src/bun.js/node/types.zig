@@ -1988,13 +1988,19 @@ pub const Process = struct {
         var args_list = std.ArrayListUnmanaged(JSC.ZigString){ .items = args, .capacity = args.len };
         args_list.items.len = 0;
 
-        // get the bun executable
-        // without paying the cost of a syscall to resolve the full path
-        args_list.appendAssumeCapacity(
-            JSC.ZigString.init(
-                std.fs.selfExePathAlloc(allocator) catch "bun",
-            ).withEncoding(),
-        );
+        if (vm.standalone_module_graph != null) {
+            // Don't break user's code because they did process.argv.slice(2)
+            // Even if they didn't type "bun", we still want to add it
+            args_list.appendAssumeCapacity(
+                JSC.ZigString.init("bun"),
+            );
+        } else {
+            args_list.appendAssumeCapacity(
+                JSC.ZigString.init(
+                    std.fs.selfExePathAlloc(allocator) catch "bun",
+                ).withEncoding(),
+            );
+        }
 
         if (vm.main.len > 0)
             args_list.appendAssumeCapacity(JSC.ZigString.init(vm.main).withEncoding());

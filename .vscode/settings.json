@@ -77,6 +77,7 @@
     "src/deps/lol-html": true,
     "src/deps/c-ares": true,
     "src/deps/tinycc": true,
+    "src/deps/zstd": true,
     "test/snippets/package-json-exports/_node_modules_copy": true
   },
   "C_Cpp.files.exclude": {
@@ -204,7 +205,18 @@
     "compare": "cpp",
     "concepts": "cpp",
     "typeindex": "cpp",
-    "__verbose_abort": "cpp"
+    "__verbose_abort": "cpp",
+    "__std_stream": "cpp",
+    "any": "cpp",
+    "charconv": "cpp",
+    "csignal": "cpp",
+    "format": "cpp",
+    "forward_list": "cpp",
+    "future": "cpp",
+    "regex": "cpp",
+    "span": "cpp",
+    "valarray": "cpp",
+    "codecvt": "cpp"
   },
   "cmake.configureOnOpen": false,
   "C_Cpp.errorSquiggles": "enabled",

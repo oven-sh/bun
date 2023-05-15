@@ -790,4 +790,23 @@ describe("bundler", () => {
       stdout: "inner\n1",
     },
   });
+  itBundled("edgecase/RequireVarThenExport", {
+    files: {
+      "/entry.js": /* js */ `
+        import { version } from './react';
+        console.log(version);
+      `,
+      "/react.js": /* js */ `
+        const a = require('./library.js');
+        exports.version = a.version;
+      `,
+      "/library.js": /* js */ `
+        exports.version = '0.6.0';
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: `0.6.0`,
+    },
+  });
 });

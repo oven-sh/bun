@@ -1,6 +1,6 @@
 import path from "path";
 import { describe, test, expect } from "bun:test";
-import { bunExe } from "harness";
+import { bunExe } from "../../../harness";
 
 const modes = [
   //

@@ -146,4 +146,4 @@ result.clientManifest;
 result.ssrManifest;
 ```
 
-Once the build is complete, you can use the manifests to implement your RSC server.
+Once the build is complete, use the manifests to implement your RSC server.

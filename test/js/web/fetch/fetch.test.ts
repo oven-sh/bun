@@ -1165,3 +1165,18 @@ it("invalid header doesnt crash", () => {
     }),
   ).toThrow();
 });
+
+it("new Request(https://example.com, otherRequest) uses url from left instead of right", () => {
+  const req1 = new Request("http://localhost/abc", {
+    headers: {
+      foo: "bar",
+    },
+  });
+
+  // Want to rewrite the URL with keeping header values
+  const req2 = new Request("http://localhost/def", req1);
+
+  // Should be `http://localhost/def` But actual: http://localhost/abc
+  expect(req2.url).toBe("http://localhost/def");
+  expect(req2.headers.get("foo")).toBe("bar");
+});

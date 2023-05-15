@@ -214,7 +214,6 @@ pub const MinifyRenamer = struct {
         symbol_uses: js_ast.Part.SymbolUseMap,
         stable_source_indices: []const u32,
     ) !void {
-        // NOTE: This function is run in parallel. Make sure to avoid data races.
         var iter = symbol_uses.iterator();
         while (iter.next()) |value| {
             try this.accumulateSymbolUseCount(top_level_symbols, value.key_ptr.*, value.value_ptr.*.count_estimate, stable_source_indices);

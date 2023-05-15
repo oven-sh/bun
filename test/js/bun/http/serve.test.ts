@@ -125,11 +125,14 @@ it("request.signal works in trivial case", async () => {
 it("request.signal works in leaky case", async () => {
   var aborty = new AbortController();
   var didAbort = false;
-  var leaky: Request | undefined;
+
   await runTest(
     {
       async fetch(req) {
-        leaky = req;
+        req.signal.addEventListener("abort", () => {
+          didAbort = true;
+        });
+
         expect(didAbort).toBe(false);
         aborty.abort();
         await Bun.sleep(2);
@@ -137,21 +140,9 @@ it("request.signal works in leaky case", async () => {
       },
     },
     async server => {
-      try {
-        const resp = fetch(`http://${server.hostname}:${server.port}`, { signal: aborty.signal });
-
-        await Bun.sleep(1);
-
-        leaky!.signal.addEventListener("abort", () => {
-          didAbort = true;
-        });
-
-        await resp;
-
-        throw new Error("Expected fetch to throw");
-      } catch (e: any) {
-        expect(e.name).toBe("AbortError");
-      }
+      expect(async () => fetch(`http://${server.hostname}:${server.port}`, { signal: aborty.signal })).toThrow(
+        "The operation was aborted.",
+      );
 
       await Bun.sleep(1);
 

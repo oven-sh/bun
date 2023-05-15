@@ -6,6 +6,11 @@ const PROJECT_ROOT = import.meta.dir;
 const PUBLIC_DIR = path.resolve(PROJECT_ROOT, "public");
 const BUILD_DIR = path.resolve(PROJECT_ROOT, "build");
 
+await Bun.build({
+  entrypoints: ["./src/index.tsx"],
+  outdir: "./build",
+});
+
 function serveFromDir(config: { directory: string; path: string }): Response | null {
   let basePath = path.join(config.directory, config.path);
   const suffixes = ["", ".html", "index.html"];
@@ -36,16 +41,6 @@ export default {
     // check /.build
     const buildResponse = serveFromDir({ directory: BUILD_DIR, path: reqPath });
     if (buildResponse) return buildResponse;
-    // const publicFilePath = path.join(PUBLIC_DIR, reqPath);
-    // if (existsSync(publicFilePath)) {
-    //   return new Response(Bun.file(publicFilePath));
-    // }
-
-    // // serve build files
-    // const buildFilePath = path.join(BUILD_DIR, reqPath);
-    // if (existsSync(buildFilePath)) {
-    //   return new Response(Bun.file(buildFilePath));
-    // }
 
     return new Response("File not found", {
       status: 404,

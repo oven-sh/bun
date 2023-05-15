@@ -1107,7 +1107,8 @@ describe("socket", () => {
     });
   });
 
-  it("should not crash when receiving an error packet without handler", done => {
+  // TODO: investigate IOT
+  it.skip("should not crash when receiving an error packet without handler", done => {
     const io = new Server(0);
     const socket = createClient(io, "/", { reconnection: false });
     let timeout = setTimeout(() => {

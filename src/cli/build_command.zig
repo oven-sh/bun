@@ -136,7 +136,7 @@ pub const BuildCommand = struct {
         }
 
         if (this_bundler.options.entry_points.len > 1 and ctx.bundler_options.outdir.len == 0) {
-            Output.prettyErrorln("error: to use multiple entry points, specify --outdir", .{});
+            Output.prettyErrorln("<r><red>error<r><d>:<r> to use multiple entry points, specify <b>--outdir<r>", .{});
             Global.exit(1);
             return;
         }
@@ -263,6 +263,7 @@ pub const BuildCommand = struct {
                 unreachable;
             }).items;
         };
+        const bundled_end = std.time.nanoTimestamp();
 
         {
             var write_summary = false;
@@ -314,74 +315,13 @@ pub const BuildCommand = struct {
                     }
 
                     if (ctx.bundler_options.compile) {
-                        const bundled_end = std.time.nanoTimestamp();
-                        const minified = this_bundler.options.minify_identifiers or this_bundler.options.minify_whitespace or this_bundler.options.minify_syntax;
-                        const padding_buf = [_]u8{' '} ** 16;
-
-                        const bundle_until_now = @divTrunc(@truncate(i64, bundled_end - bun.CLI.start_time), @as(i64, std.time.ns_per_ms));
-
-                        const bundle_elapsed = if (minified)
-                            bundle_until_now - @intCast(i64, @truncate(u63, minify_duration))
-                        else
-                            bundle_until_now;
-
-                        const minified_digit_count: usize = switch (minify_duration) {
-                            0...9 => 3,
-                            10...99 => 2,
-                            100...999 => 1,
-                            1000...9999 => 0,
-                            else => 0,
-                        };
-                        if (minified) {
-                            Output.pretty("{s}", .{padding_buf[0..@intCast(usize, minified_digit_count)]});
-                            Output.printElapsedStdoutTrim(@intToFloat(f64, minify_duration));
-                            const output_size = brk: {
-                                var total_size: u64 = 0;
-                                for (output_files) |f| {
-                                    if (f.loader == .js) {
-                                        total_size += f.size_without_sourcemap;
-                                    }
-                                }
-
-                                break :brk total_size;
-                            };
-                            // this isn't an exact size
-                            // we may inject sourcemaps or comments or import paths
-                            const delta: i64 = @truncate(i64, @intCast(i65, input_code_length) - @intCast(i65, output_size));
-                            if (delta > 1024) {
-                                Output.prettyln(
-                                    "  <green>minify<r>  -{} <d>(estimate)<r>",
-                                    .{
-                                        bun.fmt.size(@intCast(usize, delta)),
-                                    },
-                                );
-                            } else if (-delta > 1024) {
-                                Output.prettyln(
-                                    "  <b>minify<r>   +{} <d>(estimate)<r>",
-                                    .{
-                                        bun.fmt.size(@intCast(usize, -delta)),
-                                    },
-                                );
-                            } else {
-                                Output.prettyln("  <b>minify<r>", .{});
-                            }
-                        }
-
-                        const bundle_elapsed_digit_count: usize = switch (bundle_elapsed) {
-                            0...9 => 3,
-                            10...99 => 2,
-                            100...999 => 1,
-                            1000...9999 => 0,
-                            else => 0,
-                        };
-
-                        Output.pretty("{s}", .{padding_buf[0..@intCast(usize, bundle_elapsed_digit_count)]});
-                        Output.printElapsedStdoutTrim(@intToFloat(f64, bundle_elapsed));
-                        Output.prettyln(
-                            "  <green>bundle<r>  {d} modules",
-                            .{
-                                reachable_file_count,
-                            },
+                        printSummary(
+                            bundled_end,
+                            minify_duration,
+                            this_bundler.options.minify_identifiers or this_bundler.options.minify_whitespace or this_bundler.options.minify_syntax,
+                            input_code_length,
+                            reachable_file_count,
+                            output_files,
                         );
 
                         Output.flush();
@@ -400,6 +340,7 @@ pub const BuildCommand = struct {
                             1000...9999 => 0,
                             else => 0,
                         };
+                        const padding_buf = [_]u8{' '} ** 16;
 
                         Output.pretty("{s}", .{padding_buf[0..@intCast(usize, compiled_elapsed_digit_count)]});
 
@@ -443,8 +384,35 @@ pub const BuildCommand = struct {
                                         }
                                     }
                                 }
-
-                                try root_dir.dir.writeFile(rel_path, value.bytes);
+                                const JSC = bun.JSC;
+                                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                                switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
+                                    &path_buf,
+                                    JSC.Node.Arguments.WriteFile{
+                                        .data = JSC.Node.StringOrBuffer{
+                                            .buffer = JSC.Buffer{
+                                                .buffer = .{
+                                                    .ptr = @constCast(value.bytes.ptr),
+                                                    // TODO: handle > 4 GB files
+                                                    .len = @truncate(u32, value.bytes.len),
+                                                    .byte_len = @truncate(u32, value.bytes.len),
+                                                },
+                                            },
+                                        },
+                                        .encoding = .buffer,
+                                        .dirfd = @intCast(bun.FileDescriptor, root_dir.dir.fd),
+                                        .file = .{
+                                            .path = JSC.Node.PathLike{
+                                                .string = JSC.PathString.init(rel_path),
+                                            },
+                                        },
+                                    },
+                                )) {
+                                    .err => |err| {
+                                        Output.prettyErrorln("<r><red>error<r><d>:<r> failed to write file <b>{}<r>\n{}", .{ bun.fmt.quote(rel_path), err });
+                                    },
+                                    .result => {},
+                                }
                             },
                             .move => |value| {
                                 const primary = f.path[from_path.len..];
@@ -476,9 +444,18 @@ pub const BuildCommand = struct {
 
                     write_summary = true;
                 }
-                if (write_summary) {
-                    Output.printStartEndStdout(bun.CLI.start_time, std.time.nanoTimestamp());
-                    Output.prettyln(" <green>Build<r>", .{});
+                if (write_summary and log.errors == 0) {
+                    Output.prettyln("\n", .{});
+                    Output.printElapsedStdoutTrim(
+                        @intToFloat(f64, (@divTrunc(@truncate(i64, std.time.nanoTimestamp() - bun.CLI.start_time), @as(i64, std.time.ns_per_ms)))),
+                    );
+                    if (this_bundler.options.transform_only) {
+                        Output.prettyln(" <green>transpile<r>", .{});
+                    } else {
+                        Output.prettyln(" <green>bundle<r> {d} modules", .{
+                            reachable_file_count,
+                        });
+                    }
                 }
             }
 
@@ -494,4 +471,74 @@ fn exitOrWatch(code: u8, watch: bool) void {
         std.time.sleep(std.math.maxInt(u64) - 1);
     }
     Global.exit(code);
+}
+
+fn printSummary(bundled_end: i128, minify_duration: u64, minified: bool, input_code_length: usize, reachable_file_count: usize, output_files: []const options.OutputFile) void {
+    const padding_buf = [_]u8{' '} ** 16;
+
+    const bundle_until_now = @divTrunc(@truncate(i64, bundled_end - bun.CLI.start_time), @as(i64, std.time.ns_per_ms));
+
+    const bundle_elapsed = if (minified)
+        bundle_until_now - @intCast(i64, @truncate(u63, minify_duration))
+    else
+        bundle_until_now;
+
+    const minified_digit_count: usize = switch (minify_duration) {
+        0...9 => 3,
+        10...99 => 2,
+        100...999 => 1,
+        1000...9999 => 0,
+        else => 0,
+    };
+    if (minified) {
+        Output.pretty("{s}", .{padding_buf[0..@intCast(usize, minified_digit_count)]});
+        Output.printElapsedStdoutTrim(@intToFloat(f64, minify_duration));
+        const output_size = brk: {
+            var total_size: u64 = 0;
+            for (output_files) |f| {
+                if (f.loader == .js) {
+                    total_size += f.size_without_sourcemap;
+                }
+            }
+
+            break :brk total_size;
+        };
+        // this isn't an exact size
+        // we may inject sourcemaps or comments or import paths
+        const delta: i64 = @truncate(i64, @intCast(i65, input_code_length) - @intCast(i65, output_size));
+        if (delta > 1024) {
+            Output.prettyln(
+                "  <green>minify<r>  -{} <d>(estimate)<r>",
+                .{
+                    bun.fmt.size(@intCast(usize, delta)),
+                },
+            );
+        } else if (-delta > 1024) {
+            Output.prettyln(
+                "  <b>minify<r>   +{} <d>(estimate)<r>",
+                .{
+                    bun.fmt.size(@intCast(usize, -delta)),
+                },
+            );
+        } else {
+            Output.prettyln("  <b>minify<r>", .{});
+        }
+    }
+
+    const bundle_elapsed_digit_count: usize = switch (bundle_elapsed) {
+        0...9 => 3,
+        10...99 => 2,
+        100...999 => 1,
+        1000...9999 => 0,
+        else => 0,
+    };
+
+    Output.pretty("{s}", .{padding_buf[0..@intCast(usize, bundle_elapsed_digit_count)]});
+    Output.printElapsedStdoutTrim(@intToFloat(f64, bundle_elapsed));
+    Output.prettyln(
+        "  <green>bundle<r>  {d} modules",
+        .{
+            reachable_file_count,
+        },
+    );
 }

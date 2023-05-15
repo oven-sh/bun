@@ -9004,10 +9004,18 @@ const LinkerContext = struct {
         const trace = tracer(@src(), "writeOutputFilesToDisk");
         defer trace.end();
         var root_dir = std.fs.cwd().makeOpenPathIterable(root_path, .{}) catch |err| {
-            c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{s} opening outdir {}", .{
-                @errorName(err),
-                bun.fmt.quote(root_path),
-            }) catch unreachable;
+            if (err == error.NotDir) {
+                c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to create output directory {} is a file. Please choose a different outdir or delete {}", .{
+                    bun.fmt.quote(root_path),
+                    bun.fmt.quote(root_path),
+                }) catch unreachable;
+            } else {
+                c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to create output directory {s} {}", .{
+                    @errorName(err),
+                    bun.fmt.quote(root_path),
+                }) catch unreachable;
+            }
+
             return err;
         };
         defer root_dir.close();

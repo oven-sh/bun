@@ -1473,7 +1473,7 @@ pub const SystemError = extern struct {
         switch (bun.Output.enable_ansi_colors_stderr) {
             inline else => |enable_colors| try writer.print(
                 comptime bun.Output.prettyFmt(
-                    "<r><red>{}<r><d>:<r> {} <d>({})<r>",
+                    "<r><red>{}<r><d>:<r> {} <d>({}())<r>",
                     enable_colors,
                 ),
                 .{

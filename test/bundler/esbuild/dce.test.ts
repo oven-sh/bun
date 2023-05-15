@@ -31,6 +31,23 @@ describe("bundler", () => {
       stdout: "hello\n123",
     },
   });
+  itBundled("dce/UnreferencedObjectLiteral", {
+    files: {
+      "/entry.js": /* js */ `
+        ({
+            0: 1,
+            2: console.log("EFFECT1"),
+        });
+        ({
+            0: 1,
+            [console.log("EFFECT2")]: 2,
+        });
+      `,
+    },
+    run: {
+      stdout: "EFFECT1\nEFFECT2",
+    },
+  });
   itBundled("dce/PackageJsonSideEffectsFalseKeepNamedImportCommonJS", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `

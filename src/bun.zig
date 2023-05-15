@@ -1508,6 +1508,16 @@ pub fn openFileForPath(path_: [:0]const u8) !std.fs.File {
     };
 }
 
+pub fn openDirForPath(path_: [:0]const u8) !std.fs.Dir {
+    const O_PATH = if (comptime Environment.isLinux) std.os.O.PATH else std.os.O.RDONLY;
+    const flags: u32 = std.os.O.CLOEXEC | std.os.O.NOCTTY | std.os.O.DIRECTORY | O_PATH;
+
+    const fd = try std.os.openZ(path_, flags, 0);
+    return std.fs.Dir{
+        .fd = fd,
+    };
+}
+
 pub const Generation = u16;
 
 pub const zstd = @import("./deps/zstd.zig");

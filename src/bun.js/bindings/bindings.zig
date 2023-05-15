@@ -1468,6 +1468,23 @@ pub const SystemError = extern struct {
         return shim.cppFn("toErrorInstance", .{ this, global });
     }
 
+    pub fn format(self: SystemError, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        // TODO: remove this hardcoding
+        switch (bun.Output.enable_ansi_colors_stderr) {
+            inline else => |enable_colors| try writer.print(
+                comptime bun.Output.prettyFmt(
+                    "<r><red>{}<r><d>:<r> {} <d>({})<r>",
+                    enable_colors,
+                ),
+                .{
+                    self.code,
+                    self.message,
+                    self.syscall,
+                },
+            ),
+        }
+    }
+
     pub const Extern = [_][]const u8{
         "toErrorInstance",
     };

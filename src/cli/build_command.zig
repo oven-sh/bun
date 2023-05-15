@@ -158,14 +158,16 @@ pub const BuildCommand = struct {
                 break :brk2 resolve_path.getIfExistsLongestCommonPath(this_bundler.options.entry_points) orelse ".";
             };
 
-            var dir = std.fs.cwd().openDir(path, .{}) catch |err| {
-                Output.prettyErrorln("<r>error<r>: {s}: failed to open root directory: {s}", .{ @errorName(err), path });
+            var dir = bun.openDirForPath(&(try std.os.toPosixPath(path))) catch |err| {
+                Output.prettyErrorln("<r><red>{s}<r> opening root directory {}", .{ @errorName(err), bun.fmt.quote(path) });
                 Global.exit(1);
-                return;
             };
             defer dir.close();
 
-            break :brk1 try bun.getFdPath(dir.fd, &src_root_dir_buf);
+            break :brk1 bun.getFdPath(dir.fd, &src_root_dir_buf) catch |err| {
+                Output.prettyErrorln("<r><red>{s}<r> resolving root directory {}", .{ @errorName(err), bun.fmt.quote(path) });
+                Global.exit(1);
+            };
         };
 
         this_bundler.options.root_dir = src_root_dir;
@@ -290,7 +292,11 @@ pub const BuildCommand = struct {
                     const root_dir = if (root_path.len == 0 or strings.eqlComptime(root_path, "."))
                         std.fs.IterableDir{ .dir = std.fs.cwd() }
                     else
-                        try std.fs.cwd().makeOpenPathIterable(root_path, .{});
+                        std.fs.cwd().makeOpenPathIterable(root_path, .{}) catch |err| {
+                            Output.prettyErrorln("<r><red>{s}<r> while attemping to open output directory {}", .{ @errorName(err), bun.fmt.quote(root_path) });
+                            exitOrWatch(1, ctx.debug.hot_reload == .watch);
+                            unreachable;
+                        };
 
                     var all_paths = try ctx.allocator.alloc([]const u8, output_files.len);
                     var max_path_len: usize = 0;

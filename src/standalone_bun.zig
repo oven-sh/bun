@@ -7,6 +7,8 @@ const Schema = bun.Schema.Api;
 
 const Environment = bun.Environment;
 
+const Syscall = bun.JSC.Node.Syscall;
+
 pub const StandaloneModuleGraph = struct {
     bytes: []const u8 = "",
     files: bun.StringArrayHashMap(File),
@@ -192,6 +194,13 @@ pub const StandaloneModuleGraph = struct {
             return -1;
         });
 
+        const cleanup = struct {
+            pub fn toClean(name: [:0]const u8, fd: bun.FileDescriptor) void {
+                _ = Syscall.close(fd);
+                _ = Syscall.unlink(name);
+            }
+        }.toClean;
+
         const cloned_executable_fd: bun.FileDescriptor = brk: {
             var self_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
             var self_exe = std.fs.selfExePath(&self_buf) catch |err| {
@@ -205,8 +214,8 @@ pub const StandaloneModuleGraph = struct {
             if (comptime Environment.isMac) {
                 // if we're on a mac, use clonefile() if we can
                 // failure is okay, clonefile is just a fast path.
-                if (bun.C.darwin.clonefile(self_exeZ.ptr, zname.ptr, 0) == 0) {
-                    switch (bun.JSC.Node.Syscall.open(zname, std.os.O.WRONLY | std.os.O.CLOEXEC, 0)) {
+                if (Syscall.clonefile(self_exeZ, zname) == .result) {
+                    switch (Syscall.open(zname, std.os.O.WRONLY | std.os.O.CLOEXEC, 0)) {
                         .result => |res| break :brk res,
                         .err => {},
                     }
@@ -214,23 +223,25 @@ pub const StandaloneModuleGraph = struct {
             }
 
             // otherwise, just copy the file
-            const fd = switch (bun.JSC.Node.Syscall.open(zname, std.os.O.CLOEXEC | std.os.O.WRONLY | std.os.O.CREAT, 0)) {
+            const fd = switch (Syscall.open(zname, std.os.O.CLOEXEC | std.os.O.WRONLY | std.os.O.CREAT, 0)) {
                 .result => |res| res,
                 .err => |err| {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open temporary file to copy bun into: {s}", .{err.toSystemError().message.slice()});
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}", .{err});
                     Global.exit(1);
                 },
             };
-            const self_fd = switch (bun.JSC.Node.Syscall.open(self_exeZ, std.os.O.CLOEXEC | std.os.O.RDONLY, 0)) {
+            const self_fd = switch (Syscall.open(self_exeZ, std.os.O.CLOEXEC | std.os.O.RDONLY, 0)) {
                 .result => |res| res,
                 .err => |err| {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open bun executable to copy from as read-only: {s}", .{err.toSystemError().message.slice()});
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open bun executable to copy from as read-only\n{}", .{err});
+                    cleanup(zname, fd);
                     Global.exit(1);
                 },
             };
-            defer _ = bun.JSC.Node.Syscall.close(self_fd);
+            defer _ = Syscall.close(self_fd);
             bun.copyFile(self_fd, fd) catch |err| {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
+                cleanup(zname, fd);
                 Global.exit(1);
             };
             break :brk fd;
@@ -238,44 +249,61 @@ pub const StandaloneModuleGraph = struct {
 
         // Always leave at least one full page of padding at the end of the file.
         const total_byte_count = brk: {
-            const fstat = std.os.fstat(cloned_executable_fd) catch |err| {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> failed to stat temporary file: {s}", .{@errorName(err)});
-                Global.exit(1);
+            const fstat = switch (Syscall.fstat(cloned_executable_fd)) {
+                .result => |res| res,
+                .err => |err| {
+                    Output.prettyErrorln("{}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    Global.exit(1);
+                },
             };
 
             const count = @intCast(usize, @max(fstat.size, 0) + page_size + @intCast(i64, bytes.len) + 8);
 
             std.os.lseek_SET(cloned_executable_fd, 0) catch |err| {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> failed to seek to end of temporary file: {s}", .{@errorName(err)});
+                cleanup(zname, cloned_executable_fd);
                 Global.exit(1);
             };
 
             // grow it by one page + the size of the module graph
-            std.os.ftruncate(cloned_executable_fd, count) catch |err| {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> failed to truncate temporary file: {s}", .{@errorName(err)});
-                Global.exit(1);
-            };
+            // https://github.com/oven-sh/bun/issues/2882
+            switch (Syscall.ftruncate(cloned_executable_fd, @intCast(isize, count))) {
+                .result => {},
+                .err => |err| Output.prettyErrorln("<r>An error occurred while compiling Bun executable (specifically, while growing the size to {d} bytes)\n{}", .{ count, err }),
+            }
             break :brk count;
         };
 
-        std.os.lseek_END(cloned_executable_fd, -@intCast(i64, bytes.len + 8)) catch |err| {
-            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to seek to end of temporary file: {s}", .{@errorName(err)});
+        const seek_position = total_byte_count -| bytes.len -| 8;
+
+        std.os.lseek_SET(cloned_executable_fd, seek_position) catch |err| {
+            Output.prettyErrorln(
+                "<r><red>error<r><d>:<r> {s} seeking to end of temporary file (pos: {d})",
+                .{
+                    @errorName(err),
+                    seek_position,
+                },
+            );
+            cleanup(zname, cloned_executable_fd);
             Global.exit(1);
         };
 
         var remain = bytes;
         while (remain.len > 0) {
-            switch (bun.JSC.Node.Syscall.write(cloned_executable_fd, bytes)) {
+            switch (Syscall.write(cloned_executable_fd, bytes)) {
                 .result => |written| remain = remain[written..],
                 .err => |err| {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to write to temporary file: {s}", .{err.toSystemError().message.slice()});
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to write to temporary file\n{s}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+
                     Global.exit(1);
                 },
             }
         }
 
         // the final 8 bytes in the file are the length of the module graph with padding, excluding the trailer and offsets
-        _ = bun.JSC.Node.Syscall.write(cloned_executable_fd, std.mem.asBytes(&total_byte_count));
+        _ = Syscall.write(cloned_executable_fd, std.mem.asBytes(&total_byte_count));
 
         _ = bun.C.fchmod(cloned_executable_fd, 0o777);
 
@@ -288,6 +316,7 @@ pub const StandaloneModuleGraph = struct {
 
         const fd = inject(bytes);
         if (fd == -1) {
+            // TODO: remove this
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to inject into file", .{});
             Global.exit(1);
         }
@@ -321,21 +350,35 @@ pub const StandaloneModuleGraph = struct {
             }
         }
 
-        std.os.renameat(std.fs.cwd().fd, temp_location, root_dir.dir.fd, outfile) catch |err| {
-            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to rename {s} to {s}: {s}", .{ temp_location, outfile, @errorName(err) });
+        bun.C.moveFileZWithHandle(
+            fd,
+            std.fs.cwd().fd,
+            &(try std.os.toPosixPath(temp_location)),
+            root_dir.dir.fd,
+            &(try std.os.toPosixPath(outfile)),
+        ) catch |err| {
+            if (err == error.IsDir) {
+                Output.prettyErrorln("<r><red>error<r><d>:<r> {} is a directory. Please choose a different --outfile or delete the directory", .{bun.fmt.quote(outfile)});
+            } else {
+                Output.prettyErrorln("<r><red>error<r><d>:<r> failed to rename {s} to {s}: {s}", .{ temp_location, outfile, @errorName(err) });
+            }
+            _ = Syscall.unlink(
+                &(try std.os.toPosixPath(temp_location)),
+            );
+
             Global.exit(1);
         };
     }
 
     pub fn fromExecutable(allocator: std.mem.Allocator) !?StandaloneModuleGraph {
         const self_exe = (openSelfExe(.{}) catch null) orelse return null;
-        defer _ = bun.JSC.Node.Syscall.close(self_exe);
+        defer _ = Syscall.close(self_exe);
 
         var trailer_bytes: [4096]u8 = undefined;
         std.os.lseek_END(self_exe, -4096) catch return null;
         var read_amount: usize = 0;
         while (read_amount < trailer_bytes.len) {
-            switch (bun.JSC.Node.Syscall.read(self_exe, trailer_bytes[read_amount..])) {
+            switch (Syscall.read(self_exe, trailer_bytes[read_amount..])) {
                 .result => |read| {
                     if (read == 0) return null;
 
@@ -396,7 +439,7 @@ pub const StandaloneModuleGraph = struct {
 
             var remain = to_read_from;
             while (remain.len > 0) {
-                switch (bun.JSC.Node.Syscall.read(self_exe, remain)) {
+                switch (Syscall.read(self_exe, remain)) {
                     .result => |read| {
                         if (read == 0) return null;
 

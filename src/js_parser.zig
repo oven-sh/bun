@@ -11371,7 +11371,7 @@ fn NewParser_(
         }
 
         fn parseArrowBody(p: *P, args: []js_ast.G.Arg, data: *FnOrArrowDataParse) !E.Arrow {
-            var arrow_loc = p.lexer.loc();
+            const arrow_loc = p.lexer.loc();
 
             // Newlines are not allowed before "=>"
             if (p.lexer.has_newline_before) {
@@ -11392,7 +11392,7 @@ fn NewParser_(
             data.is_this_disallowed = p.fn_or_arrow_data_parse.is_this_disallowed;
 
             if (p.lexer.token == .t_open_brace) {
-                var body = try p.parseFnBody(data);
+                const body = try p.parseFnBody(data);
                 p.after_arrow_body_loc = p.lexer.loc();
                 return E.Arrow{ .args = args, .body = body };
             }
@@ -20638,7 +20638,7 @@ fn NewParser_(
             // Remove the last child from the parent scope
             const last = parent.children.len - 1;
             if (comptime Environment.allow_assert) assert(parent.children.ptr[last] == to_flatten);
-            _ = parent.children.popOrNull();
+            parent.children.len -|= 1;
 
             for (to_flatten.children.slice()) |item| {
                 item.parent = parent;

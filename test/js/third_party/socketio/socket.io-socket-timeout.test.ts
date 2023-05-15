@@ -1,3 +1,5 @@
+// TODO: uncomment when Blob bug in isBinary is fixed
+
 // import { Server } from "socket.io";
 // import { describe, it, expect } from "bun:test";
 

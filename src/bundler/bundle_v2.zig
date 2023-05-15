@@ -604,6 +604,13 @@ pub const BundleV2 = struct {
 
             // Handle onLoad plugins
             if (!this.enqueueOnLoadPluginIfNeeded(task)) {
+                if (loader.shouldCopyForBundling()) {
+                    var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
+                    additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
+                    this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
+                    this.graph.estimated_file_loader_count += 1;
+                }
+
                 this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&task.task));
             }
         } else {
@@ -665,6 +672,13 @@ pub const BundleV2 = struct {
 
         // Handle onLoad plugins as entry points
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
+            if (loader.shouldCopyForBundling()) {
+                var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
+                additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
+                this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
+                this.graph.estimated_file_loader_count += 1;
+            }
+
             batch.push(ThreadPoolLib.Batch.from(&task.task));
         }
 
@@ -1067,8 +1081,8 @@ pub const BundleV2 = struct {
                         template.data = this.bundler.options.asset_naming;
                     const source = &sources[index];
                     var pathname = source.path.name;
-                    // TODO: outbase
-                    const rel = bun.path.relative(this.bundler.fs.top_level_dir, source.path.text);
+
+                    const rel = bun.path.relative(this.bundler.options.root_dir, source.path.text);
                     if (rel.len > 0 and rel[0] != '.')
                         pathname = Fs.PathName.init(rel);
 
@@ -1483,6 +1497,13 @@ pub const BundleV2 = struct {
 
                         // Handle onLoad plugins
                         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
+                            if (loader.shouldCopyForBundling()) {
+                                var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
+                                additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
+                                this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
+                                this.graph.estimated_file_loader_count += 1;
+                            }
+
                             this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&task.task));
                         }
                     } else {
@@ -2162,15 +2183,15 @@ pub const BundleV2 = struct {
                         graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
                         diff += 1;
 
+                        if (this.enqueueOnLoadPluginIfNeeded(new_task)) {
+                            continue;
+                        }
+
                         if (loader.shouldCopyForBundling()) {
                             var additional_files: *BabyList(AdditionalFile) = &graph.input_files.items(.additional_files)[result.source.index.get()];
                             additional_files.push(this.graph.allocator, .{ .source_index = new_task.source_index.get() }) catch unreachable;
                             new_input_file.side_effects = _resolver.SideEffects.no_side_effects__pure_data;
                             graph.estimated_file_loader_count += 1;
-                        }
-
-                        if (this.enqueueOnLoadPluginIfNeeded(new_task)) {
-                            continue;
                         }
 
                         // schedule as early as possible
@@ -2429,18 +2450,12 @@ pub const ParseTask = struct {
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
             // TODO: css
-            .css, .file => {
+            else => {
                 const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
                 const root = Expr.init(E.String, E.String{
                     .data = unique_key,
                 }, Logger.Loc{ .start = 0 });
                 unique_key_for_additional_file.* = unique_key;
-                return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
-            },
-            else => {
-                const root = Expr.init(E.String, E.String{
-                    .data = source.path.text,
-                }, Logger.Loc{ .start = 0 });
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
         }
@@ -10850,7 +10865,16 @@ pub const Chunk = struct {
                             .chunk, .asset => {
                                 const index = piece.index.index;
                                 const file_path = switch (piece.index.kind) {
-                                    .asset => graph.additional_output_files.items[additional_files[index].last().?.output_file].input.text,
+                                    .asset => brk: {
+                                        const files = additional_files[index];
+                                        if (!(files.len > 0)) {
+                                            Output.panic("Internal error: missing asset file", .{});
+                                        }
+
+                                        const output_file = files.last().?.output_file;
+
+                                        break :brk graph.additional_output_files.items[output_file].path;
+                                    },
                                     .chunk => chunks[index].final_rel_path,
                                     else => unreachable,
                                 };
@@ -10884,11 +10908,17 @@ pub const Chunk = struct {
                             .asset, .chunk => {
                                 const index = piece.index.index;
                                 const file_path = switch (piece.index.kind) {
-                                    .asset => graph.additional_output_files.items[additional_files[index].last().?.output_file].input.text,
+                                    .asset => brk: {
+                                        const files = additional_files[index];
+                                        std.debug.assert(files.len > 0);
+
+                                        const output_file = files.last().?.output_file;
+
+                                        break :brk graph.additional_output_files.items[output_file].path;
+                                    },
                                     .chunk => chunks[index].final_rel_path,
                                     else => unreachable,
                                 };
-
                                 const cheap_normalizer = cheapPrefixNormalizer(
                                     import_prefix,
                                     if (from_chunk_dir.len == 0)

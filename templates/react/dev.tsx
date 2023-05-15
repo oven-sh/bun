@@ -4,7 +4,7 @@ import type { ServeOptions } from "bun";
 
 const PROJECT_ROOT = import.meta.dir;
 const PUBLIC_DIR = path.resolve(PROJECT_ROOT, "public");
-const BUILD_DIR = path.resolve(PROJECT_ROOT, ".build");
+const BUILD_DIR = path.resolve(PROJECT_ROOT, "build");
 
 function serveFromDir(config: { directory: string; path: string }): Response | null {
   let basePath = path.join(config.directory, config.path);

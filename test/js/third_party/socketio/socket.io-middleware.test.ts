@@ -48,15 +48,18 @@ describe("middleware", () => {
 
   it("should pass errors", done => {
     const io = new Server(0);
+    let timeout: Timer;
+    let socket;
     io.use((socket, next) => {
       next(new Error("Authentication error"));
     });
     io.use((socket, next) => {
-      done(new Error("nope"));
+      clearTimeout(timeout);
+      fail(done, io, new Error("nope"), socket);
     });
 
-    const socket = createClient(io);
-    const timeout = setTimeout(() => {
+    socket = createClient(io);
+    timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
     }, 200);
     socket.on("connect", () => {

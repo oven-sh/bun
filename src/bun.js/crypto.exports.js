@@ -1161,7 +1161,7 @@ var require_browser2 = __commonJS({
     };
     LazyHash.prototype.copy = function copy() {
       const copy = new LazyHash(this.#algorithm);
-      copy.#hasher = this.#hasher.copy();
+      copy._hasher = this._hasher.copy();
       return copy;
     };
 

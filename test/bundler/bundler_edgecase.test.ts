@@ -809,4 +809,49 @@ describe("bundler", () => {
       stdout: `0.6.0`,
     },
   });
+  itBundled("edgecase/OverwriteInputWithOutdir", {
+    files: {
+      "/entry.js": /* js */ `
+        import { version } from './library';
+        console.log(version);
+      `,
+      "/library.js": /* js */ `
+        exports.version = '0.6.0';
+      `,
+    },
+    outdir: "/",
+    bundleErrors: {
+      "<bun>": ['Refusing to overwrite input file "/entry.js"'],
+    },
+  });
+  itBundled("edgecase/OverwriteInputWithOutfile", {
+    files: {
+      "/entry.js": /* js */ `
+        import { version } from './library';
+        console.log(version);
+      `,
+      "/library.js": /* js */ `
+        exports.version = '0.6.0';
+      `,
+    },
+    outfile: "/entry.js",
+    bundleErrors: {
+      "<bun>": ['Refusing to overwrite input file "/entry.js"'],
+    },
+  });
+  itBundled("edgecase/OverwriteInputNonEntrypoint", {
+    files: {
+      "/entry.js": /* js */ `
+        import { version } from './library';
+        console.log(version);
+      `,
+      "/library.js": /* js */ `
+        exports.version = '0.6.0';
+      `,
+    },
+    outfile: "/entry.js",
+    bundleErrors: {
+      "<bun>": ['Refusing to overwrite input file "/entry.js"'],
+    },
+  });
 });

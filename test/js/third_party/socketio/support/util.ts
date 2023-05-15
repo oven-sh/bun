@@ -78,3 +78,9 @@ export function eioPoll(httpServer, sid): Promise<string> {
       });
   });
 }
+
+export function waitFor<T = unknown>(emitter, event) {
+  return new Promise<T>(resolve => {
+    emitter.once(event, resolve);
+  });
+}

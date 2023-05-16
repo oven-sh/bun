@@ -1133,11 +1133,9 @@ const build = Bun.build({
 });
 
 const artifact = build.outputs[0];
-return new Response(artifact, {
-  headers: {
-    "Content-Type": artifact.type,
-  },
-});
+
+// Content-Type header is automatically set
+return new Response(artifact);
 ```
 
 The Bun runtime implements special pretty-printing of `BuildArtifact` object to make debugging easier.

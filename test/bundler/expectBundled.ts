@@ -106,6 +106,8 @@ export interface BundlerTestInput {
   stdin?: { contents: string; cwd: string };
   /** Use when doing something weird with entryPoints and you need to check other output paths. */
   outputPaths?: string[];
+  /** Use --compile */
+  compile?: boolean;
 
   /** force using cli or js api. defaults to api if possible, then cli otherwise */
   backend?: "cli" | "api";
@@ -319,6 +321,7 @@ function expectBundled(
     capture,
     chunkNaming,
     cjs2esm,
+    compile,
     dce,
     dceKeepMarkerCount,
     define,
@@ -449,7 +452,7 @@ function expectBundled(
       external = external.map(x => (typeof x !== "string" ? x : x.replace(/\{\{root\}\}/g, root)));
     }
 
-    outfile = useOutFile ? path.join(root, outfile ?? "/out.js") : undefined;
+    outfile = useOutFile ? path.join(root, outfile ?? (compile ? "/out" : "/out.js")) : undefined;
     outdir = !useOutFile ? path.join(root, outdir ?? "/out") : undefined;
     metafile = metafile ? path.join(root, metafile) : undefined;
     outputPaths = (
@@ -525,6 +528,7 @@ function expectBundled(
               ...entryPaths,
               ...(entryPointsRaw ?? []),
               bundling === false ? "--no-bundle" : [],
+              compile ? "--compile" : [],
               outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
               define && Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
               `--target=${target}`,
@@ -618,6 +622,22 @@ function expectBundled(
             {
               "version": "0.2.0",
               "configurations": [
+                ...(compile
+                  ? [
+                      {
+                        "type": "lldb",
+                        "request": "launch",
+                        "name": "run compiled exe",
+                        "program": outfile,
+                        "args": [],
+                        "cwd": root,
+                        "env": {
+                          "FORCE_COLOR": "1",
+                        },
+                        "console": "internalConsole",
+                      },
+                    ]
+                  : []),
                 {
                   "type": "lldb",
                   "request": "launch",
@@ -1000,125 +1020,127 @@ for (const [key, blob] of build.outputs) {
     }
 
     // Check that the bundle failed with status code 0 by verifying all files exist.
-    // TODO: clean up this entire bit into one main loop
-    if (outfile) {
-      if (!existsSync(outfile)) {
-        throw new Error("Bundle was not written to disk: " + outfile);
-      } else {
-        const content = readFileSync(outfile).toString();
-        if (dce) {
-          const dceFails = [...content.matchAll(/FAIL|FAILED|DROP|REMOVE/gi)];
-          if (dceFails.length) {
-            throw new Error("DCE test did not remove all expected code in " + outfile + ".");
-          }
-          if (dceKeepMarkerCount !== false) {
-            const keepMarkersThisFile = [...content.matchAll(/KEEP/gi)].length;
-            keepMarkersFound += keepMarkersThisFile;
-            if (
-              (typeof dceKeepMarkerCount === "number"
-                ? dceKeepMarkerCount
-                : Object.values(keepMarkers).reduce((a, b) => a + b, 0)) !== keepMarkersThisFile
-            ) {
-              throw new Error(
-                "DCE keep markers were not preserved in " +
-                  outfile +
-                  ". Expected " +
-                  keepMarkers[outfile] +
-                  " but found " +
-                  keepMarkersThisFile +
-                  ".",
-              );
+    // TODO: clean up this entire bit into one main loop\
+    if (!compile) {
+      if (outfile) {
+        if (!existsSync(outfile)) {
+          throw new Error("Bundle was not written to disk: " + outfile);
+        } else {
+          if (dce) {
+            const content = readFileSync(outfile).toString();
+            const dceFails = [...content.matchAll(/FAIL|FAILED|DROP|REMOVE/gi)];
+            if (dceFails.length) {
+              throw new Error("DCE test did not remove all expected code in " + outfile + ".");
             }
-          }
-        }
-        if (!ESBUILD) {
-          // expect(readFileSync(outfile).toString()).toMatchSnapshot(outfile.slice(root.length));
-        }
-      }
-    } else {
-      // entryNames makes it so we cannot predict the output file
-      if (!entryNaming || entryNaming === "[dir]/[name].[ext]") {
-        for (const fullpath of outputPaths) {
-          if (!existsSync(fullpath)) {
-            throw new Error("Bundle was not written to disk: " + fullpath);
-          } else {
-            if (!ESBUILD) {
-              // expect(readFileSync(fullpath).toString()).toMatchSnapshot(fullpath.slice(root.length));
-            }
-            if (dce) {
-              const content = readFileSync(fullpath, "utf8");
-              const dceFails = [...content.replace(/\/\*.*?\*\//g, "").matchAll(/FAIL|FAILED|DROP|REMOVE/gi)];
-              const key = fullpath.slice(root.length);
-              if (dceFails.length) {
-                throw new Error("DCE test did not remove all expected code in " + key + ".");
+            if (dceKeepMarkerCount !== false) {
+              const keepMarkersThisFile = [...content.matchAll(/KEEP/gi)].length;
+              keepMarkersFound += keepMarkersThisFile;
+              if (
+                (typeof dceKeepMarkerCount === "number"
+                  ? dceKeepMarkerCount
+                  : Object.values(keepMarkers).reduce((a, b) => a + b, 0)) !== keepMarkersThisFile
+              ) {
+                throw new Error(
+                  "DCE keep markers were not preserved in " +
+                    outfile +
+                    ". Expected " +
+                    keepMarkers[outfile] +
+                    " but found " +
+                    keepMarkersThisFile +
+                    ".",
+                );
               }
-              if (dceKeepMarkerCount !== false) {
-                const keepMarkersThisFile = [...content.matchAll(/KEEP/gi)].length;
-                keepMarkersFound += keepMarkersThisFile;
-                if (keepMarkers[key] !== keepMarkersThisFile) {
-                  throw new Error(
-                    "DCE keep markers were not preserved in " +
-                      key +
-                      ". Expected " +
-                      keepMarkers[key] +
-                      " but found " +
-                      keepMarkersThisFile +
-                      ".",
-                  );
+            }
+          }
+          if (!ESBUILD) {
+            // expect(readFileSync(outfile).toString()).toMatchSnapshot(outfile.slice(root.length));
+          }
+        }
+      } else {
+        // entryNames makes it so we cannot predict the output file
+        if (!entryNaming || entryNaming === "[dir]/[name].[ext]") {
+          for (const fullpath of outputPaths) {
+            if (!existsSync(fullpath)) {
+              throw new Error("Bundle was not written to disk: " + fullpath);
+            } else {
+              if (!ESBUILD) {
+                // expect(readFileSync(fullpath).toString()).toMatchSnapshot(fullpath.slice(root.length));
+              }
+              if (dce) {
+                const content = readFileSync(fullpath, "utf8");
+                const dceFails = [...content.replace(/\/\*.*?\*\//g, "").matchAll(/FAIL|FAILED|DROP|REMOVE/gi)];
+                const key = fullpath.slice(root.length);
+                if (dceFails.length) {
+                  throw new Error("DCE test did not remove all expected code in " + key + ".");
+                }
+                if (dceKeepMarkerCount !== false) {
+                  const keepMarkersThisFile = [...content.matchAll(/KEEP/gi)].length;
+                  keepMarkersFound += keepMarkersThisFile;
+                  if (keepMarkers[key] !== keepMarkersThisFile) {
+                    throw new Error(
+                      "DCE keep markers were not preserved in " +
+                        key +
+                        ". Expected " +
+                        keepMarkers[key] +
+                        " but found " +
+                        keepMarkersThisFile +
+                        ".",
+                    );
+                  }
                 }
               }
             }
           }
+        } else if (!ESBUILD) {
+          // TODO: snapshot these test cases
         }
-      } else if (!ESBUILD) {
-        // TODO: snapshot these test cases
       }
-    }
-    if (
-      dce &&
-      dceKeepMarkerCount !== false &&
-      typeof dceKeepMarkerCount === "number" &&
-      keepMarkersFound !== dceKeepMarkerCount
-    ) {
-      throw new Error(
-        `DCE keep markers were not preserved. Expected ${dceKeepMarkerCount} KEEP markers, but found ${keepMarkersFound}.`,
-      );
-    }
+      if (
+        dce &&
+        dceKeepMarkerCount !== false &&
+        typeof dceKeepMarkerCount === "number" &&
+        keepMarkersFound !== dceKeepMarkerCount
+      ) {
+        throw new Error(
+          `DCE keep markers were not preserved. Expected ${dceKeepMarkerCount} KEEP markers, but found ${keepMarkersFound}.`,
+        );
+      }
 
-    if (assertNotPresent) {
-      for (const [key, value] of Object.entries(assertNotPresent)) {
-        const filepath = path.join(root, key);
-        if (existsSync(filepath)) {
-          const strings = Array.isArray(value) ? value : [value];
-          for (const str of strings) {
-            if (api.readFile(key).includes(str)) throw new Error(`Expected ${key} to not contain "${str}"`);
+      if (assertNotPresent) {
+        for (const [key, value] of Object.entries(assertNotPresent)) {
+          const filepath = path.join(root, key);
+          if (existsSync(filepath)) {
+            const strings = Array.isArray(value) ? value : [value];
+            for (const str of strings) {
+              if (api.readFile(key).includes(str)) throw new Error(`Expected ${key} to not contain "${str}"`);
+            }
           }
         }
       }
-    }
 
-    if (capture) {
-      const captures = api.captureFile(path.relative(root, outfile ?? outputPaths[0]));
-      expect(captures).toEqual(capture);
-    }
+      if (capture) {
+        const captures = api.captureFile(path.relative(root, outfile ?? outputPaths[0]));
+        expect(captures).toEqual(capture);
+      }
 
-    // cjs2esm checks
-    if (cjs2esm) {
-      const outfiletext = api.readFile(path.relative(root, outfile ?? outputPaths[0]));
-      const regex = /\/\/\s+(.+?)\nvar\s+([a-zA-Z0-9_$]+)\s+=\s+__commonJS/g;
-      const matches = [...outfiletext.matchAll(regex)].map(match => "/" + match[1]);
-      const expectedMatches = cjs2esm === true ? [] : cjs2esm.unhandled ?? [];
-      try {
-        expect(matches.sort()).toEqual(expectedMatches.sort());
-      } catch (error) {
-        if (matches.length === expectedMatches.length) {
-          console.error(`cjs2esm check failed.`);
-        } else {
-          console.error(
-            `cjs2esm check failed. expected ${expectedMatches.length} __commonJS helpers but found ${matches.length}.`,
-          );
+      // cjs2esm checks
+      if (cjs2esm) {
+        const outfiletext = api.readFile(path.relative(root, outfile ?? outputPaths[0]));
+        const regex = /\/\/\s+(.+?)\nvar\s+([a-zA-Z0-9_$]+)\s+=\s+__commonJS/g;
+        const matches = [...outfiletext.matchAll(regex)].map(match => "/" + match[1]);
+        const expectedMatches = cjs2esm === true ? [] : cjs2esm.unhandled ?? [];
+        try {
+          expect(matches.sort()).toEqual(expectedMatches.sort());
+        } catch (error) {
+          if (matches.length === expectedMatches.length) {
+            console.error(`cjs2esm check failed.`);
+          } else {
+            console.error(
+              `cjs2esm check failed. expected ${expectedMatches.length} __commonJS helpers but found ${matches.length}.`,
+            );
+          }
+          throw error;
         }
-        throw error;
       }
     }
 
@@ -1175,7 +1197,7 @@ for (const [key, blob] of build.outputs) {
 
         const { success, stdout, stderr } = Bun.spawnSync({
           cmd: [
-            (run.runtime ?? "bun") === "bun" ? bunExe() : "node",
+            ...(compile ? [] : [(run.runtime ?? "bun") === "bun" ? bunExe() : "node"]),
             ...(run.bunArgs ?? []),
             file,
             ...(run.args ?? []),

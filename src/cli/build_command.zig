@@ -53,6 +53,9 @@ pub const BuildCommand = struct {
         this_bundler.options.source_map = options.SourceMapOption.fromApi(ctx.args.source_map);
         this_bundler.resolver.opts.source_map = options.SourceMapOption.fromApi(ctx.args.source_map);
 
+        this_bundler.options.compile = ctx.bundler_options.compile;
+        this_bundler.resolver.opts.compile = ctx.bundler_options.compile;
+
         if (this_bundler.options.source_map == .external and ctx.bundler_options.outdir.len == 0 and !ctx.bundler_options.compile) {
             Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use an external source map without --outdir", .{});
             Global.exit(1);

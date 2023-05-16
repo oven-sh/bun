@@ -166,6 +166,9 @@ export default {
     page("bundler/plugins", "Plugins", {
       description: `Implement custom loaders and module resolution logic with Bun's plugin system.`,
     }),
+    page("bundler/executables", "Executables", {
+      description: "Compile a TypeScript or JavaScript file to a standalone cross-platform executable",
+    }),
     page("bundler/migration", "Migration", {
       description: `Guides for migrating from other bundlers to Bun.`,
     }),

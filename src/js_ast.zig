@@ -2594,6 +2594,10 @@ pub const Stmt = struct {
         return self.data == .s_expr and self.data.s_expr.value.data == .e_call and self.data.s_expr.value.data.e_call.target.data == .e_super;
     }
 
+    pub fn isMissingExpr(self: Stmt) bool {
+        return self.data == .s_expr and self.data.s_expr.value.data == .e_missing;
+    }
+
     pub fn empty() Stmt {
         return Stmt{ .data = .{ .s_empty = None }, .loc = logger.Loc{} };
     }

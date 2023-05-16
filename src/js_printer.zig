@@ -988,9 +988,6 @@ fn NewPrinter(
                     p.printNewline();
                     p.options.indent += 1;
                     p.printStmt(stmt) catch unreachable;
-                    if (stmt.data == .s_expr and stmt.data.s_expr.value.data == .e_missing) {
-                        p.printSemicolonIfNeeded();
-                    }
                     p.options.unindent();
                 },
             }

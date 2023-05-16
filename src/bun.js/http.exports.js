@@ -1,4 +1,5 @@
 const { EventEmitter } = import.meta.require("node:events");
+const { isIPv6 } = import.meta.require("node:net");
 const { Readable, Writable, Duplex } = import.meta.require("node:stream");
 const { URL } = import.meta.require("node:url");
 const { newArrayWithSize, String, Object, Array } = import.meta.primordials;
@@ -39,7 +40,9 @@ const NODE_HTTP_WARNING =
 var _globalAgent;
 var _defaultHTTPSAgent;
 var kInternalRequest = Symbol("kInternalRequest");
+var kInternalSocketData = Symbol.for("::bunternal::");
 
+const kEmptyBuffer = Buffer.alloc(0);
 var FakeSocket = class Socket extends Duplex {
   bytesRead = 0;
   bytesWritten = 0;
@@ -318,7 +321,14 @@ export class Server extends EventEmitter {
   }
 
   address() {
-    return this.#server?.hostname;
+    if (!this.#server) return null;
+
+    const address = this.#server.hostname;
+    return {
+      address,
+      family: isIPv6(address) ? "IPv6" : "IPv4",
+      port: this.#server.port,
+    };
   }
 
   listen(port, host, onListen) {
@@ -347,8 +357,30 @@ export class Server extends EventEmitter {
       this.#server = Bun.serve({
         port,
         hostname: host,
-
-        fetch(req) {
+        // Bindings to be used for WS Server
+        websocket: {
+          open(ws) {
+            if (ws.data && typeof ws.data.open === "function") {
+              ws.data.open(ws);
+            }
+          },
+          message(ws, message) {
+            if (ws.data && typeof ws.data.message === "function") {
+              ws.data.message(ws, message);
+            }
+          },
+          close(ws, code, reason) {
+            if (ws.data && typeof ws.data.close === "function") {
+              ws.data.close(ws, code, reason);
+            }
+          },
+          drain(ws) {
+            if (ws.data && typeof ws.data.drain === "function") {
+              ws.data.drain(ws);
+            }
+          },
+        },
+        fetch(req, _server) {
           var pendingResponse;
           var pendingError;
           var rejectFunction, resolveFunction;
@@ -369,7 +401,15 @@ export class Server extends EventEmitter {
 
           http_req.once("error", err => reject(err));
           http_res.once("error", err => reject(err));
-          server.emit("request", http_req, http_res);
+
+          const upgrade = req.headers.get("upgrade");
+          if (upgrade) {
+            const socket = new FakeSocket();
+            socket[kInternalSocketData] = [_server, http_res];
+            server.emit("upgrade", http_req, socket, kEmptyBuffer);
+          } else {
+            server.emit("request", http_req, http_res);
+          }
 
           if (pendingError) {
             throw pendingError;

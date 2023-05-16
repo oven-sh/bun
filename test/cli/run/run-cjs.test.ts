@@ -35,7 +35,6 @@ export default fn;
   expect(stdout.toString("utf8")).toEqual("hello world\n");
 });
 
-
 test("not running with export default class", async () => {
   const dir = join(realpathSync(tmpdir()), "bun-run-test2");
   mkdirSync(dir, { recursive: true });

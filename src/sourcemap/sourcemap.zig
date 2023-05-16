@@ -1369,25 +1369,16 @@ pub const Chunk = struct {
 /// https://sentry.engineering/blog/the-case-for-debug-ids
 /// https://github.com/mitsuhiko/source-map-rfc/blob/proposals/debug-id/proposals/debug-id.md
 /// https://github.com/source-map/source-map-rfc/pull/20
+/// https://github.com/getsentry/rfcs/blob/main/text/0081-sourcemap-debugid.md#the-debugid-format
 pub const DebugIDFormatter = struct {
     id: u64 = 0,
 
     pub fn format(self: DebugIDFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        // The RFC asks for a UUID
-        // We are not generating a UUID, our hash is a 64-bit integer
-        // So we just print it like a UUID
-        // pretty sure this number is always 16 bytes
+        // The RFC asks for a UUID, which is 128 bits (32 hex chars). Our hashes are only 64 bits.
+        // We fill the end of the id with "bun!bun!" hex encoded
+        var buf: [32]u8 = undefined;
         const formatter = bun.fmt.hexIntUpper(self.id);
-        const expected_length = "85314830023F4CF1A267535F4E37BB17".len;
-        var buf: [expected_length]u8 = undefined;
-
-        const wrote = std.fmt.bufPrint(&buf, "{}", .{formatter}) catch unreachable;
-        @memset(
-            buf[wrote.len..].ptr,
-            // fill the remaining with B
-            'B',
-            buf.len - wrote.len,
-        );
+        _ = std.fmt.bufPrint(&buf, "{}64756e2164756e21", .{formatter}) catch unreachable;
         try writer.writeAll(&buf);
     }
 };

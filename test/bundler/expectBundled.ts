@@ -163,6 +163,7 @@ export interface BundlerTestInput {
   useDefineForClassFields?: boolean;
   sourceMap?: "inline" | "external" | "none";
   plugins?: BunPlugin[] | ((builder: PluginBuilder) => void | Promise<void>);
+  install?: string[];
 
   // pass subprocess.env
   env?: Record<string, any>;
@@ -334,6 +335,7 @@ function expectBundled(
     format,
     globalName,
     inject,
+    install,
     jsx = {},
     keepNames,
     legalComments,
@@ -482,6 +484,16 @@ function expectBundled(
     // Prepare source folder
     if (existsSync(root)) {
       rmSync(root, { recursive: true });
+    }
+    mkdirSync(root, { recursive: true });
+    if (install) {
+      const installProcess = Bun.spawnSync({
+        cmd: [bunExe(), "install", ...install],
+        cwd: root,
+      });
+      if (!installProcess.success) {
+        throw new Error("Failed to install dependencies");
+      }
     }
     for (const [file, contents] of Object.entries(files)) {
       const filename = path.join(root, file);

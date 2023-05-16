@@ -1116,7 +1116,7 @@ pub const Version = extern struct {
     }
 
     fn parseVersionNumber(input: string) u32 {
-        var bytes: [std.fmt.comptimePrint("{}", .{@as(u32, std.math.maxInt(u32))}).len]u8 = undefined;
+        var bytes: [std.fmt.count("{}", .{std.math.maxInt(u32)})]u8 = undefined;
         var byte_i: u8 = 0;
 
         std.debug.assert(input[0] != '.');

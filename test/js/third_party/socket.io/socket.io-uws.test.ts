@@ -1,4 +1,3 @@
-
 // import { App, us_socket_local_port, us_listen_socket_close } from "uWebSockets.js";
 // uWS throws an error when trying to import it
 import { Server } from "socket.io";

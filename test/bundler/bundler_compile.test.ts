@@ -23,7 +23,7 @@ describe("bundler", () => {
         import { getRandomSeed } from 'bun:jsc';
         const db = new Database("test.db");
         const query = db.query(\`select "Hello world" as message\`);
-        if (query.message !== "Hello world") throw "fail from sqlite";
+        if (query.get().message !== "Hello world") throw "fail from sqlite";
         const icon = await fetch("https://bun.sh/favicon.ico").then(x=>x.arrayBuffer())
         if(icon.byteLength < 100) throw "fail from icon";
         if (typeof getRandomSeed() !== 'number') throw "fail from bun:jsc";
@@ -37,7 +37,6 @@ describe("bundler", () => {
         if (res.status !== 200) throw "fail from server";
         if (await res.text() !== "Hello world") throw "fail from server";
         server.stop();
-        Bun.build();
       `,
     },
     run: true,

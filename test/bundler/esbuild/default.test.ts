@@ -1155,6 +1155,9 @@ describe("bundler", () => {
     onAfterBundle(api) {
       const json = JSON.parse(api.readFile("/Users/user/project/out/entry.js.map"));
       api.expectFile("/Users/user/project/out/entry.js").toContain(`//# debugId=${json.debugId}`);
+      // see src/sourcemap/sourcemap.zig DebugIDFormatter for more info
+      expect(json.debugId).toMatch(/^[A-F0-9]{32}$/);
+      expect(json.debugId.endsWith("64756e2164756e21"));
     },
     run: {
       stdout: "hi",

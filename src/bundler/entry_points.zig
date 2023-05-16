@@ -192,7 +192,7 @@ pub const ServerEntryPoint = struct {
                     \\var cjs = start?.default;
                     \\if (cjs && typeof cjs ===  'function' && cjsSymbol in cjs) {{
                     \\  // if you module.exports = (class {{}}), don't call it
-                    \\  entryNamespace = import.meta.primordials.isConstructor(cjs.constructor) ? cjs : cjs();
+                    \\  entryNamespace = cjs.constructor === Function ? cjs() : cjs;
                     \\}}
                     \\if (typeof entryNamespace?.then === 'function') {{
                     \\   entryNamespace = entryNamespace.then((entryNamespace) => {{
@@ -235,7 +235,7 @@ pub const ServerEntryPoint = struct {
                 \\var cjs = start?.default;
                 \\if (cjs && typeof cjs ===  'function' && cjsSymbol in cjs) {{
                 \\  // if you module.exports = (class {{}}), don't call it
-                \\  entryNamespace = import.meta.primordials.isConstructor(cjs.constructor) ? cjs : cjs();
+                \\  entryNamespace = cjs.constructor === Function ? cjs() : cjs;
                 \\}}
                 \\if (typeof entryNamespace?.then === 'function') {{
                 \\   entryNamespace = entryNamespace.then((entryNamespace) => {{

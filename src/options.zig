@@ -1986,7 +1986,7 @@ pub const TransformOptions = struct {
 pub const OutputFile = struct {
     loader: Loader,
     input_loader: Loader = .js,
-    input: Fs.Path,
+    src_path: Fs.Path,
     value: Value,
     size: usize = 0,
     size_without_sourcemap: usize = 0,
@@ -1995,7 +1995,7 @@ pub const OutputFile = struct {
     is_executable: bool = false,
     source_map_index: u32 = std.math.maxInt(u32),
     output_kind: JSC.API.BuildArtifact.OutputKind = .chunk,
-    path: []const u8 = "",
+    dest_path: []const u8 = "",
 
     // Depending on:
     // - The target
@@ -2072,7 +2072,7 @@ pub const OutputFile = struct {
     pub fn initPending(loader: Loader, pending: resolver.Result) OutputFile {
         return .{
             .loader = loader,
-            .input = pending.pathConst().?.*,
+            .src_path = pending.pathConst().?.*,
             .size = 0,
             .value = .{ .pending = pending },
         };
@@ -2081,7 +2081,7 @@ pub const OutputFile = struct {
     pub fn initFile(file: std.fs.File, pathname: string, size: usize) OutputFile {
         return .{
             .loader = .file,
-            .input = Fs.Path.init(pathname),
+            .src_path = Fs.Path.init(pathname),
             .size = size,
             .value = .{ .copy = FileOperation.fromFile(file.handle, pathname) },
         };
@@ -2122,8 +2122,8 @@ pub const OutputFile = struct {
         return OutputFile{
             .loader = options.loader,
             .input_loader = options.input_loader,
-            .input = Fs.Path.init(options.input_path),
-            .path = options.output_path,
+            .src_path = Fs.Path.init(options.input_path),
+            .dest_path = options.output_path,
             .size = options.size orelse switch (options.data) {
                 .buffer => |buf| buf.data.len,
                 .file => |file| file.size,
@@ -2151,7 +2151,7 @@ pub const OutputFile = struct {
     pub fn initBuf(buf: []const u8, allocator: std.mem.Allocator, pathname: string, loader: Loader, hash: ?u64, source_map_index: ?u32) OutputFile {
         return .{
             .loader = loader,
-            .input = Fs.Path.init(pathname),
+            .src_path = Fs.Path.init(pathname),
             .size = buf.len,
             .hash = hash orelse 0,
             .source_map_index = source_map_index orelse std.math.maxInt(u32),
@@ -2175,7 +2175,7 @@ pub const OutputFile = struct {
         const fd_out = file_out.handle;
         var do_close = false;
         // TODO: close file_out on error
-        const fd_in = (try std.fs.openFileAbsolute(file.input.text, .{ .mode = .read_only })).handle;
+        const fd_in = (try std.fs.openFileAbsolute(file.src_path.text, .{ .mode = .read_only })).handle;
 
         if (Environment.isWindows) {
             Fs.FileSystem.setMaxFd(fd_out);
@@ -2230,11 +2230,11 @@ pub const OutputFile = struct {
             },
             .saved => brk: {
                 var build_output = bun.default_allocator.create(JSC.API.BuildArtifact) catch @panic("Unable to allocate Artifact");
-                const path_to_use = owned_pathname orelse this.input.text;
+                const path_to_use = owned_pathname orelse this.src_path.text;
 
                 var file_blob = JSC.WebCore.Blob.Store.initFile(
                     JSC.Node.PathOrFileDescriptor{
-                        .path = JSC.Node.PathLike{ .string = bun.PathString.init(owned_pathname orelse (bun.default_allocator.dupe(u8, this.input.text) catch unreachable)) },
+                        .path = JSC.Node.PathLike{ .string = bun.PathString.init(owned_pathname orelse (bun.default_allocator.dupe(u8, this.src_path.text) catch unreachable)) },
                     },
                     this.loader.toMimeType(),
                     globalObject.allocator(),
@@ -2269,7 +2269,7 @@ pub const OutputFile = struct {
                     .hash = this.hash,
                     .loader = this.input_loader,
                     .output_kind = this.output_kind,
-                    .path = owned_pathname orelse bun.default_allocator.dupe(u8, this.input.text) catch unreachable,
+                    .path = owned_pathname orelse bun.default_allocator.dupe(u8, this.src_path.text) catch unreachable,
                 };
                 break :brk build_output.toJS(globalObject);
             },

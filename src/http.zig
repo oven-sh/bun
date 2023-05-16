@@ -2252,7 +2252,7 @@ pub const RequestContext = struct {
                     return;
                 };
 
-                const hash = Watcher.getHash(result.file.input.text);
+                const hash = Watcher.getHash(result.file.src_path.text);
                 const input_fd = if (ctx.watcher.indexOf(hash)) |ind|
                     if (ind > 0) ctx.watcher.watchlist.items(.fd)[ind] else null
                 else
@@ -2448,7 +2448,7 @@ pub const RequestContext = struct {
                     SocketPrinterInternal.reserveNext,
                     SocketPrinterInternal.advanceBy,
                 );
-                const loader = ctx.bundler.options.loaders.get(result.file.input.name.ext) orelse .file;
+                const loader = ctx.bundler.options.loaders.get(result.file.src_path.name.ext) orelse .file;
 
                 var socket_printer = SocketPrinter.init(
                     SocketPrinterInternal.init(ctx, loader),
@@ -2512,7 +2512,7 @@ pub const RequestContext = struct {
                     if (written.input_fd) |written_fd| {
                         try ctx.watcher.addFile(
                             written_fd,
-                            result.file.input.text,
+                            result.file.src_path.text,
                             hash,
                             loader,
                             resolve_result.dirname_fd,
@@ -2574,8 +2574,8 @@ pub const RequestContext = struct {
 
                         if (ctx.watcher.addFile(
                             file.fd,
-                            result.file.input.text,
-                            Watcher.getHash(result.file.input.text),
+                            result.file.src_path.text,
+                            Watcher.getHash(result.file.src_path.text),
                             result.file.loader,
                             file.dir,
                             null,
@@ -2595,7 +2595,7 @@ pub const RequestContext = struct {
                 var weak_etag = std.hash.Wyhash.init(0);
                 weak_etag_buffer[0] = 'W';
                 weak_etag_buffer[1] = '/';
-                weak_etag.update(result.file.input.text);
+                weak_etag.update(result.file.src_path.text);
                 std.mem.writeIntNative(u64, weak_etag_tmp_buffer[0..8], result.file.size);
                 weak_etag.update(weak_etag_tmp_buffer[0..8]);
 

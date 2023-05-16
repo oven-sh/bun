@@ -222,6 +222,9 @@ export interface BundlerTestInput {
 
   /** Run after bundle happens but before runtime. */
   onAfterBundle?(api: BundlerTestBundleAPI): void;
+
+  /* TODO: remove this from the tests after this is implemented */
+  skipIfWeDidNotImplementWildcardSideEffects?: boolean;
 }
 
 export interface BundlerTestBundleAPI {

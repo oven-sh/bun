@@ -56,5 +56,5 @@ export default Foo
     cwd: dir,
     env: bunEnv,
   });
-  expect(stdout.toString("utf8")).toEqual("");
+  expect(stdout.toString("utf8")).toEqual("hello world\n");
 });

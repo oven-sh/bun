@@ -190,9 +190,9 @@ pub const ServerEntryPoint = struct {
                     \\export * from '{s}{s}';
                     \\var entryNamespace = start;
                     \\var cjs = start?.default;
-                    \\if (cjs && typeof cjs ===  'function' && cjsSymbol in cjs) {{
+                    \\if (cjs && cjsSymbol in cjs) {{
                     \\  // if you module.exports = (class {{}}), don't call it
-                    \\  entryNamespace = cjs.constructor === Function ? cjs() : cjs;
+                    \\  entryNamespace = import.meta.primordials.isCallable(cjs) ? cjs() : cjs;
                     \\}}
                     \\if (typeof entryNamespace?.then === 'function') {{
                     \\   entryNamespace = entryNamespace.then((entryNamespace) => {{
@@ -233,9 +233,9 @@ pub const ServerEntryPoint = struct {
                 \\export * from '{s}{s}';
                 \\var entryNamespace = start;
                 \\var cjs = start?.default;
-                \\if (cjs && typeof cjs ===  'function' && cjsSymbol in cjs) {{
+                \\if (cjs && cjsSymbol in cjs) {{
                 \\  // if you module.exports = (class {{}}), don't call it
-                \\  entryNamespace = cjs.constructor === Function ? cjs() : cjs;
+                \\  entryNamespace = import.meta.primordials.isCallable(cjs) ? cjs() : cjs;
                 \\}}
                 \\if (typeof entryNamespace?.then === 'function') {{
                 \\   entryNamespace = entryNamespace.then((entryNamespace) => {{

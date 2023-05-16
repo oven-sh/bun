@@ -15,6 +15,10 @@ $ bun build ./index.tsx --outdir ./build
 
 {% /codetabs %}
 
+It's fast. The numbers below represent performance on esbuild's [three.js benchmark](https://github.com/oven-sh/bun/tree/main/bench/bundle).
+
+{% image src="/images/bundler-speed.png" caption="Bundling 10 copies of three.js from scratch, with sourcemaps and minification" /%}
+
 ## Why bundle?
 
 The bundler is a key piece of infrastructure in the JavaScript ecosystem. As a brief overview of why bundling is so important:

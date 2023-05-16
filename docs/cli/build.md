@@ -207,7 +207,7 @@ Refer to the [Bundler > Loaders](/docs/bundler/loaders#file) page for more compl
 
 ### Plugins
 
-The behavior described in this table can be overridden with [plugins](/docs/bundler/plugins). Refer to the [Bundler > Loaders](/docs/bundler/plugins) page for complete documentation.
+The behavior described in this table can be overridden or extended with [plugins](/docs/bundler/plugins). Refer to the [Bundler > Loaders](/docs/bundler/plugins) page for complete documentation.
 
 ## API
 
@@ -217,9 +217,9 @@ The behavior described in this table can be overridden with [plugins](/docs/bund
 
 {% codetabs group="a" %}
 
-```ts #JavaScript
+```ts#JavaScript
 const result = await Bun.build({
-  entrypoints: ['./index.ts']
+  entrypoints: ["./index.ts"],
 });
 // => { success: boolean, outputs: BuildArtifact[], logs: BuildMessage[] }
 ```
@@ -257,7 +257,7 @@ If `outdir` is not passed to the JavaScript API, bundled code will not be writte
 
 ```ts
 const result = await Bun.build({
-  entrypoints: ['./index.ts']
+  entrypoints: ["./index.ts"],
 });
 
 for (const result of result.outputs) {
@@ -312,12 +312,18 @@ Depending on the target, Bun will apply different module resolution rules and op
 
   All bundles generated with `target: "bun"` are marked with a special `// @bun` pragma, which indicates to the Bun runtime that there's no need to re-transpile the file before execution.
 
+  If any entrypoints contains a Bun shebang (`#!/usr/bin/env bun`) the bundler will default to `target: "bun"` instead of `"browser`.
+
 ---
 
 - `node`
 - For generating bundles that are intended to be run by Node.js. Prioritizes the `"node"` export condition when resolving imports, and outputs `.mjs`. In the future, this will automatically polyfill the `Bun` global and other built-in `bun:*` modules, though this is not yet implemented.
 
 {% /table %}
+
+{% callout %}
+
+{% /callout %}
 
 ### `format`
 
@@ -1051,6 +1057,9 @@ $ bun build ./index.tsx --outdir ./out --loader .png:dataurl --loader .txt:file
 
 {% /codetabs %}
 
+### `--compile`
+
+When using the
 
 ## Error handling
 
@@ -1058,11 +1067,11 @@ $ bun build ./index.tsx --outdir ./out --loader .png:dataurl --loader .txt:file
 
 ```ts
 const result = await Bun.build({
-  entrypoints: ['./index.tsx'],
-  outdir: './out',
+  entrypoints: ["./index.tsx"],
+  outdir: "./out",
 });
 
-if(!result.success) {
+if (!result.success) {
   console.error("Build failed");
   for (const message of result.logs) {
     // Bun will pretty print the message object
@@ -1143,24 +1152,43 @@ interface BuildArtifact extends Blob {
   path: string;
   loader: Loader;
   hash?: string;
-  kind: "entry-point" | "chunk" | "asset" | "sourecemap";
+  kind: "entry-point" | "chunk" | "asset" | "sourcemap";
   sourcemap?: BuildArtifact;
 }
 
-type Loader =
-  | "js"
-  | "jsx"
-  | "ts"
-  | "tsx"
-  | "json"
-  | "toml"
-  | "file"
-  | "napi"
-  | "wasm"
-  | "text";
+type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text";
+
+interface BuildOutput {
+  outputs: BuildArtifact[];
+  success: boolean;
+  logs: Array<BuildMessage | ResolveMessage>;
+}
+
+declare class ResolveMessage {
+  readonly name: "ResolveMessage";
+  readonly position: Position | null;
+  readonly code: string;
+  readonly message: string;
+  readonly referrer: string;
+  readonly specifier: string;
+  readonly importKind:
+    | "entry_point"
+    | "stmt"
+    | "require"
+    | "import"
+    | "dynamic"
+    | "require_resolve"
+    | "at"
+    | "at_conditional"
+    | "url"
+    | "internal";
+  readonly level: "error" | "warning" | "info" | "debug" | "verbose";
+
+  toString(): string;
+}
 ```
 
-<!-- 
+<!--
 interface BuildManifest {
   inputs: {
     [path: string]: {

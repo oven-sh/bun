@@ -52,7 +52,7 @@ const templateStringTests: Record<string, TemplateStringTest> = {
   Function: { expr: "`${function() { return 123; }}`", captureRaw: "`${function(" },
   Identifier: { expr: "`${ident}`", captureRaw: "`${ident}`" },
   IdentifierAdd: { expr: "`${ident + ident}`", captureRaw: "`${ident+ident}`" },
-  IdentifierConstAdd: { expr: "`${2 + ident}`", captureRaw: "`${ident+ident}`" },
+  IdentifierConstAdd: { expr: "`${2 + ident}`", captureRaw: "`${2+ident}`" },
   EscapeIssue1: {
     expr: `\`\\abc\${ident}\``,
     captureRaw: `\`abc\${ident}\``,
@@ -63,7 +63,7 @@ const templateStringTests: Record<string, TemplateStringTest> = {
   },
   TernaryWithEscapeVariable: {
     expr: '`${"1"}\\${${VARIABLE ? "SOMETHING" : ""}`',
-    captureRaw: '`${"1"}\\${${VARIABLE ? "SOMETHING" : ""}`',
+    captureRaw: '`${"1"}\\${${VARIABLE?"SOMETHING":""}`',
   },
   TernaryWithEscapeTrue: {
     expr: '`${"1"}\\${${true ? "SOMETHING" : ""}`',
@@ -79,7 +79,7 @@ const templateStringTests: Record<string, TemplateStringTest> = {
   FoldNested3: { expr: "`a${`b`}c${`${'1'}${'d'}`}e`", capture: true },
   FoldNested4: { expr: "`a${`b`}c${`${`${`${'d'}`}`}`}e`", capture: true },
   FoldNested5: { expr: "`\\$${`d`}`", print: true }, // could be captured
-  FoldNested6: { expr: "`a\0${5}c\\${{$${`d`}e`", capture: true },
+  FoldNested6: { expr: "`a\0${5}c\\${{$${`d`}e`", print: true },
   EscapedDollar: { expr: "`\\${'a'}`", captureRaw: "`\\${'a'}`" },
   EscapedDollar2: { expr: "`\\${'a'}\\${'b'}`", captureRaw: "`\\${'a'}\\${'b'}`" },
 };

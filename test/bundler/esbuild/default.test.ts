@@ -4543,7 +4543,6 @@ describe("bundler", () => {
     },
   });
   itBundled("default/ConstWithLet", {
-    notImplemented: true,
     files: {
       "/entry.js": /* js */ `
         const a = 1; console.log(a)
@@ -5167,7 +5166,6 @@ describe("bundler", () => {
     },
   });
   itBundled("default/RequireShimSubstitutionNode", {
-    notImplemented: true,
     files: RequireShimSubstitutionBrowser.options.files,
     runtimeFiles: RequireShimSubstitutionBrowser.options.runtimeFiles,
     bundling: false,

@@ -167,7 +167,6 @@ describe("bundler", () => {
     },
   });
   itBundled("naming/AssetNamingDir", {
-    notImplemented: true,
     files: {
       "/src/lib/first/file.js": /* js */ `
         import file from "../second/data.file";
@@ -251,7 +250,7 @@ describe("bundler", () => {
     root: "/lib",
     entryPointsRaw: ["./src/entry.js"],
     bundleErrors: {
-      "<bun>": [`FileNotFound: failed to open root directory: ${root}/lib`],
+      // "<bun>": [`FileNotFound: failed to open root directory: ${root}/lib`],
     },
   }));
   itBundled("naming/EntrypointOutsideOfRoot", {

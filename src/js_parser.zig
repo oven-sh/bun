@@ -18004,6 +18004,7 @@ fn NewParser_(
                     }
                 },
                 .s_expr => |data| {
+                    const should_trim_primitive = !p.options.features.minify_syntax and !data.value.isPrimitiveLiteral();
                     p.stmt_expr_value = data.value.data;
                     const is_top_level = p.current_scope == p.module_scope;
                     if (comptime FeatureFlags.unwrap_commonjs_to_esm) {
@@ -18015,8 +18016,12 @@ fn NewParser_(
 
                     data.value = p.visitExpr(data.value);
 
+                    if (should_trim_primitive and data.value.isPrimitiveLiteral()) {
+                        return;
+                    }
+
                     // simplify unused
-                    data.value = SideEffects.simpifyUnusedExpr(p, data.value) orelse data.value.toEmpty();
+                    data.value = SideEffects.simpifyUnusedExpr(p, data.value) orelse return;
 
                     if (comptime FeatureFlags.unwrap_commonjs_to_esm) {
                         if (is_top_level) {
@@ -18130,17 +18135,17 @@ fn NewParser_(
                         p.popScope();
                     }
 
-                    // // trim empty statements
-                    if (data.stmts.len == 0) {
-                        stmts.append(Stmt{ .data = Prefill.Data.SEmpty, .loc = stmt.loc }) catch unreachable;
-                        return;
-                    } else if (data.stmts.len == 1 and !statementCaresAboutScope(data.stmts[0])) {
-                        // Unwrap blocks containing a single statement
-                        stmts.append(data.stmts[0]) catch unreachable;
-                        return;
+                    if (p.options.features.minify_syntax) {
+                        // // trim empty statements
+                        if (data.stmts.len == 0) {
+                            stmts.append(Stmt{ .data = Prefill.Data.SEmpty, .loc = stmt.loc }) catch unreachable;
+                            return;
+                        } else if (data.stmts.len == 1 and !statementCaresAboutScope(data.stmts[0])) {
+                            // Unwrap blocks containing a single statement
+                            stmts.append(data.stmts[0]) catch unreachable;
+                            return;
+                        }
                     }
-                    stmts.append(stmt.*) catch unreachable;
-                    return;
                 },
                 .s_with => |data| {
                     // using with is forbidden in strict mode
@@ -18169,7 +18174,11 @@ fn NewParser_(
                     data.test_ = SideEffects.simplifyBoolean(p, data.test_);
                 },
                 .s_if => |data| {
-                    data.test_ = SideEffects.simplifyBoolean(p, p.visitExpr(data.test_));
+                    data.test_ = p.visitExpr(data.test_);
+
+                    if (p.options.features.minify_syntax) {
+                        data.test_ = SideEffects.simplifyBoolean(p, data.test_);
+                    }
 
                     const effects = SideEffects.toBoolean(data.test_.data);
                     if (effects.ok and !effects.value) {
@@ -18193,41 +18202,69 @@ fn NewParser_(
                         }
 
                         // Trim unnecessary "else" clauses
-                        if (data.no != null and @as(Stmt.Tag, data.no.?.data) == .s_empty) {
-                            data.no = null;
+                        if (p.options.features.minify_syntax) {
+                            if (data.no != null and @as(Stmt.Tag, data.no.?.data) == .s_empty) {
+                                data.no = null;
+                            }
                         }
                     }
 
-                    if (effects.ok) {
-                        if (effects.value) {
-                            if (data.no == null or !SideEffects.shouldKeepStmtInDeadControlFlow(data.no.?, p.allocator)) {
-                                if (effects.side_effects == .could_have_side_effects) {
-                                    // Keep the condition if it could have side effects (but is still known to be truthy)
-                                    if (SideEffects.simpifyUnusedExpr(p, data.test_)) |test_| {
-                                        stmts.append(p.s(S.SExpr{ .value = test_ }, test_.loc)) catch unreachable;
+                    if (p.options.features.minify_syntax) {
+                        if (effects.ok) {
+                            if (effects.value) {
+                                if (data.no == null or !SideEffects.shouldKeepStmtInDeadControlFlow(data.no.?, p.allocator)) {
+                                    if (effects.side_effects == .could_have_side_effects) {
+                                        // Keep the condition if it could have side effects (but is still known to be truthy)
+                                        if (SideEffects.simpifyUnusedExpr(p, data.test_)) |test_| {
+                                            stmts.append(p.s(S.SExpr{ .value = test_ }, test_.loc)) catch unreachable;
+                                        }
                                     }
-                                }
 
-                                return try p.appendIfBodyPreservingScope(stmts, data.yes);
+                                    return try p.appendIfBodyPreservingScope(stmts, data.yes);
+                                } else {
+                                    // We have to keep the "no" branch
+                                }
                             } else {
-                                // We have to keep the "no" branch
+                                // The test is falsy
+                                if (!SideEffects.shouldKeepStmtInDeadControlFlow(data.yes, p.allocator)) {
+                                    if (effects.side_effects == .could_have_side_effects) {
+                                        // Keep the condition if it could have side effects (but is still known to be truthy)
+                                        if (SideEffects.simpifyUnusedExpr(p, data.test_)) |test_| {
+                                            stmts.append(p.s(S.SExpr{ .value = test_ }, test_.loc)) catch unreachable;
+                                        }
+                                    }
+
+                                    if (data.no == null) {
+                                        return;
+                                    }
+
+                                    return try p.appendIfBodyPreservingScope(stmts, data.no.?);
+                                }
                             }
-                        } else {
-                            // The test is falsy
-                            if (!SideEffects.shouldKeepStmtInDeadControlFlow(data.yes, p.allocator)) {
-                                if (effects.side_effects == .could_have_side_effects) {
-                                    // Keep the condition if it could have side effects (but is still known to be truthy)
-                                    if (SideEffects.simpifyUnusedExpr(p, data.test_)) |test_| {
-                                        stmts.append(p.s(S.SExpr{ .value = test_ }, test_.loc)) catch unreachable;
+                        }
+
+                        // TODO: more if statement syntax minification
+                        const can_remove_test = p.exprCanBeRemovedIfUnused(&data.test_);
+                        switch (data.yes.data) {
+                            .s_expr => |yes_expr| {
+                                if (yes_expr.value.isMissing()) {
+                                    if (data.no == null and can_remove_test) {
+                                        return;
+                                    } else if (data.no.?.isMissingExpr() and can_remove_test) {
+                                        return;
                                     }
                                 }
-
+                            },
+                            .s_empty => {
                                 if (data.no == null) {
+                                    if (can_remove_test) {
+                                        return;
+                                    }
+                                } else if (data.no.?.isMissingExpr() and can_remove_test) {
                                     return;
                                 }
-
-                                return try p.appendIfBodyPreservingScope(stmts, data.no.?);
-                            }
+                            },
+                            else => {},
                         }
                     }
                 },
@@ -19551,6 +19588,21 @@ fn NewParser_(
         }
 
         fn visitSingleStmt(p: *P, stmt: Stmt, kind: StmtsKind) Stmt {
+            if (stmt.data == .s_block) {
+                var new_stmt = stmt;
+                p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
+                var stmts = ListManaged(Stmt).initCapacity(p.allocator, stmt.data.s_block.stmts.len) catch unreachable;
+                stmts.appendSlice(stmt.data.s_block.stmts) catch unreachable;
+                p.visitStmts(&stmts, kind) catch unreachable;
+                p.popScope();
+                new_stmt.data.s_block.stmts = stmts.items;
+                if (p.options.features.minify_syntax) {
+                    new_stmt = p.stmtsToSingleStmt(stmt.loc, stmts.items);
+                }
+
+                return new_stmt;
+            }
+
             const has_if_scope = switch (stmt.data) {
                 .s_function => stmt.data.s_function.func.flags.contains(.has_if_scope),
                 else => false,

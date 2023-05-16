@@ -152,7 +152,7 @@ describe("bundler", () => {
       `,
     },
     cjs2esm: true,
-    dce: true,
+    minifySyntax: true,
     env: {
       NODE_ENV: "production",
     },
@@ -181,7 +181,7 @@ describe("bundler", () => {
       `,
     },
     cjs2esm: true,
-    dce: true,
+    minifySyntax: true,
     env: {
       NODE_ENV: "development",
     },

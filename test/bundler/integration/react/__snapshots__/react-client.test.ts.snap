@@ -1,0 +1,326 @@
+// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`bundler integration, react client base, NODE_ENV=development: Browser console logs 1`] = `
+[
+  "%cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold",
+  "render in <App/> http://localhost:3000/index.js",
+  "render in <Loading/>",
+  "useEffect1 in <App/>",
+  "useEffect2 in <App/>",
+  "-- testing marker --",
+  "render in <App/> http://localhost:3000/index.js",
+  "useEffect1 cleanup in <App/>",
+  "useEffect1 in <App/>",
+  "-- testing marker --",
+  "render in <App/> http://localhost:3000/index.js",
+  "useEffect1 cleanup in <App/>",
+  "useEffect1 in <App/>",
+]
+`;
+
+exports[`bundler integration, react client base, NODE_ENV=development: DOM Snapshots 1`] = `
+[
+  
+"<html lang="en"><head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>React App Integration Test</title>
+</head>
+<body>
+  <div id="root"><div><h1 class="title">Hello, world!</h1><p class="class">React Application</p><div>static string</div><p class="count">Count: 0</p><button>Increment</button><p class="same-file">Component in same file</p><p class="another-file">Component in another file 1</p><div class="list"><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div></div><div>Loading...</div></div></div>
+  <script src="/index.js" type="module"></script>
+
+
+</body></html>"
+,
+  
+"<html lang="en"><head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>React App Integration Test</title>
+</head>
+<body>
+  <div id="root"><div><h1 class="title">Hello, world!</h1><p class="class">React Application</p><div>static string</div><p class="count">Count: 1</p><button>Increment</button><p class="same-file">Component in same file</p><p class="another-file">Component in another file 1</p><div class="list"><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div></div><div><p class="lazy">Lazy loaded chunk: http://localhost:3000/Lazy.js</p><code></code></div></div></div>
+  <script src="/index.js" type="module"></script>
+
+
+</body></html>"
+,
+  
+"<html lang="en"><head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>React App Integration Test</title>
+</head>
+<body>
+  <div id="root"><div><h1 class="title">Hello, world!</h1><p class="class">React Application</p><div>static string</div><p class="count">Count: 2</p><button>Increment</button><p class="same-file">Component in same file</p><p class="another-file">Component in another file 1</p><div class="list"><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div></div><div><p class="lazy">Lazy loaded chunk: http://localhost:3000/Lazy.js</p><code></code></div></div></div>
+  <script src="/index.js" type="module"></script>
+
+
+</body></html>"
+,
+]
+`;
+
+exports[`bundler integration, react client minify-all, NODE_ENV=development: Browser console logs 1`] = `
+[
+  "%cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold",
+  "render in <App/> http://localhost:3000/index.js",
+  "render in <Loading/>",
+  "useEffect1 in <App/>",
+  "useEffect2 in <App/>",
+  "-- testing marker --",
+  "render in <App/> http://localhost:3000/index.js",
+  "useEffect1 cleanup in <App/>",
+  "useEffect1 in <App/>",
+  "-- testing marker --",
+  "render in <App/> http://localhost:3000/index.js",
+  "useEffect1 cleanup in <App/>",
+  "useEffect1 in <App/>",
+]
+`;
+
+exports[`bundler integration, react client minify-all, NODE_ENV=development: DOM Snapshots 1`] = `
+[
+  
+"<html lang="en"><head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>React App Integration Test</title>
+</head>
+<body>
+  <div id="root"><div><h1 class="title">Hello, world!</h1><p class="class">React Application</p><div>static string</div><p class="count">Count: 0</p><button>Increment</button><p class="same-file">Component in same file</p><p class="another-file">Component in another file 1</p><div class="list"><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div></div><div>Loading...</div></div></div>
+  <script src="/index.js" type="module"></script>
+
+
+</body></html>"
+,
+  
+"<html lang="en"><head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>React App Integration Test</title>
+</head>
+<body>
+  <div id="root"><div><h1 class="title">Hello, world!</h1><p class="class">React Application</p><div>static string</div><p class="count">Count: 1</p><button>Increment</button><p class="same-file">Component in same file</p><p class="another-file">Component in another file 1</p><div class="list"><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div></div><div><p class="lazy">Lazy loaded chunk: http://localhost:3000/Lazy.js</p><code></code></div></div></div>
+  <script src="/index.js" type="module"></script>
+
+
+</body></html>"
+,
+  
+"<html lang="en"><head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>React App Integration Test</title>
+</head>
+<body>
+  <div id="root"><div><h1 class="title">Hello, world!</h1><p class="class">React Application</p><div>static string</div><p class="count">Count: 2</p><button>Increment</button><p class="same-file">Component in same file</p><p class="another-file">Component in another file 1</p><div class="list"><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div></div><div><p class="lazy">Lazy loaded chunk: http://localhost:3000/Lazy.js</p><code></code></div></div></div>
+  <script src="/index.js" type="module"></script>
+
+
+</body></html>"
+,
+]
+`;
+
+exports[`bundler integration, react client minify-syntax, NODE_ENV=development: Browser console logs 1`] = `
+[
+  "%cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold",
+  "render in <App/> http://localhost:3000/index.js",
+  "render in <Loading/>",
+  "useEffect1 in <App/>",
+  "useEffect2 in <App/>",
+  "-- testing marker --",
+  "render in <App/> http://localhost:3000/index.js",
+  "useEffect1 cleanup in <App/>",
+  "useEffect1 in <App/>",
+  "-- testing marker --",
+  "render in <App/> http://localhost:3000/index.js",
+  "useEffect1 cleanup in <App/>",
+  "useEffect1 in <App/>",
+]
+`;
+
+exports[`bundler integration, react client minify-syntax, NODE_ENV=development: DOM Snapshots 1`] = `
+[
+  
+"<html lang="en"><head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>React App Integration Test</title>
+</head>
+<body>
+  <div id="root"><div><h1 class="title">Hello, world!</h1><p class="class">React Application</p><div>static string</div><p class="count">Count: 0</p><button>Increment</button><p class="same-file">Component in same file</p><p class="another-file">Component in another file 1</p><div class="list"><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div></div><div>Loading...</div></div></div>
+  <script src="/index.js" type="module"></script>
+
+
+</body></html>"
+,
+  
+"<html lang="en"><head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>React App Integration Test</title>
+</head>
+<body>
+  <div id="root"><div><h1 class="title">Hello, world!</h1><p class="class">React Application</p><div>static string</div><p class="count">Count: 1</p><button>Increment</button><p class="same-file">Component in same file</p><p class="another-file">Component in another file 1</p><div class="list"><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div></div><div><p class="lazy">Lazy loaded chunk: http://localhost:3000/Lazy.js</p><code></code></div></div></div>
+  <script src="/index.js" type="module"></script>
+
+
+</body></html>"
+,
+  
+"<html lang="en"><head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>React App Integration Test</title>
+</head>
+<body>
+  <div id="root"><div><h1 class="title">Hello, world!</h1><p class="class">React Application</p><div>static string</div><p class="count">Count: 2</p><button>Increment</button><p class="same-file">Component in same file</p><p class="another-file">Component in another file 1</p><div class="list"><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div></div><div><p class="lazy">Lazy loaded chunk: http://localhost:3000/Lazy.js</p><code></code></div></div></div>
+  <script src="/index.js" type="module"></script>
+
+
+</body></html>"
+,
+]
+`;
+
+exports[`bundler integration, react client minify-whitespace, NODE_ENV=development: Browser console logs 1`] = `
+[
+  "%cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold",
+  "render in <App/> http://localhost:3000/index.js",
+  "render in <Loading/>",
+  "useEffect1 in <App/>",
+  "useEffect2 in <App/>",
+  "-- testing marker --",
+  "render in <App/> http://localhost:3000/index.js",
+  "useEffect1 cleanup in <App/>",
+  "useEffect1 in <App/>",
+  "-- testing marker --",
+  "render in <App/> http://localhost:3000/index.js",
+  "useEffect1 cleanup in <App/>",
+  "useEffect1 in <App/>",
+]
+`;
+
+exports[`bundler integration, react client minify-whitespace, NODE_ENV=development: DOM Snapshots 1`] = `
+[
+  
+"<html lang="en"><head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>React App Integration Test</title>
+</head>
+<body>
+  <div id="root"><div><h1 class="title">Hello, world!</h1><p class="class">React Application</p><div>static string</div><p class="count">Count: 0</p><button>Increment</button><p class="same-file">Component in same file</p><p class="another-file">Component in another file 1</p><div class="list"><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div></div><div>Loading...</div></div></div>
+  <script src="/index.js" type="module"></script>
+
+
+</body></html>"
+,
+  
+"<html lang="en"><head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>React App Integration Test</title>
+</head>
+<body>
+  <div id="root"><div><h1 class="title">Hello, world!</h1><p class="class">React Application</p><div>static string</div><p class="count">Count: 1</p><button>Increment</button><p class="same-file">Component in same file</p><p class="another-file">Component in another file 1</p><div class="list"><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div></div><div><p class="lazy">Lazy loaded chunk: http://localhost:3000/Lazy.js</p><code></code></div></div></div>
+  <script src="/index.js" type="module"></script>
+
+
+</body></html>"
+,
+  
+"<html lang="en"><head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>React App Integration Test</title>
+</head>
+<body>
+  <div id="root"><div><h1 class="title">Hello, world!</h1><p class="class">React Application</p><div>static string</div><p class="count">Count: 2</p><button>Increment</button><p class="same-file">Component in same file</p><p class="another-file">Component in another file 1</p><div class="list"><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div></div><div><p class="lazy">Lazy loaded chunk: http://localhost:3000/Lazy.js</p><code></code></div></div></div>
+  <script src="/index.js" type="module"></script>
+
+
+</body></html>"
+,
+]
+`;
+
+exports[`bundler integration, react client sourcemaps, NODE_ENV=development: Browser console logs 1`] = `
+[
+  "%cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold",
+  "render in <App/> http://localhost:3000/index.js",
+  "render in <Loading/>",
+  "useEffect1 in <App/>",
+  "useEffect2 in <App/>",
+  "-- testing marker --",
+  "render in <App/> http://localhost:3000/index.js",
+  "useEffect1 cleanup in <App/>",
+  "useEffect1 in <App/>",
+  "-- testing marker --",
+  "render in <App/> http://localhost:3000/index.js",
+  "useEffect1 cleanup in <App/>",
+  "useEffect1 in <App/>",
+]
+`;
+
+exports[`bundler integration, react client sourcemaps, NODE_ENV=development: DOM Snapshots 1`] = `
+[
+  
+"<html lang="en"><head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>React App Integration Test</title>
+</head>
+<body>
+  <div id="root"><div><h1 class="title">Hello, world!</h1><p class="class">React Application</p><div>static string</div><p class="count">Count: 0</p><button>Increment</button><p class="same-file">Component in same file</p><p class="another-file">Component in another file 1</p><div class="list"><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div></div><div>Loading...</div></div></div>
+  <script src="/index.js" type="module"></script>
+
+
+</body></html>"
+,
+  
+"<html lang="en"><head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>React App Integration Test</title>
+</head>
+<body>
+  <div id="root"><div><h1 class="title">Hello, world!</h1><p class="class">React Application</p><div>static string</div><p class="count">Count: 1</p><button>Increment</button><p class="same-file">Component in same file</p><p class="another-file">Component in another file 1</p><div class="list"><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div></div><div><p class="lazy">Lazy loaded chunk: http://localhost:3000/Lazy.js</p><code></code></div></div></div>
+  <script src="/index.js" type="module"></script>
+
+
+</body></html>"
+,
+  
+"<html lang="en"><head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>React App Integration Test</title>
+</head>
+<body>
+  <div id="root"><div><h1 class="title">Hello, world!</h1><p class="class">React Application</p><div>static string</div><p class="count">Count: 2</p><button>Increment</button><p class="same-file">Component in same file</p><p class="another-file">Component in another file 1</p><div class="list"><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div><div>Item {}</div></div><div><p class="lazy">Lazy loaded chunk: http://localhost:3000/Lazy.js</p><code></code></div></div></div>
+  <script src="/index.js" type="module"></script>
+
+
+</body></html>"
+,
+]
+`;

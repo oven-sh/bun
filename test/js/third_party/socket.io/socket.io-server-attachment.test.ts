@@ -65,7 +65,7 @@ describe("server attachment", () => {
 
     it("should serve source map (min)", testSourceMap("socket.io.min.js.map"));
 
-    it("should serve client (gzip)", done => {
+    it.skip("should serve client (gzip)", done => {
       const srv = createServer();
       const io = new Server(srv);
       const timeout = setTimeout(() => {

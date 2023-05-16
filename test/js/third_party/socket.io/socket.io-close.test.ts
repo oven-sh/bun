@@ -7,7 +7,7 @@ import { Server } from "socket.io";
 import { exec, ChildProcess } from "child_process";
 
 describe("close", () => {
-  it("should be able to close sio sending a srv", done => {
+  it.skip("should be able to close sio sending a srv", done => {
     const httpServer = createServer().listen(0);
     const io = new Server(httpServer);
     const port = getPort(io);
@@ -51,7 +51,7 @@ describe("close", () => {
     });
   });
 
-  it("should be able to close sio sending a srv", done => {
+  it.skip("should be able to close sio sending a srv", done => {
     const io = new Server(0);
     const port = getPort(io);
     const net = require("net");

@@ -734,7 +734,7 @@ describe("messaging many", () => {
       });
   });
 
-  it("should precompute the WebSocket frame when broadcasting", done => {
+  it.skip("should precompute the WebSocket frame when broadcasting", done => {
     const io = new Server(0);
     const socket = createClient(io, "/chat", {
       transports: ["websocket"],

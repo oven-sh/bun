@@ -443,7 +443,7 @@ pub const JestPrettyFormat = struct {
                     };
                 }
 
-                if (js_type == .PureForwardingProxy) {
+                if (js_type == .GlobalProxy) {
                     return Tag.get(
                         JSC.JSValue.c(JSC.C.JSObjectGetProxyTarget(value.asObjectRef())),
                         globalThis,

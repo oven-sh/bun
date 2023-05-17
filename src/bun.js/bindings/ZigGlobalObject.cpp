@@ -9,7 +9,6 @@
 #include "JavaScriptCore/CallFrameInlines.h"
 #include "JavaScriptCore/ClassInfo.h"
 #include "JavaScriptCore/CodeBlock.h"
-#include "JavaScriptCore/CodeCache.h"
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/ErrorInstance.h"
@@ -992,11 +991,7 @@ static JSC_DEFINE_HOST_FUNCTION(functionATOB,
         return JSC::JSValue::encode(JSC::jsEmptyString(vm));
     }
 
-    auto decodedData = WTF::base64Decode(encodedString, {
-                                                            WTF::Base64DecodeOptions::ValidatePadding,
-                                                            WTF::Base64DecodeOptions::IgnoreSpacesAndNewLines,
-                                                            WTF::Base64DecodeOptions::DiscardVerticalTab,
-                                                        });
+    auto decodedData = WTF::base64Decode(encodedString, Base64DecodeMode::DefaultValidatePaddingAndIgnoreWhitespace);
     if (!decodedData) {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         throwException(globalObject, scope, createDOMException(globalObject, ExceptionCode::InvalidCharacterError));

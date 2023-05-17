@@ -49,9 +49,8 @@ void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, Stri
 
     Yarr::RegularExpression regex(
         StringView(filter->pattern()),
-        filter->flags().contains(Yarr::Flags::IgnoreCase) ? Yarr::TextCaseSensitivity::TextCaseInsensitive : Yarr::TextCaseSensitivity::TextCaseInsensitive,
-        filter->multiline() ? Yarr::MultilineMode::MultilineEnabled : Yarr::MultilineMode::MultilineDisabled,
-        filter->eitherUnicode() ? Yarr::UnicodeMode::UnicodeAwareMode : Yarr::UnicodeMode::UnicodeUnawareMode);
+        filter->flags());
+
     nsGroup->append(WTFMove(regex));
 }
 

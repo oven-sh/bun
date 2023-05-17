@@ -1015,13 +1015,13 @@ pub const BundleV2 = struct {
         var this = try BundleV2.init(bundler, allocator, event_loop, enable_reloading, null, null);
         this.unique_key = unique_key;
 
-        if (this.bundler.log.msgs.items.len > 0) {
+        if (this.bundler.log.hasErrors()) {
             return error.BuildFailed;
         }
 
         this.graph.pool.pool.schedule(try this.enqueueEntryPoints(this.bundler.options.entry_points));
 
-        if (this.bundler.log.msgs.items.len > 0) {
+        if (this.bundler.log.hasErrors()) {
             return error.BuildFailed;
         }
 
@@ -1031,7 +1031,7 @@ pub const BundleV2 = struct {
         source_code_size.* = this.source_code_length;
 
         if (this.graph.use_directive_entry_points.len > 0) {
-            if (this.bundler.log.msgs.items.len > 0) {
+            if (this.bundler.log.hasErrors()) {
                 return error.BuildFailed;
             }
 
@@ -1039,7 +1039,7 @@ pub const BundleV2 = struct {
             this.waitForParse();
         }
 
-        if (this.bundler.log.msgs.items.len > 0) {
+        if (this.bundler.log.hasErrors()) {
             return error.BuildFailed;
         }
 

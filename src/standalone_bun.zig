@@ -110,7 +110,7 @@ pub const StandaloneModuleGraph = struct {
         var string_builder = bun.StringBuilder{};
         var module_count: usize = 0;
         for (output_files, 0..) |output_file, i| {
-            string_builder.count(output_file.path);
+            string_builder.count(output_file.dest_path);
             string_builder.count(prefix);
             if (output_file.value == .buffer) {
                 if (output_file.output_kind == .sourcemap) {
@@ -153,7 +153,7 @@ pub const StandaloneModuleGraph = struct {
             }
 
             var module = CompiledModuleGraphFile{
-                .name = string_builder.fmtAppendCount("{s}{s}", .{ prefix, output_file.path }),
+                .name = string_builder.fmtAppendCount("{s}{s}", .{ prefix, output_file.dest_path }),
                 .loader = output_file.loader,
                 .contents = string_builder.appendCount(output_file.value.buffer.bytes),
             };

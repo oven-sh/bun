@@ -1132,7 +1132,7 @@ var require_cipher_base = __commonJS({
 // node_modules/create-hash/browser.js
 var require_browser2 = __commonJS({
   "node_modules/create-hash/browser.js"(exports, module) {
-    "use strict";
+    ("use strict");
     const { Transform } = stream_exports;
 
     // does not become a node stream unless you create it into one

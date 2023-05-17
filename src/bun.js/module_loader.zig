@@ -1716,6 +1716,7 @@ pub const ModuleLoader = struct {
                         .hash = 0,
                     };
                 },
+                .@"bun:events_native" => return jsSyntheticModule(.@"bun:events_native"),
                 .@"node:child_process" => {
                     return ResolvedSource{
                         .allocator = null,
@@ -2240,6 +2241,7 @@ pub const HardcodedModule = enum {
     @"bun:jsc",
     @"bun:main",
     @"bun:sqlite",
+    @"bun:events_native",
     @"detect-libc",
     @"node:assert",
     @"node:assert/strict",
@@ -2304,6 +2306,7 @@ pub const HardcodedModule = enum {
             .{ "bun:jsc", HardcodedModule.@"bun:jsc" },
             .{ "bun:main", HardcodedModule.@"bun:main" },
             .{ "bun:sqlite", HardcodedModule.@"bun:sqlite" },
+            .{ "bun:events_native", HardcodedModule.@"bun:events_native" },
             .{ "depd", HardcodedModule.depd },
             .{ "detect-libc", HardcodedModule.@"detect-libc" },
             .{ "node:assert", HardcodedModule.@"node:assert" },
@@ -2372,6 +2375,7 @@ pub const HardcodedModule = enum {
             .{ "bun:jsc", .{ .path = "bun:jsc" } },
             .{ "bun:sqlite", .{ .path = "bun:sqlite" } },
             .{ "bun:wrap", .{ .path = "bun:wrap" } },
+            .{ "bun:events_native", .{ .path = "bun:events_native" } },
             .{ "child_process", .{ .path = "node:child_process" } },
             .{ "crypto", .{ .path = "node:crypto" } },
             .{ "depd", .{ .path = "depd" } },

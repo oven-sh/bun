@@ -5148,7 +5148,7 @@ fn NewParser_(
                         // require cannot return a promise.
                         !handles_import_errors)
                     {
-                        const import_record_index = p.addImportRecordByRangeAndPath(.stmt, p.source.rangeOfString(arg.loc), path);
+                        const import_record_index = p.addImportRecordByRangeAndPath(.require, p.source.rangeOfString(arg.loc), path);
                         p.import_records.items[import_record_index].handles_import_errors = handles_import_errors;
 
                         // Note that this symbol may be completely removed later.

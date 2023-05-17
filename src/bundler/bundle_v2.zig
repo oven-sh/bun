@@ -1250,8 +1250,8 @@ pub const BundleV2 = struct {
                     defer build.output_files.deinit();
                     var to_assign_on_sourcemap: JSC.JSValue = .zero;
                     for (output_files, 0..) |*output_file, i| {
-                        defer bun.default_allocator.free(output_file.input.text);
-                        defer bun.default_allocator.free(output_file.path);
+                        defer bun.default_allocator.free(output_file.src_path.text);
+                        defer bun.default_allocator.free(output_file.dest_path);
                         const result = output_file.toJS(
                             if (!this.config.outdir.isEmpty())
                                 if (std.fs.path.isAbsolute(this.config.outdir.list.items))
@@ -1259,7 +1259,7 @@ pub const BundleV2 = struct {
                                         u8,
                                         bun.path.joinAbsString(
                                             this.config.outdir.toOwnedSliceLeaky(),
-                                            &[_]string{output_file.path},
+                                            &[_]string{output_file.dest_path},
                                             .auto,
                                         ),
                                     ) catch unreachable
@@ -1268,14 +1268,14 @@ pub const BundleV2 = struct {
                                         u8,
                                         bun.path.joinAbsString(
                                             Fs.FileSystem.instance.top_level_dir,
-                                            &[_]string{ this.config.dir.toOwnedSliceLeaky(), this.config.outdir.toOwnedSliceLeaky(), output_file.path },
+                                            &[_]string{ this.config.dir.toOwnedSliceLeaky(), this.config.outdir.toOwnedSliceLeaky(), output_file.dest_path },
                                             .auto,
                                         ),
                                     ) catch unreachable
                             else
                                 bun.default_allocator.dupe(
                                     u8,
-                                    output_file.path,
+                                    output_file.dest_path,
                                 ) catch unreachable,
                             globalThis,
                         );
@@ -8901,6 +8901,11 @@ const LinkerContext = struct {
 
         const root_path = c.resolver.opts.output_dir;
 
+        if (root_path.len == 0 and c.parse_graph.additional_output_files.items.len > 0 and !c.resolver.opts.compile) {
+            try c.log.addError(null, Logger.Loc.Empty, "cannot write multiple output files without an output directory");
+            return error.MultipleOutputFilesWithoutOutputDir;
+        }
+
         if (root_path.len > 0) {
             try c.writeOutputFilesToDisk(root_path, chunks, react_client_components_manifest, &output_files);
         } else {
@@ -9334,6 +9339,19 @@ const LinkerContext = struct {
                     src.value.buffer.allocator.free(bytes);
                 }
 
+                if (std.fs.path.dirname(src.dest_path)) |rel_parent| {
+                    if (rel_parent.len > 0) {
+                        root_dir.dir.makePath(rel_parent) catch |err| {
+                            c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{s} creating outdir {} while saving file {}", .{
+                                @errorName(err),
+                                bun.fmt.quote(rel_parent),
+                                bun.fmt.quote(src.dest_path),
+                            }) catch unreachable;
+                            return err;
+                        };
+                    }
+                }
+
                 switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
                     &pathbuf,
                     JSC.Node.Arguments.WriteFile{
@@ -9351,15 +9369,15 @@ const LinkerContext = struct {
                         .dirfd = @intCast(bun.FileDescriptor, root_dir.dir.fd),
                         .file = .{
                             .path = JSC.Node.PathLike{
-                                .string = JSC.PathString.init(src.input.text),
+                                .string = JSC.PathString.init(src.dest_path),
                             },
                         },
                     },
                 )) {
                     .err => |err| {
-                        c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing chunk {}", .{
+                        c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing file {}", .{
                             bun.fmt.quote(err.toSystemError().message.slice()),
-                            bun.fmt.quote(src.input.text),
+                            bun.fmt.quote(src.src_path.text),
                         }) catch unreachable;
                         return error.WriteFailed;
                     },
@@ -10752,7 +10770,7 @@ pub const Chunk = struct {
                             .chunk, .asset => {
                                 const index = piece.index.index;
                                 const file_path = switch (piece.index.kind) {
-                                    .asset => graph.additional_output_files.items[additional_files[index].last().?.output_file].input.text,
+                                    .asset => graph.additional_output_files.items[additional_files[index].last().?.output_file].src_path.text,
                                     .chunk => chunks[index].final_rel_path,
                                     else => unreachable,
                                 };
@@ -10803,7 +10821,7 @@ pub const Chunk = struct {
                                         .asset => {
                                             shift.before.advance(unique_key_for_additional_files[index]);
                                             const file = graph.additional_output_files.items[additional_files[index].last().?.output_file];
-                                            break :brk file.input.text;
+                                            break :brk file.src_path.text;
                                         },
                                         .chunk => {
                                             const piece_chunk = chunks[index];
@@ -10928,7 +10946,7 @@ pub const Chunk = struct {
 
                                         const output_file = files.last().?.output_file;
 
-                                        break :brk graph.additional_output_files.items[output_file].path;
+                                        break :brk graph.additional_output_files.items[output_file].dest_path;
                                     },
                                     .chunk => chunks[index].final_rel_path,
                                     else => unreachable,
@@ -10969,7 +10987,7 @@ pub const Chunk = struct {
 
                                         const output_file = files.last().?.output_file;
 
-                                        break :brk graph.additional_output_files.items[output_file].path;
+                                        break :brk graph.additional_output_files.items[output_file].dest_path;
                                     },
                                     .chunk => chunks[index].final_rel_path,
                                     else => unreachable,

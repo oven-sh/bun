@@ -960,7 +960,7 @@ pub const Bundler = struct {
         file_path.pretty = Linker.relative_paths_list.append(string, bundler.fs.relativeTo(file_path.text)) catch unreachable;
 
         var output_file = options.OutputFile{
-            .input = file_path,
+            .src_path = file_path,
             .loader = loader,
             .value = undefined,
         };

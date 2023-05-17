@@ -494,6 +494,11 @@ pub const JSBundler = struct {
         globalThis: *JSC.JSGlobalObject,
         arguments: []const JSC.JSValue,
     ) JSC.JSValue {
+        if (arguments.len == 0 or !arguments[0].isObject()) {
+            globalThis.throwInvalidArguments("Expected a config object to be passed to Bun.build", .{});
+            return JSC.JSValue.jsUndefined();
+        }
+
         var plugins: ?*Plugin = null;
         const config = Config.fromJS(globalThis, arguments[0], &plugins, globalThis.allocator()) catch {
             return JSC.JSValue.jsUndefined();

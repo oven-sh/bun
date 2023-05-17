@@ -5,7 +5,6 @@
 #include "ZigSourceProvider.h"
 
 #include "JavaScriptCore/BytecodeCacheError.h"
-#include "JavaScriptCore/CodeCache.h"
 
 #include "JavaScriptCore/Completion.h"
 #include "wtf/Scope.h"

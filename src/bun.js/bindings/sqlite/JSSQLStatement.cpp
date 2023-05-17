@@ -1505,7 +1505,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnNames, (JSGlobalObject * lexical
     }
     JSC::JSArray* array;
     if (castedThis->columnNames->size() > 0) {
-        array = ownPropertyKeys(lexicalGlobalObject, castedThis->_prototype.get(), PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude, CachedPropertyNamesKind::Keys);
+        array = ownPropertyKeys(lexicalGlobalObject, castedThis->_prototype.get(), PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude);
     } else {
         array = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
     }

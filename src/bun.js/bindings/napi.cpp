@@ -21,7 +21,6 @@
 #include "JavaScriptCore/CallFrameInlines.h"
 #include "JavaScriptCore/ClassInfo.h"
 #include "JavaScriptCore/CodeBlock.h"
-#include "JavaScriptCore/CodeCache.h"
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/ErrorInstance.h"
@@ -61,7 +60,7 @@ namespace Napi {
 
 JSC::SourceCode generateSourceCode(WTF::String keyString, JSC::VM& vm, JSC::JSObject* object, JSC::JSGlobalObject* globalObject)
 {
-    JSC::JSArray* exportKeys = ownPropertyKeys(globalObject, object, PropertyNameMode::StringsAndSymbols, DontEnumPropertiesMode::Include, std::nullopt);
+    JSC::JSArray* exportKeys = ownPropertyKeys(globalObject, object, PropertyNameMode::StringsAndSymbols, DontEnumPropertiesMode::Include);
     JSC::Identifier ident = JSC::Identifier::fromString(vm, "__BunTemporaryGlobal"_s);
     WTF::StringBuilder sourceCodeBuilder = WTF::StringBuilder();
     // TODO: handle symbol collision
@@ -268,7 +267,7 @@ static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* t
         if (getterProperty) {
             JSC::JSNativeStdFunction* getterFunction = JSC::JSNativeStdFunction::create(
                 globalObject->vm(), globalObject, 0, String(), [getterProperty](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
-                    JSC::MarkedArgumentBufferWithSize values;
+                    JSC::MarkedArgumentBuffer values;
                     values.append(callFrame->thisValue());
                     return getterProperty(globalObject, callFrame);
                 });
@@ -284,7 +283,7 @@ static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* t
         if (setterProperty) {
             JSC::JSNativeStdFunction* setterFunction = JSC::JSNativeStdFunction::create(
                 globalObject->vm(), globalObject, 1, String(), [setterProperty](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
-                    JSC::MarkedArgumentBufferWithSize values;
+                    JSC::MarkedArgumentBuffer values;
                     values.append(callFrame->thisValue());
                     values.append(callFrame->uncheckedArgument(0));
                     return setterProperty(globalObject, callFrame);
@@ -1348,7 +1347,7 @@ extern "C" napi_status napi_get_all_property_names(
         return NAPI_OBJECT_EXPECTED;
     }
 
-    JSC::JSArray* exportKeys = ownPropertyKeys(globalObject, object, jsc_property_mode, jsc_key_mode, std::nullopt);
+    JSC::JSArray* exportKeys = ownPropertyKeys(globalObject, object, jsc_property_mode, jsc_key_mode);
     // TODO: filter
     *result = toNapi(JSC::JSValue::encode(exportKeys));
     return napi_ok;
@@ -1455,7 +1454,7 @@ extern "C" napi_status napi_get_property_names(napi_env env, napi_value object,
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
     JSC::EnsureStillAliveScope ensureStillAlive(jsValue);
-    JSC::JSValue value = JSC::ownPropertyKeys(globalObject, jsValue.getObject(), PropertyNameMode::Strings, DontEnumPropertiesMode::Include, std::nullopt);
+    JSC::JSValue value = JSC::ownPropertyKeys(globalObject, jsValue.getObject(), PropertyNameMode::Strings, DontEnumPropertiesMode::Include);
     if (UNLIKELY(scope.exception())) {
         *result = reinterpret_cast<napi_value>(JSC::JSValue::encode(JSC::jsUndefined()));
         return napi_generic_failure;

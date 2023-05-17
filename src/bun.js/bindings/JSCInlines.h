@@ -46,7 +46,7 @@
 #include "JavaScriptCore/JSFunctionInlines.h"
 #include "JavaScriptCore/JSGlobalObjectInlines.h"
 #include "JavaScriptCore/JSObjectInlines.h"
-#include "JavaScriptCore/JSProxy.h"
+#include "JavaScriptCore/JSGlobalProxy.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/Operations.h"
 #include "JavaScriptCore/SlotVisitorInlines.h"

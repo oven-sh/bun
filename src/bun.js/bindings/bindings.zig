@@ -2894,7 +2894,7 @@ pub const JSValue = enum(JSValueReprInt) {
         BooleanObject,
         NumberObject,
         ErrorInstance,
-        PureForwardingProxy,
+        GlobalProxy,
         DirectArguments,
         ScopedArguments,
         ClonedArguments,

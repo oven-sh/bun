@@ -99,11 +99,6 @@ jobs:
           TAG="${TAG:-"${{ github.event.release.tag_name }}"}"
           echo "Setup tag: ${TAG}"
           echo "TAG=${TAG}" >> ${GITHUB_ENV}
-      - id: setup-node
-        name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: latest
       - id: setup-bun
         name: Setup Bun
         uses: oven-sh/setup-bun@v1

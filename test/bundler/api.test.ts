@@ -198,15 +198,20 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
-  test.skip("new Response(BuildArtifact)", async () => {
+  test("new Response(BuildArtifact) sets content type", async () => {
     const x = await Bun.build({
       entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],
     });
-    const response = new Response(x.outputs.values().next().value!);
-    expect(await response.text()).toMatchSnapshot("response text");
+    const response = new Response(x.outputs[0]);
     expect(response.headers.get("content-type")).toBe("text/javascript;charset=utf-8");
-    expect(response.headers.get("content-length")).toBeGreaterThan(1);
-    expect(response.headers.get("content-length")).toMatchSnapshot("content-length");
+    expect(await response.text()).toMatchSnapshot("response text");
+  });
+
+  test("new Response(BuildArtifact) sets etag", async () => {
+    const x = await Bun.build({
+      entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],
+    });
+    const response = new Response(x.outputs[0]);
     expect(response.headers.get("etag")).toBeTruthy();
     expect(response.headers.get("etag")).toMatchSnapshot("content-etag");
   });
@@ -234,15 +239,27 @@ describe("Bun.build", () => {
   //   throw new Error("test was not fully written");
   // });
 
-  // test("errors are returned as an array", async () => {
-  //   const x = await Bun.build({
-  //     entrypoints: [join(import.meta.dir, "does-not-exist.ts")],
-  //   });
-  //   expect(x.errors).toHaveLength(1);
-  //   expect(x.errors[0].message).toMatch(/ModuleNotFound/);
-  //   expect(x.errors[0].name).toBe("BuildMessage");
-  //   expect(x.errors[0].position).toEqual(null);
-  //   expect(x.warnings).toHaveLength(0);
-  //   expect(x.logs).toHaveLength(0);
-  // });
+  test("errors are returned as an array", async () => {
+    const x = await Bun.build({
+      entrypoints: [join(import.meta.dir, "does-not-exist.ts")],
+    });
+    expect(x.success).toBe(false);
+    expect(x.logs).toHaveLength(1);
+    expect(x.logs[0].message).toMatch(/ModuleNotFound/);
+    expect(x.logs[0].name).toBe("BuildMessage");
+    expect(x.logs[0].position).toEqual(null);
+  });
+
+  test("warnings do not fail a build", async () => {
+    const x = await Bun.build({
+      entrypoints: [join(import.meta.dir, "./fixtures/jsx-warning/index.jsx")],
+    });
+    expect(x.success).toBe(true);
+    expect(x.logs).toHaveLength(1);
+    expect(x.logs[0].message).toBe(
+      '"key" prop before a {...spread} is deprecated in JSX. Falling back to classic runtime.',
+    );
+    expect(x.logs[0].name).toBe("BuildMessage");
+    expect(x.logs[0].position).toBeTruthy();
+  });
 });

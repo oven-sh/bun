@@ -232,7 +232,7 @@ pub const BuildCommand = struct {
                     ctx.args,
                 );
 
-                if (log.msgs.items.len > 0) {
+                if (log.hasErrors()) {
                     try log.printForLogLevel(Output.errorWriter());
 
                     if (result.errors.len > 0 or result.output_files.len == 0) {

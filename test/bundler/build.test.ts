@@ -4,6 +4,16 @@ import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 
 describe("Bun.build", () => {
+  test("passing undefined doesnt segfault", () => {
+    try {
+      // @ts-ignore
+      Bun.build();
+    } catch (error) {
+      return;
+    }
+    throw new Error("should have thrown");
+  });
+
   test("invalid options throws", async () => {
     expect(() => Bun.build({} as any)).toThrow();
     expect(() =>

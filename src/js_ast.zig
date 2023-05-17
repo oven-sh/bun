@@ -2176,7 +2176,7 @@ pub const E = struct {
             return @ptrCast([*]const u16, @alignCast(@alignOf(u16), this.data.ptr))[0..this.data.len];
         }
 
-        pub fn resovleRopeIfNeeded(this: *String, allocator: std.mem.Allocator) void {
+        pub fn resolveRopeIfNeeded(this: *String, allocator: std.mem.Allocator) void {
             if (this.next == null or !this.isUTF8()) return;
             var str = this.next;
             var bytes = std.ArrayList(u8).initCapacity(allocator, this.rope_len) catch unreachable;
@@ -2191,7 +2191,7 @@ pub const E = struct {
         }
 
         pub fn slice(this: *String, allocator: std.mem.Allocator) []const u8 {
-            this.resovleRopeIfNeeded(allocator);
+            this.resolveRopeIfNeeded(allocator);
             return this.string(allocator) catch unreachable;
         }
 
@@ -2419,6 +2419,7 @@ pub const E = struct {
                         }
 
                         if (part.tail.len() > 0) {
+                            head.data.e_string.resolveRopeIfNeeded(allocator);
                             head.data.e_string.push(Expr.init(E.String, part.tail, part.tail_loc).data.e_string);
                         }
 
@@ -2445,7 +2446,7 @@ pub const E = struct {
 
             if (parts.items.len == 0) {
                 parts.deinit();
-                head.data.e_string.resovleRopeIfNeeded(allocator);
+                head.data.e_string.resolveRopeIfNeeded(allocator);
                 return head;
             }
 
@@ -5157,8 +5158,8 @@ pub const Expr = struct {
                     switch (right) {
                         .e_string => |r| {
                             equality.ok = true;
-                            r.resovleRopeIfNeeded(allocator);
-                            l.resovleRopeIfNeeded(allocator);
+                            r.resolveRopeIfNeeded(allocator);
+                            l.resolveRopeIfNeeded(allocator);
                             equality.equal = r.eql(E.String, l);
                         },
                         .e_null, .e_undefined => {

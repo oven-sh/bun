@@ -134,4 +134,56 @@ describe("bundler", () => {
           },
     );
   }
+
+  itBundled("string/TemplateFolding", {
+    files: {
+      "entry.js": /* js */ `
+        const s1 = "hello";
+        \`\${s1} world\`;
+        console.log(s1);
+
+        const s2 = \`hello\`;
+        console.log(s2);
+        const s3 = \`\${s2} world \${s1}\`;
+        console.log(s3);
+
+        const s4 = \`\${s1}\${s2}\${s3}\`;
+        console.log(s4);
+
+        const s5 = \`👋🌎\`;
+        console.log(s5);
+        const s6 = \`\${s5} 🌍 \${s1}\`;
+        console.log(s6);
+
+        const s7 = \`\${s1}\${s2}\${s3}\${s4}\${s5}\${s6}\`;
+        console.log(s7);
+
+        const hexCharacters = "a-f\\d";
+        console.log(hexCharacters);
+        const match3or4Hex = \`#?[\${hexCharacters}]{3}[\${hexCharacters}]?\`;
+        console.log(match3or4Hex);
+        const match6or8Hex = \`#?[\${hexCharacters}]{6}([\${hexCharacters}]{2})?\`;
+        console.log(match6or8Hex);
+        const nonHexChars = new RegExp(\`[^#\${hexCharacters}]\`, "gi");
+        console.log(nonHexChars);
+        const validHexSize = new RegExp(\`^\${match3or4Hex}\$|^\${match6or8Hex}$\`, "i");
+        console.log(validHexSize);
+      `,
+    },
+    bundling: false,
+    run: {
+      stdout: `hello
+      hello
+      hello world hello
+      hellohellohello world hello
+      👋🌎
+      👋🌎 🌍 hello
+      hellohellohello world hellohellohellohello world hello👋🌎👋🌎 🌍 hello
+      a-f\d
+      #?[a-f\d]{3}[a-f\d]?
+      #?[a-f\d]{6}([a-f\d]{2})?
+      /[^#a-f\d]/gi
+      /^#?[a-f\d]{3}[a-f\d]?$|^#?[a-f\d]{6}([a-f\d]{2})?$/i`,
+    },
+  });
 });

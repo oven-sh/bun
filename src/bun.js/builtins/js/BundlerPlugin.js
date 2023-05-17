@@ -41,16 +41,7 @@ function runOnResolvePlugins(
   "use strict";
 
   // Must be kept in sync with ImportRecord.label
-  const kind = [
-    "entry-point",
-    "import-statement",
-    "require-call",
-    "dynamic-import",
-    "require-resolve",
-    "import-rule",
-    "url-token",
-    "internal",
-  ][kindId];
+  const kind = $ImportRecordIdToLabel[kindId];
 
   var promiseResult = (async (inputPath, inputNamespace, importer, kind) => {
     var {onResolve, onLoad} = this;

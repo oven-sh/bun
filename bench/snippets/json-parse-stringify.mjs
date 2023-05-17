@@ -46,11 +46,11 @@ var obj = {
 };
 var big = JSON.stringify(obj);
 
-bench("JSON.parse(big)", () => {
+bench("JSON.parse(obj)", () => {
   globalThis.foo = JSON.parse(big);
 });
 
-bench("JSON.stringify(big)", () => {
+bench("JSON.stringify(obj)", () => {
   globalThis.bar = JSON.stringify(obj);
 });
 

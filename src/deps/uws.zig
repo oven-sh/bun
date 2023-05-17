@@ -140,6 +140,7 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
 
             var socket = us_socket_context_connect(comptime ssl_int, socket_ctx, host_, port, null, 0, @sizeOf(Context)) orelse return null;
             const socket_ = ThisSocket{ .socket = socket };
+
             var holder = socket_.ext(Context) orelse {
                 if (comptime bun.Environment.allow_assert) unreachable;
                 _ = us_socket_close_connecting(comptime ssl_int, socket);
@@ -186,6 +187,7 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
             defer allocator.free(path_);
 
             var socket = us_socket_context_connect_unix(comptime ssl_int, socket_ctx, path_, 0, 8) orelse return null;
+
             const socket_ = ThisSocket{ .socket = socket };
             var holder = socket_.ext(*anyopaque) orelse {
                 if (comptime bun.Environment.allow_assert) unreachable;
@@ -209,6 +211,7 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
 
             var socket = us_socket_context_connect(comptime ssl_int, socket_ctx, host_, port, null, 0, @sizeOf(*anyopaque)) orelse return null;
             const socket_ = ThisSocket{ .socket = socket };
+
             var holder = socket_.ext(*anyopaque) orelse {
                 if (comptime bun.Environment.allow_assert) unreachable;
                 _ = us_socket_close_connecting(comptime ssl_int, socket);

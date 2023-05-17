@@ -365,10 +365,12 @@ pub const ServerConfig = struct {
 
             if (obj.getTruthy(global, "requestCert")) |request_cert| {
                 result.request_cert = if (request_cert.asBoolean()) 1 else 0;
+                any = true;
             }
 
             if (obj.getTruthy(global, "rejectUnauthorized")) |reject_unauthorized| {
                 result.reject_unauthorized = if (reject_unauthorized.asBoolean()) 1 else 0;
+                any = true;
             }
 
             if (obj.getTruthy(global, "ciphers")) |ssl_ciphers| {
@@ -379,20 +381,20 @@ pub const ServerConfig = struct {
                     any = true;
                 }
             }
+            if (obj.getTruthy(global, "serverName")) |key_file_name| {
+                var sliced = key_file_name.toSlice(global, bun.default_allocator);
+                defer sliced.deinit();
+                if (sliced.len > 0) {
+                    result.server_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    any = true;
+                }
+            }
 
             // Optional
             if (any) {
                 if (obj.getTruthy(global, "secureOptions")) |secure_options| {
                     if (secure_options.isNumber()) {
                         result.secure_options = secure_options.toU32();
-                    }
-                }
-
-                if (obj.getTruthy(global, "serverName")) |key_file_name| {
-                    var sliced = key_file_name.toSlice(global, bun.default_allocator);
-                    defer sliced.deinit();
-                    if (sliced.len > 0) {
-                        result.server_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
                     }
                 }
 

@@ -12,6 +12,9 @@ var InternalSecureContext = class SecureContext {
   constructor(options) {
     const context = {};
     if (options) {
+      if (typeof options.servername === "string" && options.servername.length > 0) {
+        this.servername = options.servername;
+      }
       if (options.key) {
         context.key = (Array.isArray(options.key) ? options.key : [options.key]).map(mapStringArray);
       } else context.key = undefined;
@@ -36,8 +39,8 @@ var InternalSecureContext = class SecureContext {
   }
 };
 
-function SecureContext() {
-  return new InternalSecureContext();
+function SecureContext(options) {
+  return new InternalSecureContext(options);
 }
 
 function createSecureContext(options) {
@@ -139,6 +142,7 @@ class Server extends NetServer {
   secureOptions;
   _rejectUnauthorized;
   _requestCert;
+  servername;
 
   constructor(options, secureConnectionListener) {
     super(options, secureConnectionListener);
@@ -159,6 +163,9 @@ class Server extends NetServer {
       options = options.context;
     }
     if (options) {
+      if (typeof options.servername === "string" && options.servername.length > 0) {
+        this.servername = options.servername;
+      }
       if (options.key) {
         this.key = (Array.isArray(options.key) ? options.key : [options.key]).map(mapStringArray);
       } else this.key = undefined;
@@ -203,7 +210,7 @@ class Server extends NetServer {
   [buntls](port, host, isClient) {
     return [
       {
-        serverName: host || "localhost",
+        serverName: this.servername || host || "localhost",
         key: this.key,
         cert: this.cert,
         ca: this.ca,

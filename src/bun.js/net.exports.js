@@ -247,7 +247,6 @@ const Socket = (function (InternalSocket) {
         self._securePending = false;
         self.secureConnecting = false;
         self._secureEstablished = !!success;
-
         // Needs getPeerCertificate support (not implemented yet)
         // if (!verifyError && !this.isSessionReused()) {
         //   const hostname = options.servername ||
@@ -368,7 +367,9 @@ const Socket = (function (InternalSocket) {
           requestCert,
           rejectUnauthorized,
           pauseOnConnect,
+          servername,
         } = port;
+        this.servername = servername;
       }
 
       if (!pauseOnConnect) {
@@ -379,18 +380,23 @@ const Socket = (function (InternalSocket) {
 
       const bunTLS = this[bunTlsSymbol];
       var tls = undefined;
+
       if (typeof bunTLS === "function") {
         tls = bunTLS.call(this, port, host, true);
-        //Client always request Cert
+        //Client always +request Cert
         this._requestCert = true;
         this._rejectUnauthorized = rejectUnauthorized;
+        if (tls) {
+          tls.rejectUnauthorized = rejectUnauthorized;
+          tls.requestCert = true;
+        }
+
         this.authorized = false;
         this.secureConnecting = true;
         this._secureEstablished = false;
         this._securePending = true;
         if (connectListener) this.on("secureConnect", connectListener);
       } else if (connectListener) this.on("connect", connectListener);
-
       bunConnect(
         path
           ? {

@@ -15,6 +15,7 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const Which = @import("../../../which.zig");
 const uws = @import("root").bun.uws;
 const ZigString = JSC.ZigString;
+const BoringSSL = bun.BoringSSL;
 // const Corker = struct {
 //     ptr: ?*[16384]u8 = null,
 //     holder: ?*anyopaque = null,
@@ -831,6 +832,7 @@ pub const Listener = struct {
                 .handlers = handlers_ptr,
                 .this_value = .zero,
                 .socket = undefined,
+                .connection = connection,
             };
 
             TLSSocket.dataSetCached(tls.getThisValue(globalObject), globalObject, default_data);
@@ -853,6 +855,7 @@ pub const Listener = struct {
                 .handlers = handlers_ptr,
                 .this_value = .zero,
                 .socket = undefined,
+                .connection = null,
             };
 
             TCPSocket.dataSetCached(tcp.getThisValue(globalObject), globalObject, default_data);
@@ -891,6 +894,7 @@ fn NewSocket(comptime ssl: bool) type {
         reffer: JSC.Ref = JSC.Ref.init(),
         last_4: [4]u8 = .{ 0, 0, 0, 0 },
         authorized: bool = false,
+        connection: ?Listener.UnixOrHost = null,
 
         // TODO: switch to something that uses `visitAggregate` and have the
         // `Listener` keep a list of all the sockets JSValue in there
@@ -1068,7 +1072,25 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn onOpen(this: *This, socket: Socket) void {
             JSC.markBinding(@src());
-            log("onOpen", .{});
+            log("onOpen ssl: {}", .{comptime ssl});
+
+            // Add SNI support for TLS (mongodb and others requires this)
+            if (comptime ssl) {
+                if (this.connection) |connection| {
+                    if (connection == .host) {
+                        const host = normalizeHost(connection.host.host);
+                        if (host.len > 0) {
+                            var ssl_ptr: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, socket.getNativeHandle());
+                            if (!ssl_ptr.isInitFinished()) {
+                                var host__ = default_allocator.dupeZ(u8, host) catch unreachable;
+                                defer default_allocator.free(host__);
+                                ssl_ptr.setHostname(host__);
+                            }
+                        }
+                    }
+                }
+            }
+
             this.poll_ref.ref(this.handlers.vm);
             this.detached = false;
             this.socket = socket;
@@ -1145,6 +1167,7 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn onHandshake(this: *This, _: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
+            log("onHandshake({d})", .{success});
             JSC.markBinding(@src());
 
             const authorized = if (success == 1) true else false;
@@ -1159,6 +1182,7 @@ fn NewSocket(comptime ssl: bool) type {
             if (callback == .zero) {
                 callback = handlers.onOpen;
                 if (callback == .zero) {
+                    log("onOpen({d})", .{success});
                     return;
                 }
                 is_open = true;
@@ -1650,6 +1674,10 @@ fn NewSocket(comptime ssl: bool) type {
             this.detached = true;
             if (!this.socket.isClosed()) {
                 this.socket.close(0, null);
+            }
+            if (this.connection != null) {
+                var connection = this.connection.?;
+                connection.deinit();
             }
             this.markInactive();
             this.poll_ref.unref(JSC.VirtualMachine.get());

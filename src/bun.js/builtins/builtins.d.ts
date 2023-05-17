@@ -7,7 +7,6 @@ declare var $overriddenName: string;
 /** ??? */
 declare var $linkTimeConstant: never;
 
-//
 declare function $extractHighWaterMarkFromQueuingStrategyInit(obj: any): any;
 
 // JSC defines their intrinsics in a nice list here:
@@ -76,8 +75,20 @@ declare function $isMapIterator(obj: unknown): obj is Iterator<any>;
 declare function $isSetIterator(obj: unknown): obj is Iterator<any>;
 declare function $isUndefinedOrNull(obj: unknown): obj is null | undefined;
 declare function $tailCallForwardArguments(): TODO;
+/**
+ * **NOTE** - use `throw new TypeError()` instead. it compiles to the same builtin
+ * @deprecated
+ */
 declare function $throwTypeError(message: string): never;
+/**
+ * **NOTE** - use `throw new RangeError()` instead. it compiles to the same builtin
+ * @deprecated
+ */
 declare function $throwRangeError(message: string): never;
+/**
+ * **NOTE** - use `throw new OutOfMemoryError()` instead. it compiles to the same builtin
+ * @deprecated
+ */
 declare function $throwOutOfMemoryError(): never;
 declare function $tryGetById(): TODO;
 declare function $tryGetByIdWithWellKnownSymbol(): TODO;
@@ -110,9 +121,13 @@ declare function $createPromise(): TODO;
 
 // The following I cannot find any definitions of, but they are functional.
 declare function $toLength(length: number): number;
+declare function $isTypedArrayView(obj: unknown): obj is ArrayBufferView | DataView | Uint8Array;
 
+// Promise stuff
 declare const $promiseFieldFlags: unique symbol;
 declare const $promiseFieldReactionsOrResult: unique symbol;
+declare const $promiseStateMask: number;
+declare const $promiseStateFulfilled: number;
 type PromiseField = typeof $promiseFieldFlags | typeof $promiseFieldReactionsOrResult;
 type PromiseFieldToValue<X extends PromiseField, V> = X extends typeof $promiseFieldFlags
   ? number
@@ -120,37 +135,12 @@ type PromiseFieldToValue<X extends PromiseField, V> = X extends typeof $promiseF
   ? V
   : never;
 
-// You can also `@` on some/all methods on classes to avoid prototype pollution.
+// You can also `@` on any method on a classes to avoid prototype pollution.
+type ClassWithIntrinsics<T> = { [K in keyof T as T[K] extends Function ? `$${K}` : never]: T[K] };
 
-declare interface Map<K, V> {
-  $set(key: K, value: V): void;
-  $get(key: K): V | undefined;
-}
-declare interface CallableFunction extends Function {
-  /**
-   * Calls the function with the specified object as the this value and the elements of specified array as the arguments.
-   * @param thisArg The object to be used as the this object.
-   * @param args An array of argument values to be passed to the function.
-   */
-  $apply<T, R>(this: (this: T) => R, thisArg: T): R;
-  $apply<T, A extends any[], R>(this: (this: T, ...args: A) => R, thisArg: T, args: A): R;
-
-  /**
-   * Calls the function with the specified object as the this value and the specified rest arguments as the arguments.
-   * @param thisArg The object to be used as the this object.
-   * @param args Argument values to be passed to the function.
-   */
-  $call<T, A extends any[], R>(this: (this: T, ...args: A) => R, thisArg: T, ...args: A): R;
-}
-declare interface Promise<T> {
-  $then<TResult1 = T, TResult2 = never>(
-    onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null,
-    onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null,
-  ): Promise<TResult1 | TResult2>;
-  $catch<TResult = never>(
-    onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null,
-  ): Promise<T | TResult>;
-}
+declare interface Map<K, V> extends ClassWithIntrinsics<Map<K, V>> {}
+declare interface CallableFunction extends ClassWithIntrinsics<CallableFunction> {}
+declare interface Promise<T> extends ClassWithIntrinsics<Promise<T>> {}
 
 declare class OutOfMemoryError {
   constructor();
@@ -161,3 +151,6 @@ declare const $ImportKindIdToLabel: Array<import("bun").ImportKind>;
 declare const $ImportKindLabelToId: Record<import("bun").ImportKind, number>;
 declare const $LoaderIdToLabel: Array<import("bun").Loader>;
 declare const $LoaderLabelToId: Record<import("bun").Loader, number>;
+
+// not a builtin, but a macro of our own
+declare function notImplementedIssue(issueNumber: number, description: string): Error;

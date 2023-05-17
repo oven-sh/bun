@@ -1,29 +1,4 @@
-/*
- * Copyright (C) 2023 Codeblog Corp. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
- * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
- * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
- * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
- * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
-import { BunPlugin, PluginConstraints } from "bun";
-type Setup = BunPlugin["setup"];
+import type { AnyFunction, BuildConfig, BunPlugin, PluginBuilder, PluginConstraints } from "bun";
 
 // This API expects 4 functions:
 // It should be generic enough to reuse for Bun.plugin() eventually, too.
@@ -36,12 +11,34 @@ interface BundlerPlugin {
   addFilter(filter, namespace, number): void;
 }
 
-export function runSetupFunction(this: BundlerPlugin, setup: Setup) {
+// Extra types
+type Setup = BunPlugin["setup"];
+type MinifyObj = Exclude<BuildConfig["minify"], boolean>;
+interface BuildConfigExt extends BuildConfig {
+  // we support esbuild-style entryPoints
+  entryPoints?: string[];
+  // plugins is guaranteed to not be null
+  plugins: BunPlugin[];
+}
+interface PluginBuilderExt extends PluginBuilder {
+  // these functions aren't implemented yet, so we dont publicly expose them
+  resolve: AnyFunction;
+  onStart: AnyFunction;
+  onEnd: AnyFunction;
+  onDispose: AnyFunction;
+  // we partially support initialOptions. it's read-only and a subset of
+  // all options mapped to their esbuild names
+  initialOptions: any;
+  // we set this to an empty object
+  esbuild: any;
+}
+
+export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: BuildConfigExt) {
   var onLoadPlugins = new Map();
   var onResolvePlugins = new Map();
 
-  function validate(constraints: PluginConstraints, callback: Function, map: Map<any, any>) {
-    if (!constraints || !$isObject(constraints)) {
+  function validate(filterObject: PluginConstraints, callback, map) {
+    if (!filterObject || !$isObject(filterObject)) {
       throw new TypeError('Expected an object with "filter" RegExp');
     }
 
@@ -49,7 +46,7 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup) {
       throw new TypeError("callback must be a function");
     }
 
-    var { filter, namespace = "file" } = constraints;
+    var { filter, namespace = "file" } = filterObject;
 
     if (!filter) {
       throw new TypeError('Expected an object with "filter" RegExp');
@@ -67,8 +64,8 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup) {
       namespace = "file";
     }
 
-    if (!/^([/@a-zA-Z0-9_\\-]+)$/.test(namespace)) {
-      throw new TypeError("namespace can only contain @a-zA-Z0-9_\\-");
+    if (!/^([/$a-zA-Z0-9_\\-]+)$/.test(namespace)) {
+      throw new TypeError("namespace can only contain $a-zA-Z0-9_\\-");
     }
 
     var callbacks = map.$get(namespace);
@@ -89,15 +86,19 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup) {
   }
 
   function onStart(callback) {
-    throw new TypeError("On-start callbacks are not implemented yet. See https://github.com/oven-sh/bun/issues/2771");
+    throw notImplementedIssue(2771, "On-start callbacks");
   }
 
   function onEnd(callback) {
-    throw new TypeError("On-end callbacks are not implemented yet. See https://github.com/oven-sh/bun/issues/2771");
+    throw notImplementedIssue(2771, "On-end callbacks");
   }
 
   function onDispose(callback) {
-    throw new TypeError("On-dispose callbacks are not implemented yet. See https://github.com/oven-sh/bun/issues/2771");
+    throw notImplementedIssue(2771, "On-dispose callbacks");
+  }
+
+  function resolve(callback) {
+    throw notImplementedIssue(2771, "build.resolve()");
   }
 
   const processSetupResult = () => {
@@ -156,13 +157,27 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup) {
   };
 
   var setupResult = setup({
-    onLoad,
-    onResolve,
-    target: "browser",
+    config: config,
     onDispose,
     onEnd,
+    onLoad,
+    onResolve,
     onStart,
-  });
+    resolve,
+    // esbuild's options argument is different, we provide some interop
+    initialOptions: {
+      ...config,
+      bundle: true,
+      entryPoints: config.entrypoints ?? config.entryPoints ?? [],
+      minify: typeof config.minify === "boolean" ? config.minify : false,
+      minifyIdentifiers: config.minify === true || (config.minify as MinifyObj)?.identifiers,
+      minifyWhitespace: config.minify === true || (config.minify as MinifyObj)?.whitespace,
+      minifySyntax: config.minify === true || (config.minify as MinifyObj)?.syntax,
+      outbase: config.root,
+      platform: config.target === "bun" ? "node" : config.target,
+    },
+    esbuild: {},
+  } satisfies PluginBuilderExt as PluginBuilder);
 
   if (setupResult && $isPromise(setupResult)) {
     if ($getPromiseInternalField(setupResult, $promiseFieldFlags) & $promiseStateFulfilled) {
@@ -232,10 +247,12 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
 
         if (!external) {
           if (userNamespace === "file") {
-            // TODO: Windows
-
-            if (path[0] !== "/" || path.includes("..")) {
-              throw new TypeError('onResolve plugin "path" must be absolute when the namespace is "file"');
+            if (process.platform !== "win32") {
+              if (path[0] !== "/" || path.includes("..")) {
+                throw new TypeError('onResolve plugin "path" must be absolute when the namespace is "file"');
+              }
+            } else {
+              // TODO: Windows
             }
           }
           if (userNamespace === "dataurl") {
@@ -245,7 +262,7 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
           }
 
           if (userNamespace && userNamespace !== "file" && (!onLoad || !onLoad.$has(userNamespace))) {
-            throw new TypeError(`Expected onLoad plugin for namespace ${$jsonStringify(userNamespace, " ")} to exist`);
+            throw new TypeError(`Expected onLoad plugin for namespace ${userNamespace} to exist`);
           }
         }
         this.onResolveAsync(internalID, path, userNamespace, external);
@@ -314,16 +331,16 @@ export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespac
 
         var { contents, loader = defaultLoader } = result;
         if (!(typeof contents === "string") && !$isTypedArrayView(contents)) {
-          throw TypeError('onLoad plugins must return an object with "contents" as a string or Uint8Array');
+          throw new TypeError('onLoad plugins must return an object with "contents" as a string or Uint8Array');
         }
 
         if (!(typeof loader === "string")) {
-          throw TypeError('onLoad plugins must return an object with "loader" as a string');
+          throw new TypeError('onLoad plugins must return an object with "loader" as a string');
         }
 
         const chosenLoader = LOADERS_MAP[loader];
         if (chosenLoader === undefined) {
-          throw new TypeError(`Loader ${$jsonStringify(loader, " ")} is not supported.`);
+          throw new TypeError(`Loader ${loader} is not supported.`);
         }
 
         this.onLoadAsync(internalID, contents, chosenLoader);

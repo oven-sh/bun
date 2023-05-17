@@ -962,7 +962,7 @@ declare module "bun" {
           entry?: string;
           asset?: string;
         }; // | string;
-    // root?: string; // project root
+    root?: string; // project root
     splitting?: boolean; // default true, enable code splitting
     plugins?: BunPlugin[];
     // manifest?: boolean; // whether to return manifest

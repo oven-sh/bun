@@ -142,6 +142,7 @@ pub const MutableString = struct {
                 has_needed_gap = true;
             }
 
+            if (comptime bun.Environment.allow_assert) {
                 std.debug.assert(js_lexer.isIdentifier(mutable.list.items));
             }
 

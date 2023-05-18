@@ -1,6 +1,7 @@
 std::unique_ptr<IsoSubspace> m_subspaceForBlob;
 std::unique_ptr<IsoSubspace> m_subspaceForBlobConstructor;std::unique_ptr<IsoSubspace> m_subspaceForBuildArtifact;
-std::unique_ptr<IsoSubspace> m_subspaceForCryptoHasher;
+std::unique_ptr<IsoSubspace> m_subspaceForBuildMessage;
+std::unique_ptr<IsoSubspace> m_subspaceForBuildMessageConstructor;std::unique_ptr<IsoSubspace> m_subspaceForCryptoHasher;
 std::unique_ptr<IsoSubspace> m_subspaceForCryptoHasherConstructor;std::unique_ptr<IsoSubspace> m_subspaceForDirent;
 std::unique_ptr<IsoSubspace> m_subspaceForDirentConstructor;std::unique_ptr<IsoSubspace> m_subspaceForExpect;
 std::unique_ptr<IsoSubspace> m_subspaceForExpectConstructor;std::unique_ptr<IsoSubspace> m_subspaceForExpectAny;
@@ -11,7 +12,8 @@ std::unique_ptr<IsoSubspace> m_subspaceForMD4Constructor;std::unique_ptr<IsoSubs
 std::unique_ptr<IsoSubspace> m_subspaceForMD5Constructor;std::unique_ptr<IsoSubspace> m_subspaceForMatchedRoute;
 std::unique_ptr<IsoSubspace> m_subspaceForNodeJSFS;
 std::unique_ptr<IsoSubspace> m_subspaceForNodeJSFSConstructor;std::unique_ptr<IsoSubspace> m_subspaceForRequest;
-std::unique_ptr<IsoSubspace> m_subspaceForRequestConstructor;std::unique_ptr<IsoSubspace> m_subspaceForResponse;
+std::unique_ptr<IsoSubspace> m_subspaceForRequestConstructor;std::unique_ptr<IsoSubspace> m_subspaceForResolveMessage;
+std::unique_ptr<IsoSubspace> m_subspaceForResolveMessageConstructor;std::unique_ptr<IsoSubspace> m_subspaceForResponse;
 std::unique_ptr<IsoSubspace> m_subspaceForResponseConstructor;std::unique_ptr<IsoSubspace> m_subspaceForSHA1;
 std::unique_ptr<IsoSubspace> m_subspaceForSHA1Constructor;std::unique_ptr<IsoSubspace> m_subspaceForSHA224;
 std::unique_ptr<IsoSubspace> m_subspaceForSHA224Constructor;std::unique_ptr<IsoSubspace> m_subspaceForSHA256;

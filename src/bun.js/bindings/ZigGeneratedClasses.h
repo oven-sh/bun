@@ -132,6 +132,64 @@ public:
     mutable JSC::WriteBarrier<JSC::Unknown> m_type;
 };
 
+class JSBuildMessage final : public JSC::JSDestructibleObject {
+public:
+    using Base = JSC::JSDestructibleObject;
+    static JSBuildMessage* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
+
+    DECLARE_EXPORT_INFO;
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<JSBuildMessage, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForBuildMessage.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBuildMessage = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForBuildMessage.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForBuildMessage = std::forward<decltype(space)>(space); });
+    }
+
+    static void destroy(JSC::JSCell*);
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info());
+    }
+
+    static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
+    static JSObject* createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype);
+
+    ~JSBuildMessage();
+
+    void* wrapped() const { return m_ctx; }
+
+    void detach()
+    {
+        m_ctx = nullptr;
+    }
+
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+    static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSBuildMessage, m_ctx); }
+
+    void* m_ctx { nullptr };
+
+    JSBuildMessage(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
+        : Base(vm, structure)
+    {
+        m_ctx = sinkPtr;
+    }
+
+    void finishCreation(JSC::VM&);
+
+    DECLARE_VISIT_CHILDREN;
+    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
+
+    mutable JSC::WriteBarrier<JSC::Unknown> m_level;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_message;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_position;
+};
+
 class JSCryptoHasher final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
@@ -742,6 +800,67 @@ public:
     mutable JSC::WriteBarrier<JSC::Unknown> m_headers;
     mutable JSC::WriteBarrier<JSC::Unknown> m_signal;
     mutable JSC::WriteBarrier<JSC::Unknown> m_url;
+};
+
+class JSResolveMessage final : public JSC::JSDestructibleObject {
+public:
+    using Base = JSC::JSDestructibleObject;
+    static JSResolveMessage* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
+
+    DECLARE_EXPORT_INFO;
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<JSResolveMessage, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForResolveMessage.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForResolveMessage = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForResolveMessage.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForResolveMessage = std::forward<decltype(space)>(space); });
+    }
+
+    static void destroy(JSC::JSCell*);
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info());
+    }
+
+    static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
+    static JSObject* createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype);
+
+    ~JSResolveMessage();
+
+    void* wrapped() const { return m_ctx; }
+
+    void detach()
+    {
+        m_ctx = nullptr;
+    }
+
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+    static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSResolveMessage, m_ctx); }
+
+    void* m_ctx { nullptr };
+
+    JSResolveMessage(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
+        : Base(vm, structure)
+    {
+        m_ctx = sinkPtr;
+    }
+
+    void finishCreation(JSC::VM&);
+
+    DECLARE_VISIT_CHILDREN;
+    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
+
+    mutable JSC::WriteBarrier<JSC::Unknown> m_importKind;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_level;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_message;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_position;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_referrer;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_specifier;
 };
 
 class JSResponse final : public JSC::JSDestructibleObject {

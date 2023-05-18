@@ -3021,6 +3021,15 @@ JSC_DEFINE_CUSTOM_GETTER(bunDns_getter, (JSGlobalObject * globalObject, EncodedJ
     return JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(globalObject)->dnsObject());
 }
 
+JSC_DEFINE_CUSTOM_GETTER(functionResolveMessageGetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
+{
+    return JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSResolveMessageConstructor());
+}
+JSC_DEFINE_CUSTOM_GETTER(functionBuildMessageGetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
+{
+    return JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSBuildMessageConstructor());
+}
+
 EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
 {
     JSC::VM& vm = this->vm();
@@ -3262,6 +3271,18 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "navigator"_s), JSC::CustomGetterSetter::create(vm, functionLazyNavigatorGetter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "ResolveError"_s), JSC::CustomGetterSetter::create(vm, functionResolveMessageGetter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "ResolveMessage"_s), JSC::CustomGetterSetter::create(vm, functionResolveMessageGetter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "BuildError"_s), JSC::CustomGetterSetter::create(vm, functionBuildMessageGetter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "BuildMessage"_s), JSC::CustomGetterSetter::create(vm, functionBuildMessageGetter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
 
     putDirect(vm, builtinNames.requireMapPrivateName(), this->requireMap(),

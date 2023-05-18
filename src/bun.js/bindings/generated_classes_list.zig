@@ -32,4 +32,6 @@ pub const Classes = struct {
     pub const TextDecoder = JSC.WebCore.TextDecoder;
     pub const Timeout = JSC.API.Bun.Timer.TimerObject;
     pub const BuildArtifact = JSC.API.BuildArtifact;
+    pub const BuildMessage = JSC.BuildMessage;
+    pub const ResolveMessage = JSC.ResolveMessage;
 };

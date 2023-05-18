@@ -436,8 +436,8 @@ pub const Msg = struct {
 
     pub fn toJS(this: Msg, globalObject: *bun.JSC.JSGlobalObject, allocator: std.mem.Allocator) JSC.JSValue {
         return switch (this.metadata) {
-            .build => JSC.BuildMessage.create(globalObject, allocator, this).?.value(),
-            .resolve => JSC.ResolveMessage.create(globalObject, allocator, this, "").?.value(),
+            .build => JSC.BuildMessage.create(globalObject, allocator, this),
+            .resolve => JSC.ResolveMessage.create(globalObject, allocator, this, ""),
         };
     }
 
@@ -720,18 +720,17 @@ pub const Log = struct {
             0 => return JSC.JSValue.jsUndefined(),
             1 => {
                 const msg = msgs[0];
-                return JSC.JSValue.fromRef(JSC.BuildMessage.create(global, allocator, msg));
+                return switch (msg.metadata) {
+                    .build => JSC.BuildMessage.create(global, allocator, msg),
+                    .resolve => JSC.ResolveMessage.create(global, allocator, msg, ""),
+                };
             },
             else => {
                 for (msgs[0..count], 0..) |msg, i| {
-                    switch (msg.metadata) {
-                        .build => {
-                            errors_stack[i] = JSC.BuildMessage.create(global, allocator, msg).?;
-                        },
-                        .resolve => {
-                            errors_stack[i] = JSC.ResolveMessage.create(global, allocator, msg, "").?;
-                        },
-                    }
+                    errors_stack[i] = switch (msg.metadata) {
+                        .build => JSC.BuildMessage.create(global, allocator, msg).asVoid(),
+                        .resolve => JSC.ResolveMessage.create(global, allocator, msg, "").asVoid(),
+                    };
                 }
                 const out = JSC.ZigString.init(fmt);
                 const agg = global.createAggregateError(errors_stack[0..count].ptr, count, &out);

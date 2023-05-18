@@ -95,8 +95,6 @@ pub const GlobalClasses = [_]type{
     Bun.Class,
     WebCore.Crypto.Class,
     EventListenerMixin.addEventListener(VirtualMachine),
-    BuildMessage.Class,
-    ResolveMessage.Class,
 
     // Fetch.Class,
     js_ast.Macro.JSNode.BunJSXCallbackFunction,
@@ -112,6 +110,8 @@ const Task = JSC.Task;
 const Blob = @import("../blob.zig");
 pub const Buffer = MarkedArrayBuffer;
 const Lock = @import("../lock.zig").Lock;
+const BuildMessage = JSC.BuildMessage;
+const ResolveMessage = JSC.ResolveMessage;
 
 pub const OpaqueCallback = *const fn (current: ?*anyopaque) callconv(.C) void;
 pub fn OpaqueWrap(comptime Context: type, comptime Function: fn (this: *Context) void) OpaqueCallback {
@@ -1327,7 +1327,7 @@ pub const VirtualMachine = struct {
             };
 
             {
-                res.* = ErrorableZigString.err(err, @ptrCast(*anyopaque, ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source.slice())));
+                res.* = ErrorableZigString.err(err, ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source.slice()).asVoid());
             }
 
             return;
@@ -1437,7 +1437,7 @@ pub const VirtualMachine = struct {
                     };
                 };
                 {
-                    ret.* = ErrorableResolvedSource.err(err, @ptrCast(*anyopaque, BuildMessage.create(globalThis, globalThis.allocator(), msg)));
+                    ret.* = ErrorableResolvedSource.err(err, BuildMessage.create(globalThis, globalThis.allocator(), msg).asVoid());
                 }
                 return;
             },
@@ -1445,13 +1445,13 @@ pub const VirtualMachine = struct {
             1 => {
                 const msg = log.msgs.items[0];
                 ret.* = ErrorableResolvedSource.err(err, switch (msg.metadata) {
-                    .build => BuildMessage.create(globalThis, globalThis.allocator(), msg).?,
+                    .build => BuildMessage.create(globalThis, globalThis.allocator(), msg).asVoid(),
                     .resolve => ResolveMessage.create(
                         globalThis,
                         globalThis.allocator(),
                         msg,
                         referrer.slice(),
-                    ).?,
+                    ).asVoid(),
                 });
                 return;
             },
@@ -1462,13 +1462,13 @@ pub const VirtualMachine = struct {
 
                 for (log.msgs.items, 0..) |msg, i| {
                     errors[i] = switch (msg.metadata) {
-                        .build => BuildMessage.create(globalThis, globalThis.allocator(), msg).?,
+                        .build => BuildMessage.create(globalThis, globalThis.allocator(), msg).asVoid(),
                         .resolve => ResolveMessage.create(
                             globalThis,
                             globalThis.allocator(),
                             msg,
                             referrer.slice(),
-                        ).?,
+                        ).asVoid(),
                     };
                 }
 
@@ -1792,21 +1792,8 @@ pub const VirtualMachine = struct {
             return;
         }
 
-        if (value.isObject()) {
-            if (js.JSObjectGetPrivate(value.asRef())) |priv| {
-                was_internal = this.printErrorFromMaybePrivateData(
-                    priv,
-                    exception_list,
-                    Writer,
-                    writer,
-                    allow_ansi_color,
-                );
-                return;
-            }
-        }
-
         was_internal = this.printErrorFromMaybePrivateData(
-            value.asRef(),
+            value,
             exception_list,
             Writer,
             writer,
@@ -1816,18 +1803,15 @@ pub const VirtualMachine = struct {
 
     pub fn printErrorFromMaybePrivateData(
         this: *VirtualMachine,
-        value: ?*anyopaque,
+        value: JSC.JSValue,
         exception_list: ?*ExceptionList,
         comptime Writer: type,
         writer: Writer,
         comptime allow_ansi_color: bool,
     ) bool {
-        const private_data_ptr = JSPrivateDataPtr.from(value);
-
-        switch (private_data_ptr.tag()) {
-            .BuildMessage => {
+        if (value.jsType() == .DOMWrapper) {
+            if (value.as(JSC.BuildMessage)) |build_error| {
                 defer Output.flush();
-                var build_error = private_data_ptr.as(BuildMessage);
                 if (!build_error.logged) {
                     build_error.msg.writeFormat(writer, allow_ansi_color) catch {};
                     writer.writeAll("\n") catch {};
@@ -1840,10 +1824,8 @@ pub const VirtualMachine = struct {
                     ) catch {};
                 }
                 return true;
-            },
-            .ResolveMessage => {
+            } else if (value.as(JSC.ResolveMessage)) |resolve_error| {
                 defer Output.flush();
-                var resolve_error = private_data_ptr.as(ResolveMessage);
                 if (!resolve_error.logged) {
                     resolve_error.msg.writeFormat(writer, allow_ansi_color) catch {};
                     resolve_error.logged = true;
@@ -1857,24 +1839,24 @@ pub const VirtualMachine = struct {
                     ) catch {};
                 }
                 return true;
-            },
-            else => {
-                this.printErrorInstance(
-                    @intToEnum(JSValue, @bitCast(JSValue.Type, (@ptrToInt(value)))),
-                    exception_list,
-                    Writer,
-                    writer,
-                    allow_ansi_color,
-                ) catch |err| {
-                    if (comptime Environment.isDebug) {
-                        // yo dawg
-                        Output.printErrorln("Error while printing Error-like object: {s}", .{@errorName(err)});
-                        Output.flush();
-                    }
-                };
-                return false;
-            },
+            }
         }
+
+        this.printErrorInstance(
+            value,
+            exception_list,
+            Writer,
+            writer,
+            allow_ansi_color,
+        ) catch |err| {
+            if (comptime Environment.isDebug) {
+                // yo dawg
+                Output.printErrorln("Error while printing Error-like object: {s}", .{@errorName(err)});
+                Output.flush();
+            }
+        };
+
+        return false;
     }
 
     pub fn reportUncaughtException(globalObject: *JSGlobalObject, exception: *JSC.Exception) JSValue {
@@ -2435,411 +2417,6 @@ pub const EventListenerMixin = struct {
             },
             .{},
         );
-    }
-};
-
-pub const ResolveMessage = struct {
-    msg: logger.Msg,
-    allocator: std.mem.Allocator,
-    referrer: ?Fs.Path = null,
-    logged: bool = false,
-
-    pub fn fmt(allocator: std.mem.Allocator, specifier: string, referrer: string, err: anyerror) !string {
-        switch (err) {
-            error.ModuleNotFound => {
-                if (Resolver.isPackagePath(specifier) and !strings.containsChar(specifier, '/')) {
-                    return try std.fmt.allocPrint(allocator, "Cannot find package \"{s}\" from \"{s}\"", .{ specifier, referrer });
-                } else {
-                    return try std.fmt.allocPrint(allocator, "Cannot find module \"{s}\" from \"{s}\"", .{ specifier, referrer });
-                }
-            },
-            else => {
-                if (Resolver.isPackagePath(specifier)) {
-                    return try std.fmt.allocPrint(allocator, "{s} while resolving package \"{s}\" from \"{s}\"", .{ @errorName(err), specifier, referrer });
-                } else {
-                    return try std.fmt.allocPrint(allocator, "{s} while resolving \"{s}\" from \"{s}\"", .{ @errorName(err), specifier, referrer });
-                }
-            },
-        }
-    }
-
-    pub fn toStringFn(this: *ResolveMessage, ctx: js.JSContextRef) js.JSValueRef {
-        var text = std.fmt.allocPrint(default_allocator, "ResolveMessage: {s}", .{this.msg.data.text}) catch return null;
-        var str = ZigString.init(text);
-        str.setOutputEncoding();
-        if (str.isUTF8()) {
-            const out = str.toValueGC(ctx.ptr());
-            default_allocator.free(text);
-            return out.asObjectRef();
-        }
-
-        return str.toExternalValue(ctx.ptr()).asObjectRef();
-    }
-
-    pub fn toString(
-        // this
-        this: *ResolveMessage,
-        ctx: js.JSContextRef,
-        // function
-        _: js.JSObjectRef,
-        // thisObject
-        _: js.JSObjectRef,
-        _: []const js.JSValueRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return this.toStringFn(ctx);
-    }
-
-    pub fn convertToType(ctx: js.JSContextRef, obj: js.JSObjectRef, kind: js.JSType, _: js.ExceptionRef) callconv(.C) js.JSValueRef {
-        switch (kind) {
-            js.JSType.kJSTypeString => {
-                if (js.JSObjectGetPrivate(obj)) |priv| {
-                    if (JSPrivateDataPtr.from(priv).is(ResolveMessage)) {
-                        var this = JSPrivateDataPtr.from(priv).as(ResolveMessage);
-                        return this.toStringFn(ctx);
-                    }
-                }
-            },
-            else => {},
-        }
-
-        return obj;
-    }
-
-    pub const Class = NewClass(
-        ResolveMessage,
-        .{
-            .name = "ResolveMessage",
-            .read_only = true,
-        },
-        .{
-            .toString = .{ .rfn = toString },
-            .convertToType = .{ .rfn = &convertToType },
-        },
-        .{
-            .referrer = .{
-                .get = getReferrer,
-                .ro = true,
-            },
-            .code = .{
-                .get = getCode,
-                .ro = true,
-            },
-            .message = .{
-                .get = getMessage,
-                .ro = true,
-            },
-            .name = .{
-                .get = getName,
-                .ro = true,
-            },
-            .specifier = .{
-                .get = getSpecifier,
-                .ro = true,
-            },
-            .importKind = .{
-                .get = getImportKind,
-                .ro = true,
-            },
-            .position = .{
-                .get = getPosition,
-                .ro = true,
-            },
-            .level = .{
-                .get = getLevel,
-                .ro = true,
-            },
-        },
-    );
-
-    pub fn create(
-        globalThis: *JSGlobalObject,
-        allocator: std.mem.Allocator,
-        msg: logger.Msg,
-        referrer: string,
-    ) js.JSObjectRef {
-        var resolve_error = allocator.create(ResolveMessage) catch unreachable;
-        resolve_error.* = ResolveMessage{
-            .msg = msg.clone(allocator) catch unreachable,
-            .allocator = allocator,
-            .referrer = Fs.Path.init(referrer),
-        };
-        var ref = Class.make(globalThis, resolve_error);
-        js.JSValueProtect(globalThis, ref);
-        return ref;
-    }
-
-    pub fn getCode(
-        _: *ResolveMessage,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return ZigString.static(comptime @as(string, @tagName(JSC.Node.ErrorCode.ERR_MODULE_NOT_FOUND))).toValueGC(ctx).asObjectRef();
-    }
-
-    pub fn getPosition(
-        this: *ResolveMessage,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return BuildMessage.generatePositionObject(this.msg, ctx);
-    }
-
-    pub fn getMessage(
-        this: *ResolveMessage,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return ZigString.init(this.msg.data.text).toValueGC(ctx.ptr()).asRef();
-    }
-
-    pub fn getSpecifier(
-        this: *ResolveMessage,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return ZigString.init(this.msg.metadata.resolve.specifier.slice(this.msg.data.text)).toValueGC(ctx.ptr()).asRef();
-    }
-
-    pub fn getImportKind(
-        this: *ResolveMessage,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return ZigString.init(this.msg.metadata.resolve.import_kind.label()).toValueGC(ctx.ptr()).asRef();
-    }
-
-    pub fn getReferrer(
-        this: *ResolveMessage,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        if (this.referrer) |referrer| {
-            return ZigString.init(referrer.text).toValueGC(ctx.ptr()).asRef();
-        } else {
-            return js.JSValueMakeNull(ctx);
-        }
-    }
-
-    pub fn getName(
-        _: *ResolveMessage,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return ZigString.static("ResolveMessage").toValueGC(ctx.ptr()).asRef();
-    }
-
-    pub fn getLevel(
-        this: *ResolveMessage,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return ZigString.init(this.msg.kind.string()).toValueGC(ctx.ptr()).asRef();
-    }
-
-    pub fn finalize(this: *ResolveMessage) void {
-        this.msg.deinit(bun.default_allocator);
-    }
-};
-
-pub const BuildMessage = struct {
-    msg: logger.Msg,
-    // resolve_result: Resolver.Result,
-    allocator: std.mem.Allocator,
-    logged: bool = false,
-
-    pub const Class = NewClass(
-        BuildMessage,
-        .{ .name = "BuildMessage", .read_only = true, .ts = .{
-            .class = .{
-                .name = "BuildMessage",
-            },
-        } },
-        .{
-            .convertToType = .{ .rfn = convertToType },
-            .toString = .{ .rfn = toString },
-        },
-        .{
-            .message = .{
-                .get = getMessage,
-                .ro = true,
-            },
-            .name = .{
-                .get = getName,
-                .ro = true,
-            },
-            // This is called "position" instead of "location" because "location" may be confused with Location.
-            .position = .{
-                .get = getPosition,
-                .ro = true,
-            },
-            .level = .{
-                .get = getLevel,
-                .ro = true,
-            },
-        },
-    );
-
-    pub fn toStringFn(this: *BuildMessage, ctx: js.JSContextRef) js.JSValueRef {
-        var text = std.fmt.allocPrint(default_allocator, "BuildMessage: {s}", .{this.msg.data.text}) catch return null;
-        var str = ZigString.init(text);
-        str.setOutputEncoding();
-        if (str.isUTF8()) {
-            const out = str.toValueGC(ctx.ptr());
-            default_allocator.free(text);
-            return out.asObjectRef();
-        }
-
-        return str.toExternalValue(ctx.ptr()).asObjectRef();
-    }
-
-    pub fn toString(
-        // this
-        this: *BuildMessage,
-        ctx: js.JSContextRef,
-        // function
-        _: js.JSObjectRef,
-        // thisObject
-        _: js.JSObjectRef,
-        _: []const js.JSValueRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return this.toStringFn(ctx);
-    }
-
-    pub fn convertToType(ctx: js.JSContextRef, obj: js.JSObjectRef, kind: js.JSType, _: js.ExceptionRef) callconv(.C) js.JSValueRef {
-        switch (kind) {
-            js.JSType.kJSTypeString => {
-                if (js.JSObjectGetPrivate(obj)) |priv| {
-                    if (JSPrivateDataPtr.from(priv).is(BuildMessage)) {
-                        var this = JSPrivateDataPtr.from(priv).as(BuildMessage);
-                        return this.toStringFn(ctx);
-                    }
-                }
-            },
-            else => {},
-        }
-
-        return obj;
-    }
-
-    pub fn create(
-        globalThis: *JSGlobalObject,
-        allocator: std.mem.Allocator,
-        msg: logger.Msg,
-        // resolve_result: *const Resolver.Result,
-    ) js.JSObjectRef {
-        var build_error = allocator.create(BuildMessage) catch unreachable;
-        build_error.* = BuildMessage{
-            .msg = msg.clone(allocator) catch unreachable,
-            // .resolve_result = resolve_result.*,
-            .allocator = allocator,
-        };
-
-        var ref = Class.make(globalThis, build_error);
-        js.JSValueProtect(globalThis, ref);
-        return ref;
-    }
-
-    pub fn getPosition(
-        this: *BuildMessage,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return generatePositionObject(this.msg, ctx);
-    }
-
-    pub fn generatePositionObject(msg: logger.Msg, ctx: js.JSContextRef) js.JSValueRef {
-        if (msg.data.location) |location| {
-            var object = JSC.JSValue.createEmptyObject(ctx, 7);
-
-            object.put(
-                ctx,
-                ZigString.static("lineText"),
-                ZigString.init(location.line_text orelse "").toValueGC(ctx),
-            );
-            object.put(
-                ctx,
-                ZigString.static("file"),
-                ZigString.init(location.file).toValueGC(ctx),
-            );
-            object.put(
-                ctx,
-                ZigString.static("namespace"),
-                ZigString.init(location.namespace).toValueGC(ctx),
-            );
-            object.put(
-                ctx,
-                ZigString.static("line"),
-                JSValue.jsNumber(location.line),
-            );
-            object.put(
-                ctx,
-                ZigString.static("column"),
-                JSValue.jsNumber(location.column),
-            );
-            object.put(
-                ctx,
-                ZigString.static("length"),
-                JSValue.jsNumber(location.length),
-            );
-            object.put(
-                ctx,
-                ZigString.static("offset"),
-                JSValue.jsNumber(location.offset),
-            );
-            return object.asObjectRef();
-        }
-
-        return js.JSValueMakeNull(ctx);
-    }
-
-    pub fn getMessage(
-        this: *BuildMessage,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return ZigString.init(this.msg.data.text).toValueGC(ctx.ptr()).asRef();
-    }
-
-    pub fn getName(
-        _: *BuildMessage,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return ZigString.static("BuildMessage").toValueGC(ctx.ptr()).asRef();
-    }
-
-    pub fn getLevel(
-        this: *BuildMessage,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return ZigString.init(this.msg.kind.string()).toValueGC(ctx.ptr()).asRef();
     }
 };
 

@@ -1261,24 +1261,13 @@ pub const JestPrettyFormat = struct {
                         }
 
                         return;
+                    } else if (value.as(JSC.BuildMessage)) |build_log| {
+                        build_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
+                        return;
+                    } else if (value.as(JSC.ResolveMessage)) |resolve_log| {
+                        resolve_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
+                        return;
                     } else if (jsType != .DOMWrapper) {
-                        if (CAPI.JSObjectGetPrivate(value.asRef())) |private_data_ptr| {
-                            const priv_data = JSPrivateDataPtr.from(private_data_ptr);
-                            switch (priv_data.tag()) {
-                                .BuildMessage => {
-                                    const build_log = priv_data.as(JS.BuildMessage);
-                                    build_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
-                                    return;
-                                },
-                                .ResolveMessage => {
-                                    const resolve_log = priv_data.as(JS.ResolveMessage);
-                                    resolve_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
-                                    return;
-                                },
-                                else => {},
-                            }
-                        }
-
                         if (value.isCallable(this.globalThis.vm())) {
                             return this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors);
                         }

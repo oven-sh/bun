@@ -10,6 +10,12 @@ JSC::Structure* JSBuildArtifactStructure() { return m_JSBuildArtifact.getInitial
   JSC::LazyClassStructure m_JSBuildArtifact;
   bool hasJSBuildArtifactSetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_JSBuildArtifactSetterValue;
+JSC::Structure* JSBuildMessageStructure() { return m_JSBuildMessage.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSBuildMessageConstructor() { return m_JSBuildMessage.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSBuildMessagePrototype() { return m_JSBuildMessage.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSBuildMessage;
+  bool hasJSBuildMessageSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSBuildMessageSetterValue;
 JSC::Structure* JSCryptoHasherStructure() { return m_JSCryptoHasher.getInitializedOnMainThread(this); }
         JSC::JSObject* JSCryptoHasherConstructor() { return m_JSCryptoHasher.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSCryptoHasherPrototype() { return m_JSCryptoHasher.prototypeInitializedOnMainThread(this); }
@@ -76,6 +82,12 @@ JSC::Structure* JSRequestStructure() { return m_JSRequest.getInitializedOnMainTh
   JSC::LazyClassStructure m_JSRequest;
   bool hasJSRequestSetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_JSRequestSetterValue;
+JSC::Structure* JSResolveMessageStructure() { return m_JSResolveMessage.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSResolveMessageConstructor() { return m_JSResolveMessage.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSResolveMessagePrototype() { return m_JSResolveMessage.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSResolveMessage;
+  bool hasJSResolveMessageSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSResolveMessageSetterValue;
 JSC::Structure* JSResponseStructure() { return m_JSResponse.getInitializedOnMainThread(this); }
         JSC::JSObject* JSResponseConstructor() { return m_JSResponse.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSResponsePrototype() { return m_JSResponse.prototypeInitializedOnMainThread(this); }

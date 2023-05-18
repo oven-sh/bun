@@ -12,6 +12,8 @@ pub usingnamespace @import("./bun.js/javascript.zig");
 pub usingnamespace @import("./bun.js/module_loader.zig");
 pub const C = @import("./bun.js/javascript_core_c_api.zig");
 pub const WebCore = @import("./bun.js/webcore.zig");
+pub const BuildMessage = @import("./bun.js/BuildMessage.zig").BuildMessage;
+pub const ResolveMessage = @import("./bun.js/ResolveMessage.zig").ResolveMessage;
 pub const Cloudflare = struct {
     pub const HTMLRewriter = @import("./bun.js/api/html_rewriter.zig").HTMLRewriter;
     pub const ContentOptions = @import("./bun.js/api/html_rewriter.zig").ContentOptions;

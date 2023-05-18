@@ -9693,6 +9693,9 @@ pub const Macro = struct {
                                 } else if (value.as(JSC.WebCore.Blob)) |resp| {
                                     blob_ = resp.*;
                                     blob_.?.allocator = null;
+                                } else if (value.as(JSC.ResolveMessage) != null or value.as(JSC.BuildMessage) != null) {
+                                    this.macro.vm.runErrorHandler(value, null);
+                                    return error.MacroFailed;
                                 }
                             } else {
                                 var private_data = JSCBase.JSPrivateDataPtr.from(JSC.C.JSObjectGetPrivate(value.asObjectRef()).?);
@@ -9704,10 +9707,6 @@ pub const Macro = struct {
                                         node.visited = true;
                                         node.updateSymbolsMap(Visitor, this.visitor);
                                         return _entry.value_ptr.*;
-                                    },
-                                    .ResolveMessage, .BuildMessage => {
-                                        this.macro.vm.runErrorHandler(value, null);
-                                        return error.MacroFailed;
                                     },
 
                                     else => {},

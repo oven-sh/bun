@@ -1,6 +1,7 @@
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBlob;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBlobConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBuildArtifact;
-std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCryptoHasher;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBuildMessage;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBuildMessageConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCryptoHasher;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCryptoHasherConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDirent;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDirentConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExpect;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExpectConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExpectAny;
@@ -11,7 +12,8 @@ std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMD4Constructor;std::un
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMD5Constructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMatchedRoute;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeJSFS;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeJSFSConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForRequest;
-std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForRequestConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForResponse;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForRequestConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForResolveMessage;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForResolveMessageConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForResponse;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForResponseConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA1;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA1Constructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA224;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA224Constructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA256;

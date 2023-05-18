@@ -12781,11 +12781,11 @@ fn NewParser_(
                             p.log.addRangeError(p.source, p.lexer.range(), "Template literals cannot have an optional chain as a tag") catch unreachable;
                         }
                         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
-                        const head = p.lexer.toEString();
+                        const head = p.lexer.rawTemplateContents();
                         try p.lexer.next();
                         left = p.newExpr(E.Template{
                             .tag = left,
-                            .head = .{ .cooked = head },
+                            .head = .{ .raw = head },
                         }, left.loc);
                     },
                     .t_template_head => {

@@ -2540,27 +2540,30 @@ fn NewPrinter(
                     }
 
                     p.print("`");
-                    if (e.head.isPresent()) {
-                        e.head.resolveRopeIfNeeded(p.options.allocator);
-
-                        if (e.tag == null) {
-                            p.printStringContent(&e.head, '`');
-                        } else if (e.head_raw) |head_raw| {
-                            p.print(head_raw);
-                        }
+                    switch (e.head) {
+                        .raw => |raw| p.print(raw),
+                        .cooked => |_cooked| {
+                            var cooked = _cooked;
+                            if (cooked.isPresent()) {
+                                cooked.resolveRopeIfNeeded(p.options.allocator);
+                                p.printStringContent(&cooked, '`');
+                            }
+                        },
                     }
 
                     for (e.parts) |*part| {
                         p.print("${");
                         p.printExpr(part.value, .lowest, ExprFlag.None());
                         p.print("}");
-                        if (part.tail.isPresent()) {
-                            part.tail.resolveRopeIfNeeded(p.options.allocator);
-                            if (e.tag == null) {
-                                p.printStringContent(&part.tail, '`');
-                            } else if (part.tail_raw) |tail_raw| {
-                                p.print(tail_raw);
-                            }
+                        switch (part.tail) {
+                            .raw => |raw| p.print(raw),
+                            .cooked => |_cooked| {
+                                var cooked = _cooked;
+                                if (cooked.isPresent()) {
+                                    cooked.resolveRopeIfNeeded(p.options.allocator);
+                                    p.printStringContent(&cooked, '`');
+                                }
+                            },
                         }
                     }
                     p.print("`");

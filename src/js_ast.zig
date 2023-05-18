@@ -2358,15 +2358,23 @@ pub const E = struct {
     pub const TemplatePart = struct {
         value: ExprNodeIndex,
         tail_loc: logger.Loc,
-        tail: E.String,
-        tail_raw: ?string = null,
+        tail: Template.Contents,
     };
 
     pub const Template = struct {
         tag: ?ExprNodeIndex = null,
-        head: E.String,
-        head_raw: ?string = null,
         parts: []TemplatePart = &([_]TemplatePart{}),
+        head: Contents,
+
+        pub const Contents = union(Tag) {
+            cooked: E.String,
+            raw: string,
+
+            const Tag = enum {
+                cooked,
+                raw,
+            };
+        };
 
         /// "`a${'b'}c`" => "`abc`"
         pub fn fold(
@@ -2374,7 +2382,7 @@ pub const E = struct {
             allocator: std.mem.Allocator,
             loc: logger.Loc,
         ) Expr {
-            if (this.tag != null or !this.head.isUTF8()) {
+            if (this.tag != null or (this.head == .cooked and !this.head.cooked.isUTF8())) {
                 // we only fold utf-8/ascii for now
                 return Expr{
                     .data = .{
@@ -2384,14 +2392,17 @@ pub const E = struct {
                 };
             }
 
+            std.debug.assert(this.head == .cooked);
+
             if (this.parts.len == 0) {
-                return Expr.init(E.String, this.head, loc);
+                return Expr.init(E.String, this.head.cooked, loc);
             }
 
             var parts = std.ArrayList(TemplatePart).initCapacity(allocator, this.parts.len) catch unreachable;
-            var head = Expr.init(E.String, this.head, loc);
+            var head = Expr.init(E.String, this.head.cooked, loc);
             for (this.parts) |part_| {
                 var part = part_;
+                std.debug.assert(part.tail == .cooked);
 
                 switch (part.value.data) {
                     .e_number => {
@@ -2414,28 +2425,29 @@ pub const E = struct {
                     else => {},
                 }
 
-                if (part.value.data == .e_string and part.tail.isUTF8() and part.value.data.e_string.isUTF8()) {
+                if (part.value.data == .e_string and part.tail.cooked.isUTF8() and part.value.data.e_string.isUTF8()) {
                     if (parts.items.len == 0) {
                         if (part.value.data.e_string.len() > 0) {
                             head.data.e_string.push(part.value.data.e_string);
                         }
 
-                        if (part.tail.len() > 0) {
+                        if (part.tail.cooked.len() > 0) {
                             head.data.e_string.resolveRopeIfNeeded(allocator);
-                            head.data.e_string.push(Expr.init(E.String, part.tail, part.tail_loc).data.e_string);
+                            head.data.e_string.push(Expr.init(E.String, part.tail.cooked, part.tail_loc).data.e_string);
                         }
 
                         continue;
                     } else {
                         var prev_part = &parts.items[parts.items.len - 1];
+                        std.debug.assert(prev_part.tail == .cooked);
 
-                        if (prev_part.tail.isUTF8()) {
+                        if (prev_part.tail.cooked.isUTF8()) {
                             if (part.value.data.e_string.len() > 0) {
-                                prev_part.tail.push(part.value.data.e_string);
+                                prev_part.tail.cooked.push(part.value.data.e_string);
                             }
 
-                            if (part.tail.len() > 0) {
-                                prev_part.tail.push(Expr.init(E.String, part.tail, part.tail_loc).data.e_string);
+                            if (part.tail.cooked.len() > 0) {
+                                prev_part.tail.cooked.push(Expr.init(E.String, part.tail.cooked, part.tail_loc).data.e_string);
                             }
                         } else {
                             parts.appendAssumeCapacity(part);
@@ -2457,7 +2469,7 @@ pub const E = struct {
                 E.Template{
                     .tag = null,
                     .parts = parts.items,
-                    .head = head.data.e_string.*,
+                    .head = .{ .cooked = head.data.e_string.* },
                 },
                 loc,
             );
@@ -7093,7 +7105,10 @@ pub const Macro = struct {
                         return toStringValue(this, ctx, str.*);
                     },
                     .e_template => |template| {
-                        const str = template.head;
+                        const str = switch (template.head) {
+                            .cooked => |cooked| cooked,
+                            .raw => |raw| E.String.init(raw),
+                        };
 
                         if (str.isBlank()) {
                             return JSC.ZigString.init("").toValue(ctx.ptr()).asRef();
@@ -7136,8 +7151,10 @@ pub const Macro = struct {
                         return JSBindings.toStringValue(this, ctx, str.*);
                     },
                     .e_template => |template| {
-                        return JSBindings.toStringValue(this, ctx, template.head);
-                        // return JSBindings.toTemplatePrimitive(this, ctx, template.*);
+                        return switch (template.head) {
+                            .cooked => |cooked| JSBindings.toStringValue(this, ctx, cooked),
+                            .raw => |raw| JSBindings.toStringValue(this, ctx, E.String.init(raw)),
+                        };
                     },
                     .e_number => |number| {
                         return JSBindings.toNumberValue(this, number);

@@ -12519,14 +12519,15 @@ fn NewParser_(
                 const tail_loc = p.lexer.loc();
                 try p.lexer.rescanCloseBraceAsTemplateToken();
 
-                const tail_raw = if (include_raw) p.lexer.rawTemplateContents() else null;
-                var tail = p.lexer.toEString();
+                const tail: E.Template.Contents = brk: {
+                    if (!include_raw) break :brk .{ .cooked = p.lexer.toEString() };
+                    break :brk .{ .raw = p.lexer.rawTemplateContents() };
+                };
 
                 parts.append(E.TemplatePart{
                     .value = value,
                     .tail_loc = tail_loc,
                     .tail = tail,
-                    .tail_raw = tail_raw,
                 }) catch unreachable;
 
                 if (p.lexer.token == .t_template_tail) {
@@ -12619,7 +12620,7 @@ fn NewParser_(
 
                 // Reset the optional chain flag by default. That way we won't accidentally
                 // treat "c.d" as OptionalChainContinue in "a?.b + c.d".
-                var old_optional_chain = optional_chain;
+                const old_optional_chain = optional_chain;
                 optional_chain = null;
                 switch (p.lexer.token) {
                     .t_dot => {
@@ -12784,7 +12785,7 @@ fn NewParser_(
                         try p.lexer.next();
                         left = p.newExpr(E.Template{
                             .tag = left,
-                            .head = head,
+                            .head = .{ .cooked = head },
                         }, left.loc);
                     },
                     .t_template_head => {
@@ -12792,14 +12793,12 @@ fn NewParser_(
                             p.log.addRangeError(p.source, p.lexer.range(), "Template literals cannot have an optional chain as a tag") catch unreachable;
                         }
                         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
-                        const head_raw = p.lexer.rawTemplateContents();
-                        const head = p.lexer.toEString();
+                        const head = p.lexer.rawTemplateContents();
                         const partsGroup = try p.parseTemplateParts(true);
                         const tag = left;
                         left = p.newExpr(E.Template{
                             .tag = tag,
-                            .head = head,
-                            .head_raw = head_raw,
+                            .head = .{ .raw = head },
                             .parts = partsGroup,
                         }, left.loc);
                     },
@@ -13619,7 +13618,7 @@ fn NewParser_(
                     // if ()
 
                     return p.newExpr(E.Template{
-                        .head = head,
+                        .head = .{ .cooked = head },
                         .parts = parts,
                     }, loc);
                 },

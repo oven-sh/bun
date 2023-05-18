@@ -1666,7 +1666,7 @@ declare module "bun" {
     /**
      *  File path to a .pem file for a custom root CA
      * 
-     * @deprecated since v0.6.3 - Use `cert: Bun.file(path)` instead.
+     * @deprecated since v0.6.3 - Use `ca: Bun.file(path)` instead.
      */
     caFile?: string;
 

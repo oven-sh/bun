@@ -150,4 +150,34 @@ describe("bundler", () => {
       "/b_13.js",
     ],
   });
+
+  // https://github.com/oven-sh/bun/issues/2948
+  itBundled("regression/ReassignLocal#2948", {
+    files: {
+      "/entry.js": `
+      import { Buffer } from 'node:buffer';
+
+      export function schemaEncode(data) {
+        const filename_len = Buffer.byteLength(data.filename);
+        const buf = Buffer.allocUnsafe(29 + filename_len);
+        buf.writeUInt8(1);
+        for (let i=0; i<3; i++) buf.writeUInt32LE(data.to[i], 1 + i * 4);
+        buf.writeDoubleLE(data.random, 13);
+        buf.writeUInt16LE(data.page, 21);
+        let offset = 23;
+        offset = buf.writeUInt16LE(filename_len, offset);
+        offset += buf.write(data.filename, offset);
+        buf.writeUInt32LE(data.from, offset);
+        return buf;
+      }
+
+      schemaEncode({filename: "heyyyy", to: [1,2,3], page: 123, random: Math.random(), from: 158})
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    run: {
+      file: "/entry.js",
+    },
+  });
 });

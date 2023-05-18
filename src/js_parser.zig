@@ -20389,7 +20389,10 @@ fn NewParser_(
                                     var decl = &prev_local.decls.slice()[0];
                                     if (decl.binding.data == .b_identifier and
                                         decl.binding.data.b_identifier.ref.eql(bin_assign.left.data.e_identifier.ref) and
-                                        (decl.value == null or decl.value.?.isPrimitiveLiteral()))
+                                        // If the value was assigned, we shouldn't merge it incase it was used in the current statement
+                                        // https://github.com/oven-sh/bun/issues/2948
+                                        // We don't have a more granular way to check symbol usage so this is the best we can do
+                                        decl.value == null)
                                     {
                                         decl.value = bin_assign.right;
                                         p.ignoreUsage(bin_assign.left.data.e_identifier.ref);

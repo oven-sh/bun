@@ -4,6 +4,19 @@ import { itBundled, testForFile } from "./expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 describe("bundler", () => {
+  // https://github.com/oven-sh/bun/issues/2946
+  itBundled("regression/InvalidIdentifierInFileName#2946", {
+    files: {
+      "/entry.js": "import foo from './1.png';\nconsole.log(foo);",
+      "/1.png": "abcdefgh",
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    run: {
+      file: "/out/entry.js",
+    },
+  });
+
   itBundled("regression/MergeAdjacentDecl#2942", {
     files: {
       "/shared.js": `

@@ -2546,19 +2546,28 @@ fn NewPrinter(
                     }
 
                     p.print("`");
-                    if (e.head.isPresent()) {
-                        e.head.resolveRopeIfNeeded(p.options.allocator);
-
-                        p.printStringContent(&e.head, '`');
+                    switch (e.head) {
+                        .raw => |raw| p.print(raw),
+                        .cooked => |*cooked| {
+                            if (cooked.isPresent()) {
+                                cooked.resolveRopeIfNeeded(p.options.allocator);
+                                p.printStringContent(cooked, '`');
+                            }
+                        },
                     }
 
                     for (e.parts) |*part| {
                         p.print("${");
                         p.printExpr(part.value, .lowest, ExprFlag.None());
                         p.print("}");
-                        if (part.tail.isPresent()) {
-                            part.tail.resolveRopeIfNeeded(p.options.allocator);
-                            p.printStringContent(&part.tail, '`');
+                        switch (part.tail) {
+                            .raw => |raw| p.print(raw),
+                            .cooked => |*cooked| {
+                                if (cooked.isPresent()) {
+                                    cooked.resolveRopeIfNeeded(p.options.allocator);
+                                    p.printStringContent(cooked, '`');
+                                }
+                            },
                         }
                     }
                     p.print("`");

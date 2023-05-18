@@ -12507,7 +12507,7 @@ fn NewParser_(
             return true;
         }
 
-        pub fn parseTemplateParts(p: *P, _: bool) ![]E.TemplatePart {
+        pub fn parseTemplateParts(p: *P, include_raw: bool) ![]E.TemplatePart {
             var parts = ListManaged(E.TemplatePart).initCapacity(p.allocator, 1) catch unreachable;
             // Allow "in" inside template literals
             var oldAllowIn = p.allow_in;
@@ -12519,7 +12519,10 @@ fn NewParser_(
                 const tail_loc = p.lexer.loc();
                 try p.lexer.rescanCloseBraceAsTemplateToken();
 
-                var tail = p.lexer.toEString();
+                const tail: E.Template.Contents = brk: {
+                    if (!include_raw) break :brk .{ .cooked = p.lexer.toEString() };
+                    break :brk .{ .raw = p.lexer.rawTemplateContents() };
+                };
 
                 parts.append(E.TemplatePart{
                     .value = value,
@@ -12617,7 +12620,7 @@ fn NewParser_(
 
                 // Reset the optional chain flag by default. That way we won't accidentally
                 // treat "c.d" as OptionalChainContinue in "a?.b + c.d".
-                var old_optional_chain = optional_chain;
+                const old_optional_chain = optional_chain;
                 optional_chain = null;
                 switch (p.lexer.token) {
                     .t_dot => {
@@ -12778,11 +12781,11 @@ fn NewParser_(
                             p.log.addRangeError(p.source, p.lexer.range(), "Template literals cannot have an optional chain as a tag") catch unreachable;
                         }
                         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
-                        const head = p.lexer.toEString();
+                        const head = p.lexer.rawTemplateContents();
                         try p.lexer.next();
                         left = p.newExpr(E.Template{
                             .tag = left,
-                            .head = head,
+                            .head = .{ .raw = head },
                         }, left.loc);
                     },
                     .t_template_head => {
@@ -12790,10 +12793,14 @@ fn NewParser_(
                             p.log.addRangeError(p.source, p.lexer.range(), "Template literals cannot have an optional chain as a tag") catch unreachable;
                         }
                         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
-                        const head = p.lexer.toEString();
+                        const head = p.lexer.rawTemplateContents();
                         const partsGroup = try p.parseTemplateParts(true);
                         const tag = left;
-                        left = p.newExpr(E.Template{ .tag = tag, .head = head, .parts = partsGroup }, left.loc);
+                        left = p.newExpr(E.Template{
+                            .tag = tag,
+                            .head = .{ .raw = head },
+                            .parts = partsGroup,
+                        }, left.loc);
                     },
                     .t_open_bracket => {
                         // When parsing a decorator, ignore EIndex expressions since they may be
@@ -13611,7 +13618,7 @@ fn NewParser_(
                     // if ()
 
                     return p.newExpr(E.Template{
-                        .head = head,
+                        .head = .{ .cooked = head },
                         .parts = parts,
                     }, loc);
                 },

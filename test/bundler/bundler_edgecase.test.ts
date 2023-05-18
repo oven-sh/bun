@@ -77,14 +77,13 @@ describe("bundler", () => {
     run: { file: "/entry.ts" },
   });
   itBundled("edgecase/TemplateStringIssue622", {
-    notImplemented: true,
     files: {
       "/entry.ts": /* js */ `
         capture(\`\\?\`);
         capture(hello\`\\?\`);
       `,
     },
-    capture: ["`\\\\?`", "hello`\\\\?`"],
+    capture: ["`?`", "hello`\\?`"],
     target: "bun",
   });
   // https://github.com/oven-sh/bun/issues/2699

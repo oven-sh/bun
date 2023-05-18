@@ -2542,11 +2542,10 @@ fn NewPrinter(
                     p.print("`");
                     switch (e.head) {
                         .raw => |raw| p.print(raw),
-                        .cooked => |_cooked| {
-                            var cooked = _cooked;
+                        .cooked => |*cooked| {
                             if (cooked.isPresent()) {
                                 cooked.resolveRopeIfNeeded(p.options.allocator);
-                                p.printStringContent(&cooked, '`');
+                                p.printStringContent(cooked, '`');
                             }
                         },
                     }
@@ -2557,11 +2556,10 @@ fn NewPrinter(
                         p.print("}");
                         switch (part.tail) {
                             .raw => |raw| p.print(raw),
-                            .cooked => |_cooked| {
-                                var cooked = _cooked;
+                            .cooked => |*cooked| {
                                 if (cooked.isPresent()) {
                                     cooked.resolveRopeIfNeeded(p.options.allocator);
-                                    p.printStringContent(&cooked, '`');
+                                    p.printStringContent(cooked, '`');
                                 }
                             },
                         }

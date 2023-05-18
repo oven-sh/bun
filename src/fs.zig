@@ -533,6 +533,15 @@ pub const FileSystem = struct {
 
         pub var tmpdir_path: []const u8 = undefined;
         pub var tmpdir_path_set = false;
+        pub fn tmpdirPath(_: *const @This()) []const u8 {
+            if (!tmpdir_path_set) {
+                tmpdir_path = bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse PLATFORM_TMP_DIR;
+                tmpdir_path_set = true;
+            }
+
+            return tmpdir_path;
+        }
+
         pub fn openTmpDir(_: *const RealFS) !std.fs.Dir {
             if (!tmpdir_path_set) {
                 tmpdir_path = bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse PLATFORM_TMP_DIR;

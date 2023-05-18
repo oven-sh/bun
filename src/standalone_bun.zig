@@ -187,8 +187,8 @@ pub const StandaloneModuleGraph = struct {
         std.mem.page_size;
 
     pub fn inject(bytes: []const u8) i32 {
-        var buf: [512]u8 = undefined;
-        var zname = bun.span(bun.fs.FileSystem.instance.tmpname("bun-build", &buf, @bitCast(u64, std.time.milliTimestamp())) catch |err| {
+        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var zname: [:0]const u8 = bun.span(bun.fs.FileSystem.instance.tmpname("bun-build", &buf, @bitCast(u64, std.time.milliTimestamp())) catch |err| {
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get temporary file name: {s}", .{@errorName(err)});
             Global.exit(1);
             return -1;
@@ -225,11 +225,32 @@ pub const StandaloneModuleGraph = struct {
             // otherwise, just copy the file
 
             const fd = brk2: {
+                var tried_changing_abs_dir = false;
                 for (0..3) |retry| {
                     switch (Syscall.open(zname, std.os.O.CLOEXEC | std.os.O.WRONLY | std.os.O.CREAT, 0)) {
                         .result => |res| break :brk2 res,
                         .err => |err| {
                             if (retry < 2) {
+                                // they may not have write access to the present working directory
+                                //
+                                // but we want to default to it since it's the
+                                // least likely to need to be copied due to
+                                // renameat() across filesystems
+                                //
+                                // so in the event of a failure, we try to
+                                // we retry using the tmp dir
+                                //
+                                // but we only do that once because otherwise it's just silly
+                                if (!tried_changing_abs_dir) {
+                                    tried_changing_abs_dir = true;
+                                    const zname_z = bun.strings.concat(bun.default_allocator, &.{
+                                        bun.fs.FileSystem.instance.fs.tmpdirPath(),
+                                        zname,
+                                        &.{0},
+                                    }) catch @panic("OOM");
+                                    zname = zname_z[0..zname_z.len -| 1 :0];
+                                    continue;
+                                }
                                 switch (err.getErrno()) {
                                     // try again
                                     .PERM, .AGAIN, .BUSY => continue,

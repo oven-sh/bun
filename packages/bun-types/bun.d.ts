@@ -1700,13 +1700,6 @@ declare module "bun" {
       */
      cert?: string | Buffer | Array<string | Buffer> | undefined;
      /**
-      * Cipher suite specification, replacing the default. For more
-      * information, see modifying the default cipher suite. Permitted
-      * ciphers can be obtained via tls.getCiphers(). Cipher names must be
-      * uppercased in order for OpenSSL to accept them.
-      */
-     ciphers?: string | undefined;
-     /**
       * Private keys in PEM format. PEM allows the option of private keys
       * being encrypted. Encrypted keys will be decrypted with
       * options.passphrase. Multiple keys using different algorithms can be

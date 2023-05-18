@@ -2211,13 +2211,14 @@ fn NewPrinter(
                     );
 
                     if (p.canPrintIdentifier(e.name)) {
-                        if (!isOptionalChain and p.prev_num_end == p.writer.written) {
-                            // "1.toString" is a syntax error, so print "1 .toString" instead
-                            p.print(" ");
-                        }
                         if (isOptionalChain) {
                             p.print("?.");
                         } else {
+                            if (p.prev_num_end == p.writer.written) {
+                                // "1.toString" is a syntax error, so print "1 .toString" instead
+                                p.print(" ");
+                            }
+
                             p.print(".");
                         }
 
@@ -2225,11 +2226,16 @@ fn NewPrinter(
                         p.printIdentifier(e.name);
                     } else {
                         if (isOptionalChain) {
-                            p.print("?.");
+                            p.print("?.[");
+                        } else {
+                            p.print("[");
                         }
-                        p.print("[");
-                        p.addSourceMapping(e.name_loc);
-                        p.printQuotedUTF8(e.name, true);
+
+                        p.printPossiblyEscapedIdentifierString(
+                            e.name,
+                            true,
+                        );
+
                         p.print("]");
                     }
 
@@ -2700,7 +2706,7 @@ fn NewPrinter(
                                 p.print("[");
                                 // TODO: addSourceMappingForName
                                 // p.addSourceMappingForName(alias);
-                                p.printQuotedUTF8(alias, true);
+                                p.printPossiblyEscapedIdentifierString(alias, true);
                                 p.print("]");
                             }
 
@@ -3005,6 +3011,34 @@ fn NewPrinter(
             }
         }
 
+        fn printBindingIdentifierName(p: *Printer, name: string, name_loc: logger.Loc) void {
+            p.addSourceMapping(name_loc);
+
+            if (comptime !is_json and ascii_only) {
+                const quote = bestQuoteCharForString(u8, name, false);
+                p.print(quote);
+                p.printQuotedIdentifier(name);
+                p.print(quote);
+            } else {
+                p.printQuotedUTF8(name, false);
+            }
+        }
+
+        fn printPossiblyEscapedIdentifierString(p: *Printer, name: string, allow_backtick: bool) void {
+            if (comptime !ascii_only or is_json) {
+                p.printQuotedUTF8(name, allow_backtick);
+            } else {
+                const quote = if (comptime !is_json)
+                    bestQuoteCharForString(u8, name, allow_backtick)
+                else
+                    '"';
+
+                p.print(quote);
+                p.printQuotedIdentifier(name);
+                p.print(quote);
+            }
+        }
+
         pub fn printNamespaceAlias(p: *Printer, import_record: ImportRecord, namespace: G.NamespaceAlias) void {
             if (import_record.module_id > 0 and !import_record.contains_import_star) {
                 p.print("$");
@@ -3025,7 +3059,7 @@ fn NewPrinter(
                 p.printIdentifier(namespace.alias);
             } else {
                 p.print("[");
-                p.printQuotedUTF8(namespace.alias, true);
+                p.printPossiblyEscapedIdentifierString(namespace.alias, true);
                 p.print("]");
             }
         }
@@ -3216,23 +3250,11 @@ fn NewPrinter(
                         // While each of those property keys are ASCII, a subset of ASCII is valid as the start of an identifier
                         // "=" and ":" are not valid
                         // So we need to check
-                        if ((comptime !is_json) and p.canPrintIdentifier(key.data)) {
+                        if (p.canPrintIdentifier(key.data)) {
                             p.print(key.data);
                         } else {
                             allow_shorthand = false;
-                            const quote = if (comptime !is_json)
-                                bestQuoteCharForString(u8, key.data, true)
-                            else
-                                '"';
-                            if (quote == '`') {
-                                p.print('[');
-                            }
-                            p.print(quote);
-                            p.printUTF8StringEscapedQuotes(key.data, quote);
-                            p.print(quote);
-                            if (quote == '`') {
-                                p.print(']');
-                            }
+                            p.printBindingIdentifierName(key.data, logger.Loc.Empty);
                         }
 
                         // Use a shorthand property if the names are the same
@@ -3478,7 +3500,7 @@ fn NewPrinter(
                                                     else => {},
                                                 }
                                             } else {
-                                                p.printQuotedUTF8(str.data, false);
+                                                p.printPossiblyEscapedIdentifierString(str.data, false);
                                             }
                                         } else if (p.canPrintIdentifierUTF16(str.slice16())) {
                                             p.printSpaceBeforeIdentifier();
@@ -5081,23 +5103,9 @@ fn NewPrinter(
                             is_ascii = false;
                         }
 
-                        switch (cursor.c) {
-                            0...0xFFFF => {
-                                p.print([_]u8{
-                                    '\\',
-                                    'u',
-                                    hex_chars[cursor.c >> 12],
-                                    hex_chars[(cursor.c >> 8) & 15],
-                                    hex_chars[(cursor.c >> 4) & 15],
-                                    hex_chars[cursor.c & 15],
-                                });
-                            },
-                            else => {
-                                p.print("\\u{");
-                                std.fmt.formatInt(cursor.c, 16, .lower, .{}, p) catch unreachable;
-                                p.print("}");
-                            },
-                        }
+                        p.print("\\u{");
+                        std.fmt.formatInt(cursor.c, 16, .lower, .{}, p) catch unreachable;
+                        p.print("}");
                     },
                 }
             }

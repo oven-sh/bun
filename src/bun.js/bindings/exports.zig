@@ -1774,7 +1774,7 @@ pub const ZigConsoleClient = struct {
                                 writer.writeAll(comptime Output.prettyFmt("<r><green>", true));
                             }
 
-                            writer.writeAll("'");
+                            writer.writeAll("\"");
 
                             while (strings.indexOfAny16(utf16Slice, "\"")) |j| {
                                 writer.write16Bit(utf16Slice[0..j]);

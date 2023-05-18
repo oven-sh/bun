@@ -2087,7 +2087,6 @@ type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
  * "/node_modules.server.bun".
  *
  * Bun may inject additional imports into your code. This usually has a `bun:` prefix.
- *
  */
 declare var Loader: {
   /**
@@ -2110,25 +2109,34 @@ declare var Loader: {
    *
    * Virtual modules and JS polyfills are embedded in bun's binary. They don't
    * point to anywhere in your local filesystem.
-   *
-   *
    */
   registry: Map<
     string,
     {
+      key: string;
       /**
        * This refers to the state the ESM module is in
        *
        * TODO: make an enum for this number
-       *
-       *
        */
       state: number;
-      dependencies: string[];
+      fetch: Promise<any>;
+      instantiate: Promise<any>;
+      satisfy: Promise<any>;
+      dependencies: Array<
+        (typeof Loader)["registry"] extends Map<any, infer V> ? V : any
+      >;
       /**
        * Your application will probably crash if you mess with this.
        */
-      module: any;
+      module: {
+        dependenciesMap: (typeof Loader)["registry"];
+      };
+      linkError?: any;
+      linkSucceeded: boolean;
+      evaluated: boolean;
+      then?: any;
+      isAsync: boolean;
     }
   >;
   /**

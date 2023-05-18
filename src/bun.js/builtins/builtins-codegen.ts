@@ -6,12 +6,36 @@ const MINIFY = process.argv.includes("--minify");
 
 // This is a list of extra syntax replacements to do.
 const replacements: Replacement[] = [
+  { from: /\bthrow new TypeError\b/g, to: "$throwTypeError" },
+  { from: /\bthrow new RangeError\b/g, to: "$throwRangeError" },
+  { from: /\bthrow new OutOfMemoryError\b/g, to: "$throwOutOfMemoryError" },
+  { from: /\bthrow notImplementedIssue\(([0-9]+),(.*?)\)/g, to: "$throwTypeError($1, $2)" },
+];
+
+// This is a list of globals we should access using @ notation
+// undefined -> __intrinsic__undefined -> @undefined
+const globalsToPrefix = [
+  "AbortSignal",
+  "Array",
+  "Buffer",
+  "Bun",
+  "Infinity",
+  "Loader",
+  "Promise",
+  "ReadableByteStreamController",
+  "ReadableStream",
+  "ReadableStreamBYOBReader",
+  "ReadableStreamBYOBRequest",
+  "ReadableStreamDefaultController",
+  "ReadableStreamDefaultReader",
+  "TransformStream",
+  "TransformStreamDefaultController",
+  "Uint8Array",
+  "WritableStream",
+  "WritableStreamDefaultController",
+  "WritableStreamDefaultWriter",
+  "isNaN",
   "undefined",
-  { from: "throw new TypeError", to: "$throwTypeError" },
-  { from: "throw new RangeError", to: "$throwRangeError" },
-  { from: "throw new OutOfMemoryError", to: "$throwOutOfMemoryError" },
-  { from: /throw notImplementedIssue\(([0-9]+),(.*?)\)/g, to: "$throwTypeError($1, $2)" },
-  // TODO: the rest
 ];
 
 // These enums map to $<enum>IdToLabel and $<enum>LabelToId
@@ -32,7 +56,7 @@ const enums = {
 
 // These identifiers have typedef but not present at runtime (converted with replacements)
 // If they are present in the bundle after runtime, we warn at the user.
-const warnOnIdentifiersNotPresentAtRuntime = ["OutOfMemoryError"];
+const warnOnIdentifiersNotPresentAtRuntime = ["OutOfMemoryError", "notImplementedIssue"];
 
 type Replacement = string | { from: string | RegExp; to: string };
 
@@ -45,12 +69,16 @@ if (!existsSync(OUT_DIR)) mkdirSync(OUT_DIR);
 if (existsSync(TMP_DIR)) rmSync(TMP_DIR, { recursive: true });
 mkdirSync(TMP_DIR);
 
+function escapeRegex(str: string) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /** Applies source code replacements as defined in `replacements` */
 function applyReplacements(src: string) {
   let result = src.replace(/\$([a-zA-Z0-9_]+)\b/gm, `__intrinsic__$1`);
   for (const replacement of replacements) {
     if (typeof replacement === "string") {
-      result = result.replace(replacement, "__intrinsic__" + replacement);
+      result = result.replace(new RegExp("\\b" + escapeRegex(replacement) + "\\b", "g"), "__intrinsic__" + replacement);
     } else {
       result = result.replace(replacement.from, replacement.to.replaceAll("$", "__intrinsic__"));
     }
@@ -143,6 +171,10 @@ for (const name in enums) {
   const keys = Array.isArray(value) ? value : Object.keys(value).filter(k => !k.match(/^[0-9]+$/));
   define[`__intrinsic__${name}IdToLabel`] = "[" + keys.map(k => `"${k}"`).join(", ") + "]";
   define[`__intrinsic__${name}LabelToId`] = "{" + keys.map(k => `"${k}": ${keys.indexOf(k)}`).join(", ") + "}";
+}
+
+for (const name of globalsToPrefix) {
+  define[name] = "__intrinsic__" + name;
 }
 
 interface ParsedBuiltin {

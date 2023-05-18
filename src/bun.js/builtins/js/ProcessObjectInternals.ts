@@ -23,12 +23,11 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-
 function binding(bindingName) {
   "use strict";
   bindingName !== "constants" &&
-    @throwTypeError(
-      'process.binding() is not supported in Bun. If that breaks something, please file an issue and include a reproducible code sample.'
+    $throwTypeError(
+      "process.binding() is not supported in Bun. If that breaks something, please file an issue and include a reproducible code sample.",
     );
 
   var cache = globalThis.Symbol.for("process.bindings.constants");
@@ -37,17 +36,14 @@ function binding(bindingName) {
     // TODO: make this less hacky.
     // This calls require("node:fs").constants
     // except, outside an ESM module.
-    const {constants: fs} = globalThis[globalThis.Symbol.for("Bun.lazy")](
-      "createImportMeta",
-      "node:process"
-    ).require(
-      "node:fs"
-    )
+    const { constants: fs } = globalThis[globalThis.Symbol.for("Bun.lazy")]("createImportMeta", "node:process").require(
+      "node:fs",
+    );
     constants = {
       fs,
       zlib: {},
       crypto: {},
-      os: @Bun._Os().constants,
+      os: Bun._Os().constants,
     };
     globalThis[cache] = constants;
   }
@@ -103,6 +99,8 @@ function getStdioWriteStream(fd_, rawRequire) {
       _destroy(err, callback) {
         if (!err && this.#onClose !== null) {
           var AbortError = class AbortError extends Error {
+            code: string;
+            name: string;
             constructor(message = "The operation was aborted", options = void 0) {
               if (options !== void 0 && typeof options !== "object") {
                 throw new Error(`Invalid AbortError options:\n\n${JSON.stringify(options, null, 2)}`);
@@ -369,7 +367,7 @@ function getStdioWriteStream(fd_, rawRequire) {
       return this.#write1(chunk);
     }
 
-    #performCallback(cb, err) {
+    #performCallback(cb, err?: any) {
       if (err) {
         this.emit("error", err);
       }
@@ -508,7 +506,7 @@ function getStdinStream(fd_, rawRequire, Bun) {
       super({ readable: true, writable: true });
     }
 
-    #onFinished(err) {
+    #onFinished(err?) {
       const cb = this.#onClose;
       this.#onClose = null;
 
@@ -545,6 +543,7 @@ function getStdinStream(fd_, rawRequire, Bun) {
     }
 
     setRawMode(mode) {}
+
     on(name, callback) {
       // Streams don't generally required to present any data when only
       // `readable` events are present, i.e. `readableFlowing === false`

@@ -512,6 +512,7 @@ export class Server extends EventEmitter {
 
     return this;
   }
+  setTimeout(msecs, callback) {}
 }
 
 function assignHeaders(object, req) {

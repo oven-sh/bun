@@ -3502,7 +3502,10 @@ pub const NodeFS = struct {
             }
         }
 
-        _ = ftruncateSync(.{ .fd = fd, .len = @truncate(JSC.WebCore.Blob.SizeType, written) });
+        // https://github.com/oven-sh/bun/issues/2931
+        if ((@enumToInt(args.flag) & std.os.O.APPEND) == 0) {
+            _ = ftruncateSync(.{ .fd = fd, .len = @truncate(JSC.WebCore.Blob.SizeType, written) });
+        }
 
         return Maybe(Return.WriteFile).success;
     }

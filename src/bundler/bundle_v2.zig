@@ -497,7 +497,7 @@ pub const BundleV2 = struct {
                                     source,
                                     import_record.range,
                                     this.graph.allocator,
-                                    "Could not resolve Node.js builtin: \"{s}\".",
+                                    "Could not resolve Node.js builtin: \"{s}\". To use Node.js builtins, set target to 'node' or 'bun'",
                                     .{path_to_use},
                                     import_record.kind,
                                 ) catch unreachable;
@@ -1927,7 +1927,7 @@ pub const BundleV2 = struct {
                                         source,
                                         import_record.range,
                                         this.graph.allocator,
-                                        "Could not resolve Node.js builtin: \"{s}\".",
+                                        "Could not resolve Node.js builtin: \"{s}\". To use Node.js builtins, set target to 'node' or 'bun'",
                                         .{import_record.path.text},
                                         import_record.kind,
                                     ) catch @panic("unexpected log error");

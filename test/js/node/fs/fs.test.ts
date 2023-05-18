@@ -47,6 +47,35 @@ function mkdirForce(path: string) {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
 
+it("writeFileSync in append should not truncate the file", () => {
+  const path = join(tmpdir(), "writeFileSync-should-not-append-" + (Date.now() * 10000).toString(16));
+  var str = "";
+  writeFileSync(path, "---BEGIN---");
+  str += "---BEGIN---";
+  for (let i = 0; i < 10; i++) {
+    const line = "Line #" + i;
+    str += line;
+    writeFileSync(path, line, { flag: "a" });
+  }
+  expect(readFileSync(path, "utf8")).toBe(str);
+});
+
+it("writeFileSync NOT in append SHOULD truncate the file", () => {
+  const path = join(tmpdir(), "writeFileSync-should-not-append-" + (Date.now() * 10000).toString(16));
+
+  for (let options of [{ flag: "w" }, { flag: undefined }, {}, undefined]) {
+    writeFileSync(path, "---BEGIN---", options);
+    var str = "---BEGIN---";
+    expect(readFileSync(path, "utf8")).toBe(str);
+    for (let i = 0; i < 10; i++) {
+      const line = "Line #" + i;
+      str = line;
+      writeFileSync(path, line, options);
+      expect(readFileSync(path, "utf8")).toBe(str);
+    }
+  }
+});
+
 describe("copyFileSync", () => {
   it("should work for files < 128 KB", () => {
     const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}/1234/hi`;

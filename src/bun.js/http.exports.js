@@ -3,6 +3,7 @@ const { isIPv6 } = import.meta.require("node:net");
 const { Readable, Writable, Duplex } = import.meta.require("node:stream");
 const { URL } = import.meta.require("node:url");
 const { newArrayWithSize, String, Object, Array } = import.meta.primordials;
+const { isTypedArray } = import.meta.require("util/types");
 
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
@@ -43,6 +44,17 @@ var kInternalRequest = Symbol("kInternalRequest");
 var kInternalSocketData = Symbol.for("::bunternal::");
 
 const kEmptyBuffer = Buffer.alloc(0);
+
+function isValidTLSArray(obj) {
+  if (typeof obj === "string" || isTypedArray(obj) || obj instanceof ArrayBuffer) return true;
+  if (Array.isArray(obj)) {
+    for (var i = 0; i < obj.length; i++) {
+      if (typeof obj !== "string" && !isTypedArray(obj) && !(obj instanceof ArrayBuffer)) return false;
+    }
+    return true;
+  }
+}
+
 var FakeSocket = class Socket extends Duplex {
   bytesRead = 0;
   bytesWritten = 0;
@@ -275,6 +287,8 @@ export class Agent extends EventEmitter {
 export class Server extends EventEmitter {
   #server;
   #options;
+  #tls;
+  #is_tls = false;
 
   constructor(options, callback) {
     super();
@@ -284,6 +298,62 @@ export class Server extends EventEmitter {
       options = {};
     } else if (options == null || typeof options === "object") {
       options = { ...options };
+      this.#tls = null;
+      let key = options.key;
+      if (key) {
+        if (!isValidTLSArray(key)) {
+          throw new TypeError(
+            "key argument must be an string, Buffer or TypedArray or an array containing string, Buffer or TypedArray",
+          );
+        }
+        this.#is_tls = true;
+      }
+      let cert = options.cert;
+      if (cert) {
+        if (!isValidTLSArray(cert)) {
+          throw new TypeError(
+            "cert argument must be an string, Buffer or TypedArray or an array containing string, Buffer or TypedArray",
+          );
+        }
+        this.#is_tls = true;
+      }
+
+      let ca = options.ca;
+      if (ca) {
+        if (!isValidTLSArray(ca)) {
+          throw new TypeError(
+            "ca argument must be an string, Buffer or TypedArray or an array containing string, Buffer or TypedArray",
+          );
+        }
+        this.#is_tls = true;
+      }
+      let passphrase = options.passphrase;
+      if (passphrase && typeof passphrase !== "string") {
+        throw new TypeError("passphrase argument must be an string");
+      }
+
+      let serverName = options.servername;
+      if (serverName && typeof serverName !== "string") {
+        throw new TypeError("servername argument must be an string");
+      }
+
+      let secureOptions = options.secureOptions || 0;
+      if (secureOptions && typeof secureOptions !== "number") {
+        throw new TypeError("secureOptions argument must be an number");
+      }
+
+      if (this.#is_tls) {
+        this.#tls = {
+          serverName,
+          key: key,
+          cert: cert,
+          ca: ca,
+          passphrase: passphrase,
+          secureOptions: secureOptions,
+        };
+      } else {
+        this.#tls = null;
+      }
     } else {
       throw new Error("bun-http-polyfill: invalid arguments");
     }
@@ -354,7 +424,12 @@ export class Server extends EventEmitter {
     const RequestClass = this.#options.IncomingMessage || IncomingMessage;
 
     try {
+      const tls = this.#tls;
+      if (tls) {
+        this.serverName = tls.serverName || host || "localhost";
+      }
       this.#server = Bun.serve({
+        tls,
         port,
         hostname: host,
         // Bindings to be used for WS Server

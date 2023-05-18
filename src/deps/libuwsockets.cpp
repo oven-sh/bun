@@ -9,7 +9,7 @@
 extern "C"
 {
 
-  uws_app_t *uws_create_app(int ssl, struct us_socket_context_options_t options)
+  uws_app_t *uws_create_app(int ssl, struct us_bun_socket_context_options_t options)
   {
     if (ssl)
     {
@@ -513,15 +513,10 @@ extern "C"
   }
   void uws_add_server_name_with_options(
       int ssl, uws_app_t *app, const char *hostname_pattern,
-      struct us_socket_context_options_t options)
+      struct us_bun_socket_context_options_t options)
   {
     uWS::SocketContextOptions sco;
-    sco.ca_file_name = options.ca_file_name;
-    sco.cert_file_name = options.cert_file_name;
-    sco.dh_params_file_name = options.dh_params_file_name;
-    sco.key_file_name = options.key_file_name;
-    sco.passphrase = options.passphrase;
-    sco.ssl_prefer_low_memory_usage = options.ssl_prefer_low_memory_usage;
+    memcpy(&sco, &options, sizeof(uWS::SocketContextOptions));
 
     if (ssl)
     {

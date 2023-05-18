@@ -1,9 +1,17 @@
+const { isTypedArray } = import.meta.require("util/types");
+
 function parseCertString() {
   throw Error("Not implemented");
 }
 
-function mapStringArray(item) {
-  return item.toString();
+function isValidTLSArray(obj) {
+  if (typeof obj === "string" || isTypedArray(obj) || obj instanceof ArrayBuffer) return true;
+  if (Array.isArray(obj)) {
+    for (var i = 0; i < obj.length; i++) {
+      if (typeof obj !== "string" && !isTypedArray(obj) && !(obj instanceof ArrayBuffer)) return false;
+    }
+    return true;
+  }
 }
 
 var InternalSecureContext = class SecureContext {
@@ -12,28 +20,52 @@ var InternalSecureContext = class SecureContext {
   constructor(options) {
     const context = {};
     if (options) {
-      if (typeof options.servername === "string" && options.servername.length > 0) {
-        this.servername = options.servername;
+      let key = options.key;
+      if (key) {
+        if (!isValidTLSArray(key)) {
+          throw new TypeError(
+            "key argument must be an string, Buffer or TypedArray or an array containing string, Buffer or TypedArray",
+          );
+        }
+        this.key = key;
       }
-      if (options.key) {
-        context.key = (Array.isArray(options.key) ? options.key : [options.key]).map(mapStringArray);
-      } else context.key = undefined;
+      let cert = options.cert;
+      if (cert) {
+        if (!isValidTLSArray(cert)) {
+          throw new TypeError(
+            "cert argument must be an string, Buffer or TypedArray or an array containing string, Buffer or TypedArray",
+          );
+        }
+        this.cert = cert;
+      }
 
-      if (options.passphrase) context.passphrase = options.passphrase;
-      else context.passphrase = undefined;
+      let ca = options.ca;
+      if (ca) {
+        if (!isValidTLSArray(ca)) {
+          throw new TypeError(
+            "ca argument must be an string, Buffer or TypedArray or an array containing string, Buffer or TypedArray",
+          );
+        }
+        this.ca = ca;
+      }
 
-      if (options.cert) {
-        context.cert = (Array.isArray(options.cert) ? options.cert : [options.cert]).map(mapStringArray);
-      } else context.cert = undefined;
+      let passphrase = options.passphrase;
+      if (passphrase && typeof passphrase !== "string") {
+        throw new TypeError("passphrase argument must be an string");
+      }
+      this.passphrase = passphrase;
 
-      if (options.ca) {
-        context.ca = (Array.isArray(options.ca) ? options.ca : [options.ca]).map(mapStringArray);
-      } else context.ca = undefined;
+      let servername = options.servername;
+      if (servername && typeof servername !== "string") {
+        throw new TypeError("servername argument must be an string");
+      }
+      this.servername = servername;
 
-      const secureOptions = options.secureOptions || 0;
-
-      if (secureOptions) context.secureOptions = secureOptions;
-      else context.secureOptions = undefined;
+      let secureOptions = options.secureOptions || 0;
+      if (secureOptions && typeof secureOptions !== "number") {
+        throw new TypeError("secureOptions argument must be an number");
+      }
+      this.secureOptions = secureOptions;
     }
     this.context = context;
   }
@@ -163,28 +195,52 @@ class Server extends NetServer {
       options = options.context;
     }
     if (options) {
-      if (typeof options.servername === "string" && options.servername.length > 0) {
-        this.servername = options.servername;
+      let key = options.key;
+      if (key) {
+        if (!isValidTLSArray(key)) {
+          throw new TypeError(
+            "key argument must be an string, Buffer or TypedArray or an array containing string, Buffer or TypedArray",
+          );
+        }
+        this.key = key;
       }
-      if (options.key) {
-        this.key = (Array.isArray(options.key) ? options.key : [options.key]).map(mapStringArray);
-      } else this.key = undefined;
+      let cert = options.cert;
+      if (cert) {
+        if (!isValidTLSArray(cert)) {
+          throw new TypeError(
+            "cert argument must be an string, Buffer or TypedArray or an array containing string, Buffer or TypedArray",
+          );
+        }
+        this.cert = cert;
+      }
 
-      if (options.passphrase) this.passphrase = options.passphrase;
-      else this.passphrase = undefined;
+      let ca = options.ca;
+      if (ca) {
+        if (!isValidTLSArray(ca)) {
+          throw new TypeError(
+            "ca argument must be an string, Buffer or TypedArray or an array containing string, Buffer or TypedArray",
+          );
+        }
+        this.ca = ca;
+      }
 
-      if (options.cert) {
-        this.cert = (Array.isArray(options.cert) ? options.cert : [options.cert]).map(mapStringArray);
-      } else this.cert = undefined;
+      let passphrase = options.passphrase;
+      if (passphrase && typeof passphrase !== "string") {
+        throw new TypeError("passphrase argument must be an string");
+      }
+      this.passphrase = passphrase;
 
-      if (options.ca) {
-        this.ca = (Array.isArray(options.ca) ? options.ca : [options.ca]).map(mapStringArray);
-      } else this.ca = undefined;
+      let servername = options.servername;
+      if (servername && typeof servername !== "string") {
+        throw new TypeError("servername argument must be an string");
+      }
+      this.servername = servername;
 
-      const secureOptions = options.secureOptions || 0;
-
-      if (secureOptions) this.secureOptions = secureOptions;
-      else this.secureOptions = undefined;
+      let secureOptions = options.secureOptions || 0;
+      if (secureOptions && typeof secureOptions !== "number") {
+        throw new TypeError("secureOptions argument must be an number");
+      }
+      this.secureOptions = secureOptions;
 
       const requestCert = options.requestCert || false;
 

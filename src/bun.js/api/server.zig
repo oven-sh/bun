@@ -277,7 +277,7 @@ pub const ServerConfig = struct {
                                     any = true;
                                 }
                             } else {
-                                global.throwInvalidArguments("key argument must be an array containing string, Buffer or TypedArray", .{});
+                                global.throwInvalidArguments("key argument must be an string, Buffer or TypedArray or an array containing string, Buffer or TypedArray", .{});
                                 arena.deinit();
                                 // mark and free all keys
                                 result.key = native_array;
@@ -297,9 +297,28 @@ pub const ServerConfig = struct {
                         result.key_count = valid_count;
                     }
                 } else {
-                    global.throwInvalidArguments("key argument must be an array containing string, Buffer or TypedArray", .{});
-                    result.deinit();
-                    return null;
+                    const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
+                    var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator);
+                    if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj, exception)) |sb| {
+                        const sliced = sb.slice();
+                        if (sliced.len > 0) {
+                            native_array[0] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                            any = true;
+                            result.key = native_array;
+                            result.key_count = 1;
+                        } else {
+                            bun.default_allocator.free(native_array);
+                        }
+                    } else {
+                        global.throwInvalidArguments("key argument must be an string, Buffer or TypedArray or an array containing string, Buffer or TypedArray", .{});
+                        arena.deinit();
+                        // mark and free all certs
+                        result.key = native_array;
+                        result.deinit();
+                        return null;
+                    }
+
+                    arena.deinit();
                 }
             }
 
@@ -337,7 +356,7 @@ pub const ServerConfig = struct {
                                     any = true;
                                 }
                             } else {
-                                global.throwInvalidArguments("cert argument must be an array containing string, Buffer or TypedArray", .{});
+                                global.throwInvalidArguments("cert argument must be an string, Buffer or TypedArray or an array containing string, Buffer or TypedArray", .{});
                                 arena.deinit();
                                 // mark and free all certs
                                 result.cert = native_array;
@@ -357,9 +376,28 @@ pub const ServerConfig = struct {
                         result.cert_count = valid_count;
                     }
                 } else {
-                    global.throwInvalidArguments("cert argument must be an array containing string, Buffer or TypedArray", .{});
-                    result.deinit();
-                    return null;
+                    const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
+                    var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator);
+                    if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj, exception)) |sb| {
+                        const sliced = sb.slice();
+                        if (sliced.len > 0) {
+                            native_array[0] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                            any = true;
+                            result.cert = native_array;
+                            result.cert_count = 1;
+                        } else {
+                            bun.default_allocator.free(native_array);
+                        }
+                    } else {
+                        global.throwInvalidArguments("cert argument must be an string, Buffer or TypedArray or an array containing string, Buffer or TypedArray", .{});
+                        arena.deinit();
+                        // mark and free all certs
+                        result.cert = native_array;
+                        result.deinit();
+                        return null;
+                    }
+
+                    arena.deinit();
                 }
             }
 
@@ -418,7 +456,7 @@ pub const ServerConfig = struct {
                                         any = true;
                                     }
                                 } else {
-                                    global.throwInvalidArguments("ca argument must be an array containing string, Buffer or TypedArray", .{});
+                                    global.throwInvalidArguments("ca argument must be an string, Buffer or TypedArray or an array containing string, Buffer or TypedArray", .{});
                                     arena.deinit();
                                     // mark and free all CA's
                                     result.cert = native_array;
@@ -438,9 +476,26 @@ pub const ServerConfig = struct {
                             result.ca_count = valid_count;
                         }
                     } else {
-                        global.throwInvalidArguments("cert argument must be an array containing string, Buffer or TypedArray", .{});
-                        result.deinit();
-                        return null;
+                        const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
+                        var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator);
+                        if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj, exception)) |sb| {
+                            const sliced = sb.slice();
+                            if (sliced.len > 0) {
+                                native_array[0] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                                any = true;
+                                result.ca = native_array;
+                                result.ca_count = 1;
+                            } else {
+                                bun.default_allocator.free(native_array);
+                            }
+                        } else {
+                            global.throwInvalidArguments("ca argument must be an string, Buffer or TypedArray or an array containing string, Buffer or TypedArray", .{});
+                            arena.deinit();
+                            // mark and free all certs
+                            result.ca = native_array;
+                            result.deinit();
+                            return null;
+                        }
                     }
                 }
 
@@ -5144,16 +5199,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             if (ssl_enabled) {
                 BoringSSL.load();
                 const ssl_config = this.config.ssl_config orelse @panic("Assertion failure: ssl_config");
-                this.app = App.create(
-                    .{
-                        .key_file_name = ssl_config.key_file_name,
-                        .cert_file_name = ssl_config.cert_file_name,
-                        .passphrase = ssl_config.passphrase,
-                        .dh_params_file_name = ssl_config.dh_params_file_name,
-                        .ca_file_name = ssl_config.ca_file_name,
-                        .ssl_prefer_low_memory_usage = @as(c_int, @boolToInt(ssl_config.low_memory_mode)),
-                    },
-                );
+                this.app = App.create(ssl_config.asUSockets());
 
                 if (ssl_config.server_name != null and std.mem.span(ssl_config.server_name).len > 0) {
                     this.app.addServerName(ssl_config.server_name);

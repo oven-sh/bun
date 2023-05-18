@@ -7397,7 +7397,20 @@ const LinkerContext = struct {
                             var clone = std.ArrayList(G.Decl).initCapacity(allocator, before.decls.len + after.decls.len) catch unreachable;
                             clone.appendSliceAssumeCapacity(before.decls.slice());
                             clone.appendSliceAssumeCapacity(after.decls.slice());
-                            before.decls.update(clone);
+                            // we must clone instead of overwrite in-place incase the same S.Local is used across threads
+                            // https://github.com/oven-sh/bun/issues/2942
+                            stmts.items[end - 1] = Stmt.allocate(
+                                allocator,
+                                S.Local,
+                                S.Local{
+                                    .decls = BabyList(G.Decl).fromList(clone),
+                                    .is_export = before.is_export,
+                                    .was_commonjs_export = before.was_commonjs_export,
+                                    .was_ts_import_equals = before.was_ts_import_equals,
+                                    .kind = before.kind,
+                                },
+                                stmts.items[end - 1].loc,
+                            );
                         }
                         continue;
                     }

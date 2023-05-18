@@ -3015,9 +3015,12 @@ fn NewPrinter(
             p.addSourceMapping(name_loc);
 
             if (comptime !is_json and ascii_only) {
+                const quote = bestQuoteCharForString(u8, name, false);
+                p.print(quote);
                 p.printQuotedIdentifier(name);
+                p.print(quote);
             } else {
-                p.printQuotedUTF8(name, true);
+                p.printQuotedUTF8(name, false);
             }
         }
 
@@ -5100,26 +5103,9 @@ fn NewPrinter(
                             is_ascii = false;
                         }
 
-                        switch (cursor.c) {
-                            // note that 2-digit hex escapes are not supported in identifiers
-                            0...0xFFFF => {
-                                var ptr = p.writer.reserve(6) catch unreachable;
-                                ptr[0..6].* = [_]u8{
-                                    '\\',
-                                    'u',
-                                    hex_chars[cursor.c >> 12],
-                                    hex_chars[(cursor.c >> 8) & 15],
-                                    hex_chars[(cursor.c >> 4) & 15],
-                                    hex_chars[cursor.c & 15],
-                                };
-                                p.writer.advance(6);
-                            },
-                            else => {
-                                p.print("\\u{");
-                                std.fmt.formatInt(cursor.c, 16, .lower, .{}, p) catch unreachable;
-                                p.print("}");
-                            },
-                        }
+                        p.print("\\u{");
+                        std.fmt.formatInt(cursor.c, 16, .lower, .{}, p) catch unreachable;
+                        p.print("}");
                     },
                 }
             }

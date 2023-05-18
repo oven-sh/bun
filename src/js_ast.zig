@@ -2359,11 +2359,13 @@ pub const E = struct {
         value: ExprNodeIndex,
         tail_loc: logger.Loc,
         tail: E.String,
+        tail_raw: ?string = null,
     };
 
     pub const Template = struct {
         tag: ?ExprNodeIndex = null,
         head: E.String,
+        head_raw: ?string = null,
         parts: []TemplatePart = &([_]TemplatePart{}),
 
         /// "`a${'b'}c`" => "`abc`"

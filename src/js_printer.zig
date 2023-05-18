@@ -2543,7 +2543,11 @@ fn NewPrinter(
                     if (e.head.isPresent()) {
                         e.head.resolveRopeIfNeeded(p.options.allocator);
 
-                        p.printStringContent(&e.head, '`');
+                        if (e.tag == null) {
+                            p.printStringContent(&e.head, '`');
+                        } else if (e.head_raw) |head_raw| {
+                            p.print(head_raw);
+                        }
                     }
 
                     for (e.parts) |*part| {
@@ -2552,7 +2556,11 @@ fn NewPrinter(
                         p.print("}");
                         if (part.tail.isPresent()) {
                             part.tail.resolveRopeIfNeeded(p.options.allocator);
-                            p.printStringContent(&part.tail, '`');
+                            if (e.tag == null) {
+                                p.printStringContent(&part.tail, '`');
+                            } else if (part.tail_raw) |tail_raw| {
+                                p.print(tail_raw);
+                            }
                         }
                     }
                     p.print("`");

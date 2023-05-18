@@ -12507,7 +12507,7 @@ fn NewParser_(
             return true;
         }
 
-        pub fn parseTemplateParts(p: *P, _: bool) ![]E.TemplatePart {
+        pub fn parseTemplateParts(p: *P, include_raw: bool) ![]E.TemplatePart {
             var parts = ListManaged(E.TemplatePart).initCapacity(p.allocator, 1) catch unreachable;
             // Allow "in" inside template literals
             var oldAllowIn = p.allow_in;
@@ -12519,12 +12519,14 @@ fn NewParser_(
                 const tail_loc = p.lexer.loc();
                 try p.lexer.rescanCloseBraceAsTemplateToken();
 
+                const tail_raw = if (include_raw) p.lexer.rawTemplateContents() else null;
                 var tail = p.lexer.toEString();
 
                 parts.append(E.TemplatePart{
                     .value = value,
                     .tail_loc = tail_loc,
                     .tail = tail,
+                    .tail_raw = tail_raw,
                 }) catch unreachable;
 
                 if (p.lexer.token == .t_template_tail) {
@@ -12790,10 +12792,16 @@ fn NewParser_(
                             p.log.addRangeError(p.source, p.lexer.range(), "Template literals cannot have an optional chain as a tag") catch unreachable;
                         }
                         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
+                        const head_raw = p.lexer.rawTemplateContents();
                         const head = p.lexer.toEString();
                         const partsGroup = try p.parseTemplateParts(true);
                         const tag = left;
-                        left = p.newExpr(E.Template{ .tag = tag, .head = head, .parts = partsGroup }, left.loc);
+                        left = p.newExpr(E.Template{
+                            .tag = tag,
+                            .head = head,
+                            .head_raw = head_raw,
+                            .parts = partsGroup,
+                        }, left.loc);
                     },
                     .t_open_bracket => {
                         // When parsing a decorator, ignore EIndex expressions since they may be

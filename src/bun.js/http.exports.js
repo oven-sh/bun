@@ -626,6 +626,10 @@ export class IncomingMessage extends Readable {
     return (this.#fakeSocket ??= new FakeSocket());
   }
 
+  set socket(val) {
+    this.#fakeSocket = val;
+  }
+
   setTimeout(msecs, callback) {
     throw new Error("not implemented");
   }
@@ -744,6 +748,10 @@ export class OutgoingMessage extends Writable {
 
   get socket() {
     return (this.#fakeSocket ??= new FakeSocket());
+  }
+
+  set socket(val) {
+    this.#fakeSocket = val;
   }
 
   get connection() {

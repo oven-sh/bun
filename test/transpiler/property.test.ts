@@ -9,15 +9,18 @@ test("latin1 property name", () => {
   const filtered = stdout.toString().replaceAll("\n", "").replaceAll(" ", "");
   expect(filtered).toBe(
     `{
-"código": 1,
-"código2": 2,
-"código3": 3,
-"código4": 4
-} 1 1 2 3 4 3 2 4
+      "código": 1,
+      "código2": 2,
+      "código3": 3,
+      "código4": 4,
+      "código5": 5
+    } 1 1 2 3 4 3 2 4 5 2
 `
       .replaceAll("\n", "")
       .replaceAll(" ", ""),
   );
   // just to be sure
-  expect(Bun.hash(filtered)).toBe(808511629428895);
+  expect(Buffer.from(Bun.CryptoHasher.hash("sha1", filtered) as Uint8Array).toString("hex")).toBe(
+    "9459ed53a27b14076123524ee68df0ce963cac5c",
+  );
 });

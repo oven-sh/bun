@@ -2227,10 +2227,11 @@ fn NewPrinter(
                         if (isOptionalChain) {
                             p.print("?.");
                         }
-                        p.print("[");
-                        p.addSourceMapping(e.name_loc);
-                        p.printQuotedUTF8(e.name, true);
-                        p.print("]");
+
+                        p.printBindingIdentifierName(
+                            e.name,
+                            e.name_loc,
+                        );
                     }
 
                     if (wrap) {
@@ -2700,7 +2701,7 @@ fn NewPrinter(
                                 p.print("[");
                                 // TODO: addSourceMappingForName
                                 // p.addSourceMappingForName(alias);
-                                p.printQuotedUTF8(alias, true);
+                                p.printPossiblyEscapedIdentifierString(alias, true);
                                 p.print("]");
                             }
 
@@ -3005,6 +3006,50 @@ fn NewPrinter(
             }
         }
 
+        fn printBindingIdentifierName(p: *Printer, name: string, name_loc: logger.Loc) void {
+            if (comptime ascii_only) {
+                const quote = if (comptime !is_json)
+                    bestQuoteCharForString(u8, name, true)
+                else
+                    '"';
+
+                p.print(switch (quote) {
+                    '"' => "[\"",
+                    '\'' => "['",
+                    '`' => "[`",
+                    else => unreachable,
+                });
+                p.addSourceMapping(name_loc);
+                p.printQuotedIdentifier(name);
+                p.print(switch (quote) {
+                    '"' => "\"]",
+                    '\'' => "']",
+                    '`' => "`]",
+                    else => unreachable,
+                });
+            } else {
+                p.addSourceMapping(name_loc);
+                p.print("[");
+                p.printQuotedUTF8(name, true);
+                p.print("]");
+            }
+        }
+
+        fn printPossiblyEscapedIdentifierString(p: *Printer, name: string, allow_backtick: bool) void {
+            const quote = if (comptime !is_json)
+                bestQuoteCharForString(u8, name, allow_backtick)
+            else
+                '"';
+
+            if (comptime !ascii_only) {
+                p.printQuotedUTF8(name, allow_backtick);
+            } else {
+                p.print(quote);
+                p.printQuotedIdentifier(name);
+                p.print(quote);
+            }
+        }
+
         pub fn printNamespaceAlias(p: *Printer, import_record: ImportRecord, namespace: G.NamespaceAlias) void {
             if (import_record.module_id > 0 and !import_record.contains_import_star) {
                 p.print("$");
@@ -3025,7 +3070,7 @@ fn NewPrinter(
                 p.printIdentifier(namespace.alias);
             } else {
                 p.print("[");
-                p.printQuotedUTF8(namespace.alias, true);
+                p.printPossiblyEscapedIdentifierString(namespace.alias, true);
                 p.print("]");
             }
         }
@@ -3220,19 +3265,7 @@ fn NewPrinter(
                             p.print(key.data);
                         } else {
                             allow_shorthand = false;
-                            const quote = if (comptime !is_json)
-                                bestQuoteCharForString(u8, key.data, true)
-                            else
-                                '"';
-                            if (quote == '`') {
-                                p.print('[');
-                            }
-                            p.print(quote);
-                            p.printUTF8StringEscapedQuotes(key.data, quote);
-                            p.print(quote);
-                            if (quote == '`') {
-                                p.print(']');
-                            }
+                            p.printBindingIdentifierName(key.data, logger.Loc.Empty);
                         }
 
                         // Use a shorthand property if the names are the same
@@ -3478,7 +3511,7 @@ fn NewPrinter(
                                                     else => {},
                                                 }
                                             } else {
-                                                p.printQuotedUTF8(str.data, false);
+                                                p.printPossiblyEscapedIdentifierString(str.data, false);
                                             }
                                         } else if (p.canPrintIdentifierUTF16(str.slice16())) {
                                             p.printSpaceBeforeIdentifier();

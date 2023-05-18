@@ -1182,7 +1182,6 @@ fn NewSocket(comptime ssl: bool) type {
             if (callback == .zero) {
                 callback = handlers.onOpen;
                 if (callback == .zero) {
-                    log("onOpen({d})", .{success});
                     return;
                 }
                 is_open = true;

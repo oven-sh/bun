@@ -4,7 +4,19 @@ import { readdirSync } from "fs";
 import { resolve } from "path";
 import type { Field, ClassDefinition } from "./class-definitions";
 
+const CommonIdentifiers = {
+  "name": true,
+};
+function toIdentifier(propertyName) {
+  if (CommonIdentifiers[propertyName]) {
+    return `vm.propertyNames->${propertyName}`;
+  }
+
+  return `Identifier::fromString(vm, ${JSON.stringify(propertyName)}_s)`;
+}
+
 const directoriesToSearch = [
+  resolve(`${import.meta.dir}/../`),
   resolve(`${import.meta.dir}/../api`),
   resolve(`${import.meta.dir}/../test`),
   resolve(`${import.meta.dir}/../webcore`),
@@ -181,6 +193,7 @@ function propRow(
     DOMJIT,
     enumerable = true,
     configurable = false,
+    value,
   } = (defaultPropertyAttributes ? Object.assign({}, defaultPropertyAttributes, prop) : prop) as any;
 
   var extraPropertyAttributes = "";
@@ -265,7 +278,7 @@ export function generateHashTable(nameToUse, symbolName, typeName, obj, props = 
   }
 
   for (const name in props) {
-    if ("internal" in props[name]) continue;
+    if ("internal" in props[name] || "value" in props[name]) continue;
     if (name.startsWith("@@")) continue;
 
     rows.push(propRow(symbolName, typeName, name, props[name], wrapped, defaultPropertyAttributes));
@@ -301,7 +314,17 @@ function generatePrototype(typeName, obj) {
   const { proto: protoFields } = obj;
   var specialSymbols = "";
 
+  var staticPrototypeValues = "";
+
   for (const name in protoFields) {
+    if ("value" in protoFields[name]) {
+      const { value } = protoFields[name];
+      staticPrototypeValues += `
+      this->putDirect(vm, ${toIdentifier(name)}, jsString(vm, String(${JSON.stringify(
+        value,
+      )}_s)), PropertyAttribute::ReadOnly | 0);`;
+    }
+
     if (!name.startsWith("@@")) {
       continue;
     }
@@ -350,7 +373,7 @@ void ${proto}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
       Object.keys(protoFields).length > 0
         ? `reifyStaticProperties(vm, ${className(typeName)}::info(), ${proto}TableValues, *this);`
         : ""
-    }${specialSymbols}
+    }${specialSymbols}${staticPrototypeValues}
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

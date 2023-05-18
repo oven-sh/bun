@@ -5,6 +5,7 @@ interface PropertyAttribute {
 
 export type Field =
   | ({ getter: string; cache?: true | string; this?: boolean } & PropertyAttribute)
+  | { value: string }
   | ({ setter: string; this?: boolean } & PropertyAttribute)
   | ({
       accessor: { getter: string; setter: string };

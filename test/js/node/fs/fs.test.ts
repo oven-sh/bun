@@ -62,14 +62,17 @@ it("writeFileSync in append should not truncate the file", () => {
 
 it("writeFileSync NOT in append SHOULD truncate the file", () => {
   const path = join(tmpdir(), "writeFileSync-should-not-append-" + (Date.now() * 10000).toString(16));
-  writeFileSync(path, "---BEGIN---");
-  var str = "---BEGIN---";
-  expect(readFileSync(path, "utf8")).toBe(str);
-  for (let i = 0; i < 10; i++) {
-    const line = "Line #" + i;
-    str = line;
-    writeFileSync(path, line);
+
+  for (let options of [{ flag: "w" }, { flag: undefined }, {}, undefined]) {
+    writeFileSync(path, "---BEGIN---", options);
+    var str = "---BEGIN---";
     expect(readFileSync(path, "utf8")).toBe(str);
+    for (let i = 0; i < 10; i++) {
+      const line = "Line #" + i;
+      str = line;
+      writeFileSync(path, line, options);
+      expect(readFileSync(path, "utf8")).toBe(str);
+    }
   }
 });
 

@@ -1646,12 +1646,16 @@ declare module "bun" {
      * File path to a TLS key
      *
      * To enable TLS, this option is required.
+     * 
+     * @deprecated since v0.6.3 - Use `key: Bun.file(path)` instead.
      */
     keyFile: string;
     /**
      * File path to a TLS certificate
      *
      * To enable TLS, this option is required.
+     * 
+     * @deprecated since v0.6.3 - Use `cert: Bun.file(path)` instead.
      */
     certFile: string;
 
@@ -1661,6 +1665,8 @@ declare module "bun" {
     passphrase?: string;
     /**
      *  File path to a .pem file for a custom root CA
+     * 
+     * @deprecated since v0.6.3 - Use `cert: Bun.file(path)` instead.
      */
     caFile?: string;
 
@@ -1686,7 +1692,7 @@ declare module "bun" {
      * the well-known CAs curated by Mozilla. Mozilla's CAs are completely
      * replaced when CAs are explicitly specified using this option.
      */
-     ca?: string | Buffer | Array<string | Buffer> | undefined;
+     ca?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
      /**
       *  Cert chains in PEM format. One cert chain should be provided per
       *  private key. Each cert chain should consist of the PEM formatted
@@ -1698,7 +1704,7 @@ declare module "bun" {
       *  intermediate certificates are not provided, the peer will not be
       *  able to validate the certificate, and the handshake will fail.
       */
-     cert?: string | Buffer | Array<string | Buffer> | undefined;
+     cert?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
      /**
       * Private keys in PEM format. PEM allows the option of private keys
       * being encrypted. Encrypted keys will be decrypted with
@@ -1709,7 +1715,7 @@ declare module "bun" {
       * object.passphrase is optional. Encrypted keys will be decrypted with
       * object.passphrase if provided, or options.passphrase if it is not.
       */
-     key?: string | Buffer | Array<string | Buffer> | undefined;
+     key?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
      /**
       * Optionally affect the OpenSSL protocol behavior, which is not
       * usually necessary. This should be used carefully if at all! Value is

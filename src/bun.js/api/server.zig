@@ -91,6 +91,58 @@ const SendfileContext = struct {
 const DateTime = bun.DateTime;
 const linux = std.os.linux;
 
+const BlobFileContentResult = struct {
+    data: [*c]const u8,
+
+    const log = Output.scoped(.BlobFileContentResult, false);
+    fn init(comptime fieldname: []const u8, js_obj: JSC.JSValue, global: *JSC.JSGlobalObject, exception: JSC.C.ExceptionRef) ?BlobFileContentResult {
+        if (JSC.WebCore.Body.Value.fromJS(global, js_obj)) |body| {
+            if (body == .Blob and body.Blob.store != null and body.Blob.store.?.data == .file) {
+                const pathlike = body.Blob.store.?.data.file.pathlike;
+                if (pathlike == .path) {
+                    const path = pathlike.path.slice();
+
+                    const path_z = bun.default_allocator.dupeZ(u8, path) catch unreachable;
+                    defer bun.default_allocator.destroy(path_z);
+                    if (std.os.system.access(path_z, std.os.F_OK) != 0) {
+                        JSC.throwInvalidArguments(std.fmt.comptimePrint("Unable to access {s} path", .{fieldname}), .{}, global, exception);
+                        return .{ .data = null };
+                    }
+                    const cwd = std.process.getCwdAlloc(bun.default_allocator) catch {
+                        JSC.throwInvalidArguments(std.fmt.comptimePrint("Unable to access {s} path", .{fieldname}), .{}, global, exception);
+                        return .{ .data = null };
+                    };
+                    defer bun.default_allocator.free(cwd);
+
+                    const fullpath = std.fs.path.resolve(bun.default_allocator, &.{ cwd, path }) catch {
+                        JSC.throwInvalidArguments(std.fmt.comptimePrint("Unable to resolve {s} path", .{fieldname}), .{}, global, exception);
+                        return .{ .data = null };
+                    };
+                    defer bun.default_allocator.free(fullpath);
+                    var file = std.fs.openFileAbsolute(fullpath, std.fs.File.OpenFlags{ .mode = .read_only }) catch {
+                        JSC.throwInvalidArguments(std.fmt.comptimePrint("Unable to open {s} path", .{fieldname}), .{}, global, exception);
+                        return .{ .data = null };
+                    };
+                    defer file.close();
+                    const stats = file.stat() catch {
+                        JSC.throwInvalidArguments(std.fmt.comptimePrint("Unable to open {s} path", .{fieldname}), .{}, global, exception);
+                        return .{ .data = null };
+                    };
+
+                    if (stats.size > 0) {
+                        const file_content = file.readToEndAllocOptions(bun.default_allocator, stats.size, stats.size, @alignOf(u8), 0) catch {
+                            JSC.throwInvalidArguments(std.fmt.comptimePrint("Unable to read {s} path", .{fieldname}), .{}, global, exception);
+                            return .{ .data = null };
+                        };
+                        return .{ .data = file_content.ptr };
+                    }
+                }
+            }
+        }
+        return null;
+    }
+};
+
 pub const ServerConfig = struct {
     port: u16 = 0,
     hostname: [*:0]const u8 = "localhost",
@@ -276,8 +328,20 @@ pub const ServerConfig = struct {
                                     valid_count += 1;
                                     any = true;
                                 }
+                            } else if (BlobFileContentResult.init("key", item, global, exception)) |content| {
+                                if (content.data) |data| {
+                                    native_array[valid_count] = data;
+                                    valid_count += 1;
+                                    any = true;
+                                } else {
+                                    arena.deinit();
+                                    // mark and free all CA's
+                                    result.cert = native_array;
+                                    result.deinit();
+                                    return null;
+                                }
                             } else {
-                                global.throwInvalidArguments("key argument must be an string, Buffer or TypedArray or an array containing string, Buffer or TypedArray", .{});
+                                global.throwInvalidArguments("key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile", .{});
                                 arena.deinit();
                                 // mark and free all keys
                                 result.key = native_array;
@@ -296,6 +360,17 @@ pub const ServerConfig = struct {
 
                         result.key_count = valid_count;
                     }
+                } else if (BlobFileContentResult.init("key", js_obj, global, exception)) |content| {
+                    if (content.data) |data| {
+                        const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
+                        native_array[0] = data;
+                        result.key = native_array;
+                        result.key_count = 1;
+                        any = true;
+                    } else {
+                        result.deinit();
+                        return null;
+                    }
                 } else {
                     const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
                     var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator);
@@ -310,7 +385,7 @@ pub const ServerConfig = struct {
                             bun.default_allocator.free(native_array);
                         }
                     } else {
-                        global.throwInvalidArguments("key argument must be an string, Buffer or TypedArray or an array containing string, Buffer or TypedArray", .{});
+                        global.throwInvalidArguments("key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile", .{});
                         arena.deinit();
                         // mark and free all certs
                         result.key = native_array;
@@ -355,8 +430,20 @@ pub const ServerConfig = struct {
                                     valid_count += 1;
                                     any = true;
                                 }
+                            } else if (BlobFileContentResult.init("cert", item, global, exception)) |content| {
+                                if (content.data) |data| {
+                                    native_array[valid_count] = data;
+                                    valid_count += 1;
+                                    any = true;
+                                } else {
+                                    arena.deinit();
+                                    // mark and free all CA's
+                                    result.cert = native_array;
+                                    result.deinit();
+                                    return null;
+                                }
                             } else {
-                                global.throwInvalidArguments("cert argument must be an string, Buffer or TypedArray or an array containing string, Buffer or TypedArray", .{});
+                                global.throwInvalidArguments("cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile", .{});
                                 arena.deinit();
                                 // mark and free all certs
                                 result.cert = native_array;
@@ -375,6 +462,17 @@ pub const ServerConfig = struct {
 
                         result.cert_count = valid_count;
                     }
+                } else if (BlobFileContentResult.init("cert", js_obj, global, exception)) |content| {
+                    if (content.data) |data| {
+                        const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
+                        native_array[0] = data;
+                        result.cert = native_array;
+                        result.cert_count = 1;
+                        any = true;
+                    } else {
+                        result.deinit();
+                        return null;
+                    }
                 } else {
                     const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
                     var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator);
@@ -389,7 +487,7 @@ pub const ServerConfig = struct {
                             bun.default_allocator.free(native_array);
                         }
                     } else {
-                        global.throwInvalidArguments("cert argument must be an string, Buffer or TypedArray or an array containing string, Buffer or TypedArray", .{});
+                        global.throwInvalidArguments("cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile", .{});
                         arena.deinit();
                         // mark and free all certs
                         result.cert = native_array;
@@ -428,87 +526,109 @@ pub const ServerConfig = struct {
                 }
             }
 
-            // Optional
-            if (any) {
-                if (obj.getTruthy(global, "secureOptions")) |secure_options| {
-                    if (secure_options.isNumber()) {
-                        result.secure_options = secure_options.toU32();
-                    }
-                }
+            if (obj.getTruthy(global, "ca")) |js_obj| {
+                if (js_obj.jsType().isArray()) {
+                    const count = js_obj.getLengthOfArray(global);
+                    if (count > 0) {
+                        const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
 
-                if (obj.getTruthy(global, "ca")) |js_obj| {
-                    if (js_obj.jsType().isArray()) {
-                        const count = js_obj.getLengthOfArray(global);
-                        if (count > 0) {
-                            const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
+                        var i: u32 = 0;
+                        var valid_count: u32 = 0;
 
-                            var i: u32 = 0;
-                            var valid_count: u32 = 0;
-
-                            var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator);
-                            while (i < count) : (i += 1) {
-                                const item = js_obj.getIndex(global, i);
-                                if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item, exception)) |sb| {
-                                    const sliced = sb.slice();
-                                    if (sliced.len > 0) {
-                                        native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
-                                        valid_count += 1;
-                                        any = true;
-                                    }
+                        var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator);
+                        while (i < count) : (i += 1) {
+                            const item = js_obj.getIndex(global, i);
+                            if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item, exception)) |sb| {
+                                const sliced = sb.slice();
+                                if (sliced.len > 0) {
+                                    native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                                    valid_count += 1;
+                                    any = true;
+                                }
+                            } else if (BlobFileContentResult.init("ca", item, global, exception)) |content| {
+                                if (content.data) |data| {
+                                    native_array[valid_count] = data;
+                                    valid_count += 1;
+                                    any = true;
                                 } else {
-                                    global.throwInvalidArguments("ca argument must be an string, Buffer or TypedArray or an array containing string, Buffer or TypedArray", .{});
                                     arena.deinit();
                                     // mark and free all CA's
                                     result.cert = native_array;
                                     result.deinit();
                                     return null;
                                 }
-                            }
-
-                            arena.deinit();
-
-                            if (valid_count == 0) {
-                                bun.default_allocator.free(native_array);
                             } else {
-                                result.ca = native_array;
+                                global.throwInvalidArguments("ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile", .{});
+                                arena.deinit();
+                                // mark and free all CA's
+                                result.cert = native_array;
+                                result.deinit();
+                                return null;
                             }
+                        }
 
-                            result.ca_count = valid_count;
+                        arena.deinit();
+
+                        if (valid_count == 0) {
+                            bun.default_allocator.free(native_array);
+                        } else {
+                            result.ca = native_array;
+                        }
+
+                        result.ca_count = valid_count;
+                    }
+                } else if (BlobFileContentResult.init("ca", js_obj, global, exception)) |content| {
+                    if (content.data) |data| {
+                        const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
+                        native_array[0] = data;
+                        result.ca = native_array;
+                        result.ca_count = 1;
+                        any = true;
+                    } else {
+                        result.deinit();
+                        return null;
+                    }
+                } else {
+                    const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
+                    var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator);
+                    if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj, exception)) |sb| {
+                        const sliced = sb.slice();
+                        if (sliced.len > 0) {
+                            native_array[0] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                            any = true;
+                            result.ca = native_array;
+                            result.ca_count = 1;
+                        } else {
+                            bun.default_allocator.free(native_array);
                         }
                     } else {
-                        const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
-                        var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator);
-                        if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj, exception)) |sb| {
-                            const sliced = sb.slice();
-                            if (sliced.len > 0) {
-                                native_array[0] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
-                                any = true;
-                                result.ca = native_array;
-                                result.ca_count = 1;
-                            } else {
-                                bun.default_allocator.free(native_array);
-                            }
-                        } else {
-                            global.throwInvalidArguments("ca argument must be an string, Buffer or TypedArray or an array containing string, Buffer or TypedArray", .{});
-                            arena.deinit();
-                            // mark and free all certs
-                            result.ca = native_array;
-                            result.deinit();
-                            return null;
-                        }
+                        JSC.throwInvalidArguments("ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile", .{}, global, exception);
+                        arena.deinit();
+                        // mark and free all certs
+                        result.ca = native_array;
+                        result.deinit();
+                        return null;
                     }
                 }
+            }
 
-                if (obj.getTruthy(global, "caFile")) |ca_file_name| {
-                    var sliced = ca_file_name.toSlice(global, bun.default_allocator);
-                    defer sliced.deinit();
-                    if (sliced.len > 0) {
-                        result.ca_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
-                        if (std.os.system.access(result.ca_file_name, std.os.F_OK) != 0) {
-                            JSC.throwInvalidArguments("Invalid caFile path", .{}, global, exception);
-                            result.deinit();
-                            return null;
-                        }
+            if (obj.getTruthy(global, "caFile")) |ca_file_name| {
+                var sliced = ca_file_name.toSlice(global, bun.default_allocator);
+                defer sliced.deinit();
+                if (sliced.len > 0) {
+                    result.ca_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    if (std.os.system.access(result.ca_file_name, std.os.F_OK) != 0) {
+                        JSC.throwInvalidArguments("Invalid caFile path", .{}, global, exception);
+                        result.deinit();
+                        return null;
+                    }
+                }
+            }
+            // Optional
+            if (any) {
+                if (obj.getTruthy(global, "secureOptions")) |secure_options| {
+                    if (secure_options.isNumber()) {
+                        result.secure_options = secure_options.toU32();
                     }
                 }
 

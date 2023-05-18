@@ -46,10 +46,11 @@ var kInternalSocketData = Symbol.for("::bunternal::");
 const kEmptyBuffer = Buffer.alloc(0);
 
 function isValidTLSArray(obj) {
-  if (typeof obj === "string" || isTypedArray(obj) || obj instanceof ArrayBuffer) return true;
+  if (typeof obj === "string" || isTypedArray(obj) || obj instanceof ArrayBuffer || obj instanceof Blob) return true;
   if (Array.isArray(obj)) {
     for (var i = 0; i < obj.length; i++) {
-      if (typeof obj !== "string" && !isTypedArray(obj) && !(obj instanceof ArrayBuffer)) return false;
+      if (typeof obj !== "string" && !isTypedArray(obj) && !(obj instanceof ArrayBuffer) && !(obj instanceof Blob))
+        return false;
     }
     return true;
   }
@@ -303,7 +304,7 @@ export class Server extends EventEmitter {
       if (key) {
         if (!isValidTLSArray(key)) {
           throw new TypeError(
-            "key argument must be an string, Buffer or TypedArray or an array containing string, Buffer or TypedArray",
+            "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
           );
         }
         this.#is_tls = true;
@@ -312,7 +313,7 @@ export class Server extends EventEmitter {
       if (cert) {
         if (!isValidTLSArray(cert)) {
           throw new TypeError(
-            "cert argument must be an string, Buffer or TypedArray or an array containing string, Buffer or TypedArray",
+            "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
           );
         }
         this.#is_tls = true;
@@ -322,7 +323,7 @@ export class Server extends EventEmitter {
       if (ca) {
         if (!isValidTLSArray(ca)) {
           throw new TypeError(
-            "ca argument must be an string, Buffer or TypedArray or an array containing string, Buffer or TypedArray",
+            "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
           );
         }
         this.#is_tls = true;

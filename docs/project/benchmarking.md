@@ -89,7 +89,7 @@ console.log(heapStats());
     'Immutable Butterfly': 103,
     Primordials: 1,
     'Set Iterator': 1,
-    JSProxy: 1,
+    JSGlobalProxy: 1,
     AsyncFromSyncIterator: 1,
     ModuleRecord: 13,
     FinalizationRegistry: 1,

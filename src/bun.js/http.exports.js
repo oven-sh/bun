@@ -680,7 +680,7 @@ export class IncomingMessage extends Readable {
   }
 
   get httpVersion() {
-    return 1.1;
+    return "1.1";
   }
 
   get rawTrailers() {

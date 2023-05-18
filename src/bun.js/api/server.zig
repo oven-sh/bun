@@ -381,8 +381,8 @@ pub const ServerConfig = struct {
                     any = true;
                 }
             }
-            if (obj.getTruthy(global, "serverName")) |key_file_name| {
-                var sliced = key_file_name.toSlice(global, bun.default_allocator);
+            if (obj.getTruthy(global, "serverName")) |server_name| {
+                var sliced = server_name.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
                     result.server_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "fs";
 import path from "path";
 import { LoaderKeys } from "../../api/schema";
 
@@ -315,20 +315,33 @@ $$capture_start$$(function(${fn.params.join(", ")}) {$UseStrict$();${fn.source}}
   return bundledFunctions;
 }
 
-const files = [
-  {
-    basename: "CountQueuingStrategy",
-    functions: await processFileSplit("js/CountQueuingStrategy.ts"),
-  },
-  {
-    basename: "ConsoleObject",
-    functions: await processFileSplit("js/ConsoleObject.ts"),
-  },
-  {
-    basename: "BundlerPlugin",
-    functions: await processFileSplit("js/BundlerPlugin.ts"),
-  },
-];
+// const files = [
+//   {
+//     basename: "CountQueuingStrategy",
+//     functions: await processFileSplit("js/CountQueuingStrategy.ts"),
+//   },
+//   {
+//     basename: "ConsoleObject",
+//     functions: await processFileSplit("js/ConsoleObject.ts"),
+//   },
+//   {
+//     basename: "BundlerPlugin",
+//     functions: await processFileSplit("js/BundlerPlugin.ts"),
+//   },
+// ];
+const files = await Promise.all(
+  readdirSync(SRC_DIR)
+    .filter(x => x.endsWith(".ts"))
+    .map(async x => {
+      const basename = path.basename(x, ".ts");
+      return {
+        basename,
+        functions: await processFileSplit(path.join(SRC_DIR, x)),
+      };
+    }),
+);
+
+console.log(files);
 
 // C++ codegen
 let cpp = `#include "config.h"

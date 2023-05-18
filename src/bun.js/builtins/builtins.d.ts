@@ -196,7 +196,7 @@ declare function $byobRequest(): TODO;
 declare function $cancel(): TODO;
 declare function $cancelAlgorithm(): TODO;
 declare function $chdir(): TODO;
-declare function $cloneArrayBuffer(): TODO;
+declare function $cloneArrayBuffer(a, b, c): TODO;
 declare function $close(): TODO;
 declare function $closeAlgorithm(): TODO;
 declare function $closeRequest(): TODO;
@@ -215,7 +215,7 @@ declare function $createEmptyReadableStream(): TODO;
 declare function $createFIFO(): TODO;
 declare function $createNativeReadableStream(): TODO;
 declare function $createReadableStream(): TODO;
-declare function $createUninitializedArrayBuffer(): TODO;
+declare function $createUninitializedArrayBuffer(size: number): ArrayBuffer;
 declare function $createWritableStreamFromInternal(): TODO;
 declare function $cwd(): TODO;
 declare function $data(): TODO;
@@ -280,8 +280,8 @@ declare function $loadModule(): TODO;
 declare function $localStreams(): TODO;
 declare function $main(): TODO;
 declare function $makeDOMException(): TODO;
-declare function $makeGetterTypeError(): TODO;
-declare function $makeThisTypeError(): TODO;
+declare function $makeGetterTypeError(className: string, prop: string): Error;
+declare function $makeThisTypeError(className: string, method: string): Error;
 declare function $map(): TODO;
 declare function $method(): TODO;
 declare function $nextTick(): TODO;
@@ -393,6 +393,55 @@ declare function $written(): TODO;
 // you need to use the '@' syntax.
 declare const $loadCJS2ESM: RemoveThis<typeof import("./js/ImportMetaObject")["loadCJS2ESM"]>;
 
+// Readable stream ????
+declare function $isReadableStream(stream: unknown): stream is ReadableStream;
+declare function $privateInitializeReadableByteStreamController(
+  stream: unknown,
+  underlyingByteSource: unknown,
+  highWaterMark: unknown,
+): stream is ReadableStream;
+declare function $isReadableByteStreamController(stream: unknown): stream is ReadableStream;
+declare function $readableByteStreamControllerEnqueue(stream: unknown, chunk: unknown): TODO;
+declare function $readableByteStreamControllerError(stream: unknown, chunk: unknown): TODO;
+declare function $readableByteStreamControllerClose(stream: unknown): TODO;
+declare function $readableByteStreamControllerGetDesiredSize(stream: unknown): TODO;
+declare function $readableByteStreamControllerClearPendingPullIntos(stream: unknown): TODO;
+declare function $newQueue(): TODO;
+declare function $promiseInvokeOrNoopNoCatch(obj: unknown, method: unknown, args: unknown[]): Promise<any>;
+declare function $readableByteStreamControllerCallPullIfNeeded(obj): TODO;
+declare function $readableByteStreamControllerCancel(): TODO;
+declare function $readableByteStreamControllerPull(): TODO;
+declare function $promiseInvokeOrNoop(obj: unknown, method: unknown, args: unknown[]): Promise<any>;
+declare function $readableStreamError(obj: unknown, err: unknown): void;
+declare function $makeTypeError(err: string): TypeError;
+declare function $readableStreamClose(obj: unknown): void;
+declare function $readableByteStreamControllerInvalidateBYOBRequest(obj: unknown): void;
+declare function $isReadableStreamBYOBReader(obj: unknown): void;
+declare function $isReadableStreamDefaultReader(obj: unknown): void;
+declare function $readableStreamHasDefaultReader(obj: unknown): void;
+declare function $readableByteStreamControllerHandleQueueDrain(obj: unknown): void;
+declare function $createFulfilledPromise(obj: unknown): void;
+declare function $readableStreamAddReadRequest(stream: unknown): void;
+declare function $readableStreamHasBYOBReader(stream: unknown): boolean;
+declare function $readableByteStreamControllerShouldCallPull(stream: unknown): boolean;
+declare function $readableStreamReaderKind(reader: unknown): number;
+declare function $readableByteStreamControllerEnqueueChunk(a, b, c, d): any;
+declare function $transferBufferToCurrentRealm(a): any;
+declare function $readableStreamFulfillReadRequest(a, b, c): any;
+declare function $readableByteStreamControllerProcessPullDescriptors(a): any;
+declare function $isReadableStreamLocked(a): any;
+declare function $readableByteStreamControllerRespondInternal(a, b): any;
+declare function $readableByteStreamControllerRespondInClosedState(a, b): any;
+declare function $readableByteStreamControllerRespondInReadableState(a, b): any;
+declare function $readableByteStreamControllerShiftPendingDescriptor(a): any;
+declare function $readableByteStreamControllerCommitDescriptor(a, b): any;
+declare function $readableByteStreamControllerFillDescriptorFromQueue(a, b): any;
+declare function $readableByteStreamControllerConvertDescriptor(a): any;
+declare function $readableStreamFulfillReadIntoRequest(a, b, c): any;
+declare function $fulfillPromise(a, b): any;
+declare function $readableByteStreamControllerPullInto(a, b): any;
+declare function $readableStreamAddReadIntoRequest(a): any;
+
 // The following I cannot find any definitions of, but they are functional.
 declare function $toLength(length: number): number;
 declare function $isTypedArrayView(obj: unknown): obj is ArrayBufferView | DataView | Uint8Array;
@@ -415,9 +464,15 @@ type ClassWithIntrinsics<T> = { [K in keyof T as T[K] extends Function ? `$${K}`
 declare interface Map<K, V> extends ClassWithIntrinsics<Map<K, V>> {}
 declare interface CallableFunction extends ClassWithIntrinsics<CallableFunction> {}
 declare interface Promise<T> extends ClassWithIntrinsics<Promise<T>> {}
+declare interface ArrayBufferConstructor<T> extends ClassWithIntrinsics<ArrayBufferConstructor<T>> {}
+declare interface PromiseConstructor<T> extends ClassWithIntrinsics<PromiseConstructor<T>> {}
 
 declare class OutOfMemoryError {
   constructor();
+}
+
+declare class ReadableStreamBYOBRequest {
+  constructor(stream: unknown, view: unknown, $isReadableStream: typeof $isReadableStream);
 }
 
 // Inlining our enum types

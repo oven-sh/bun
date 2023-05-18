@@ -2211,13 +2211,14 @@ fn NewPrinter(
                     );
 
                     if (p.canPrintIdentifier(e.name)) {
-                        if (!isOptionalChain and p.prev_num_end == p.writer.written) {
-                            // "1.toString" is a syntax error, so print "1 .toString" instead
-                            p.print(" ");
-                        }
                         if (isOptionalChain) {
                             p.print("?.");
                         } else {
+                            if (p.prev_num_end == p.writer.written) {
+                                // "1.toString" is a syntax error, so print "1 .toString" instead
+                                p.print(" ");
+                            }
+
                             p.print(".");
                         }
 
@@ -2225,13 +2226,17 @@ fn NewPrinter(
                         p.printIdentifier(e.name);
                     } else {
                         if (isOptionalChain) {
-                            p.print("?.");
+                            p.print("?.[");
+                        } else {
+                            p.print("[");
                         }
 
-                        p.printBindingIdentifierName(
+                        p.printPossiblyEscapedIdentifierString(
                             e.name,
-                            e.name_loc,
+                            true,
                         );
+
+                        p.print("]");
                     }
 
                     if (wrap) {
@@ -3007,43 +3012,24 @@ fn NewPrinter(
         }
 
         fn printBindingIdentifierName(p: *Printer, name: string, name_loc: logger.Loc) void {
-            if (comptime ascii_only) {
-                const quote = if (comptime !is_json)
-                    bestQuoteCharForString(u8, name, true)
-                else
-                    '"';
+            p.addSourceMapping(name_loc);
 
-                p.print(switch (quote) {
-                    '"' => "[\"",
-                    '\'' => "['",
-                    '`' => "[`",
-                    else => unreachable,
-                });
-                p.addSourceMapping(name_loc);
+            if (comptime !is_json and ascii_only) {
                 p.printQuotedIdentifier(name);
-                p.print(switch (quote) {
-                    '"' => "\"]",
-                    '\'' => "']",
-                    '`' => "`]",
-                    else => unreachable,
-                });
             } else {
-                p.addSourceMapping(name_loc);
-                p.print("[");
                 p.printQuotedUTF8(name, true);
-                p.print("]");
             }
         }
 
         fn printPossiblyEscapedIdentifierString(p: *Printer, name: string, allow_backtick: bool) void {
-            const quote = if (comptime !is_json)
-                bestQuoteCharForString(u8, name, allow_backtick)
-            else
-                '"';
-
-            if (comptime !ascii_only) {
+            if (comptime !ascii_only or is_json) {
                 p.printQuotedUTF8(name, allow_backtick);
             } else {
+                const quote = if (comptime !is_json)
+                    bestQuoteCharForString(u8, name, allow_backtick)
+                else
+                    '"';
+
                 p.print(quote);
                 p.printQuotedIdentifier(name);
                 p.print(quote);
@@ -3261,7 +3247,7 @@ fn NewPrinter(
                         // While each of those property keys are ASCII, a subset of ASCII is valid as the start of an identifier
                         // "=" and ":" are not valid
                         // So we need to check
-                        if ((comptime !is_json) and p.canPrintIdentifier(key.data)) {
+                        if (p.canPrintIdentifier(key.data)) {
                             p.print(key.data);
                         } else {
                             allow_shorthand = false;
@@ -5115,15 +5101,18 @@ fn NewPrinter(
                         }
 
                         switch (cursor.c) {
+                            // note that 2-digit hex escapes are not supported in identifiers
                             0...0xFFFF => {
-                                p.print([_]u8{
+                                var ptr = p.writer.reserve(6) catch unreachable;
+                                ptr[0..6].* = [_]u8{
                                     '\\',
                                     'u',
                                     hex_chars[cursor.c >> 12],
                                     hex_chars[(cursor.c >> 8) & 15],
                                     hex_chars[(cursor.c >> 4) & 15],
                                     hex_chars[cursor.c & 15],
-                                });
+                                };
+                                p.writer.advance(6);
                             },
                             else => {
                                 p.print("\\u{");

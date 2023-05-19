@@ -30,21 +30,21 @@ class BunWebSocket extends globalThis.WebSocket {
       var handler = ({ message }) => {
         try {
           if (typeof message === "string") {
-            if (this.#binaryType === "blob") {
-              message = new Blob([message], { type: "text/plain" });
-            } else if (this.#binaryType === "arraybuffer") {
+            if (this.#binaryType === "arraybuffer") {
               const encoder = new TextEncoder();
               message = encoder.encode(message).buffer;
+            } else if (this.#binaryType === "blob") {
+              message = new Blob([message], { type: "text/plain" });
             } else {
               // nodebuffer or buffer
               message = Buffer.from(message);
             }
           } else {
             //Uint8Array
-            if (this.#binaryType === "blob") {
-              message = new Blob([message]);
-            } else if (this.#binaryType === "arraybuffer") {
+            if (this.#binaryType === "arraybuffer") {
               message = message.buffer;
+            } else if (this.#binaryType === "blob") {
+              message = new Blob([message]);
             } else {
               // nodebuffer or buffer
               message = Buffer.from(message);
@@ -370,21 +370,21 @@ class BunWebSocketMocked extends EventEmitter {
     this.#ws = ws;
 
     if (typeof message === "string") {
-      if (this.#binaryType === "blob") {
-        message = new Blob([message], { type: "text/plain" });
-      } else if (this.#binaryType === "arraybuffer") {
+      if (this.#binaryType === "arraybuffer") {
         const encoder = new TextEncoder();
         message = encoder.encode(message).buffer;
+      } else if (this.#binaryType === "blob") {
+        message = new Blob([message], { type: "text/plain" });
       } else {
         // nodebuffer or buffer
         message = Buffer.from(message);
       }
     } else {
       //Uint8Array
-      if (this.#binaryType === "blob") {
-        message = new Blob([message]);
-      } else if (this.#binaryType === "arraybuffer") {
+      if (this.#binaryType === "arraybuffer") {
         message = message.buffer;
+      } else if (this.#binaryType === "blob") {
+        message = new Blob([message]);
       } else {
         // nodebuffer or buffer
         message = Buffer.from(message);
@@ -768,7 +768,7 @@ class Server extends EventEmitter {
         ? this.options.handleProtocols(protocols, request)
         : protocols.values().next().value;
     }
-    const ws = new BunWebSocketMocked(request.url, protocol, extensions, "nodebuffer");
+    const ws = new BunWebSocketMocked(request.url, protocol, extensions, "arraybuffer");
 
     const headers = ["HTTP/1.1 101 Switching Protocols", "Upgrade: websocket", "Connection: Upgrade"];
     this.emit("headers", headers, request);

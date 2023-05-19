@@ -104,7 +104,11 @@ declare function $putByIdDirectPrivate(obj: any, key: PropertyKey, value: any): 
 declare function $putByValDirect(obj: any, key: PropertyKey, value: any): void;
 declare function $putByValWithThisSloppy(): TODO;
 declare function $putByValWithThisStrict(): TODO;
-declare function $putPromiseInternalField(): TODO;
+declare function $putPromiseInternalField<T extends PromiseFieldType, P extends Promise<any>>(
+  promise: P,
+  key: T,
+  value: PromiseFieldToValue<T, P>,
+): void;
 declare function $putGeneratorInternalField(): TODO;
 declare function $putAsyncGeneratorInternalField(): TODO;
 declare function $putArrayIteratorInternalField(): TODO;
@@ -467,6 +471,8 @@ declare function $readableStreamToArrayBufferDirect(a: any, b: any): any;
 declare function $readableStreamIntoArray(a: any): any;
 declare function $readableStreamToTextDirect(a: any, b): any;
 declare function $readableStreamIntoText(a: any): any;
+declare function $shieldingPromiseResolve(a: any): any;
+declare function $promiseInvokeOrNoopMethodNoCatch(a: any, b: any, c: any): any;
 
 // The following I cannot find any definitions of, but they are functional.
 declare function $toLength(length: number): number;

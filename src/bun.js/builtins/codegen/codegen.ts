@@ -1,196 +1,22 @@
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "fs";
 import path from "path";
-import { LoaderKeys } from "../../api/schema";
+import { sliceSourceCode } from "./builtin-parser";
+import { applyGlobalReplacements, enums, globalsToPrefix } from "./replacements";
+import { cap, fmtCPPString, low } from "./helpers";
+
+console.log("Bundling Bun builtins...");
 
 const MINIFY = process.argv.includes("--minify") || process.argv.includes("-m");
 const PARALLEL = process.argv.includes("--parallel") || process.argv.includes("-p");
 
-// This is a list of extra syntax replacements to do. Kind of like macros
-const replacements: ReplacementRule[] = [
-  {
-    from: /\bnotImplementedIssue\(\s*([0-9]+)\s*,\s*((?:"[^"]*"|'[^']+'))\s*\)/g,
-    to: "new TypeError(`${$2} is not implemented yet. See https://github.com/oven-sh/bun/issues/$1`)",
-    global: true,
-  },
-  { from: /\bthrow new TypeError\b/g, to: "$throwTypeError" },
-  { from: /\bthrow new RangeError\b/g, to: "$throwRangeError" },
-  { from: /\bthrow new OutOfMemoryError\b/g, to: "$throwOutOfMemoryError" },
-];
-
-// This is a list of globals we should access using @ notation
-// undefined -> __intrinsic__undefined -> @undefined
-const globalsToPrefix = [
-  "AbortSignal",
-  "Array",
-  "Buffer",
-  "Bun",
-  "Infinity",
-  "Loader",
-  "Promise",
-  "ReadableByteStreamController",
-  "ReadableStream",
-  "ReadableStreamBYOBReader",
-  "ReadableStreamBYOBRequest",
-  "ReadableStreamDefaultController",
-  "ReadableStreamDefaultReader",
-  "TransformStream",
-  "TransformStreamDefaultController",
-  "Uint8Array",
-  "WritableStream",
-  "WritableStreamDefaultController",
-  "WritableStreamDefaultWriter",
-  "isNaN",
-  "undefined",
-];
-
-// These enums map to $<enum>IdToLabel and $<enum>LabelToId
-// Make sure to define in ./builtins.d.ts
-const enums = {
-  Loader: LoaderKeys,
-  ImportKind: [
-    "entry-point",
-    "import-statement",
-    "require-call",
-    "dynamic-import",
-    "require-resolve",
-    "import-rule",
-    "url-token",
-    "internal",
-  ],
-};
-
-// These identifiers have typedef but not present at runtime (converted with replacements)
-// If they are present in the bundle after runtime, we warn at the user.
-const warnOnIdentifiersNotPresentAtRuntime = ["OutOfMemoryError", "notImplementedIssue"];
-
-//
-interface ReplacementRule {
-  from: RegExp;
-  to: string;
-  global?: boolean;
-}
-
-const SRC_DIR = path.join(import.meta.dir, "js");
-const CPP_OUT_DIR = path.join(import.meta.dir);
-const OUT_DIR = path.join(import.meta.dir, "out");
-const TMP_DIR = path.join(import.meta.dir, "out/tmp");
+const SRC_DIR = path.join(import.meta.dir, "../js");
+const CPP_OUT_DIR = path.join(import.meta.dir, "../");
+const OUT_DIR = path.join(import.meta.dir, "../out");
+const TMP_DIR = path.join(import.meta.dir, "../out/tmp");
 
 if (!existsSync(OUT_DIR)) mkdirSync(OUT_DIR);
 if (existsSync(TMP_DIR)) rmSync(TMP_DIR, { recursive: true });
 mkdirSync(TMP_DIR);
-
-/** Applies source code replacements as defined in `replacements` */
-function applyReplacements(src: string) {
-  let result = src.replace(/\$([a-zA-Z0-9_]+)\b/gm, `__intrinsic__$1`);
-  for (const replacement of replacements) {
-    if (!replacement.global) result = result.replace(replacement.from, replacement.to.replaceAll("$", "__intrinsic__"));
-  }
-  return result;
-}
-
-/** makes this into a valid c++ string literal */
-function createCPPString(str: string) {
-  return (
-    '"' +
-    str
-      .replace(/\\/g, "\\\\")
-      .replace(/"/g, '\\"')
-      .replace(/\n/g, "\\n")
-      .replace(/\r/g, "\\r")
-      .replace(/\t/g, "\\t")
-      .replace(/\?/g, "\\?") + // https://stackoverflow.com/questions/1234582
-    '"'
-  );
-}
-
-function cap(str: string) {
-  return str[0].toUpperCase() + str.slice(1);
-}
-
-/**
- * Slices a string until it hits a }, but keeping in mind JS comments,
- * regex, template literals, comments, and matching {
- *
- * Used to extract function bodies without parsing the code.
- */
-function sliceSourceCode(contents: string, replace: boolean): { result: string; rest: string; usesThis: boolean } {
-  let bracketCount = 0;
-  let i = 0;
-  let result = "";
-  let usesThis = false;
-  while (contents.length) {
-    // TODO: template literal, regexp
-    // these are important because our replacement logic would replace intrinsics
-    // within these, when it should remain as the literal dollar.
-    // but this isn't used in the codebase
-    i = contents.match(/\/\*|\/\/|'|"|{|}|`/)?.index ?? contents.length;
-    const chunk = replace ? applyReplacements(contents.slice(0, i)) : contents.slice(0, i);
-    if (chunk.includes("this")) usesThis = true;
-    result += chunk;
-    contents = contents.slice(i);
-    if (!contents.length) break;
-    if (contents.startsWith("/*")) {
-      i = contents.slice(2).indexOf("*/") + 2;
-    } else if (contents.startsWith("//")) {
-      i = contents.slice(2).indexOf("\n") + 2;
-    } else if (contents.startsWith("'")) {
-      i = contents.slice(1).match(/(?<!\\)'/)!.index! + 2;
-    } else if (contents.startsWith('"')) {
-      i = contents.slice(1).match(/(?<!\\)"/)!.index! + 2;
-    } else if (contents.startsWith("`")) {
-      const { result: result2, rest } = sliceTemplateLiteralSourceCode(contents.slice(1), replace);
-      result += "`" + result2;
-      contents = rest;
-      continue;
-    } else if (contents.startsWith("{")) {
-      bracketCount++;
-      i = 1;
-    } else if (contents.startsWith("}")) {
-      bracketCount--;
-      if (bracketCount <= 0) {
-        result += "}";
-        contents = contents.slice(1);
-        break;
-      }
-      i = 1;
-    } else {
-      throw new Error("TODO");
-    }
-    result += contents.slice(0, i);
-    contents = contents.slice(i);
-  }
-
-  return { result, rest: contents, usesThis };
-}
-
-function sliceTemplateLiteralSourceCode(contents: string, replace: boolean) {
-  let i = 0;
-  let result = "";
-  let usesThis = false;
-  while (contents.length) {
-    i = contents.match(/`|\${/)!.index!;
-    result += contents.slice(0, i);
-    contents = contents.slice(i);
-    if (!contents.length) break;
-    if (contents.startsWith("`")) {
-      result += "`";
-      contents = contents.slice(1);
-      break;
-    } else if (contents.startsWith("$")) {
-      const { result: result2, rest, usesThis: usesThisVal } = sliceSourceCode(contents.slice(1), replace);
-      result += "$" + result2;
-      contents = rest;
-      usesThis ||= usesThisVal;
-      continue;
-    } else {
-      throw new Error("TODO");
-    }
-  }
-
-  return { result, rest: contents, usesThis };
-}
-
-/** Converts an enum object to --define arguments */
 
 const define = {
   "process.env.NODE_ENV": "development",
@@ -217,6 +43,7 @@ interface ParsedBuiltin {
   directives: Record<string, any>;
   source: string;
   usesThis: boolean;
+  async: boolean;
 }
 interface BundledBuiltin {
   name: string;
@@ -239,19 +66,19 @@ async function processFileSplit(filename: string): Promise<BundledBuiltin[]> {
   const basename = path.basename(filename, ".ts");
   let contents = await Bun.file(filename).text();
 
-  for (const replacement of replacements) {
-    if (replacement.global) contents = contents.replace(replacement.from, replacement.to);
-  }
+  contents = applyGlobalReplacements(contents);
 
   // first approach doesnt work perfectly because we actually need to split each function declaration
   // and then compile those separately
 
   const consumeWhitespace = /^\s*/;
-  const consumeTopLevelContent = /^(\/\*|\/\/|type|import|interface|\$|export function|function)/;
+  const consumeTopLevelContent = /^(\/\*|\/\/|type|import|interface|\$|export (?:async )?function|(?:async )?function)/;
+  const consumeEndOfType = /;|.(?=export|type|interface|\$|\/\/|\/\*|function)/;
 
   const functions: ParsedBuiltin[] = [];
   let directives: Record<string, any> = {};
   const bundledFunctions: BundledBuiltin[] = [];
+  let internal = false;
 
   while (contents.length) {
     contents = contents.replace(consumeWhitespace, "");
@@ -267,12 +94,15 @@ async function processFileSplit(filename: string): Promise<BundledBuiltin[]> {
       contents = contents.slice(i + 1);
     } else if (match[1] === "/*") {
       const i = contents.indexOf("*/") + 2;
+      internal ||= contents.slice(0, i).includes("@internal");
       contents = contents.slice(i);
     } else if (match[1] === "//") {
       const i = contents.indexOf("\n") + 1;
+      internal ||= contents.slice(0, i).includes("@internal");
       contents = contents.slice(i);
-    } else if (match[1] === "type") {
-      contents = sliceSourceCode(contents, false).rest;
+    } else if (match[1] === "type" || match[1] === "export type") {
+      const i = contents.search(consumeEndOfType);
+      contents = contents.slice(i + 1);
     } else if (match[1] === "interface") {
       contents = sliceSourceCode(contents, false).rest;
     } else if (match[1] === "$") {
@@ -287,15 +117,24 @@ async function processFileSplit(filename: string): Promise<BundledBuiltin[]> {
       } catch (error) {
         throw new SyntaxError("Could not parse directive value " + directive[2] + " (must be JSON parsable)");
       }
+      if (name === "constructor") {
+        throw new SyntaxError("$constructor not implemented");
+      }
+      if (name === "nakedConstructor") {
+        throw new SyntaxError("$nakedConstructor not implemented");
+      }
       directives[name] = value;
       contents = contents.slice(directive[0].length);
-    } else if (match[1] === "export function") {
-      const declaration = contents.match(/^export function ([a-zA-Z0-9]+)\(([^)]*)\)(?:\s*:\s*([^{\n]+))?\s*{?/);
+    } else if (match[1] === "export function" || match[1] === "export async function") {
+      const declaration = contents.match(
+        /^export\s+(async\s+)?function\s+([a-zA-Z0-9]+)\s*\(([^)]*)\)(?:\s*:\s*([^{\n]+))?\s*{?/,
+      );
       if (!declaration)
         throw new SyntaxError("Could not parse function declaration:\n" + contents.slice(0, contents.indexOf("\n")));
 
-      const name = declaration[1];
-      const paramString = declaration[2];
+      const async = !!declaration[1];
+      const name = declaration[2];
+      const paramString = declaration[3];
       const params =
         paramString.trim().length === 0 ? [] : paramString.split(",").map(x => x.replace(/:.+$/, "").trim());
       if (params[0] === "this") {
@@ -309,10 +148,11 @@ async function processFileSplit(filename: string): Promise<BundledBuiltin[]> {
         directives,
         source: result.trim().slice(1, -1),
         usesThis,
+        async,
       });
       contents = rest;
       directives = {};
-    } else if (match[1] === "function") {
+    } else if (match[1] === "function" || match[1] === "async function") {
       const fnname = contents.match(/^function ([a-zA-Z0-9]+)\(([^)]*)\)(?:\s*:\s*([^{\n]+))?\s*{?/)![1];
       throw new SyntaxError("All top level functions must be exported: " + fnname);
     } else {
@@ -337,7 +177,7 @@ async function processFileSplit(filename: string): Promise<BundledBuiltin[]> {
 // do not allow the bundler to rename a symbol to $
 ($);
 
-$$capture_start$$(${
+$$capture_start$$(${fn.async ? "async " : ""}${
         useThis
           ? `function(${fn.params.join(",")})`
           : `${fn.params.length === 1 ? fn.params[0] : `(${fn.params.join(",")})`}=>`
@@ -387,7 +227,18 @@ $$capture_start$$(${
 }
 
 // const filesToProcess = readdirSync(SRC_DIR).filter(x => x.endsWith(".ts"));
-const filesToProcess = ["BundlerPlugin.ts"];
+const filesToProcess = [
+  "ByteLengthQueuingStrategy.ts",
+  "BundlerPlugin.ts",
+  "ConsoleObject.ts",
+  "CountQueuingStrategy.ts",
+  "ImportMetaObject.ts",
+  "JSBufferConstructor.ts",
+  "JSBufferPrototype.ts",
+  "ProcessObjectInternals.ts",
+  "ReadableByteStreamController.ts",
+  "ReadableByteStreamInternals.ts",
+];
 
 const files: Array<{ basename: string; functions: BundledBuiltin[] }> = [];
 async function processFile(x: string) {
@@ -415,9 +266,14 @@ if (PARALLEL) {
 
 // C++ codegen
 let cpp = `#include "config.h"
-#include "WebCoreJSBuiltins.h"
+`;
 
-#include "WebCoreJSClientData.h"
+for (const { basename } of files) {
+  cpp += `#include "${basename}Builtins.h"
+`;
+}
+
+cpp += `#include "WebCoreJSClientData.h"
 #include <JavaScriptCore/IdentifierInlines.h>
 #include <JavaScriptCore/ImplementationVisibility.h>
 #include <JavaScriptCore/Intrinsic.h>
@@ -430,16 +286,17 @@ namespace WebCore {
 
 for (const { basename, functions } of files) {
   cpp += `/* ${basename}.ts */\n`;
+  const lowerBasename = low(basename);
 
   for (const fn of functions) {
-    const name = `${basename}${cap(fn.name)}Code`;
+    const name = `${lowerBasename}${cap(fn.name)}Code`;
     cpp += `// ${fn.name}
 const JSC::ConstructAbility s_${name}ConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_${name}ConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_${name}ImplementationVisibility = JSC::ImplementationVisibility::${fn.visibility};
 const int s_${name}Length = ${fn.source.length};
 static const JSC::Intrinsic s_${name}Intrinsic = JSC::NoIntrinsic;
-const char* const s_${name} = ${createCPPString(fn.source)};
+const char* const s_${name} = ${fmtCPPString(fn.source)};
 
 `;
   }
@@ -447,7 +304,7 @@ const char* const s_${name} = ${createCPPString(fn.source)};
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \\
 {\\
     JSVMClientData* clientData = static_cast<JSVMClientData*>(vm.clientData); \\
-    return clientData->builtinFunctions().${basename}Builtins().codeName##Executable()->link(vm, nullptr, clientData->builtinFunctions().${basename}Builtins().codeName##Source(), std::nullopt, s_##codeName##Intrinsic); \\
+    return clientData->builtinFunctions().${lowerBasename}Builtins().codeName##Executable()->link(vm, nullptr, clientData->builtinFunctions().${lowerBasename}Builtins().codeName##Source(), std::nullopt, s_##codeName##Intrinsic); \\
 }
 WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 #undef DEFINE_BUILTIN_GENERATOR
@@ -460,7 +317,8 @@ cpp += `
 `;
 
 // C++ Header codegen
-let h = `#pragma once
+for (const { basename, functions } of files) {
+  let h = `#pragma once
 
 #include <JavaScriptCore/BuiltinUtils.h>
 #include <JavaScriptCore/Identifier.h>
@@ -472,13 +330,12 @@ class FunctionExecutable;
 }
 
 namespace WebCore {
+/* ${basename}.ts */
 `;
-
-for (const { basename, functions } of files) {
-  h += `/* ${basename}.ts */\n`;
+  const lowerBasename = low(basename);
 
   for (const fn of functions) {
-    const name = `${basename}${cap(fn.name)}Code`;
+    const name = `${lowerBasename}${cap(fn.name)}Code`;
     h += `// ${fn.name}
 #define WEBCORE_BUILTIN_${basename.toUpperCase()}_${fn.name.toUpperCase()} 1
 extern const char* const s_${name};
@@ -491,12 +348,12 @@ extern const JSC::ImplementationVisibility s_${name}ImplementationVisibility;
   }
   h += `#define WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_DATA(macro) \\\n`;
   for (const fn of functions) {
-    h += `    macro(${fn.name}, ${basename}${cap(fn.name)}, ${fn.params.length}) \\\n`;
+    h += `    macro(${fn.name}, ${lowerBasename}${cap(fn.name)}, ${fn.params.length}) \\\n`;
   }
   h += "\n";
   h += `#define WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_CODE(macro) \\\n`;
   for (const fn of functions) {
-    const name = `${basename}${cap(fn.name)}Code`;
+    const name = `${lowerBasename}${cap(fn.name)}Code`;
     h += `    macro(${name}, ${fn.name}, ${fn.overriddenName}, s_${name}Length) \\\n`;
   }
   h += "\n";
@@ -522,8 +379,8 @@ public:
     {
     }
 
-#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-    JSC::UnlinkedFunctionExecutable* name##Executable(); \
+#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \\
+    JSC::UnlinkedFunctionExecutable* name##Executable(); \\
     const JSC::SourceCode& name##Source() const { return m_##name##Source; }
     WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
 #undef EXPOSE_BUILTIN_EXECUTABLES
@@ -537,24 +394,24 @@ private:
 
     WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
 
-#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
-    JSC::SourceCode m_##name##Source;\
+#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \\
+    JSC::SourceCode m_##name##Source;\\
     JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
     WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
 #undef DECLARE_BUILTIN_SOURCE_MEMBERS
 
 };
 
-#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-inline JSC::UnlinkedFunctionExecutable* ${basename}BuiltinsWrapper::name##Executable() \
-{\
-    if (!m_##name##Executable) {\
-        JSC::Identifier executableName = functionName##PublicName();\
-        if (overriddenName)\
-            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
-    }\
-    return m_##name##Executable.get();\
+#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \\
+inline JSC::UnlinkedFunctionExecutable* ${basename}BuiltinsWrapper::name##Executable() \\
+{\\
+    if (!m_##name##Executable) {\\
+        JSC::Identifier executableName = functionName##PublicName();\\
+        if (overriddenName)\\
+            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\\
+    }\\
+    return m_##name##Executable.get();\\
 }
 WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
 #undef DEFINE_BUILTIN_EXECUTABLES
@@ -565,21 +422,19 @@ inline void ${basename}BuiltinsWrapper::exportNames()
     WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
 #undef EXPORT_FUNCTION_NAME
 }
-`;
-}
 
-h += `
 } // namespace WebCore
 `;
 
-await Bun.write(path.join(CPP_OUT_DIR, `WebCoreJSBuiltins.cpp`), cpp);
-await Bun.write(path.join(CPP_OUT_DIR, `WebCoreJSBuiltins.h`), h);
+  await Bun.write(path.join(CPP_OUT_DIR, "cpp", basename + `Builtins.h`), h);
+}
+
+await Bun.write(path.join(CPP_OUT_DIR, `NewBuiltinGenerator.cpp`), cpp);
 
 const totalJSSize = files.reduce(
   (acc, { functions }) => acc + functions.reduce((acc, fn) => acc + fn.source.length, 0),
   0,
 );
-console.log("Generated builtins");
 console.log(
   `Embedded JS size: ${totalJSSize} bytes (across ${files.reduce(
     (acc, { functions }) => acc + functions.length,

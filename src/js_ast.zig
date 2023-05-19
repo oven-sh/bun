@@ -2428,8 +2428,7 @@ pub const E = struct {
                 if (part.value.data == .e_string and part.tail.cooked.isUTF8() and part.value.data.e_string.isUTF8()) {
                     if (parts.items.len == 0) {
                         if (part.value.data.e_string.len() > 0) {
-                            part.value = part.value.clone(allocator) catch unreachable;
-                            head.data.e_string.push(part.value.data.e_string);
+                            head.data.e_string.push(Expr.init(E.String, part.value.data.e_string.clone(allocator) catch unreachable, part.value.loc).data.e_string);
                         }
 
                         if (part.tail.cooked.len() > 0) {
@@ -2443,8 +2442,7 @@ pub const E = struct {
 
                         if (prev_part.tail.cooked.isUTF8()) {
                             if (part.value.data.e_string.len() > 0) {
-                                part.value = part.value.clone(allocator) catch unreachable;
-                                prev_part.tail.cooked.push(part.value.data.e_string);
+                                prev_part.tail.cooked.push(Expr.init(E.String, part.value.data.e_string.clone(allocator) catch unreachable, part.value.loc).data.e_string);
                             }
 
                             if (part.tail.cooked.len() > 0) {

@@ -90,9 +90,9 @@ export default {
     page("runtime/typescript", "TypeScript", {
       description: `Bun can directly execute TypeScript files without additional configuration.`,
     }),
-    // page("runtime/jsx", "JSX", {
-    //   description: `Bun can directly execute TypeScript files without additional configuration.`,
-    // }),
+    page("runtime/jsx", "JSX", {
+      description: `Bun can directly execute TypeScript files without additional configuration.`,
+    }),
     // page("runtime/apis", "APIs", {
     //   description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
     // }),
@@ -227,9 +227,9 @@ export default {
     page("api/websockets", "WebSockets", {
       description: `Bun supports server-side WebSockets with on-the-fly compression, TLS support, and a Bun-native pubsub API.`,
     }), // "`Bun.serve`"),
-    page("api/tcp", "TCP Sockets", {
-      description: `Bun's native API implements Web-standard TCP Sockets, plus a Bun-native API for building fast TCP servers.`,
-    }), // "`Bun.{listen|connect}`"),
+    page("api/binary-data", "Binary data", {
+      description: `How to represent and manipulate binary data in Bun.`,
+    }), // "`Bun.serve`"),
     page("api/file-io", "File I/O", {
       description: `Read and write files fast with Bun's heavily optimized file system API.`,
     }), // "`Bun.write`"),
@@ -239,6 +239,9 @@ export default {
     page("api/file-system-router", "FileSystemRouter", {
       description: `Resolve incoming HTTP requests against a local file system directory with Bun's fast, Next.js-compatible router.`,
     }), // "`Bun.FileSystemRouter`"),
+    page("api/tcp", "TCP Sockets", {
+      description: `Bun's native API implements Web-standard TCP Sockets, plus a Bun-native API for building fast TCP servers.`,
+    }), // "`Bun.{listen|connect}`")
     page("api/globals", "Globals", {
       description: `Bun implements a range of Web APIs, Node.js APIs, and Bun-native APIs that are available in the global scope.`,
     }), // "`Bun.write`"),

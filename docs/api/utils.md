@@ -20,6 +20,28 @@ await Bun.sleep(oneSecondInFuture);
 console.log("hello one second later!");
 ```
 
+## `Bun.sleepSync`
+
+`Bun.sleepSync(ms: number)` (added in Bun v0.5.6)
+
+A blocking synchronous version of `Bun.sleep`.
+
+```ts
+console.log("hello");
+Bun.sleepSync(1000); // blocks thread for one second
+console.log("hello one second later!");
+```
+
+Alternatively, pass a `Date` object to receive a `Promise` that resolves at that point in time.
+
+```ts
+const oneSecondInFuture = new Date(Date.now() + 1000);
+
+console.log("hello");
+await Bun.sleep(oneSecondInFuture);
+console.log("hello one second later!");
+```
+
 ## `Bun.which`
 
 `Bun.which(bin: string)`

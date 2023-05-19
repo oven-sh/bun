@@ -61,6 +61,10 @@ public:
 
     const JSC::SourceCode& source() const { return m_source; }
 
+    DECLARE_VISIT_CHILDREN;
+    mutable WriteBarrier<JSC::DirectEvalExecutable> m_cachedDirectExecutable;
+    mutable WriteBarrier<JSC::JSGlobalObject> m_cachedGlobalObject;
+
 private:
     JSC::SourceCode m_source;
 

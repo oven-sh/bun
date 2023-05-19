@@ -107,12 +107,26 @@ static EncodedJSValue runInContext(JSGlobalObject* globalObject, NodeVMScript* s
     }
 
     auto err_scope = DECLARE_THROW_SCOPE(vm);
-    auto* eval = DirectEvalExecutable::create(
-        globalObject, script->source(), DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
-        false, false, EvalContextType::None, nullptr, nullptr, ECMAMode::sloppy());
-    RETURN_IF_EXCEPTION(err_scope, {});
+    JSC::DirectEvalExecutable* executable = nullptr;
 
-    return JSValue::encode(vm.interpreter.executeEval(eval, globalObject, scope));
+    if (JSC::JSGlobalObject* cachedGlobalObject = script->m_cachedGlobalObject.get()) {
+        if (cachedGlobalObject == globalObject) {
+            if (JSC::DirectEvalExecutable* existingEval = script->m_cachedDirectExecutable.get()) {
+                executable = existingEval;
+            }
+        }
+    }
+
+    if (executable == nullptr) {
+        executable = JSC::DirectEvalExecutable::create(
+            globalObject, script->source(), DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
+            false, false, EvalContextType::None, nullptr, nullptr, ECMAMode::sloppy());
+        RETURN_IF_EXCEPTION(err_scope, {});
+        script->m_cachedDirectExecutable.set(vm, script, executable);
+        script->m_cachedGlobalObject.set(vm, script, globalObject);
+    }
+
+    return JSValue::encode(vm.interpreter.executeEval(executable, globalObject, scope));
 }
 
 JSC_DEFINE_HOST_FUNCTION(scriptConstructorCall, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -291,6 +305,18 @@ const ClassInfo NodeVMScriptPrototype::s_info = { "Script"_s, &Base::s_info, nul
 const ClassInfo NodeVMScript::s_info = { "Script"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMScript) };
 const ClassInfo NodeVMScriptConstructor::s_info = { "Script"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMScriptConstructor) };
 
+DEFINE_VISIT_CHILDREN(NodeVMScript);
+
+template<typename Visitor>
+void NodeVMScript::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    NodeVMScript* thisObject = jsCast<NodeVMScript*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_cachedDirectExecutable);
+    visitor.append(thisObject->m_cachedGlobalObject);
+}
+
 NodeVMScriptConstructor::NodeVMScriptConstructor(VM& vm, Structure* structure)
     : NodeVMScriptConstructor::Base(vm, structure, scriptConstructorCall, scriptConstructorConstruct)
 {
@@ -339,5 +365,4 @@ void NodeVMScript::destroy(JSCell* cell)
 {
     static_cast<NodeVMScript*>(cell)->NodeVMScript::~NodeVMScript();
 }
-
 }

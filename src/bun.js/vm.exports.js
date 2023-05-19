@@ -27,17 +27,17 @@ Script.prototype.runInNewContext = function (contextObject, options) {
     contextObject = {};
   }
   const context = createContext(contextObject);
-  this.runInContext(context, options);
+  return this.runInContext(context, options);
 };
 
 function runInContext(code, context, options) {
-  new Script(code).runInContext(context, options);
+  return new Script(code).runInContext(context, options);
 }
 function runInNewContext(code, contextObject, options) {
-  new Script(code).runInNewContext(contextObject, options);
+  return new Script(code).runInNewContext(contextObject, options);
 }
 function runInThisContext(code, options) {
-  new Script(code).runInNewContext(options);
+  return new Script(code).runInNewContext(options);
 }
 function compileFunction() {
   notimpl("compileFunction");

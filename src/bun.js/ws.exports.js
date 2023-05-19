@@ -946,6 +946,7 @@ var createWebSocketStream = ws => {
 
 BunWebSocket.createWebSocketStream = createWebSocketStream;
 
-export default BunWebSocket;
+BunWebSocket[Symbol.for("CommonJS")] = 0;
 
+export default BunWebSocket;
 export { createWebSocketStream, Server, Receiver, Sender, BunWebSocket as WebSocket, Server as WebSocketServer };

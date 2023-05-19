@@ -170,6 +170,12 @@ declare module "bun:test" {
         | (() => void | Promise<unknown>)
         | ((done: (err?: unknown) => void) => void),
     ): void;
+    /**
+     * Indicate a test is yet to be written.
+     *
+     * @param label the label for the test
+     */
+    todo(label: string): void
   };
   /**
    * Runs a test.

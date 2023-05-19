@@ -429,6 +429,7 @@ pub const TestRunner = struct {
         onTestPass: OnTestUpdate,
         onTestFail: OnTestUpdate,
         onTestSkip: OnTestUpdate,
+        onTestTodo: OnTestUpdate,
     };
 
     pub fn reportPass(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*DescribeScope) void {
@@ -443,6 +444,11 @@ pub const TestRunner = struct {
     pub fn reportSkip(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope) void {
         this.tests.items(.status)[test_id] = .skip;
         this.callback.onTestSkip(this.callback, test_id, file, label, 0, 0, parent);
+    }
+
+    pub fn reportTodo(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope) void {
+        this.tests.items(.status)[test_id] = .todo;
+        this.callback.onTestTodo(this.callback, test_id, file, label, 0, 0, parent);
     }
 
     pub fn addTestCount(this: *TestRunner, count: u32) u32 {
@@ -492,6 +498,7 @@ pub const TestRunner = struct {
             pass,
             fail,
             skip,
+            todo,
         };
     };
 };
@@ -3119,6 +3126,7 @@ pub const TestScope = struct {
     ran: bool = false,
     task: ?*TestRunnerTask = null,
     skipped: bool = false,
+    is_todo: bool = false,
     snapshot_count: usize = 0,
 
     pub const Class = NewClass(
@@ -3128,6 +3136,7 @@ pub const TestScope = struct {
             .call = call,
             .only = only,
             .skip = skip,
+            .todo = todo,
         },
         .{},
     );
@@ -3173,6 +3182,17 @@ pub const TestScope = struct {
         return prepare(this, ctx, arguments, exception, .call);
     }
 
+    pub fn todo(
+        _: void,
+        ctx: js.JSContextRef,
+        this: js.JSObjectRef,
+        _: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSObjectRef {
+        return prepare(this, ctx, arguments, exception, .todo);
+    }
+
     fn prepare(
         this: js.JSObjectRef,
         ctx: js.JSContextRef,
@@ -3197,6 +3217,23 @@ pub const TestScope = struct {
         if (label_value != .zero) {
             const allocator = getAllocator(ctx);
             label = (label_value.toSlice(ctx, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
+        }
+
+        if (tag == .todo) {
+            if ((label_value == .zero or args.len != 1)) {
+                JSError(getAllocator(ctx), "test.todo() must be called with only a description. Use test.skip if you passed a callback.", .{}, ctx, exception);
+                return this;
+            }
+
+            DescribeScope.active.todo_counter += 1;
+            DescribeScope.active.tests.append(getAllocator(ctx), TestScope{
+                .label = label,
+                .parent = DescribeScope.active,
+                .is_todo = true,
+                .callback = null,
+            }) catch unreachable;
+
+            return this;
         }
 
         const function = function_value;
@@ -3417,6 +3454,7 @@ pub const DescribeScope = struct {
     done: bool = false,
     skipped: bool = false,
     skipped_counter: u32 = 0,
+    todo_counter: u32 = 0,
 
     pub fn isAllSkipped(this: *const DescribeScope) bool {
         return this.skipped or @as(usize, this.skipped_counter) >= this.tests.items.len;
@@ -3888,6 +3926,13 @@ pub const TestRunnerTask = struct {
         var test_: TestScope = this.describe.tests.items[test_id];
         describe.current_test_id = test_id;
         var globalThis = this.globalThis;
+
+        if (!describe.skipped and test_.is_todo) {
+            this.processTestResult(globalThis, .{ .todo = {} }, test_, test_id, describe);
+            this.deinit();
+            return false;
+        }
+
         if (test_.skipped or describe.skipped) {
             this.processTestResult(globalThis, .{ .skip = {} }, test_, test_id, describe);
             this.deinit();
@@ -4003,6 +4048,7 @@ pub const TestRunnerTask = struct {
                 describe,
             ),
             .skip => Jest.runner.?.reportSkip(test_id, this.source_file_path, test_.label, describe),
+            .todo => Jest.runner.?.reportTodo(test_id, this.source_file_path, test_.label, describe),
             .pending => @panic("Unexpected pending test"),
         }
         describe.onTestComplete(globalThis, test_id, result == .skip);
@@ -4037,4 +4083,5 @@ pub const Result = union(TestRunner.Test.Status) {
     pass: u32, // assertion count
     pending: void,
     skip: void,
+    todo: void,
 };

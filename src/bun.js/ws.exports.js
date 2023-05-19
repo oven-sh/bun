@@ -410,8 +410,8 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   #close(ws, code, reason) {
-    this.#ws = null;
     this.#state = 3;
+    this.#ws = null;
 
     this.emit("close", code, reason);
   }

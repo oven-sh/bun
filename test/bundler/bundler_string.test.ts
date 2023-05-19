@@ -175,10 +175,21 @@ describe("bundler", () => {
           return "NAME";
         }
 
-        console.log(\`k\${INTERNAL}=\${INTERNAL}j\`);
+        console.log(\`k\${foo()}=\${INTERNAL}j\`);
         console.log("d" + INTERNAL);
         console.log(INTERNAL + "l");
         console.log("d" + INTERNAL + "l");
+
+        const CONST_VALUE = "CONST_VALUE";
+
+        function blaBla(a) {
+          const { propertyName } = a;
+          const condition = \`\${propertyName}.\${CONST_VALUE}AA.WHAT\`;
+          return condition;
+        }
+
+        console.log(CONST_VALUE);
+        console.log(CONST_VALUE === "CONST_VALUE");
       `,
     },
     bundling: false,
@@ -195,10 +206,12 @@ describe("bundler", () => {
       #?[a-f\d]{6}([a-f\d]{2})?
       /[^#a-f\d]/gi
       /^#?[a-f\d]{3}[a-f\d]?$|^#?[a-f\d]{6}([a-f\d]{2})?$/i
-      kOOPS=OOPSj
+      kNAME=OOPSj
       dOOPS
       OOPSl
-      dOOPSl`,
+      dOOPSl
+      CONST_VALUE
+      true`,
     },
   });
 });

@@ -5,6 +5,10 @@ if ("Bun" in globalThis) {
 }
 
 function fetch(...args) {
+  // require("node-fetch") returns the default export which means we need to
+  // repeat the ESM exports onto it.
+  //
+  // We don't want to copy that onto the global fetch object, so we wrap it.
   return realFetch(...args);
 }
 

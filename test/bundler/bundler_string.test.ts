@@ -168,6 +168,17 @@ describe("bundler", () => {
         console.log(nonHexChars);
         const validHexSize = new RegExp(\`^\${match3or4Hex}\$|^\${match6or8Hex}$\`, "i");
         console.log(validHexSize);
+
+        const INTERNAL = "OOPS";
+
+        function foo() {
+          return "NAME";
+        }
+
+        console.log(\`k\${INTERNAL}=\${INTERNAL}j\`);
+        console.log("d" + INTERNAL);
+        console.log(INTERNAL + "l");
+        console.log("d" + INTERNAL + "l");
       `,
     },
     bundling: false,
@@ -183,7 +194,11 @@ describe("bundler", () => {
       #?[a-f\d]{3}[a-f\d]?
       #?[a-f\d]{6}([a-f\d]{2})?
       /[^#a-f\d]/gi
-      /^#?[a-f\d]{3}[a-f\d]?$|^#?[a-f\d]{6}([a-f\d]{2})?$/i`,
+      /^#?[a-f\d]{3}[a-f\d]?$|^#?[a-f\d]{6}([a-f\d]{2})?$/i
+      kOOPS=OOPSj
+      dOOPS
+      OOPSl
+      dOOPSl`,
     },
   });
 });

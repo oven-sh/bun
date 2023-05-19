@@ -2447,6 +2447,7 @@ pub const E = struct {
                             }
 
                             if (part.tail.cooked.len() > 0) {
+                                prev_part.tail.cooked.resolveRopeIfNeeded(allocator);
                                 prev_part.tail.cooked.push(Expr.init(E.String, part.tail.cooked, part.tail_loc).data.e_string);
                             }
                         } else {

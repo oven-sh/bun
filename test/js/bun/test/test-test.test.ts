@@ -2759,7 +2759,7 @@ describe(() => {
   });
 });
 
-describe.skip('todo', () => {
+describe('todo', () => {
   test.todo('implement this test')
   it.todo('implement another test')
 })

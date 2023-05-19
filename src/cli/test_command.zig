@@ -225,19 +225,16 @@ pub const CommandLineReporter = struct {
         var writer_: std.fs.File.Writer = Output.errorWriter();
         var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
 
-        // If you do it.only, don't report the skipped tests because its pretty noisy
-        if (jest.Jest.runner != null and !jest.Jest.runner.?.only) {
-            // when the tests skip, we want to repeat the failures at the end
-            // so that you can see them better when there are lots of tests that ran
-            const initial_length = this.todos_to_repeat_buf.items.len;
-            var writer = this.todos_to_repeat_buf.writer(bun.default_allocator);
+        // when the tests skip, we want to repeat the failures at the end
+        // so that you can see them better when there are lots of tests that ran
+        const initial_length = this.todos_to_repeat_buf.items.len;
+        var writer = this.todos_to_repeat_buf.writer(bun.default_allocator);
 
-            writeTestStatusLine(.todo, &writer);
-            printTestLine(label, elapsed_ns, parent, true, writer);
+        writeTestStatusLine(.todo, &writer);
+        printTestLine(label, elapsed_ns, parent, true, writer);
 
-            writer_.writeAll(this.todos_to_repeat_buf.items[initial_length..]) catch unreachable;
-            Output.flush();
-        }
+        writer_.writeAll(this.todos_to_repeat_buf.items[initial_length..]) catch unreachable;
+        Output.flush();
 
         // this.updateDots();
         this.summary.todo += 1;

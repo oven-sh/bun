@@ -1674,8 +1674,7 @@ fn NewSocket(comptime ssl: bool) type {
             if (!this.socket.isClosed()) {
                 this.socket.close(0, null);
             }
-            if (this.connection != null) {
-                var connection = this.connection.?;
+            if (this.connection) |connection| {
                 connection.deinit();
                 this.connection = null;
             }

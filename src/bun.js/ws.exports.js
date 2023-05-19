@@ -7,6 +7,7 @@ import http from "http";
 
 const kBunInternals = Symbol.for("::bunternal::");
 const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
+const encoder = new TextEncoder();
 
 class BunWebSocket extends globalThis.WebSocket {
   constructor(url, ...args) {
@@ -31,7 +32,6 @@ class BunWebSocket extends globalThis.WebSocket {
         try {
           if (typeof message === "string") {
             if (this.#binaryType === "arraybuffer") {
-              const encoder = new TextEncoder();
               message = encoder.encode(message).buffer;
             } else if (this.#binaryType === "blob") {
               message = new Blob([message], { type: "text/plain" });
@@ -379,7 +379,6 @@ class BunWebSocketMocked extends EventEmitter {
 
     if (typeof message === "string") {
       if (this.#binaryType === "arraybuffer") {
-        const encoder = new TextEncoder();
         message = encoder.encode(message).buffer;
       } else if (this.#binaryType === "blob") {
         message = new Blob([message], { type: "text/plain" });

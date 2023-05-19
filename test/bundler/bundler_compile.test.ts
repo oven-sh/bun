@@ -31,9 +31,9 @@ describe("bundler", () => {
           fetch() {
             return new Response("Hello world");
           },
-          port: 42000,
+          port: 0,
         });
-        const res = await fetch("http://localhost:42000");
+        const res = await fetch(\`http://\${server.hostname}:\${server.port}\`);
         if (res.status !== 200) throw "fail from server";
         if (await res.text() !== "Hello world") throw "fail from server";
         server.stop();

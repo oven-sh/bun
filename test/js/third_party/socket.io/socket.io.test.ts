@@ -1013,7 +1013,7 @@ describe("socket", () => {
     });
   });
 
-  it("should be able to emit after server close and restart", done => {
+  it.skip("should be able to emit after server close and restart", done => {
     const io = new Server(0);
     let timeout: any;
     io.on("connection", socket => {

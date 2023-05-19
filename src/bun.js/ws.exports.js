@@ -13,13 +13,44 @@ class BunWebSocket extends globalThis.WebSocket {
     super(url, ...args);
     this.#wrappedHandlers = new WeakMap();
   }
+  #binaryType;
   #wrappedHandlers = new WeakMap();
 
+  get binaryType() {
+    return this.#binaryType;
+  }
+  set binaryType(type) {
+    if (type !== "nodebuffer" && type !== "buffer" && type !== "blob" && type !== "arraybuffer") {
+      throw new TypeError("binaryType must be either 'blob', 'arraybuffer', 'nodebuffer' or 'buffer'");
+    }
+    this.#binaryType = type;
+  }
   on(event, callback) {
     if (event === "message") {
-      var handler = ({ data }) => {
+      var handler = ({ message }) => {
         try {
-          callback(data);
+          if (typeof message === "string") {
+            if (this.#binaryType === "blob") {
+              message = new Blob([message], { type: "text/plain" });
+            } else if (this.#binaryType === "arraybuffer") {
+              const encoder = new TextEncoder();
+              message = encoder.encode(message).buffer;
+            } else {
+              // nodebuffer or buffer
+              message = Buffer.from(message);
+            }
+          } else {
+            //Uint8Array
+            if (this.#binaryType === "blob") {
+              message = new Blob([message]);
+            } else if (this.#binaryType === "arraybuffer") {
+              message = message.buffer;
+            } else {
+              // nodebuffer or buffer
+              message = Buffer.from(message);
+            }
+          }
+          callback(message);
         } catch (e) {
           globalThis.reportError(e);
         }

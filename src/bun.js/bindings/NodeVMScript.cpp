@@ -95,11 +95,11 @@ static EncodedJSValue runInContext(JSGlobalObject* globalObject, NodeVMScript* s
     auto& vm = globalObject->vm();
 
     if (!optionsArg.isUndefined()) {
-        if (!optionsArg.isObject()) {
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            return throwVMTypeError(globalObject, scope, "options must be an object"_s);
-        }
-        JSObject* options = asObject(optionsArg);
+        // if (!optionsArg.isObject()) {
+        //     auto scope = DECLARE_THROW_SCOPE(vm);
+        //     return throwVMTypeError(globalObject, scope, "options must be an object"_s);
+        // }
+        // JSObject* options = asObject(optionsArg);
 
         // TODO: displayErrors - Not really sure what this option even does or why it's useful
         // TODO: timeout - I can't figure out how to make Watchdog work so leaving this for now
@@ -164,11 +164,19 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, Cal
         return throwVMTypeError(globalObject, scope, "context parameter must be a contextified object"_s);
     }
     JSScope* scope = jsDynamicCast<JSScope*>(scopeVal);
-    ASSERT(scope);
+    if (UNLIKELY(!scope)) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(globalObject, scope, "context parameter must be a contextified object"_s);
+    }
 
-    return runInContext(globalObject, script, context, scope, args.at(1));
+    JSGlobalProxy* globalProxy = jsDynamicCast<JSGlobalProxy*>(context->getPrototypeDirect());
+    if (!globalProxy) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(globalObject, scope, "context parameter must be a contextified object"_s);
+    }
+
+    return runInContext(globalProxy->target(), script, context, scope, args.at(1));
 }
-JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject* globalObject, CallFrame* callFrame))
 JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
@@ -209,13 +217,15 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
         return throwVMTypeError(globalObject, scope, "parameter to createContext must be an object"_s);
     }
     JSObject* context = asObject(contextArg);
+    auto* targetContext = JSC::JSGlobalObject::create(
+        vm, JSC::JSGlobalObject::createStructure(vm, JSC::jsNull()));
 
-    PropertyDescriptor descriptor;
-    descriptor.setWritable(false);
-    descriptor.setEnumerable(false);
-    descriptor.setValue(context);
-    JSObject::defineOwnProperty(context, globalObject, Identifier::fromString(vm, "globalThis"_s), descriptor, true);
-    JSScope* contextScope = JSWithScope::create(vm, globalObject, globalObject->globalScope(), context);
+    auto proxyStructure = JSGlobalProxy::createStructure(vm, globalObject, JSC::jsNull());
+    auto proxy = JSGlobalProxy::create(vm, proxyStructure);
+    proxy->setTarget(vm, targetContext);
+    context->setPrototypeDirect(vm, proxy);
+
+    JSScope* contextScope = JSWithScope::create(vm, targetContext, targetContext->globalScope(), context);
 
     auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     zigGlobalObject->vmModuleContextMap()->set(vm, context, contextScope);

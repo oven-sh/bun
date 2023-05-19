@@ -409,7 +409,6 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   #drain(ws) {
-    this.#ws = ws;
     const chunk = this.#enquedMessages[0];
     if (chunk) {
       const written = ws.send(chunk);
@@ -429,14 +428,13 @@ class BunWebSocketMocked extends EventEmitter {
       if (written == -1) {
         // backpressure
         this.#enquedMessages.push(data);
-        this.#bufferedAmount += length;
-        return;
+        this.#bufferedAmount += data.length;
       }
-    } else if (this.#state > 1) {
-      return;
+    } else if (this.#state === 0) {
+      // not connected yet
+      this.#enquedMessages.push(data);
+      this.#bufferedAmount += data.length;
     }
-
-    this.#enquedMessages.push(data);
   }
 
   close(code, reason) {

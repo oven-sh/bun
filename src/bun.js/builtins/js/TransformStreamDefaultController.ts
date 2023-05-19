@@ -23,54 +23,38 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-function initializeTransformStreamDefaultController()
-{
-    "use strict";
-
-    return this;
+export function initializeTransformStreamDefaultController(this) {
+  return this;
 }
 
-@getter
-function desiredSize()
-{
-    "use strict";
+$getter;
+export function desiredSize(this) {
+  if (!$isTransformStreamDefaultController(this))
+    throw $makeThisTypeError("TransformStreamDefaultController", "enqueue");
 
-    if (!@isTransformStreamDefaultController(this))
-        throw @makeThisTypeError("TransformStreamDefaultController", "enqueue");
+  const stream = $getByIdDirectPrivate(this, "stream");
+  const readable = $getByIdDirectPrivate(stream, "readable");
+  const readableController = $getByIdDirectPrivate(readable, "readableStreamController");
 
-    const stream = @getByIdDirectPrivate(this, "stream");
-    const readable = @getByIdDirectPrivate(stream, "readable");
-    const readableController = @getByIdDirectPrivate(readable, "readableStreamController");
-
-    return @readableStreamDefaultControllerGetDesiredSize(readableController);
+  return $readableStreamDefaultControllerGetDesiredSize(readableController);
 }
 
-function enqueue(chunk)
-{
-    "use strict";
+export function enqueue(this, chunk) {
+  if (!$isTransformStreamDefaultController(this))
+    throw $makeThisTypeError("TransformStreamDefaultController", "enqueue");
 
-    if (!@isTransformStreamDefaultController(this))
-        throw @makeThisTypeError("TransformStreamDefaultController", "enqueue");
-
-    @transformStreamDefaultControllerEnqueue(this, chunk);
+  $transformStreamDefaultControllerEnqueue(this, chunk);
 }
 
-function error(e)
-{
-    "use strict";
+export function error(this, e) {
+  if (!$isTransformStreamDefaultController(this)) throw $makeThisTypeError("TransformStreamDefaultController", "error");
 
-    if (!@isTransformStreamDefaultController(this))
-        throw @makeThisTypeError("TransformStreamDefaultController", "error");
-
-    @transformStreamDefaultControllerError(this, e);
+  $transformStreamDefaultControllerError(this, e);
 }
 
-function terminate()
-{
-    "use strict";
+export function terminate(this) {
+  if (!$isTransformStreamDefaultController(this))
+    throw $makeThisTypeError("TransformStreamDefaultController", "terminate");
 
-    if (!@isTransformStreamDefaultController(this))
-        throw @makeThisTypeError("TransformStreamDefaultController", "terminate");
-
-    @transformStreamDefaultControllerTerminate(this);
+  $transformStreamDefaultControllerTerminate(this);
 }

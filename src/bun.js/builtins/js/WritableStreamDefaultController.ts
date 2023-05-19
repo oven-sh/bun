@@ -23,34 +23,26 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+export function initializeWritableStreamDefaultController() {
+  $putByIdDirectPrivate(this, "queue", $newQueue());
+  $putByIdDirectPrivate(this, "abortSteps", reason => {
+    const result = $getByIdDirectPrivate(this, "abortAlgorithm").$call($undefined, reason);
+    $writableStreamDefaultControllerClearAlgorithms(this);
+    return result;
+  });
 
-function initializeWritableStreamDefaultController()
-{
-    "use strict";
+  $putByIdDirectPrivate(this, "errorSteps", () => {
+    $resetQueue($getByIdDirectPrivate(this, "queue"));
+  });
 
-    @putByIdDirectPrivate(this, "queue", @newQueue());
-    @putByIdDirectPrivate(this, "abortSteps", (reason) => {
-        const result = @getByIdDirectPrivate(this, "abortAlgorithm").@call(@undefined, reason);
-        @writableStreamDefaultControllerClearAlgorithms(this);
-        return result;
-    });
-
-    @putByIdDirectPrivate(this, "errorSteps", () => {
-        @resetQueue(@getByIdDirectPrivate(this, "queue"));
-    });
-
-    return this;
+  return this;
 }
 
-function error(e)
-{
-    "use strict";
+export function error(e) {
+  if ($getByIdDirectPrivate(this, "abortSteps") === $undefined)
+    throw $makeThisTypeError("WritableStreamDefaultController", "error");
 
-    if (@getByIdDirectPrivate(this, "abortSteps") === @undefined)
-        throw @makeThisTypeError("WritableStreamDefaultController", "error");
-
-    const stream = @getByIdDirectPrivate(this, "stream");
-    if (@getByIdDirectPrivate(stream, "state") !== "writable")
-        return;
-    @writableStreamDefaultControllerError(this, e);
+  const stream = $getByIdDirectPrivate(this, "stream");
+  if ($getByIdDirectPrivate(stream, "state") !== "writable") return;
+  $writableStreamDefaultControllerError(this, e);
 }

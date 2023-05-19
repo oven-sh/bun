@@ -62,7 +62,7 @@ interface BundledBuiltin {
 /**
  * Source .ts file --> Array<bundled js function code>
  */
-async function processFileSplit(filename: string): Promise<BundledBuiltin[]> {
+async function processFileSplit(filename: string): Promise<{ functions: BundledBuiltin[]; internal: boolean }> {
   const basename = path.basename(filename, ".ts");
   let contents = await Bun.file(filename).text();
 
@@ -223,30 +223,21 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     // debug
     await Bun.write(path.join(OUT_DIR, `${basename}.${fn.name}.js`), finalReplacement);
   }
-  return bundledFunctions;
+  return {
+    functions: bundledFunctions,
+    internal,
+  };
 }
 
-// const filesToProcess = readdirSync(SRC_DIR).filter(x => x.endsWith(".ts"));
-const filesToProcess = [
-  "ByteLengthQueuingStrategy.ts",
-  "BundlerPlugin.ts",
-  "ConsoleObject.ts",
-  "CountQueuingStrategy.ts",
-  "ImportMetaObject.ts",
-  "JSBufferConstructor.ts",
-  "JSBufferPrototype.ts",
-  "ProcessObjectInternals.ts",
-  "ReadableByteStreamController.ts",
-  "ReadableByteStreamInternals.ts",
-];
+const filesToProcess = readdirSync(SRC_DIR).filter(x => x.endsWith(".ts"));
 
-const files: Array<{ basename: string; functions: BundledBuiltin[] }> = [];
+const files: Array<{ basename: string; functions: BundledBuiltin[]; internal: boolean }> = [];
 async function processFile(x: string) {
   const basename = path.basename(x, ".ts");
   try {
     files.push({
       basename,
-      functions: await processFileSplit(path.join(SRC_DIR, x)),
+      ...(await processFileSplit(path.join(SRC_DIR, x))),
     });
   } catch (error) {
     console.error("Failed to process file: " + basename + ".ts");
@@ -265,15 +256,15 @@ if (PARALLEL) {
 }
 
 // C++ codegen
-let cpp = `#include "config.h"
+let bundledCPP = `#include "config.h"
 `;
 
 for (const { basename } of files) {
-  cpp += `#include "${basename}Builtins.h"
+  bundledCPP += `#include "${basename}Builtins.h"
 `;
 }
 
-cpp += `#include "WebCoreJSClientData.h"
+bundledCPP += `#include "WebCoreJSClientData.h"
 #include <JavaScriptCore/IdentifierInlines.h>
 #include <JavaScriptCore/ImplementationVisibility.h>
 #include <JavaScriptCore/Intrinsic.h>
@@ -285,12 +276,11 @@ namespace WebCore {
 `;
 
 for (const { basename, functions } of files) {
-  cpp += `/* ${basename}.ts */\n`;
+  bundledCPP += `/* ${basename}.ts */\n`;
   const lowerBasename = low(basename);
-
   for (const fn of functions) {
     const name = `${lowerBasename}${cap(fn.name)}Code`;
-    cpp += `// ${fn.name}
+    bundledCPP += `// ${fn.name}
 const JSC::ConstructAbility s_${name}ConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_${name}ConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_${name}ImplementationVisibility = JSC::ImplementationVisibility::${fn.visibility};
@@ -300,7 +290,7 @@ const char* const s_${name} = ${fmtCPPString(fn.source)};
 
 `;
   }
-  cpp += `#define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \\
+  bundledCPP += `#define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \\
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \\
 {\\
     JSVMClientData* clientData = static_cast<JSVMClientData*>(vm.clientData); \\
@@ -312,12 +302,76 @@ WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 `;
 }
 
-cpp += `
+bundledCPP += `
+
+JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm)
+    : m_vm(vm)
+`;
+
+for (const { basename } of files) {
+  bundledCPP += `    , m_${low(basename)}Builtins(vm)\n`;
+}
+
+bundledCPP += `
+{
+    UNUSED_PARAM(vm);
+}
+
+template<typename Visitor>
+void JSBuiltinInternalFunctions::visit(Visitor& visitor)
+{
+`;
+for (const { basename } of files) {
+  bundledCPP += `    m_${low(basename)}.visit(visitor);\n`;
+}
+
+bundledCPP += `
+    UNUSED_PARAM(visitor);
+}
+
+template void JSBuiltinInternalFunctions::visit(AbstractSlotVisitor&);
+template void JSBuiltinInternalFunctions::visit(SlotVisitor&);
+
+SUPPRESS_ASAN void JSBuiltinInternalFunctions::initialize(JSDOMGlobalObject& globalObject)
+{
+    UNUSED_PARAM(globalObject);
+`;
+
+for (const { basename, internal } of files) {
+  if (internal) {
+    bundledCPP += `    m_${low(basename)}.init(globalObject);\n`;
+  }
+}
+
+bundledCPP += `
+    JSVMClientData& clientData = *static_cast<JSVMClientData*>(m_vm.clientData);
+    JSDOMGlobalObject::GlobalPropertyInfo staticGlobals[] = {
+`;
+
+for (const { basename, internal } of files) {
+  if (internal) {
+    bundledCPP += `#define DECLARE_GLOBAL_STATIC(name) \\
+    JSDOMGlobalObject::GlobalPropertyInfo( \\
+        clientData.builtinFunctions().${low(basename)}Builtins().name##PrivateName(), ${low(
+      basename,
+    )}().m_##name##Function.get() , JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly),
+    WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_FUNCTION_NAME(DECLARE_GLOBAL_STATIC)
+  #undef DECLARE_GLOBAL_STATIC
+  `;
+  }
+}
+
+bundledCPP += `
+    };
+    globalObject.addStaticGlobals(staticGlobals, std::size(staticGlobals));
+    UNUSED_PARAM(clientData);
+}
+
 } // namespace WebCore
 `;
 
 // C++ Header codegen
-for (const { basename, functions } of files) {
+for (const { basename, functions, internal } of files) {
   let h = `#pragma once
 
 #include <JavaScriptCore/BuiltinUtils.h>
@@ -422,14 +476,142 @@ inline void ${basename}BuiltinsWrapper::exportNames()
     WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
 #undef EXPORT_FUNCTION_NAME
 }
-
-} // namespace WebCore
 `;
+
+  if (internal) {
+    h += `class ${basename}BuiltinFunctions {
+public:
+    explicit ${basename}BuiltinFunctions(JSC::VM& vm) : m_vm(vm) { }
+
+    void init(JSC::JSGlobalObject&);
+    template<typename Visitor> void visit(Visitor&);
+
+public:
+    JSC::VM& m_vm;
+
+#define DECLARE_BUILTIN_SOURCE_MEMBERS(functionName) \\
+    JSC::WriteBarrier<JSC::JSFunction> m_##functionName##Function;
+    WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_SOURCE_MEMBERS)
+#undef DECLARE_BUILTIN_SOURCE_MEMBERS
+};
+
+inline void ReadableStreamInternalsBuiltinFunctions::init(JSC::JSGlobalObject& globalObject)
+{
+#define EXPORT_FUNCTION(codeName, functionName, overriddenName, length) \\
+    m_##functionName##Function.set(m_vm, &globalObject, JSC::JSFunction::create(m_vm, codeName##Generator(m_vm), &globalObject));
+    WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_CODE(EXPORT_FUNCTION)
+#undef EXPORT_FUNCTION
+}
+
+template<typename Visitor>
+inline void ${basename}BuiltinFunctions::visit(Visitor& visitor)
+{
+#define VISIT_FUNCTION(name) visitor.append(m_##name##Function);
+    WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_FUNCTION_NAME(VISIT_FUNCTION)
+#undef VISIT_FUNCTION
+}
+
+template void ${basename}BuiltinFunctions::visit(JSC::AbstractSlotVisitor&);
+template void ${basename}BuiltinFunctions::visit(JSC::SlotVisitor&);
+    `;
+  }
+  h += `} // namespace WebCore\n`;
 
   await Bun.write(path.join(CPP_OUT_DIR, "cpp", basename + `Builtins.h`), h);
 }
 
-await Bun.write(path.join(CPP_OUT_DIR, `NewBuiltinGenerator.cpp`), cpp);
+await Bun.write(path.join(CPP_OUT_DIR, `WebCoreJSBuiltins.cpp`), bundledCPP);
+
+// C++ Header codegen2
+let WebCoreJSBuiltins = `#pragma once
+
+`;
+
+for (const { basename } of files) {
+  WebCoreJSBuiltins += `#include "${basename}Builtins.h"\n`;
+}
+
+WebCoreJSBuiltins += `
+#include <JavaScriptCore/VM.h>
+#include <JavaScriptCore/WeakInlines.h>
+
+namespace WebCore {
+
+class JSBuiltinFunctions {
+public:
+    explicit JSBuiltinFunctions(JSC::VM& vm)
+        : m_vm(vm)
+`;
+
+for (const { basename } of files) {
+  WebCoreJSBuiltins += `        , m_${low(basename)}Builtins(m_vm)\n`;
+}
+
+WebCoreJSBuiltins += `
+    {
+`;
+
+for (const { basename, internal } of files) {
+  if (internal) {
+    WebCoreJSBuiltins += `        m_${low(basename)}Builtins.exportNames();\n`;
+  }
+}
+
+WebCoreJSBuiltins += `    }
+`;
+
+for (const { basename } of files) {
+  WebCoreJSBuiltins += `    ${basename}BuiltinsWrapper& ${low(basename)}Builtins() { return m_${low(
+    basename,
+  )}Builtins; }\n`;
+}
+
+WebCoreJSBuiltins += `
+private:
+    JSC::VM& m_vm;
+`;
+
+for (const { basename } of files) {
+  WebCoreJSBuiltins += `    ${basename}BuiltinsWrapper m_${low(basename)}Builtins;\n`;
+}
+
+WebCoreJSBuiltins += `;
+};
+
+using JSDOMGlobalObject = Zig::GlobalObject;
+
+class JSBuiltinInternalFunctions {
+public:
+    explicit JSBuiltinInternalFunctions(JSC::VM&);
+
+    template<typename Visitor> void visit(Visitor&);
+    void initialize(JSDOMGlobalObject&);
+`;
+
+for (const { basename, internal } of files) {
+  if (internal) {
+    WebCoreJSBuiltins += `    ${basename}BuiltinFunctions& ${low(basename)}() { return m_${low(basename)}; }\n`;
+  }
+}
+
+WebCoreJSBuiltins += `
+private:
+    JSC::VM& m_vm;
+`;
+
+for (const { basename, internal } of files) {
+  if (internal) {
+    WebCoreJSBuiltins += `    ${basename}BuiltinFunctions m_${low(basename)};\n`;
+  }
+}
+
+WebCoreJSBuiltins += `
+};
+
+} // namespace WebCore
+`;
+
+Bun.write(path.join(CPP_OUT_DIR, `WebCoreJSBuiltins.h`), WebCoreJSBuiltins);
 
 const totalJSSize = files.reduce(
   (acc, { functions }) => acc + functions.reduce((acc, fn) => acc + fn.source.length, 0),

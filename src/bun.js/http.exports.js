@@ -284,12 +284,30 @@ export class Agent extends EventEmitter {
     debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.destroy is a no-op");
   }
 }
+function emitListeningNextTick(self, onListen, err, hostname, port) {
+  if (typeof onListen === "function") {
+    try {
+      onListen(err, hostname, port);
+    } catch (err) {
+      self.emit("error", err);
+    }
+  }
+
+  self.listening = !err;
+
+  if (err) {
+    self.emit("error", err);
+  } else {
+    self.emit("listening");
+  }
+}
 
 export class Server extends EventEmitter {
   #server;
   #options;
   #tls;
   #is_tls = false;
+  listening = false;
 
   constructor(options, callback) {
     super();
@@ -402,7 +420,7 @@ export class Server extends EventEmitter {
     };
   }
 
-  listen(port, host, onListen) {
+  listen(port, host, backlog, onListen) {
     const server = this;
     if (typeof host === "function") {
       onListen = host;
@@ -421,6 +439,11 @@ export class Server extends EventEmitter {
 
       if (typeof port?.callback === "function") onListen = port?.callback;
     }
+
+    if (typeof backlog === "function") {
+      onListen = backlog;
+    }
+
     const ResponseClass = this.#options.ServerResponse || ServerResponse;
     const RequestClass = this.#options.IncomingMessage || IncomingMessage;
 
@@ -481,7 +504,7 @@ export class Server extends EventEmitter {
           const upgrade = req.headers.get("upgrade");
           if (upgrade) {
             const socket = new FakeSocket();
-            socket[kInternalSocketData] = [_server, http_res];
+            socket[kInternalSocketData] = [_server, http_res, req];
             server.emit("upgrade", http_req, socket, kEmptyBuffer);
           } else {
             server.emit("request", http_req, http_res);
@@ -501,13 +524,9 @@ export class Server extends EventEmitter {
           });
         },
       });
-
-      if (onListen) setTimeout(() => onListen(null, this.#server.hostname, this.#server.port), 0);
+      setTimeout(emitListeningNextTick, 1, this, onListen, null, this.#server.hostname, this.#server.port);
     } catch (err) {
-      if (onListen) {
-        setTimeout(onListen, 0, err);
-      }
-      this.emit("error", err);
+      setTimeout(emitListeningNextTick, 1, this, onListen, err);
     }
 
     return this;

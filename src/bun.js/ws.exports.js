@@ -6,6 +6,7 @@ import EventEmitter from "events";
 import http from "http";
 
 const kBunInternals = Symbol.for("::bunternal::");
+const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
 
 class BunWebSocket extends globalThis.WebSocket {
   constructor(url, ...args) {
@@ -294,7 +295,6 @@ function abortHandshakeOrEmitwsClientError(server, req, response, socket, code, 
 const RUNNING = 0;
 const CLOSING = 1;
 const CLOSED = 2;
-const OPEN_EVENT = new Event("open");
 
 class BunWebSocketMocked extends EventEmitter {
   #ws;
@@ -311,7 +311,7 @@ class BunWebSocketMocked extends EventEmitter {
   #onmessage;
   #onopen;
 
-  constructor(url, protocol, extensions) {
+  constructor(url, protocol, extensions, binaryType) {
     super();
     this.#ws = null;
     this.#state = 0;
@@ -327,7 +327,7 @@ class BunWebSocketMocked extends EventEmitter {
     const close = this.#close.bind(this);
     const drain = this.#drain.bind(this);
 
-    [kBunInternals] = {
+    this[kBunInternals] = {
       message, // a message is received
       open, // a socket is opened
       close, // a socket is closed
@@ -359,61 +359,56 @@ class BunWebSocketMocked extends EventEmitter {
         message = Buffer.from(message);
       }
     }
-    this.emit(
-      "message",
-      new MessageEvent("message", {
-        cancelable: false,
-        data: message,
-        source: this,
-      }),
-    );
+    this.emit("message", message);
   }
 
   #open(ws) {
     this.#ws = ws;
     this.#state = 1;
-    this.emit("open", OPEN_EVENT);
+    this.emit("open", this);
+    // first drain event
+    this.#drain(ws);
   }
 
   #close(ws, code, reason) {
     this.#ws = null;
     this.#state = 3;
 
-    this.emit(
-      "close",
-      new CloseEvent("close", {
-        code,
-        reason,
-        wasClean: true,
-      }),
-    );
+    this.emit("close", code, reason);
   }
 
   #drain(ws) {
     this.#ws = ws;
-    const data = this.#enquedMessages[0];
-    const length = data.length - start;
-    const written = ws.send(data.slice(start));
-    if (written == -1) {
-      // backpressure wait until next drain event
-      return;
-    }
+    const chunk = this.#enquedMessages[0];
+    if (chunk) {
+      const [data, start] = chunk;
+      const length = data.length - start;
+      const written = ws.send(data.slice(start));
+      if (written == -1) {
+        // backpressure wait until next drain event
+        return;
+      }
 
-    this.#bufferedAmount -= length;
-    this.#enquedMessages.shift();
+      this.#bufferedAmount -= length;
+      this.#enquedMessages.shift();
+    }
   }
 
   send(data) {
-    if (this.#state !== 1) {
+    if (this.#state > 1) {
       return;
     }
-    const written = this.#ws.send(data);
-    if (written == -1) {
-      const length = data.length;
-      // backpressure
-      this.#enquedMessages.push([data, length]);
-      this.#bufferedAmount += length;
-      return;
+    if (this.#state === 1) {
+      const written = this.#ws.send(data);
+      if (written == -1) {
+        const length = data.length;
+        // backpressure
+        this.#enquedMessages.push([data, length]);
+        this.#bufferedAmount += length;
+        return;
+      }
+    } else {
+      this.#enquedMessages.push([data, data.length]);
     }
   }
 
@@ -435,7 +430,7 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   get readyState() {
-    return this.#state;
+    return readyStates[this.#state];
   }
   get url() {
     return this.#url;
@@ -518,6 +513,7 @@ class BunWebSocketMocked extends EventEmitter {
     return this.#onopen;
   }
 }
+
 class Server extends EventEmitter {
   _server;
   options;
@@ -584,6 +580,7 @@ class Server extends EventEmitter {
         });
         res.end(body);
       });
+
       this._server.listen(options.port, options.host, options.backlog, callback);
     } else if (options.server) {
       this._server = options.server;
@@ -734,7 +731,7 @@ class Server extends EventEmitter {
    * @private
    */
   completeUpgrade(extensions, key, protocols, request, socket, head, cb) {
-    const [server, response] = socket[kBunInternals];
+    const [server, response, req] = socket[kBunInternals];
     if (this._state > RUNNING) return abortHandshake(response, 503);
 
     let protocol = "";
@@ -746,16 +743,14 @@ class Server extends EventEmitter {
         ? this.options.handleProtocols(protocols, request)
         : protocols.values().next().value;
     }
-    const ws = new BunWebSocketMocked(request.url, protocol, extensions);
+    const ws = new BunWebSocketMocked(request.url, protocol, extensions, "nodebuffer");
 
     const headers = ["HTTP/1.1 101 Switching Protocols", "Upgrade: websocket", "Connection: Upgrade"];
-
-    this.emit("headers", headers, req);
+    this.emit("headers", headers, request);
 
     if (
-      server.upgrade(request.req, {
-        data: ws,
-        headers,
+      server.upgrade(req, {
+        data: ws[kBunInternals],
       })
     ) {
       response._reply(undefined);
@@ -837,25 +832,26 @@ class Server extends EventEmitter {
 
     // TODO: add perMessageDeflate options
 
-    const secWebSocketExtensions = req.headers["sec-websocket-extensions"];
-    // const extensions = {};
+    // const secWebSocketExtensions = req.headers["sec-websocket-extensions"];
+    const extensions = {};
 
-    if (secWebSocketExtensions !== undefined) {
-      //   const perMessageDeflate = new PerMessageDeflate(this.options.perMessageDeflate, true, this.options.maxPayload);
+    // if (secWebSocketExtensions !== undefined) {
+    // console.log(secWebSocketExtensions);
+    // const perMessageDeflate = new PerMessageDeflate(this.options.perMessageDeflate, true, this.options.maxPayload);
 
-      //   try {
-      //     const offers = extension.parse(secWebSocketExtensions);
+    // try {
+    //   const offers = extension.parse(secWebSocketExtensions);
 
-      //     if (offers[PerMessageDeflate.extensionName]) {
-      //       perMessageDeflate.accept(offers[PerMessageDeflate.extensionName]);
-      //       extensions[PerMessageDeflate.extensionName] = perMessageDeflate;
-      //     }
-      //   } catch (err) {
-      const message = "Invalid or unacceptable Sec-WebSocket-Extensions header";
-      abortHandshakeOrEmitwsClientError(this, req, response, socket, 400, message);
-      return;
-      //   }
-    }
+    //   if (offers[PerMessageDeflate.extensionName]) {
+    //     perMessageDeflate.accept(offers[PerMessageDeflate.extensionName]);
+    //     extensions[PerMessageDeflate.extensionName] = perMessageDeflate;
+    //   }
+    // } catch (err) {
+    //   const message = "Invalid or unacceptable Sec-WebSocket-Extensions header";
+    //   abortHandshakeOrEmitwsClientError(this, req, response, socket, 400, message);
+    //   return;
+    // }
+    // }
 
     //
     // Optionally call external client verification handler.
@@ -886,6 +882,47 @@ class Server extends EventEmitter {
 }
 
 BunWebSocket.WebSocketServer = Server;
+BunWebSocket.Server = Server;
+
+Object.defineProperty(BunWebSocket, "CONNECTING", {
+  enumerable: true,
+  value: readyStates.indexOf("CONNECTING"),
+});
+
+Object.defineProperty(BunWebSocket.prototype, "CONNECTING", {
+  enumerable: true,
+  value: readyStates.indexOf("CONNECTING"),
+});
+
+Object.defineProperty(BunWebSocket, "OPEN", {
+  enumerable: true,
+  value: readyStates.indexOf("OPEN"),
+});
+
+Object.defineProperty(BunWebSocket.prototype, "OPEN", {
+  enumerable: true,
+  value: readyStates.indexOf("OPEN"),
+});
+
+Object.defineProperty(WebSocket, "CLOSING", {
+  enumerable: true,
+  value: readyStates.indexOf("CLOSING"),
+});
+
+Object.defineProperty(WebSocket.prototype, "CLOSING", {
+  enumerable: true,
+  value: readyStates.indexOf("CLOSING"),
+});
+
+Object.defineProperty(WebSocket, "CLOSED", {
+  enumerable: true,
+  value: readyStates.indexOf("CLOSED"),
+});
+
+Object.defineProperty(WebSocket.prototype, "CLOSED", {
+  enumerable: true,
+  value: readyStates.indexOf("CLOSED"),
+});
 
 class Sender {
   constructor() {

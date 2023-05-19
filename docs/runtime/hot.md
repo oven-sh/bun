@@ -79,7 +79,7 @@ declare global {
   var count: number;
 }
 
-globalThis.count = globalThis.count ?? 0;
+globalThis.count ??= 0;
 console.log(`Reloaded ${globalThis.count} times`);
 globalThis.count++;
 
@@ -105,7 +105,7 @@ Bun provides the following simplified API for implementing HTTP servers. Refer t
 ```ts#server.ts
 import {type Serve} from "bun";
 
-globalThis.count = globalThis.count ?? 0;
+globalThis.count ??= 0;
 globalThis.count++;
 
 export default {

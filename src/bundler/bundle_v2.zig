@@ -6418,7 +6418,6 @@ const LinkerContext = struct {
         defer trace.end();
 
         _ = chunk_index;
-        const allocator = worker.allocator;
         const c = ctx.c;
         std.debug.assert(chunk.content == .javascript);
 
@@ -6427,7 +6426,7 @@ const LinkerContext = struct {
 
         defer chunk.renamer.deinit(bun.default_allocator);
 
-        var arena = std.heap.ArenaAllocator.init(allocator);
+        var arena = std.heap.ArenaAllocator.init(worker.allocator);
         defer arena.deinit();
 
         // Also generate the cross-chunk binding code
@@ -6448,7 +6447,7 @@ const LinkerContext = struct {
                 // TODO: IIFE
                 .indent = indent,
 
-                .allocator = allocator,
+                .allocator = worker.allocator,
                 .require_ref = runtimeRequireRef,
                 .minify_whitespace = c.options.minify_whitespace,
                 .minify_identifiers = c.options.minify_identifiers,
@@ -6456,8 +6455,8 @@ const LinkerContext = struct {
                 .const_values = c.graph.const_values,
             };
 
-            var cross_chunk_import_records = ImportRecord.List.initCapacity(allocator, chunk.cross_chunk_imports.len) catch unreachable;
-            defer cross_chunk_import_records.deinitWithAllocator(allocator);
+            var cross_chunk_import_records = ImportRecord.List.initCapacity(worker.allocator, chunk.cross_chunk_imports.len) catch unreachable;
+            defer cross_chunk_import_records.deinitWithAllocator(worker.allocator);
             for (chunk.cross_chunk_imports.slice()) |import_record| {
                 cross_chunk_import_records.appendAssumeCapacity(
                     .{
@@ -6471,7 +6470,7 @@ const LinkerContext = struct {
             const ast = c.graph.ast.get(chunk.entry_point.source_index);
 
             cross_chunk_prefix = js_printer.print(
-                allocator,
+                worker.allocator,
                 c.resolver.opts.target,
                 ast.toAST(),
                 c.source_(chunk.entry_point.source_index),
@@ -6484,7 +6483,7 @@ const LinkerContext = struct {
                 false,
             ).result.code;
             cross_chunk_suffix = js_printer.print(
-                allocator,
+                worker.allocator,
                 c.resolver.opts.target,
                 ast.toAST(),
                 c.source_(chunk.entry_point.source_index),
@@ -6505,7 +6504,7 @@ const LinkerContext = struct {
                     toCommonJSRef,
                     toESMRef,
                     chunk.entry_point.source_index,
-                    allocator,
+                    worker.allocator,
                     arena.allocator(),
                     chunk.renamer,
                 );
@@ -6516,7 +6515,7 @@ const LinkerContext = struct {
 
         var j = bun.Joiner{
             .use_pool = false,
-            .node_allocator = allocator,
+            .node_allocator = worker.allocator,
             .watcher = .{
                 .input = chunk.unique_key,
             },
@@ -6568,7 +6567,7 @@ const LinkerContext = struct {
         const compile_results = chunk.compile_results_for_chunk;
         var compile_results_for_source_map = std.MultiArrayList(CompileResultForSourceMap){};
 
-        compile_results_for_source_map.ensureUnusedCapacity(allocator, compile_results.len) catch unreachable;
+        compile_results_for_source_map.ensureUnusedCapacity(worker.allocator, compile_results.len) catch unreachable;
 
         const sources: []const Logger.Source = c.parse_graph.input_files.items(.source);
         for (@as([]CompileResult, compile_results)) |compile_result| {
@@ -6638,7 +6637,7 @@ const LinkerContext = struct {
                 if (compile_result.source_map_chunk()) |source_map_chunk| {
                     line_offset.reset();
                     if (c.options.source_maps != .none) {
-                        try compile_results_for_source_map.append(allocator, CompileResultForSourceMap{
+                        try compile_results_for_source_map.append(worker.allocator, CompileResultForSourceMap{
                             .source_map_chunk = source_map_chunk,
                             .generated_offset = generated_offset.value,
                             .source_index = compile_result.sourceIndex(),
@@ -6687,7 +6686,7 @@ const LinkerContext = struct {
         // TODO: footer
 
         chunk.intermediate_output = c.breakOutputIntoPieces(
-            allocator,
+            worker.allocator,
             &j,
             @truncate(u32, ctx.chunks.len),
         ) catch @panic("Unhandled out of memory error in breakOutputIntoPieces()");
@@ -6717,11 +6716,14 @@ const LinkerContext = struct {
         chunk_abs_dir: string,
         can_have_shifts: bool,
     ) !sourcemap.SourceMapPieces {
-        std.debug.assert(results.len > 0);
         const trace = tracer(@src(), "generateSourceMapForChunk");
         defer trace.end();
 
-        var j = Joiner{};
+        var j = Joiner{
+            .node_allocator = worker.allocator,
+            .use_pool = false,
+        };
+
         const sources = c.parse_graph.input_files.items(.source);
         const quoted_source_map_contents = c.graph.files.items(.quoted_source_contents);
 
@@ -6761,9 +6763,9 @@ const LinkerContext = struct {
             }
         }
 
-        j.push("],\n  \"sourcesContent\": [\n  ");
-
+        j.push("],\n  \"sourcesContent\": [");
         if (source_indices.len > 0) {
+            j.push("\n    ");
             j.push(quoted_source_map_contents[source_indices[0]]);
 
             if (source_indices.len > 1) {
@@ -6773,7 +6775,7 @@ const LinkerContext = struct {
                 }
             }
         }
-        j.push("\n], \"mappings\": \"");
+        j.push("\n  ],\n  \"mappings\": \"");
 
         var mapping_start = j.len;
         var prev_end_state = sourcemap.SourceMapState{};

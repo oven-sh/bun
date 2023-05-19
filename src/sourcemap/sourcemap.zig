@@ -602,7 +602,7 @@ pub fn appendSourceMapChunk(j: *Joiner, allocator: std.mem.Allocator, prev_end_s
 
     var source_map = source_map_;
     if (strings.indexOfNotChar(source_map, ';')) |semicolons| {
-        j.append(source_map[0..semicolons], 0, null);
+        j.push(source_map[0..semicolons]);
         source_map = source_map[semicolons..];
         prev_end_state.generated_column = 0;
         start_state.generated_column = 0;

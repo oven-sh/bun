@@ -4,8 +4,8 @@ if ("Bun" in globalThis) {
   realFetch = Bun.fetch;
 }
 
-function fetch(url, opts) {
-  return realFetch(url, opts);
+function fetch(...args) {
+  return realFetch(...args);
 }
 
 class AbortError extends DOMException {

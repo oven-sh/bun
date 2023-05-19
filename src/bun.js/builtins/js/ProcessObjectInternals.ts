@@ -23,10 +23,9 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-function binding(bindingName) {
-  "use strict";
-  bindingName !== "constants" &&
-    $throwTypeError(
+export function binding(bindingName) {
+  if (bindingName !== "constants")
+    throw new TypeError(
       "process.binding() is not supported in Bun. If that breaks something, please file an issue and include a reproducible code sample.",
     );
 
@@ -50,7 +49,7 @@ function binding(bindingName) {
   return constants;
 }
 
-function getStdioWriteStream(fd_, rawRequire) {
+export function getStdioWriteStream(fd_, rawRequire) {
   var module = { path: "node:process", require: rawRequire };
   var require = path => module.require(path);
 
@@ -473,7 +472,7 @@ function getStdioWriteStream(fd_, rawRequire) {
   return new FastStdioWriteStream(fd_);
 }
 
-function getStdinStream(fd_, rawRequire, Bun) {
+export function getStdinStream(fd_, rawRequire, Bun) {
   var module = { path: "node:process", require: rawRequire };
   var require = path => module.require(path);
 

@@ -24,7 +24,7 @@
  */
 // @internal
 
-function privateInitializeReadableByteStreamController(this, stream, underlyingByteSource, highWaterMark) {
+export function privateInitializeReadableByteStreamController(this, stream, underlyingByteSource, highWaterMark) {
   if (!$isReadableStream(stream)) throw new TypeError("ReadableByteStreamController needs a ReadableStream");
 
   // readableStreamController is initialized with null value.
@@ -73,35 +73,35 @@ function privateInitializeReadableByteStreamController(this, stream, underlyingB
   return this;
 }
 
-function readableStreamByteStreamControllerStart(this, controller) {
+export function readableStreamByteStreamControllerStart(this, controller) {
   $putByIdDirectPrivate(controller, "start", undefined);
 }
 
-function privateInitializeReadableStreamBYOBRequest(this, controller, view) {
+export function privateInitializeReadableStreamBYOBRequest(this, controller, view) {
   $putByIdDirectPrivate(this, "associatedReadableByteStreamController", controller);
   $putByIdDirectPrivate(this, "view", view);
 }
 
-function isReadableByteStreamController(controller) {
+export function isReadableByteStreamController(controller) {
   // Same test mechanism as in isReadableStreamDefaultController (ReadableStreamInternals.js).
   // See corresponding function for explanations.
   return $isObject(controller) && !!$getByIdDirectPrivate(controller, "underlyingByteSource");
 }
 
-function isReadableStreamBYOBRequest(byobRequest) {
+export function isReadableStreamBYOBRequest(byobRequest) {
   // Same test mechanism as in isReadableStreamDefaultController (ReadableStreamInternals.js).
   // See corresponding function for explanations.
   return $isObject(byobRequest) && !!$getByIdDirectPrivate(byobRequest, "associatedReadableByteStreamController");
 }
 
-function isReadableStreamBYOBReader(reader) {
+export function isReadableStreamBYOBReader(reader) {
   // Spec tells to return true only if reader has a readIntoRequests internal slot.
   // However, since it is a private slot, it cannot be checked using hasOwnProperty().
   // Since readIntoRequests is initialized with an empty array, the following test is ok.
   return $isObject(reader) && !!$getByIdDirectPrivate(reader, "readIntoRequests");
 }
 
-function readableByteStreamControllerCancel(controller, reason) {
+export function readableByteStreamControllerCancel(controller, reason) {
   var pendingPullIntos = $getByIdDirectPrivate(controller, "pendingPullIntos");
   var first = pendingPullIntos.peek();
   if (first) first.bytesFilled = 0;
@@ -110,7 +110,7 @@ function readableByteStreamControllerCancel(controller, reason) {
   return $promiseInvokeOrNoop($getByIdDirectPrivate(controller, "underlyingByteSource"), "cancel", [reason]);
 }
 
-function readableByteStreamControllerError(controller, e) {
+export function readableByteStreamControllerError(controller, e) {
   $assert(
     $getByIdDirectPrivate($getByIdDirectPrivate(controller, "controlledReadableStream"), "state") === $streamReadable,
   );
@@ -119,7 +119,7 @@ function readableByteStreamControllerError(controller, e) {
   $readableStreamError($getByIdDirectPrivate(controller, "controlledReadableStream"), e);
 }
 
-function readableByteStreamControllerClose(controller) {
+export function readableByteStreamControllerClose(controller) {
   $assert(!$getByIdDirectPrivate(controller, "closeRequested"));
   $assert(
     $getByIdDirectPrivate($getByIdDirectPrivate(controller, "controlledReadableStream"), "state") === $streamReadable,
@@ -142,7 +142,7 @@ function readableByteStreamControllerClose(controller) {
   $readableStreamClose($getByIdDirectPrivate(controller, "controlledReadableStream"));
 }
 
-function readableByteStreamControllerClearPendingPullIntos(controller) {
+export function readableByteStreamControllerClearPendingPullIntos(controller) {
   $readableByteStreamControllerInvalidateBYOBRequest(controller);
   var existing = $getByIdDirectPrivate(controller, "pendingPullIntos");
   if (existing !== undefined) {
@@ -152,7 +152,7 @@ function readableByteStreamControllerClearPendingPullIntos(controller) {
   }
 }
 
-function readableByteStreamControllerGetDesiredSize(controller) {
+export function readableByteStreamControllerGetDesiredSize(controller) {
   const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
   const state = $getByIdDirectPrivate(stream, "state");
 
@@ -162,17 +162,17 @@ function readableByteStreamControllerGetDesiredSize(controller) {
   return $getByIdDirectPrivate(controller, "strategyHWM") - $getByIdDirectPrivate(controller, "queue").size;
 }
 
-function readableStreamHasBYOBReader(stream) {
+export function readableStreamHasBYOBReader(stream) {
   const reader = $getByIdDirectPrivate(stream, "reader");
   return reader !== undefined && $isReadableStreamBYOBReader(reader);
 }
 
-function readableStreamHasDefaultReader(stream) {
+export function readableStreamHasDefaultReader(stream) {
   const reader = $getByIdDirectPrivate(stream, "reader");
   return reader !== undefined && $isReadableStreamDefaultReader(reader);
 }
 
-function readableByteStreamControllerHandleQueueDrain(controller) {
+export function readableByteStreamControllerHandleQueueDrain(controller) {
   $assert(
     $getByIdDirectPrivate($getByIdDirectPrivate(controller, "controlledReadableStream"), "state") === $streamReadable,
   );
@@ -181,7 +181,7 @@ function readableByteStreamControllerHandleQueueDrain(controller) {
   else $readableByteStreamControllerCallPullIfNeeded(controller);
 }
 
-function readableByteStreamControllerPull(controller) {
+export function readableByteStreamControllerPull(controller) {
   const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
   $assert($readableStreamHasDefaultReader(stream));
   if ($getByIdDirectPrivate(controller, "queue").content?.isNotEmpty()) {
@@ -221,7 +221,7 @@ function readableByteStreamControllerPull(controller) {
   return promise;
 }
 
-function readableByteStreamControllerShouldCallPull(controller) {
+export function readableByteStreamControllerShouldCallPull(controller) {
   const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
 
   if ($getByIdDirectPrivate(stream, "state") !== $streamReadable) return false;
@@ -243,7 +243,7 @@ function readableByteStreamControllerShouldCallPull(controller) {
   return false;
 }
 
-function readableByteStreamControllerCallPullIfNeeded(controller) {
+export function readableByteStreamControllerCallPullIfNeeded(controller) {
   if (!$readableByteStreamControllerShouldCallPull(controller)) return;
 
   if ($getByIdDirectPrivate(controller, "pulling")) {
@@ -271,7 +271,7 @@ function readableByteStreamControllerCallPullIfNeeded(controller) {
   );
 }
 
-function transferBufferToCurrentRealm(buffer) {
+export function transferBufferToCurrentRealm(buffer) {
   // FIXME: Determine what should be done here exactly (what is already existing in current
   // codebase and what has to be added). According to spec, Transfer operation should be
   // performed in order to transfer buffer to current realm. For the moment, simply return
@@ -279,14 +279,15 @@ function transferBufferToCurrentRealm(buffer) {
   return buffer;
 }
 
-function readableStreamReaderKind(reader) {
+export function readableStreamReaderKind(reader) {
   if (!!$getByIdDirectPrivate(reader, "readRequests")) return $getByIdDirectPrivate(reader, "bunNativePtr") ? 3 : 1;
 
   if (!!$getByIdDirectPrivate(reader, "readIntoRequests")) return 2;
 
   return 0;
 }
-function readableByteStreamControllerEnqueue(controller, chunk) {
+
+export function readableByteStreamControllerEnqueue(controller, chunk) {
   const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
   $assert(!$getByIdDirectPrivate(controller, "closeRequested"));
   $assert($getByIdDirectPrivate(stream, "state") === $streamReadable);
@@ -345,7 +346,7 @@ function readableByteStreamControllerEnqueue(controller, chunk) {
 }
 
 // Spec name: readableByteStreamControllerEnqueueChunkToQueue.
-function readableByteStreamControllerEnqueueChunk(controller, buffer, byteOffset, byteLength) {
+export function readableByteStreamControllerEnqueueChunk(controller, buffer, byteOffset, byteLength) {
   $getByIdDirectPrivate(controller, "queue").content.push({
     buffer: buffer,
     byteOffset: byteOffset,
@@ -354,7 +355,7 @@ function readableByteStreamControllerEnqueueChunk(controller, buffer, byteOffset
   $getByIdDirectPrivate(controller, "queue").size += byteLength;
 }
 
-function readableByteStreamControllerRespondWithNewView(controller, view) {
+export function readableByteStreamControllerRespondWithNewView(controller, view) {
   $assert($getByIdDirectPrivate(controller, "pendingPullIntos").isNotEmpty());
 
   let firstDescriptor = $getByIdDirectPrivate(controller, "pendingPullIntos").peek();
@@ -368,7 +369,7 @@ function readableByteStreamControllerRespondWithNewView(controller, view) {
   $readableByteStreamControllerRespondInternal(controller, view.byteLength);
 }
 
-function readableByteStreamControllerRespond(controller, bytesWritten) {
+export function readableByteStreamControllerRespond(controller, bytesWritten) {
   bytesWritten = $toNumber(bytesWritten);
 
   if (isNaN(bytesWritten) || bytesWritten === Infinity || bytesWritten < 0)
@@ -379,7 +380,7 @@ function readableByteStreamControllerRespond(controller, bytesWritten) {
   $readableByteStreamControllerRespondInternal(controller, bytesWritten);
 }
 
-function readableByteStreamControllerRespondInternal(controller, bytesWritten) {
+export function readableByteStreamControllerRespondInternal(controller, bytesWritten) {
   let firstDescriptor = $getByIdDirectPrivate(controller, "pendingPullIntos").peek();
   let stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
 
@@ -392,7 +393,7 @@ function readableByteStreamControllerRespondInternal(controller, bytesWritten) {
   }
 }
 
-function readableByteStreamControllerRespondInReadableState(controller, bytesWritten, pullIntoDescriptor) {
+export function readableByteStreamControllerRespondInReadableState(controller, bytesWritten, pullIntoDescriptor) {
   if (pullIntoDescriptor.bytesFilled + bytesWritten > pullIntoDescriptor.byteLength)
     throw new RangeError("bytesWritten value is too great");
 
@@ -423,7 +424,7 @@ function readableByteStreamControllerRespondInReadableState(controller, bytesWri
   $readableByteStreamControllerProcessPullDescriptors(controller);
 }
 
-function readableByteStreamControllerRespondInClosedState(controller, firstDescriptor) {
+export function readableByteStreamControllerRespondInClosedState(controller, firstDescriptor) {
   firstDescriptor.buffer = $transferBufferToCurrentRealm(firstDescriptor.buffer);
   $assert(firstDescriptor.bytesFilled === 0);
 
@@ -444,7 +445,7 @@ function readableByteStreamControllerRespondInClosedState(controller, firstDescr
 }
 
 // Spec name: readableByteStreamControllerProcessPullIntoDescriptorsUsingQueue (shortened for readability).
-function readableByteStreamControllerProcessPullDescriptors(controller) {
+export function readableByteStreamControllerProcessPullDescriptors(controller) {
   $assert(!$getByIdDirectPrivate(controller, "closeRequested"));
   while ($getByIdDirectPrivate(controller, "pendingPullIntos").isNotEmpty()) {
     if ($getByIdDirectPrivate(controller, "queue").size === 0) return;
@@ -460,7 +461,7 @@ function readableByteStreamControllerProcessPullDescriptors(controller) {
 }
 
 // Spec name: readableByteStreamControllerFillPullIntoDescriptorFromQueue (shortened for readability).
-function readableByteStreamControllerFillDescriptorFromQueue(controller, pullIntoDescriptor) {
+export function readableByteStreamControllerFillDescriptorFromQueue(controller, pullIntoDescriptor) {
   const currentAlignedBytes =
     pullIntoDescriptor.bytesFilled - (pullIntoDescriptor.bytesFilled % pullIntoDescriptor.elementSize);
   const maxBytesToCopy =
@@ -518,13 +519,13 @@ function readableByteStreamControllerFillDescriptorFromQueue(controller, pullInt
 }
 
 // Spec name: readableByteStreamControllerShiftPendingPullInto (renamed for consistency).
-function readableByteStreamControllerShiftPendingDescriptor(controller) {
+export function readableByteStreamControllerShiftPendingDescriptor(controller) {
   let descriptor = $getByIdDirectPrivate(controller, "pendingPullIntos").shift();
   $readableByteStreamControllerInvalidateBYOBRequest(controller);
   return descriptor;
 }
 
-function readableByteStreamControllerInvalidateBYOBRequest(controller) {
+export function readableByteStreamControllerInvalidateBYOBRequest(controller) {
   if ($getByIdDirectPrivate(controller, "byobRequest") === undefined) return;
   const byobRequest = $getByIdDirectPrivate(controller, "byobRequest");
   $putByIdDirectPrivate(byobRequest, "associatedReadableByteStreamController", undefined);
@@ -533,7 +534,7 @@ function readableByteStreamControllerInvalidateBYOBRequest(controller) {
 }
 
 // Spec name: readableByteStreamControllerCommitPullIntoDescriptor (shortened for readability).
-function readableByteStreamControllerCommitDescriptor(stream, pullIntoDescriptor) {
+export function readableByteStreamControllerCommitDescriptor(stream, pullIntoDescriptor) {
   $assert($getByIdDirectPrivate(stream, "state") !== $streamErrored);
   let done = false;
   if ($getByIdDirectPrivate(stream, "state") === $streamClosed) {
@@ -549,7 +550,7 @@ function readableByteStreamControllerCommitDescriptor(stream, pullIntoDescriptor
 }
 
 // Spec name: readableByteStreamControllerConvertPullIntoDescriptor (shortened for readability).
-function readableByteStreamControllerConvertDescriptor(pullIntoDescriptor) {
+export function readableByteStreamControllerConvertDescriptor(pullIntoDescriptor) {
   $assert(pullIntoDescriptor.bytesFilled <= pullIntoDescriptor.byteLength);
   $assert(pullIntoDescriptor.bytesFilled % pullIntoDescriptor.elementSize === 0);
 
@@ -560,12 +561,12 @@ function readableByteStreamControllerConvertDescriptor(pullIntoDescriptor) {
   );
 }
 
-function readableStreamFulfillReadIntoRequest(stream, chunk, done) {
+export function readableStreamFulfillReadIntoRequest(stream, chunk, done) {
   const readIntoRequest = $getByIdDirectPrivate($getByIdDirectPrivate(stream, "reader"), "readIntoRequests").shift();
   $fulfillPromise(readIntoRequest, { value: chunk, done: done });
 }
 
-function readableStreamBYOBReaderRead(reader, view) {
+export function readableStreamBYOBReaderRead(reader, view) {
   const stream = $getByIdDirectPrivate(reader, "ownerReadableStream");
   $assert(!!stream);
 
@@ -576,7 +577,7 @@ function readableStreamBYOBReaderRead(reader, view) {
   return $readableByteStreamControllerPullInto($getByIdDirectPrivate(stream, "readableStreamController"), view);
 }
 
-function readableByteStreamControllerPullInto(controller, view) {
+export function readableByteStreamControllerPullInto(controller, view) {
   const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
   let elementSize = 1;
   // Spec describes that in the case where view is a TypedArray, elementSize
@@ -641,7 +642,7 @@ function readableByteStreamControllerPullInto(controller, view) {
   return promise;
 }
 
-function readableStreamAddReadIntoRequest(stream) {
+export function readableStreamAddReadIntoRequest(stream) {
   $assert($isReadableStreamBYOBReader($getByIdDirectPrivate(stream, "reader")));
   $assert(
     $getByIdDirectPrivate(stream, "state") === $streamReadable ||

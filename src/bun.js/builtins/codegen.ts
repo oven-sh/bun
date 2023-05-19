@@ -2,14 +2,19 @@ import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "fs";
 import path from "path";
 import { LoaderKeys } from "../../api/schema";
 
-const MINIFY = process.argv.includes("--minify");
+const MINIFY = process.argv.includes("--minify") || process.argv.includes("-m");
+const PARALLEL = process.argv.includes("--parallel") || process.argv.includes("-p");
 
-// This is a list of extra syntax replacements to do.
-const replacements: Replacement[] = [
+// This is a list of extra syntax replacements to do. Kind of like macros
+const replacements: ReplacementRule[] = [
+  {
+    from: /\bnotImplementedIssue\(\s*([0-9]+)\s*,\s*((?:"[^"]*"|'[^']+'))\s*\)/g,
+    to: "new TypeError(`${$2} is not implemented yet. See https://github.com/oven-sh/bun/issues/$1`)",
+    global: true,
+  },
   { from: /\bthrow new TypeError\b/g, to: "$throwTypeError" },
   { from: /\bthrow new RangeError\b/g, to: "$throwRangeError" },
   { from: /\bthrow new OutOfMemoryError\b/g, to: "$throwOutOfMemoryError" },
-  { from: /\bthrow notImplementedIssue\(([0-9]+),(.*?)\)/g, to: "$throwTypeError($1, $2)" },
 ];
 
 // This is a list of globals we should access using @ notation
@@ -58,7 +63,12 @@ const enums = {
 // If they are present in the bundle after runtime, we warn at the user.
 const warnOnIdentifiersNotPresentAtRuntime = ["OutOfMemoryError", "notImplementedIssue"];
 
-type Replacement = string | { from: string | RegExp; to: string };
+//
+interface ReplacementRule {
+  from: RegExp;
+  to: string;
+  global?: boolean;
+}
 
 const SRC_DIR = path.join(import.meta.dir, "js");
 const CPP_OUT_DIR = path.join(import.meta.dir);
@@ -69,19 +79,11 @@ if (!existsSync(OUT_DIR)) mkdirSync(OUT_DIR);
 if (existsSync(TMP_DIR)) rmSync(TMP_DIR, { recursive: true });
 mkdirSync(TMP_DIR);
 
-function escapeRegex(str: string) {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 /** Applies source code replacements as defined in `replacements` */
 function applyReplacements(src: string) {
   let result = src.replace(/\$([a-zA-Z0-9_]+)\b/gm, `__intrinsic__$1`);
   for (const replacement of replacements) {
-    if (typeof replacement === "string") {
-      result = result.replace(new RegExp("\\b" + escapeRegex(replacement) + "\\b", "g"), "__intrinsic__" + replacement);
-    } else {
-      result = result.replace(replacement.from, replacement.to.replaceAll("$", "__intrinsic__"));
-    }
+    if (!replacement.global) result = result.replace(replacement.from, replacement.to.replaceAll("$", "__intrinsic__"));
   }
   return result;
 }
@@ -111,36 +113,41 @@ function cap(str: string) {
  *
  * Used to extract function bodies without parsing the code.
  */
-function sliceSourceCode(contents: string, replace: boolean): { result: string; rest: string } {
+function sliceSourceCode(contents: string, replace: boolean): { result: string; rest: string; usesThis: boolean } {
   let bracketCount = 0;
   let i = 0;
   let result = "";
+  let usesThis = false;
   while (contents.length) {
     // TODO: template literal, regexp
     // these are important because our replacement logic would replace intrinsics
     // within these, when it should remain as the literal dollar.
     // but this isn't used in the codebase
-    i = contents.match(/\/\*|\/\/|'|"|{|}/)?.index ?? contents.length;
-    result += replace ? applyReplacements(contents.slice(0, i)) : contents.slice(0, i);
+    i = contents.match(/\/\*|\/\/|'|"|{|}|`/)?.index ?? contents.length;
+    const chunk = replace ? applyReplacements(contents.slice(0, i)) : contents.slice(0, i);
+    if (chunk.includes("this")) usesThis = true;
+    result += chunk;
     contents = contents.slice(i);
     if (!contents.length) break;
     if (contents.startsWith("/*")) {
       i = contents.slice(2).indexOf("*/") + 2;
     } else if (contents.startsWith("//")) {
-      i = contents.slice(2).indexOf("\n") + 1;
+      i = contents.slice(2).indexOf("\n") + 2;
     } else if (contents.startsWith("'")) {
       i = contents.slice(1).match(/(?<!\\)'/)!.index! + 2;
     } else if (contents.startsWith('"')) {
       i = contents.slice(1).match(/(?<!\\)"/)!.index! + 2;
     } else if (contents.startsWith("`")) {
-      // todo: edge case
-      i = contents.slice(1).match(/(?<!\\)`/)!.index! + 2;
+      const { result: result2, rest } = sliceTemplateLiteralSourceCode(contents.slice(1), replace);
+      result += "`" + result2;
+      contents = rest;
+      continue;
     } else if (contents.startsWith("{")) {
       bracketCount++;
       i = 1;
     } else if (contents.startsWith("}")) {
       bracketCount--;
-      if (bracketCount === 0) {
+      if (bracketCount <= 0) {
         result += "}";
         contents = contents.slice(1);
         break;
@@ -153,7 +160,34 @@ function sliceSourceCode(contents: string, replace: boolean): { result: string; 
     contents = contents.slice(i);
   }
 
-  return { result, rest: contents };
+  return { result, rest: contents, usesThis };
+}
+
+function sliceTemplateLiteralSourceCode(contents: string, replace: boolean) {
+  let i = 0;
+  let result = "";
+  let usesThis = false;
+  while (contents.length) {
+    i = contents.match(/`|\${/)!.index!;
+    result += contents.slice(0, i);
+    contents = contents.slice(i);
+    if (!contents.length) break;
+    if (contents.startsWith("`")) {
+      result += "`";
+      contents = contents.slice(1);
+      break;
+    } else if (contents.startsWith("$")) {
+      const { result: result2, rest, usesThis: usesThisVal } = sliceSourceCode(contents.slice(1), replace);
+      result += "$" + result2;
+      contents = rest;
+      usesThis ||= usesThisVal;
+      continue;
+    } else {
+      throw new Error("TODO");
+    }
+  }
+
+  return { result, rest: contents, usesThis };
 }
 
 /** Converts an enum object to --define arguments */
@@ -182,12 +216,20 @@ interface ParsedBuiltin {
   params: string[];
   directives: Record<string, any>;
   source: string;
+  usesThis: boolean;
 }
 interface BundledBuiltin {
   name: string;
   directives: Record<string, any>;
+  isGetter: boolean;
+  isConstructor: boolean;
+  isLinkTimeConstant: boolean;
+  isNakedConstructor: boolean;
+  intrinsic: string;
+  overriddenName: string;
   source: string;
   params: string[];
+  visibility: string;
 }
 
 /**
@@ -197,11 +239,15 @@ async function processFileSplit(filename: string): Promise<BundledBuiltin[]> {
   const basename = path.basename(filename, ".ts");
   let contents = await Bun.file(filename).text();
 
+  for (const replacement of replacements) {
+    if (replacement.global) contents = contents.replace(replacement.from, replacement.to);
+  }
+
   // first approach doesnt work perfectly because we actually need to split each function declaration
   // and then compile those separately
 
   const consumeWhitespace = /^\s*/;
-  const consumeTopLevelContent = /^(\/\*|\/\/|type|import|interface|\$|export function)/;
+  const consumeTopLevelContent = /^(\/\*|\/\/|type|import|interface|\$|export function|function)/;
 
   const functions: ParsedBuiltin[] = [];
   let directives: Record<string, any> = {};
@@ -256,15 +302,19 @@ async function processFileSplit(filename: string): Promise<BundledBuiltin[]> {
         params.shift();
       }
 
-      const { result, rest } = sliceSourceCode(contents.slice(declaration[0].length - 1), true);
+      const { result, rest, usesThis } = sliceSourceCode(contents.slice(declaration[0].length - 1), true);
       functions.push({
         name,
         params,
         directives,
         source: result.trim().slice(1, -1),
+        usesThis,
       });
       contents = rest;
       directives = {};
+    } else if (match[1] === "function") {
+      const fnname = contents.match(/^function ([a-zA-Z0-9]+)\(([^)]*)\)(?:\s*:\s*([^{\n]+))?\s*{?/)![1];
+      throw new SyntaxError("All top level functions must be exported: " + fnname);
     } else {
       throw new Error("TODO: parse " + match[1]);
     }
@@ -272,8 +322,13 @@ async function processFileSplit(filename: string): Promise<BundledBuiltin[]> {
 
   for (const fn of functions) {
     const tmpFile = path.join(TMP_DIR, `${basename}.${fn.name}.ts`);
+
+    // not sure if this optimization works properly in jsc builtins
+    // const useThis = fn.usesThis;
+    const useThis = true;
+
     // TODO: we should use format=IIFE so we could bundle imports and extra functions.
-    await writeFileSync(
+    await Bun.write(
       tmpFile,
       `// @ts-nocheck
 // GENERATED TEMP FILE - DO NOT EDIT
@@ -282,9 +337,14 @@ async function processFileSplit(filename: string): Promise<BundledBuiltin[]> {
 // do not allow the bundler to rename a symbol to $
 ($);
 
-$$capture_start$$(function(${fn.params.join(", ")}) {$UseStrict$();${fn.source}}).$$capture_end$$;
+$$capture_start$$(${
+        useThis
+          ? `function(${fn.params.join(",")})`
+          : `${fn.params.length === 1 ? fn.params[0] : `(${fn.params.join(",")})`}=>`
+      } {${useThis ? "$UseStrict$();" : ""}${fn.source}}).$$capture_end$$;
 `,
     );
+    await Bun.sleep(1);
     const build = await Bun.build({
       entrypoints: [tmpFile],
       define,
@@ -307,41 +367,51 @@ $$capture_start$$(function(${fn.params.join(", ")}) {$UseStrict$();${fn.source}}
       directives: fn.directives,
       source: finalReplacement,
       params: fn.params,
+      visibility: fn.directives.visibility ?? (fn.directives.linkTimeConstant ? "Private" : "Public"),
+      isGetter: !!fn.directives.getter,
+      isConstructor: !!fn.directives.constructor,
+      isLinkTimeConstant: !!fn.directives.linkTimeConstant,
+      isNakedConstructor: !!fn.directives.nakedConstructor,
+      intrinsic: fn.directives.intrinsic ?? "NoIntrinsic",
+      overriddenName: fn.directives.getter
+        ? `"get ${fn.name}"_s`
+        : fn.directives.overriddenName
+        ? `"${fn.directives.overriddenName}"_s`
+        : "ASCIILiteral()",
     });
 
     // debug
-    Bun.write(path.join(OUT_DIR, `${basename}.${fn.name}.js`), finalReplacement);
+    await Bun.write(path.join(OUT_DIR, `${basename}.${fn.name}.js`), finalReplacement);
   }
   return bundledFunctions;
 }
 
-// const files = [
-//   {
-//     basename: "CountQueuingStrategy",
-//     functions: await processFileSplit("js/CountQueuingStrategy.ts"),
-//   },
-//   {
-//     basename: "ConsoleObject",
-//     functions: await processFileSplit("js/ConsoleObject.ts"),
-//   },
-//   {
-//     basename: "BundlerPlugin",
-//     functions: await processFileSplit("js/BundlerPlugin.ts"),
-//   },
-// ];
-const files = await Promise.all(
-  readdirSync(SRC_DIR)
-    .filter(x => x.endsWith(".ts"))
-    .map(async x => {
-      const basename = path.basename(x, ".ts");
-      return {
-        basename,
-        functions: await processFileSplit(path.join(SRC_DIR, x)),
-      };
-    }),
-);
+// const filesToProcess = readdirSync(SRC_DIR).filter(x => x.endsWith(".ts"));
+const filesToProcess = ["BundlerPlugin.ts"];
 
-console.log(files);
+const files: Array<{ basename: string; functions: BundledBuiltin[] }> = [];
+async function processFile(x: string) {
+  const basename = path.basename(x, ".ts");
+  try {
+    files.push({
+      basename,
+      functions: await processFileSplit(path.join(SRC_DIR, x)),
+    });
+  } catch (error) {
+    console.error("Failed to process file: " + basename + ".ts");
+    console.error(error);
+    process.exit(1);
+  }
+}
+
+// Bun seems to crash if this is parallelized, :(
+if (PARALLEL) {
+  await Promise.all(filesToProcess.map(processFile));
+} else {
+  for (const x of filesToProcess) {
+    await processFile(x);
+  }
+}
 
 // C++ codegen
 let cpp = `#include "config.h"
@@ -362,11 +432,11 @@ for (const { basename, functions } of files) {
   cpp += `/* ${basename}.ts */\n`;
 
   for (const fn of functions) {
-    const name = `${basename}${fn.name}Code`;
+    const name = `${basename}${cap(fn.name)}Code`;
     cpp += `// ${fn.name}
 const JSC::ConstructAbility s_${name}ConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_${name}ConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_${name}ImplementationVisibility = JSC::ImplementationVisibility::Public;
+const JSC::ImplementationVisibility s_${name}ImplementationVisibility = JSC::ImplementationVisibility::${fn.visibility};
 const int s_${name}Length = ${fn.source.length};
 static const JSC::Intrinsic s_${name}Intrinsic = JSC::NoIntrinsic;
 const char* const s_${name} = ${createCPPString(fn.source)};
@@ -427,12 +497,7 @@ extern const JSC::ImplementationVisibility s_${name}ImplementationVisibility;
   h += `#define WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_CODE(macro) \\\n`;
   for (const fn of functions) {
     const name = `${basename}${cap(fn.name)}Code`;
-    const displayName = fn.directives.getter
-      ? `"get ${fn.name}"_s`
-      : fn.directives.overriddenName
-      ? `"${fn.directives.overriddenName}"_s`
-      : "ASCIILiteral()";
-    h += `    macro(${name}, ${fn.name}, ${displayName}, s_${name}Length) \\\n`;
+    h += `    macro(${name}, ${fn.name}, ${fn.overriddenName}, s_${name}Length) \\\n`;
   }
   h += "\n";
   h += `#define WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_FUNCTION_NAME(macro) \\\n`;
@@ -507,8 +572,8 @@ h += `
 } // namespace WebCore
 `;
 
-Bun.write(path.join(CPP_OUT_DIR, `WebCoreJSBuiltins.cpp`), cpp);
-Bun.write(path.join(CPP_OUT_DIR, `WebCoreJSBuiltins.h`), h);
+await Bun.write(path.join(CPP_OUT_DIR, `WebCoreJSBuiltins.cpp`), cpp);
+await Bun.write(path.join(CPP_OUT_DIR, `WebCoreJSBuiltins.h`), h);
 
 const totalJSSize = files.reduce(
   (acc, { functions }) => acc + functions.reduce((acc, fn) => acc + fn.source.length, 0),
@@ -516,9 +581,9 @@ const totalJSSize = files.reduce(
 );
 console.log("Generated builtins");
 console.log(
-  `Embedded JS size: ${totalJSSize} bytes across ${files.reduce(
+  `Embedded JS size: ${totalJSSize} bytes (across ${files.reduce(
     (acc, { functions }) => acc + functions.length,
     0,
-  )} functions`,
+  )} functions, ${files.length} files)`,
 );
 console.log(`[${performance.now().toFixed(1)}ms]`);

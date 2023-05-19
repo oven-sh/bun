@@ -31,7 +31,7 @@ export function loadCJS2ESM(this: ImportMetaObject, resolvedSpecifier: string) {
       var state = flags & $promiseStateMask;
       // this branch should never happen, but just to be safe
       if (state === $promiseStatePending || (reactionsOrResult && $isPromise(reactionsOrResult))) {
-        throw new TypeError(`require() async module \"${key}\" is unsupported`);
+        throw new TypeError(`require() async module "${key}" is unsupported`);
       } else if (state === $promiseStateRejected) {
         // TODO: use SyntaxError but preserve the specifier
         throw new TypeError(`${reactionsOrResult?.message ?? "An error occurred"} while parsing module \"${key}\"`);
@@ -88,9 +88,7 @@ export function requireESM(this: ImportMetaObject, resolved) {
   }
 
   if (!entry || !entry.evaluated || !entry.module) {
-    throw new TypeError(
-      `require() failed to evaluate module \"${resolved}\". This is an internal consistentency error.`,
-    );
+    throw new TypeError(`require() failed to evaluate module "${resolved}". This is an internal consistentency error.`);
   }
   var exports = Loader.getModuleNamespaceObject(entry.module);
   var commonJS = exports.default;

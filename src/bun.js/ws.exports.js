@@ -412,35 +412,31 @@ class BunWebSocketMocked extends EventEmitter {
     this.#ws = ws;
     const chunk = this.#enquedMessages[0];
     if (chunk) {
-      const [data, start] = chunk;
-      const length = data.length - start;
-      const written = ws.send(data.slice(start));
+      const written = ws.send(chunk);
       if (written == -1) {
         // backpressure wait until next drain event
         return;
       }
 
-      this.#bufferedAmount -= length;
+      this.#bufferedAmount -= chunk.length;
       this.#enquedMessages.shift();
     }
   }
 
   send(data) {
-    if (this.#state > 1) {
-      return;
-    }
     if (this.#state === 1) {
       const written = this.#ws.send(data);
       if (written == -1) {
-        const length = data.length;
         // backpressure
-        this.#enquedMessages.push([data, length]);
+        this.#enquedMessages.push(data);
         this.#bufferedAmount += length;
         return;
       }
-    } else {
-      this.#enquedMessages.push([data, data.length]);
+    } else if (this.#state > 1) {
+      return;
     }
+
+    this.#enquedMessages.push(data);
   }
 
   close(code, reason) {

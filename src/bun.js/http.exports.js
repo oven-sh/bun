@@ -459,24 +459,16 @@ export class Server extends EventEmitter {
         // Bindings to be used for WS Server
         websocket: {
           open(ws) {
-            if (ws.data && typeof ws.data.open === "function") {
-              ws.data.open(ws);
-            }
+            ws.data.open(ws);
           },
           message(ws, message) {
-            if (ws.data && typeof ws.data.message === "function") {
-              ws.data.message(ws, message);
-            }
+            ws.data.message(ws, message);
           },
           close(ws, code, reason) {
-            if (ws.data && typeof ws.data.close === "function") {
-              ws.data.close(ws, code, reason);
-            }
+            ws.data.close(ws, code, reason);
           },
           drain(ws) {
-            if (ws.data && typeof ws.data.drain === "function") {
-              ws.data.drain(ws);
-            }
+            ws.data.drain(ws);
           },
         },
         fetch(req, _server) {

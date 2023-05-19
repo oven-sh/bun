@@ -9,5 +9,13 @@ test("node-fetch", () => {
 });
 
 test("node-fetch fetches", async () => {
-  expect(await fetch("http://example.com")).toBeInstanceOf(Response);
+  const server = Bun.serve({
+    port: 0,
+    fetch(req, server) {
+      server.stop();
+      return new Response();
+    },
+  });
+  expect(await fetch("http://" + server.hostname + ":" + server.port)).toBeInstanceOf(Response);
+  server.stop(true);
 });

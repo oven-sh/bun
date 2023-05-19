@@ -133,7 +133,7 @@ declare global {
   var server: Server;
 }
 
-globalThis.count = globalThis.count ?? 0;
+globalThis.count ??= 0;
 globalThis.count++;
 
 // define server parameters

@@ -335,7 +335,7 @@ class BunWebSocketMocked extends EventEmitter {
   #protocol;
   #extensions;
   #bufferedAmount = 0;
-  #binaryType = "blob";
+  #binaryType = "arraybuffer";
 
   #onclose;
   #onerror;
@@ -348,10 +348,13 @@ class BunWebSocketMocked extends EventEmitter {
     this.#state = 0;
     this.#url = url;
     this.#bufferedAmount = 0;
-    this.#binaryType = "blob";
+    binaryType = binaryType || "arraybuffer";
+    if (binaryType !== "nodebuffer" && binaryType !== "buffer" && binaryType !== "blob" && binaryType !== "arraybuffer") {
+      throw new TypeError("binaryType must be either 'blob', 'arraybuffer', 'nodebuffer' or 'buffer'");
+    }
+    this.#binaryType = binaryType;
     this.#protocol = protocol;
     this.#extensions = extensions;
-    this.binaryType = binaryType;
 
     const message = this.#message.bind(this);
     const open = this.#open.bind(this);

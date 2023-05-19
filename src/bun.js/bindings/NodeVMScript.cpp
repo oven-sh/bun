@@ -29,11 +29,66 @@
 #include "DOMJITIDLTypeFilter.h"
 #include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
+#include <JavaScriptCore/Completion.h>
 
 namespace WebCore {
 using namespace JSC;
 
-static EncodedJSValue constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newTarget = JSValue())
+class ScriptOptions {
+public:
+    String filename;
+    OrdinalNumber lineOffset;
+    OrdinalNumber columnOffset;
+    String cachedData;
+    bool produceCachedData;
+    bool importModuleDynamically;
+
+    static std::optional<ScriptOptions> fromJS(JSC::JSGlobalObject* globalObject, JSC::JSValue optionsArg, bool& failed)
+    {
+        auto& vm = globalObject->vm();
+        ScriptOptions opts;
+        bool any = false;
+        if (!optionsArg.isUndefined()) {
+            if (!optionsArg.isObject()) {
+                auto scope = DECLARE_THROW_SCOPE(vm);
+                throwVMTypeError(globalObject, scope, "options must be an object"_s);
+                failed = true;
+                return std::nullopt;
+            }
+            JSObject* options = asObject(optionsArg);
+
+            if (JSValue filenameOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "filename"_s))) {
+                if (filenameOpt.isString()) {
+                    opts.filename = filenameOpt.toWTFString(globalObject);
+                    any = true;
+                }
+            }
+
+            if (JSValue lineOffsetOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "lineOffset"_s))) {
+                if (lineOffsetOpt.isAnyInt()) {
+                    opts.lineOffset = OrdinalNumber::fromZeroBasedInt(lineOffsetOpt.asAnyInt());
+                    any = true;
+                }
+            }
+            if (JSValue columnOffsetOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "columnOffset"_s))) {
+                if (columnOffsetOpt.isAnyInt()) {
+                    opts.columnOffset = OrdinalNumber::fromZeroBasedInt(columnOffsetOpt.asAnyInt());
+                    any = true;
+                }
+            }
+
+            // TODO: cachedData
+            // TODO: importModuleDynamically
+        }
+
+        if (any)
+            return opts;
+        return std::nullopt;
+    }
+};
+
+static EncodedJSValue
+constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newTarget = JSValue())
 {
     VM& vm = globalObject->vm();
     JSValue callee = callFrame->jsCallee();
@@ -42,36 +97,18 @@ static EncodedJSValue constructScript(JSGlobalObject* globalObject, CallFrame* c
     String sourceString = sourceArg.isUndefined() ? emptyString() : sourceArg.toWTFString(globalObject);
 
     JSValue optionsArg = args.at(1);
-    String filename = ""_s;
-    OrdinalNumber lineOffset, columnOffset;
-    if (!optionsArg.isUndefined()) {
-        if (!optionsArg.isObject()) {
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            return throwVMTypeError(globalObject, scope, "options must be an object"_s);
-        }
-        JSObject* options = asObject(optionsArg);
-
-        JSValue filenameOpt = options->get(globalObject, Identifier::fromString(vm, "filename"_s));
-        if (filenameOpt.isString()) {
-            filename = filenameOpt.toWTFString(globalObject);
-        }
-
-        JSValue lineOffsetOpt = options->get(globalObject, Identifier::fromString(vm, "lineOffset"_s));
-        if (lineOffsetOpt.isAnyInt()) {
-            lineOffset = OrdinalNumber::fromZeroBasedInt(lineOffsetOpt.asAnyInt());
-        }
-        JSValue columnOffsetOpt = options->get(globalObject, Identifier::fromString(vm, "columnOffset"_s));
-        if (columnOffsetOpt.isAnyInt()) {
-            columnOffset = OrdinalNumber::fromZeroBasedInt(columnOffsetOpt.asAnyInt());
-        }
-
-        // TODO: cachedData
-        // TODO: importModuleDynamically
+    bool didThrow = false;
+    ScriptOptions options;
+    if (auto scriptOptions = ScriptOptions::fromJS(globalObject, optionsArg, didThrow)) {
+        options = scriptOptions.value();
     }
+
+    if (didThrow)
+        return JSValue::encode(jsUndefined());
 
     auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     Structure* structure = zigGlobalObject->NodeVMScriptStructure();
-    if (zigGlobalObject->NodeVMScript() != newTarget) {
+    if (UNLIKELY(zigGlobalObject->NodeVMScript() != newTarget)) {
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSObject* targetObj = asObject(newTarget);
         auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(getFunctionRealm(globalObject, targetObj));
@@ -83,8 +120,8 @@ static EncodedJSValue constructScript(JSGlobalObject* globalObject, CallFrame* c
 
     auto scope = DECLARE_THROW_SCOPE(vm);
     SourceCode source(
-        JSC::StringSourceProvider::create(sourceString, JSC::SourceOrigin(), filename, TextPosition(lineOffset, columnOffset)),
-        lineOffset.zeroBasedInt(), columnOffset.zeroBasedInt());
+        JSC::StringSourceProvider::create(sourceString, JSC::SourceOrigin(), options.filename, TextPosition(options.lineOffset, options.columnOffset)),
+        options.lineOffset.zeroBasedInt(), options.columnOffset.zeroBasedInt());
     RETURN_IF_EXCEPTION(scope, {});
     NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, source);
     return JSValue::encode(JSValue(script));
@@ -94,39 +131,31 @@ static EncodedJSValue runInContext(JSGlobalObject* globalObject, NodeVMScript* s
 {
     auto& vm = globalObject->vm();
 
-    if (!optionsArg.isUndefined()) {
-        // if (!optionsArg.isObject()) {
-        //     auto scope = DECLARE_THROW_SCOPE(vm);
-        //     return throwVMTypeError(globalObject, scope, "options must be an object"_s);
-        // }
-        // JSObject* options = asObject(optionsArg);
-
-        // TODO: displayErrors - Not really sure what this option even does or why it's useful
-        // TODO: timeout - I can't figure out how to make Watchdog work so leaving this for now
-        // TODO: breakOnSigint - Bun doesn't support signal handlers at all yet I believe
-    }
-
-    auto err_scope = DECLARE_THROW_SCOPE(vm);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
     JSC::DirectEvalExecutable* executable = nullptr;
 
-    if (JSC::JSGlobalObject* cachedGlobalObject = script->m_cachedGlobalObject.get()) {
-        if (cachedGlobalObject == globalObject) {
-            if (JSC::DirectEvalExecutable* existingEval = script->m_cachedDirectExecutable.get()) {
-                executable = existingEval;
-            }
-        }
+    if (JSC::DirectEvalExecutable* existingEval = script->m_cachedDirectExecutable.get()) {
+        executable = existingEval;
     }
 
     if (executable == nullptr) {
+        // Note: it accepts a JSGlobalObject, but it just reads stuff from JSC::VM.
         executable = JSC::DirectEvalExecutable::create(
             globalObject, script->source(), DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
             false, false, EvalContextType::None, nullptr, nullptr, ECMAMode::sloppy());
-        RETURN_IF_EXCEPTION(err_scope, {});
+        RETURN_IF_EXCEPTION(throwScope, {});
         script->m_cachedDirectExecutable.set(vm, script, executable);
-        script->m_cachedGlobalObject.set(vm, script, globalObject);
     }
 
-    return JSValue::encode(vm.interpreter.executeEval(executable, globalObject, scope));
+    auto catchScope = DECLARE_CATCH_SCOPE(vm);
+    JSValue result = vm.interpreter.executeEval(executable, globalObject, scope);
+    if (catchScope.exception()) {
+        JSC::throwException(globalObject, throwScope, catchScope.exception());
+        catchScope.clearException();
+        return JSValue::encode({});
+    }
+
+    return JSValue::encode(result);
 }
 
 JSC_DEFINE_HOST_FUNCTION(scriptConstructorCall, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -191,6 +220,167 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, Cal
 
     return runInContext(globalProxy->target(), script, context, scope, args.at(1));
 }
+
+JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto sourceStringValue = callFrame->argument(0);
+    JSValue contextObjectValue = callFrame->argument(1);
+    JSValue optionsObjectValue = callFrame->argument(2);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!sourceStringValue.isString()) {
+        throwTypeError(globalObject, scope, "Script code must be a string"_s);
+        return JSValue::encode({});
+    }
+
+    auto sourceString = sourceStringValue.toWTFString(globalObject);
+
+    if (!contextObjectValue || contextObjectValue.isUndefinedOrNull()) {
+        contextObjectValue = JSC::constructEmptyObject(globalObject);
+    }
+
+    if (UNLIKELY(!contextObjectValue || !contextObjectValue.isObject())) {
+        throwTypeError(globalObject, scope, "Context must be an object"_s);
+        return JSValue::encode({});
+    }
+
+    // we don't care about options for now
+
+    ScriptOptions options;
+    {
+        bool didThrow = false;
+
+        if (auto scriptOptions = ScriptOptions::fromJS(globalObject, optionsObjectValue, didThrow)) {
+            options = scriptOptions.value();
+        }
+        if (UNLIKELY(didThrow)) {
+            return JSValue::encode({});
+        }
+    }
+    SourceCode source(
+        JSC::StringSourceProvider::create(sourceString, JSC::SourceOrigin(), options.filename, TextPosition(options.lineOffset, options.columnOffset)),
+        options.lineOffset.zeroBasedInt(), options.columnOffset.zeroBasedInt());
+
+    auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    JSObject* context = asObject(contextObjectValue);
+    auto* targetContext = JSC::JSGlobalObject::create(
+        vm, zigGlobal->globalObjectStructure());
+
+    auto* executable = JSC::DirectEvalExecutable::create(
+        targetContext, source, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
+        false, false, EvalContextType::None, nullptr, nullptr, ECMAMode::sloppy());
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto proxyStructure = JSGlobalProxy::createStructure(vm, globalObject, JSC::jsNull());
+    auto proxy = JSGlobalProxy::create(vm, proxyStructure);
+    proxy->setTarget(vm, targetContext);
+    context->setPrototypeDirect(vm, proxy);
+
+    JSScope* contextScope = JSWithScope::create(vm, targetContext, targetContext->globalScope(), context);
+
+    auto result = JSValue::encode(vm.interpreter.executeEval(executable, targetContext, contextScope));
+    RETURN_IF_EXCEPTION(scope, {});
+    return result;
+}
+
+JSC_DEFINE_HOST_FUNCTION(vmModuleRunInThisContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto sourceStringValue = callFrame->argument(0);
+    JSValue contextObjectValue = callFrame->argument(1);
+    JSValue optionsObjectValue = callFrame->argument(2);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!sourceStringValue.isString()) {
+        throwTypeError(globalObject, scope, "Script code must be a string"_s);
+        return JSValue::encode({});
+    }
+
+    auto sourceString = sourceStringValue.toWTFString(globalObject);
+
+    if (!contextObjectValue || contextObjectValue.isUndefinedOrNull()) {
+        contextObjectValue = JSC::constructEmptyObject(globalObject);
+    }
+
+    if (UNLIKELY(!contextObjectValue || !contextObjectValue.isObject())) {
+        throwTypeError(globalObject, scope, "Context must be an object"_s);
+        return JSValue::encode({});
+    }
+
+    ScriptOptions options;
+    {
+        bool didThrow = false;
+
+        if (auto scriptOptions = ScriptOptions::fromJS(globalObject, optionsObjectValue, didThrow)) {
+            options = scriptOptions.value();
+        }
+        if (UNLIKELY(didThrow)) {
+            return JSValue::encode({});
+        }
+    }
+    SourceCode source(
+        JSC::StringSourceProvider::create(sourceString, JSC::SourceOrigin(), options.filename, TextPosition(options.lineOffset, options.columnOffset)),
+        options.lineOffset.zeroBasedInt(), options.columnOffset.zeroBasedInt());
+    auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    JSObject* context = asObject(contextObjectValue);
+
+    auto proxyStructure = zigGlobal->globalProxyStructure();
+    auto proxy = JSGlobalProxy::create(vm, proxyStructure);
+    proxy->setTarget(vm, globalObject);
+    context->setPrototypeDirect(vm, proxy);
+
+    JSScope* contextScope = JSWithScope::create(vm, globalObject, globalObject->globalScope(), context);
+
+    auto* executable = JSC::DirectEvalExecutable::create(
+        globalObject, source, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
+        false, false, EvalContextType::None, nullptr, nullptr, ECMAMode::sloppy());
+
+    RETURN_IF_EXCEPTION(scope, {});
+    auto result = JSValue::encode(vm.interpreter.executeEval(executable, globalObject, contextScope));
+    RETURN_IF_EXCEPTION(scope, {});
+    return result;
+}
+
+JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    NodeVMScript* script = jsDynamicCast<NodeVMScript*>(callFrame->thisValue());
+    JSValue contextObjectValue = callFrame->argument(0);
+    JSValue optionsObjectValue = callFrame->argument(1);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!script) {
+        throwTypeError(globalObject, scope, "Script.prototype.runInNewContext can only be called on a Script object"_s);
+        return JSValue::encode({});
+    }
+
+    if (!contextObjectValue || contextObjectValue.isUndefinedOrNull()) {
+        contextObjectValue = JSC::constructEmptyObject(globalObject);
+    }
+
+    if (UNLIKELY(!contextObjectValue || !contextObjectValue.isObject())) {
+        throwTypeError(globalObject, scope, "Context must be an object"_s);
+        return JSValue::encode({});
+    }
+
+    // we don't care about options for now
+
+    bool didThrow = false;
+
+    auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    JSObject* context = asObject(contextObjectValue);
+    auto* targetContext = JSC::JSGlobalObject::create(
+        vm, zigGlobal->globalObjectStructure());
+
+    // auto proxyStructure = JSGlobalProxy::createStructure(vm, globalObject, JSC::jsNull());
+    // auto proxy = JSGlobalProxy::create(vm, proxyStructure);
+    // proxy->setTarget(vm, targetContext);
+    // context->setPrototypeDirect(vm, proxy);
+
+    JSScope* contextScope = JSWithScope::create(vm, globalObject, globalObject->globalScope(), context);
+    return runInContext(globalObject, script, targetContext, contextScope, callFrame->argument(0));
+}
 JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
@@ -201,8 +391,8 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
         return throwVMTypeError(globalObject, scope, "Script.prototype.runInThisContext can only be called on a Script object"_s);
     }
 
-    ArgList args(callFrame);
-    return runInContext(globalObject, script, globalObject->globalThis(), globalObject->globalScope(), args.at(0));
+    JSValue arg0 = callFrame->argument(0);
+    return runInContext(globalObject, script, globalObject->globalThis(), globalObject->globalScope(), arg0);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, EncodedJSValue thisValueEncoded, PropertyName))
@@ -225,23 +415,22 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    ArgList args(callFrame);
-    JSValue contextArg = args.at(0);
+    JSValue contextArg = callFrame->argument(0);
     if (!contextArg.isObject()) {
         return throwVMTypeError(globalObject, scope, "parameter to createContext must be an object"_s);
     }
     JSObject* context = asObject(contextArg);
+    auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     auto* targetContext = JSC::JSGlobalObject::create(
-        vm, JSC::JSGlobalObject::createStructure(vm, JSC::jsNull()));
+        vm, zigGlobalObject->globalObjectStructure());
 
-    auto proxyStructure = JSGlobalProxy::createStructure(vm, globalObject, JSC::jsNull());
+    auto proxyStructure = zigGlobalObject->globalProxyStructure();
     auto proxy = JSGlobalProxy::create(vm, proxyStructure);
     proxy->setTarget(vm, targetContext);
     context->setPrototypeDirect(vm, proxy);
 
     JSScope* contextScope = JSWithScope::create(vm, targetContext, targetContext->globalScope(), context);
 
-    auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     zigGlobalObject->vmModuleContextMap()->set(vm, context, contextScope);
 
     return JSValue::encode(context);
@@ -250,9 +439,9 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
 JSC_DEFINE_HOST_FUNCTION(vmModule_isContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     ArgList args(callFrame);
-    JSValue contextArg = args.at(0);
+    JSValue contextArg = callFrame->argument(0);
     bool isContext;
-    if (!contextArg.isObject()) {
+    if (!contextArg || !contextArg.isObject()) {
         isContext = false;
     } else {
         auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
@@ -295,9 +484,10 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(NodeVMScriptPrototype, NodeVMScriptPrototype
 
 static const struct HashTableValue scriptPrototypeTableValues[] = {
     { "cachedDataRejected"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, scriptGetCachedDataRejected, nullptr } },
-    { "createCachedData"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, scriptCreateCachedData, 0 } },
-    { "runInContext"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, scriptRunInContext, 0 } },
-    { "runInThisContext"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, scriptRunInThisContext, 0 } },
+    { "createCachedData"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, scriptCreateCachedData, 1 } },
+    { "runInContext"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, scriptRunInContext, 2 } },
+    { "runInNewContext"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, scriptRunInNewContext, 2 } },
+    { "runInThisContext"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, scriptRunInThisContext, 2 } },
     { "sourceMapURL"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, scriptGetSourceMapURL, nullptr } },
 };
 
@@ -314,7 +504,6 @@ void NodeVMScript::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_cachedDirectExecutable);
-    visitor.append(thisObject->m_cachedGlobalObject);
 }
 
 NodeVMScriptConstructor::NodeVMScriptConstructor(VM& vm, Structure* structure)

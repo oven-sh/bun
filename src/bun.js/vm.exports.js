@@ -18,27 +18,12 @@ function notimpl(message) {
   throw new TODO(message);
 }
 
-const createContext = vm.createContext;
-const isContext = vm.isContext;
-const Script = vm.Script;
-
-Script.prototype.runInNewContext = function (contextObject, options) {
-  if (contextObject === undefined) {
-    contextObject = {};
-  }
-  const context = createContext(contextObject);
-  return this.runInContext(context, options);
-};
+const { createContext, isContext, Script, runInNewContext, runInThisContext } = vm;
 
 function runInContext(code, context, options) {
   return new Script(code).runInContext(context, options);
 }
-function runInNewContext(code, contextObject, options) {
-  return new Script(code).runInNewContext(contextObject, options);
-}
-function runInThisContext(code, options) {
-  return new Script(code).runInNewContext(options);
-}
+
 function compileFunction() {
   notimpl("compileFunction");
 }

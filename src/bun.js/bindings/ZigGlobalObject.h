@@ -254,6 +254,9 @@ public:
 
     JSObject* dnsObject() { return m_dnsObject.getInitializedOnMainThread(this); }
 
+    Structure* globalObjectStructure() { return m_cachedGlobalObjectStructure.getInitializedOnMainThread(this); }
+    Structure* globalProxyStructure() { return m_cachedGlobalProxyStructure.getInitializedOnMainThread(this); }
+
     JSWeakMap* vmModuleContextMap() { return m_vmModuleContextMap.getInitializedOnMainThread(this); }
 
     JSC::JSObject* processObject()
@@ -465,6 +468,8 @@ private:
     LazyProperty<JSGlobalObject, JSWeakMap> m_vmModuleContextMap;
 
     LazyProperty<JSGlobalObject, JSFunction> m_bunSleepThenCallback;
+    LazyProperty<JSGlobalObject, Structure> m_cachedGlobalObjectStructure;
+    LazyProperty<JSGlobalObject, Structure> m_cachedGlobalProxyStructure;
 
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     void* m_bunVM;

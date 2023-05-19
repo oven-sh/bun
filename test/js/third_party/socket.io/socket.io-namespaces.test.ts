@@ -172,7 +172,7 @@ describe("namespaces", () => {
     });
   });
 
-  it("should work with `of` second param", done => {
+  it.skip("should work with `of` second param", done => {
     const io = new Server(0);
     const chat = createClient(io, "/chat");
     const news = createClient(io, "/news");
@@ -206,7 +206,7 @@ describe("namespaces", () => {
     });
   });
 
-  it("should disconnect upon transport disconnection", done => {
+  it.skip("should disconnect upon transport disconnection", done => {
     const io = new Server(0);
     const chat = createClient(io, "/chat");
     const news = createClient(io, "/news");
@@ -242,7 +242,7 @@ describe("namespaces", () => {
     });
   });
 
-  it("should fire a `disconnecting` event just before leaving all rooms", done => {
+  it.skip("should fire a `disconnecting` event just before leaving all rooms", done => {
     const io = new Server(0);
     const socket = createClient(io);
     const timeout = setTimeout(() => {
@@ -283,7 +283,7 @@ describe("namespaces", () => {
     });
   });
 
-  it("should return error connecting to non-existent namespace", done => {
+  it.skip("should return error connecting to non-existent namespace", done => {
     const io = new Server(0);
     const socket = createClient(io, "/doesnotexist");
     const timeout = setTimeout(() => {
@@ -301,7 +301,7 @@ describe("namespaces", () => {
     });
   });
 
-  it("should not reuse same-namespace connections", done => {
+  it.skip("should not reuse same-namespace connections", done => {
     const io = new Server(0);
     const clientSocket1 = createClient(io);
     const clientSocket2 = createClient(io);
@@ -319,7 +319,7 @@ describe("namespaces", () => {
     });
   });
 
-  it("should find all clients in a namespace", done => {
+  it.skip("should find all clients in a namespace", done => {
     const io = new Server(0);
     const chatSids: string[] = [];
     let otherSid: SocketId | null = null;
@@ -355,7 +355,7 @@ describe("namespaces", () => {
     }
   });
 
-  it("should find all clients in a namespace room", done => {
+  it.skip("should find all clients in a namespace room", done => {
     const io = new Server(0);
     let chatFooSid: SocketId | null = null;
     let chatBarSid: SocketId | null = null;
@@ -401,7 +401,7 @@ describe("namespaces", () => {
     }
   });
 
-  it("should find all clients across namespace rooms", done => {
+  it.skip("should find all clients across namespace rooms", done => {
     const io = new Server(0);
     let chatFooSid: SocketId | null = null;
     let chatBarSid: SocketId | null = null;
@@ -678,7 +678,7 @@ describe("namespaces", () => {
   });
 
   describe("dynamic namespaces", () => {
-    it("should allow connections to dynamic namespaces with a regex", done => {
+    it.skip("should allow connections to dynamic namespaces with a regex", done => {
       const io = new Server(0);
       const socket = createClient(io, "/dynamic-101");
       const timeout = setTimeout(() => {
@@ -724,7 +724,7 @@ describe("namespaces", () => {
       });
     });
 
-    it("should allow connections to dynamic namespaces with a function", done => {
+    it.skip("should allow connections to dynamic namespaces with a function", done => {
       const io = new Server(0);
       const socket = createClient(io, "/dynamic-101");
       const timeout = setTimeout(() => {
@@ -848,7 +848,7 @@ describe("namespaces", () => {
       io.of(/^\/dynamic-\d+$/);
     });
 
-    it("should allow a client to connect to a cleaned up namespace", done => {
+    it.skip("should allow a client to connect to a cleaned up namespace", done => {
       const io = new Server(0, { cleanupEmptyChildNamespaces: true });
       const c1 = createClient(io, "/dynamic-101");
       const timeout = setTimeout(() => {

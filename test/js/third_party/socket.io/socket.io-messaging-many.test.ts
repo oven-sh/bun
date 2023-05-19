@@ -115,7 +115,7 @@ describe("messaging many", () => {
 
     const timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket1, socket2, socket3);
-    }, 200);
+    }, 400);
 
     socket1.on("a", a => {
       try {

@@ -609,6 +609,7 @@ pub const ServerConfig = struct {
                         result.deinit();
                         return null;
                     }
+                    arena.deinit();
                 }
             }
 

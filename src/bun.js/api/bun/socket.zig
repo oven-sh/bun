@@ -1677,6 +1677,7 @@ fn NewSocket(comptime ssl: bool) type {
             if (this.connection != null) {
                 var connection = this.connection.?;
                 connection.deinit();
+                this.connection = null;
             }
             this.markInactive();
             this.poll_ref.unref(JSC.VirtualMachine.get());

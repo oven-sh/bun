@@ -904,22 +904,22 @@ Object.defineProperty(BunWebSocket.prototype, "OPEN", {
   value: readyStates.indexOf("OPEN"),
 });
 
-Object.defineProperty(WebSocket, "CLOSING", {
+Object.defineProperty(BunWebSocket, "CLOSING", {
   enumerable: true,
   value: readyStates.indexOf("CLOSING"),
 });
 
-Object.defineProperty(WebSocket.prototype, "CLOSING", {
+Object.defineProperty(BunWebSocket.prototype, "CLOSING", {
   enumerable: true,
   value: readyStates.indexOf("CLOSING"),
 });
 
-Object.defineProperty(WebSocket, "CLOSED", {
+Object.defineProperty(BunWebSocket, "CLOSED", {
   enumerable: true,
   value: readyStates.indexOf("CLOSED"),
 });
 
-Object.defineProperty(WebSocket.prototype, "CLOSED", {
+Object.defineProperty(BunWebSocket.prototype, "CLOSED", {
   enumerable: true,
   value: readyStates.indexOf("CLOSED"),
 });

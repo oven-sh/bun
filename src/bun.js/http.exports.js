@@ -298,7 +298,7 @@ function emitListeningNextTick(self, onListen, err, hostname, port) {
   if (err) {
     self.emit("error", err);
   } else {
-    self.emit("listening");
+    self.emit("listening", hostname, port);
   }
 }
 

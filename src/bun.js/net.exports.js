@@ -383,7 +383,7 @@ const Socket = (function (InternalSocket) {
 
       if (typeof bunTLS === "function") {
         tls = bunTLS.call(this, port, host, true);
-        //Client always +request Cert
+        //Client always request Cert
         this._requestCert = true;
         this._rejectUnauthorized = rejectUnauthorized;
         if (tls) {

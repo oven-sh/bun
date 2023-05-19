@@ -1,4 +1,5 @@
-import { RUN_UNCHECKED_TESTS, itBundled, testForFile } from "../expectBundled";
+import fs from "fs";
+import { itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:
@@ -63,13 +64,20 @@ describe("bundler", () => {
   });
   itBundled("loader/File", {
     files: {
-      "/entry.js": `console.log(require('./test.svg'))`,
+      "/entry.js": `
+        import path from 'path';
+        const file = require('./test.svg');
+        console.log(file);
+        const contents = await Bun.file(path.join(import.meta.dir, file)).text();
+        if(contents !== '<svg></svg>') throw new Error('Contents did not match');
+      `,
       "/test.svg": `<svg></svg>`,
     },
     outdir: "/out",
     loader: {
-      // ".svg": "file",
+      ".svg": "file",
     },
+    target: "bun",
     run: {
       stdout: /\.\/test-.*\.svg/,
     },
@@ -77,8 +85,15 @@ describe("bundler", () => {
   itBundled("loader/FileMultipleNoCollision", {
     files: {
       "/entry.js": /* js */ `
-        console.log(require('./a/test.svg'))
-        console.log(require('./b/test.svg'))
+        import path from 'path';
+        const file1 = require('./a/test.svg');
+        console.log(file1);
+        const contents = await Bun.file(path.join(import.meta.dir, file1)).text();
+        if(contents !== '<svg></svg>') throw new Error('Contents did not match');
+        const file2 = require('./b/test.svg');
+        console.log(file2);
+        const contents2 = await Bun.file(path.join(import.meta.dir, file2)).text();
+        if(contents2 !== '<svg></svg>') throw new Error('Contents did not match');
       `,
       "/a/test.svg": `<svg></svg>`,
       "/b/test.svg": `<svg></svg>`,
@@ -86,6 +101,7 @@ describe("bundler", () => {
     loader: {
       ".svg": "file",
     },
+    target: "bun",
     outdir: "/out",
     run: {
       stdout: /\.\/test-.*\.svg\n\.\/test-.*\.svg/,
@@ -94,8 +110,15 @@ describe("bundler", () => {
   itBundled("loader/FileMultipleNoCollisionAssetNames", {
     files: {
       "/entry.js": /* js */ `
-        console.log(require('./a/test.svg'))
-        console.log(require('./b/test.svg'))
+        import path from 'path';
+        const file1 = require('./a/test.svg');
+        console.log(file1);
+        const contents = await Bun.file(path.join(import.meta.dir, file1)).text();
+        if(contents !== '<svg></svg>') throw new Error('Contents did not match');
+        const file2 = require('./b/test.svg');
+        console.log(file2);
+        const contents2 = await Bun.file(path.join(import.meta.dir, file2)).text();
+        if(contents2 !== '<svg></svg>') throw new Error('Contents did not match');
       `,
       "/a/test.svg": `<svg></svg>`,
       "/b/test.svg": `<svg></svg>`,
@@ -105,8 +128,9 @@ describe("bundler", () => {
     loader: {
       ".svg": "file",
     },
+    target: "bun",
     run: {
-      stdout: /\.\/test-.*\.svg \.\/test-.*\.svg/,
+      stdout: /\.\/assets\/test-.*\.svg\n\.\/assets\/test-.*\.svg/,
     },
   });
   itBundled("loader/JSXSyntaxInJSWithJSXLoader", {

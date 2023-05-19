@@ -356,6 +356,7 @@ const Socket = (function (InternalSocket) {
         var {
           port,
           host,
+          path,
           // TODOs
           localAddress,
           localPort,

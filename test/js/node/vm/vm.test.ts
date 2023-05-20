@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { createContext, runInContext, runInNewContext, runInThisContext, Script } from "node:vm";
 
+function capture(_: any, _1?: any) {}
 describe("runInContext()", () => {
   testRunInContext(runInContext, { isIsolated: true });
 });
@@ -133,6 +134,7 @@ function testRunInContext(
   });
   test("cannot access local scope", () => {
     var foo = "bar"; // intentionally unused
+    capture(foo, foo);
     const context = createContext({});
     const result = fn("typeof foo;", context);
     expect(result).toBe("undefined");

@@ -3895,8 +3895,6 @@ pub const TestRunnerTask = struct {
     sync_state: AsyncState = .none,
     reported: bool = false,
     started_at: std.time.Instant = std.mem.zeroes(std.time.Instant),
-    orig_num_polls: i32 = 0,
-    orig_active: u32 = 0,
 
     pub const AsyncState = enum {
         none,

@@ -179,8 +179,6 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 #include "CallSitePrototype.h"
 #include "DOMWrapperWorld-class.h"
 
-#include "JavaScriptCore/Watchdog.h"
-
 constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 
 #ifdef __APPLE__

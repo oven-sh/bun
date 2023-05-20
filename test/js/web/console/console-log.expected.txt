@@ -11,21 +11,21 @@ Symbol(Symbol Description)
 2000-06-27T02:24:34.304Z
 [ 123, 456, 789 ]
 {
-  "name": "foo"
+  name: "foo"
 }
 {
-  "a": 123,
-  "b": 456,
-  "c": 789
+  a: 123,
+  b: 456,
+  c: 789
 }
 {
-  "a": {
-    "b": {
-      "c": 123
+  a: {
+    b: {
+      c: 123
     },
-    "bacon": true
+    bacon: true
   },
-  "name": "bar"
+  name: "bar"
 }
 Promise { <pending> }
 [Function]
@@ -36,10 +36,10 @@ Promise { <pending> }
 Is it a bug or a feature that formatting numbers like 123 is colored
 String 123 should be 2nd word, 456 == 456 and percent s %s == What okay
 {
-  "foo": {
-    "name": "baz"
+  foo: {
+    name: "baz"
   },
-  "bar": [Circular]
+  bar: [Circular]
 } am
 [
   {}, {}, {}, {}

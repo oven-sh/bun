@@ -2560,18 +2560,19 @@ test("test async exceptions fail tests", () => {
   });
 
   `;
-
-  rmSync("/tmp/test-throwing-bun/test-throwing-eventemitter.test.js", {
+  const dir = join(tmpdir(), "test-throwing-bun");
+  const filepath = join(dir, "test-throwing-eventemitter.test.js");
+  rmSync(filepath, {
     force: true,
   });
 
   try {
-    mkdirSync("/tmp/test-throwing-bun", { recursive: true });
+    mkdirSync(dir, { recursive: true });
   } catch (e) {}
-  writeFileSync("/tmp/test-throwing-bun/test-throwing-eventemitter.test.js", code);
+  writeFileSync(filepath, code);
 
-  const { stderr, exitCode } = spawnSync([bunExe(), "wiptest", "test-throwing-eventemitter"], {
-    cwd: realpathSync("/tmp/test-throwing-bun"),
+  const { stderr, exitCode } = spawnSync([bunExe(), "test", "test-throwing-eventemitter"], {
+    cwd: realpathSync(dir),
     env: bunEnv,
   });
 

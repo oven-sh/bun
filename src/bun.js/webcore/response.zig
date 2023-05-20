@@ -979,28 +979,29 @@ pub const Fetch = struct {
                         method = request.method;
                     }
 
-                    if (options.fastGet(ctx.ptr(), .headers)) |headers_| {
-                        if (headers_.as(FetchHeaders)) |headers__| {
-                            if (headers__.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
-                                hostname = _hostname.toOwnedSliceZ(bun.default_allocator) catch unreachable;
+                    var fetch_headers: ?*FetchHeaders = blk: {
+                        if (options.fastGet(ctx.ptr(), .headers)) |headers_| {
+                            if (headers_.as(FetchHeaders)) |headers__| {
+                                if (headers__.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
+                                    hostname = _hostname.toOwnedSliceZ(bun.default_allocator) catch unreachable;
+                                }
+                                break :blk headers__;
+                                // TODO: make this one pass
+                            } else if (FetchHeaders.createFromJS(ctx.ptr(), headers_)) |headers__| {
+                                if (headers__.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
+                                    hostname = _hostname.toOwnedSliceZ(bun.default_allocator) catch unreachable;
+                                }
+                                break :blk headers__;
+                            } else if (request.headers) |head| {
+                                if (head.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
+                                    hostname = _hostname.toOwnedSliceZ(bun.default_allocator) catch unreachable;
+                                }
+                                break :blk head;
                             }
-                            headers = Headers.from(headers__, bun.default_allocator) catch unreachable;
-                            // TODO: make this one pass
-                        } else if (FetchHeaders.createFromJS(ctx.ptr(), headers_)) |headers__| {
-                            if (headers__.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
-                                hostname = _hostname.toOwnedSliceZ(bun.default_allocator) catch unreachable;
-                            }
-                            headers = Headers.from(headers__, bun.default_allocator) catch unreachable;
-                            headers__.deref();
                         } else if (request.headers) |head| {
-                            if (head.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
-                                hostname = _hostname.toOwnedSliceZ(bun.default_allocator) catch unreachable;
-                            }
-                            headers = Headers.from(head, bun.default_allocator) catch unreachable;
+                            break :blk head;
                         }
-                    } else if (request.headers) |head| {
-                        headers = Headers.from(head, bun.default_allocator) catch unreachable;
-                    }
+                    };
 
                     if (options.fastGet(ctx.ptr(), .body)) |body__| {
                         if (Body.Value.fromJS(ctx.ptr(), body__)) |body_const| {
@@ -1020,6 +1021,20 @@ pub const Fetch = struct {
                     } else {
                         body = request.body.value.useAsAnyBlob();
                     }
+
+                    if (fetch_headers == null) {
+                        fetch_headers = FetchHeaders.createEmpty();
+                    }
+
+                    if (body == .Blob) {
+                        const content_type = body.Blob.content_type;
+                        if (content_type.len > 0) {
+                            fetch_headers.?.put("content-type", content_type, globalThis);
+                        }
+                    }
+
+                    headers = Headers.from(fetch_headers orelse unreachable, bun.default_allocator) catch unreachable;
+                    fetch_headers.?.deref();
 
                     if (options.get(ctx, "timeout")) |timeout_value| {
                         if (timeout_value.isBoolean()) {
@@ -1115,25 +1130,28 @@ pub const Fetch = struct {
                         method = Method.which(slice_.slice()) orelse .GET;
                     }
 
-                    if (options.fastGet(ctx.ptr(), .headers)) |headers_| {
-                        if (headers_.as(FetchHeaders)) |headers__| {
-                            if (headers__.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
-                                hostname = _hostname.toOwnedSliceZ(bun.default_allocator) catch unreachable;
+                    var fetch_headers: ?*FetchHeaders = blk: {
+                        if (options.fastGet(ctx.ptr(), .headers)) |headers_| {
+                            if (headers_.as(FetchHeaders)) |headers__| {
+                                if (headers__.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
+                                    hostname = _hostname.toOwnedSliceZ(bun.default_allocator) catch unreachable;
+                                }
+                                break :blk headers__;
+                                // TODO: make this one pass
+                            } else if (FetchHeaders.createFromJS(ctx.ptr(), headers_)) |headers__| {
+                                if (headers__.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
+                                    hostname = _hostname.toOwnedSliceZ(bun.default_allocator) catch unreachable;
+                                }
+                                break :blk headers__;
+                            } else {
+                                // Converting the headers failed; return null and
+                                //  let the set exception get thrown
+                                return .zero;
                             }
-                            headers = Headers.from(headers__, bun.default_allocator) catch unreachable;
-                            // TODO: make this one pass
-                        } else if (FetchHeaders.createFromJS(ctx.ptr(), headers_)) |headers__| {
-                            defer headers__.deref();
-                            if (headers__.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
-                                hostname = _hostname.toOwnedSliceZ(bun.default_allocator) catch unreachable;
-                            }
-                            headers = Headers.from(headers__, bun.default_allocator) catch unreachable;
-                        } else {
-                            // Converting the headers failed; return null and
-                            //  let the set exception get thrown
-                            return .zero;
                         }
-                    }
+
+                        break :blk null;
+                    };
 
                     if (options.fastGet(ctx.ptr(), .body)) |body__| {
                         if (Body.Value.fromJS(ctx.ptr(), body__)) |body_const| {
@@ -1150,6 +1168,20 @@ pub const Fetch = struct {
                             return JSC.JSValue.jsUndefined();
                         }
                     }
+
+                    if (fetch_headers == null) {
+                        fetch_headers = FetchHeaders.createEmpty();
+                    }
+
+                    if (body == .Blob) {
+                        const content_type = body.Blob.content_type;
+                        if (content_type.len > 0) {
+                            fetch_headers.?.put("content-type", content_type, globalThis);
+                        }
+                    }
+
+                    headers = Headers.from(fetch_headers orelse unreachable, bun.default_allocator) catch unreachable;
+                    fetch_headers.?.deref();
 
                     if (options.get(ctx, "timeout")) |timeout_value| {
                         if (timeout_value.isBoolean()) {

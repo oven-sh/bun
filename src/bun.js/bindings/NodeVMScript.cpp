@@ -342,12 +342,12 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInThisContext, (JSGlobalObject * globalObjec
     proxy->setTarget(vm, globalObject);
     context->setPrototypeDirect(vm, proxy);
 
-    JSScope* contextScope = JSWithScope::create(vm, globalObject, globalObject->globalScope(), context);
-
     auto* executable = JSC::DirectEvalExecutable::create(
         globalObject, source, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
         false, false, EvalContextType::None, nullptr, nullptr, ECMAMode::sloppy());
+    RETURN_IF_EXCEPTION(throwScope, {});
 
+    JSScope* contextScope = JSWithScope::create(vm, globalObject, globalObject->globalScope(), context);
     auto catchScope = DECLARE_CATCH_SCOPE(vm);
     JSValue result = vm.interpreter.executeEval(executable, globalObject, contextScope);
     if (UNLIKELY(catchScope.exception())) {

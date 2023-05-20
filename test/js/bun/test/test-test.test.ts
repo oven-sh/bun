@@ -2759,7 +2759,15 @@ describe(() => {
   });
 });
 
-describe('todo', () => {
-  test.todo('implement this test')
-  it.todo('implement another test')
-})
+describe("todo", () => {
+  test.todo("implement this feature", () => {
+    throw new Error();
+  });
+
+  test.todo("make this test pass", () => {
+    expect(5).toBe(5);
+    expect(4).toBe(3);
+  });
+
+  it.todo("implement this test");
+});

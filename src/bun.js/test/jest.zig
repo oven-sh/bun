@@ -3219,31 +3219,34 @@ pub const TestScope = struct {
             label = (label_value.toSlice(ctx, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
         }
 
-        if (tag == .todo) {
-            if ((label_value == .zero or args.len != 1)) {
-                JSError(getAllocator(ctx), "test.todo() must be called with only a description. Use test.skip if you passed a callback.", .{}, ctx, exception);
-                return this;
-            }
-
-            DescribeScope.active.todo_counter += 1;
-            DescribeScope.active.tests.append(getAllocator(ctx), TestScope{
-                .label = label,
-                .parent = DescribeScope.active,
-                .is_todo = true,
-                .callback = null,
-            }) catch unreachable;
-
+        if (tag == .todo and label_value == .zero) {
+            JSError(getAllocator(ctx), "test.todo() requires a description", .{}, ctx, exception);
             return this;
         }
 
         const function = function_value;
         if (function.isEmptyOrUndefinedOrNull() or !function.isCell() or !function.isCallable(ctx.vm())) {
-            JSError(getAllocator(ctx), "test() expects a function", .{}, ctx, exception);
-            return this;
+            // a callback is not required for .todo
+            if (tag != .todo) {
+                JSError(getAllocator(ctx), "test() expects a function", .{}, ctx, exception);
+                return this;
+            }
         }
 
         if (tag == .only) {
             Jest.runner.?.setOnly();
+        }
+
+        if (tag == .todo) {
+            DescribeScope.active.todo_counter += 1;
+            DescribeScope.active.tests.append(getAllocator(ctx), TestScope{
+                .label = label,
+                .parent = DescribeScope.active,
+                .is_todo = true,
+                .callback = if (function == .zero) null else function.asObjectRef(),
+            }) catch unreachable;
+
+            return this;
         }
 
         if (tag == .skip or (tag != .only and Jest.runner.?.only)) {
@@ -3358,8 +3361,12 @@ pub const TestScope = struct {
 
         if (initial_value.isAnyError()) {
             if (!Jest.runner.?.did_pending_test_fail) {
-                Jest.runner.?.did_pending_test_fail = true;
+                Jest.runner.?.did_pending_test_fail = !this.is_todo;
                 vm.runErrorHandler(initial_value, null);
+            }
+
+            if (this.is_todo) {
+                return .{ .todo = {} };
             }
 
             return .{ .fail = active_test_expectation_counter.actual };
@@ -3380,8 +3387,12 @@ pub const TestScope = struct {
             switch (promise.status(vm.global.vm())) {
                 .Rejected => {
                     if (!Jest.runner.?.did_pending_test_fail) {
-                        Jest.runner.?.did_pending_test_fail = true;
+                        Jest.runner.?.did_pending_test_fail = !this.is_todo;
                         vm.runErrorHandler(promise.result(vm.global.vm()), null);
+                    }
+
+                    if (this.is_todo) {
+                        return .{ .todo = {} };
                     }
 
                     return .{ .fail = active_test_expectation_counter.actual };
@@ -3413,6 +3424,11 @@ pub const TestScope = struct {
                 active_test_expectation_counter.actual,
                 active_test_expectation_counter.expected,
             });
+            return .{ .fail = active_test_expectation_counter.actual };
+        }
+
+        if (this.is_todo) {
+            Output.prettyErrorln("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` or check that test is correct.<r>", .{});
             return .{ .fail = active_test_expectation_counter.actual };
         }
 
@@ -3927,7 +3943,7 @@ pub const TestRunnerTask = struct {
         describe.current_test_id = test_id;
         var globalThis = this.globalThis;
 
-        if (!describe.skipped and test_.is_todo) {
+        if (!describe.skipped and test_.is_todo and test_.callback == null) {
             this.processTestResult(globalThis, .{ .todo = {} }, test_, test_id, describe);
             this.deinit();
             return false;

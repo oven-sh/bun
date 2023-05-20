@@ -191,6 +191,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     pub const onTimeout = handleTimeout;
                     pub const onConnectError = handleConnectError;
                     pub const onEnd = handleEnd;
+                    pub const onHandshake = handleHandshake;
                 },
             );
             if (is_new_loop) {
@@ -287,12 +288,14 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         }
 
         pub fn fail(this: *HTTPClient, code: ErrorCode) void {
+            log("onFail", .{});
             JSC.markBinding(@src());
             WebSocket__didCloseWithErrorCode(this.outgoing_websocket, code);
             this.cancel();
         }
 
         pub fn handleClose(this: *HTTPClient, _: Socket, _: c_int, _: ?*anyopaque) void {
+            log("onClose", .{});
             JSC.markBinding(@src());
             this.clearData();
             WebSocket__didCloseWithErrorCode(this.outgoing_websocket, ErrorCode.ended);
@@ -302,6 +305,19 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this.fail(code);
             if (!this.tcp.isClosed())
                 this.tcp.close(0, null);
+        }
+
+        pub fn handleHandshake(this: *HTTPClient, socket: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
+            _ = ssl_error;
+            log("onHandshake({d})", .{success});
+
+            const wrote = socket.write(this.input_body_buf, true);
+            if (wrote < 0) {
+                this.terminate(ErrorCode.failed_to_write);
+                return;
+            }
+
+            this.to_send = this.input_body_buf[@intCast(usize, wrote)..];
         }
 
         pub fn handleOpen(this: *HTTPClient, socket: Socket) void {
@@ -317,15 +333,16 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     bun.default_allocator.free(this.hostname);
                     this.hostname = "";
                 }
-            }
+                //wait handshake if we are ssl
+            } else {
+                const wrote = socket.write(this.input_body_buf, true);
+                if (wrote < 0) {
+                    this.terminate(ErrorCode.failed_to_write);
+                    return;
+                }
 
-            const wrote = socket.write(this.input_body_buf, true);
-            if (wrote < 0) {
-                this.terminate(ErrorCode.failed_to_write);
-                return;
+                this.to_send = this.input_body_buf[@intCast(usize, wrote)..];
             }
-
-            this.to_send = this.input_body_buf[@intCast(usize, wrote)..];
         }
 
         fn getBody(this: *HTTPClient) *BodyBufBytes {
@@ -861,6 +878,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     pub const onTimeout = handleTimeout;
                     pub const onConnectError = handleConnectError;
                     pub const onEnd = handleEnd;
+                    // just by adding it will fix ssl handshake
+                    pub const onHandshake = handleHandshake;
                 },
             );
         }
@@ -894,7 +913,16 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.cancel();
         }
 
+        pub fn handleHandshake(this: *WebSocket, socket: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
+            _ = socket;
+            _ = ssl_error;
+            log("WebSocket.onHandshake({d})", .{success});
+            if (success == 0) {
+                WebSocket__didCloseWithErrorCode(this, ErrorCode.ended);
+            }
+        }
         pub fn handleClose(this: *WebSocket, _: Socket, _: c_int, _: ?*anyopaque) void {
+            log("onClose", .{});
             JSC.markBinding(@src());
             this.clearData();
             if (this.outgoing_websocket) |ws|

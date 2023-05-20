@@ -179,6 +179,8 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 #include "CallSitePrototype.h"
 #include "DOMWrapperWorld-class.h"
 
+#include "JavaScriptCore/Watchdog.h"
+
 constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 
 #ifdef __APPLE__
@@ -3767,6 +3769,16 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     ScriptExecutionContext* context = thisObject->scriptExecutionContext();
     visitor.addOpaqueRoot(context);
+}
+
+extern "C" void JSGlobalObject__throwTerminationException(JSC::JSGlobalObject* globalObject)
+{
+    globalObject->vm().setHasTerminationRequest();
+}
+
+extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* globalObject)
+{
+    globalObject->vm().clearHasTerminationRequest();
 }
 
 extern "C" void Bun__queueTask(JSC__JSGlobalObject*, WebCore::EventLoopTask* task);

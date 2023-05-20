@@ -1,11 +1,11 @@
 // @ts-nocheck
 import { spawn, spawnSync } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
-import { mkdirSync, realpathSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, realpathSync, rmSync, writeFileSync, copyFileSync } from "fs";
 import { mkdtemp, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "os";
-import { join } from "path";
+import { join, dirname } from "path";
 
 it("shouldn't crash when async test runner callback throws", async () => {
   const code = `
@@ -2757,4 +2757,20 @@ describe(() => {
       throw new Error("This should not throw. `.skip` is broken");
     });
   });
+});
+
+it("test timeouts when expected", () => {
+  const path = join(realpathSync(tmpdir()), "test-timeout.test.js");
+  copyFileSync(join(import.meta.dir, "timeout-test-fixture.js"), path);
+  const { stdout, stderr, exited } = spawnSync({
+    cmd: [bunExe(), "test", path],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+    cwd: realpathSync(dirname(path)),
+  });
+
+  const err = stderr!.toString();
+  expect(err).toContain("timed out after 10ms");
+  expect(err).not.toContain("unreachable code");
 });

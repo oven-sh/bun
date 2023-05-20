@@ -2345,6 +2345,11 @@ pub const JSGlobalObject = extern struct {
         this.throwValue(this.createErrorInstance("Out of memory", .{}));
     }
 
+    extern fn JSGlobalObject__clearTerminationException(this: *JSGlobalObject) void;
+    extern fn JSGlobalObject__throwTerminationException(this: *JSGlobalObject) void;
+    pub const throwTerminationException = JSGlobalObject__throwTerminationException;
+    pub const clearTerminationException = JSGlobalObject__clearTerminationException;
+
     pub fn throwInvalidArguments(
         this: *JSGlobalObject,
         comptime fmt: string,

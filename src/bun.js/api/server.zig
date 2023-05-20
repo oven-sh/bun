@@ -101,7 +101,7 @@ const BlobFileContentResult = struct {
                 const read = fs.readFileWithOptions(.{ .path = body.Blob.store.?.data.file.pathlike }, .sync, .null_terminated);
                 switch (read) {
                     .err => {
-                        JSC.throwInvalidArguments(std.fmt.comptimePrint("Unable to read {s} path", .{fieldname}), .{}, global, exception);
+                        global.throwValue(read.err.toJSC(global));
                         return .{ .data = "" };
                     },
                     else => {

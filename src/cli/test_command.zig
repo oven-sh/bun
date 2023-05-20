@@ -498,8 +498,20 @@ pub const TestCommand = struct {
                 error_writer.writeAll(reporter.skips_to_repeat_buf.items) catch unreachable;
             }
 
-            if (reporter.summary.fail > 0) {
+            if (reporter.summary.todo > 0) {
                 if (reporter.summary.skip > 0) {
+                    Output.prettyError("\n", .{});
+                }
+
+                Output.prettyError("\n<r><d>{d} todo:<r>\n", .{reporter.summary.todo});
+                Output.flush();
+
+                var error_writer = Output.errorWriter();
+                error_writer.writeAll(reporter.todos_to_repeat_buf.items) catch unreachable;
+            }
+
+            if (reporter.summary.fail > 0) {
+                if (reporter.summary.skip > 0 or reporter.summary.todo > 0) {
                     Output.prettyError("\n", .{});
                 }
 

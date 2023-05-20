@@ -171,11 +171,22 @@ declare module "bun:test" {
         | ((done: (err?: unknown) => void) => void),
     ): void;
     /**
-     * Indicate a test is yet to be written.
+     * Indicate a test is yet to be written or implemented correctly.
+     *
+     * When a test function is passed, it will be marked as `todo` in the test results
+     * as long the test does not pass. When the test passes, the test will be marked as
+     * `fail` in the results; you will have to remove the `.todo` or check that your test
+     * is implemented correctly.
      *
      * @param label the label for the test
+     * @param fn the test function
      */
-    todo(label: string): void
+    todo(
+      label: string,
+      fn?:
+        | (() => void | Promise<unknown>)
+        | ((done: (err?: unknown) => void) => void),
+    ): void;
   };
   /**
    * Runs a test.

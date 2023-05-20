@@ -309,9 +309,11 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         pub fn handleHandshake(this: *HTTPClient, socket: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
             _ = socket;
-            _ = this;
             _ = ssl_error;
             log("onHandshake({d})", .{success});
+            if (success == 0) {
+                this.fail(ErrorCode.failed_to_connect);
+            }
         }
 
         pub fn handleOpen(this: *HTTPClient, socket: Socket) void {
@@ -912,7 +914,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             log("WebSocket.onHandshake({d})", .{success});
             if (success == 0) {
                 if (this.outgoing_websocket) |ws| {
-                    WebSocket__didCloseWithErrorCode(ws, ErrorCode.ended);
+                    WebSocket__didCloseWithErrorCode(ws, ErrorCode.failed_to_connect);
                 }
             }
         }

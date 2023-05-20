@@ -3361,6 +3361,7 @@ pub const TestScope = struct {
 
         if (initial_value.isAnyError()) {
             if (!Jest.runner.?.did_pending_test_fail) {
+                // test failed unless it's a todo
                 Jest.runner.?.did_pending_test_fail = !this.is_todo;
                 vm.runErrorHandler(initial_value, null);
             }
@@ -3387,6 +3388,7 @@ pub const TestScope = struct {
             switch (promise.status(vm.global.vm())) {
                 .Rejected => {
                     if (!Jest.runner.?.did_pending_test_fail) {
+                        // test failed unless it's a todo
                         Jest.runner.?.did_pending_test_fail = !this.is_todo;
                         vm.runErrorHandler(promise.result(vm.global.vm()), null);
                     }

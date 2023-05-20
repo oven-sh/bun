@@ -694,6 +694,10 @@ init-submodules:
 build-obj:
 	$(ZIG) build obj -Doptimize=ReleaseFast -Dcpu="$(CPU_TARGET)"
 
+.PHONY: build-obj-small
+build-obj-small:
+	$(ZIG) build obj -Doptimize=ReleaseSmall -Dcpu="$(CPU_TARGET)"
+
 .PHONY: dev-build-obj-wasm
 dev-build-obj-wasm:
 	$(ZIG) build bun-wasm -Dtarget=wasm32-freestanding

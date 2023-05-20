@@ -3856,11 +3856,6 @@ restart:
     }
 }
 
-inline bool propertyCompare(const std::pair<String, std::pair<Identifier, JSValue>>& a, const std::pair<String, std::pair<Identifier, JSValue>>& b)
-{
-    return codePointCompare(a.first.impl(), b.first.impl()) < 0;
-}
-
 void JSC__JSValue__forEachPropertyOrdered(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC__JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC__JSValue JSValue3, bool isSymbol))
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
@@ -3869,25 +3864,44 @@ void JSC__JSValue__forEachPropertyOrdered(JSC__JSValue JSValue0, JSC__JSGlobalOb
         return;
 
     JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
-
     JSC::PropertyNameArray properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
-    JSC::JSObject::getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Include);
+    {
+        auto scope = DECLARE_CATCH_SCOPE(vm);
 
-    Vector<std::pair<String, std::pair<Identifier, JSValue>>> ordered_properties;
-    for (auto property : properties) {
-        JSValue propertyValue = object->getDirect(vm, property);
-        ordered_properties.append(std::pair<String, std::pair<Identifier, JSValue>>(property.isSymbol() && !property.isPrivateName() ? property.impl() : property.string(), std::pair<Identifier, JSValue>(property, propertyValue)));
+        JSC::JSObject::getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Include);
+
+        if (UNLIKELY(scope.exception())) {
+            scope.clearException();
+            return;
+        }
     }
 
-    std::sort(ordered_properties.begin(), ordered_properties.end(), propertyCompare);
+    WTF::Vector<uint32_t> orderedPropertyIndices;
+    orderedPropertyIndices.reserveInitialCapacity(properties.size());
+    uint32_t index = 0;
+    for (auto property : properties) {
+        orderedPropertyIndices.uncheckedAppend(index++);
+    }
 
-    for (auto item : ordered_properties) {
-        ZigString key = toZigString(item.first);
-        Identifier property = item.second.first;
-        JSValue propertyValue = item.second.second;
+    std::sort(orderedPropertyIndices.begin(), orderedPropertyIndices.end(), [&](uint32_t aIndex, uint32_t bIndex) -> bool {
+        const Identifier& a = properties[aIndex];
+        const Identifier& b = properties[bIndex];
+        const WTF::StringImpl* aString = a.isSymbol() && !a.isPrivateName() ? a.impl() : a.string().impl();
+        const WTF::StringImpl* bString = b.isSymbol() && !b.isPrivateName() ? b.impl() : b.string().impl();
+
+        return codePointCompare(aString, bString) < 0;
+    });
+
+    for (auto propertyIndex : orderedPropertyIndices) {
+        const Identifier& property = properties[propertyIndex];
+        bool isSymbol = property.isSymbol();
+        const WTF::StringImpl* propertyName = isSymbol && !property.isPrivateName() ? property.impl() : property.string().impl();
+        ZigString key = toZigString(propertyName);
+
+        JSValue propertyValue = object->getDirect(vm, property);
+
         JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
-        iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol());
+        iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), isSymbol);
     }
 }
 

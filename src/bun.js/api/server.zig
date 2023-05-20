@@ -92,7 +92,6 @@ const DateTime = bun.DateTime;
 const linux = std.os.linux;
 
 const BlobFileContentResult = struct {
-    const log = Output.scoped(.BlobFileContentResult, false);
     data: [:0]const u8,
     fn init(comptime fieldname: []const u8, js_obj: JSC.JSValue, global: *JSC.JSGlobalObject, exception: JSC.C.ExceptionRef) ?BlobFileContentResult {
         if (JSC.WebCore.Body.Value.fromJS(global, js_obj)) |body| {

@@ -503,7 +503,7 @@ pub const TestCommand = struct {
                     Output.prettyError("\n", .{});
                 }
 
-                Output.prettyError("\n<r><d>{d} todo:<r>\n", .{reporter.summary.todo});
+                Output.prettyError("\n<r><d>{d} tests todo:<r>\n", .{reporter.summary.todo});
                 Output.flush();
 
                 var error_writer = Output.errorWriter();

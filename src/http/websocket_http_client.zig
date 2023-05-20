@@ -191,7 +191,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     pub const onTimeout = handleTimeout;
                     pub const onConnectError = handleConnectError;
                     pub const onEnd = handleEnd;
-                    pub const onHandshake = handleHandshake;
+                    // pub const onHandshake = handleHandshake;
                 },
             );
             if (is_new_loop) {
@@ -333,16 +333,15 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     bun.default_allocator.free(this.hostname);
                     this.hostname = "";
                 }
-                //wait handshake if we are ssl
-            } else {
-                const wrote = socket.write(this.input_body_buf, true);
-                if (wrote < 0) {
-                    this.terminate(ErrorCode.failed_to_write);
-                    return;
-                }
-
-                this.to_send = this.input_body_buf[@intCast(usize, wrote)..];
             }
+
+            const wrote = socket.write(this.input_body_buf, true);
+            if (wrote < 0) {
+                this.terminate(ErrorCode.failed_to_write);
+                return;
+            }
+
+            this.to_send = this.input_body_buf[@intCast(usize, wrote)..];
         }
 
         fn getBody(this: *HTTPClient) *BodyBufBytes {
@@ -879,7 +878,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     pub const onConnectError = handleConnectError;
                     pub const onEnd = handleEnd;
                     // just by adding it will fix ssl handshake
-                    pub const onHandshake = handleHandshake;
+                    // pub const onHandshake = handleHandshake;
                 },
             );
         }

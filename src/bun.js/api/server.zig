@@ -92,53 +92,30 @@ const DateTime = bun.DateTime;
 const linux = std.os.linux;
 
 const BlobFileContentResult = struct {
-    data: [*c]const u8,
-
     const log = Output.scoped(.BlobFileContentResult, false);
+    data: [:0]const u8,
     fn init(comptime fieldname: []const u8, js_obj: JSC.JSValue, global: *JSC.JSGlobalObject, exception: JSC.C.ExceptionRef) ?BlobFileContentResult {
         if (JSC.WebCore.Body.Value.fromJS(global, js_obj)) |body| {
             if (body == .Blob and body.Blob.store != null and body.Blob.store.?.data == .file) {
-                const pathlike = body.Blob.store.?.data.file.pathlike;
-                if (pathlike == .path) {
-                    const path = pathlike.path.slice();
-
-                    const path_z = bun.default_allocator.dupeZ(u8, path) catch unreachable;
-                    defer bun.default_allocator.destroy(path_z);
-                    if (std.os.system.access(path_z, std.os.F_OK) != 0) {
-                        JSC.throwInvalidArguments(std.fmt.comptimePrint("Unable to access {s} path", .{fieldname}), .{}, global, exception);
-                        return .{ .data = null };
-                    }
-                    const cwd = std.process.getCwdAlloc(bun.default_allocator) catch {
-                        JSC.throwInvalidArguments(std.fmt.comptimePrint("Unable to access {s} path", .{fieldname}), .{}, global, exception);
-                        return .{ .data = null };
-                    };
-                    defer bun.default_allocator.free(cwd);
-
-                    const fullpath = std.fs.path.resolve(bun.default_allocator, &.{ cwd, path }) catch {
-                        JSC.throwInvalidArguments(std.fmt.comptimePrint("Unable to resolve {s} path", .{fieldname}), .{}, global, exception);
-                        return .{ .data = null };
-                    };
-                    defer bun.default_allocator.free(fullpath);
-                    var file = std.fs.openFileAbsolute(fullpath, std.fs.File.OpenFlags{ .mode = .read_only }) catch {
-                        JSC.throwInvalidArguments(std.fmt.comptimePrint("Unable to open {s} path", .{fieldname}), .{}, global, exception);
-                        return .{ .data = null };
-                    };
-                    defer file.close();
-                    const stats = file.stat() catch {
-                        JSC.throwInvalidArguments(std.fmt.comptimePrint("Unable to open {s} path", .{fieldname}), .{}, global, exception);
-                        return .{ .data = null };
-                    };
-
-                    if (stats.size > 0) {
-                        const file_content = file.readToEndAllocOptions(bun.default_allocator, stats.size, stats.size, @alignOf(u8), 0) catch {
-                            JSC.throwInvalidArguments(std.fmt.comptimePrint("Unable to read {s} path", .{fieldname}), .{}, global, exception);
-                            return .{ .data = null };
-                        };
-                        return .{ .data = file_content.ptr };
-                    }
+                var fs: JSC.Node.NodeFS = .{};
+                const read = fs.readFileWithOptions(.{ .path = body.Blob.store.?.data.file.pathlike }, .sync, .null_terminated);
+                switch (read) {
+                    .err => {
+                        JSC.throwInvalidArguments(std.fmt.comptimePrint("Unable to read {s} path", .{fieldname}), .{}, global, exception);
+                        return .{ .data = "" };
+                    },
+                    else => {
+                        const str = read.result.null_terminated;
+                        if (str.len > 0) {
+                            return .{ .data = str };
+                        }
+                        JSC.throwInvalidArguments(std.fmt.comptimePrint("Invalid {s} file", .{fieldname}), .{}, global, exception);
+                        return .{ .data = str };
+                    },
                 }
             }
         }
+
         return null;
     }
 };
@@ -329,8 +306,8 @@ pub const ServerConfig = struct {
                                     any = true;
                                 }
                             } else if (BlobFileContentResult.init("key", item, global, exception)) |content| {
-                                if (content.data) |data| {
-                                    native_array[valid_count] = data;
+                                if (content.data.len > 0) {
+                                    native_array[valid_count] = content.data.ptr;
                                     valid_count += 1;
                                     any = true;
                                 } else {
@@ -361,9 +338,9 @@ pub const ServerConfig = struct {
                         result.key_count = valid_count;
                     }
                 } else if (BlobFileContentResult.init("key", js_obj, global, exception)) |content| {
-                    if (content.data) |data| {
+                    if (content.data.len > 0) {
                         const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
-                        native_array[0] = data;
+                        native_array[0] = content.data.ptr;
                         result.key = native_array;
                         result.key_count = 1;
                         any = true;
@@ -431,8 +408,8 @@ pub const ServerConfig = struct {
                                     any = true;
                                 }
                             } else if (BlobFileContentResult.init("cert", item, global, exception)) |content| {
-                                if (content.data) |data| {
-                                    native_array[valid_count] = data;
+                                if (content.data.len > 0) {
+                                    native_array[valid_count] = content.data.ptr;
                                     valid_count += 1;
                                     any = true;
                                 } else {
@@ -463,9 +440,9 @@ pub const ServerConfig = struct {
                         result.cert_count = valid_count;
                     }
                 } else if (BlobFileContentResult.init("cert", js_obj, global, exception)) |content| {
-                    if (content.data) |data| {
+                    if (content.data.len > 0) {
                         const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
-                        native_array[0] = data;
+                        native_array[0] = content.data.ptr;
                         result.cert = native_array;
                         result.cert_count = 1;
                         any = true;
@@ -546,8 +523,8 @@ pub const ServerConfig = struct {
                                     any = true;
                                 }
                             } else if (BlobFileContentResult.init("ca", item, global, exception)) |content| {
-                                if (content.data) |data| {
-                                    native_array[valid_count] = data;
+                                if (content.data.len > 0) {
+                                    native_array[valid_count] = content.data.ptr;
                                     valid_count += 1;
                                     any = true;
                                 } else {
@@ -578,9 +555,9 @@ pub const ServerConfig = struct {
                         result.ca_count = valid_count;
                     }
                 } else if (BlobFileContentResult.init("ca", js_obj, global, exception)) |content| {
-                    if (content.data) |data| {
+                    if (content.data.len > 0) {
                         const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
-                        native_array[0] = data;
+                        native_array[0] = content.data.ptr;
                         result.ca = native_array;
                         result.ca_count = 1;
                         any = true;

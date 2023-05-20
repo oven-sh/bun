@@ -21,7 +21,7 @@ function notimpl(message) {
 const { createContext, isContext, Script, runInNewContext, runInThisContext } = vm;
 
 function runInContext(code, context, options) {
-  return new Script(code).runInContext(context, options);
+  return new Script(code, options).runInContext(context);
 }
 
 function compileFunction() {

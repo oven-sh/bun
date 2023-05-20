@@ -120,7 +120,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
 
     auto scope = DECLARE_THROW_SCOPE(vm);
     SourceCode source(
-        JSC::StringSourceProvider::create(sourceString, JSC::SourceOrigin(), options.filename, TextPosition(options.lineOffset, options.columnOffset)),
+        JSC::StringSourceProvider::create(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename)), options.filename, TextPosition(options.lineOffset, options.columnOffset)),
         options.lineOffset.zeroBasedInt(), options.columnOffset.zeroBasedInt());
     RETURN_IF_EXCEPTION(scope, {});
     NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, source);
@@ -263,7 +263,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
         }
     }
     SourceCode source(
-        JSC::StringSourceProvider::create(sourceString, JSC::SourceOrigin(), options.filename, TextPosition(options.lineOffset, options.columnOffset)),
+        JSC::StringSourceProvider::create(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename)), options.filename, TextPosition(options.lineOffset, options.columnOffset)),
         options.lineOffset.zeroBasedInt(), options.columnOffset.zeroBasedInt());
 
     auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(globalObject);
@@ -284,7 +284,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
     JSScope* contextScope = JSWithScope::create(vm, targetContext, targetContext->globalScope(), context);
 
     auto catchScope = DECLARE_CATCH_SCOPE(vm);
-    JSValue result = vm.interpreter.executeEval(executable, globalObject, contextScope);
+    JSValue result = vm.interpreter.executeEval(executable, targetContext, contextScope);
     if (UNLIKELY(catchScope.exception())) {
         auto returnedException = catchScope.exception();
         catchScope.clearException();
@@ -332,7 +332,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInThisContext, (JSGlobalObject * globalObjec
         }
     }
     SourceCode source(
-        JSC::StringSourceProvider::create(sourceString, JSC::SourceOrigin(), options.filename, TextPosition(options.lineOffset, options.columnOffset)),
+        JSC::StringSourceProvider::create(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename)), options.filename, TextPosition(options.lineOffset, options.columnOffset)),
         options.lineOffset.zeroBasedInt(), options.columnOffset.zeroBasedInt());
     auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     JSObject* context = asObject(contextObjectValue);
@@ -397,7 +397,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
     // proxy->setTarget(vm, targetContext);
     // context->setPrototypeDirect(vm, proxy);
 
-    JSScope* contextScope = JSWithScope::create(vm, globalObject, globalObject->globalScope(), context);
+    JSScope* contextScope = JSWithScope::create(vm, targetContext, targetContext->globalScope(), context);
     return runInContext(globalObject, script, targetContext, contextScope, callFrame->argument(0));
 }
 JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -405,13 +405,25 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
     auto& vm = globalObject->vm();
     JSValue thisValue = callFrame->thisValue();
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
     if (UNLIKELY(!script)) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(globalObject, scope, "Script.prototype.runInThisContext can only be called on a Script object"_s);
+        return throwVMTypeError(globalObject, throwScope, "Script.prototype.runInThisContext can only be called on a Script object"_s);
     }
 
-    JSValue arg0 = callFrame->argument(0);
-    return runInContext(globalObject, script, globalObject->globalThis(), globalObject->globalScope(), arg0);
+    JSValue contextArg = callFrame->argument(0);
+    if (!contextArg || contextArg.isUndefinedOrNull()) {
+        contextArg = JSC::constructEmptyObject(globalObject);
+    }
+
+    if (!contextArg.isObject()) {
+        return throwVMTypeError(globalObject, throwScope, "context must be an object"_s);
+    }
+
+    JSObject* context = asObject(contextArg);
+    JSWithScope* contextScope = JSWithScope::create(vm, globalObject, globalObject->globalScope(), context);
+
+    return runInContext(globalObject, script, globalObject->globalThis(), contextScope, callFrame->argument(1));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, EncodedJSValue thisValueEncoded, PropertyName))

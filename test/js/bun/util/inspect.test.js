@@ -7,7 +7,7 @@ it("getters", () => {
     },
   };
 
-  expect(Bun.inspect(obj)).toBe("{\n" + '  "foo": [Getter]' + "\n" + "}");
+  expect(Bun.inspect(obj)).toBe("{\n" + "  foo: [Getter]" + "\n" + "}");
   var called = false;
   const objWithThrowingGetter = {
     get foo() {
@@ -20,7 +20,7 @@ it("getters", () => {
     },
   };
 
-  expect(Bun.inspect(objWithThrowingGetter)).toBe("{\n" + '  "foo": [Getter]' + "\n" + "}");
+  expect(Bun.inspect(objWithThrowingGetter)).toBe("{\n" + "  foo: [Getter]" + "\n" + "}");
   expect(called).toBe(false);
 });
 
@@ -39,7 +39,7 @@ it("when prototype defines the same property, don't print the same property twic
   };
   var obj = Object.create(base);
   obj.foo = "456";
-  expect(Bun.inspect(obj).trim()).toBe('{\n  "foo": "456"\n}'.trim());
+  expect(Bun.inspect(obj).trim()).toBe('{\n  foo: "456"\n}'.trim());
 });
 
 it("Blob inspect", () => {
@@ -71,7 +71,7 @@ it("Blob inspect", () => {
 }`);
 });
 
-it.skip("utf16 property name", () => {
+it("utf16 property name", () => {
   var { Database } = require("bun:sqlite");
   const db = Database.open(":memory:");
   expect("笑".codePointAt(0)).toBe(31505);
@@ -218,10 +218,10 @@ it("inspect", () => {
   expect(Bun.inspect(1, "hi")).toBe("1 hi");
   expect(Bun.inspect([])).toBe("[]");
   expect(Bun.inspect({})).toBe("{}");
-  expect(Bun.inspect({ hello: 1 })).toBe('{\n  "hello": 1\n}');
-  expect(Bun.inspect({ hello: 1, there: 2 })).toBe('{\n  "hello": 1,\n  "there": 2\n}');
-  expect(Bun.inspect({ hello: "1", there: 2 })).toBe('{\n  "hello": "1",\n  "there": 2\n}');
-  expect(Bun.inspect({ 'hello-"there': "1", there: 2 })).toBe('{\n  "hello-\\"there": "1",\n  "there": 2\n}');
+  expect(Bun.inspect({ hello: 1 })).toBe("{\n  hello: 1\n}");
+  expect(Bun.inspect({ hello: 1, there: 2 })).toBe("{\n  hello: 1,\n  there: 2\n}");
+  expect(Bun.inspect({ hello: "1", there: 2 })).toBe('{\n  hello: "1",\n  there: 2\n}');
+  expect(Bun.inspect({ 'hello-"there': "1", there: 2 })).toBe('{\n  "hello-\\"there": "1",\n  there: 2\n}');
   var str = "123";
   while (str.length < 4096) {
     str += "123";

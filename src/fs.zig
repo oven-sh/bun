@@ -1047,7 +1047,7 @@ pub const FileSystem = struct {
             if (use_shared_buffer) {
                 shared_buffer.reset();
                 var offset: u64 = 0;
-                try shared_buffer.growBy(size);
+                try shared_buffer.growBy(size + 1);
                 shared_buffer.list.expandToCapacity();
 
                 // if you press save on a large file we might not read all the
@@ -1086,6 +1086,10 @@ pub const FileSystem = struct {
                         }
                     }
                     break;
+                }
+
+                if (shared_buffer.list.capacity > file_contents.len) {
+                    file_contents.ptr[file_contents.len] = 0;
                 }
             } else {
                 // We use pread to ensure if the file handle was open, it doesn't seek from the last position

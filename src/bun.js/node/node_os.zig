@@ -668,7 +668,7 @@ pub const Os = struct {
         return JSC.JSValue.jsNumberFromUint64(C.getSystemUptime());
     }
 
-    pub fn userInfo(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn userInfo(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         const result = JSC.JSValue.createEmptyObject(globalThis, 5);
 
         result.put(globalThis, JSC.ZigString.static("homedir"), homedir(globalThis, callframe));

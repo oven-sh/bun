@@ -184,6 +184,9 @@ export default {
     page("test/extending", "Extending the test runner", {
       description: "Add lifecycle hooks to your tests that run before/after each test, or before/after all tests.",
     }),
+    page("test/hot", "Watch mode", {
+      description: "Reload your tests automatically on change.",
+    }),
 
     divider("Package runner"),
     page("cli/bunx", "`bunx`", {

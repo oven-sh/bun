@@ -818,6 +818,17 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(
 
         JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
 
+        #ifdef BUN_DEBUG
+          /** View the file name of the JS file that called this function
+           * from a debugger */ 
+          SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+          const char* fileName = sourceOrigin.string().utf8().data();
+          static const char* lastFileName = nullptr;
+          if (lastFileName != fileName) {
+            lastFileName = fileName;
+          }
+        #endif
+
         return ${symbolName(typeName, proto[name].fn)}(thisObject->wrapped(), lexicalGlobalObject, callFrame);
     }
     `);

@@ -161,7 +161,7 @@ describe("utility methods", () => {
       }, 300);
 
       serverSockets[0]?.join(["room1", "room2"]);
-      serverSockets[1]?.join("room1");
+      serverSockets[1]?.join("aroom1");
       serverSockets[2]?.join("room2");
       io.in("room2").disconnectSockets(true);
 

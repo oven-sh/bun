@@ -36,7 +36,7 @@ async function init(httpServer: HttpServer, io: Server) {
 }
 
 describe("connection state recovery", () => {
-  it.skip("should restore session and missed packets", done => {
+  it("should restore session and missed packets", done => {
     const httpServer = createServer().listen(0);
     const io = new Server(httpServer, {
       connectionStateRecovery: {},
@@ -84,7 +84,7 @@ describe("connection state recovery", () => {
     })();
   });
 
-  it.skip("should restore rooms and data attributes", done => {
+  it("should restore rooms and data attributes", done => {
     const httpServer = createServer().listen(0);
     const io = new Server(httpServer, {
       connectionStateRecovery: {},
@@ -130,7 +130,7 @@ describe("connection state recovery", () => {
     })();
   });
 
-  it.skip("should not run middlewares upon recovery by default", done => {
+  it("should not run middlewares upon recovery by default", done => {
     const httpServer = createServer().listen(0);
     const io = new Server(httpServer, {
       connectionStateRecovery: {},
@@ -168,7 +168,7 @@ describe("connection state recovery", () => {
     })();
   });
 
-  it.skip("should run middlewares even upon recovery", done => {
+  it("should run middlewares even upon recovery", done => {
     const httpServer = createServer().listen(0);
     const io = new Server(httpServer, {
       connectionStateRecovery: {
@@ -210,7 +210,7 @@ describe("connection state recovery", () => {
     })();
   });
 
-  it.skip("should fail to restore an unknown session", done => {
+  it("should fail to restore an unknown session", done => {
     const httpServer = createServer().listen(0);
     const io = new Server(httpServer, {
       connectionStateRecovery: {},

@@ -139,7 +139,7 @@ typedef void (*uws_get_headers_server_handler)(const char *header_name,
                                                void *user_data);
 
 // Basic HTTP
-uws_app_t *uws_create_app(int ssl, struct us_socket_context_options_t options);
+uws_app_t *uws_create_app(int ssl, struct us_bun_socket_context_options_t options);
 
 void uws_app_destroy(int ssl, uws_app_t *app);
 void uws_app_get(int ssl, uws_app_t *app, const char *pattern,
@@ -191,7 +191,7 @@ void uws_remove_server_name(int ssl, uws_app_t *app,
 void uws_add_server_name(int ssl, uws_app_t *app, const char *hostname_pattern);
 void uws_add_server_name_with_options(
     int ssl, uws_app_t *app, const char *hostname_pattern,
-    struct us_socket_context_options_t options);
+    struct us_bun_socket_context_options_t options);
 void uws_missing_server_name(int ssl, uws_app_t *app,
                              uws_missing_server_handler handler,
                              void *user_data);

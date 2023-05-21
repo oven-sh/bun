@@ -1,12 +1,10 @@
-// TODO: uncomment when Blob bug in isBinary is fixed
-
 import { Server } from "socket.io";
 import { describe, it, expect } from "bun:test";
 
 import { success, fail, createClient } from "./support/util.ts";
 
 describe("timeout", () => {
-  it.skip("should timeout if the client does not acknowledge the event", done => {
+  it("should timeout if the client does not acknowledge the event", done => {
     const io = new Server(0);
     const client = createClient(io, "/");
     try {
@@ -30,7 +28,7 @@ describe("timeout", () => {
     }
   });
 
-  it.skip("should timeout if the client does not acknowledge the event in time", done => {
+  it("should timeout if the client does not acknowledge the event in time", done => {
     const io = new Server(0);
     const client = createClient(io, "/");
     const timeout = setTimeout(() => {
@@ -66,7 +64,7 @@ describe("timeout", () => {
     }, 200);
   });
 
-  it.skip("should not timeout if the client does acknowledge the event", done => {
+  it("should not timeout if the client does acknowledge the event", done => {
     const io = new Server(0);
     const client = createClient(io, "/");
     const timeout = setTimeout(() => {
@@ -91,7 +89,7 @@ describe("timeout", () => {
     });
   });
 
-  it.skip("should timeout if the client does not acknowledge the event (promise)", done => {
+  it("should timeout if the client does not acknowledge the event (promise)", done => {
     const io = new Server(0);
     const client = createClient(io, "/");
     const timeout = setTimeout(() => {
@@ -111,7 +109,7 @@ describe("timeout", () => {
     });
   });
 
-  it.skip("should not timeout if the client does acknowledge the event (promise)", done => {
+  it("should not timeout if the client does acknowledge the event (promise)", done => {
     const io = new Server(0);
     const client = createClient(io, "/");
     const timeout = setTimeout(() => {

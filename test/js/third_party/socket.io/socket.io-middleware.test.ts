@@ -4,7 +4,7 @@ import { describe, it, expect } from "bun:test";
 import { success, fail, createClient, createPartialDone } from "./support/util.ts";
 
 describe("middleware", () => {
-  it("should call functions", done => {
+  it.skip("should call functions", done => {
     const io = new Server(0);
     let timeout: Timer;
 

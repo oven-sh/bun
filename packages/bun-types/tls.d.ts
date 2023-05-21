@@ -12,6 +12,7 @@ declare module "tls" {
   // import { X509Certificate } from "node:crypto";
   import * as net from "node:net";
   import * as stream from "stream";
+  import { BunFile } from "bun";
   const CLIENT_RENEG_LIMIT: number;
   const CLIENT_RENEG_WINDOW: number;
   interface Certificate {
@@ -860,7 +861,7 @@ declare module "tls" {
      * the well-known CAs curated by Mozilla. Mozilla's CAs are completely
      * replaced when CAs are explicitly specified using this option.
      */
-    ca?: string | Buffer | Array<string | Buffer> | undefined;
+    ca?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
     /**
      *  Cert chains in PEM format. One cert chain should be provided per
      *  private key. Each cert chain should consist of the PEM formatted
@@ -872,7 +873,7 @@ declare module "tls" {
      *  intermediate certificates are not provided, the peer will not be
      *  able to validate the certificate, and the handshake will fail.
      */
-    cert?: string | Buffer | Array<string | Buffer> | undefined;
+    cert?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
     /**
      *  Colon-separated list of supported signature algorithms. The list
      *  can contain digest algorithms (SHA256, MD5 etc.), public key
@@ -930,7 +931,7 @@ declare module "tls" {
      * object.passphrase is optional. Encrypted keys will be decrypted with
      * object.passphrase if provided, or options.passphrase if it is not.
      */
-    key?: string | Buffer | Array<string | Buffer | KeyObject> | undefined;
+    key?: string | Buffer | BunFile | Array<string | Buffer | BunFile | KeyObject> | undefined;
     /**
      * Name of an OpenSSL engine to get private key from. Should be used
      * together with privateKeyIdentifier.

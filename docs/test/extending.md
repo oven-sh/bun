@@ -26,7 +26,7 @@ afterAll(() => {
 
 Test file:
 
-```ts#my-test.test.ts
+```ts
 import { expect, test } from "bun:test";
 
 test("1 + 1", () => {

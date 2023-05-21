@@ -181,6 +181,9 @@ export default {
       description:
         "Write your tests using Jest-like expect matchers, plus setup/teardown hooks, snapshot testing, and more",
     }),
+    page("test/extending", "Extending the test runner", {
+      description: "Add lifecycle hooks to your tests that run before/after each test, or before/after all tests.",
+    }),
 
     divider("Package runner"),
     page("cli/bunx", "`bunx`", {

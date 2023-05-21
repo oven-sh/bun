@@ -380,6 +380,13 @@ pub const TestRunner = struct {
     last_test_timeout_timer_duration: u32 = 0,
     active_test_for_timeout: ?TestRunner.Test.ID = null,
 
+    global_callbacks: struct {
+        beforeAll: std.ArrayListUnmanaged(JSC.JSValue) = .{},
+        beforeEach: std.ArrayListUnmanaged(JSC.JSValue) = .{},
+        afterEach: std.ArrayListUnmanaged(JSC.JSValue) = .{},
+        afterAll: std.ArrayListUnmanaged(JSC.JSValue) = .{},
+    } = .{},
+
     pub const Drainer = JSC.AnyTask.New(TestRunner, drain);
 
     pub fn onTestTimeout(timer: *bun.uws.Timer) callconv(.C) void {
@@ -469,6 +476,7 @@ pub const TestRunner = struct {
         onTestPass: OnTestUpdate,
         onTestFail: OnTestUpdate,
         onTestSkip: OnTestUpdate,
+        onTestTodo: OnTestUpdate,
     };
 
     pub fn reportPass(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*DescribeScope) void {
@@ -483,6 +491,11 @@ pub const TestRunner = struct {
     pub fn reportSkip(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope) void {
         this.tests.items(.status)[test_id] = .skip;
         this.callback.onTestSkip(this.callback, test_id, file, label, 0, 0, parent);
+    }
+
+    pub fn reportTodo(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope) void {
+        this.tests.items(.status)[test_id] = .todo;
+        this.callback.onTestTodo(this.callback, test_id, file, label, 0, 0, parent);
     }
 
     pub fn addTestCount(this: *TestRunner, count: u32) u32 {
@@ -532,6 +545,7 @@ pub const TestRunner = struct {
             pass,
             fail,
             skip,
+            todo,
         };
     };
 };
@@ -807,6 +821,39 @@ pub const Snapshots = struct {
 pub const Jest = struct {
     pub var runner: ?*TestRunner = null;
 
+    fn globalHook(comptime name: string) JSC.JSHostFunctionType {
+        return struct {
+            pub fn appendGlobalFunctionCallback(
+                globalThis: *JSC.JSGlobalObject,
+                callframe: *JSC.CallFrame,
+            ) callconv(.C) JSValue {
+                const arguments = callframe.arguments(2);
+                if (arguments.len < 1) {
+                    globalThis.throwNotEnoughArguments("callback", 1, arguments.len);
+                    return .zero;
+                }
+
+                const function = arguments.ptr[0];
+                if (function.isEmptyOrUndefinedOrNull() or !function.isCallable(globalThis.vm())) {
+                    globalThis.throwInvalidArgumentType(name, "callback", "function");
+                    return .zero;
+                }
+
+                if (function.getLengthOfArray(globalThis) > 0) {
+                    globalThis.throw("done() callback is not implemented in global hooks yet. Please make your function take no arguments", .{});
+                    return .zero;
+                }
+
+                function.protect();
+                @field(Jest.runner.?.global_callbacks, name).append(
+                    bun.default_allocator,
+                    function,
+                ) catch unreachable;
+                return JSC.JSValue.jsUndefined();
+            }
+        }.appendGlobalFunctionCallback;
+    }
+
     pub fn call(
         _: void,
         ctx: js.JSContextRef,
@@ -833,6 +880,40 @@ pub const Jest = struct {
             JSError(getAllocator(ctx), "Bun.jest() expects an absolute file path", .{}, ctx, exception);
             return js.JSValueMakeUndefined(ctx);
         }
+        var vm = ctx.bunVM();
+        if (vm.is_in_preload) {
+            var global_hooks_object = JSC.JSValue.createEmptyObject(ctx, 8);
+            global_hooks_object.ensureStillAlive();
+
+            const notSupportedHereFn = struct {
+                pub fn notSupportedHere(
+                    globalThis: *JSC.JSGlobalObject,
+                    _: *JSC.CallFrame,
+                ) callconv(.C) JSValue {
+                    globalThis.throw("This function can only be used in a test.", .{});
+                    return .zero;
+                }
+            }.notSupportedHere;
+            const notSupportedHere = JSC.NewFunction(ctx, null, 0, notSupportedHereFn, false);
+            notSupportedHere.ensureStillAlive();
+
+            inline for (.{
+                "expect",
+                "describe",
+                "it",
+                "test",
+            }) |name| {
+                global_hooks_object.put(ctx, ZigString.static(name), notSupportedHere);
+            }
+
+            inline for (.{ "beforeAll", "beforeEach", "afterAll", "afterEach" }) |name| {
+                const function = JSC.NewFunction(ctx, null, 1, globalHook(name), false);
+                function.ensureStillAlive();
+                global_hooks_object.put(ctx, ZigString.static(name), function);
+            }
+            return global_hooks_object.asObjectRef();
+        }
+
         var filepath = Fs.FileSystem.instance.filename_store.append([]const u8, slice) catch unreachable;
 
         var scope = runner_.getOrPutFile(filepath);
@@ -3159,6 +3240,7 @@ pub const TestScope = struct {
     ran: bool = false,
     task: ?*TestRunnerTask = null,
     skipped: bool = false,
+    is_todo: bool = false,
     snapshot_count: usize = 0,
     timeout_millis: u32 = default_timeout,
 
@@ -3169,6 +3251,7 @@ pub const TestScope = struct {
             .call = call,
             .only = only,
             .skip = skip,
+            .todo = todo,
         },
         .{},
     );
@@ -3214,6 +3297,17 @@ pub const TestScope = struct {
         return prepare(this, ctx, arguments, exception, .call);
     }
 
+    pub fn todo(
+        _: void,
+        ctx: js.JSContextRef,
+        this: js.JSObjectRef,
+        _: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSObjectRef {
+        return prepare(this, ctx, arguments, exception, .todo);
+    }
+
     fn prepare(
         this: js.JSObjectRef,
         ctx: js.JSContextRef,
@@ -3240,14 +3334,34 @@ pub const TestScope = struct {
             label = (label_value.toSlice(ctx, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
         }
 
+        if (tag == .todo and label_value == .zero) {
+            JSError(getAllocator(ctx), "test.todo() requires a description", .{}, ctx, exception);
+            return this;
+        }
+
         const function = function_value;
         if (function.isEmptyOrUndefinedOrNull() or !function.isCell() or !function.isCallable(ctx.vm())) {
-            JSError(getAllocator(ctx), "test() expects a function", .{}, ctx, exception);
-            return this;
+            // a callback is not required for .todo
+            if (tag != .todo) {
+                JSError(getAllocator(ctx), "test() expects a function", .{}, ctx, exception);
+                return this;
+            }
         }
 
         if (tag == .only) {
             Jest.runner.?.setOnly();
+        }
+
+        if (tag == .todo) {
+            DescribeScope.active.todo_counter += 1;
+            DescribeScope.active.tests.append(getAllocator(ctx), TestScope{
+                .label = label,
+                .parent = DescribeScope.active,
+                .is_todo = true,
+                .callback = if (function == .zero) null else function.asObjectRef(),
+            }) catch unreachable;
+
+            return this;
         }
 
         if (tag == .skip or (tag != .only and Jest.runner.?.only)) {
@@ -3369,8 +3483,13 @@ pub const TestScope = struct {
 
         if (initial_value.isAnyError()) {
             if (!Jest.runner.?.did_pending_test_fail) {
-                Jest.runner.?.did_pending_test_fail = true;
+                // test failed unless it's a todo
+                Jest.runner.?.did_pending_test_fail = !this.is_todo;
                 vm.runErrorHandler(initial_value, null);
+            }
+
+            if (this.is_todo) {
+                return .{ .todo = {} };
             }
 
             return .{ .fail = active_test_expectation_counter.actual };
@@ -3391,8 +3510,13 @@ pub const TestScope = struct {
             switch (promise.status(vm.global.vm())) {
                 .Rejected => {
                     if (!Jest.runner.?.did_pending_test_fail) {
-                        Jest.runner.?.did_pending_test_fail = true;
+                        // test failed unless it's a todo
+                        Jest.runner.?.did_pending_test_fail = !this.is_todo;
                         vm.runErrorHandler(promise.result(vm.global.vm()), null);
+                    }
+
+                    if (this.is_todo) {
+                        return .{ .todo = {} };
                     }
 
                     return .{ .fail = active_test_expectation_counter.actual };
@@ -3424,6 +3548,11 @@ pub const TestScope = struct {
                 active_test_expectation_counter.actual,
                 active_test_expectation_counter.expected,
             });
+            return .{ .fail = active_test_expectation_counter.actual };
+        }
+
+        if (this.is_todo) {
+            Output.prettyErrorln("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` or check that test is correct.<r>", .{});
             return .{ .fail = active_test_expectation_counter.actual };
         }
 
@@ -3465,6 +3594,7 @@ pub const DescribeScope = struct {
     done: bool = false,
     skipped: bool = false,
     skipped_counter: u32 = 0,
+    todo_counter: u32 = 0,
 
     pub fn isAllSkipped(this: *const DescribeScope) bool {
         return this.skipped or @as(usize, this.skipped_counter) >= this.tests.items.len;
@@ -3630,7 +3760,49 @@ pub const DescribeScope = struct {
 
         return JSValue.zero;
     }
+
+    pub fn runGlobalCallbacks(globalThis: *JSC.JSGlobalObject, comptime hook: LifecycleHook) ?JSValue {
+        // global callbacks
+        for (@field(Jest.runner.?.global_callbacks, @tagName(hook)).items) |cb| {
+            if (cb.isEmpty()) continue;
+
+            const pending_test = Jest.runner.?.pending_test;
+            // forbid `expect()` within hooks
+            Jest.runner.?.pending_test = null;
+            const orig_did_pending_test_fail = Jest.runner.?.did_pending_test_fail;
+
+            Jest.runner.?.did_pending_test_fail = false;
+
+            const vm = VirtualMachine.get();
+            // note: we do not support "done" callback in global hooks in the first release.
+            var result: JSC.JSValue = cb.call(globalThis, &.{});
+            if (result.asAnyPromise()) |promise| {
+                if (promise.status(globalThis.vm()) == .Pending) {
+                    result.protect();
+                    vm.waitForPromise(promise);
+                    result.unprotect();
+                }
+
+                result = promise.result(globalThis.vm());
+            }
+
+            Jest.runner.?.pending_test = pending_test;
+            Jest.runner.?.did_pending_test_fail = orig_did_pending_test_fail;
+            if (result.isAnyError()) return result;
+        }
+
+        if (comptime hook == .beforeAll or hook == .afterAll) {
+            @field(Jest.runner.?.global_callbacks, @tagName(hook)).items.len = 0;
+        }
+
+        return null;
+    }
+
     pub fn runCallback(this: *DescribeScope, ctx: js.JSContextRef, comptime hook: LifecycleHook) JSValue {
+        if (runGlobalCallbacks(ctx, hook)) |err| {
+            return err;
+        }
+
         var parent = this.parent;
         while (parent) |scope| {
             const ret = scope.execCallback(ctx, hook);
@@ -3834,20 +4006,6 @@ pub const DescribeScope = struct {
     //     // }
     // }
 
-    pub fn runCallbacks(this: *DescribeScope, ctx: js.JSContextRef, callbacks: std.ArrayListUnmanaged(js.JSObjectRef), exception: js.ExceptionRef) bool {
-        if (comptime is_bindgen) return undefined;
-        var i: usize = 0;
-        while (i < callbacks.items.len) : (i += 1) {
-            var callback = callbacks.items[i];
-
-            var result = js.JSObjectCallAsFunctionReturnValue(ctx, callback, this, 0);
-            if (result.isException(ctx.ptr().vm())) {
-                exception.* = result.asObjectRef();
-                return false;
-            }
-        }
-    }
-
     pub fn createExpect(
         _: *DescribeScope,
         ctx: js.JSContextRef,
@@ -3940,6 +4098,13 @@ pub const TestRunnerTask = struct {
         var test_: TestScope = this.describe.tests.items[test_id];
         describe.current_test_id = test_id;
         var globalThis = this.globalThis;
+
+        if (!describe.skipped and test_.is_todo and test_.callback == null) {
+            this.processTestResult(globalThis, .{ .todo = {} }, test_, test_id, describe);
+            this.deinit();
+            return false;
+        }
+
         if (test_.skipped or describe.skipped) {
             this.processTestResult(globalThis, .{ .skip = {} }, test_, test_id, describe);
             this.deinit();
@@ -4067,6 +4232,7 @@ pub const TestRunnerTask = struct {
                 describe,
             ),
             .skip => Jest.runner.?.reportSkip(test_id, this.source_file_path, test_.label, describe),
+            .todo => Jest.runner.?.reportTodo(test_id, this.source_file_path, test_.label, describe),
             .pending => @panic("Unexpected pending test"),
         }
         describe.onTestComplete(globalThis, test_id, result == .skip);
@@ -4101,4 +4267,5 @@ pub const Result = union(TestRunner.Test.Status) {
     pass: u32, // assertion count
     pending: void,
     skip: void,
+    todo: void,
 };

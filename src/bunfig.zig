@@ -118,6 +118,32 @@ pub const Bunfig = struct {
             };
         }
 
+        fn loadPreload(
+            this: *Parser,
+            allocator: std.mem.Allocator,
+            expr: js_ast.Expr,
+        ) !void {
+            if (expr.asArray()) |array_| {
+                var array = array_;
+                var preloads = try std.ArrayList(string).initCapacity(allocator, array.array.items.len);
+                errdefer preloads.deinit();
+                while (array.next()) |item| {
+                    try this.expect(item, .e_string);
+                    if (item.data.e_string.len() > 0)
+                        preloads.appendAssumeCapacity(try item.data.e_string.string(allocator));
+                }
+                this.ctx.preloads = preloads.items;
+            } else if (expr.data == .e_string) {
+                if (expr.data.e_string.len() > 0) {
+                    var preloads = try allocator.alloc(string, 1);
+                    preloads[0] = try expr.data.e_string.string(allocator);
+                    this.ctx.preloads = preloads;
+                }
+            } else if (expr.data != .e_null) {
+                try this.addError(expr.loc, "Expected preload to be an array");
+            }
+        }
+
         pub fn parse(this: *Parser, comptime cmd: Command.Tag) !void {
             const json = this.json;
             var allocator = this.allocator;
@@ -171,19 +197,7 @@ pub const Bunfig = struct {
                 }
 
                 if (json.get("preload")) |expr| {
-                    if (expr.asArray()) |array_| {
-                        var array = array_;
-                        var preloads = try std.ArrayList(string).initCapacity(allocator, array.array.items.len);
-                        errdefer preloads.deinit();
-                        while (array.next()) |item| {
-                            try this.expect(item, .e_string);
-                            if (item.data.e_string.len() > 0)
-                                preloads.appendAssumeCapacity(try item.data.e_string.string(allocator));
-                        }
-                        this.ctx.preloads = preloads.items;
-                    } else if (expr.data != .e_null) {
-                        try this.addError(expr.loc, "Expected preload to be an array");
-                    }
+                    try this.loadPreload(allocator, expr);
                 }
             }
 
@@ -214,19 +228,7 @@ pub const Bunfig = struct {
                     }
 
                     if (test_.get("preload")) |expr| {
-                        if (expr.asArray()) |array_| {
-                            var array = array_;
-                            var preloads = try std.ArrayList(string).initCapacity(allocator, array.array.items.len);
-                            errdefer preloads.deinit();
-                            while (array.next()) |item| {
-                                try this.expect(item, .e_string);
-                                if (item.data.e_string.len() > 0)
-                                    preloads.appendAssumeCapacity(try item.data.e_string.string(allocator));
-                            }
-                            this.ctx.preloads = preloads.items;
-                        } else if (expr.data != .e_null) {
-                            try this.addError(expr.loc, "Expected preload to be an array");
-                        }
+                        try this.loadPreload(allocator, expr);
                     }
                 }
             }

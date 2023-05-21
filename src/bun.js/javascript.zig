@@ -397,6 +397,9 @@ pub const VirtualMachine = struct {
     is_from_devserver: bool = false,
     has_enabled_macro_mode: bool = false,
 
+    /// Used by bun:test to set global hooks for beforeAll, beforeEach, etc.
+    is_in_preload: bool = false,
+
     /// The arguments used to launch the process _after_ the script name and bun and any flags applied to Bun
     ///     "bun run foo --bar"
     ///          ["--bar"]
@@ -1572,67 +1575,74 @@ pub const VirtualMachine = struct {
                     return promise;
             }
 
-            for (this.preload) |preload| {
-                var result = switch (this.bundler.resolver.resolveAndAutoInstall(
-                    this.bundler.fs.top_level_dir,
-                    normalizeSource(preload),
-                    .stmt,
-                    .read_only,
-                )) {
-                    .success => |r| r,
-                    .failure => |e| {
-                        this.log.addErrorFmt(
-                            null,
-                            logger.Loc.Empty,
-                            this.allocator,
-                            "{s} resolving preload {any}",
-                            .{
-                                @errorName(e),
-                                js_printer.formatJSONString(preload),
-                            },
-                        ) catch unreachable;
-                        return e;
-                    },
-                    .pending, .not_found => {
-                        this.log.addErrorFmt(
-                            null,
-                            logger.Loc.Empty,
-                            this.allocator,
-                            "preload not found {any}",
-                            .{
-                                js_printer.formatJSONString(preload),
-                            },
-                        ) catch unreachable;
-                        return error.ModuleNotFound;
-                    },
-                };
-                promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(result.path().?.text));
-                this.pending_internal_promise = promise;
-
-                // pending_internal_promise can change if hot module reloading is enabled
-                if (this.bun_watcher != null) {
-                    this.eventLoop().performGC();
-                    switch (this.pending_internal_promise.status(this.global.vm())) {
-                        JSC.JSPromise.Status.Pending => {
-                            while (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
-                                this.eventLoop().tick();
-
-                                if (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
-                                    this.eventLoop().autoTick();
-                                }
-                            }
+            {
+                this.is_in_preload = true;
+                defer this.is_in_preload = false;
+                for (this.preload) |preload| {
+                    var result = switch (this.bundler.resolver.resolveAndAutoInstall(
+                        this.bundler.fs.top_level_dir,
+                        normalizeSource(preload),
+                        .stmt,
+                        .read_only,
+                    )) {
+                        .success => |r| r,
+                        .failure => |e| {
+                            this.log.addErrorFmt(
+                                null,
+                                logger.Loc.Empty,
+                                this.allocator,
+                                "{s} resolving preload {any}",
+                                .{
+                                    @errorName(e),
+                                    js_printer.formatJSONString(preload),
+                                },
+                            ) catch unreachable;
+                            return e;
                         },
-                        else => {},
-                    }
-                } else {
-                    this.eventLoop().performGC();
-                    this.waitForPromise(JSC.AnyPromise{
-                        .Internal = promise,
-                    });
-                }
+                        .pending, .not_found => {
+                            this.log.addErrorFmt(
+                                null,
+                                logger.Loc.Empty,
+                                this.allocator,
+                                "preload not found {any}",
+                                .{
+                                    js_printer.formatJSONString(preload),
+                                },
+                            ) catch unreachable;
+                            return error.ModuleNotFound;
+                        },
+                    };
+                    promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(result.path().?.text));
 
-                if (promise.status(this.global.vm()) == .Rejected)
-                    return promise;
+                    this.pending_internal_promise = promise;
+                    JSValue.fromCell(promise).protect();
+                    defer JSValue.fromCell(promise).unprotect();
+
+                    // pending_internal_promise can change if hot module reloading is enabled
+                    if (this.bun_watcher != null) {
+                        this.eventLoop().performGC();
+                        switch (this.pending_internal_promise.status(this.global.vm())) {
+                            JSC.JSPromise.Status.Pending => {
+                                while (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                                    this.eventLoop().tick();
+
+                                    if (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                                        this.eventLoop().autoTick();
+                                    }
+                                }
+                            },
+                            else => {},
+                        }
+                    } else {
+                        this.eventLoop().performGC();
+                        this.waitForPromise(JSC.AnyPromise{
+                            .Internal = promise,
+                        });
+                    }
+
+                    if (promise.status(this.global.vm()) == .Rejected)
+                        return promise;
+                }
             }
 
             // only load preloads once
@@ -1640,9 +1650,11 @@ pub const VirtualMachine = struct {
 
             promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.static(main_file_name));
             this.pending_internal_promise = promise;
+            JSC.JSValue.fromCell(promise).ensureStillAlive();
         } else {
             promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(this.main));
             this.pending_internal_promise = promise;
+            JSC.JSValue.fromCell(promise).ensureStillAlive();
         }
 
         return promise;

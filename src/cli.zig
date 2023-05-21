@@ -439,7 +439,7 @@ pub const Arguments = struct {
 
         opts.no_summary = args.flag("--no-summary");
 
-        if (cmd != .DevCommand) {
+        if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand) {
             const preloads = args.options("--preload");
             if (ctx.preloads.len > 0 and preloads.len > 0) {
                 var all = std.ArrayList(string).initCapacity(ctx.allocator, ctx.preloads.len + preloads.len) catch unreachable;

@@ -1,6 +1,9 @@
 declare module "bun:jsc" {
-  export function describe(value: any): string;
-  export function describeArray(args: any[]): string;
+  /**
+   * This used to be called "describe" but it could be confused with the test runner.
+   */
+  export function jscDescribe(value: any): string;
+  export function jscDescribeArray(args: any[]): string;
   export function gcAndSweep(): number;
   export function fullGC(): number;
   export function edenGC(): number;

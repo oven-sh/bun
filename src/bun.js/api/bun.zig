@@ -248,6 +248,7 @@ pub fn inspect(
             .enable_colors = false,
             .add_newline = false,
             .flush = false,
+            .max_depth = 32,
         },
     );
     buffered_writer.flush() catch {

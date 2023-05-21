@@ -1,0 +1,27 @@
+import { beforeAll, afterAll, afterEach, beforeEach, test, describe } from "bun:test";
+
+for (let suffix of ["TEST-FILE"]) {
+  for (let fn of [
+    ["beforeAll", beforeAll],
+    ["afterAll", afterAll],
+    ["afterEach", afterEach],
+    ["beforeEach", beforeEach],
+  ]) {
+    fn[1](() => console.log(fn[0] + ":", suffix));
+  }
+}
+
+test("the top-level test", () => {
+  console.log("-- the top-level test --");
+});
+
+describe("one describe scope", () => {
+  beforeAll(() => console.log("beforeAll: one describe scope"));
+  afterAll(() => console.log("afterAll: one describe scope"));
+  beforeEach(() => console.log("beforeEach: one describe scope"));
+  afterEach(() => console.log("afterEach: one describe scope"));
+
+  test("inside one describe scope", () => {
+    console.log("-- inside one describe scope --");
+  });
+});

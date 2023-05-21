@@ -3882,16 +3882,53 @@ void JSC__JSValue__forEachPropertyOrdered(JSC__JSValue JSValue0, JSC__JSGlobalOb
         const WTF::StringImpl* bImpl = b.isSymbol() && !b.isPrivateName() ? b.impl() : b.string().impl();
         return codePointCompare(aImpl, bImpl) < 0;
     });
+    auto clientData = WebCore::clientData(vm);
 
     for (auto property : vector) {
-        const WTF::StringImpl* name = property.isSymbol() && !property.isPrivateName() ? property.impl() : property.string().impl();
-        ZigString key = toZigString(name);
+        if (UNLIKELY(property.isEmpty() || property.isNull()))
+            continue;
+
+        // ignore constructor
+        if (property == vm.propertyNames->constructor || clientData->builtinNames().bunNativePtrPrivateName() == property)
+            continue;
+
+        JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
+        if (!object->getPropertySlot(globalObject, property, slot))
+            continue;
+
+        if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
+            if (property == vm.propertyNames->underscoreProto
+                || property == vm.propertyNames->toStringTagSymbol)
+                continue;
+        }
+
+        JSC::JSValue propertyValue = jsUndefined();
         auto scope = DECLARE_CATCH_SCOPE(vm);
-        JSValue propertyValue = object->get(globalObject, property);
-        if (scope.exception()) {
+        if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
+            if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
+                propertyValue = slot.getPureResult();
+            } else if (slot.attributes() & PropertyAttribute::BuiltinOrFunction) {
+                propertyValue = slot.getValue(globalObject, property);
+            } else if (slot.isCustom()) {
+                propertyValue = slot.getValue(globalObject, property);
+            } else if (slot.isValue()) {
+                propertyValue = slot.getValue(globalObject, property);
+            } else if (object->getOwnPropertySlot(object, globalObject, property, slot)) {
+                propertyValue = slot.getValue(globalObject, property);
+            }
+        } else if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
+            propertyValue = slot.getPureResult();
+        } else {
+            propertyValue = slot.getValue(globalObject, property);
+        }
+
+        if (UNLIKELY(scope.exception())) {
             scope.clearException();
             propertyValue = jsUndefined();
         }
+
+        const WTF::StringImpl* name = property.isSymbol() && !property.isPrivateName() ? property.impl() : property.string().impl();
+        ZigString key = toZigString(name);
 
         JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
         iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol());

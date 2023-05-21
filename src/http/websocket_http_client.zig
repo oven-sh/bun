@@ -149,7 +149,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
     return struct {
         pub const Socket = uws.NewSocketHandler(ssl);
         tcp: Socket,
-        outgoing_websocket: *anyopaque,
+        outgoing_websocket: ?*anyopaque,
         input_body_buf: []u8 = &[_]u8{},
         client_protocol: []const u8 = "",
         to_send: []const u8 = "",
@@ -290,7 +290,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         pub fn fail(this: *HTTPClient, code: ErrorCode) void {
             log("onFail", .{});
             JSC.markBinding(@src());
-            WebSocket__didCloseWithErrorCode(this.outgoing_websocket, code);
+            if (this.outgoing_websocket) |ws| {
+                this.outgoing_websocket = null;
+                WebSocket__didCloseWithErrorCode(ws, code);
+            }
             this.cancel();
         }
 
@@ -298,7 +301,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             log("onClose", .{});
             JSC.markBinding(@src());
             this.clearData();
-            WebSocket__didCloseWithErrorCode(this.outgoing_websocket, ErrorCode.ended);
+            if (this.outgoing_websocket) |ws| {
+                this.outgoing_websocket = null;
+                WebSocket__didCloseWithErrorCode(ws, ErrorCode.ended);
+            }
         }
 
         pub fn terminate(this: *HTTPClient, code: ErrorCode) void {
@@ -512,7 +518,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             JSC.markBinding(@src());
             this.tcp.timeout(0);
             log("onDidConnect", .{});
-            WebSocket__didConnect(this.outgoing_websocket, this.tcp.socket, overflow.ptr, overflow.len);
+            if (this.outgoing_websocket) |ws| {
+                WebSocket__didConnect(ws, this.tcp.socket, overflow.ptr, overflow.len);
+            }
         }
 
         pub fn handleWritable(
@@ -902,8 +910,10 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         pub fn fail(this: *WebSocket, code: ErrorCode) void {
             JSC.markBinding(@src());
-            if (this.outgoing_websocket) |ws|
+            if (this.outgoing_websocket) |ws| {
+                this.outgoing_websocket = null;
                 WebSocket__didCloseWithErrorCode(ws, code);
+            }
 
             this.cancel();
         }
@@ -914,6 +924,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             log("WebSocket.onHandshake({d})", .{success});
             if (success == 0) {
                 if (this.outgoing_websocket) |ws| {
+                    this.outgoing_websocket = null;
                     WebSocket__didCloseWithErrorCode(ws, ErrorCode.failed_to_connect);
                 }
             }
@@ -922,8 +933,10 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             log("onClose", .{});
             JSC.markBinding(@src());
             this.clearData();
-            if (this.outgoing_websocket) |ws|
+            if (this.outgoing_websocket) |ws| {
+                this.outgoing_websocket = null;
                 WebSocket__didCloseWithErrorCode(ws, ErrorCode.ended);
+            }
         }
 
         pub fn terminate(this: *WebSocket, code: ErrorCode) void {
@@ -1480,6 +1493,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             var out = this.outgoing_websocket orelse return;
             this.poll_ref.unrefOnNextTick(this.globalThis.bunVM());
             JSC.markBinding(@src());
+            this.outgoing_websocket = null;
             WebSocket__didCloseWithErrorCode(out, ErrorCode.closed);
         }
 

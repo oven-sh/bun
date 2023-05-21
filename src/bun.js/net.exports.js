@@ -576,8 +576,10 @@ class Server extends EventEmitter {
 
   close(callback) {
     if (this.#server) {
-      this.#server.stop(true);
+      const server = this.#server;
       this.#server = null;
+      server.stop(true);
+
       this.#listening = false;
       this[bunSocketServerConnections] = 0;
       this.emit("close");

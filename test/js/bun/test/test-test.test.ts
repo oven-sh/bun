@@ -1,11 +1,11 @@
 // @ts-nocheck
 import { spawn, spawnSync } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
-import { mkdirSync, realpathSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, realpathSync, rmSync, writeFileSync, copyFileSync } from "fs";
 import { mkdtemp, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "os";
-import { join } from "path";
+import { join, dirname } from "path";
 
 it("shouldn't crash when async test runner callback throws", async () => {
   const code = `
@@ -2560,18 +2560,19 @@ test("test async exceptions fail tests", () => {
   });
 
   `;
-
-  rmSync("/tmp/test-throwing-bun/test-throwing-eventemitter.test.js", {
+  const dir = join(tmpdir(), "test-throwing-bun");
+  const filepath = join(dir, "test-throwing-eventemitter.test.js");
+  rmSync(filepath, {
     force: true,
   });
 
   try {
-    mkdirSync("/tmp/test-throwing-bun", { recursive: true });
+    mkdirSync(dir, { recursive: true });
   } catch (e) {}
-  writeFileSync("/tmp/test-throwing-bun/test-throwing-eventemitter.test.js", code);
+  writeFileSync(filepath, code);
 
-  const { stderr, exitCode } = spawnSync([bunExe(), "wiptest", "test-throwing-eventemitter"], {
-    cwd: realpathSync("/tmp/test-throwing-bun"),
+  const { stderr, exitCode } = spawnSync([bunExe(), "test", "test-throwing-eventemitter"], {
+    cwd: realpathSync(dir),
     env: bunEnv,
   });
 
@@ -2770,4 +2771,38 @@ describe("todo", () => {
   });
 
   it.todo("implement this test");
+});
+
+it("test timeouts when expected", () => {
+  const path = join(realpathSync(tmpdir()), "test-timeout.test.js");
+  copyFileSync(join(import.meta.dir, "timeout-test-fixture.js"), path);
+  const { stdout, stderr, exited } = spawnSync({
+    cmd: [bunExe(), "test", path],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+    cwd: realpathSync(dirname(path)),
+  });
+
+  const err = stderr!.toString();
+  expect(err).toContain("timed out after 10ms");
+  expect(err).not.toContain("unreachable code");
+});
+
+it("expect().toEqual() on objects with property indices doesn't print undefined", () => {
+  const path = join(realpathSync(tmpdir()), "test-fixture-diff-indexed-properties.test.js");
+  copyFileSync(join(import.meta.dir, "test-fixture-diff-indexed-properties.js"), path);
+  const { stdout, stderr, exited } = spawnSync({
+    cmd: [bunExe(), "test", path],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+    cwd: realpathSync(dirname(path)),
+  });
+
+  let err = stderr!.toString();
+  err = err.substring(err.indexOf("expect(received).toEqual(expected)"), err.indexOf("at "));
+
+  expect(err).toMatchSnapshot();
+  expect(err).not.toContain("undefined");
 });

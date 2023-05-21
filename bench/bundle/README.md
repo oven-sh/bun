@@ -8,7 +8,7 @@ This is a performance benchmark of the following bundlers:
 - Rollup + Terser
 - Webpack
 
-It is an exact copy of [`esbuild`'s benchmark](https://github.com/evanw/esbuild/blob/main/Makefile), aside from the fast that Bun [has been added](https://github.com/colinhacks/esbuild/commit/1b928b7981aa7edfadf77fcf8931bb8d6f38cd96). The benchmark bundles 10 copies of the large [three.js](https://threejs.org/), with minification and source maps enabled.
+It is an exact copy of [`esbuild`'s benchmark](https://github.com/evanw/esbuild/blob/main/Makefile), aside from the fact that Bun [has been added](https://github.com/colinhacks/esbuild/commit/1b928b7981aa7edfadf77fcf8931bb8d6f38cd96). The benchmark bundles 10 copies of the large [three.js](https://threejs.org/), with minification and source maps enabled.
 
 To run the benchmark:
 

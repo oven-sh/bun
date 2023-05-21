@@ -1755,14 +1755,14 @@ pub const ZigConsoleClient = struct {
                             this.addForNewLine(key.len + 1);
 
                             writer.print(
-                                comptime Output.prettyFmt("\"{}\"<d>:<r> ", enable_ansi_colors),
+                                comptime Output.prettyFmt("<r>{}<d>:<r> ", enable_ansi_colors),
                                 .{key},
                             );
                         } else if (key.is16Bit() and JSLexer.isLatin1Identifier(@TypeOf(key.utf16SliceAligned()), key.utf16SliceAligned())) {
                             this.addForNewLine(key.len + 1);
 
                             writer.print(
-                                comptime Output.prettyFmt("\"{}\"<d>:<r> ", enable_ansi_colors),
+                                comptime Output.prettyFmt("<r>{}<d>:<r> ", enable_ansi_colors),
                                 .{key},
                             );
                         } else if (key.is16Bit()) {
@@ -1789,10 +1789,10 @@ pub const ZigConsoleClient = struct {
                                 .{},
                             );
                         } else {
-                            this.addForNewLine(key.len + 1);
+                            this.addForNewLine(key.len + 2);
 
                             writer.print(
-                                comptime Output.prettyFmt("{s}<d>:<r> ", enable_ansi_colors),
+                                comptime Output.prettyFmt("<r><green>{s}<r><d>:<r> ", enable_ansi_colors),
                                 .{JSPrinter.formatJSONString(key.slice())},
                             );
                         }

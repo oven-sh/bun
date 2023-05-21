@@ -15097,21 +15097,19 @@ fn NewParser_(
                                     // There are at least two args:
                                     // - name of the tag
                                     // - props
-                                    var i: usize = 1;
+                                    var i: usize = 2;
                                     args[0] = tag;
-                                    if (e_.properties.len > 0) {
+
+                                    const num_props = e_.properties.len + @boolToInt(e_.key != null);
+                                    if (num_props > 0) {
+                                        var props = p.allocator.alloc(G.Property, num_props) catch unreachable;
+                                        bun.copy(G.Property, props, e_.properties.slice());
                                         if (e_.key) |key| {
-                                            var props = p.allocator.alloc(G.Property, e_.properties.len + 1) catch unreachable;
-                                            bun.copy(G.Property, props, e_.properties.slice());
                                             props[props.len - 1] = G.Property{ .key = Expr{ .loc = key.loc, .data = keyExprData }, .value = key };
-                                            args[1] = p.newExpr(E.Object{ .properties = G.Property.List.init(props) }, expr.loc);
-                                        } else {
-                                            args[1] = p.newExpr(E.Object{ .properties = e_.properties }, expr.loc);
                                         }
-                                        i = 2;
+                                        args[1] = p.newExpr(E.Object{ .properties = G.Property.List.init(props) }, expr.loc);
                                     } else {
                                         args[1] = p.newExpr(E.Null{}, expr.loc);
-                                        i = 2;
                                     }
 
                                     const children_elements = e_.children.slice()[0..children_count];

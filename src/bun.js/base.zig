@@ -3266,7 +3266,7 @@ pub const PollRef = struct {
 
         this.status = .inactive;
         loop.num_polls -= 1;
-        loop.active -= 1;
+        loop.active -|= 1;
     }
 
     /// Only intended to be used from EventLoop.Pollable
@@ -3605,7 +3605,7 @@ pub const FilePoll = struct {
     pub fn deactivate(this: *FilePoll, loop: *uws.Loop) void {
         std.debug.assert(this.flags.contains(.has_incremented_poll_count));
         loop.num_polls -= @as(i32, @boolToInt(this.flags.contains(.has_incremented_poll_count)));
-        loop.active -= @as(u32, @boolToInt(!this.flags.contains(.disable) and this.flags.contains(.has_incremented_poll_count)));
+        loop.active -|= @as(u32, @boolToInt(!this.flags.contains(.disable) and this.flags.contains(.has_incremented_poll_count)));
 
         this.flags.remove(.has_incremented_poll_count);
     }

@@ -63,7 +63,6 @@ public:
 
     DECLARE_VISIT_CHILDREN;
     mutable WriteBarrier<JSC::DirectEvalExecutable> m_cachedDirectExecutable;
-    mutable WriteBarrier<JSC::JSGlobalObject> m_cachedGlobalObject;
 
 private:
     JSC::SourceCode m_source;
@@ -79,5 +78,6 @@ private:
 
 JSC_DECLARE_HOST_FUNCTION(vmModule_createContext);
 JSC_DECLARE_HOST_FUNCTION(vmModule_isContext);
-
+JSC_DECLARE_HOST_FUNCTION(vmModuleRunInNewContext);
+JSC_DECLARE_HOST_FUNCTION(vmModuleRunInThisContext);
 }

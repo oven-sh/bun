@@ -1,5 +1,3 @@
-# Lifecycle hooks
-
 Like the runtime, `bun:test` also supports `--preload` scripts. These scripts are loaded before any tests are run. This is useful for setting up test fixtures, mocking, and configuring the test environment.
 
 {% codetab }
@@ -64,7 +62,7 @@ The following lifecycle hooks are available in `--preload`:
 | `afterEach`  | Runs after each test.       |
 | `afterAll`   | Runs once after all tests.  |
 
-# Configuration
+## Configuration
 
 To save yourself from having to type `--preload` every time you run tests, you can add it to your `bunfig.toml`:
 
@@ -73,10 +71,10 @@ To save yourself from having to type `--preload` every time you run tests, you c
 preload = ["preloaded.ts"]
 ```
 
-# Loaders & Resolvers
+## Loaders & Resolvers
 
 {% note %}
-Plugin support is not implemented yet. There is a bug and this feature is not working.
+Plugin support is not implemented yet. **There is a bug and this feature is not working**.
 {% /note %}
 
 `bun:test` supports the same plugin API as bun's runtime and bun's bundler. See [Plugins](docs/bundler/plugins#usage) for more information.

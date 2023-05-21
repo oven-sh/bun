@@ -107,7 +107,7 @@ static NapiRefWeakHandleOwner& weakValueHandleOwner()
 void NapiFinalizer::call(JSC::JSGlobalObject* globalObject, void* data)
 {
     if (this->finalize_cb) {
-        this->finalize_cb(reinterpret_cast<napi_env>(globalObject), this->finalize_hint, data);
+        this->finalize_cb(reinterpret_cast<napi_env>(globalObject), data, this->finalize_hint);
     }
 }
 
@@ -149,7 +149,7 @@ void NapiRef::unref()
 
 void NapiRef::clear()
 {
-    this->finalizer.call(this->globalObject.get(), nullptr);
+    this->finalizer.call(this->globalObject.get(), this->data);
     this->globalObject.clear();
     this->weakValueRef.clear();
     this->strongRef.clear();

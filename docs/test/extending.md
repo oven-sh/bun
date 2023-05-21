@@ -77,7 +77,7 @@ preload = ["./preloaded.ts"]
 Plugin support is not implemented yet. **There is a bug and this feature is not working**.
 {% /note %}
 
-`bun:test` supports the same plugin API as bun's runtime and bun's bundler. See [Plugins](docs/bundler/plugins#usage) for more information.
+`bun:test` supports the same plugin API as bun's runtime and bun's bundler. See [Plugins](/docs/bundler/plugins#usage) for more information.
 
 ## Example loader
 

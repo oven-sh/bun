@@ -86,8 +86,7 @@ public:
             String asciiLowerCaseName() const
             {
                 if (keyAsHTTPHeaderName) {
-                    auto view = WTF::httpHeaderNameStringImpl(keyAsHTTPHeaderName.value());
-                    return String(view);
+                    return WTF::httpHeaderNameStringImpl(keyAsHTTPHeaderName.value());
                 }
 
                 return key.convertToASCIILowercase();

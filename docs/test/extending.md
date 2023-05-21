@@ -85,7 +85,7 @@ typeof globalThis.describe; // "undefined"
 typeof describe; // "function"
 ```
 
-This works via a transpiler integration in Bun. This transpiler plugin is only enabled inside test files and when preloading scripts. If you try to use these functions otherwise, you will get an error.
+This works via a transpiler integration in Bun. When `describe`, `expect`, `it`, etc are used in a test file, the transpiler auto-imports from `bun:test`. This transpiler plugin is only enabled inside test files and when preloading scripts. If you try to use Jest globals in other files, you will get an error.
 
 Every `describe`, `test`, and `expect` is scoped to the current test file. Importing from `"bun:test"` creates a new scope. This means you can't use `describe` from one test file in another test file because belong to different scopes.
 

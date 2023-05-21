@@ -7,6 +7,8 @@ import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "os";
 import { join, dirname } from "path";
 
+const tmp = realpathSync(tmpdir());
+
 it("shouldn't crash when async test runner callback throws", async () => {
   const code = `
   beforeEach(async () => {
@@ -2761,7 +2763,7 @@ describe(() => {
 });
 
 it("test.todo", () => {
-  const path = join(realpathSync(tmpdir()), "todo-test.test.js");
+  const path = join(tmp, "todo-test.test.js");
   copyFileSync(join(import.meta.dir, "todo-test-fixture.js"), path);
   const { stdout, stderr, exitCode } = spawnSync({
     cmd: [bunExe(), "test", path],
@@ -2778,7 +2780,7 @@ it("test.todo", () => {
 });
 
 it("test.todo doesnt cause exit code 1", () => {
-  const path = join(realpathSync(tmpdir()), "todo-test.test.js");
+  const path = join(tmp, "todo-test.test.js");
   copyFileSync(join(import.meta.dir, "todo-test-fixture-2.js"), path);
   const { stdout, stderr, exitCode } = spawnSync({
     cmd: [bunExe(), "test", path],
@@ -2793,7 +2795,7 @@ it("test.todo doesnt cause exit code 1", () => {
 });
 
 it("test timeouts when expected", () => {
-  const path = join(realpathSync(tmpdir()), "test-timeout.test.js");
+  const path = join(tmp, "test-timeout.test.js");
   copyFileSync(join(import.meta.dir, "timeout-test-fixture.js"), path);
   const { stdout, stderr, exited } = spawnSync({
     cmd: [bunExe(), "test", path],
@@ -2809,9 +2811,9 @@ it("test timeouts when expected", () => {
 });
 
 it("expect().toEqual() on objects with property indices doesn't print undefined", () => {
-  const path = join(realpathSync(tmpdir()), "test-fixture-diff-indexed-properties.test.js");
+  const path = join(tmp, "test-fixture-diff-indexed-properties.test.js");
   copyFileSync(join(import.meta.dir, "test-fixture-diff-indexed-properties.js"), path);
-  const { stdout, stderr, exited } = spawnSync({
+  const { stderr } = spawnSync({
     cmd: [bunExe(), "test", path],
     stdout: "pipe",
     stderr: "pipe",
@@ -2824,4 +2826,46 @@ it("expect().toEqual() on objects with property indices doesn't print undefined"
 
   expect(err).toMatchSnapshot();
   expect(err).not.toContain("undefined");
+});
+
+it("test --preload supports global lifecycle hooks", () => {
+  const preloadedPath = join(tmp, "test-fixture-preload-global-lifecycle-hook-preloaded.js");
+  const path = join(tmp, "test-fixture-preload-global-lifecycle-hook-test.test.js");
+  copyFileSync(join(import.meta.dir, "test-fixture-preload-global-lifecycle-hook-test.js"), path);
+  copyFileSync(join(import.meta.dir, "test-fixture-preload-global-lifecycle-hook-preloaded.js"), preloadedPath);
+  const { stdout } = spawnSync({
+    cmd: [bunExe(), "test", "--preload=" + preloadedPath, path],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+    cwd: realpathSync(dirname(path)),
+  });
+  expect(stdout.toString().trim()).toBe(
+    `
+beforeAll: #1
+beforeAll: #2
+beforeAll: TEST-FILE
+beforeAll: one describe scope
+beforeEach: #1
+beforeEach: #2
+beforeEach: TEST-FILE
+beforeEach: one describe scope
+-- inside one describe scope --
+afterEach: #1
+afterEach: #2
+afterEach: TEST-FILE
+afterEach: one describe scope
+afterAll: one describe scope
+beforeEach: #1
+beforeEach: #2
+beforeEach: TEST-FILE
+-- the top-level test --
+afterEach: #1
+afterEach: #2
+afterEach: TEST-FILE
+afterAll: TEST-FILE
+afterAll: #1
+afterAll: #2
+`.trim(),
+  );
 });

@@ -81,7 +81,7 @@ Plugin support is not implemented yet. **There is a bug and this feature is not 
 
 ## Example loader
 
-{% codetab }
+{% codetabs }
 
 ```ts#loader.ts
 import { plugin } from 'bun';
@@ -106,7 +106,7 @@ plugin({
 });
 ```
 
-{% /codetab %}
+{% /codetabs %}
 
 Now in your test file, you can import `.txt` files:
 

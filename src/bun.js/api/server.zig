@@ -4921,7 +4921,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             this.unref();
             if (!abrupt) {
                 listener.close();
-            } else {
+            } else if (!this.flags.terminated) {
                 this.flags.terminated = true;
                 this.app.close();
             }

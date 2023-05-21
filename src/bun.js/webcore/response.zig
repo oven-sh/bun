@@ -659,18 +659,18 @@ pub const Fetch = struct {
             this.request_headers.entries.deinit(bun.default_allocator);
             this.request_headers.buf.deinit(bun.default_allocator);
             this.request_headers = Headers{ .allocator = undefined };
-            this.http.?.deinit();
+            this.http.?.clearData();
 
             this.result.deinitMetadata();
             this.response_buffer.deinit();
             this.request_body.detach();
 
-            if (this.abort_reason != .zero) this.abort_reason.unprotect();
+            if (this.abort_reason != .zero)
+                this.abort_reason.unprotect();
 
             if (this.signal) |signal| {
-                signal.cleanNativeBindings(this);
-                _ = signal.unref();
                 this.signal = null;
+                signal.detach(this);
             }
         }
 
@@ -720,8 +720,8 @@ pub const Fetch = struct {
 
         pub fn onReject(this: *FetchTasklet) JSValue {
             if (this.signal) |signal| {
-                _ = signal.unref();
                 this.signal = null;
+                signal.detach(this);
             }
 
             if (!this.abort_reason.isEmptyOrUndefinedOrNull()) {

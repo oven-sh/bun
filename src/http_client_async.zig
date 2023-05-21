@@ -1247,7 +1247,7 @@ pub const AsyncHTTP = struct {
         }
     }
 
-    pub fn deinit(this: *AsyncHTTP) void {
+    pub fn clearData(this: *AsyncHTTP) void {
         this.response_headers.deinit(this.allocator);
         this.response_headers = .{};
         this.request = null;

@@ -550,24 +550,26 @@ tinycc:
 PYTHON=$(shell which python 2>/dev/null || which python3 2>/dev/null || which python2 2>/dev/null)
 
 .PHONY: builtins
-builtins: ## to generate builtins
-	@if [ -z "$(WEBKIT_DIR)" ] || [ ! -d "$(WEBKIT_DIR)/Source" ]; then echo "WebKit is not cloned. Please run make init-submodules"; exit 1; fi
-	rm -f src/bun.js/bindings/*Builtin*.cpp src/bun.js/bindings/*Builtin*.h src/bun.js/bindings/*Builtin*.cpp
-	rm -rf src/bun.js/builtins/cpp
-	mkdir -p src/bun.js/builtins/cpp
-	$(PYTHON) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src)/bun.js/builtins/js  -o $(realpath src)/bun.js/builtins/cpp --framework WebCore --force
-	$(PYTHON) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src)/bun.js/builtins/js  -o $(realpath src)/bun.js/builtins/cpp --framework WebCore --wrappers-only
-	rm -rf /tmp/1.h src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h.1
-	echo -e '// $(CLANG_FORMAT) off\nnamespace Zig { class GlobalObject; }\n#include "root.h"\n' >> /tmp/1.h
-	cat /tmp/1.h  src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h > src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h.1
-	mv src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h.1 src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h
-	rm -rf /tmp/1.h src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h.1
-	echo -e '// $(CLANG_FORMAT) off\nnamespace Zig { class GlobalObject; }\n#include "root.h"\n' >> /tmp/1.h
-	cat /tmp/1.h  src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.cpp > src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.cpp.1
-	mv src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.cpp.1 src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.cpp
-	$(SED) -i -e 's/class JSDOMGlobalObject/using JSDOMGlobalObject = Zig::GlobalObject/' src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h
-	# this is the one we actually build
-	mv src/bun.js/builtins/cpp/*JSBuiltin*.cpp src/bun.js/builtins
+# builtins: ## to generate builtins
+# 	@if [ -z "$(WEBKIT_DIR)" ] || [ ! -d "$(WEBKIT_DIR)/Source" ]; then echo "WebKit is not cloned. Please run make init-submodules"; exit 1; fi
+# 	rm -f src/bun.js/bindings/*Builtin*.cpp src/bun.js/bindings/*Builtin*.h src/bun.js/bindings/*Builtin*.cpp
+# 	rm -rf src/bun.js/builtins/cpp
+# 	mkdir -p src/bun.js/builtins/cpp
+# 	$(PYTHON) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src)/bun.js/builtins/js  -o $(realpath src)/bun.js/builtins/cpp --framework WebCore --force
+# 	$(PYTHON) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src)/bun.js/builtins/js  -o $(realpath src)/bun.js/builtins/cpp --framework WebCore --wrappers-only
+# 	rm -rf /tmp/1.h src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h.1
+# 	echo -e '// $(CLANG_FORMAT) off\nnamespace Zig { class GlobalObject; }\n#include "root.h"\n' >> /tmp/1.h
+# 	cat /tmp/1.h  src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h > src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h.1
+# 	mv src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h.1 src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h
+# 	rm -rf /tmp/1.h src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h.1
+# 	echo -e '// $(CLANG_FORMAT) off\nnamespace Zig { class GlobalObject; }\n#include "root.h"\n' >> /tmp/1.h
+# 	cat /tmp/1.h  src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.cpp > src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.cpp.1
+# 	mv src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.cpp.1 src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.cpp
+# 	$(SED) -i -e 's/class JSDOMGlobalObject/using JSDOMGlobalObject = Zig::GlobalObject/' src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h
+# 	# this is the one we actually build
+# 	mv src/bun.js/builtins/cpp/*JSBuiltin*.cpp src/bun.js/builtins
+builtins:
+	bun src/bun.js/builtins/codegen/codegen.ts --minify
 
 .PHONY: generate-builtins
 generate-builtins: builtins

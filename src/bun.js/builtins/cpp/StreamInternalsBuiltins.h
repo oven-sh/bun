@@ -1,5 +1,6 @@
 #pragma once
-
+namespace Zig { class GlobalObject; }
+#include "root.h"
 #include <JavaScriptCore/BuiltinUtils.h>
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSFunction.h>
@@ -302,7 +303,7 @@ public:
 #undef DECLARE_BUILTIN_SOURCE_MEMBERS
 };
 
-inline void ReadableStreamInternalsBuiltinFunctions::init(JSC::JSGlobalObject& globalObject)
+inline void StreamInternalsBuiltinFunctions::init(JSC::JSGlobalObject& globalObject)
 {
 #define EXPORT_FUNCTION(codeName, functionName, overriddenName, length) \
     m_##functionName##Function.set(m_vm, &globalObject, JSC::JSFunction::create(m_vm, codeName##Generator(m_vm), &globalObject));

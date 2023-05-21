@@ -1,5 +1,7 @@
 #pragma once
-
+namespace Zig {
+class GlobalObject;
+}
 #include "BundlerPluginBuiltins.h"
 #include "ByteLengthQueuingStrategyBuiltins.h"
 #include "ConsoleObjectBuiltins.h"
@@ -116,14 +118,12 @@ private:
 ;
 };
 
-using JSDOMGlobalObject = Zig::GlobalObject;
-
 class JSBuiltinInternalFunctions {
 public:
     explicit JSBuiltinInternalFunctions(JSC::VM&);
 
     template<typename Visitor> void visit(Visitor&);
-    void initialize(JSDOMGlobalObject&);
+    void initialize(Zig::GlobalObject&);
     ReadableByteStreamInternalsBuiltinFunctions& readableByteStreamInternals() { return m_readableByteStreamInternals; }
     ReadableStreamInternalsBuiltinFunctions& readableStreamInternals() { return m_readableStreamInternals; }
     StreamInternalsBuiltinFunctions& streamInternals() { return m_streamInternals; }

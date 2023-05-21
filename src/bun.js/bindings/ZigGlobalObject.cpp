@@ -93,7 +93,7 @@
 #include "JSReadableHelper.h"
 #include "Process.h"
 
-#include "WebCoreJSBuiltinInternals.h"
+#include "WebCoreJSBuiltins.h"
 #include "JSBuffer.h"
 #include "JSBufferList.h"
 #include "JSFFIFunction.h"

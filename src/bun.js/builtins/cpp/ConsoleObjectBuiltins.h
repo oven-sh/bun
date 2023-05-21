@@ -1,5 +1,6 @@
 #pragma once
-
+namespace Zig { class GlobalObject; }
+#include "root.h"
 #include <JavaScriptCore/BuiltinUtils.h>
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSFunction.h>

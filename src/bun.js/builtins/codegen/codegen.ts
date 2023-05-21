@@ -256,20 +256,13 @@ if (PARALLEL) {
 }
 
 // C++ codegen
-let bundledCPP = `#include "config.h"
-`;
-
-for (const { basename } of files) {
-  bundledCPP += `#include "${basename}Builtins.h"
-`;
-}
-
-bundledCPP += `#include "WebCoreJSClientData.h"
-#include <JavaScriptCore/IdentifierInlines.h>
-#include <JavaScriptCore/ImplementationVisibility.h>
-#include <JavaScriptCore/Intrinsic.h>
+let bundledCPP = `namespace Zig { class GlobalObject; }
+#include "root.h"
+#include "config.h"
+#include "JSDOMGlobalObject.h"
+#include "WebCoreJSClientData.h"
 #include <JavaScriptCore/JSObjectInlines.h>
-#include <JavaScriptCore/VM.h>
+#include "WebCoreJSBuiltins.h"
 
 namespace WebCore {
 
@@ -308,8 +301,10 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm)
     : m_vm(vm)
 `;
 
-for (const { basename } of files) {
-  bundledCPP += `    , m_${low(basename)}Builtins(vm)\n`;
+for (const { basename, internal } of files) {
+  if (internal) {
+    bundledCPP += `    , m_${low(basename)}(vm)\n`;
+  }
 }
 
 bundledCPP += `
@@ -321,8 +316,8 @@ template<typename Visitor>
 void JSBuiltinInternalFunctions::visit(Visitor& visitor)
 {
 `;
-for (const { basename } of files) {
-  bundledCPP += `    m_${low(basename)}.visit(visitor);\n`;
+for (const { basename, internal } of files) {
+  if (internal) bundledCPP += `    m_${low(basename)}.visit(visitor);\n`;
 }
 
 bundledCPP += `
@@ -332,7 +327,7 @@ bundledCPP += `
 template void JSBuiltinInternalFunctions::visit(AbstractSlotVisitor&);
 template void JSBuiltinInternalFunctions::visit(SlotVisitor&);
 
-SUPPRESS_ASAN void JSBuiltinInternalFunctions::initialize(JSDOMGlobalObject& globalObject)
+SUPPRESS_ASAN void JSBuiltinInternalFunctions::initialize(Zig::GlobalObject& globalObject)
 {
     UNUSED_PARAM(globalObject);
 `;
@@ -345,13 +340,13 @@ for (const { basename, internal } of files) {
 
 bundledCPP += `
     JSVMClientData& clientData = *static_cast<JSVMClientData*>(m_vm.clientData);
-    JSDOMGlobalObject::GlobalPropertyInfo staticGlobals[] = {
+    Zig::GlobalObject::GlobalPropertyInfo staticGlobals[] = {
 `;
 
 for (const { basename, internal } of files) {
   if (internal) {
     bundledCPP += `#define DECLARE_GLOBAL_STATIC(name) \\
-    JSDOMGlobalObject::GlobalPropertyInfo( \\
+    Zig::GlobalObject::GlobalPropertyInfo( \\
         clientData.builtinFunctions().${low(basename)}Builtins().name##PrivateName(), ${low(
       basename,
     )}().m_##name##Function.get() , JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly),
@@ -373,7 +368,8 @@ bundledCPP += `
 // C++ Header codegen
 for (const { basename, functions, internal } of files) {
   let h = `#pragma once
-
+namespace Zig { class GlobalObject; }
+#include "root.h"
 #include <JavaScriptCore/BuiltinUtils.h>
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSFunction.h>
@@ -495,7 +491,7 @@ public:
 #undef DECLARE_BUILTIN_SOURCE_MEMBERS
 };
 
-inline void ReadableStreamInternalsBuiltinFunctions::init(JSC::JSGlobalObject& globalObject)
+inline void ${basename}BuiltinFunctions::init(JSC::JSGlobalObject& globalObject)
 {
 #define EXPORT_FUNCTION(codeName, functionName, overriddenName, length) \\
     m_##functionName##Function.set(m_vm, &globalObject, JSC::JSFunction::create(m_vm, codeName##Generator(m_vm), &globalObject));
@@ -524,7 +520,9 @@ await Bun.write(path.join(CPP_OUT_DIR, `WebCoreJSBuiltins.cpp`), bundledCPP);
 
 // C++ Header codegen2
 let WebCoreJSBuiltins = `#pragma once
-
+namespace Zig {
+class GlobalObject;
+}
 `;
 
 for (const { basename } of files) {
@@ -578,14 +576,12 @@ for (const { basename } of files) {
 WebCoreJSBuiltins += `;
 };
 
-using JSDOMGlobalObject = Zig::GlobalObject;
-
 class JSBuiltinInternalFunctions {
 public:
     explicit JSBuiltinInternalFunctions(JSC::VM&);
 
     template<typename Visitor> void visit(Visitor&);
-    void initialize(JSDOMGlobalObject&);
+    void initialize(Zig::GlobalObject&);
 `;
 
 for (const { basename, internal } of files) {

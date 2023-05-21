@@ -37,7 +37,7 @@ class DOMWrapperWorld;
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/JSTypeInfo.h"
 #include "JavaScriptCore/Structure.h"
-#include "WebCoreJSBuiltinInternals.h"
+#include "WebCoreJSBuiltins.h"
 
 #include "DOMConstructors.h"
 #include "BunPlugin.h"

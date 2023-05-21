@@ -81,7 +81,7 @@ Plugin support is not implemented yet. **There is a bug and this feature is not 
 
 ## Example loader
 
-{% codetabs }
+{% codetabs %}
 
 ```ts#loader.ts
 import { plugin } from 'bun';

@@ -35,6 +35,8 @@ const getAllocator = @import("../base.zig").getAllocator;
 const JSPrivateDataPtr = @import("../base.zig").JSPrivateDataPtr;
 const GetJSPrivateData = @import("../base.zig").GetJSPrivateData;
 
+const default_timeout = std.time.ms_per_min * 5;
+
 const ZigString = JSC.ZigString;
 const JSInternalPromise = JSC.JSInternalPromise;
 const JSPromise = JSC.JSPromise;
@@ -374,7 +376,45 @@ pub const TestRunner = struct {
 
     snapshots: Snapshots,
 
+    test_timeout_timer: ?*bun.uws.Timer = null,
+    last_test_timeout_timer_duration: u32 = 0,
+    active_test_for_timeout: ?TestRunner.Test.ID = null,
+
     pub const Drainer = JSC.AnyTask.New(TestRunner, drain);
+
+    pub fn onTestTimeout(timer: *bun.uws.Timer) callconv(.C) void {
+        var this = timer.ext(TestRunner).?;
+
+        if (this.pending_test) |pending_test| {
+            if (!pending_test.reported) {
+                const now = std.time.Instant.now() catch unreachable;
+                const elapsed = now.since(pending_test.started_at);
+
+                if (elapsed >= (@as(u64, this.last_test_timeout_timer_duration) * std.time.ns_per_ms)) {
+                    pending_test.timeout();
+                }
+            }
+        }
+    }
+
+    pub fn setTimeout(
+        this: *TestRunner,
+        milliseconds: u32,
+        test_id: TestRunner.Test.ID,
+    ) void {
+        this.active_test_for_timeout = test_id;
+
+        if (milliseconds > 0) {
+            if (this.test_timeout_timer == null) {
+                this.test_timeout_timer = bun.uws.Timer.createFallthrough(bun.uws.Loop.get().?, this);
+            }
+
+            if (this.last_test_timeout_timer_duration != milliseconds) {
+                this.last_test_timeout_timer_duration = milliseconds;
+                this.test_timeout_timer.?.set(this, onTestTimeout, @intCast(i32, milliseconds), @intCast(i32, milliseconds));
+            }
+        }
+    }
 
     pub fn enqueue(this: *TestRunner, task: *TestRunnerTask) void {
         this.queue.writeItem(task) catch unreachable;
@@ -3120,6 +3160,7 @@ pub const TestScope = struct {
     task: ?*TestRunnerTask = null,
     skipped: bool = false,
     snapshot_count: usize = 0,
+    timeout_millis: u32 = default_timeout,
 
     pub const Class = NewClass(
         void,
@@ -3180,7 +3221,7 @@ pub const TestScope = struct {
         exception: js.ExceptionRef,
         comptime tag: @Type(.EnumLiteral),
     ) js.JSObjectRef {
-        var args = bun.cast([]const JSC.JSValue, arguments[0..@min(arguments.len, 2)]);
+        var args = bun.cast([]const JSC.JSValue, arguments[0..@min(arguments.len, 3)]);
         var label: string = "";
         if (args.len == 0) {
             return this;
@@ -3226,6 +3267,7 @@ pub const TestScope = struct {
             .label = label,
             .callback = function.asObjectRef(),
             .parent = DescribeScope.active,
+            .timeout_millis = if (arguments.len > 2) @intCast(u32, @max(args[2].coerce(i32, ctx), 0)) else default_timeout,
         }) catch unreachable;
 
         if (test_elapsed_timer == null) create_tiemr: {
@@ -3302,7 +3344,13 @@ pub const TestScope = struct {
         var initial_value = JSValue.zero;
         if (test_elapsed_timer) |timer| {
             timer.reset();
+            task.started_at = timer.started;
         }
+
+        Jest.runner.?.setTimeout(
+            this.timeout_millis,
+            task.test_id,
+        );
 
         if (callback_length > 0) {
             const callback_func = JSC.NewFunctionWithData(
@@ -3671,6 +3719,7 @@ pub const DescribeScope = struct {
 
         {
             JSC.markBinding(@src());
+            ctx.clearTerminationException();
             var result = js.JSObjectCallAsFunctionReturnValue(ctx, callback, thisObject, 0, null);
 
             if (result.asAnyPromise()) |prom| {
@@ -3694,6 +3743,7 @@ pub const DescribeScope = struct {
 
     pub fn runTests(this: *DescribeScope, this_object: JSC.JSValue, ctx: js.JSContextRef) void {
         // Step 1. Initialize the test block
+        ctx.clearTerminationException();
 
         const file = this.file_id;
         const allocator = getAllocator(ctx);
@@ -3789,6 +3839,7 @@ pub const DescribeScope = struct {
         var i: usize = 0;
         while (i < callbacks.items.len) : (i += 1) {
             var callback = callbacks.items[i];
+
             var result = js.JSObjectCallAsFunctionReturnValue(ctx, callback, this, 0);
             if (result.isException(ctx.ptr().vm())) {
                 exception.* = result.asObjectRef();
@@ -3843,6 +3894,7 @@ pub const TestRunnerTask = struct {
     promise_state: AsyncState = .none,
     sync_state: AsyncState = .none,
     reported: bool = false,
+    started_at: std.time.Instant = std.mem.zeroes(std.time.Instant),
 
     pub const AsyncState = enum {
         none,
@@ -3932,6 +3984,14 @@ pub const TestRunnerTask = struct {
         return false;
     }
 
+    pub fn timeout(this: *TestRunnerTask) void {
+        std.debug.assert(!this.reported);
+
+        this.ref.unref(this.globalThis.bunVM());
+        this.globalThis.throwTerminationException();
+        this.handleResult(.{ .fail = active_test_expectation_counter.actual }, .timeout);
+    }
+
     pub fn handleResult(this: *TestRunnerTask, result: Result, comptime from: @Type(.EnumLiteral)) void {
         if (result == .fail)
             Jest.runner.?.did_pending_test_fail = true;
@@ -3957,7 +4017,7 @@ pub const TestRunnerTask = struct {
                 std.debug.assert(this.sync_state == .pending);
                 this.sync_state = .fulfilled;
             },
-            .unhandledRejection => {},
+            .timeout, .unhandledRejection => {},
             else => @compileError("Bad from"),
         }
 
@@ -3975,6 +4035,10 @@ pub const TestRunnerTask = struct {
         var test_ = this.describe.tests.items[test_id];
         var describe = this.describe;
         describe.tests.items[test_id] = test_;
+        if (comptime from == .timeout) {
+            Output.prettyErrorln("<r><red>Timeout<r><d>:<r> test <b>{}<r> timed out after {d}ms", .{ bun.fmt.quote(test_.label), test_.timeout_millis });
+            Output.flush();
+        }
         processTestResult(this, this.globalThis, result, test_, test_id, describe);
     }
 

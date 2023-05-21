@@ -144,6 +144,15 @@ declare module "bun:test" {
       fn:
         | (() => void | Promise<unknown>)
         | ((done: (err?: unknown) => void) => void),
+      /**
+       * @default 300_000 milliseconds (5 minutes)
+       *
+       * After this many milliseconds, the test will fail with an error message like:
+       * ```ts
+       * 'Timeout: test "name" timed out after 300_000ms'
+       * ```
+       */
+      timeoutMs?: number,
     ): void;
     /**
      * Skips all other tests, except this test.
@@ -151,12 +160,14 @@ declare module "bun:test" {
      *
      * @param label the label for the test
      * @param fn the test function
+     * @param timeoutMs the timeout for the test
      */
     only(
       label: string,
       fn:
         | (() => void | Promise<unknown>)
         | ((done: (err?: unknown) => void) => void),
+      timeoutMs?: number,
     ): void;
     /**
      * Skips this test.
@@ -169,6 +180,7 @@ declare module "bun:test" {
       fn:
         | (() => void | Promise<unknown>)
         | ((done: (err?: unknown) => void) => void),
+      timeoutMs?: number,
     ): void;
   };
   /**

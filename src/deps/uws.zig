@@ -493,7 +493,7 @@ pub const Loop = extern struct {
     pub fn unref(this: *Loop) void {
         log("unref", .{});
         this.num_polls -= 1;
-        this.active -= 1;
+        this.active -|= 1;
     }
 
     pub fn unrefCount(this: *Loop, count: i32) void {

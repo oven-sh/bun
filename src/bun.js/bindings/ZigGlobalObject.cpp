@@ -3769,6 +3769,16 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.addOpaqueRoot(context);
 }
 
+extern "C" void JSGlobalObject__throwTerminationException(JSC::JSGlobalObject* globalObject)
+{
+    globalObject->vm().setHasTerminationRequest();
+}
+
+extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* globalObject)
+{
+    globalObject->vm().clearHasTerminationRequest();
+}
+
 extern "C" void Bun__queueTask(JSC__JSGlobalObject*, WebCore::EventLoopTask* task);
 extern "C" void Bun__queueTaskWithTimeout(JSC__JSGlobalObject*, WebCore::EventLoopTask* task, int timeout);
 extern "C" void Bun__queueTaskConcurrently(JSC__JSGlobalObject*, WebCore::EventLoopTask* task);

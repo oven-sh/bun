@@ -1012,6 +1012,7 @@ pub const ZigConsoleClient = struct {
         flush: bool,
         ordered_properties: bool = false,
         quote_strings: bool = false,
+        max_depth: u16 = 8,
     };
 
     pub fn format(
@@ -1039,6 +1040,7 @@ pub const ZigConsoleClient = struct {
                 .globalThis = global,
                 .ordered_properties = options.ordered_properties,
                 .quote_strings = options.quote_strings,
+                .max_depth = options.max_depth,
             };
             const tag = ZigConsoleClient.Formatter.Tag.get(vals[0], global);
 

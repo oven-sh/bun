@@ -66,7 +66,7 @@ Calling `expect`, `test`, or any other test function inside a lifecycle hook wil
 
 You can use `console.log` or any other function otherwise inside a lifecycle hook.
 
-We haven't implemented timer simulation or `Math.random` mocking yet. If you need these features, please [open an issue](https://bun.sh/issues).
+We haven't implemented timer simulation, test isolation, or `Math.random` mocking yet. If you need these features, please [open an issue](https://bun.sh/issues).
 
 ### The lifecycle of bun:test
 

@@ -2775,3 +2775,21 @@ it("test timeouts when expected", () => {
   expect(err).toContain("timed out after 10ms");
   expect(err).not.toContain("unreachable code");
 });
+
+it("expect().toEqual() on objects with property indices doesn't print undefined", () => {
+  const path = join(realpathSync(tmpdir()), "test-fixture-diff-indexed-properties.test.js");
+  copyFileSync(join(import.meta.dir, "test-fixture-diff-indexed-properties.js"), path);
+  const { stdout, stderr, exited } = spawnSync({
+    cmd: [bunExe(), "test", path],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+    cwd: realpathSync(dirname(path)),
+  });
+
+  let err = stderr!.toString();
+  err = err.substring(err.indexOf("expect(received).toEqual(expected)"), err.indexOf("at "));
+
+  expect(err).toMatchSnapshot();
+  expect(err).not.toContain("undefined");
+});

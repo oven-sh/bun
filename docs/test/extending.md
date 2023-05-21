@@ -62,6 +62,33 @@ The following lifecycle hooks are available in `--preload`:
 | `afterEach`  | Runs after each test.       |
 | `afterAll`   | Runs once after all tests.  |
 
+Calling `expect`, `test`, or any other test function inside a lifecycle hook will throw an error. Calling `test` inside `beforeAll`, `afterAll`, `beforeEach` or `afterEach` will also throw an error.
+
+You can use `console.log` or any other function otherwise inside a lifecycle hook.
+
+We haven't implemented timer simulation or `Math.random` mocking yet. If you need these features, please [open an issue](https://bun.sh/issues).
+
+### The lifecycle of bun:test
+
+The test runner is a single process that runs all tests. It loads all `--preload` scripts, then runs all tests. If a test fails, the test runner will exit with a non-zero exit code.
+
+Before running each test, it transpiles the source code and all dependencies into vanilla JavaScript using Bun's transpiler and module resolver. This means you can use TypeScript, JSX, ESM, and CommonJS in your tests.
+
+#### Globals
+
+Like Jest, you can use `describe`, `test`, `expect`, and other functions without importing them.
+
+But unlike Jest, they are not globals. They are imported from `bun:test` and are exclusively available in test files or when preloading scripts.
+
+```ts
+typeof globalThis.describe; // "undefined"
+typeof describe; // "function"
+```
+
+This works via a transpiler integration in Bun. This transpiler plugin is only enabled inside test files and when preloading scripts. If you try to use these functions otherwise, you will get an error.
+
+Every `describe`, `test`, and `expect` is scoped to the current test file. Importing from `"bun:test"` creates a new scope. This means you can't use `describe` from one test file in another test file because belong to different scopes.
+
 ## Configuration
 
 To save yourself from having to type `--preload` every time you run tests, you can add it to your `bunfig.toml`:

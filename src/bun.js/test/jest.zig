@@ -380,6 +380,13 @@ pub const TestRunner = struct {
     last_test_timeout_timer_duration: u32 = 0,
     active_test_for_timeout: ?TestRunner.Test.ID = null,
 
+    global_callbacks: struct {
+        beforeAll: std.ArrayListUnmanaged(JSC.JSValue) = .{},
+        beforeEach: std.ArrayListUnmanaged(JSC.JSValue) = .{},
+        afterEach: std.ArrayListUnmanaged(JSC.JSValue) = .{},
+        afterAll: std.ArrayListUnmanaged(JSC.JSValue) = .{},
+    } = .{},
+
     pub const Drainer = JSC.AnyTask.New(TestRunner, drain);
 
     pub fn onTestTimeout(timer: *bun.uws.Timer) callconv(.C) void {
@@ -814,6 +821,39 @@ pub const Snapshots = struct {
 pub const Jest = struct {
     pub var runner: ?*TestRunner = null;
 
+    fn globalHook(comptime name: string) JSC.JSHostFunctionType {
+        return struct {
+            pub fn appendGlobalFunctionCallback(
+                globalThis: *JSC.JSGlobalObject,
+                callframe: *JSC.CallFrame,
+            ) callconv(.C) JSValue {
+                const arguments = callframe.arguments(2);
+                if (arguments.len < 1) {
+                    globalThis.throwNotEnoughArguments("callback", 1, arguments.len);
+                    return .zero;
+                }
+
+                const function = arguments.ptr[0];
+                if (function.isEmptyOrUndefinedOrNull() or !function.isCallable(globalThis.vm())) {
+                    globalThis.throwInvalidArgumentType(name, "callback", "function");
+                    return .zero;
+                }
+
+                if (function.getLengthOfArray(globalThis) > 0) {
+                    globalThis.throw("done() callback is not implemented in global hooks yet. Please make your function take no arguments", .{});
+                    return .zero;
+                }
+
+                function.protect();
+                @field(Jest.runner.?.global_callbacks, name).append(
+                    bun.default_allocator,
+                    function,
+                ) catch unreachable;
+                return JSC.JSValue.jsUndefined();
+            }
+        }.appendGlobalFunctionCallback;
+    }
+
     pub fn call(
         _: void,
         ctx: js.JSContextRef,
@@ -840,6 +880,40 @@ pub const Jest = struct {
             JSError(getAllocator(ctx), "Bun.jest() expects an absolute file path", .{}, ctx, exception);
             return js.JSValueMakeUndefined(ctx);
         }
+        var vm = ctx.bunVM();
+        if (vm.is_in_preload) {
+            var global_hooks_object = JSC.JSValue.createEmptyObject(ctx, 8);
+            global_hooks_object.ensureStillAlive();
+
+            const notSupportedHereFn = struct {
+                pub fn notSupportedHere(
+                    globalThis: *JSC.JSGlobalObject,
+                    _: *JSC.CallFrame,
+                ) callconv(.C) JSValue {
+                    globalThis.throw("This function can only be used in a test.", .{});
+                    return .zero;
+                }
+            }.notSupportedHere;
+            const notSupportedHere = JSC.NewFunction(ctx, null, 0, notSupportedHereFn, false);
+            notSupportedHere.ensureStillAlive();
+
+            inline for (.{
+                "expect",
+                "describe",
+                "it",
+                "test",
+            }) |name| {
+                global_hooks_object.put(ctx, ZigString.static(name), notSupportedHere);
+            }
+
+            inline for (.{ "beforeAll", "beforeEach", "afterAll", "afterEach" }) |name| {
+                const function = JSC.NewFunction(ctx, null, 1, globalHook(name), false);
+                function.ensureStillAlive();
+                global_hooks_object.put(ctx, ZigString.static(name), function);
+            }
+            return global_hooks_object.asObjectRef();
+        }
+
         var filepath = Fs.FileSystem.instance.filename_store.append([]const u8, slice) catch unreachable;
 
         var scope = runner_.getOrPutFile(filepath);
@@ -3686,7 +3760,49 @@ pub const DescribeScope = struct {
 
         return JSValue.zero;
     }
+
+    pub fn runGlobalCallbacks(globalThis: *JSC.JSGlobalObject, comptime hook: LifecycleHook) ?JSValue {
+        // global callbacks
+        for (@field(Jest.runner.?.global_callbacks, @tagName(hook)).items) |cb| {
+            if (cb.isEmpty()) continue;
+
+            const pending_test = Jest.runner.?.pending_test;
+            // forbid `expect()` within hooks
+            Jest.runner.?.pending_test = null;
+            const orig_did_pending_test_fail = Jest.runner.?.did_pending_test_fail;
+
+            Jest.runner.?.did_pending_test_fail = false;
+
+            const vm = VirtualMachine.get();
+            // note: we do not support "done" callback in global hooks in the first release.
+            var result: JSC.JSValue = cb.call(globalThis, &.{});
+            if (result.asAnyPromise()) |promise| {
+                if (promise.status(globalThis.vm()) == .Pending) {
+                    result.protect();
+                    vm.waitForPromise(promise);
+                    result.unprotect();
+                }
+
+                result = promise.result(globalThis.vm());
+            }
+
+            Jest.runner.?.pending_test = pending_test;
+            Jest.runner.?.did_pending_test_fail = orig_did_pending_test_fail;
+            if (result.isAnyError()) return result;
+        }
+
+        if (comptime hook == .beforeAll or hook == .afterAll) {
+            @field(Jest.runner.?.global_callbacks, @tagName(hook)).items.len = 0;
+        }
+
+        return null;
+    }
+
     pub fn runCallback(this: *DescribeScope, ctx: js.JSContextRef, comptime hook: LifecycleHook) JSValue {
+        if (runGlobalCallbacks(ctx, hook)) |err| {
+            return err;
+        }
+
         var parent = this.parent;
         while (parent) |scope| {
             const ret = scope.execCallback(ctx, hook);
@@ -3889,20 +4005,6 @@ pub const DescribeScope = struct {
     //     //     scope.
     //     // }
     // }
-
-    pub fn runCallbacks(this: *DescribeScope, ctx: js.JSContextRef, callbacks: std.ArrayListUnmanaged(js.JSObjectRef), exception: js.ExceptionRef) bool {
-        if (comptime is_bindgen) return undefined;
-        var i: usize = 0;
-        while (i < callbacks.items.len) : (i += 1) {
-            var callback = callbacks.items[i];
-
-            var result = js.JSObjectCallAsFunctionReturnValue(ctx, callback, this, 0);
-            if (result.isException(ctx.ptr().vm())) {
-                exception.* = result.asObjectRef();
-                return false;
-            }
-        }
-    }
 
     pub fn createExpect(
         _: *DescribeScope,

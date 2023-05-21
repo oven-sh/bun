@@ -654,12 +654,12 @@ pub const TestCommand = struct {
 
                 if (files.len > 1) {
                     for (files[0 .. files.len - 1]) |file_name| {
-                        TestCommand.run(reporter, vm, file_name.slice(), allocator) catch {};
+                        TestCommand.run(reporter, vm, file_name.slice(), allocator, false) catch {};
                         Global.mimalloc_cleanup(false);
                     }
                 }
 
-                TestCommand.run(reporter, vm, files[files.len - 1].slice(), allocator) catch {};
+                TestCommand.run(reporter, vm, files[files.len - 1].slice(), allocator, true) catch {};
             }
         };
 
@@ -678,6 +678,7 @@ pub const TestCommand = struct {
         vm: *JSC.VirtualMachine,
         file_name: string,
         _: std.mem.Allocator,
+        is_last: bool,
     ) !void {
         defer {
             js_ast.Expr.Data.Store.reset();
@@ -767,6 +768,14 @@ pub const TestCommand = struct {
                 vm.global.deleteModuleRegistryEntry(&entry);
                 Output.prettyErrorln("<r>{s} <d>[RUN {d:0>4}]:<r>\n", .{ resolution.path_pair.primary.name.filename, repeat_index + 1 });
                 Output.flush();
+            }
+        }
+
+        if (is_last) {
+            if (jest.Jest.runner != null) {
+                if (jest.DescribeScope.runGlobalCallbacks(vm.global, .afterAll)) |after| {
+                    vm.global.bunVM().runErrorHandler(after, null);
+                }
             }
         }
     }

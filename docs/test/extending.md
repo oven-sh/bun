@@ -1,6 +1,6 @@
 Like the runtime, `bun:test` also supports `--preload` scripts. These scripts are loaded before any tests are run. This is useful for setting up test fixtures, mocking, and configuring the test environment.
 
-{% codetab }
+{% codetabs }
 
 ```ts#preloaded.ts
 import { beforeAll, beforeEach, afterEach, afterAll } from "bun:test";
@@ -22,7 +22,7 @@ afterAll(() => {
 });
 ```
 
-{% /codetab %}
+{% /codetabs %}
 
 Test file:
 

@@ -51,6 +51,15 @@ afterEach
 afterAll
 ```
 
+## Configuration
+
+To save yourself from having to type `--preload` every time you run tests, you can add it to your `bunfig.toml`:
+
+```toml
+[test]
+preload = ["./preloaded.ts"]
+```
+
 ## List of lifecycle hooks
 
 The following lifecycle hooks are available in `--preload`:
@@ -88,15 +97,6 @@ typeof describe; // "function"
 This works via a transpiler integration in Bun. When `describe`, `expect`, `it`, etc are used in a test file, the transpiler auto-imports from `bun:test`. This transpiler plugin is only enabled inside test files and when preloading scripts. If you try to use Jest globals in other files, you will get an error.
 
 Every `describe`, `test`, and `expect` is scoped to the current test file. Importing from `"bun:test"` creates a new scope. This means you can't use `describe` from one test file in another test file because belong to different scopes.
-
-## Configuration
-
-To save yourself from having to type `--preload` every time you run tests, you can add it to your `bunfig.toml`:
-
-```toml
-[test]
-preload = ["./preloaded.ts"]
-```
 
 ## Loaders & Resolvers
 

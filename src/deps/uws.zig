@@ -10,7 +10,7 @@ pub const u_int64_t = c_ulonglong;
 pub const LIBUS_LISTEN_DEFAULT: i32 = 0;
 pub const LIBUS_LISTEN_EXCLUSIVE_PORT: i32 = 1;
 pub const Socket = opaque {};
-
+const debug = bun.Output.scoped(.uws, false);
 const uws = @This();
 
 const BoringSSL = @import("root").bun.BoringSSL;
@@ -79,12 +79,14 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
             );
         }
         pub fn shutdown(this: ThisSocket) void {
+            debug("us_socket_shutdown({d})", .{@ptrToInt(this.socket)});
             return us_socket_shutdown(
                 comptime ssl_int,
                 this.socket,
             );
         }
         pub fn shutdownRead(this: ThisSocket) void {
+            debug("us_socket_shutdown_read({d})", .{@ptrToInt(this.socket)});
             return us_socket_shutdown_read(
                 comptime ssl_int,
                 this.socket,
@@ -103,6 +105,7 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
             ) > 0;
         }
         pub fn close(this: ThisSocket, code: i32, reason: ?*anyopaque) void {
+            debug("us_socket_close({d})", .{@ptrToInt(this.socket)});
             _ = us_socket_close(
                 comptime ssl_int,
                 this.socket,
@@ -385,6 +388,7 @@ pub const Timer = opaque {
     }
 
     pub fn deinit(this: *Timer) void {
+        debug("Timer.deinit()", .{});
         us_timer_close(this);
     }
 
@@ -425,6 +429,7 @@ pub const SocketContext = opaque {
     }
 
     pub fn close(this: *SocketContext, ssl: bool) void {
+        debug("us_socket_context_close({d})", .{@ptrToInt(this)});
         us_socket_context_close(@as(i32, @boolToInt(ssl)), this);
     }
 

@@ -254,7 +254,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
         /// Attempt to keep the socket alive by reusing it for another request.
         /// If no space is available, close the socket.
         pub fn releaseSocket(this: *@This(), socket: HTTPSocket, hostname: []const u8, port: u16) void {
-            log("releaseSocket", .{});
+            log("releaseSocket(0x{})", .{bun.fmt.hexIntUpper(@ptrToInt(socket.socket))});
 
             if (comptime Environment.allow_assert) {
                 std.debug.assert(!socket.isClosed());
@@ -275,7 +275,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     pending.hostname_len = @truncate(u8, hostname.len);
                     pending.port = port;
 
-                    log("- Keep-Alive release {s}:{d}", .{ hostname, port });
+                    log("Keep-Alive release {s}:{d} (0x{})", .{ hostname, port, @ptrToInt(socket.socket) });
                     return;
                 }
             }

@@ -1523,6 +1523,18 @@ declare module "bun" {
     hostname?: string;
 
     /**
+     * Instead of binding and listening to a hostname and port, the server
+     * can operate off a socket which has already been bound and listened
+     * by a separate process. This enables "socket activated" deployments.
+     *
+     * @example
+     * ```js
+     * process.env.LISTEN_FDS // Use fd passed by systemd socket activation
+     * ```
+     */
+     fd?: string | number;
+
+    /**
      * What URI should be used to make {@link Request.url} absolute?
      *
      * By default, looks at {@link hostname}, {@link port}, and whether or not SSL is enabled to generate one
@@ -3046,8 +3058,9 @@ declare module "bun" {
 
   interface TCPSocketListenOptions<Data = undefined>
     extends SocketOptions<Data> {
-    hostname: string;
-    port: number;
+    fd?: number;
+    hostname?: string;
+    port?: number;
     tls?: TLSOptions;
   }
 
@@ -3091,6 +3104,7 @@ declare module "bun" {
    * @param options.data The per-instance data context
    * @param options.hostname The hostname to connect to
    * @param options.port The port to connect to
+   * @param options.fd The bound socket to attach to
    * @param options.tls The TLS configuration object
    * @param options.unix The unix socket to connect to
    *

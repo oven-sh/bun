@@ -219,6 +219,7 @@ const Handlers = struct {
 pub const SocketConfig = struct {
     hostname_or_unix: JSC.ZigString.Slice,
     port: ?u16 = null,
+    fd: ?uws.socket_t = null,
     ssl: ?JSC.API.ServerConfig.SSLConfig = null,
     handlers: Handlers,
     default_data: JSC.JSValue = .zero,
@@ -229,6 +230,7 @@ pub const SocketConfig = struct {
         globalObject: *JSC.JSGlobalObject,
         exception: JSC.C.ExceptionRef,
     ) ?SocketConfig {
+        var fd: ?uws.socket_t = null;
         var hostname_or_unix: JSC.ZigString.Slice = JSC.ZigString.Slice.empty;
         var port: ?u16 = null;
         var exclusive = false;
@@ -252,71 +254,76 @@ pub const SocketConfig = struct {
             }
         }
 
-        hostname_or_unix: {
-            if (opts.getTruthy(globalObject, "unix")) |unix_socket| {
-                if (!unix_socket.isString()) {
-                    exception.* = JSC.toInvalidArguments("Expected \"unix\" to be a string", .{}, globalObject).asObjectRef();
-                    return null;
-                }
-
-                hostname_or_unix = unix_socket.getZigString(globalObject).toSlice(bun.default_allocator);
-
-                if (strings.hasPrefixComptime(hostname_or_unix.slice(), "file://") or strings.hasPrefixComptime(hostname_or_unix.slice(), "unix://") or strings.hasPrefixComptime(hostname_or_unix.slice(), "sock://")) {
-                    hostname_or_unix.ptr += 7;
-                    hostname_or_unix.len -|= 7;
-                }
-
-                if (hostname_or_unix.len > 0) {
-                    break :hostname_or_unix;
-                }
-            }
-
-            if (opts.getTruthy(globalObject, "exclusive")) |_| {
-                exclusive = true;
-            }
-
-            if (opts.getTruthy(globalObject, "hostname") orelse opts.getTruthy(globalObject, "host")) |hostname| {
-                if (!hostname.isString()) {
-                    exception.* = JSC.toInvalidArguments("Expected \"hostname\" to be a string", .{}, globalObject).asObjectRef();
-                    return null;
-                }
-
-                var port_value = opts.get(globalObject, "port") orelse JSValue.zero;
-                hostname_or_unix = hostname.getZigString(globalObject).toSlice(bun.default_allocator);
-
-                if (port_value.isEmptyOrUndefinedOrNull() and hostname_or_unix.len > 0) {
-                    const parsed_url = bun.URL.parse(hostname_or_unix.slice());
-                    if (parsed_url.getPort()) |port_num| {
-                        port_value = JSValue.jsNumber(port_num);
-                        hostname_or_unix.ptr = parsed_url.hostname.ptr;
-                        hostname_or_unix.len = @truncate(u32, parsed_url.hostname.len);
-                    }
-                }
-
-                if (port_value.isEmptyOrUndefinedOrNull() or !port_value.isNumber() or port_value.toInt64() > std.math.maxInt(u16) or port_value.toInt64() < 0) {
-                    exception.* = JSC.toInvalidArguments("Expected \"port\" to be a number between 0 and 65535", .{}, globalObject).asObjectRef();
-                    return null;
-                }
-
-                port = port_value.toU16();
-
-                if (hostname_or_unix.len == 0) {
-                    exception.* = JSC.toInvalidArguments("Expected \"hostname\" to be a non-empty string", .{}, globalObject).asObjectRef();
-                    return null;
-                }
-
-                if (hostname_or_unix.len > 0) {
-                    break :hostname_or_unix;
-                }
-            }
-
-            if (hostname_or_unix.len == 0) {
-                exception.* = JSC.toInvalidArguments("Expected \"unix\" or \"hostname\" to be a non-empty string", .{}, globalObject).asObjectRef();
+        // Currently excludes 0 (stdin)
+        if (opts.getTruthy(globalObject, "fd")) |fd_value| {
+            if (!fd_value.isNumber() or fd_value.toInt64() < 0) {
+                exception.* = JSC.toInvalidArguments("Need \"fd\" to be a nonnegative integer", .{}, globalObject).asObjectRef();
                 return null;
             }
 
-            exception.* = JSC.toInvalidArguments("Expected either \"hostname\" or \"unix\"", .{}, globalObject).asObjectRef();
-            return null;
+            fd = @as(uws.socket_t, fd_value.toInt32());
+        } else {
+            hostname_or_unix: {
+                if (opts.getTruthy(globalObject, "unix")) |unix_socket| {
+                    if (!unix_socket.isString()) {
+                        exception.* = JSC.toInvalidArguments("Expected \"unix\" to be a string", .{}, globalObject).asObjectRef();
+                        return null;
+                    }
+
+                    hostname_or_unix = unix_socket.getZigString(globalObject).toSlice(bun.default_allocator);
+
+                    if (strings.hasPrefixComptime(hostname_or_unix.slice(), "file://") or strings.hasPrefixComptime(hostname_or_unix.slice(), "unix://") or strings.hasPrefixComptime(hostname_or_unix.slice(), "sock://")) {
+                        hostname_or_unix.ptr += 7;
+                        hostname_or_unix.len -|= 7;
+                    }
+
+                    if (hostname_or_unix.len > 0) {
+                        break :hostname_or_unix;
+                    }
+                }
+
+                if (opts.getTruthy(globalObject, "exclusive")) |_| {
+                    exclusive = true;
+                }
+
+                if (opts.getTruthy(globalObject, "hostname") orelse opts.getTruthy(globalObject, "host")) |hostname| {
+                    if (!hostname.isString()) {
+                        exception.* = JSC.toInvalidArguments("Expected \"hostname\" to be a string", .{}, globalObject).asObjectRef();
+                        return null;
+                    }
+
+                    var port_value = opts.get(globalObject, "port") orelse JSValue.zero;
+                    hostname_or_unix = hostname.getZigString(globalObject).toSlice(bun.default_allocator);
+
+                    if (port_value.isEmptyOrUndefinedOrNull() and hostname_or_unix.len > 0) {
+                        const parsed_url = bun.URL.parse(hostname_or_unix.slice());
+                        if (parsed_url.getPort()) |port_num| {
+                            port_value = JSValue.jsNumber(port_num);
+                            hostname_or_unix.ptr = parsed_url.hostname.ptr;
+                            hostname_or_unix.len = @truncate(u32, parsed_url.hostname.len);
+                        }
+                    }
+
+                    if (port_value.isEmptyOrUndefinedOrNull() or !port_value.isNumber() or port_value.toInt64() > std.math.maxInt(u16) or port_value.toInt64() < 0) {
+                        exception.* = JSC.toInvalidArguments("Expected \"port\" to be a number between 0 and 65535", .{}, globalObject).asObjectRef();
+                        return null;
+                    }
+
+                    port = port_value.toU16();
+
+                    if (hostname_or_unix.len == 0) {
+                        exception.* = JSC.toInvalidArguments("Expected \"hostname\" to be a non-empty string", .{}, globalObject).asObjectRef();
+                        return null;
+                    }
+
+                    if (hostname_or_unix.len > 0) {
+                        break :hostname_or_unix;
+                    }
+                }
+
+                exception.* = JSC.toInvalidArguments("Expected \"fd\", \"hostname\" or \"unix\"", .{}, globalObject).asObjectRef();
+                return null;
+            }
         }
 
         const handlers = Handlers.fromJS(globalObject, opts.get(globalObject, "socket") orelse JSValue.zero, exception) orelse {
@@ -329,6 +336,7 @@ pub const SocketConfig = struct {
         }
 
         return SocketConfig{
+            .fd = fd,
             .hostname_or_unix = hostname_or_unix,
             .port = port,
             .ssl = ssl,
@@ -345,7 +353,7 @@ pub const Listener = struct {
     handlers: Handlers,
     listener: ?*uws.ListenSocket = null,
     poll_ref: JSC.PollRef = JSC.PollRef.init(),
-    connection: UnixOrHost,
+    connection: FdOrUnixOrHost,
     socket_context: ?*uws.SocketContext = null,
     ssl: bool = false,
 
@@ -372,15 +380,19 @@ pub const Listener = struct {
         return true;
     }
 
-    const UnixOrHost = union(enum) {
+    const FdOrUnixOrHost = union(enum) {
+        fd: uws.socket_t,
         unix: []const u8,
         host: struct {
             host: []const u8,
             port: u16,
         },
 
-        pub fn deinit(this: UnixOrHost) void {
+        pub fn deinit(this: FdOrUnixOrHost) void {
             switch (this) {
+                .fd => {
+                    // nothing
+                },
                 .unix => |u| {
                     bun.default_allocator.destroy(@intToPtr([*]u8, @ptrToInt(u.ptr)));
                 },
@@ -439,6 +451,7 @@ pub const Listener = struct {
         var socket_config = SocketConfig.fromJS(opts, globalObject, exception) orelse {
             return .zero;
         };
+        var fd = socket_config.fd;
         var hostname_or_unix = socket_config.hostname_or_unix;
         var port = socket_config.port;
         var ssl = socket_config.ssl;
@@ -515,7 +528,9 @@ pub const Listener = struct {
             );
         }
 
-        var connection: Listener.UnixOrHost = if (port) |port_| .{
+        var connection: Listener.FdOrUnixOrHost = if (fd) |fd_| .{
+            .fd = fd_
+        } else if (port) |port_| .{
             .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(), .port = port_ },
         } else .{
             .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(),
@@ -523,6 +538,9 @@ pub const Listener = struct {
 
         var listen_socket: *uws.ListenSocket = brk: {
             switch (connection) {
+                .fd => |f| {
+                    break :brk uws.us_socket_context_listen_direct(@boolToInt(ssl_enabled), socket_context, f, socket_flags, 8);
+                },
                 .host => |c| {
                     var host = bun.default_allocator.dupeZ(u8, c.host) catch unreachable;
                     defer bun.default_allocator.free(host);
@@ -729,6 +747,14 @@ pub const Listener = struct {
 
         return JSValue.jsNumber(this.connection.host.port);
     }
+    
+    pub fn getFD(this: *Listener, _: *JSC.JSGlobalObject) callconv(.C) JSValue {
+        if (this.connection != .fd) {
+            return JSValue.jsUndefined();
+        }
+
+        return JSValue.jsNumber(this.connection.fd);
+    }
 
     pub fn ref(this: *Listener, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         var this_value = callframe.this();
@@ -774,7 +800,7 @@ pub const Listener = struct {
         globalObject.bunVM().eventLoop().ensureWaker();
 
         var socket_context = uws.us_create_bun_socket_context(@boolToInt(ssl_enabled), uws.Loop.get().?, @sizeOf(usize), ctx_opts).?;
-        var connection: Listener.UnixOrHost = if (port) |port_| .{
+        var connection: Listener.FdOrUnixOrHost = if (port) |port_| .{
             .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(), .port = port_ },
         } else .{
             .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(),
@@ -913,8 +939,12 @@ fn NewSocket(comptime ssl: bool) type {
             return this.has_pending_activity.load(.Acquire);
         }
 
-        pub fn doConnect(this: *This, connection: Listener.UnixOrHost, socket_ctx: *uws.SocketContext) !void {
+        pub fn doConnect(this: *This, connection: Listener.FdOrUnixOrHost, socket_ctx: *uws.SocketContext) !void {
             switch (connection) {
+                .fd => {
+                    // fd used only for listen
+                    return error.ConnectionFailed;
+                },
                 .host => |c| {
                     _ = @This().Socket.connectPtr(
                         normalizeHost(c.host),

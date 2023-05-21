@@ -10,6 +10,9 @@ pub const u_int64_t = c_ulonglong;
 pub const LIBUS_LISTEN_DEFAULT: i32 = 0;
 pub const LIBUS_LISTEN_EXCLUSIVE_PORT: i32 = 1;
 pub const Socket = opaque {};
+// Need a concrete socket type for some uSockets calls
+// os.socket_t coincides with LIBUS_SOCKET_DESCRIPTOR
+pub const socket_t = std.os.socket_t;
 
 const uws = @This();
 
@@ -658,6 +661,7 @@ extern fn us_socket_context_ext(ssl: i32, context: ?*SocketContext) ?*anyopaque;
 
 pub extern fn us_socket_context_listen(ssl: i32, context: ?*SocketContext, host: [*c]const u8, port: i32, options: i32, socket_ext_size: i32) ?*ListenSocket;
 pub extern fn us_socket_context_listen_unix(ssl: i32, context: ?*SocketContext, path: [*c]const u8, options: i32, socket_ext_size: i32) ?*ListenSocket;
+pub extern fn us_socket_context_listen_direct(ssl: i32, context: ?*SocketContext, fd: socket_t, options: i32, socket_ext_size: i32) ?*ListenSocket;
 pub extern fn us_socket_context_connect(ssl: i32, context: ?*SocketContext, host: [*c]const u8, port: i32, source_host: [*c]const u8, options: i32, socket_ext_size: i32) ?*Socket;
 pub extern fn us_socket_context_connect_unix(ssl: i32, context: ?*SocketContext, path: [*c]const u8, options: i32, socket_ext_size: i32) ?*Socket;
 pub extern fn us_socket_is_established(ssl: i32, s: ?*Socket) i32;
@@ -1303,7 +1307,7 @@ pub fn NewApp(comptime ssl: bool) type {
                     }
                 }
             };
-            return uws_app_listen_with_config(ssl_flag, @ptrCast(*uws_app_t, app), config.host, @intCast(u16, config.port), config.options, Wrapper.handle, user_data);
+            return uws_app_listen_with_config(ssl_flag, @ptrCast(*uws_app_t, app), config.fd, @intCast(u16, config.port), config.host, config.options, Wrapper.handle, user_data);
         }
         pub fn constructorFailed(app: *ThisApp) bool {
             return uws_constructor_failed(ssl_flag, app);
@@ -1705,8 +1709,9 @@ extern fn uws_app_listen(ssl: i32, app: *uws_app_t, port: i32, handler: uws_list
 extern fn uws_app_listen_with_config(
     ssl: i32,
     app: *uws_app_t,
-    host: [*c]const u8,
+    fd: socket_t,
     port: u16,
+    host: [*c]const u8,
     options: i32,
     handler: uws_listen_handler,
     user_data: ?*anyopaque,
@@ -1836,6 +1841,7 @@ pub const SendStatus = enum(c_uint) {
     dropped = 2,
 };
 pub const uws_app_listen_config_t = extern struct {
+    fd: socket_t,
     port: i32,
     host: [*c]const u8 = null,
     options: i32,

@@ -15,6 +15,17 @@ typedef struct StringPointer {
 } StringPointer;
 #endif
 
+/* Define what a socket descriptor is based on platform */
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+#define LIBUS_SOCKET_DESCRIPTOR SOCKET
+#else
+#define LIBUS_SOCKET_DESCRIPTOR int
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -63,7 +74,7 @@ enum uws_opcode_t : int32_t {
 enum uws_sendstatus_t : uint32_t { BACKPRESSURE, SUCCESS, DROPPED };
 
 typedef struct {
-
+  LIBUS_SOCKET_DESCRIPTOR fd;
   int port;
   const char *host;
   int options;
@@ -167,8 +178,9 @@ void uws_app_run(int ssl, uws_app_t *);
 
 void uws_app_listen(int ssl, uws_app_t *app, int port,
                     uws_listen_handler handler, void *user_data);
-void uws_app_listen_with_config(int ssl, uws_app_t *app, const char *host,
-                                uint16_t port, int32_t options,
+void uws_app_listen_with_config(int ssl, uws_app_t *app,
+                                LIBUS_SOCKET_DESCRIPTOR fd, uint16_t port,
+                                const char *host, int32_t options,
                                 uws_listen_handler handler, void *user_data);
 void uws_app_listen_domain(int ssl, uws_app_t *app, const char *domain, 
                            uws_listen_domain_handler handler, void *user_data);

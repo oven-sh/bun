@@ -68,7 +68,7 @@ To save yourself from having to type `--preload` every time you run tests, you c
 
 ```toml
 [test]
-preload = ["preloaded.ts"]
+preload = ["./preloaded.ts"]
 ```
 
 ## Loaders & Resolvers
@@ -131,3 +131,5 @@ Or you can pass --preload to the command line:
 ```sh
 $ bun test --preload=loader.ts
 ```
+
+TODO: `expect.extend`

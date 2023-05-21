@@ -447,11 +447,7 @@ class BunWebSocketMocked extends EventEmitter {
   close(code, reason) {
     if (this.#state === 1) {
       this.#state = 2;
-      setTimeout(()=> {
-        if (this.#state === 2) {
-          this.#ws.close(code, reason);
-        }
-      }, 1);
+      this.#ws.close(code, reason);
     }
   }
   get binaryType() {

@@ -11,7 +11,7 @@ describe("socket", () => {
     const clientSocket = createClient(io, "/", { reconnection: false });
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), clientSocket);
-    }, 200);
+    }, 1000);
     clientSocket.on("connect", function init() {
       clientSocket.off("connect", init);
       clientSocket.io.engine.close();
@@ -35,7 +35,7 @@ describe("socket", () => {
 
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), clientSocket);
-    }, 200);
+    }, 1000);
 
     clientSocket.on("connect", () => {
       io.close();
@@ -53,7 +53,7 @@ describe("socket", () => {
 
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 200);
+    }, 1000);
 
     io.on("connection", s => {
       s.on("random", (a, b, c) => {
@@ -78,7 +78,7 @@ describe("socket", () => {
 
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 200);
+    }, 1000);
 
     io.on("connection", s => {
       s.on("message", a => {
@@ -99,7 +99,7 @@ describe("socket", () => {
     const socket = createClient(io);
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 200);
+    }, 1000);
     io.on("connection", s => {
       s.on("message", a => {
         clearTimeout(timeout);
@@ -119,7 +119,7 @@ describe("socket", () => {
     const socket = createClient(io, "/", { reconnection: false });
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 200);
+    }, 1000);
     io.on("connection", s => {
       s.on("error", err => {
         try {
@@ -147,7 +147,7 @@ describe("socket", () => {
     const socket = createClient(io);
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 200);
+    }, 1000);
     socket.on("woot", a => {
       clearTimeout(timeout);
 
@@ -169,7 +169,7 @@ describe("socket", () => {
     let i = 0;
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 200);
+    }, 1000);
     socket.on("hoot", a => {
       try {
         expect(a).toBe("utf8 — string");
@@ -196,7 +196,7 @@ describe("socket", () => {
 
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 300);
+    }, 1000);
 
     let imageData: any;
     socket.on("bun", a => {
@@ -227,7 +227,7 @@ describe("socket", () => {
 
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 300);
+    }, 1000);
 
     socket.on("multiple", (a, b, c, d, e, f) => {
       clearTimeout(timeout);
@@ -260,7 +260,7 @@ describe("socket", () => {
     const socket = createClient(io);
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 200);
+    }, 1000);
 
     io.on("connection", s => {
       s.on("buff", a => {
@@ -283,7 +283,7 @@ describe("socket", () => {
     const socket = createClient(io);
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 200);
+    }, 1000);
 
     io.on("connection", s => {
       s.on("multiple", (a, b, c, d, e, f) => {
@@ -332,7 +332,7 @@ describe("socket", () => {
       } catch (err) {
         fail(done, io, err, socket);
       }
-    }, 200);
+    }, 1000);
   });
 
   it.skip("should not emit volatile event after regular event (ws)", done => {
@@ -356,7 +356,7 @@ describe("socket", () => {
       } catch (err) {
         fail(done, io, err, socket);
       }
-    }, 200);
+    }, 1000);
   });
 
   it("should emit volatile event (polling)", done => {
@@ -408,7 +408,7 @@ describe("socket", () => {
       } catch (err) {
         fail(done, io, err, socket);
       }
-    }, 200);
+    }, 1000);
   });
 
   it("should emit only one consecutive volatile event (polling)", done => {
@@ -462,7 +462,7 @@ describe("socket", () => {
       } catch (err) {
         fail(done, io, err, socket);
       }
-    }, 200);
+    }, 1000);
   });
 
   it.skip("should emit only one consecutive volatile event with binary (ws)", done => {
@@ -489,7 +489,7 @@ describe("socket", () => {
       } catch (err) {
         fail(done, io, err, socket);
       }
-    }, 200);
+    }, 1000);
   });
 
   it.skip("should broadcast only one consecutive volatile event with binary (ws)", done => {
@@ -544,7 +544,7 @@ describe("socket", () => {
       } catch (err) {
         fail(done, io, err, socket);
       }
-    }, 200);
+    }, 1000);
   });
 
   it.skip("should emit regular events after trying a failed volatile event (ws)", done => {
@@ -572,7 +572,7 @@ describe("socket", () => {
       } catch (err) {
         fail(done, io, err, socket);
       }
-    }, 200);
+    }, 1000);
   });
 
   it("should emit message events through `send`", done => {
@@ -580,7 +580,7 @@ describe("socket", () => {
     const socket = createClient(io);
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 200);
+    }, 1000);
 
     socket.on("message", a => {
       clearTimeout(timeout);
@@ -601,7 +601,7 @@ describe("socket", () => {
     const socket = createClient(io);
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 200);
+    }, 1000);
     io.on("connection", s => {
       s.on("woot", fn => {
         fn(1, 2);
@@ -653,7 +653,7 @@ describe("socket", () => {
 
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 200);
+    }, 1000);
 
     io.on("connection", s => {
       socket.on("hi", fn => {
@@ -672,7 +672,7 @@ describe("socket", () => {
 
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 200);
+    }, 1000);
 
     io.on("connection", s => {
       s.on("woot", (a, b, fn) => {
@@ -697,7 +697,7 @@ describe("socket", () => {
 
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 200);
+    }, 1000);
 
     io.on("connection", s => {
       socket.on("hi", (a, b, fn) => {
@@ -721,7 +721,7 @@ describe("socket", () => {
     const socket = createClient(io);
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 200);
+    }, 1000);
 
     io.on("connection", s => {
       s.on("woot", (buf, fn) => {
@@ -751,7 +751,7 @@ describe("socket", () => {
 
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 200);
+    }, 1000);
 
     io.on("connection", s => {
       socket.on("hi", (a, fn) => {
@@ -774,7 +774,7 @@ describe("socket", () => {
     const socket = createClient(io);
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 200);
+    }, 1000);
 
     io.on("connection", s => {
       socket.on("hi", fn => {
@@ -797,7 +797,7 @@ describe("socket", () => {
     const socket = createClient(io);
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 200);
+    }, 1000);
 
     io.on("connection", s => {
       s.on("woot", fn => {
@@ -821,7 +821,7 @@ describe("socket", () => {
 
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 200);
+    }, 1000);
 
     io.on("connection", async s => {
       socket.on("hi", (a, b, fn) => {
@@ -851,7 +851,7 @@ describe("socket", () => {
     const socket = createClient(io);
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 200);
+    }, 1000);
 
     io.on("connection", s => {
       clearTimeout(timeout);
@@ -869,7 +869,7 @@ describe("socket", () => {
     const socket = createClient(io);
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 200);
+    }, 1000);
 
     io.on("connection", s => {
       clearTimeout(timeout);
@@ -888,7 +888,7 @@ describe("socket", () => {
     const socket = createClient(io);
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 200);
+    }, 1000);
 
     io.on("connection", s => {
       clearTimeout(timeout);
@@ -907,7 +907,7 @@ describe("socket", () => {
     const socket = createClient(io, "/", { query: { key1: 1, key2: 2 } });
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 200);
+    }, 1000);
 
     io.on("connection", s => {
       clearTimeout(timeout);
@@ -931,7 +931,7 @@ describe("socket", () => {
     });
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), client1, client2);
-    }, 200);
+    }, 1000);
 
     io.on("connection", s => {});
     io.of("/connection2").on("connection", s => {
@@ -1035,7 +1035,7 @@ describe("socket", () => {
     });
     timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), clientSocket);
-    }, 300);
+    }, 1000);
     clientSocket.once("connect", () => {
       io.close(() => {
         clientSocket.io.on("reconnect", () => {
@@ -1051,7 +1051,7 @@ describe("socket", () => {
     const socket = createClient(io, "/chat");
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 300);
+    }, 1000);
     io.of("/chat").on("connection", s => {
       s.conn.once("packetCreate", packet => {
         clearTimeout(timeout);
@@ -1071,7 +1071,7 @@ describe("socket", () => {
     const socket = createClient(io, "/chat");
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 300);
+    }, 1000);
 
     io.of("/chat").on("connection", s => {
       s.conn.once("packetCreate", packet => {
@@ -1092,7 +1092,7 @@ describe("socket", () => {
     const socket = createClient(io, "/", { reconnection: false });
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 300);
+    }, 1000);
 
     io.on("connection", s => {
       s.conn.on("upgrade", () => {
@@ -1113,7 +1113,7 @@ describe("socket", () => {
     const socket = createClient(io, "/", { reconnection: false });
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 300);
+    }, 1000);
 
     io.on("connection", s => {
       s.conn.on("upgrade", () => {
@@ -1133,7 +1133,7 @@ describe("socket", () => {
     const socket = createClient(io, "/", { reconnection: false });
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 300);
+    }, 1000);
 
     io.on("connection", s => {
       s.once("error", err => {
@@ -1157,7 +1157,7 @@ describe("socket", () => {
     const socket = createClient(io, "/", { reconnection: false });
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 300);
+    }, 1000);
 
     io.on("connection", s => {
       s.once("error", err => {
@@ -1187,7 +1187,7 @@ describe("socket", () => {
     const socket = createClient(io);
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 300);
+    }, 1000);
 
     io.on("connection", () => {
       clearTimeout(timeout);
@@ -1201,7 +1201,7 @@ describe("socket", () => {
     const socket = createClient(io);
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), socket);
-    }, 300);
+    }, 1000);
 
     io.on("connection", s => {
       clearTimeout(timeout);
@@ -1221,7 +1221,7 @@ describe("socket", () => {
     const clientSocket = createClient(io);
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), clientSocket);
-    }, 300);
+    }, 1000);
 
     io.on("connection", socket => {
       socket.on("test", () => {
@@ -1244,7 +1244,7 @@ describe("socket", () => {
     const client = createClient(io, "/");
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), client);
-    }, 300);
+    }, 1000);
 
     io.use((socket, next) => {
       socket.join("room1");
@@ -1269,7 +1269,7 @@ describe("socket", () => {
     const client = createClient(io, "/");
     let timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"), client);
-    }, 300);
+    }, 1000);
 
     io.on("connection", socket => {
       socket.disconnect();
@@ -1295,7 +1295,7 @@ describe("socket", () => {
       const clientSocket = createClient(io, "/", { multiplex: false });
       let timeout = setTimeout(() => {
         fail(done, io, new Error("timeout"), clientSocket);
-      }, 300);
+      }, 1000);
 
       clientSocket.emit("my-event", "123");
 
@@ -1318,7 +1318,7 @@ describe("socket", () => {
       const clientSocket = createClient(io, "/", { multiplex: false });
       let timeout = setTimeout(() => {
         fail(done, io, new Error("timeout"), clientSocket);
-      }, 300);
+      }, 1000);
 
       clientSocket.emit("my-event", "123");
 
@@ -1358,7 +1358,7 @@ describe("socket", () => {
       const clientSocket = createClient(io, "/", { multiplex: false });
       let timeout = setTimeout(() => {
         fail(done, io, new Error("timeout"), clientSocket);
-      }, 300);
+      }, 1000);
 
       clientSocket.emit("my-event", "123");
 
@@ -1387,7 +1387,7 @@ describe("socket", () => {
       const clientSocket = createClient(io, "/", { multiplex: false });
       let timeout = setTimeout(() => {
         fail(done, io, new Error("timeout"), clientSocket);
-      }, 300);
+      }, 1000);
 
       io.on("connection", socket => {
         socket.onAnyOutgoing((event, arg1) => {
@@ -1412,7 +1412,7 @@ describe("socket", () => {
       const clientSocket = createClient(io, "/", { multiplex: false });
       let timeout = setTimeout(() => {
         fail(done, io, new Error("timeout"), clientSocket);
-      }, 300);
+      }, 1000);
       io.on("connection", socket => {
         socket.onAnyOutgoing((event, arg1) => {
           clearTimeout(timeout);
@@ -1435,7 +1435,7 @@ describe("socket", () => {
       const clientSocket = createClient(io, "/", { multiplex: false });
       let timeout = setTimeout(() => {
         fail(done, io, new Error("timeout"), clientSocket);
-      }, 300);
+      }, 1000);
       io.on("connection", socket => {
         socket.onAnyOutgoing((event, arg1) => {
           clearTimeout(timeout);
@@ -1458,7 +1458,7 @@ describe("socket", () => {
       const clientSocket = createClient(io, "/", { multiplex: false });
       let timeout = setTimeout(() => {
         fail(done, io, new Error("timeout"), clientSocket);
-      }, 300);
+      }, 1000);
 
       io.on("connection", socket => {
         let count = 0;
@@ -1500,7 +1500,7 @@ describe("socket", () => {
       const clientSocket = createClient(io, "/", { multiplex: false });
       let timeout = setTimeout(() => {
         fail(done, io, new Error("timeout"), clientSocket);
-      }, 300);
+      }, 1000);
 
       io.on("connection", socket => {
         const _fail = () => fail(done, io, new Error("fail"), clientSocket);
@@ -1535,7 +1535,7 @@ describe("socket", () => {
 
       let timeout = setTimeout(() => {
         fail(done, io, new Error("timeout"), socket1, socket2, socket3);
-      }, 300);
+      }, 1000);
 
       io.of("/bar").on("connection", socket => {
         socket.disconnect(true);

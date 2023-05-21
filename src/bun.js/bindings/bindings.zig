@@ -4937,7 +4937,8 @@ pub const EncodedJSValue = extern union {
     asPtr: ?*anyopaque,
     asDouble: f64,
 };
-
+pub const JSHostFunctionType = fn (*JSGlobalObject, *CallFrame) callconv(.C) JSValue;
+pub const JSHostFunctionPtr = *const JSHostFunctionType;
 const DeinitFunction = *const fn (ctx: *anyopaque, buffer: [*]u8, len: usize) callconv(.C) void;
 
 pub const JSArray = struct {
@@ -4967,7 +4968,7 @@ const private = struct {
         globalObject: *JSGlobalObject,
         symbolName: ?*const ZigString,
         argCount: u32,
-        functionPointer: *const anyopaque,
+        functionPointer: JSHostFunctionPtr,
         strong: bool,
     ) JSValue;
 
@@ -4989,7 +4990,7 @@ pub fn NewFunction(
     globalObject: *JSGlobalObject,
     symbolName: ?*const ZigString,
     argCount: u32,
-    comptime functionPointer: anytype,
+    comptime functionPointer: JSHostFunctionType,
     strong: bool,
 ) JSValue {
     return NewRuntimeFunction(globalObject, symbolName, argCount, &functionPointer, strong);
@@ -4999,11 +5000,11 @@ pub fn NewRuntimeFunction(
     globalObject: *JSGlobalObject,
     symbolName: ?*const ZigString,
     argCount: u32,
-    functionPointer: anytype,
+    functionPointer: JSHostFunctionPtr,
     strong: bool,
 ) JSValue {
     JSC.markBinding(@src());
-    return private.Bun__CreateFFIFunctionValue(globalObject, symbolName, argCount, @ptrCast(*const anyopaque, functionPointer), strong);
+    return private.Bun__CreateFFIFunctionValue(globalObject, symbolName, argCount, functionPointer, strong);
 }
 
 pub fn getFunctionData(function: JSValue) ?*anyopaque {

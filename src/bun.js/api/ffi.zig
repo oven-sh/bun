@@ -384,7 +384,7 @@ pub const FFI = struct {
                         global,
                         &str,
                         @intCast(u32, function.arg_types.items.len),
-                        compiled.ptr,
+                        bun.cast(JSC.JSHostFunctionPtr, compiled.ptr),
                         false,
                     );
                     compiled.js_function = cb;
@@ -480,7 +480,7 @@ pub const FFI = struct {
                         global,
                         name,
                         @intCast(u32, function.arg_types.items.len),
-                        compiled.ptr,
+                        bun.cast(JSC.JSHostFunctionPtr, compiled.ptr),
                         false,
                     );
                     compiled.js_function = cb;

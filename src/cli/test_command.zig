@@ -52,6 +52,7 @@ fn fmtStatusTextLine(comptime status: @Type(.EnumLiteral), comptime emoji: bool)
             .pass => Output.prettyFmt("<r><green>✓<r>", emoji),
             .fail => Output.prettyFmt("<r><red>✗<r>", emoji),
             .skip => Output.prettyFmt("<r><yellow>-<d>", emoji),
+            .todo => Output.prettyFmt("<r><magenta>✎<r>", emoji),
             else => @compileError("Invalid status " ++ @tagName(status)),
         };
     }
@@ -74,11 +75,13 @@ pub const CommandLineReporter = struct {
 
     failures_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
     skips_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
+    todos_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
 
     pub const Summary = struct {
         pass: u32 = 0,
         expectations: u32 = 0,
         skip: u32 = 0,
+        todo: u32 = 0,
         fail: u32 = 0,
     };
 
@@ -216,6 +219,27 @@ pub const CommandLineReporter = struct {
         this.summary.skip += 1;
         this.summary.expectations += expectations;
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.skip;
+    }
+
+    pub fn handleTestTodo(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
+        var writer_: std.fs.File.Writer = Output.errorWriter();
+        var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
+
+        // when the tests skip, we want to repeat the failures at the end
+        // so that you can see them better when there are lots of tests that ran
+        const initial_length = this.todos_to_repeat_buf.items.len;
+        var writer = this.todos_to_repeat_buf.writer(bun.default_allocator);
+
+        writeTestStatusLine(.todo, &writer);
+        printTestLine(label, elapsed_ns, parent, true, writer);
+
+        writer_.writeAll(this.todos_to_repeat_buf.items[initial_length..]) catch unreachable;
+        Output.flush();
+
+        // this.updateDots();
+        this.summary.todo += 1;
+        this.summary.expectations += expectations;
+        this.jest.tests.items(.status)[id] = TestRunner.Test.Status.todo;
     }
 };
 
@@ -405,6 +429,7 @@ pub const TestCommand = struct {
             .onTestPass = CommandLineReporter.handleTestPass,
             .onTestFail = CommandLineReporter.handleTestFail,
             .onTestSkip = CommandLineReporter.handleTestSkip,
+            .onTestTodo = CommandLineReporter.handleTestTodo,
         };
         reporter.repeat_count = @max(ctx.test_options.repeat_count, 1);
         reporter.jest.callback = &reporter.callback;
@@ -473,8 +498,20 @@ pub const TestCommand = struct {
                 error_writer.writeAll(reporter.skips_to_repeat_buf.items) catch unreachable;
             }
 
-            if (reporter.summary.fail > 0) {
+            if (reporter.summary.todo > 0) {
                 if (reporter.summary.skip > 0) {
+                    Output.prettyError("\n", .{});
+                }
+
+                Output.prettyError("\n<r><d>{d} tests todo:<r>\n", .{reporter.summary.todo});
+                Output.flush();
+
+                var error_writer = Output.errorWriter();
+                error_writer.writeAll(reporter.todos_to_repeat_buf.items) catch unreachable;
+            }
+
+            if (reporter.summary.fail > 0) {
+                if (reporter.summary.skip > 0 or reporter.summary.todo > 0) {
                     Output.prettyError("\n", .{});
                 }
 
@@ -514,6 +551,10 @@ pub const TestCommand = struct {
 
             if (reporter.summary.skip > 0) {
                 Output.prettyError(" <r><yellow>{d:5>} skip<r>\n", .{reporter.summary.skip});
+            }
+
+            if (reporter.summary.todo > 0) {
+                Output.prettyError(" <r><magenta>{d:5>} todo<r>\n", .{reporter.summary.todo});
             }
 
             if (reporter.summary.fail > 0) {
@@ -567,10 +608,8 @@ pub const TestCommand = struct {
                 Output.prettyError(" {d:5>} expect() calls\n", .{reporter.summary.expectations});
             }
 
-            Output.prettyError("Ran {d} tests across {d} files ", .{
-                reporter.summary.fail + reporter.summary.pass,
-                test_files.len,
-            });
+            const total_tests = reporter.summary.fail + reporter.summary.pass + reporter.summary.skip + reporter.summary.todo;
+            Output.prettyError("Ran {d} tests across {d} files. <d>{d} total<r> ", .{ reporter.summary.fail + reporter.summary.pass, test_files.len, total_tests });
             Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
         }
 

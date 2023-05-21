@@ -2760,17 +2760,36 @@ describe(() => {
   });
 });
 
-describe("todo", () => {
-  test.todo("implement this feature", () => {
-    throw new Error();
+it("test.todo", () => {
+  const path = join(realpathSync(tmpdir()), "todo-test.test.js");
+  copyFileSync(join(import.meta.dir, "todo-test-fixture.js"), path);
+  const { stdout, stderr, exitCode } = spawnSync({
+    cmd: [bunExe(), "test", path],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+    cwd: realpathSync(dirname(path)),
   });
 
-  test.todo("make this test pass", () => {
-    expect(5).toBe(5);
-    expect(4).toBe(3);
+  const err = stderr!.toString();
+  expect(err).toContain("this test is marked as todo but passes");
+  expect(err).toContain("2 todo");
+  expect(err).toContain("1 fail");
+});
+
+it("test.todo doesnt cause exit code 1", () => {
+  const path = join(realpathSync(tmpdir()), "todo-test.test.js");
+  copyFileSync(join(import.meta.dir, "todo-test-fixture-2.js"), path);
+  const { stdout, stderr, exitCode } = spawnSync({
+    cmd: [bunExe(), "test", path],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+    cwd: realpathSync(dirname(path)),
   });
 
-  it.todo("implement this test");
+  const err = stderr!.toString();
+  expect(exitCode).toBe(0);
 });
 
 it("test timeouts when expected", () => {

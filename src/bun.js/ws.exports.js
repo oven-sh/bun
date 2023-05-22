@@ -26,6 +26,12 @@ class BunWebSocket extends globalThis.WebSocket {
     }
     this.#binaryType = type;
   }
+
+  send(data, opts, cb) {
+    super.send(data, opts?.compress);
+    typeof cb === "function" && cb();
+  }
+
   on(event, callback) {
     if (event === "message") {
       var handler = ({ message }) => {

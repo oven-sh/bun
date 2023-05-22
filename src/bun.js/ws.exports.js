@@ -383,7 +383,7 @@ class BunWebSocketMocked extends EventEmitter {
         message = message.buffer;
       } else if (this.#binaryType === "blob") {
         message = new Blob([message]);
-      } else if(!Buffer.isBuffer(message)) {
+      } else {
         // nodebuffer
         message = Buffer.from(message);
       }

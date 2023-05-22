@@ -419,8 +419,8 @@ class BunWebSocketMocked extends EventEmitter {
   #drain(ws) {
     const chunk = this.#enquedMessages[0];
     if (chunk) {
-      const [data, opts, cb] = chunk;
-      const written = ws.send(data, opts?.compress);
+      const [data, compress, cb] = chunk;
+      const written = ws.send(data, compress);
       if (written == -1) {
         // backpressure wait until next drain event
         return;
@@ -435,10 +435,11 @@ class BunWebSocketMocked extends EventEmitter {
 
   send(data, opts, cb) {
     if (this.#state === 1) {
-      const written = this.#ws.send(data, opts?.compress);
+      const compress = opts?.compress;
+      const written = this.#ws.send(data, compress);
       if (written == -1) {
         // backpressure
-        this.#enquedMessages.push([data, opts, cb]);
+        this.#enquedMessages.push([data, compress, cb]);
         this.#bufferedAmount += data.length;
         return;
       }
@@ -446,7 +447,7 @@ class BunWebSocketMocked extends EventEmitter {
       typeof cb === "function" && cb();
     } else if (this.#state === 0) {
       // not connected yet
-      this.#enquedMessages.push([data, opts, cb]);
+      this.#enquedMessages.push([data, opts?.compress, cb]);
       this.#bufferedAmount += data.length;
     }
   }

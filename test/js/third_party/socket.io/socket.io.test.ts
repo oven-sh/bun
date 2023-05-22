@@ -5,7 +5,8 @@ import { join } from "path";
 import { createClient, createPartialDone, getPort, success, fail } from "./support/util.ts";
 import { Server } from "socket.io";
 
-describe("socket", () => {
+// skipped due to a macOS bug
+describe.skip("socket.io", () => {
   it.skip("should not fire events more than once after manually reconnecting", done => {
     const io = new Server(0);
     const clientSocket = createClient(io, "/", { reconnection: false });

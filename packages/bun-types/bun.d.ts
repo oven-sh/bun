@@ -1332,11 +1332,11 @@ declare module "bun" {
     cork: (callback: (ws: ServerWebSocket<T>) => any) => void | Promise<void>;
 
     /**
-     * Configure the {@link WebSocketHandler.message} callback to return a {@link ArrayBuffer} instead of a {@link Uint8Array}
+     * Configure the {@link WebSocketHandler.message} callback to return a {@link ArrayBuffer} or {@link Buffer} instead of a {@link Uint8Array}
      *
      * @default "uint8array"
      */
-    binaryType?: "arraybuffer" | "uint8array";
+    binaryType?: "arraybuffer" | "uint8array" | "nodebuffer";
   }
 
   type WebSocketCompressor =
@@ -1646,7 +1646,7 @@ declare module "bun" {
      * File path to a TLS key
      *
      * To enable TLS, this option is required.
-     * 
+     *
      * @deprecated since v0.6.3 - Use `key: Bun.file(path)` instead.
      */
     keyFile: string;
@@ -1654,7 +1654,7 @@ declare module "bun" {
      * File path to a TLS certificate
      *
      * To enable TLS, this option is required.
-     * 
+     *
      * @deprecated since v0.6.3 - Use `cert: Bun.file(path)` instead.
      */
     certFile: string;
@@ -1665,7 +1665,7 @@ declare module "bun" {
     passphrase?: string;
     /**
      *  File path to a .pem file for a custom root CA
-     * 
+     *
      * @deprecated since v0.6.3 - Use `ca: Bun.file(path)` instead.
      */
     caFile?: string;
@@ -1687,41 +1687,56 @@ declare module "bun" {
      */
     lowMemoryMode?: boolean;
 
-     /**
+    /**
      * Optionally override the trusted CA certificates. Default is to trust
      * the well-known CAs curated by Mozilla. Mozilla's CAs are completely
      * replaced when CAs are explicitly specified using this option.
      */
-     ca?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
-     /**
-      *  Cert chains in PEM format. One cert chain should be provided per
-      *  private key. Each cert chain should consist of the PEM formatted
-      *  certificate for a provided private key, followed by the PEM
-      *  formatted intermediate certificates (if any), in order, and not
-      *  including the root CA (the root CA must be pre-known to the peer,
-      *  see ca). When providing multiple cert chains, they do not have to
-      *  be in the same order as their private keys in key. If the
-      *  intermediate certificates are not provided, the peer will not be
-      *  able to validate the certificate, and the handshake will fail.
-      */
-     cert?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
-     /**
-      * Private keys in PEM format. PEM allows the option of private keys
-      * being encrypted. Encrypted keys will be decrypted with
-      * options.passphrase. Multiple keys using different algorithms can be
-      * provided either as an array of unencrypted key strings or buffers,
-      * or an array of objects in the form {pem: <string|buffer>[,
-      * passphrase: <string>]}. The object form can only occur in an array.
-      * object.passphrase is optional. Encrypted keys will be decrypted with
-      * object.passphrase if provided, or options.passphrase if it is not.
-      */
-     key?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
-     /**
-      * Optionally affect the OpenSSL protocol behavior, which is not
-      * usually necessary. This should be used carefully if at all! Value is
-      * a numeric bitmask of the SSL_OP_* options from OpenSSL Options
-      */
-     secureOptions?: number | undefined; // Value is a numeric bitmask of the `SSL_OP_*` options
+    ca?:
+      | string
+      | Buffer
+      | BunFile
+      | Array<string | Buffer | BunFile>
+      | undefined;
+    /**
+     *  Cert chains in PEM format. One cert chain should be provided per
+     *  private key. Each cert chain should consist of the PEM formatted
+     *  certificate for a provided private key, followed by the PEM
+     *  formatted intermediate certificates (if any), in order, and not
+     *  including the root CA (the root CA must be pre-known to the peer,
+     *  see ca). When providing multiple cert chains, they do not have to
+     *  be in the same order as their private keys in key. If the
+     *  intermediate certificates are not provided, the peer will not be
+     *  able to validate the certificate, and the handshake will fail.
+     */
+    cert?:
+      | string
+      | Buffer
+      | BunFile
+      | Array<string | Buffer | BunFile>
+      | undefined;
+    /**
+     * Private keys in PEM format. PEM allows the option of private keys
+     * being encrypted. Encrypted keys will be decrypted with
+     * options.passphrase. Multiple keys using different algorithms can be
+     * provided either as an array of unencrypted key strings or buffers,
+     * or an array of objects in the form {pem: <string|buffer>[,
+     * passphrase: <string>]}. The object form can only occur in an array.
+     * object.passphrase is optional. Encrypted keys will be decrypted with
+     * object.passphrase if provided, or options.passphrase if it is not.
+     */
+    key?:
+      | string
+      | Buffer
+      | BunFile
+      | Array<string | Buffer | BunFile>
+      | undefined;
+    /**
+     * Optionally affect the OpenSSL protocol behavior, which is not
+     * usually necessary. This should be used carefully if at all! Value is
+     * a numeric bitmask of the SSL_OP_* options from OpenSSL Options
+     */
+    secureOptions?: number | undefined; // Value is a numeric bitmask of the `SSL_OP_*` options
   }
 
   export interface TLSServeOptions extends ServeOptions, TLSOptions {

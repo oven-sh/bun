@@ -436,15 +436,54 @@ describe("websocket server", () => {
           server.stop();
         },
         message(ws, msg) {
-          if (ws.binaryType === "uint8array") {
-            expect(ws.binaryType).toBe("uint8array");
-            ws.binaryType = "arraybuffer";
-            expect(ws.binaryType).toBe("arraybuffer");
-            expect(msg instanceof Uint8Array).toBe(true);
-          } else {
-            expect(ws.binaryType).toBe("arraybuffer");
-            expect(msg instanceof ArrayBuffer).toBe(true);
-            done = true;
+          // The first message is supposed to be "uint8array"
+          // Then after uint8array, we switch it to "nodebuffer"
+          // Then after nodebuffer, we switch it to "arraybuffer"
+          // and then we're done
+          switch (ws.binaryType) {
+            case "uint8array": {
+              for (let badType of [
+                123,
+                NaN,
+                Symbol("uint8array"),
+                "uint16array",
+                "uint32array",
+                "float32array",
+                "float64array",
+                "garbage",
+              ]) {
+                expect(() => {
+                  /* @ts-ignore */
+                  ws.binaryType = badType;
+                }).toThrow();
+              }
+              expect(ws.binaryType).toBe("uint8array");
+              ws.binaryType = "nodebuffer";
+              expect(ws.binaryType).toBe("nodebuffer");
+              expect(msg instanceof Uint8Array).toBe(true);
+              expect(Buffer.isBuffer(msg)).toBe(false);
+              break;
+            }
+
+            case "nodebuffer": {
+              expect(ws.binaryType).toBe("nodebuffer");
+              ws.binaryType = "arraybuffer";
+              expect(ws.binaryType).toBe("arraybuffer");
+              expect(msg instanceof Uint8Array).toBe(true);
+              expect(Buffer.isBuffer(msg)).toBe(true);
+              break;
+            }
+
+            case "arraybuffer": {
+              expect(ws.binaryType).toBe("arraybuffer");
+              expect(msg instanceof ArrayBuffer).toBe(true);
+              done = true;
+              break;
+            }
+
+            default: {
+              throw new Error("unknown binaryType");
+            }
           }
 
           ws.send("hello world");
@@ -463,7 +502,7 @@ describe("websocket server", () => {
       },
     });
 
-    await new Promise<boolean>((resolve, reject) => {
+    const isDone = await new Promise<boolean>((resolve, reject) => {
       var counter = 0;
       const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
       websocket.onopen = () => {
@@ -473,7 +512,7 @@ describe("websocket server", () => {
         try {
           expect(e.data).toBe("hello world");
 
-          if (counter++ > 0) {
+          if (counter++ > 2) {
             websocket.close();
             resolve(done);
           }
@@ -487,6 +526,7 @@ describe("websocket server", () => {
         reject(e);
       };
     });
+    expect(isDone).toBe(true);
   });
 
   it("does not upgrade for non-websocket connections", async () => {

@@ -3325,7 +3325,7 @@ pub const ServerWebSocket = struct {
     this_value: JSValue = .zero,
     websocket: uws.AnyWebSocket = undefined,
     closed: bool = false,
-    binary_type: JSC.JSValue.JSType = .Uint8Array,
+    binary_type: JSC.BinaryType = .Uint8Array,
     opened: bool = false,
 
     pub usingnamespace JSC.Codegen.JSServerWebSocket;
@@ -3429,6 +3429,12 @@ pub const ServerWebSocket = struct {
                         globalObject,
                         message,
                         .Uint8Array,
+                    )
+                else if (this.binary_type == .Buffer)
+                    JSC.ArrayBuffer.create(
+                        globalObject,
+                        message,
+                        .Buffer,
                     )
                 else
                     JSC.ArrayBuffer.create(
@@ -4208,17 +4214,12 @@ pub const ServerWebSocket = struct {
         log("getBinaryType()", .{});
 
         return switch (this.binary_type) {
-            .Uint8Array => ZigString.static("uint8array").toValue(globalThis),
-            else => ZigString.static("arraybuffer").toValue(globalThis),
+            .Uint8Array => ZigString.static("uint8array").toValueGC(globalThis),
+            .Buffer => ZigString.static("nodebuffer").toValueGC(globalThis),
+            .ArrayBuffer => ZigString.static("arraybuffer").toValueGC(globalThis),
+            else => @panic("Invalid binary type"),
         };
     }
-
-    pub const BinaryType = bun.ComptimeStringMap(JSC.JSValue.JSType, .{
-        &.{ "uint8array", .Uint8Array },
-        &.{ "Uint8Array", .Uint8Array },
-        &.{ "arraybuffer", .ArrayBuffer },
-        &.{ "ArrayBuffer", .ArrayBuffer },
-    });
 
     pub fn setBinaryType(
         this: *ServerWebSocket,
@@ -4227,27 +4228,15 @@ pub const ServerWebSocket = struct {
     ) callconv(.C) bool {
         log("setBinaryType()", .{});
 
-        if (value.isEmptyOrUndefinedOrNull() or !value.isString()) {
-            globalThis.throw("binaryType must be either \"uint8array\" or \"arraybuffer\"", .{});
-            return false;
-        }
-
-        switch (BinaryType.getWithEql(
-            value.getZigString(globalThis),
-            ZigString.eqlComptime,
-        ) orelse // random value
-            .Uint8ClampedArray) {
-            .Uint8Array => {
-                this.binary_type = .Uint8Array;
-
-                return true;
-            },
-            .ArrayBuffer => {
-                this.binary_type = .ArrayBuffer;
+        switch (JSC.BinaryType.fromJSValue(globalThis, value) orelse
+            // some other value which we don't support
+            .Float64Array) {
+            .ArrayBuffer, .Buffer, .Uint8Array => |val| {
+                this.binary_type = val;
                 return true;
             },
             else => {
-                globalThis.throw("binaryType must be either \"uint8array\" or \"arraybuffer\"", .{});
+                globalThis.throw("binaryType must be either \"uint8array\" or \"arraybuffer\" or \"nodebuffer\"", .{});
                 return false;
             },
         }

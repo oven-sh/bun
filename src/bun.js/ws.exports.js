@@ -341,11 +341,7 @@ class BunWebSocketMocked extends EventEmitter {
     this.#url = url;
     this.#bufferedAmount = 0;
     binaryType = binaryType || "arraybuffer";
-    if (
-      binaryType !== "nodebuffer" &&
-      binaryType !== "blob" &&
-      binaryType !== "arraybuffer"
-    ) {
+    if (binaryType !== "nodebuffer" && binaryType !== "blob" && binaryType !== "arraybuffer") {
       throw new TypeError("binaryType must be either 'blob', 'arraybuffer' or 'nodebuffer'");
     }
     this.#binaryType = binaryType;

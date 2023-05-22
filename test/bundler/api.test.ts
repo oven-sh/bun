@@ -66,6 +66,16 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
+  test("Bun.write(BuildArtifact)", async () => {
+    Bun.gc(true);
+    const x = await Bun.build({
+      entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],
+    });
+    await Bun.write("/tmp/bun-build-test-write.js", x.outputs[0]);
+    expect(readFileSync("/tmp/bun-build-test-write.js", "utf-8")).toMatchSnapshot();
+    Bun.gc(true);
+  });
+
   test("rebuilding busts the directory entries cache", () => {
     Bun.gc(true);
     const { exitCode, stderr } = Bun.spawnSync({
@@ -187,16 +197,6 @@ describe("Bun.build", () => {
   //   expect(chunkBlob.sourcemap).toBe(null);
   //   Bun.gc(true);
   // });
-
-  test("Bun.write(BuildArtifact)", async () => {
-    Bun.gc(true);
-    const x = await Bun.build({
-      entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],
-    });
-    Bun.write("/tmp/bun-build-test-write.js", x.outputs[0]);
-    expect(readFileSync("/tmp/bun-build-test-write.js", "utf-8")).toMatchSnapshot();
-    Bun.gc(true);
-  });
 
   test("new Response(BuildArtifact) sets content type", async () => {
     const x = await Bun.build({

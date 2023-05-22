@@ -1817,8 +1817,8 @@ pub const AbortSignal = extern opaque {
     }
 
     pub fn detach(this: *AbortSignal, ctx: ?*anyopaque) void {
-        _ = this.unref();
         this.cleanNativeBindings(ctx);
+        _ = this.unref();
     }
 
     pub fn fromJS(value: JSValue) ?*AbortSignal {

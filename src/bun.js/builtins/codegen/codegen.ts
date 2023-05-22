@@ -181,7 +181,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
         useThis
           ? `function(${fn.params.join(",")})`
           : `${fn.params.length === 1 ? fn.params[0] : `(${fn.params.join(",")})`}=>`
-      } {${useThis ? "$UseStrict$();" : ""}${fn.source}}).$$capture_end$$;
+      } {${fn.source}}).$$capture_end$$;
 `,
     );
     await Bun.sleep(1);
@@ -200,7 +200,11 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     }
     const output = await build.outputs[0].text();
     const captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)![1];
-    const finalReplacement = captured.replace(/\$UseStrict\$\(\)/, '"use strict"').replace(/__intrinsic__/g, "@");
+    const finalReplacement =
+      captured
+        .replace(/function\s*\(.*?\)\s*{/, '$&"use strict";')
+        .replace(/^\((async )?function\(/, "($1function (")
+        .replace(/__intrinsic__/g, "@") + "\n";
 
     bundledFunctions.push({
       name: fn.name,

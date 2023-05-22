@@ -1,4 +1,7 @@
-type BinaryType = "arraybuffer" | "blob";
+/**
+ * "blob" is not supported yet
+ */
+type BinaryType = "arraybuffer" | "nodebuffer" | "blob";
 type Transferable = ArrayBuffer;
 type MessageEventSource = undefined;
 type Encoding = "utf-8" | "windows-1252" | "utf-16";
@@ -1803,7 +1806,7 @@ declare var CustomEvent: {
 interface WebSocketEventMap {
   close: CloseEvent;
   error: Event;
-  message: MessageEvent;
+  message: MessageEvent<Buffer | ArrayBuffer | string>;
   open: Event;
 }
 
@@ -1812,7 +1815,9 @@ interface WebSocket extends EventTarget {
   /**
    * Returns a string that indicates how binary data from the WebSocket object is exposed to scripts:
    *
-   * Can be set, to change how binary data is returned. The default is "blob".
+   * Can be set, to change how binary data is returned. The default is `"arraybuffer"`.
+   *
+   * Unlike in browsers, you can also set `binaryType` to `"nodebuffer"` to receive a {@link Buffer} object.
    */
   binaryType: BinaryType;
   /**
@@ -1825,7 +1830,9 @@ interface WebSocket extends EventTarget {
   readonly extensions: string;
   onclose: ((this: WebSocket, ev: CloseEvent) => any) | null;
   onerror: ((this: WebSocket, ev: Event) => any) | null;
-  onmessage: ((this: WebSocket, ev: MessageEvent) => any) | null;
+  onmessage:
+    | ((this: WebSocket, ev: WebSocketEventMap["message"]) => any)
+    | null;
   onopen: ((this: WebSocket, ev: Event) => any) | null;
   /** Returns the subprotocol selected by the server, if any. It can be used in conjunction with the array form of the constructor's second argument to perform subprotocol negotiation. */
   readonly protocol: string;

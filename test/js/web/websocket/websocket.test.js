@@ -71,6 +71,66 @@ describe("WebSocket", () => {
     });
     const ws = new WebSocket(`http://${server.hostname}:${server.port}`, {});
   });
+  describe("nodebuffer", () => {
+    it("should support 'nodebuffer' binaryType", done => {
+      const server = Bun.serve({
+        port: 0,
+        fetch(req, server) {
+          if (server.upgrade(req)) {
+            return;
+          }
+
+          return new Response();
+        },
+        websocket: {
+          open(ws) {
+            ws.sendBinary(new Uint8Array([1, 2, 3]));
+          },
+        },
+      });
+      const ws = new WebSocket(`http://${server.hostname}:${server.port}`, {});
+      ws.binaryType = "nodebuffer";
+      expect(ws.binaryType).toBe("nodebuffer");
+      Bun.gc(true);
+      ws.onmessage = ({ data }) => {
+        expect(Buffer.isBuffer(data)).toBe(true);
+        expect(data).toEqual(new Uint8Array([1, 2, 3]));
+        server.stop(true);
+        Bun.gc(true);
+        done();
+      };
+    });
+
+    it("should support 'nodebuffer' binaryType when the handler is not immediately provided", done => {
+      var client;
+      const server = Bun.serve({
+        port: 0,
+        fetch(req, server) {
+          if (server.upgrade(req)) {
+            return;
+          }
+
+          return new Response();
+        },
+        websocket: {
+          open(ws) {
+            ws.sendBinary(new Uint8Array([1, 2, 3]));
+            setTimeout(() => {
+              client.onmessage = ({ data }) => {
+                expect(Buffer.isBuffer(data)).toBe(true);
+                expect(data).toEqual(new Uint8Array([1, 2, 3]));
+                server.stop(true);
+                done();
+              };
+            }, 0);
+          },
+        },
+      });
+      client = new WebSocket(`http://${server.hostname}:${server.port}`, {});
+      client.binaryType = "nodebuffer";
+      expect(client.binaryType).toBe("nodebuffer");
+    });
+  });
 
   it("should send and receive messages", async () => {
     const ws = new WebSocket(TEST_WEBSOCKET_HOST);

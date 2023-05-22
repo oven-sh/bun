@@ -164,7 +164,9 @@ private:
     void failAsynchronously();
 
     enum class BinaryType { Blob,
-        ArrayBuffer };
+        ArrayBuffer,
+        // non-standard:
+        NodeBuffer };
 
     State m_state { CONNECTING };
     URL m_url;

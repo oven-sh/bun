@@ -69,6 +69,8 @@
 #include <wtf/text/CString.h>
 #include <wtf/text/StringBuilder.h>
 
+#include "JSBuffer.h"
+
 // #if USE(WEB_THREAD)
 // #include "WebCoreThreadRun.h"
 // #endif
@@ -680,6 +682,8 @@ String WebSocket::binaryType() const
     //     return "blob"_s;
     case BinaryType::ArrayBuffer:
         return "arraybuffer"_s;
+    case BinaryType::NodeBuffer:
+        return "nodebuffer"_s;
     }
     ASSERT_NOT_REACHED();
     return String();
@@ -693,6 +697,9 @@ ExceptionOr<void> WebSocket::setBinaryType(const String& binaryType)
     // }
     if (binaryType == "arraybuffer"_s) {
         m_binaryType = BinaryType::ArrayBuffer;
+        return {};
+    } else if (binaryType == "nodebuffer"_s) {
+        m_binaryType = BinaryType::NodeBuffer;
         return {};
     }
     // scriptExecutionContext()->addConsoleMessage(MessageSource::JS, MessageLevel::Error, "'" + binaryType + "' is not a valid value for binaryType; binaryType remains unchanged.");
@@ -854,6 +861,49 @@ void WebSocket::didReceiveBinaryData(Vector<uint8_t>&& binaryData)
             context->postTask([this, buffer = WTFMove(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 ASSERT(scriptExecutionContext());
                 protectedThis->dispatchEvent(MessageEvent::create(buffer, m_url.string()));
+                protectedThis->decPendingActivityCount();
+            });
+        }
+
+        break;
+    }
+    case BinaryType::NodeBuffer: {
+
+        if (this->hasEventListeners("message"_s)) {
+            // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
+            this->incPendingActivityCount();
+            JSUint8Array* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(scriptExecutionContext()->jsGlobalObject(), binaryData.size())));
+            if (binaryData.size() > 0)
+                memcpy(buffer->vector(), binaryData.data(), binaryData.size());
+            JSC::EnsureStillAliveScope ensureStillAlive(buffer);
+            MessageEvent::Init init;
+            init.data = buffer;
+            init.origin = this->m_url.string();
+
+            dispatchEvent(MessageEvent::create(eventNames().messageEvent, WTFMove(init), EventIsTrusted::Yes));
+            this->decPendingActivityCount();
+            return;
+        }
+
+        if (auto* context = scriptExecutionContext()) {
+            auto arrayBuffer = JSC::ArrayBuffer::tryCreate(binaryData.data(), binaryData.size());
+
+            this->incPendingActivityCount();
+
+            context->postTask([this, buffer = WTFMove(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+                ASSERT(scriptExecutionContext());
+                size_t length = buffer->byteLength();
+                JSUint8Array* uint8array = JSUint8Array::create(
+                    scriptExecutionContext()->jsGlobalObject(),
+                    reinterpret_cast<Zig::GlobalObject*>(scriptExecutionContext()->jsGlobalObject())->JSBufferSubclassStructure(),
+                    WTFMove(buffer.copyRef()),
+                    0,
+                    length);
+                JSC::EnsureStillAliveScope ensureStillAlive(uint8array);
+                MessageEvent::Init init;
+                init.data = uint8array;
+                init.origin = protectedThis->m_url.string();
+                protectedThis->dispatchEvent(MessageEvent::create(eventNames().messageEvent, WTFMove(init), EventIsTrusted::Yes));
                 protectedThis->decPendingActivityCount();
             });
         }

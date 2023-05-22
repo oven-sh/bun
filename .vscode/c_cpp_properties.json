@@ -33,6 +33,7 @@
           "${workspaceFolder}/src/bun.js/bindings/*",
           "${workspaceFolder}/src/bun.js/bindings/sqlite/",
           "${workspaceFolder}/src/bun.js/bindings/webcrypto/",
+          "${workspaceFolder}/src/bun.js/bindings/webcore/",
           "${workspaceFolder}/src/bun.js/builtins/*",
           "${workspaceFolder}/src/bun.js/builtins/cpp/*",
           "${workspaceFolder}/src/bun.js/modules/*",

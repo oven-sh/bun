@@ -626,7 +626,7 @@ pub const Fetch = struct {
         request_body: AnyBlob = undefined,
         response_buffer: MutableString = undefined,
         request_headers: Headers = Headers{ .allocator = undefined },
-        ref: *JSC.napi.Ref = undefined,
+        promise: JSC.JSPromise.Strong,
         concurrent_task: JSC.ConcurrentTask = .{},
         poll_ref: JSC.PollRef = .{},
 
@@ -684,9 +684,10 @@ pub const Fetch = struct {
 
             const globalThis = this.global_this;
 
-            var ref = this.ref;
-            const promise_value = ref.get();
-            defer ref.destroy();
+            var ref = this.promise;
+            const promise_value = ref.value();
+            defer ref.strong.deinit();
+
             var poll_ref = this.poll_ref;
             var vm = globalThis.bunVM();
             defer poll_ref.unref(vm);
@@ -805,7 +806,7 @@ pub const Fetch = struct {
         pub fn get(
             allocator: std.mem.Allocator,
             globalThis: *JSC.JSGlobalObject,
-            promise: JSValue,
+            promise: JSC.JSPromise.Strong,
             fetch_options: FetchOptions,
         ) !*FetchTasklet {
             var jsc_vm = globalThis.bunVM();
@@ -824,7 +825,7 @@ pub const Fetch = struct {
                 .request_body = fetch_options.body,
                 .global_this = globalThis,
                 .request_headers = fetch_options.headers,
-                .ref = JSC.napi.Ref.create(globalThis, promise),
+                .promise = promise,
                 .url_proxy_buffer = fetch_options.url_proxy_buffer,
                 .signal = fetch_options.signal,
                 .hostname = fetch_options.hostname,
@@ -898,7 +899,7 @@ pub const Fetch = struct {
             allocator: std.mem.Allocator,
             global: *JSGlobalObject,
             fetch_options: FetchOptions,
-            promise: JSValue,
+            promise: JSC.JSPromise.Strong,
         ) !*FetchTasklet {
             try HTTPClient.HTTPThread.init();
             var node = try get(
@@ -968,6 +969,8 @@ pub const Fetch = struct {
 
         var url_proxy_buffer: []const u8 = undefined;
 
+        // TODO: move this into a DRYer implementation
+        // The status quo is very repetitive and very bug prone
         if (first_arg.as(Request)) |request| {
             if (args.nextEat()) |options| {
                 if (options.isObject() or options.jsType() == .DOMWrapper) {
@@ -1298,9 +1301,6 @@ pub const Fetch = struct {
             return .zero;
         }
 
-        var promise = JSPromise.Strong.init(globalThis);
-        var promise_val = promise.value();
-
         if (url.isEmpty()) {
             const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
             return JSPromise.rejectedPromiseValue(globalThis, err);
@@ -1317,6 +1317,12 @@ pub const Fetch = struct {
             const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_unexpected_body, .{}, ctx);
             return JSPromise.rejectedPromiseValue(globalThis, err);
         }
+
+        // Only create this after we have validated all the input.
+        // or else we will leak it
+        var promise = JSPromise.Strong.init(globalThis);
+
+        const promise_val = promise.value();
 
         // var resolve = FetchTasklet.FetchResolver.Class.make(ctx: js.JSContextRef, ptr: *ZigType)
         _ = FetchTasklet.queue(
@@ -1340,8 +1346,12 @@ pub const Fetch = struct {
                 .globalThis = globalThis,
                 .hostname = hostname,
             },
-            promise_val,
+            // Pass the Strong value instead of creating a new one, or else we
+            // will leak it
+            // see https://github.com/oven-sh/bun/issues/2985
+            promise,
         ) catch unreachable;
+
         return promise_val;
     }
 };

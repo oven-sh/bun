@@ -22,7 +22,7 @@ class BunWebSocket extends globalThis.WebSocket {
   }
   set binaryType(type) {
     if (type !== "nodebuffer" && type !== "blob" && type !== "arraybuffer") {
-      throw new TypeError("binaryType must be either 'blob', 'arraybuffer', 'nodebuffer' or 'buffer'");
+      throw new TypeError("binaryType must be either 'blob', 'arraybuffer' or 'nodebuffer'");
     }
     if (type !== "blob") {
       super.binaryType = type;
@@ -343,11 +343,10 @@ class BunWebSocketMocked extends EventEmitter {
     binaryType = binaryType || "arraybuffer";
     if (
       binaryType !== "nodebuffer" &&
-      binaryType !== "buffer" &&
       binaryType !== "blob" &&
       binaryType !== "arraybuffer"
     ) {
-      throw new TypeError("binaryType must be either 'blob', 'arraybuffer', 'nodebuffer' or 'buffer'");
+      throw new TypeError("binaryType must be either 'blob', 'arraybuffer' or 'nodebuffer'");
     }
     this.#binaryType = binaryType;
     this.#protocol = protocol;
@@ -456,7 +455,7 @@ class BunWebSocketMocked extends EventEmitter {
 
   set binaryType(type) {
     if (type !== "nodebuffer" && type !== "blob" && type !== "arraybuffer") {
-      throw new TypeError("binaryType must be either 'blob', 'arraybuffer', 'nodebuffer' or 'buffer'");
+      throw new TypeError("binaryType must be either 'blob', 'arraybuffer' or 'nodebuffer'");
     }
     this.#binaryType = type;
   }

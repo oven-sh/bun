@@ -397,6 +397,7 @@ class BunWebSocketMocked extends EventEmitter {
         message = Buffer.from(message);
       }
     }
+
     this.emit("message", message);
   }
 
@@ -418,28 +419,34 @@ class BunWebSocketMocked extends EventEmitter {
   #drain(ws) {
     const chunk = this.#enquedMessages[0];
     if (chunk) {
-      const written = ws.send(chunk);
+      const [data, cb] = chunk;
+      const written = ws.send(data);
       if (written == -1) {
         // backpressure wait until next drain event
         return;
       }
+
+      typeof cb === "function" && cb();
 
       this.#bufferedAmount -= chunk.length;
       this.#enquedMessages.shift();
     }
   }
 
-  send(data) {
+  send(data, opts, cb) {
     if (this.#state === 1) {
       const written = this.#ws.send(data);
       if (written == -1) {
         // backpressure
-        this.#enquedMessages.push(data);
+        this.#enquedMessages.push([data, cb]);
         this.#bufferedAmount += data.length;
+        return;
       }
+
+      typeof cb === "function" && cb();
     } else if (this.#state === 0) {
       // not connected yet
-      this.#enquedMessages.push(data);
+      this.#enquedMessages.push([data, cb]);
       this.#bufferedAmount += data.length;
     }
   }
@@ -775,7 +782,7 @@ class Server extends EventEmitter {
         ? this.options.handleProtocols(protocols, request)
         : protocols.values().next().value;
     }
-    const ws = new BunWebSocketMocked(request.url, protocol, extensions, "arraybuffer");
+    const ws = new BunWebSocketMocked(request.url, protocol, extensions, "nodebuffer");
 
     const headers = ["HTTP/1.1 101 Switching Protocols", "Upgrade: websocket", "Connection: Upgrade"];
     this.emit("headers", headers, request);

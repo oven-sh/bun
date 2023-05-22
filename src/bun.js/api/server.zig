@@ -978,80 +978,6 @@ const HTTPStatusText = struct {
     }
 };
 
-pub fn NewRequestContextStackAllocator(comptime RequestContext: type, comptime count: usize) type {
-    // Pre-allocate up to 2048 requests
-    // use a bitset to track which ones are used
-    return struct {
-        buf: [count]RequestContext = undefined,
-        unused: Set = undefined,
-        fallback_allocator: std.mem.Allocator = undefined,
-
-        pub const Set = std.bit_set.ArrayBitSet(usize, count);
-
-        pub fn get(this: *@This()) std.mem.Allocator {
-            this.unused = Set.initFull();
-            return .{
-                .ptr = this,
-                .vtable = &.{
-                    .alloc = alloc,
-                    .resize = resize,
-                    .free = free,
-                },
-            };
-        }
-
-        fn alloc(self_: *anyopaque, a: usize, b: u8, d: usize) ?[*]u8 {
-            const self = @ptrCast(*@This(), @alignCast(@alignOf(@This()), self_));
-            if (self.unused.findFirstSet()) |i| {
-                self.unused.unset(i);
-                return std.mem.asBytes(&self.buf[i]);
-            }
-
-            return self.fallback_allocator.rawAlloc(a, b, d);
-        }
-
-        fn resize(
-            _: *anyopaque,
-            _: []u8,
-            _: u8,
-            _: usize,
-            _: usize,
-        ) bool {
-            unreachable;
-        }
-
-        fn sliceContainsSlice(container: []u8, slice: []u8) bool {
-            return @ptrToInt(slice.ptr) >= @ptrToInt(container.ptr) and
-                (@ptrToInt(slice.ptr) + slice.len) <= (@ptrToInt(container.ptr) + container.len);
-        }
-
-        fn free(
-            self_: *anyopaque,
-            buf: []u8,
-            buf_align: u8,
-            return_address: usize,
-        ) void {
-            const self = @ptrCast(*@This(), @alignCast(@alignOf(@This()), self_));
-            const bytes = std.mem.asBytes(&self.buf);
-            if (sliceContainsSlice(bytes, buf)) {
-                const index = if (bytes[0..buf.len].ptr != buf.ptr)
-                    (@ptrToInt(buf.ptr) - @ptrToInt(bytes)) / @sizeOf(RequestContext)
-                else
-                    @as(usize, 0);
-
-                if (comptime Environment.allow_assert) {
-                    std.debug.assert(@intToPtr(*RequestContext, @ptrToInt(buf.ptr)) == &self.buf[index]);
-                    std.debug.assert(!self.unused.isSet(index));
-                }
-
-                self.unused.set(index);
-            } else {
-                self.fallback_allocator.rawFree(buf, buf_align, return_address);
-            }
-        }
-    };
-}
-
 // This is defined separately partially to work-around an LLVM debugger bug.
 fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comptime ThisServer: type) type {
     return struct {
@@ -1059,9 +985,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         const ctxLog = Output.scoped(.RequestContext, false);
         const App = uws.NewApp(ssl_enabled);
         pub threadlocal var pool: ?*RequestContext.RequestContextStackAllocator = null;
-        pub threadlocal var pool_allocator: std.mem.Allocator = undefined;
         pub const ResponseStream = JSC.WebCore.HTTPServerWritable(ssl_enabled);
-        pub const RequestContextStackAllocator = NewRequestContextStackAllocator(RequestContext, 2048);
+
+        // This pre-allocates up to 2,048 RequestContext structs.
+        // It costs about 655,632 bytes.
+        pub const RequestContextStackAllocator = bun.HiveArray(RequestContext, 2048).Fallback;
+
         pub const name = "HTTPRequestContext" ++ (if (debug_mode) "Debug" else "") ++ (if (ThisServer.ssl_enabled) "TLS" else "");
         pub const shim = JSC.Shimmer("Bun", name, @This());
 
@@ -1635,7 +1564,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.request_body = null;
             }
 
-            server.request_pool_allocator.destroy(this);
+            server.request_pool_allocator.put(this);
         }
 
         fn writeHeaders(
@@ -4385,7 +4314,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         base_url_string_for_joining: string = "",
         config: ServerConfig = ServerConfig{},
         pending_requests: usize = 0,
-        request_pool_allocator: std.mem.Allocator = undefined,
+        request_pool_allocator: *RequestContext.RequestContextStackAllocator = undefined,
 
         listen_callback: JSC.AnyTask = undefined,
         allocator: std.mem.Allocator,
@@ -4956,14 +4885,10 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
             if (RequestContext.pool == null) {
                 RequestContext.pool = server.allocator.create(RequestContext.RequestContextStackAllocator) catch @panic("Out of memory!");
-                RequestContext.pool.?.* = .{
-                    .fallback_allocator = server.allocator,
-                };
-                server.request_pool_allocator = RequestContext.pool.?.get();
-                RequestContext.pool_allocator = server.request_pool_allocator;
-            } else {
-                server.request_pool_allocator = RequestContext.pool_allocator;
+                RequestContext.pool.?.* = RequestContext.RequestContextStackAllocator.init(server.allocator);
             }
+
+            server.request_pool_allocator = RequestContext.pool.?;
 
             return server;
         }
@@ -5133,7 +5058,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             JSC.markBinding(@src());
             this.pending_requests += 1;
             req.setYield(false);
-            var ctx = this.request_pool_allocator.create(RequestContext) catch @panic("ran out of memory");
+            var ctx = this.request_pool_allocator.tryGet() catch @panic("ran out of memory");
             ctx.create(this, req, resp);
             var request_object = this.allocator.create(JSC.WebCore.Request) catch unreachable;
             var body = JSC.WebCore.InitRequestBodyValue(.{ .Null = {} }) catch unreachable;
@@ -5236,7 +5161,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             JSC.markBinding(@src());
             this.pending_requests += 1;
             req.setYield(false);
-            var ctx = this.request_pool_allocator.create(RequestContext) catch @panic("ran out of memory");
+            var ctx = this.request_pool_allocator.tryGet() catch @panic("ran out of memory");
             ctx.create(this, req, resp);
             var request_object = this.allocator.create(JSC.WebCore.Request) catch unreachable;
             var body = JSC.WebCore.InitRequestBodyValue(.{ .Null = {} }) catch unreachable;

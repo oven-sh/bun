@@ -20378,7 +20378,10 @@ fn NewParser_(
                             (prev_stmt.data == .s_local and
                                 s_expr.value.data == .e_binary and
                                 prev_stmt.data.s_local.decls.len == 1 and
-                                s_expr.value.data.e_binary.op == .bin_assign)
+                                s_expr.value.data.e_binary.op == .bin_assign and
+                                // we can only do this with var because var is hoisted
+                                // the statment we are merging into may use the statement before its defined.
+                                prev_stmt.data.s_local.kind == .k_var)
                             {
                                 var prev_local = prev_stmt.data.s_local;
                                 var bin_assign = s_expr.value.data.e_binary;

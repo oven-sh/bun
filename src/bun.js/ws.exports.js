@@ -39,7 +39,7 @@ class BunWebSocket extends globalThis.WebSocket {
     if (event === "message") {
       var handler = ({ data }) => {
         try {
-          if(this.#binaryType == "blob") {
+          if (this.#binaryType == "blob") {
             data = new Blob([data], { type: "text/plain" });
           }
           callback(data);

@@ -1373,6 +1373,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 .method = HTTP.Method.which(req.method()) orelse .GET,
                 .server = server,
             };
+
+            ctxLog("create<d> ({*})<r>", .{this});
         }
 
         pub fn isDeadRequest(this: *RequestContext) bool {
@@ -1471,7 +1473,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         // This function may be called multiple times
         // so it's important that we can safely do that
         pub fn finalizeWithoutDeinit(this: *RequestContext) void {
-            ctxLog("finalizeWithoutDeinit", .{});
+            ctxLog("finalizeWithoutDeinit<d> ({*})<r>", .{this});
             this.blob.detach();
 
             if (comptime Environment.allow_assert) {
@@ -1541,14 +1543,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
         }
         pub fn finalize(this: *RequestContext) void {
-            ctxLog("finalize", .{});
+            ctxLog("finalize<d> ({*})<r>", .{this});
             this.finalizeWithoutDeinit();
             this.markComplete();
             this.deinit();
         }
 
         pub fn deinit(this: *RequestContext) void {
-            ctxLog("deinit", .{});
+            ctxLog("deinit<d> ({*})<r>", .{this});
             if (comptime Environment.allow_assert)
                 std.debug.assert(this.finalized);
 

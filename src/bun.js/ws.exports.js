@@ -21,8 +21,11 @@ class BunWebSocket extends globalThis.WebSocket {
     return this.#binaryType;
   }
   set binaryType(type) {
-    if (type !== "nodebuffer" && type !== "buffer" && type !== "blob" && type !== "arraybuffer") {
+    if (type !== "nodebuffer" && type !== "blob" && type !== "arraybuffer") {
       throw new TypeError("binaryType must be either 'blob', 'arraybuffer', 'nodebuffer' or 'buffer'");
+    }
+    if (type !== "blob") {
+      super.binaryType = type;
     }
     this.#binaryType = type;
   }
@@ -34,29 +37,12 @@ class BunWebSocket extends globalThis.WebSocket {
 
   on(event, callback) {
     if (event === "message") {
-      var handler = ({ message }) => {
+      var handler = ({ data }) => {
         try {
-          if (typeof message === "string") {
-            if (this.#binaryType === "arraybuffer") {
-              message = encoder.encode(message).buffer;
-            } else if (this.#binaryType === "blob") {
-              message = new Blob([message], { type: "text/plain" });
-            } else {
-              // nodebuffer or buffer
-              message = Buffer.from(message);
-            }
-          } else {
-            //Uint8Array
-            if (this.#binaryType === "arraybuffer") {
-              message = message.buffer;
-            } else if (this.#binaryType === "blob") {
-              message = new Blob([message]);
-            } else {
-              // nodebuffer or buffer
-              message = Buffer.from(message);
-            }
+          if(this.#binaryType == "blob") {
+            data = new Blob([data], { type: "text/plain" });
           }
-          callback(message);
+          callback(data);
         } catch (e) {
           globalThis.reportError(e);
         }
@@ -469,7 +455,7 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   set binaryType(type) {
-    if (type !== "nodebuffer" && type !== "buffer" && type !== "blob" && type !== "arraybuffer") {
+    if (type !== "nodebuffer" && type !== "blob" && type !== "arraybuffer") {
       throw new TypeError("binaryType must be either 'blob', 'arraybuffer', 'nodebuffer' or 'buffer'");
     }
     this.#binaryType = type;

@@ -223,3 +223,13 @@ If you see this error when compiling, run:
 ```bash
 $ xcode-select --install
 ```
+
+## Arch Linux / Cannot find `libatomic.a`
+
+Bun requires `libatomic` to be statically linked. On Arch Linux, it is only given as a shared library, but as a workaround you can symlink it to get the build working locally.
+
+```bash
+$ sudo ln -s /lib/libatomic.so /lib/libatomic.a
+```
+
+The built version of bun may not work on other systems if compiled this way.

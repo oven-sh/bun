@@ -6,6 +6,7 @@ import { createClient, getPort, success, fail, eioHandshake, eioPoll, eioPush } 
 import { Server } from "socket.io";
 import { exec, ChildProcess } from "child_process";
 
+// Hanging tests are disabled because they cause the test suite to hang
 describe("close", () => {
   it.skip("should be able to close sio sending a srv", done => {
     const httpServer = createServer().listen(0);

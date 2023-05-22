@@ -282,6 +282,19 @@ const char* const s_jsBufferPrototypeReadUIntLECode =
     "})\n" \
 ;
 
+const JSC::ConstructAbility s_jsBufferPrototypeInspectCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeInspectCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeInspectCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_jsBufferPrototypeInspectCodeLength = 81;
+static const JSC::Intrinsic s_jsBufferPrototypeInspectCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeInspectCode =
+    "(function (recurseTimes, ctx) {\n" \
+    "  \"use strict\";\n" \
+    "\n" \
+    "  return @Bun.inspect(this);\n" \
+    "})\n" \
+;
+
 const JSC::ConstructAbility s_jsBufferPrototypeReadUIntBECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadUIntBECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadUIntBECodeImplementationVisibility = JSC::ImplementationVisibility::Public;

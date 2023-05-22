@@ -155,6 +155,13 @@ function readUIntLE(offset, byteLength) {
   }
   @throwRangeError("byteLength must be >= 1 and <= 6");
 }
+
+function inspect(recurseTimes, ctx) {
+  "use strict";
+
+  return @Bun.inspect(this);
+}
+
 function readUIntBE(offset, byteLength) {
   "use strict";
   const view = this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength);

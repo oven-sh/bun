@@ -117,6 +117,11 @@ extern const int s_jsBufferPrototypeReadUIntLECodeLength;
 extern const JSC::ConstructAbility s_jsBufferPrototypeReadUIntLECodeConstructAbility;
 extern const JSC::ConstructorKind s_jsBufferPrototypeReadUIntLECodeConstructorKind;
 extern const JSC::ImplementationVisibility s_jsBufferPrototypeReadUIntLECodeImplementationVisibility;
+extern const char* const s_jsBufferPrototypeInspectCode;
+extern const int s_jsBufferPrototypeInspectCodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeInspectCodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeInspectCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_jsBufferPrototypeInspectCodeImplementationVisibility;
 extern const char* const s_jsBufferPrototypeReadUIntBECode;
 extern const int s_jsBufferPrototypeReadUIntBECodeLength;
 extern const JSC::ConstructAbility s_jsBufferPrototypeReadUIntBECodeConstructAbility;
@@ -388,6 +393,7 @@ extern const JSC::ImplementationVisibility s_jsBufferPrototypeOffsetCodeImplemen
     macro(readIntLE, jsBufferPrototypeReadIntLE, 2) \
     macro(readIntBE, jsBufferPrototypeReadIntBE, 2) \
     macro(readUIntLE, jsBufferPrototypeReadUIntLE, 2) \
+    macro(inspect, jsBufferPrototypeInspect, 2) \
     macro(readUIntBE, jsBufferPrototypeReadUIntBE, 2) \
     macro(readFloatLE, jsBufferPrototypeReadFloatLE, 1) \
     macro(readFloatBE, jsBufferPrototypeReadFloatBE, 1) \
@@ -454,6 +460,7 @@ extern const JSC::ImplementationVisibility s_jsBufferPrototypeOffsetCodeImplemen
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_READINTLE 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_READINTBE 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_READUINTLE 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_INSPECT 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_READUINTBE 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_READFLOATLE 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_READFLOATBE 1
@@ -521,6 +528,7 @@ extern const JSC::ImplementationVisibility s_jsBufferPrototypeOffsetCodeImplemen
     macro(jsBufferPrototypeReadIntLECode, readIntLE, ASCIILiteral(), s_jsBufferPrototypeReadIntLECodeLength) \
     macro(jsBufferPrototypeReadIntBECode, readIntBE, ASCIILiteral(), s_jsBufferPrototypeReadIntBECodeLength) \
     macro(jsBufferPrototypeReadUIntLECode, readUIntLE, ASCIILiteral(), s_jsBufferPrototypeReadUIntLECodeLength) \
+    macro(jsBufferPrototypeInspectCode, inspect, ASCIILiteral(), s_jsBufferPrototypeInspectCodeLength) \
     macro(jsBufferPrototypeReadUIntBECode, readUIntBE, ASCIILiteral(), s_jsBufferPrototypeReadUIntBECodeLength) \
     macro(jsBufferPrototypeReadFloatLECode, readFloatLE, ASCIILiteral(), s_jsBufferPrototypeReadFloatLECodeLength) \
     macro(jsBufferPrototypeReadFloatBECode, readFloatBE, ASCIILiteral(), s_jsBufferPrototypeReadFloatBECodeLength) \
@@ -582,6 +590,7 @@ extern const JSC::ImplementationVisibility s_jsBufferPrototypeOffsetCodeImplemen
     macro(base64urlWrite) \
     macro(hexSlice) \
     macro(hexWrite) \
+    macro(inspect) \
     macro(latin1Slice) \
     macro(latin1Write) \
     macro(offset) \

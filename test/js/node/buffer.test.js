@@ -2387,3 +2387,8 @@ it("repro #2063", () => {
   expect(buf[83]).toBe(49);
   expect(buf[84]).toBe(125);
 });
+
+it("inspect() should exist", () => {
+  expect(Buffer.prototype.inspect).toBeInstanceOf(Function);
+  expect(new Buffer("123").inspect()).toBe(Bun.inspect(new Buffer("123")));
+});

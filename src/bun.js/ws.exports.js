@@ -40,7 +40,7 @@ class BunWebSocket extends globalThis.WebSocket {
       var handler = ({ data }) => {
         try {
           if (this.#binaryType == "blob") {
-            data = new Blob([data], { type: "text/plain" });
+            data = new Blob([data]);
           }
           callback(data);
         } catch (e) {
@@ -374,7 +374,7 @@ class BunWebSocketMocked extends EventEmitter {
       } else if (this.#binaryType === "blob") {
         message = new Blob([message], { type: "text/plain" });
       } else {
-        // nodebuffer or buffer
+        // nodebuffer
         message = Buffer.from(message);
       }
     } else {
@@ -383,8 +383,8 @@ class BunWebSocketMocked extends EventEmitter {
         message = message.buffer;
       } else if (this.#binaryType === "blob") {
         message = new Blob([message]);
-      } else {
-        // nodebuffer or buffer
+      } else if(!Buffer.isBuffer(message)) {
+        // nodebuffer
         message = Buffer.from(message);
       }
     }

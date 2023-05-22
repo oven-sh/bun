@@ -2,31 +2,35 @@ This page is intended as an introduction to working with binary data in JavaScri
 
 ## `ArrayBuffer`
 
-Until 2009, there was no language-native way to store and manipulate binary data in JavaScript. ECMAScript v5 introduced an _array_ of classes for doing so.
+Until 2009, there was no language-native way to store and manipulate binary data in JavaScript. ECMAScript v5 introduced a range of new mechanisms for this.
 
-The most primitive and low-level construct for dealing with binary data is the `ArrayBuffer`. Think of it as a sequence of bytes. Despite the name, it isn't an array and supports none of the array methods and operators one might expect.
-
-```ts
-// this buffer can store 10 bytes
-const buf = new ArrayBuffer(10);
-```
-
-Perhaps unexpectedly, there's no can't read from or write to an `ArrayBuffer`. In fact, there's very little you can do with one except check its size and create "slices" from it.
+In JavaScript, The data structure that underlies all binary data manipulation is the `ArrayBuffer`. Think of it as a simple sequence of bytes stored somewhere in memory.
 
 ```ts
-const buf = new ArrayBuffer(10);
-
-buf.byteLength; // => 10
-
-const slice = buf.slice(0, 5); // returns new ArrayBuffer
-slice.byteLength; // => 5
+// this buffer can store 8 bytes
+const buf = new ArrayBuffer(8);
 ```
 
-To do anything interesting we need a construct known as a "view". A view is a class that _wraps_ an `ArrayBuffer` instance and lets us read and manipulate the underlying data. There are two types of views: typed arrays and `DataView`.
+Despite the name, it isn't an array and supports none of the array methods and operators one might expect. In fact, there is no way to directly read or write values from an `ArrayBuffer`. There's very little you can do with one except check its size and create "slices" from it.
+
+```ts
+const buf = new ArrayBuffer(8);
+
+buf.byteLength; // => 8
+
+const slice = buf.slice(0, 4); // returns new ArrayBuffer
+slice.byteLength; // => 4
+```
+
+To do anything interesting we need a construct known as a "view". A view is a class that _wraps_ an `ArrayBuffer` instance and lets you read and manipulate the underlying data. There are two types of views: _typed arrays_ and `DataView`.
 
 ## Typed arrays
 
 Typed arrays are a family of classes that provide an `Array`-like interface for interacting with data in an `ArrayBuffer`.
+
+{% callout %}
+Commonly, you will see this family of classes referred to collectively by their shared superclass `TypedArray`. This class as _internal_ to JavaScript; you can't directly create instances of it, and `TypedArray` is not defined in the global scope. Think of it as an `interface` or an abstract class.
+{% /callout %}
 
 ```ts
 const buffer = new ArrayBuffer(3);
@@ -45,10 +49,6 @@ arr[3] = 255; // no-op, out of bounds
 // filter, map, reduce, each, every, find, includes, indexOf
 const newarr = arr.filter(n => n > 128); // Uint8Array(1) [255]
 ```
-
-{% callout %}
-Commonly, you will see this family of classes referred to collectively by their shared superclass `TypedArray`. This class as _internal_ to JavaScript; you can't directly create instances of it, and `TypedArray` is not defined in the global scope. Think of it as an `interface` or an abstract class.
-{% /callout %}
 
 While an `ArrayBuffer` is a generic sequence of bytes, these typed array classes interpret the bytes as a sequence of numbers of different sizes. The top row contains the raw bytes, and the later rows contain how these bytes will be interpreted when _viewed_ using different typed array classes.
 
@@ -167,43 +167,189 @@ The table below demonstrates how the bytes in an `ArrayBuffer` are interpreted w
 
 ### Creating typed arrays
 
-{% callout %}
-
-In the examples below, we'll be creating instances of `Uint8Array`, as it's simple and commonly used. Each individual byte of the `ArrayBuffer` is interpreted as a number between 0 and 255.
-
-{% /callout %}
-
 To create a typed array from a pre-defined `ArrayBuffer`:
 
 ```ts
 // create typed array from ArrayBuffer
-const buf = new ArrayBuffer(3);
+const buf = new ArrayBuffer(10);
 const arr = new Uint8Array(buf);
 
 arr[0] = 30;
 arr[1] = 60;
-console.log(arr); // => Uint8Array(3) [ 30, 60, 0 ];
+console.log(arr); // => Uint8Array(3) [ 30, 60, 0, 0, 0, 0, 0, 0, 0, 0 ];
 ```
 
-You can also create a typed array from a particular "slice" of an `ArrayBuffer`.
+If we tried to instantiate a `Uint32Array` from this same `ArrayBuffer`, we'd get an error.
+
+```ts
+const buf = new ArrayBuffer(10);
+const arr = new Uint32Array(buf);
+//          ^  RangeError: ArrayBuffer length minus the byteOffset
+//             is not a multiple of the element size
+```
+
+A `Uint32` value requires four bytes (16 bits). Because the `ArrayBuffer` is 10 bytes long, there's no way to cleanly divide its contents into 4-byte chunks.
+
+To fix this, we can create a typed array over a particular "slice" of an `ArrayBuffer`. The `Uint16Array` below only "views" the _first_ 8 bytes of the underlying `ArrayBuffer`. To achieve these, we specify a `byteOffset` of `0` and a `length` of `2`, which indicates the number of `Uint32` numbers we want our array to hold.
 
 ```ts
 // create typed array from ArrayBuffer slice
 const buf = new ArrayBuffer(10);
+const arr = new Uint32Array(buf, 0, 2);
 
-// [0, ]
+/*
+  buf    _ _ _ _ _ _ _ _ _ _    10 bytes
+  arr   [_______,_______]       2 4-byte elements
+*/
 
-// 5 = offset
-// 10 = length
-const arr = new Uint8Array(buf, 5, 3);
+arr.byteOffset; // 0
+arr.length; // 2
 ```
 
-In most cases, though, you won't explicitly create an `ArrayBuffer` instance. You can instantiate typed arrays from a dataTo create a typed array from an array of numbers:
+You don't need to explicitly create an `ArrayBuffer` instance; you can instead directly specify a length in the typed array constructor:
 
 ```ts
-const arr = new Uint8Array([30, 60, 90]);
-arr[0]; // => 30;
+const arr2 = new Uint8Array(5);
+
+// all elements are initialized to zero
+// => Uint8Array(5) [0, 0, 0, 0, 0]
 ```
+
+Typed arrays can also be instantiated directly from an array of numbers, or another typed array:
+
+```ts
+// from an array of numbers
+const arr1 = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7]);
+arr1[0]; // => 0;
+arr1[7]; // => 7;
+
+// from another typed array
+const arr2 = new Uint8Array(arr);
+```
+
+Refer to the [MDN documentation](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray) for more information on the properties and methods of typed arrays.
+
+## `DataView`
+
+The `DataView` class is a lower-level interface for reading and manipulating binary data. Whereas typed arrays interpret the underlying bytes as an array of numbers with a consistent number of bytes per element, `DataView` provides granular methods for reading and writing binary data at a given byte offset.
+
+Below we create a new `DataView` and set the first byte to 5.
+
+```ts
+const buf = new ArrayBuffer(4);
+// [0x0, 0x0, 0x0]
+
+const dv = new DataView(buf);
+dv.setUint8(0, 3); // write value 3 at byte offset 0
+dv.getUint8(0); // => 3
+// [0x11, 0x0, 0x0, 0x0]
+```
+
+Now lets write a `Uint16` at byte offset `1`. This requires two bytes. We're using the value `513`, which is `2 * 256 + 1`; in bytes, that's `00000010 00000001`.
+
+```ts
+dv.setUint16(1, 513);
+// [0x11, 0x10, 0x1, 0x0]
+
+console.log(dv.getUint16(1)); // => 513
+```
+
+We've now assigned a value to the first three bytes in our underlying `ArrayBuffer`. Even though the second and third bytes were created using `setUint16()`, we can still read each of its component bytes using `getUint8()`.
+
+```ts
+console.log(dv.getUint8(1)); // => 2
+console.log(dv.getUint8(2)); // => 1
+```
+
+Attempting to write a value that requires more space than is available in the underlying `ArrayBuffer` will cuase an error. Below we attempt to write a `Float64` (which requires 8 bytes) at byte offset `0`, but there are only four total bytes in the buffer.
+
+```ts
+dv.setFloat64(0, 3.1415);
+// ^ RangeError: Out of bounds access
+```
+
+The following methods are available on `DataView`:
+
+{% table %}
+
+- Getters
+- Setters
+
+---
+
+- [`getBigInt64()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView/getBigInt64)
+- [`setBigInt64()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView/setBigInt64)
+
+---
+
+- [`getBigUint64()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView/getBigUint64)
+- [`setBigUint64()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView/setBigUint64)
+
+---
+
+- [`getFloat32()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView/getFloat32)
+- [`setFloat32()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView/setFloat32)
+
+---
+
+- [`getFloat64()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView/getFloat64)
+- [`setFloat64()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView/setFloat64)
+
+---
+
+- [`getInt16()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView/getInt16)
+- [`setInt16()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView/setInt16)
+
+---
+
+- [`getInt32()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView/getInt32)
+- [`setInt32()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView/setInt32)
+
+---
+
+- [`getInt8()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView/getInt8)
+- [`setInt8()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView/setInt8)
+
+---
+
+- [`getUint16()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView/getUint16)
+- [`setUint16()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView/setUint16)
+
+---
+
+- [`getUint32()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView/getUint32)
+- [`setUint32()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView/setUint32)
+
+---
+
+- [`getUint8()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView/getUint8)
+- [`setUint8()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView/setUint8)
+
+{% /table %}
+
+## `Buffer`
+
+Bun fully supports `Buffer`. `Buffer` is a Node.js API for working with binary data that pre-dates the introduction of typed arrays in the JavaScript spec. It has since been re-implemented as a subclass of `Uint8Array` with a wide array of additional methods.
+
+{% table %}
+
+- From / To
+- `ArrayBuffer`
+- `TypedArray`
+- `DataView`
+- `Buffer`
+- `string`
+- `number[]`
+
+---
+
+- `ArrayBuffer`
+- n/a
+- `new Uint8Array(buf)`
+- `new Uint8Array(buf)`
+- not well-defined
+
+{% /table %}
 
 - Use Buffer
 - TextEncoder

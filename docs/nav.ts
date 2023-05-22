@@ -154,7 +154,7 @@ export default {
     }),
 
     divider("Bundler"),
-    page("cli/build", "`Bun.build`", {
+    page("bundler", "`Bun.build`", {
       description: "Bundle code for comsumption in the browser with Bun's native bundler.",
     }),
     // page("bundler/intro", "How bundlers work", {
@@ -169,7 +169,7 @@ export default {
     page("bundler/executables", "Executables", {
       description: "Compile a TypeScript or JavaScript file to a standalone cross-platform executable",
     }),
-    page("bundler/migration", "Migration", {
+    page("bundler/vs-esbuild", "vs esbuild", {
       description: `Guides for migrating from other bundlers to Bun.`,
     }),
 

@@ -1334,7 +1334,9 @@ declare module "bun" {
     /**
      * Configure the {@link WebSocketHandler.message} callback to return a {@link ArrayBuffer} or {@link Buffer} instead of a {@link Uint8Array}
      *
-     * @default "uint8array"
+     * @default "nodebuffer"
+     *
+     * In Bun v0.6.2 and earlier, this defaulted to "uint8array"
      */
     binaryType?: "arraybuffer" | "uint8array" | "nodebuffer";
   }

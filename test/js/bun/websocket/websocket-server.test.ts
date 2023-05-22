@@ -171,7 +171,6 @@ describe("websocket server", () => {
 
   it("close inside open", async () => {
     var resolve: () => void;
-    console.trace("here");
     var server = serve({
       port: 0,
       websocket: {
@@ -441,7 +440,7 @@ describe("websocket server", () => {
           // Then after nodebuffer, we switch it to "arraybuffer"
           // and then we're done
           switch (ws.binaryType) {
-            case "uint8array": {
+            case "nodebuffer": {
               for (let badType of [
                 123,
                 NaN,
@@ -457,20 +456,20 @@ describe("websocket server", () => {
                   ws.binaryType = badType;
                 }).toThrow();
               }
-              expect(ws.binaryType).toBe("uint8array");
-              ws.binaryType = "nodebuffer";
               expect(ws.binaryType).toBe("nodebuffer");
+              ws.binaryType = "uint8array";
+              expect(ws.binaryType).toBe("uint8array");
               expect(msg instanceof Uint8Array).toBe(true);
-              expect(Buffer.isBuffer(msg)).toBe(false);
+              expect(Buffer.isBuffer(msg)).toBe(true);
               break;
             }
 
-            case "nodebuffer": {
-              expect(ws.binaryType).toBe("nodebuffer");
+            case "uint8array": {
+              expect(ws.binaryType).toBe("uint8array");
               ws.binaryType = "arraybuffer";
               expect(ws.binaryType).toBe("arraybuffer");
               expect(msg instanceof Uint8Array).toBe(true);
-              expect(Buffer.isBuffer(msg)).toBe(true);
+              expect(Buffer.isBuffer(msg)).toBe(false);
               break;
             }
 

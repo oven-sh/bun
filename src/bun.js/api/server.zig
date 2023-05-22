@@ -3256,7 +3256,7 @@ pub const ServerWebSocket = struct {
     this_value: JSValue = .zero,
     websocket: uws.AnyWebSocket = undefined,
     closed: bool = false,
-    binary_type: JSC.BinaryType = .Uint8Array,
+    binary_type: JSC.BinaryType = .Buffer,
     opened: bool = false,
 
     pub usingnamespace JSC.Codegen.JSServerWebSocket;
@@ -3355,17 +3355,17 @@ pub const ServerWebSocket = struct {
                     str.markUTF8();
                     break :brk str.toValueGC(globalObject);
                 },
-                .binary => if (this.binary_type == .Uint8Array)
-                    JSC.ArrayBuffer.create(
-                        globalObject,
-                        message,
-                        .Uint8Array,
-                    )
-                else if (this.binary_type == .Buffer)
+                .binary => if (this.binary_type == .Buffer)
                     JSC.ArrayBuffer.create(
                         globalObject,
                         message,
                         .Buffer,
+                    )
+                else if (this.binary_type == .Uint8Array)
+                    JSC.ArrayBuffer.create(
+                        globalObject,
+                        message,
+                        .Uint8Array,
                     )
                 else
                     JSC.ArrayBuffer.create(

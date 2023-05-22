@@ -9019,7 +9019,7 @@ const LinkerContext = struct {
                             else
                                 .chunk,
                             .input_loader = if (chunk.entry_point.is_entry_point) c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index] else .js,
-                            .output_path = chunk.final_rel_path,
+                            .output_path = try bun.default_allocator.dupe(u8, chunk.final_rel_path),
                             .is_executable = chunk.is_executable,
                             .source_map_index = if (sourcemap_output_file != null)
                                 @truncate(u32, output_files.items.len + 1)

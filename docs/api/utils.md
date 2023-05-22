@@ -164,3 +164,69 @@ Bun.openInEditor(import.meta.url, {
   column: 5,
 });
 ```
+
+Bun.ArrayBufferSink;
+
+## `Bun.deepEquals()`
+
+Nestedly check if two objects are equivalent. This is used internally by `expect().toEqual()` in `bun:test`.
+
+```ts
+const foo = { a: 1, b: 2, c: { d: 3 } };
+
+// true
+Bun.deepEquals(foo, { a: 1, b: 2, c: { d: 3 } });
+
+// false
+Bun.deepEquals(foo, { a: 1, b: 2, c: { d: 4 } });
+```
+
+A third boolean parameter can be used to enable "strict" mode. This is used by `expect().toStrictEqual()` in the test runner.
+
+```ts
+const a = { entries: [1, 2] };
+const b = { entries: [1, 2], extra: undefined };
+
+Bun.deepEquals(a, b); // => true
+Bun.deepEquals(a, b, true); // => false
+```
+
+In strict mode, the following are considered unequal:
+
+```ts
+// undefined values
+Bun.deepEquals({}, { a: undefined }, true); // false
+
+// undefined in arrays
+Bun.deepEquals(["asdf"], ["asdf", undefined], true); // false
+
+// sparse arrays
+Bun.deepEquals([, 1], [undefined, 1], true); // false
+
+// object literals vs instances w/ same properties
+class Foo {
+  a = 1;
+}
+Bun.deepEquals(new Foo(), { a: 1 }, true); // false
+```
+
+Bun.escapeHTML;
+
+new Bun.MD5();
+Bun.enableANSIColors;
+Bun.env;
+Bun.fileURLToPath;
+Bun.pathToFileURL;
+Bun.hash;
+Bun.deflateSync;
+Bun.inflateSync;
+Bun.inspect;
+Bun.main;
+Bun.nanoseconds();
+Bun.readableStreamToArray;
+Bun.sha;
+Bun.version;
+Bun.revision;
+Bun.version;
+Bun.resolve;
+Bun.resolveSync;

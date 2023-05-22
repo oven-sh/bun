@@ -2980,7 +2980,7 @@ pub const WebSocketServer = struct {
         /// used by publish()
         flags: packed struct(u2) {
             ssl: bool = false,
-            publish_to_self: bool = true,
+            publish_to_self: bool = false,
         } = .{},
 
         pub fn fromJS(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue) ?Handler {

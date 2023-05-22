@@ -37,6 +37,9 @@ describe("websocket server", () => {
     var server = serve({
       port: 0,
       websocket: {
+        // FIXME: update this test to not rely on publishToSelf: true,
+        publishToSelf: true,
+
         open(ws) {
           ws.subscribe("all");
         },
@@ -115,6 +118,9 @@ describe("websocket server", () => {
         var server = serve({
           port: 0,
           websocket: {
+            // FIXME: update this test to not rely on publishToSelf: true,
+            publishToSelf: true,
+
             open(ws) {
               ws.subscribe("all");
             },
@@ -617,6 +623,9 @@ describe("websocket server", () => {
       var server = serve({
         port: 0,
         websocket: {
+          // FIXME: update this test to not rely on publishToSelf: true,
+          publishToSelf: true,
+
           async open(ws) {
             // we don't care about the data
             // we just want to make sure the DOMJIT call doesn't crash
@@ -647,6 +656,9 @@ describe("websocket server", () => {
       var server = serve({
         port: 0,
         websocket: {
+          // FIXME: update this test to not rely on publishToSelf: true,
+          publishToSelf: true,
+
           async open(ws) {
             // we don't care about the data
             // we just want to make sure the DOMJIT call doesn't crash
@@ -908,6 +920,9 @@ describe("websocket server", () => {
     const server = serve({
       port: 0,
       websocket: {
+        // FIXME: update this test to not rely on publishToSelf: true,
+        publishToSelf: true,
+
         open(ws) {
           server.stop();
           ws.subscribe("test");

@@ -216,7 +216,7 @@ If a value is specified for `publicPath`, the import will use value as a prefix 
 ---
 
 - `"https://cdn.example.com/"`
-- `https://cdn.example.com/`
+- `https://cdn.example.com/logo.svg`
 
 {% /table %}
 

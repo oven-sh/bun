@@ -23,22 +23,22 @@ function EventEmitter(opts) {
 
   this._maxListeners ??= undefined;
   if (
-    (this[kCapture] = opts?.captureRejections ? Boolean(opts?.captureRejections) : EventEmitter.prototype[kCapture])
+    (this[kCapture] = opts?.captureRejections ? Boolean(opts?.captureRejections) : EventEmitterPrototype[kCapture])
   ) {
     this.emit = emitWithRejectionCapture;
   }
 }
-
-EventEmitter.prototype._events = undefined;
-EventEmitter.prototype._eventsCount = 0;
-EventEmitter.prototype._maxListeners = undefined;
-EventEmitter.prototype.setMaxListeners = function setMaxListeners(n) {
+const EventEmitterPrototype = EventEmitter.prototype;
+EventEmitterPrototype._events = undefined;
+EventEmitterPrototype._eventsCount = 0;
+EventEmitterPrototype._maxListeners = undefined;
+EventEmitterPrototype.setMaxListeners = function setMaxListeners(n) {
   validateNumber(n, "setMaxListeners", 0);
   this._maxListeners = n;
   return this;
 };
 
-EventEmitter.prototype.getMaxListeners = function getMaxListeners() {
+EventEmitterPrototype.getMaxListeners = function getMaxListeners() {
   return this._maxListeners ?? defaultMaxListeners;
 };
 
@@ -115,9 +115,9 @@ const emitWithRejectionCapture = function emit(type, ...args) {
   return true;
 };
 
-EventEmitter.prototype.emit = emitWithoutRejectionCapture;
+EventEmitterPrototype.emit = emitWithoutRejectionCapture;
 
-EventEmitter.prototype.addListener = function addListener(type, fn) {
+EventEmitterPrototype.addListener = function addListener(type, fn) {
   checkListener(fn);
   var events = this._events;
   if (!events) {
@@ -140,9 +140,9 @@ EventEmitter.prototype.addListener = function addListener(type, fn) {
   return this;
 };
 
-EventEmitter.prototype.on = EventEmitter.prototype.addListener;
+EventEmitterPrototype.on = EventEmitterPrototype.addListener;
 
-EventEmitter.prototype.prependListener = function prependListener(type, fn) {
+EventEmitterPrototype.prependListener = function prependListener(type, fn) {
   checkListener(fn);
   var events = this._events;
   if (!events) {
@@ -183,7 +183,7 @@ function onceWrapper(type, listener, ...args) {
   listener.apply(this, args);
 }
 
-EventEmitter.prototype.once = function once(type, fn) {
+EventEmitterPrototype.once = function once(type, fn) {
   checkListener(fn);
   const bound = onceWrapper.bind(this, type, fn);
   bound.listener = fn;
@@ -191,7 +191,7 @@ EventEmitter.prototype.once = function once(type, fn) {
   return this;
 };
 
-EventEmitter.prototype.prependOnceListener = function prependOnceListener(type, fn) {
+EventEmitterPrototype.prependOnceListener = function prependOnceListener(type, fn) {
   checkListener(fn);
   const bound = onceWrapper.bind(this, type, fn);
   bound.listener = fn;
@@ -199,7 +199,7 @@ EventEmitter.prototype.prependOnceListener = function prependOnceListener(type, 
   return this;
 };
 
-EventEmitter.prototype.removeListener = function removeListener(type, fn) {
+EventEmitterPrototype.removeListener = function removeListener(type, fn) {
   checkListener(fn);
   var { _events: events } = this;
   if (!events) return this;
@@ -226,9 +226,9 @@ EventEmitter.prototype.removeListener = function removeListener(type, fn) {
   return this;
 };
 
-EventEmitter.prototype.off = EventEmitter.prototype.removeListener;
+EventEmitterPrototype.off = EventEmitterPrototype.removeListener;
 
-EventEmitter.prototype.removeAllListeners = function removeAllListeners(type) {
+EventEmitterPrototype.removeAllListeners = function removeAllListeners(type) {
   var { _events: events } = this;
   if (type && events) {
     if (events[type]) {
@@ -241,7 +241,7 @@ EventEmitter.prototype.removeAllListeners = function removeAllListeners(type) {
   return this;
 };
 
-EventEmitter.prototype.listeners = function listeners(type) {
+EventEmitterPrototype.listeners = function listeners(type) {
   var { _events: events } = this;
   if (!events) return [];
   var handlers = events[type];
@@ -249,7 +249,7 @@ EventEmitter.prototype.listeners = function listeners(type) {
   return handlers.map(x => x.listener ?? x);
 };
 
-EventEmitter.prototype.rawListeners = function rawListeners(type) {
+EventEmitterPrototype.rawListeners = function rawListeners(type) {
   var { _events } = this;
   if (!_events) return [];
   var handlers = _events[type];
@@ -257,19 +257,20 @@ EventEmitter.prototype.rawListeners = function rawListeners(type) {
   return handlers.slice();
 };
 
-EventEmitter.prototype.listenerCount = function listenerCount(type) {
+EventEmitterPrototype.listenerCount = function listenerCount(type) {
   var { _events: events } = this;
   if (!events) return 0;
   return events[type]?.length ?? 0;
 };
 
-EventEmitter.prototype.eventNames = function eventNames() {
+EventEmitterPrototype.eventNames = function eventNames() {
   return this._eventsCount > 0 ? Reflect.ownKeys(this._events) : [];
 };
 
-EventEmitter.prototype[kCapture] = false;
+EventEmitterPrototype[kCapture] = false;
 
-function once(emitter, type, { signal } = {}) {
+function once(emitter, type, options) {
+  var signal = options?.signal;
   validateAbortSignal(signal, "options.signal");
   if (signal?.aborted) {
     throw new AbortError(undefined, { cause: signal?.reason });
@@ -309,7 +310,8 @@ function once(emitter, type, { signal } = {}) {
 }
 EventEmitter.once = once;
 
-function on(emitter, type, { signal, close, highWatermark = Number.MAX_SAFE_INTEGER, lowWatermark = 1 } = {}) {
+function on(emitter, type, options) {
+  var { signal, close, highWatermark = Number.MAX_SAFE_INTEGER, lowWatermark = 1 } = options || {};
   throw new Error("events.on is not implemented. See https://github.com/oven-sh/bun/issues/2679");
 }
 EventEmitter.on = on;
@@ -348,12 +350,12 @@ EventEmitter.captureRejectionSymbol = captureRejectionSymbol;
 ObjectDefineProperty(EventEmitter, "captureRejections", {
   __proto__: null,
   get() {
-    return EventEmitter.prototype[kCapture];
+    return EventEmitterPrototype[kCapture];
   },
   set(value) {
     validateBoolean(value, "EventEmitter.captureRejections");
 
-    EventEmitter.prototype[kCapture] = value;
+    EventEmitterPrototype[kCapture] = value;
   },
   enumerable: true,
 });

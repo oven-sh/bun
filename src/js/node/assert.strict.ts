@@ -1,5 +1,5 @@
 // Hardcoded module "node:assert/strict"
-var { strict: strictBase } = import.meta.require("node:assert");
+import { strict as strictBase } from "node:assert";
 
 export var {
   fail,

@@ -1,5 +1,6 @@
 // Hardcoded module "node:fs/promises"
 // Note: `constants` is injected into the top of this file
+declare var constants: typeof import("node:fs/promises").constants;
 
 var fs = Bun.fs();
 

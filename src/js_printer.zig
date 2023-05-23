@@ -1988,8 +1988,14 @@ fn NewPrinter(
                         if (value.loc_ref.ref.?.eql(id.ref)) {
                             if (p.options.commonjs_named_exports_deoptimized or value.needs_decl) {
                                 p.printSymbol(p.options.commonjs_named_exports_ref);
-                                p.print(".");
-                                p.print(key);
+                                if (p.canPrintIdentifier(key)) {
+                                    p.print(".");
+                                    p.print(key);
+                                } else {
+                                    p.print("[\"");
+                                    p.print(key);
+                                    p.print("\"]");
+                                }
                             } else {
                                 p.printSymbol(value.loc_ref.ref.?);
                             }

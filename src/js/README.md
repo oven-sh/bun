@@ -7,18 +7,14 @@
 When you change any of those folders, run this to bundle and minify them:
 
 ```bash
-$ make bundle-hardcoded
-$ make dev
+$ make hardcoded
 ```
 
-Instead of `make dev`, the debug build of bun has an environment variable you can dynamically load these files:
+These modules are bundled into the binary, but in debug mode they are loaded from the filesystem, so you do not need to rerun `make dev`. If you want to override the modules in a release build, you can set `BUN_OVERRIDE_MODULE_PATH` to the path to the repo:
 
 ```bash
-$ make bundle-hardcoded
-$ BUN_OVERRIDE_MODULE_PATH=/path/to/bun/src/js bun-debug ...
+$ BUN_OVERRIDE_MODULE_PATH=/path/to/bun-repo bun ...
 ```
-
-Saving the above as an alias may be helpful if you are frequently editing the JS modules.
 
 For any private types like `Bun.fs()`, add them to `./private.d.ts`
 

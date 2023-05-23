@@ -87,22 +87,22 @@ const Install = @import("../install/install.zig");
 const VirtualMachine = JSC.VirtualMachine;
 const Dependency = @import("../install/dependency.zig");
 
-// This exists to make it so we can reload these quicker in development
+// Setting BUN_OVERRIDE_MODULE_PATH to the path to the bun repo will make it so modules are loaded
+// from there instead of the ones embedded into the binary.
+// In debug mode, this is set automatically for you, using the path relative to this file.
 fn jsModuleFromFile(from_path: string, comptime input: string) string {
-    const absolute_path = comptime (bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?) ++ "/../js/out/modules/" ++ input;
     const Holder = struct {
         pub const file = @embedFile("../js/out/modules/" ++ input);
     };
 
-    if (comptime !Environment.allow_assert) {
-        if (from_path.len == 0) {
-            return Holder.file;
-        }
+    if ((comptime !Environment.allow_assert) and from_path.len == 0) {
+        return Holder.file;
     }
 
     var file: std.fs.File = undefined;
-
-    if (comptime Environment.allow_assert) {
+    if ((comptime Environment.allow_assert) and from_path.len == 0) {
+        const absolute_path = comptime (Environment.base_path ++ (std.fs.path.dirname(std.fs.path.dirname(@src().file).?).?) ++ "/js/out/modules/" ++ input);
+        Output.prettyln("loading: {s}", .{absolute_path});
         file = std.fs.openFileAbsoluteZ(absolute_path, .{ .mode = .read_only }) catch {
             const WarnOnce = struct {
                 pub var warned = false;
@@ -114,7 +114,7 @@ fn jsModuleFromFile(from_path: string, comptime input: string) string {
             return Holder.file;
         };
     } else {
-        var parts = [_]string{ from_path, input };
+        var parts = [_]string{ from_path, "src/js/out/modules/" ++ input };
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var absolute_path_to_use = Fs.FileSystem.instance.absBuf(&parts, &buf);
         buf[absolute_path_to_use.len] = 0;
@@ -130,10 +130,8 @@ fn jsModuleFromFile(from_path: string, comptime input: string) string {
         };
     }
 
-    var contents = file.readToEndAlloc(bun.default_allocator, std.math.maxInt(usize)) catch @panic("Cannot read file: " ++ absolute_path);
-    if (comptime !Environment.allow_assert) {
-        file.close();
-    }
+    var contents = file.readToEndAlloc(bun.default_allocator, std.math.maxInt(usize)) catch @panic("Cannot read file " ++ input);
+    file.close();
     return contents;
 }
 
@@ -1772,9 +1770,7 @@ pub const ModuleLoader = struct {
                 .@"node:fs/promises" => {
                     return ResolvedSource{
                         .allocator = null,
-                        .source_code = ZigString.init(
-                            JSC.Node.fs.constants_string ++ @embedFile("../js/out/modules/node/fs.promises.js")
-                        ),
+                        .source_code = ZigString.init(JSC.Node.fs.constants_string ++ @embedFile("../js/out/modules/node/fs.promises.js")),
                         .specifier = ZigString.init("node:fs/promises"),
                         .source_url = ZigString.init("node:fs/promises"),
                         .hash = 0,
@@ -1788,7 +1784,6 @@ pub const ModuleLoader = struct {
                                 JSC.FFI.ABIType.map_to_js_object ++
                                 ";" ++
                                 @embedFile("../js/out/modules/bun/ffi.js"),
-                            
                         ),
                         .specifier = ZigString.init("bun:ffi"),
                         .source_url = ZigString.init("bun:ffi"),
@@ -1834,7 +1829,7 @@ pub const ModuleLoader = struct {
                 .depd => return jsResolvedSource(jsc_vm.load_builtins_from_path, .depd, "thirdparty/depd.js"),
                 .undici => return jsResolvedSource(jsc_vm.load_builtins_from_path, .undici, "thirdparty/undici.js"),
                 .ws => return jsResolvedSource(jsc_vm.load_builtins_from_path, .ws, "thirdparty/ws.js"),
-                
+
                 .@"node:cluster" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:cluster", "node/cluster.js"),
                 .@"node:dgram" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:dgram", "node/dgram.js"),
                 .@"node:diagnostics_channel" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:diagnostics_channel", "node/diagnostics_channel.js"),

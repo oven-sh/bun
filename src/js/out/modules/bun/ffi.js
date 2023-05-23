@@ -1,326 +1,260 @@
-// src/js/bun/ffi.js
-var cstringReturnType = function(val) {
-  return new __GlobalBunCString(val);
-};
-var FFIBuilder = function(params, returnType, functionToCall, name) {
-  const hasReturnType = typeof FFIType[returnType] === "number" && FFIType[returnType] !== FFIType.void;
-  var paramNames = new Array(params.length);
-  var args = new Array(params.length);
-  for (let i = 0;i < params.length; i++) {
-    paramNames[i] = `p${i}`;
-    const wrapper = ffiWrappers[FFIType[params[i]]];
-    if (wrapper) {
-      args[i] = `(${wrapper.toString()})(p${i})`;
-    } else {
-      throw new TypeError(`Unsupported type ${params[i]}. Must be one of: ${Object.keys(FFIType).sort().join(", ")}`);
+var h = function (J) {
+    return new __GlobalBunCString(J);
+  },
+  T = function (J, j, q, z) {
+    const E = typeof FFIType[j] === "number" && FFIType[j] !== FFIType.void;
+    var G = new Array(J.length),
+      H = new Array(J.length);
+    for (let Q = 0; Q < J.length; Q++) {
+      G[Q] = `p${Q}`;
+      const U = A[FFIType[J[Q]]];
+      if (U) H[Q] = `(${U.toString()})(p${Q})`;
+      else throw new TypeError(`Unsupported type ${J[Q]}. Must be one of: ${Object.keys(FFIType).sort().join(", ")}`);
     }
-  }
-  var code = `functionToCall(${args.join(", ")})`;
-  if (hasReturnType) {
-    if (FFIType[returnType] === FFIType.cstring) {
-      code = `return (${cstringReturnType.toString()})(${code})`;
-    } else {
-      code = `return ${code}`;
+    var K = `functionToCall(${H.join(", ")})`;
+    if (E)
+      if (FFIType[j] === FFIType.cstring) K = `return (${h.toString()})(${K})`;
+      else K = `return ${K}`;
+    var M = new Function("functionToCall", ...G, K);
+    Object.defineProperty(M, "name", { value: z });
+    var P;
+    switch (G.length) {
+      case 0:
+        P = () => M(q);
+        break;
+      case 1:
+        P = Q => M(q, Q);
+        break;
+      case 2:
+        P = (Q, U) => M(q, Q, U);
+        break;
+      case 3:
+        P = (Q, U, V) => M(q, Q, U, V);
+        break;
+      case 4:
+        P = (Q, U, V, X) => M(q, Q, U, V, X);
+        break;
+      case 5:
+        P = (Q, U, V, X, Y) => M(q, Q, U, V, X, Y);
+        break;
+      case 6:
+        P = (Q, U, V, X, Y, Z) => M(q, Q, U, V, X, Y, Z);
+        break;
+      case 7:
+        P = (Q, U, V, X, Y, Z, $) => M(q, Q, U, V, X, Y, Z, $);
+        break;
+      case 8:
+        P = (Q, U, V, X, Y, Z, $, D) => M(q, Q, U, V, X, Y, Z, $, D);
+        break;
+      case 9:
+        P = (Q, U, V, X, Y, Z, $, D, I) => M(q, Q, U, V, X, Y, Z, $, D, I);
+        break;
+      default: {
+        P = (...Q) => M(q, ...Q);
+        break;
+      }
     }
-  }
-  var func = new Function("functionToCall", ...paramNames, code);
-  Object.defineProperty(func, "name", {
-    value: name
-  });
-  var wrap;
-  switch (paramNames.length) {
-    case 0:
-      wrap = () => func(functionToCall);
-      break;
-    case 1:
-      wrap = (arg1) => func(functionToCall, arg1);
-      break;
-    case 2:
-      wrap = (arg1, arg2) => func(functionToCall, arg1, arg2);
-      break;
-    case 3:
-      wrap = (arg1, arg2, arg3) => func(functionToCall, arg1, arg2, arg3);
-      break;
-    case 4:
-      wrap = (arg1, arg2, arg3, arg4) => func(functionToCall, arg1, arg2, arg3, arg4);
-      break;
-    case 5:
-      wrap = (arg1, arg2, arg3, arg4, arg5) => func(functionToCall, arg1, arg2, arg3, arg4, arg5);
-      break;
-    case 6:
-      wrap = (arg1, arg2, arg3, arg4, arg5, arg6) => func(functionToCall, arg1, arg2, arg3, arg4, arg5, arg6);
-      break;
-    case 7:
-      wrap = (arg1, arg2, arg3, arg4, arg5, arg6, arg7) => func(functionToCall, arg1, arg2, arg3, arg4, arg5, arg6, arg7);
-      break;
-    case 8:
-      wrap = (arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) => func(functionToCall, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
-      break;
-    case 9:
-      wrap = (arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) => func(functionToCall, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
-      break;
-    default: {
-      wrap = (...args2) => func(functionToCall, ...args2);
-      break;
-    }
-  }
-  wrap.native = functionToCall;
-  wrap.ptr = functionToCall.ptr;
-  return wrap;
-};
-function dlopen(path, options) {
-  const result = nativeDLOpen(path, options);
-  for (let key in result.symbols) {
-    var symbol = result.symbols[key];
-    if (options[key]?.args?.length || FFIType[options[key]?.returns] === FFIType.cstring) {
-      result.symbols[key] = FFIBuilder(options[key].args ?? [], options[key].returns ?? FFIType.void, symbol, path.includes("/") ? `${key} (${path.split("/").pop()})` : `${key} (${path})`);
-    } else {
-      result.symbols[key].native = result.symbols[key];
-    }
-  }
-  return result;
-}
-function linkSymbols(options) {
-  const result = nativeLinkSymbols(options);
-  for (let key in result.symbols) {
-    var symbol = result.symbols[key];
-    if (options[key]?.args?.length || FFIType[options[key]?.returns] === FFIType.cstring) {
-      result.symbols[key] = FFIBuilder(options[key].args ?? [], options[key].returns ?? FFIType.void, symbol, key);
-    } else {
-      result.symbols[key].native = result.symbols[key];
-    }
-  }
-  return result;
-}
-var onCloseCFunction = function(close) {
-  close();
-};
-function CFunction(options) {
-  const identifier = `CFunction${cFunctionI++}`;
-  var result = linkSymbols({
-    [identifier]: options
-  });
-  var hasClosed = false;
-  var close = result.close;
-  result.symbols[identifier].close = () => {
-    if (hasClosed || !close)
-      return;
-    hasClosed = true;
-    close();
-    close = undefined;
+    return (P.native = q), (P.ptr = q.ptr), P;
   };
-  cFunctionRegistry ||= new FinalizationRegistry(onCloseCFunction);
-  cFunctionRegistry.register(result.symbols[identifier], result.symbols[identifier].close);
-  return result.symbols[identifier];
+function y(J, j) {
+  const q = w(J, j);
+  for (let E in q.symbols) {
+    var z = q.symbols[E];
+    if (j[E]?.args?.length || FFIType[j[E]?.returns] === FFIType.cstring)
+      q.symbols[E] = T(
+        j[E].args ?? [],
+        j[E].returns ?? FFIType.void,
+        z,
+        J.includes("/") ? `${E} (${J.split("/").pop()})` : `${E} (${J})`,
+      );
+    else q.symbols[E].native = q.symbols[E];
+  }
+  return q;
 }
-var suffix = "dylib";
-var ffi = globalThis.Bun.FFI;
-var ptr = (arg1, arg2) => typeof arg2 === "undefined" ? ffi.ptr(arg1) : ffi.ptr(arg1, arg2);
-var toBuffer = ffi.toBuffer;
-var toArrayBuffer = ffi.toArrayBuffer;
-var viewSource = ffi.viewSource;
-var BunCString = ffi.CString;
-var nativeLinkSymbols = ffi.linkSymbols;
-var nativeDLOpen = ffi.dlopen;
-var nativeCallback = ffi.callback;
-var closeCallback = ffi.closeCallback;
-delete ffi.callback;
-delete ffi.closeCallback;
-
-class JSCallback {
-  constructor(cb, options) {
-    const { ctx, ptr: ptr2 } = nativeCallback(options, cb);
-    this.#ctx = ctx;
-    this.ptr = ptr2;
-    this.#threadsafe = !!options?.threadsafe;
+function u(J) {
+  const j = L(J);
+  for (let z in j.symbols) {
+    var q = j.symbols[z];
+    if (J[z]?.args?.length || FFIType[J[z]?.returns] === FFIType.cstring)
+      j.symbols[z] = T(J[z].args ?? [], J[z].returns ?? FFIType.void, q, z);
+    else j.symbols[z].native = j.symbols[z];
+  }
+  return j;
+}
+var s = function (J) {
+  J();
+};
+function g(J) {
+  const j = `CFunction${c++}`;
+  var q = u({ [j]: J }),
+    z = !1,
+    E = q.close;
+  return (
+    (q.symbols[j].close = () => {
+      if (z || !E) return;
+      (z = !0), E(), (E = void 0);
+    }),
+    (S ||= new FinalizationRegistry(s)),
+    S.register(q.symbols[j], q.symbols[j].close),
+    q.symbols[j]
+  );
+}
+var F = "dylib",
+  N = globalThis.Bun.FFI,
+  R = (J, j) => (typeof j === "undefined" ? N.ptr(J) : N.ptr(J, j)),
+  x = N.toBuffer,
+  O = N.toArrayBuffer,
+  B = N.viewSource,
+  _ = N.CString,
+  L = N.linkSymbols,
+  w = N.dlopen,
+  d = N.callback,
+  k = N.closeCallback;
+delete N.callback;
+delete N.closeCallback;
+class W {
+  constructor(J, j) {
+    const { ctx: q, ptr: z } = d(j, J);
+    (this.#J = q), (this.ptr = z), (this.#j = !!j?.threadsafe);
   }
   ptr;
-  #ctx;
-  #threadsafe;
+  #J;
+  #j;
   get threadsafe() {
-    return this.#threadsafe;
+    return this.#j;
   }
   [Symbol.toPrimitive]() {
-    const { ptr: ptr2 } = this;
-    return typeof ptr2 === "number" ? ptr2 : 0;
+    const { ptr: J } = this;
+    return typeof J === "number" ? J : 0;
   }
   close() {
-    const ctx = this.#ctx;
-    this.ptr = null;
-    this.#ctx = null;
-    if (ctx) {
-      closeCallback(ctx);
-    }
+    const J = this.#J;
+    if (((this.ptr = null), (this.#J = null), J)) k(J);
   }
 }
-
-class CString extends String {
-  constructor(ptr2, byteOffset, byteLength) {
-    super(ptr2 ? typeof byteLength === "number" && Number.isSafeInteger(byteLength) ? new BunCString(ptr2, byteOffset || 0, byteLength) : new BunCString(ptr2) : "");
-    this.ptr = typeof ptr2 === "number" ? ptr2 : 0;
-    if (typeof byteOffset !== "undefined") {
-      this.byteOffset = byteOffset;
-    }
-    if (typeof byteLength !== "undefined") {
-      this.byteLength = byteLength;
-    }
+class b extends String {
+  constructor(J, j, q) {
+    super(J ? (typeof q === "number" && Number.isSafeInteger(q) ? new _(J, j || 0, q) : new _(J)) : "");
+    if (((this.ptr = typeof J === "number" ? J : 0), typeof j !== "undefined")) this.byteOffset = j;
+    if (typeof q !== "undefined") this.byteLength = q;
   }
   ptr;
   byteOffset;
   byteLength;
-  #cachedArrayBuffer;
+  #J;
   get arrayBuffer() {
-    if (this.#cachedArrayBuffer) {
-      return this.#cachedArrayBuffer;
-    }
-    if (!this.ptr) {
-      return this.#cachedArrayBuffer = new ArrayBuffer(0);
-    }
-    return this.#cachedArrayBuffer = toArrayBuffer(this.ptr, this.byteOffset, this.byteLength);
+    if (this.#J) return this.#J;
+    if (!this.ptr) return (this.#J = new ArrayBuffer(0));
+    return (this.#J = O(this.ptr, this.byteOffset, this.byteLength));
   }
 }
-Object.defineProperty(globalThis, "__GlobalBunCString", {
-  value: CString,
-  enumerable: false,
-  configurable: false
-});
-var ffiWrappers = new Array(18);
-var char = (val) => val | 0;
-ffiWrappers.fill(char);
-ffiWrappers[FFIType.uint8_t] = function uint8(val) {
-  return val < 0 ? 0 : val >= 255 ? 255 : val | 0;
+Object.defineProperty(globalThis, "__GlobalBunCString", { value: b, enumerable: !1, configurable: !1 });
+var A = new Array(18),
+  m = J => J | 0;
+A.fill(m);
+A[FFIType.uint8_t] = function J(j) {
+  return j < 0 ? 0 : j >= 255 ? 255 : j | 0;
 };
-ffiWrappers[FFIType.int16_t] = function int16(val) {
-  return val <= -32768 ? -32768 : val >= 32768 ? 32768 : val | 0;
+A[FFIType.int16_t] = function J(j) {
+  return j <= -32768 ? -32768 : j >= 32768 ? 32768 : j | 0;
 };
-ffiWrappers[FFIType.uint16_t] = function uint16(val) {
-  return val <= 0 ? 0 : val >= 65536 ? 65536 : val | 0;
+A[FFIType.uint16_t] = function J(j) {
+  return j <= 0 ? 0 : j >= 65536 ? 65536 : j | 0;
 };
-ffiWrappers[FFIType.int32_t] = function int32(val) {
-  return val | 0;
+A[FFIType.int32_t] = function J(j) {
+  return j | 0;
 };
-ffiWrappers[FFIType.uint32_t] = function uint32(val) {
-  return val <= 0 ? 0 : val >= 4294967295 ? 4294967295 : +val || 0;
+A[FFIType.uint32_t] = function J(j) {
+  return j <= 0 ? 0 : j >= 4294967295 ? 4294967295 : +j || 0;
 };
-ffiWrappers[FFIType.i64_fast] = function int64(val) {
-  if (typeof val === "bigint") {
-    if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= BigInt(-Number.MAX_SAFE_INTEGER)) {
-      return Number(val).valueOf() || 0;
-    }
-    return val;
+A[FFIType.i64_fast] = function J(j) {
+  if (typeof j === "bigint") {
+    if (j <= BigInt(Number.MAX_SAFE_INTEGER) && j >= BigInt(-Number.MAX_SAFE_INTEGER)) return Number(j).valueOf() || 0;
+    return j;
   }
-  return !val ? 0 : +val || 0;
+  return !j ? 0 : +j || 0;
 };
-ffiWrappers[FFIType.u64_fast] = function u64_fast(val) {
-  if (typeof val === "bigint") {
-    if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= 0) {
-      return Number(val).valueOf() || 0;
-    }
-    return val;
+A[FFIType.u64_fast] = function J(j) {
+  if (typeof j === "bigint") {
+    if (j <= BigInt(Number.MAX_SAFE_INTEGER) && j >= 0) return Number(j).valueOf() || 0;
+    return j;
   }
-  return !val ? 0 : +val || 0;
+  return !j ? 0 : +j || 0;
 };
-ffiWrappers[FFIType.int64_t] = function int642(val) {
-  if (typeof val === "bigint") {
-    return val;
-  }
-  if (typeof val === "number") {
-    return BigInt(val || 0);
-  }
-  return BigInt(+val || 0);
+A[FFIType.int64_t] = function J(j) {
+  if (typeof j === "bigint") return j;
+  if (typeof j === "number") return BigInt(j || 0);
+  return BigInt(+j || 0);
 };
-ffiWrappers[FFIType.uint64_t] = function uint64(val) {
-  if (typeof val === "bigint") {
-    return val;
-  }
-  if (typeof val === "number") {
-    return val <= 0 ? BigInt(0) : BigInt(val || 0);
-  }
-  return BigInt(+val || 0);
+A[FFIType.uint64_t] = function J(j) {
+  if (typeof j === "bigint") return j;
+  if (typeof j === "number") return j <= 0 ? BigInt(0) : BigInt(j || 0);
+  return BigInt(+j || 0);
 };
-ffiWrappers[FFIType.u64_fast] = function u64_fast2(val) {
-  if (typeof val === "bigint") {
-    if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= BigInt(0))
-      return Number(val);
-    return val;
+A[FFIType.u64_fast] = function J(j) {
+  if (typeof j === "bigint") {
+    if (j <= BigInt(Number.MAX_SAFE_INTEGER) && j >= BigInt(0)) return Number(j);
+    return j;
   }
-  return typeof val === "number" ? val <= 0 ? 0 : +val || 0 : +val || 0;
+  return typeof j === "number" ? (j <= 0 ? 0 : +j || 0) : +j || 0;
 };
-ffiWrappers[FFIType.uint16_t] = function uint162(val) {
-  const ret = (typeof val === "bigint" ? Number(val) : val) | 0;
-  return ret <= 0 ? 0 : ret > 65535 ? 65535 : ret;
+A[FFIType.uint16_t] = function J(j) {
+  const q = (typeof j === "bigint" ? Number(j) : j) | 0;
+  return q <= 0 ? 0 : q > 65535 ? 65535 : q;
 };
-ffiWrappers[FFIType.double] = function double(val) {
-  if (typeof val === "bigint") {
-    if (val.valueOf() < BigInt(Number.MAX_VALUE)) {
-      return Math.abs(Number(val).valueOf()) + 0.00000000000001 - 0.00000000000001;
-    }
+A[FFIType.double] = function J(j) {
+  if (typeof j === "bigint") {
+    if (j.valueOf() < BigInt(Number.MAX_VALUE))
+      return Math.abs(Number(j).valueOf()) + 0.00000000000001 - 0.00000000000001;
   }
-  if (!val) {
-    return 0 + 0.00000000000001 - 0.00000000000001;
-  }
-  return val + 0.00000000000001 - 0.00000000000001;
+  if (!j) return 0;
+  return j + 0.00000000000001 - 0.00000000000001;
 };
-ffiWrappers[FFIType.float] = ffiWrappers[10] = function float(val) {
-  return Math.fround(val);
+A[FFIType.float] = A[10] = function J(j) {
+  return Math.fround(j);
 };
-ffiWrappers[FFIType.bool] = function bool(val) {
-  return !!val;
+A[FFIType.bool] = function J(j) {
+  return !!j;
 };
 Object.defineProperty(globalThis, "__GlobalBunFFIPtrFunctionForWrapper", {
-  value: ptr,
-  enumerable: false,
-  configurable: true
+  value: R,
+  enumerable: !1,
+  configurable: !0,
 });
-ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = function pointer(val) {
-  if (typeof val === "number")
-    return val;
-  if (!val) {
-    return null;
-  }
-  if (ArrayBuffer.isView(val) || val instanceof ArrayBuffer) {
-    return __GlobalBunFFIPtrFunctionForWrapper(val);
-  }
-  if (typeof val === "string") {
-    throw new TypeError("To convert a string to a pointer, encode it as a buffer");
-  }
-  throw new TypeError(`Unable to convert ${val} to a pointer`);
+A[FFIType.cstring] = A[FFIType.pointer] = function J(j) {
+  if (typeof j === "number") return j;
+  if (!j) return null;
+  if (ArrayBuffer.isView(j) || j instanceof ArrayBuffer) return __GlobalBunFFIPtrFunctionForWrapper(j);
+  if (typeof j === "string") throw new TypeError("To convert a string to a pointer, encode it as a buffer");
+  throw new TypeError(`Unable to convert ${j} to a pointer`);
 };
-ffiWrappers[FFIType.function] = function functionType(val) {
-  if (typeof val === "number") {
-    return val;
-  }
-  if (typeof val === "bigint") {
-    return Number(val);
-  }
-  var ptr2 = val && val.ptr;
-  if (!ptr2) {
-    throw new TypeError("Expected function to be a JSCallback or a number");
-  }
-  return ptr2;
+A[FFIType.function] = function J(j) {
+  if (typeof j === "number") return j;
+  if (typeof j === "bigint") return Number(j);
+  var q = j && j.ptr;
+  if (!q) throw new TypeError("Expected function to be a JSCallback or a number");
+  return q;
 };
-var native = {
-  dlopen: nativeDLOpen,
-  callback: () => {
-    throw new Error("Deprecated. Use new JSCallback(options, fn) instead");
-  }
-};
-var cFunctionI = 0;
-var cFunctionRegistry;
-var read = ffi.read;
+var C = {
+    dlopen: w,
+    callback: () => {
+      throw new Error("Deprecated. Use new JSCallback(options, fn) instead");
+    },
+  },
+  c = 0,
+  S,
+  i = N.read;
 export {
-  viewSource,
-  toBuffer,
-  toArrayBuffer,
-  suffix,
-  read,
-  ptr,
-  native,
-  linkSymbols,
-  dlopen,
-  JSCallback,
-  CString,
-  CFunction
+  B as viewSource,
+  x as toBuffer,
+  O as toArrayBuffer,
+  F as suffix,
+  i as read,
+  R as ptr,
+  C as native,
+  u as linkSymbols,
+  y as dlopen,
+  W as JSCallback,
+  b as CString,
+  g as CFunction,
 };
-
-//# debugId=57507DFEA306791064756e2164756e21

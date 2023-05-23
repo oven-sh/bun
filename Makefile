@@ -555,7 +555,11 @@ PYTHON=$(shell which python 2>/dev/null || which python3 2>/dev/null || which py
 
 .PHONY: builtins
 builtins:
-	bun src/js/builtins/codegen/index.ts --minify
+	NODE_ENV=production bun src/js/builtins/codegen/index.ts --minify
+
+.PHONY: hardcoded
+hardcoded:
+	NODE_ENV=production bun src/js/build-hardcoded.ts
 
 .PHONY: generate-builtins
 generate-builtins: builtins
@@ -1875,7 +1879,7 @@ regenerate-bindings:
 	@make bindings -j$(CPU_COUNT)
 
 .PHONY: setup
-setup: vendor-dev builtins identifier-cache clean-bindings
+setup: vendor-dev identifier-cache clean-bindings
 	make jsc-check
 	make bindings -j$(CPU_COUNT)
 	@echo ""

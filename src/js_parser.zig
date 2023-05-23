@@ -19497,13 +19497,9 @@ fn NewParser_(
                             return false;
                         }
 
-                        return
-                        // TODO: figure out why this is needed when bundling
-                        // The problem is all the top-level vars are getting removed when they're not actually side effect free
-                        !p.source.index.isRuntime() and
-                            // when there's actually no symbol by that name, we return Ref.None
-                            // If a symbol had already existed by that name, we return .unbound
-                            (result.ref.isNull() or p.symbols.items[result.ref.innerIndex()].kind == .unbound);
+                        // when there's actually no symbol by that name, we return Ref.None
+                        // If a symbol had already existed by that name, we return .unbound
+                        return (result.ref.isNull() or p.symbols.items[result.ref.innerIndex()].kind == .unbound);
                     }
                 },
                 else => {},

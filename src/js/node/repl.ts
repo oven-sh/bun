@@ -1,27 +1,21 @@
 // Hardcoded module "node:repl"
 // This is a stub! None of this is actually implemented yet.
 // It only exists to make some packages which import this module work.
-
-class NotImplementedYet extends Error {
-  constructor(message = "node:repl is not implemented yet in Bun") {
-    super(message);
-    this.name = "NotImplementedYet";
-  }
-}
+import { throwNotImplemented } from "../shared";
 
 function REPLServer() {
-  throw new NotImplementedYet("REPLServer is not implemented yet in Bun");
+  throwNotImplemented("node:repl REPLServer");
 }
 
 function Recoverable() {
-  throw new NotImplementedYet("Recoverable is not implemented yet in Bun");
+  throwNotImplemented("node:repl Recoverable");
 }
 
 var REPL_MODE_SLOPPY = 0,
   REPL_MODE_STRICT = 1;
 
 function start() {
-  throw new NotImplementedYet();
+  throwNotImplemented("node:repl");
 }
 
 var repl = {
@@ -34,7 +28,7 @@ var repl = {
   removeHistoryDuplicates: false,
   crlfDelay: 100,
   completer: () => {
-    throw new NotImplementedYet();
+    throwNotImplemented("node:repl");
   },
   history: [],
   _initialPrompt: "> ",
@@ -43,19 +37,19 @@ var repl = {
     {},
     {
       get() {
-        throw new NotImplementedYet();
+        throwNotImplemented("node:repl");
       },
       has: () => false,
       ownKeys: () => [],
       getOwnPropertyDescriptor: () => undefined,
       set() {
-        throw new NotImplementedYet();
+        throwNotImplemented("node:repl");
       },
     },
   ),
   line: "",
   eval: () => {
-    throw new NotImplementedYet();
+    throwNotImplemented("node:repl");
   },
   isCompletionEnabled: true,
   escapeCodeTimeout: 500,
@@ -71,13 +65,13 @@ var repl = {
     {},
     {
       get() {
-        throw new NotImplementedYet();
+        throwNotImplemented("node:repl");
       },
       has: () => false,
       ownKeys: () => [],
       getOwnPropertyDescriptor: () => undefined,
       set() {
-        throw new NotImplementedYet();
+        throwNotImplemented("node:repl");
       },
     },
   ),

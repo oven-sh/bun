@@ -1,23 +1,11 @@
 // Hardcoded module "node:vm"
+import { throwNotImplemented } from "../shared";
+
 const lazy = globalThis[Symbol.for("Bun.lazy")];
 if (!lazy || typeof lazy !== "function") {
   throw new Error("Something went wrong while loading Bun. Expected 'Bun.lazy' to be defined.");
 }
 const vm = lazy("vm");
-
-class TODO extends Error {
-  constructor(messageName) {
-    const message = messageName
-      ? `node:vm ${messageName} is not implemented yet in Bun. Track the status & thumbs up the issue: https://github.com/oven-sh/bun/issues/401`
-      : `node:vm is not implemented yet in Bun. Track the status & thumbs up the issue: https://github.com/oven-sh/bun/issues/401`;
-    super(message);
-    this.name = "TODO";
-  }
-}
-
-function notimpl(message) {
-  throw new TODO(message);
-}
 
 const { createContext, isContext, Script, runInNewContext, runInThisContext } = vm;
 
@@ -26,10 +14,10 @@ function runInContext(code, context, options) {
 }
 
 function compileFunction() {
-  notimpl("compileFunction");
+  throwNotImplemented("node:vm compileFunction", 401);
 }
 function measureMemory() {
-  notimpl("measureMemory");
+  throwNotImplemented("node:vm measureMemory", 401);
 }
 
 const defaultObject = {

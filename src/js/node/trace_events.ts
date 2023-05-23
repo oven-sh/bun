@@ -1,6 +1,5 @@
 // Hardcoded module "node:trace_events"
 // This is a stub! This is not actually implemented yet.
-
 class Tracing {
   enabled = false;
   categories = "";

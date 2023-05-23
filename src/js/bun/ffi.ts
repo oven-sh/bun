@@ -1,4 +1,5 @@
-// --- FFIType ---
+// FFIType is injected in this file
+declare const FFIType: typeof import("bun:ffi").FFIType;
 
 export const suffix =
   process.platform === "darwin"

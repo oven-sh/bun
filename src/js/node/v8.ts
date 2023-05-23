@@ -1,43 +1,26 @@
 // Hardcoded module "node:v8"
 // This is a stub! None of this is actually implemented yet.
-
-class TODO extends Error {
-  constructor(messageName) {
-    const message = messageName
-      ? `node:v8 ${messageName} is not implemented yet in Bun. `
-      : `node:v8 is not implemented yet in Bun`;
-    super(message);
-    this.name = "TODO";
-  }
-}
-
-function hideFromStack(fns) {
-  for (const fn of fns) {
-    Object.defineProperty(fn, "name", {
-      value: "::bunternal::",
-    });
-  }
-}
+import { hideFromStack, throwNotImplemented } from "../shared";
 
 function notimpl(message) {
-  throw new TODO(message);
+  throwNotImplemented("node:v8 " + message);
 }
 
 class Deserializer {
   constructor() {
-    notimpl();
+    notimpl("Deserializer");
   }
 }
 class Serializer {
   constructor() {
-    notimpl();
+    notimpl("Serializer");
   }
 }
 class DefaultDeserializer extends Deserializer {}
 class DefaultSerializer extends Serializer {}
 class GCProfiler {
   constructor() {
-    notimpl();
+    notimpl("GCProfiler");
   }
 }
 
@@ -144,8 +127,7 @@ export {
   defaultObject as default,
 };
 
-hideFromStack([
-  TODO.prototype.constructor,
+hideFromStack(
   notimpl,
   cachedDataVersionTag,
   getHeapSnapshot,
@@ -164,4 +146,4 @@ hideFromStack([
   DefaultDeserializer,
   DefaultSerializer,
   GCProfiler,
-]);
+);

@@ -1,30 +1,9 @@
 // Hardcoded module "node:http2"
 // This is a stub! None of this is actually implemented yet.
-
-function hideFromStack(fns) {
-  for (const fn of fns) {
-    Object.defineProperty(fn, "name", {
-      value: "::bunternal::",
-    });
-  }
-}
-
-class TODO extends Error {
-  constructor(messageName) {
-    const message = messageName
-      ? `node:http2 ${messageName} is not implemented yet in Bun. Track the status and thumbs up the issue: https://github.com/oven-sh/bun/issues/887`
-      : `node:http2 is not implemented yet in Bun. Track the status and thumbs up the issue: https://github.com/oven-sh/bun/issues/887`;
-    super(message);
-    this.name = "TODO";
-  }
-}
-
-function notimpl(message) {
-  throw new TODO(message);
-}
+import { hideFromStack, throwNotImplemented } from "../shared";
 
 function connect() {
-  notimpl("connect");
+  throwNotImplemented("node:http2 connect", 887);
 }
 const constants = {
   NGHTTP2_ERR_FRAME_SIZE_ERROR: -522,
@@ -270,10 +249,10 @@ const constants = {
 };
 
 function createServer() {
-  notimpl("createServer");
+  throwNotImplemented("node:http2 createServer", 887);
 }
 function createSecureServer() {
-  notimpl("createSecureServer");
+  throwNotImplemented("node:http2 createSecureServer", 887);
 }
 function getDefaultSettings() {
   return {
@@ -295,10 +274,10 @@ function getUnpackedSettings() {
 }
 const sensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
 function Http2ServerRequest() {
-  notimpl("Http2ServerRequest");
+  throwNotImplemented("node:http2 Http2ServerRequest", 887);
 }
 function Http2ServerResponse() {
-  notimpl("Http2ServerResponse");
+  throwNotImplemented("node:http2 Http2ServerResponse", 887);
 }
 
 const defaultObject = {
@@ -330,9 +309,7 @@ export {
 };
 
 hideFromStack([
-  TODO.prototype.constructor,
   Http2ServerRequest,
-  notimpl,
   Http2ServerResponse,
   connect,
   createServer,

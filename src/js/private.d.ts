@@ -1,6 +1,23 @@
 // The types in this file are not publicly defined, but do exist.
 // Stuff like `Bun.fs()` and so on.
 
+/**
+ * Works like the zig `@compileError` built-in, but only supports plain strings.
+ */
+declare function $bundleError(error: string);
+
+declare module "bun" {
+  var TOML: {
+    parse(contents: string): any;
+  };
+  function fs(): typeof import("node:fs");
+  function _Os(): typeof import("node:os");
+  function jest(): typeof import("bun:test");
+  var main: string;
+  var tty: Array<{ hasColors: boolean }>;
+  var FFI: any;
+}
+
 declare var Loader: {
   registry: Map<string, LoaderEntry>;
 
@@ -32,13 +49,6 @@ interface LoaderModule {
   dependenciesMap: Map<string, LoaderEntry>;
 }
 
-declare module "bun" {
-  var TOML: {
-    parse(contents: string): any;
-  };
-  function fs(): typeof import("node:fs");
-  function _Os(): typeof import("node:os");
-  function jest(): typeof import("bun:test");
-  var main: string;
-  var tty: Array<{ hasColors: boolean }>;
+declare interface Error {
+  code?: string;
 }

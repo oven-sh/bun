@@ -1,17 +1,9 @@
 // Hardcoded module "node:cluster"
-
 // This is a stub
 // We leave it in here to provide a better error message
 // TODO: implement node cluster
-const { EventEmitter } = import.meta.require("node:events");
-class TODO extends Error {
-  constructor(
-    message = "node:cluster is not implemented yet in Bun. Track the status: https://github.com/oven-sh/bun/issues/2428",
-  ) {
-    super(message);
-    this.name = "TODO";
-  }
-}
+import EventEmitter from "node:events";
+import { throwNotImplemented } from "../shared";
 
 export var SCHED_NONE = 0,
   SCHED_RR = 1,
@@ -23,7 +15,7 @@ export var SCHED_NONE = 0,
   cluster;
 
 Worker = function Worker() {
-  throw new TODO("Worker is not implemented yet in Bun");
+  throwNotImplemented("node:cluster Worker", 2428);
 };
 
 // TODO: is it okay for this to be a class?
@@ -35,15 +27,15 @@ class Cluster extends EventEmitter {
   static Worker = Worker;
 
   fork() {
-    throw new TODO();
+    throwNotImplemented("node:cluster", 2428);
   }
 
   disconnect() {
-    throw new TODO();
+    throwNotImplemented("node:cluster", 2428);
   }
 
   setupMaster() {
-    throw new TODO();
+    throwNotImplemented("node:cluster", 2428);
   }
 
   settings = {};
@@ -51,6 +43,7 @@ class Cluster extends EventEmitter {
   SCHED_NONE = 0;
   SCHED_RR = 1;
   schedulingPolicy = 2;
+  // @ts-expect-error
   [Symbol.for("CommonJS")] = 0;
 }
 

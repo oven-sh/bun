@@ -1,8 +1,8 @@
 // Hardcoded module "node:tls"
-const { isTypedArray } = import.meta.require("util/types");
+import { isTypedArray } from "util/types";
 
 function parseCertString() {
-  throw Error("Not implemented");
+  throwNotImplemented("Not implemented");
 }
 
 function isValidTLSArray(obj) {

@@ -1,15 +1,17 @@
 // Hardcoded module "node:perf_hooks"
+import { throwNotImplemented } from "../shared";
+
 export var performance = globalThis.performance;
 
 export class PerformanceObserver {
   constructor() {
-    throw new Error("PerformanceEntry is not implemented yet");
+    throwNotImplemented("PerformanceObserver");
   }
 }
 
 export class PerformanceEntry {
   constructor() {
-    throw new Error("PerformanceEntry is not implemented yet");
+    throwNotImplemented("PerformanceEntry");
   }
 }
 export class PerformanceNodeTiming {

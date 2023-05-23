@@ -5,7 +5,7 @@ var drainMicrotasks = () => {
 };
 
 var notImplemented = () => {
-  console.warn("[bun]: async_hooks has not been implemented yet :(");
+  console.warn("[bun]: async_hooks has not been implemented yet. See https://github.com/oven-sh/bun/issues/1832");
   notImplemented = () => {};
 };
 

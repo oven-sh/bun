@@ -1285,7 +1285,16 @@ export class ClientRequest extends OutgoingMessage {
 
     var defaultAgent = options._defaultAgent || Agent.globalAgent;
 
-    const protocol = (this.#protocol = options.protocol ||= defaultAgent.protocol);
+    let protocol = options.protocol;
+    if (!protocol) {
+      if (options.port === 443) {
+        protocol = "https:";
+      } else {
+        protocol = defaultAgent.protocol || "http:";
+      }
+      this.#protocol = protocol;
+    }
+
     switch (this.#agent?.protocol) {
       case undefined: {
         break;

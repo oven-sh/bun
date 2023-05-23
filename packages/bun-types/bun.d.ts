@@ -3139,10 +3139,10 @@ declare module "bun" {
    */
   export function connect<Data = undefined>(
     options: TCPSocketConnectOptions<Data>,
-  ): Promise<TCPSocketListener<typeof options>>;
+  ): Promise<Socket<Data>>;
   export function connect<Data = undefined>(
     options: UnixSocketOptions<Data>,
-  ): Promise<UnixSocketListener<typeof options>>;
+  ): Promise<Socket<Data>>;
 
   /**
    *

@@ -27,6 +27,20 @@ it("should keep process alive only when active", async () => {
   ).toEqual(["[Client] OPENED", "[Client] GOT response", "[Client] CLOSED"]);
 });
 
+it("connect() should return the socket object", async () => {
+  const { exited, stdout, stderr } = spawn({
+    cmd: [bunExe(), "connect-returns-socket.js"],
+    cwd: import.meta.dir,
+    stdout: "pipe",
+    stdin: null,
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(await exited).toBe(0);
+  expect(await new Response(stderr).text()).toBe("");
+});
+
 it("listen() should throw connection error for invalid host", () => {
   expect(() => {
     const handlers: SocketHandler = {

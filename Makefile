@@ -331,7 +331,7 @@ ALL_JSC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/WTF/Headers \
 
 SHARED_INCLUDE_DIR = -I$(realpath src/bun.js/bindings)/ \
 		-I$(realpath src/js/builtins/) \
-		-I$(realpath src/js/out) \
+		-I$(realpath src/js/out/) \
 		-I$(realpath src/bun.js/bindings) \
 		-I$(realpath src/bun.js/bindings/webcore) \
 		-I$(realpath src/bun.js/bindings/webcrypto) \

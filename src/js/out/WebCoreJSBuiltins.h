@@ -3964,6 +3964,7 @@ extern const JSC::ConstructAbility s_importMetaObjectInternalRequireCodeConstruc
 extern const JSC::ConstructorKind s_importMetaObjectInternalRequireCodeConstructorKind;
 extern const JSC::ImplementationVisibility s_importMetaObjectInternalRequireCodeImplementationVisibility;
 
+<<<<<<< HEAD
 // createRequireCache
 #define WEBCORE_BUILTIN_IMPORTMETAOBJECT_CREATEREQUIRECACHE 1
 extern const char* const s_importMetaObjectCreateRequireCacheCode;
@@ -3972,6 +3973,8 @@ extern const JSC::ConstructAbility s_importMetaObjectCreateRequireCacheCodeConst
 extern const JSC::ConstructorKind s_importMetaObjectCreateRequireCacheCodeConstructorKind;
 extern const JSC::ImplementationVisibility s_importMetaObjectCreateRequireCacheCodeImplementationVisibility;
 
+=======
+>>>>>>> c5cd1573 (fixup makefile)
 // require
 #define WEBCORE_BUILTIN_IMPORTMETAOBJECT_REQUIRE 1
 extern const char* const s_importMetaObjectRequireCode;
@@ -3992,7 +3995,10 @@ extern const JSC::ImplementationVisibility s_importMetaObjectMainCodeImplementat
     macro(loadCJS2ESM, importMetaObjectLoadCJS2ESM, 1) \
     macro(requireESM, importMetaObjectRequireESM, 1) \
     macro(internalRequire, importMetaObjectInternalRequire, 1) \
+<<<<<<< HEAD
     macro(createRequireCache, importMetaObjectCreateRequireCache, 0) \
+=======
+>>>>>>> c5cd1573 (fixup makefile)
     macro(require, importMetaObjectRequire, 1) \
     macro(main, importMetaObjectMain, 0) \
 
@@ -4000,7 +4006,10 @@ extern const JSC::ImplementationVisibility s_importMetaObjectMainCodeImplementat
     macro(importMetaObjectLoadCJS2ESMCode, loadCJS2ESM, ASCIILiteral(), s_importMetaObjectLoadCJS2ESMCodeLength) \
     macro(importMetaObjectRequireESMCode, requireESM, ASCIILiteral(), s_importMetaObjectRequireESMCodeLength) \
     macro(importMetaObjectInternalRequireCode, internalRequire, ASCIILiteral(), s_importMetaObjectInternalRequireCodeLength) \
+<<<<<<< HEAD
     macro(importMetaObjectCreateRequireCacheCode, createRequireCache, ASCIILiteral(), s_importMetaObjectCreateRequireCacheCodeLength) \
+=======
+>>>>>>> c5cd1573 (fixup makefile)
     macro(importMetaObjectRequireCode, require, ASCIILiteral(), s_importMetaObjectRequireCodeLength) \
     macro(importMetaObjectMainCode, main, "get main"_s, s_importMetaObjectMainCodeLength) \
 
@@ -4008,7 +4017,10 @@ extern const JSC::ImplementationVisibility s_importMetaObjectMainCodeImplementat
     macro(loadCJS2ESM) \
     macro(requireESM) \
     macro(internalRequire) \
+<<<<<<< HEAD
     macro(createRequireCache) \
+=======
+>>>>>>> c5cd1573 (fixup makefile)
     macro(require) \
     macro(main) \
 

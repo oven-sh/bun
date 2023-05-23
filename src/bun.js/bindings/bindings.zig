@@ -2354,6 +2354,11 @@ pub const JSGlobalObject = extern struct {
     extern fn JSGlobalObject__throwTerminationException(this: *JSGlobalObject) void;
     pub const throwTerminationException = JSGlobalObject__throwTerminationException;
     pub const clearTerminationException = JSGlobalObject__clearTerminationException;
+    extern fn JSGlobalObject__setTimeZone(this: *JSGlobalObject, timeZone: *const ZigString) bool;
+
+    pub fn setTimeZone(this: *JSGlobalObject, timeZone: *const ZigString) bool {
+        return JSGlobalObject__setTimeZone(this, timeZone);
+    }
 
     pub fn throwInvalidArguments(
         this: *JSGlobalObject,

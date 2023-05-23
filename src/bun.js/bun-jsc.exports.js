@@ -31,3 +31,5 @@ export const getProtectedObjects = jsc.getProtectedObjects;
 export const generateHeapSnapshotForDebugging = jsc.generateHeapSnapshotForDebugging;
 export const profile = jsc.profile;
 export default jsc;
+export const setTimeZone = jsc.setTimeZone;
+export const setTimezone = setTimeZone;

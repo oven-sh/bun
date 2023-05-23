@@ -98,6 +98,28 @@ it("process.env is spreadable and editable", () => {
   expect(eval(`globalThis.process.env.USER = "${orig}"`)).toBe(orig);
 });
 
+it("process.env.TZ", () => {
+  var origTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  // the default timezone is Etc/UTC
+  if (!"TZ" in process.env) {
+    expect(origTimezone).toBe("Etc/UTC");
+  }
+
+  const realOrigTimezone = origTimezone;
+  if (origTimezone === "America/Anchorage") {
+    origTimezone = "America/New_York";
+  }
+
+  const target = "America/Anchorage";
+  const tzKey = String("TZ" + " ").substring(0, 2);
+  process.env[tzKey] = target;
+  expect(process.env[tzKey]).toBe(target);
+  expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(target);
+  process.env[tzKey] = origTimezone;
+  expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(realOrigTimezone);
+});
+
 it("process.version starts with v", () => {
   expect(process.version.startsWith("v")).toBeTruthy();
 });

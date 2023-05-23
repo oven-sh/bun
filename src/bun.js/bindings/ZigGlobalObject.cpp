@@ -3768,6 +3768,18 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.addOpaqueRoot(context);
 }
 
+extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, const ZigString* timeZone)
+{
+    auto& vm = globalObject->vm();
+
+    if (WTF::setTimeZoneOverride(Zig::toString(*timeZone))) {
+        vm.dateCache.resetIfNecessarySlow();
+        return true;
+    }
+
+    return false;
+}
+
 extern "C" void JSGlobalObject__throwTerminationException(JSC::JSGlobalObject* globalObject)
 {
     globalObject->vm().setHasTerminationRequest();

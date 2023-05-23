@@ -693,27 +693,8 @@ pub const BundleV2 = struct {
         thread_pool: ?*ThreadPoolLib,
         heap: ?ThreadlocalArena,
     ) !*BundleV2 {
-        tracy: {
-            if (bundler.env.get("BUN_TRACY") != null) {
-                if (!bun.tracy.init()) {
-                    Output.prettyErrorln("Failed to load Tracy. Is it installed in your include path?", .{});
-                    Output.flush();
-                    break :tracy;
-                }
+        bundler.env.loadTracy();
 
-                bun.tracy.start();
-
-                if (!bun.tracy.isConnected()) {
-                    std.time.sleep(std.time.ns_per_ms * 10);
-                }
-
-                if (!bun.tracy.isConnected()) {
-                    Output.prettyErrorln("Tracy is not connected. Is Tracy running on your computer?", .{});
-                    Output.flush();
-                    break :tracy;
-                }
-            }
-        }
         var generator = try allocator.create(BundleV2);
         bundler.options.mark_builtins_as_external = bundler.options.target.isBun() or bundler.options.target == .node;
         bundler.resolver.opts.mark_builtins_as_external = bundler.options.target.isBun() or bundler.options.target == .node;

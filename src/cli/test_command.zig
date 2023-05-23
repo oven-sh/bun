@@ -453,9 +453,9 @@ pub const TestCommand = struct {
         );
         vm.argv = ctx.passthrough;
         vm.preload = ctx.preloads;
+        vm.bundler.options.rewrite_jest_for_tests = true;
 
         try vm.bundler.configureDefines();
-        vm.bundler.options.rewrite_jest_for_tests = true;
 
         vm.loadExtraEnv();
         vm.is_main_thread = true;
@@ -466,9 +466,11 @@ pub const TestCommand = struct {
         var TZ_NAME: string =
             // We use the string "Etc/UTC" instead of "UTC" so there is no normalization difference.
             "Etc/UTC";
+
         if (vm.bundler.env.get("TZ")) |tz| {
             TZ_NAME = tz;
         }
+
         if (TZ_NAME.len > 0) {
             _ = vm.global.setTimeZone(&JSC.ZigString.init(TZ_NAME));
         }

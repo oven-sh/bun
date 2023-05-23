@@ -1464,6 +1464,10 @@ pub const BundleOptions = struct {
     /// So we have a list of packages which we know are safe to do this with.
     unwrap_commonjs_packages: []const string = &default_unwrap_commonjs_packages,
 
+    pub fn isTest(this: *const BundleOptions) bool {
+        return this.rewrite_jest_for_tests;
+    }
+
     pub fn setProduction(this: *BundleOptions, value: bool) void {
         this.production = value;
         this.jsx.development = !value;
@@ -1509,10 +1513,20 @@ pub const BundleOptions = struct {
             this.target,
             loader_,
             env,
-            if (loader_) |e|
-                e.map.get("BUN_ENV") orelse e.map.get("NODE_ENV")
-            else
-                null,
+            node_env: {
+                if (loader_) |e|
+                    if (e.map.get("BUN_ENV") orelse e.map.get("NODE_ENV")) |env_| break :node_env env_;
+
+                if (this.isTest()) {
+                    break :node_env "\"test\"";
+                }
+
+                if (this.production) {
+                    break :node_env "\"production\"";
+                }
+
+                break :node_env "\"development\"";
+            },
         );
         this.defines_loaded = true;
     }

@@ -211,6 +211,8 @@ pub const Run = struct {
             }
         }
 
+        vm.bundler.env.loadTracy();
+
         var callback = OpaqueWrap(Run, Run.start);
         vm.global.vm().holdAPILock(&run, callback);
     }

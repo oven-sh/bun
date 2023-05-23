@@ -918,7 +918,7 @@ pub const Printer = struct {
         };
 
         env_loader.loadProcess();
-        try env_loader.load(&fs.fs, entries_option.entries, false);
+        try env_loader.load(&fs.fs, entries_option.entries, .production);
         var log = logger.Log.init(allocator);
         try options.load(
             allocator,

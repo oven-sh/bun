@@ -403,6 +403,10 @@ pub const Loader = struct {
     @".env.local": ?logger.Source = null,
     @".env.development": ?logger.Source = null,
     @".env.production": ?logger.Source = null,
+    @".env.test": ?logger.Source = null,
+    @".env.development.local": ?logger.Source = null,
+    @".env.production.local": ?logger.Source = null,
+    @".env.test.local": ?logger.Source = null,
     @".env": ?logger.Source = null,
 
     quiet: bool = false,
@@ -435,6 +439,30 @@ pub const Loader = struct {
             this.map.get("TDDIUM") orelse
             this.map.get("JENKINS_URL") orelse
             this.map.get("bamboo.buildKey")) != null;
+    }
+
+    pub fn loadTracy(this: *const Loader) void {
+        tracy: {
+            if (this.get("BUN_TRACY") != null) {
+                if (!bun.tracy.init()) {
+                    Output.prettyErrorln("Failed to load Tracy. Is it installed in your include path?", .{});
+                    Output.flush();
+                    break :tracy;
+                }
+
+                bun.tracy.start();
+
+                if (!bun.tracy.isConnected()) {
+                    std.time.sleep(std.time.ns_per_ms * 10);
+                }
+
+                if (!bun.tracy.isConnected()) {
+                    Output.prettyErrorln("Tracy is not connected. Is Tracy running on your computer?", .{});
+                    Output.flush();
+                    break :tracy;
+                }
+            }
+        }
     }
 
     pub fn getHttpProxy(this: *Loader, url: URL) ?URL {
@@ -711,26 +739,58 @@ pub const Loader = struct {
         this: *Loader,
         fs: *Fs.FileSystem.RealFS,
         dir: *Fs.FileSystem.DirEntry,
-        comptime development: bool,
+        comptime suffix: enum { development, production, @"test" },
     ) !void {
         const start = std.time.nanoTimestamp();
         var dir_handle: std.fs.Dir = std.fs.cwd();
 
-        if (dir.hasComptimeQuery(".env.local")) {
-            try this.loadEnvFile(fs, dir_handle, ".env.local", false);
-            Analytics.Features.dotenv = true;
+        switch (comptime suffix) {
+            .development => {
+                if (dir.hasComptimeQuery(".env.development.local")) {
+                    try this.loadEnvFile(fs, dir_handle, ".env.development.local", false);
+                    Analytics.Features.dotenv = true;
+                }
+            },
+            .production => {
+                if (dir.hasComptimeQuery(".env.production.local")) {
+                    try this.loadEnvFile(fs, dir_handle, ".env.production.local", false);
+                    Analytics.Features.dotenv = true;
+                }
+            },
+            .@"test" => {
+                if (dir.hasComptimeQuery(".env.test.local")) {
+                    try this.loadEnvFile(fs, dir_handle, ".env.test.local", false);
+                    Analytics.Features.dotenv = true;
+                }
+            },
         }
 
-        if (comptime development) {
-            if (dir.hasComptimeQuery(".env.development")) {
-                try this.loadEnvFile(fs, dir_handle, ".env.development", false);
+        if (comptime suffix != .@"test") {
+            if (dir.hasComptimeQuery(".env.local")) {
+                try this.loadEnvFile(fs, dir_handle, ".env.local", false);
                 Analytics.Features.dotenv = true;
             }
-        } else {
-            if (dir.hasComptimeQuery(".env.production")) {
-                try this.loadEnvFile(fs, dir_handle, ".env.production", false);
-                Analytics.Features.dotenv = true;
-            }
+        }
+
+        switch (comptime suffix) {
+            .development => {
+                if (dir.hasComptimeQuery(".env.development")) {
+                    try this.loadEnvFile(fs, dir_handle, ".env.development", false);
+                    Analytics.Features.dotenv = true;
+                }
+            },
+            .production => {
+                if (dir.hasComptimeQuery(".env.production")) {
+                    try this.loadEnvFile(fs, dir_handle, ".env.production", false);
+                    Analytics.Features.dotenv = true;
+                }
+            },
+            .@"test" => {
+                if (dir.hasComptimeQuery(".env.test")) {
+                    try this.loadEnvFile(fs, dir_handle, ".env.test", false);
+                    Analytics.Features.dotenv = true;
+                }
+            },
         }
 
         if (dir.hasComptimeQuery(".env")) {
@@ -746,21 +806,33 @@ pub const Loader = struct {
             @intCast(u8, @boolToInt(this.@".env.local" != null)) +
             @intCast(u8, @boolToInt(this.@".env.development" != null)) +
             @intCast(u8, @boolToInt(this.@".env.production" != null)) +
+            @intCast(u8, @boolToInt(this.@".env.test" != null)) +
+            @intCast(u8, @boolToInt(this.@".env.test.local" != null)) +
+            @intCast(u8, @boolToInt(this.@".env.development.local" != null)) +
+            @intCast(u8, @boolToInt(this.@".env.production.local" != null)) +
             @intCast(u8, @boolToInt(this.@".env" != null));
 
         if (count == 0) return;
         const elapsed = @intToFloat(f64, (std.time.nanoTimestamp() - start)) / std.time.ns_per_ms;
 
         const all = [_]string{
+            ".env.development.local",
+            ".env.production.local",
+            ".env.test.local",
             ".env.local",
             ".env.development",
             ".env.production",
+            ".env.test",
             ".env",
         };
         const loaded = [_]bool{
             this.@".env.local" != null,
             this.@".env.development" != null,
             this.@".env.production" != null,
+            this.@".env.test" != null,
+            this.@".env.development.local" != null,
+            this.@".env.production.local" != null,
+            this.@".env.test.local" != null,
             this.@".env" != null,
         };
 
@@ -783,6 +855,7 @@ pub const Loader = struct {
     }
 
     pub fn loadEnvFile(this: *Loader, fs: *Fs.FileSystem.RealFS, dir: std.fs.Dir, comptime base: string, comptime override: bool) !void {
+        _ = fs;
         if (@field(this, base) != null) {
             return;
         }
@@ -808,13 +881,7 @@ pub const Loader = struct {
                 },
             }
         };
-        Fs.FileSystem.setMaxFd(file.handle);
-
-        defer {
-            if (fs.needToCloseFiles()) {
-                file.close();
-            }
-        }
+        defer file.close();
 
         const stat = try file.stat();
         if (stat.size == 0) {
@@ -825,6 +892,7 @@ pub const Loader = struct {
         var buf = try this.allocator.allocSentinel(u8, stat.size, 0);
         errdefer this.allocator.free(buf);
         var contents = try file.readAll(buf);
+
         // always sentinel
         buf.ptr[contents + 1] = 0;
         const source = logger.Source.initPathString(base, buf.ptr[0..contents :0]);

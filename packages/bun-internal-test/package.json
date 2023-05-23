@@ -14,7 +14,7 @@
     "prettier": "^2.8.2"
   },
   "scripts": {
-    "test": "node src/runner.node.mjs",
+    "test": "bun scripts/run-bun-tests.ts",
     "test:ecosystem": "bun scripts/run-ecosystem-tests.ts"
   }
 }

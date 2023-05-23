@@ -427,13 +427,12 @@ jobs:
           sudo mv bun /usr/local/bin/bun
           bun --version
       - id: test
-        name: Test (node runner)
-        # if: ${{github.event.inputs.use_bun == 'false'}}
+        name: Test
         run: |
           bun install
           bun install --cwd test
           bun install --cwd packages/bun-internal-test
-          node packages/bun-internal-test/src/runner.node.mjs || true
+          bun run test || true
       - name: Comment on PR
         if: steps.test.outputs.failing_tests != '' && github.event_name == 'pull_request'
         uses: thollander/actions-comment-pull-request@v2

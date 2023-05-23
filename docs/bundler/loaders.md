@@ -221,7 +221,7 @@ If a value is specified for `publicPath`, the import will use value as a prefix 
 {% /table %}
 
 {% callout %}
-The location and file name of the copied file is determined by the value of [`naming.asset`](/docs/cli/build#naming).
+The location and file name of the copied file is determined by the value of [`naming.asset`](/docs/bundler#naming).
 {% /callout %}
 This loader is copied into the `outdir` as-is. The name of the copied file is determined using the value of `naming.asset`.
 

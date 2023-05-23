@@ -26,7 +26,7 @@ Get started with one of the quick links below, or read on to learn more about Bu
 {% arrowbutton href="/docs/quickstart" text="Do the quickstart" /%}
 {% arrowbutton href="/docs/cli/install" text="Install a package" /%}
 {% arrowbutton href="/docs/templates" text="Use a project template" /%}
-{% arrowbutton href="/docs/cli/build" text="Bundle code for production" /%}
+{% arrowbutton href="/docs/bundler" text="Bundle code for production" /%}
 {% arrowbutton href="/docs/api/http" text="Build an HTTP server" /%}
 {% arrowbutton href="/docs/api/websockets" text="Build a Websocket server" /%}
 {% arrowbutton href="/docs/api/file-io" text="Read and write files" /%}

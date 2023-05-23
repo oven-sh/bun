@@ -1,6 +1,8 @@
-{% callout %}
-**Note** — This page documents the `Bun.serve` API. This API is heavily optimized and represents the recommended way to build HTTP servers in Bun. Existing Node.js projects may use Bun's [nearly complete](/docs/runtime/nodejs-apis#node_http) implementation of the Node.js [`http`](https://nodejs.org/api/http.html) and [`https`](https://nodejs.org/api/https.html) modules.
-{% /callout %}
+## Node.js built-ins (`node:http` and `node:https`)
+
+Bun implements the Node.js [`http`](https://nodejs.org/api/http.html) and [`https`](https://nodejs.org/api/https.html) modules. These modules have been re-implemented to use Bun's fast internal HTTP infrastructure. Feel free to use these modules directly; frameworks like [Express](https://expressjs.com/) that depend on these modules should work out of the box. For granular compatibility information, see [Runtime > Node.js APIs](/docs/runtime/nodejs-apis).
+
+For better performance and a cleaner API, we recommend using [`Bun.serve`](#start-a-server-bun-serve) (documented below).
 
 ## Send a request (`fetch()`)
 
@@ -102,30 +104,72 @@ server.stop();
 
 ### TLS
 
-Bun supports TLS out of the box, powered by [OpenSSL](https://www.openssl.org/). Enable TLS by passing in a value for `keyFile` and `certFile`; both are required to enable TLS. If needed, supply a `passphrase` to decrypt the `keyFile`.
+Bun supports TLS out of the box, powered by [OpenSSL](https://www.openssl.org/). Enable TLS by passing in a value for `key` and `cert`; both are required to enable TLS. If needed, supply a `passphrase` to decrypt the `keyFile`.
 
 ```ts
 Bun.serve({
   fetch(req) {
     return new Response("Hello!!!");
   },
-  keyFile: "./key.pem", // path to TLS key
-  certFile: "./cert.pem", // path to TLS cert
-  passphrase: "super-secret", // optional passphrase
+
+  // can be string, BunFile, TypedArray, Buffer, or array thereof
+  key: Bun.file("./key.pem"),
+  cert: Bun.file("./cert.pem"),
+
+  // passphrase, only required if key is encrypted
+  passphrase: "super-secret",
 });
 ```
 
-The root CA and Diffie-Helman parameters can be configured as well.
+The `key` and `cert` fields expect the _contents_ of your TLS key and certificate. This can be a string, `BunFile`, `TypedArray`, or `Buffer`.
+
+```ts
+Bun.serve({
+  fetch() {},
+
+  // BunFile
+  key: Bun.file("./key.pem"),
+  // Buffer
+  key: fs.readFileSync("./key.pem"),
+  // string
+  key: fs.readFileSync("./key.pem", "utf8"),
+  // array
+  key: [Bun.file('./key1.pem'), Bun.file('./key2.pem']
+});
+```
+
+Earlier versions of Bun supported passing a file path as `keyFile` and `certFile`; this has been deprecated as of `v0.6.3`.
+
+```ts
+// deprecated 🚧
+Bun.serve({
+  fetch() {
+    /* ... */
+  },
+  keyFile: "/path/to/key.pem", // path to TLS key
+  certFile: "/path/to/cert.pem", // path to TLS cert
+});
+```
+
+Optionally, you can override the trusted CA certificates by passing a value for `ca`. By default, the server will trust the list of well-known CAs curated by Mozilla. When `ca` is specified, the Mozilla list is overwritten.
 
 ```ts
 Bun.serve({
   fetch(req) {
     return new Response("Hello!!!");
   },
-  keyFile: "./key.pem", // path to TLS key
-  certFile: "./cert.pem", // path to TLS cert
-  caFile: "./ca.pem", // path to root CA certificate
-  dhParamsFile: "./dhparams.pem", // Diffie Helman parameters
+  key: Bun.file("./key.pem"), // path to TLS key
+  cert: Bun.file("./cert.pem"), // path to TLS cert
+  ca: Bun.file("./ca.pem"), // path to root CA certificate
+});
+```
+
+To override Diffie-Helman parameters:
+
+```ts
+Bun.serve({
+  // ...
+  dhParamsFile: "./dhparams.pem", // path to Diffie Helman parameters
 });
 ```
 

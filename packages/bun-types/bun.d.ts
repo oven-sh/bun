@@ -5,6 +5,21 @@ interface VoidFunction {
 declare namespace Bun {
   interface Env extends Dict<string> {
     NODE_ENV: string;
+
+    /**
+     * The timezone used by Intl, Date, etc.
+     *
+     * To change the timezone, set `Bun.env.TZ` or `process.env.TZ` to the time zone you want to use.
+     *
+     * You can view the current timezone with `Intl.DateTimeFormat().resolvedOptions().timeZone`
+     *
+     * @example
+     * ```js
+     * Bun.env.TZ = "America/Los_Angeles";
+     * console.log(Intl.DateTimeFormat().resolvedOptions().timeZone); // "America/Los_Angeles"
+     * ```
+     */
+    TZ?: string;
   }
 }
 

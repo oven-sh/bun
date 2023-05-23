@@ -236,8 +236,8 @@ This page is updated regularly to reflect compatibility status of the latest ver
 ---
 
 - {% anchor id="node_vm" %} [`node:vm`](https://nodejs.org/api/vm.html) {% /anchor %}
-- 🔴
-- Not implemented.
+- 🟡
+- Partially implemented.
 
 ---
 

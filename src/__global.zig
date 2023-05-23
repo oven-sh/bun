@@ -49,7 +49,7 @@ pub inline fn getStartTime() i128 {
 
 pub const version: @import("./install/semver.zig").Version = .{
     .major = 0,
-    .minor = 5,
+    .minor = 6,
     .patch = build_id,
 };
 

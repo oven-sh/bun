@@ -1,22 +1,20 @@
 # JavaScript Builtins
 
-TLDR:
+**TLDR** — When files in this directory change, run:
 
 ```bash
 # Delete the built files
-make clean-bindings generate-bindings && \
-    # Compile all the C++ files which live in ../bindings
-    make bindings -j10 && \
-    # Re-link the binary without compiling zig (so it's faster)
-    make bun-link-lld-debug
+$ make regenerate-bindings
+# Re-link the binary without compiling zig (so it's faster)
+$ make bun-link-lld-debug
 ```
 
-JavaScript files in [./js](./js) use JavaScriptCore's builtins syntax
+TypeScript files in [./ts](./ts) are bundled into C++ Headers that can access JavaScriptCore intrinsics. These files use special globals that are prefixed with `$`.
 
 ```js
-@getter
-function foo() {
-    return @getByIdDirectPrivate(this, "superSecret");
+$getter
+export function foo() {
+    return $getByIdDirectPrivate(this, "superSecret");
 }
 ```
 
@@ -26,16 +24,30 @@ V8 has a [similar feature](https://v8.dev/blog/embedded-builtins) (they use `%` 
 
 They usually are accompanied by a C++ file.
 
-The `js` directory is necessary for the bindings generator to work.
+We use a custom code generator located in `./codegen` which contains a regex-based parser that separates each function into it's own bundling context, so syntax like top level variables / functions will not work.
+
+You can also use `process.platform` and `process.arch` in these files. The values are inlined and DCE'd.
+
+## Generating builtins
 
 To regenerate the builtins, run this from Bun's project root (where the `Makefile` is)
 
 ```bash
-make builtins
+$ make builtins
 ```
 
 You'll want to also rebuild all the C++ bindings or you will get strange crashes on start
 
 ```bash
-make clean-bindings
+$ make clean-bindings
+```
+
+The `make regenerate-bindings` command will clean and rebuild the bindings.
+
+Also, you can run the code generator manually.
+
+```bash
+$ bun ./codegen/index.ts
+# pass --minify to minify (make passes this by default)
+# pass --keep-tmp to keep the temporary ./tmp folder, which contains processed pre-bundled .ts files
 ```

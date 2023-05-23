@@ -38,8 +38,6 @@
 #include "JavaScriptCore/BuiltinNames.h"
 
 #include "JSBufferEncodingType.h"
-#include "JSBufferPrototypeBuiltins.h"
-#include "JSBufferConstructorBuiltins.h"
 #include "JavaScriptCore/JSBase.h"
 #if ENABLE(MEDIA_SOURCE)
 #include "BufferMediaSource.h"

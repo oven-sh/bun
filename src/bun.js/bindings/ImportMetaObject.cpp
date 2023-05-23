@@ -33,8 +33,6 @@
 #include "JavaScriptCore/BuiltinNames.h"
 
 #include "JSBufferEncodingType.h"
-#include "JSBufferPrototypeBuiltins.h"
-#include "JSBufferConstructorBuiltins.h"
 #include "JavaScriptCore/JSBase.h"
 
 #include "JSDOMURL.h"

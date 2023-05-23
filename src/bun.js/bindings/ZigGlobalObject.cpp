@@ -93,7 +93,7 @@
 #include "JSReadableHelper.h"
 #include "Process.h"
 
-#include "WebCoreJSBuiltinInternals.h"
+#include "WebCoreJSBuiltins.h"
 #include "JSBuffer.h"
 #include "JSBufferList.h"
 #include "JSFFIFunction.h"
@@ -103,7 +103,6 @@
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "napi.h"
 #include "JSSQLStatement.h"
-#include "ReadableStreamBuiltins.h"
 #include "BunJSCModule.h"
 #include "ModuleLoader.h"
 #include "NodeVMScript.h"

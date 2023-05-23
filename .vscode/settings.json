@@ -108,6 +108,11 @@
     "editor.defaultFormatter": "xaver.clang-format"
   },
   "files.associations": {
+    "*.{setting,comp,fuse,fu}": "lua",
+    "*.ctk": "json",
+    "*.json5": "json5",
+    "*.json": "jsonc",
+    "*.scriptlib": "lua",
     "*.lock": "yarnlock",
     "*.idl": "cpp",
     "memory": "cpp",
@@ -216,7 +221,14 @@
     "regex": "cpp",
     "span": "cpp",
     "valarray": "cpp",
-    "codecvt": "cpp"
+    "codecvt": "cpp",
+    "hash_map": "cpp",
+    "source_location": "cpp",
+    "numbers": "cpp",
+    "semaphore": "cpp",
+    "stdfloat": "cpp",
+    "stop_token": "cpp",
+    "cfenv": "cpp"
   },
   "cmake.configureOnOpen": false,
   "C_Cpp.errorSquiggles": "enabled",

@@ -4,10 +4,12 @@ import path from "path";
 const OUT_DIR = path.join(import.meta.dir, "out/");
 const TMP_DIR = path.join(import.meta.dir, "out/tmp");
 
-if (fs.existsSync(OUT_DIR)) {
-  fs.rmSync(OUT_DIR, { recursive: true });
+if (fs.existsSync(OUT_DIR + "/modules")) {
+  fs.rmSync(OUT_DIR + "/modules", { recursive: true });
 }
-fs.mkdirSync(OUT_DIR, { recursive: true });
+if (fs.existsSync(OUT_DIR + "/modules_dev")) {
+  fs.rmSync(OUT_DIR + "/modules_dev", { recursive: true });
+}
 
 function readdirRecursive(root: string): string[] {
   const files = fs.readdirSync(root, { withFileTypes: true });
@@ -34,11 +36,14 @@ const build_prod = await Bun.build({
     "process.arch": JSON.stringify(process.arch),
   },
 });
+
 const build_dev = await Bun.build({
   entrypoints: entrypoints,
   target: "bun",
   sourcemap: "external",
-  minify: false,
+  minify: {
+    syntax: true,
+  },
   naming: {
     entry: "[dir]/[name].[ext]",
   },

@@ -746,6 +746,7 @@ pub const TestCommand = struct {
             }
 
             const file_end = reporter.jest.files.len;
+
             for (file_start..file_end) |module_id| {
                 const module = reporter.jest.files.items(.module_scope)[module_id];
 
@@ -770,7 +771,15 @@ pub const TestCommand = struct {
                         prev_unhandled_count = vm.unhandled_error_counter;
                     }
                 }
-                _ = vm.global.vm().runGC(false);
+                switch (vm.aggressive_garbage_collection) {
+                    .none => {},
+                    .mild => {
+                        _ = vm.global.vm().collectAsync();
+                    },
+                    .aggressive => {
+                        _ = vm.global.vm().runGC(false);
+                    },
+                }
             }
 
             vm.global.vm().clearMicrotaskCallback();

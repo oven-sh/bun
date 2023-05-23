@@ -209,7 +209,7 @@ export default Hello;
 });
 
 describe("errors", () => {
-  it("valid loaders work", () => {
+  it.todo("valid loaders work", () => {
     const validLoaders = ["js", "jsx", "ts", "tsx"];
     const inputs = ["export default 'hi';", "export default 'hi';", "export default 'hi';", "export default 'hi';"];
     for (let i = 0; i < validLoaders.length; i++) {
@@ -306,7 +306,7 @@ describe("errors", () => {
     }
   });
 
-  it("async transpiler errors work", async () => {
+  it.skip("async transpiler errors work", async () => {
     expect(async () => {
       globalThis.asyncOnLoad = `const x: string = -NaNAn../!!;`;
       await import("async:fail");

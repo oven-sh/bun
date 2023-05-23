@@ -1,4 +1,4 @@
-// @module "node:timers/promises"
+// Hardcoded module "node:timers/promises"
 // https://github.com/niksy/isomorphic-timers-promises/blob/master/index.js
 const symbolAsyncIterator = Symbol.asyncIterator;
 

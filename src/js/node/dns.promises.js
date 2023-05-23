@@ -1,4 +1,4 @@
-// @module "node:dns/promises"
+// Hardcoded module "node:dns/promises"
 const { promises } = import.meta.require("node:dns");
 
 export const {

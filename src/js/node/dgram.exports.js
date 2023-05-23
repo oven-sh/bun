@@ -1,4 +1,4 @@
-// @module "node:dgram"
+// Hardcoded module "node:dgram"
 // This is a stub! None of this is actually implemented yet.
 
 function hideFromStack(fns) {

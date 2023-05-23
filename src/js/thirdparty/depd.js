@@ -1,4 +1,4 @@
-// @module "depd"
+// Hardcoded module "depd"
 // TODO: remove this module from being bundled into bun
 // This is a temporary workaround for a CommonJS <> ESM interop issue.
 

@@ -1,4 +1,4 @@
-// @module "node:diagnostics_channel"
+// Hardcoded module "node:diagnostics_channel"
 // This is a stub! None of this is actually implemented yet.
 
 function hideFromStack(fns) {

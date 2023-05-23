@@ -1,4 +1,4 @@
-// @module "node:util"
+// Hardcoded module "node:util"
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __commonJS = (cb, mod) =>
   function __require() {

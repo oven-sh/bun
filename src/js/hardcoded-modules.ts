@@ -27,7 +27,7 @@ const entrypoints = [
 const build = await Bun.build({
   entrypoints: entrypoints.map(({ file }) => file),
   external: entrypoints.map(({ name }) => name),
-  outdir: './dist/modules',
+  outdir: './out/modules',
   sourcemap: 'external',
   minify: true,
 });

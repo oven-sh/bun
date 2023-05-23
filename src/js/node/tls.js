@@ -1,4 +1,4 @@
-// @module "node:tls"
+// Hardcoded module "node:tls"
 const { isTypedArray } = import.meta.require("util/types");
 
 function parseCertString() {

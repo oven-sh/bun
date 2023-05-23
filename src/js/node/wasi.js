@@ -1,4 +1,4 @@
-// @module "node:wasi"
+// Hardcoded module "node:wasi"
 // HUGE thanks to:
 // - @williamstein and https://github.com/sagemathinc/cowasm/tree/main/core/wasi-js
 // - @syrusakbary for wasmer-js https://github.com/wasmerio/wasmer-js

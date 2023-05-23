@@ -1,4 +1,4 @@
-// @module "node:http2"
+// Hardcoded module "node:http2"
 // This is a stub! None of this is actually implemented yet.
 
 function hideFromStack(fns) {

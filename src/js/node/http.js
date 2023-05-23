@@ -1,4 +1,4 @@
-// @module "node:http"
+// Hardcoded module "node:http"
 const { EventEmitter } = import.meta.require("node:events");
 const { isIPv6 } = import.meta.require("node:net");
 const { Readable, Writable, Duplex } = import.meta.require("node:stream");

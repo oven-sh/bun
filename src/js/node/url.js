@@ -1,4 +1,4 @@
-// @module "node:url"
+// Hardcoded module "node:url"
 "use strict";
 const { URL: F, URLSearchParams: M, [Symbol.for("Bun.lazy")]: S } = globalThis;
 function it(s) {

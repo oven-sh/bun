@@ -1,4 +1,4 @@
-// @module "node:path/win32"
+// Hardcoded module "node:path/win32"
 function bound(obj) {
   return {
     basename: obj.basename.bind(obj),

@@ -1,4 +1,4 @@
-// @module "ws"
+// Hardcoded module "ws"
 // Mocking https://github.com/websockets/ws
 // this just wraps WebSocket to look like an EventEmitter
 // without actually using an EventEmitter polyfill

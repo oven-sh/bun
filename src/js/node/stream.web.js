@@ -1,4 +1,4 @@
-// @module "node:stream/web"
+// Hardcoded module "node:stream/web" / "readable-stream/web"
 export const {
   ReadableStream,
   ReadableStreamDefaultController,

@@ -1,4 +1,4 @@
-// @module "node:os"
+// Hardcoded module "node:os"
 function bound(obj) {
   return {
     arch: obj.arch.bind(obj),

@@ -1,4 +1,4 @@
-// @module "detect-libc"
+// Hardcoded module "detect-libc"
 export function family() {
   return Promise.resolve(familySync());
 }

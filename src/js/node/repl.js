@@ -1,4 +1,4 @@
-// @module "node:repl"
+// Hardcoded module "node:repl"
 // This is a stub! None of this is actually implemented yet.
 // It only exists to make some packages which import this module work.
 

@@ -1,4 +1,4 @@
-// @module "node:assert"
+// Hardcoded module "node:assert"
 var { Bun } = import.meta.primordials;
 var isDeepEqual = Bun.deepEquals;
 var __create = Object.create;

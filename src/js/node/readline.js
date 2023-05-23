@@ -1,4 +1,4 @@
-// @module "node:readline"
+// Hardcoded module "node:readline"
 // Attribution: Some parts of of this module are derived from code originating from the Node.js
 // readline module which is licensed under an MIT license:
 //

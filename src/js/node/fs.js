@@ -1,4 +1,4 @@
-// @module "node:fs"
+// Hardcoded module "node:fs"
 var { direct, isPromise, isCallable } = import.meta.primordials;
 var promises = import.meta.require("node:fs/promises");
 

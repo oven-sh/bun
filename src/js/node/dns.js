@@ -1,4 +1,4 @@
-// @module "node:dns"
+// Hardcoded module "node:dns"
 // only resolve4, resolve, lookup, resolve6 and resolveSrv are implemented.
 
 const { dns } = globalThis.Bun;

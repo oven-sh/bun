@@ -1,4 +1,4 @@
-// @module "node:vm"
+// Hardcoded module "node:vm"
 const lazy = globalThis[Symbol.for("Bun.lazy")];
 if (!lazy || typeof lazy !== "function") {
   throw new Error("Something went wrong while loading Bun. Expected 'Bun.lazy' to be defined.");

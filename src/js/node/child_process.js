@@ -1,4 +1,4 @@
-// @module "node:child_process"
+// Hardcoded module "node:child_process"
 const EventEmitter = import.meta.require("node:events");
 const {
   Readable: { fromWeb: ReadableFromWeb },

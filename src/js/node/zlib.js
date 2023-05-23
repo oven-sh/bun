@@ -1,4 +1,4 @@
-// @module "node:zlib"
+// Hardcoded module "node:zlib"
 // TODO: **use a native binding from Bun for this!!**
 // This is a very slow module!
 // It should really be fixed. It will show up in benchmarking. It also loads

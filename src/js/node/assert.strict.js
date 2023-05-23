@@ -1,4 +1,4 @@
-// @module "node:assert/strict"
+// Hardcoded module "node:assert/strict"
 var { strict: strictBase } = import.meta.require("node:assert");
 
 export var {

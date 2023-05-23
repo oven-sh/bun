@@ -1,4 +1,4 @@
-// @module "node:stream/consumers"
+// Hardcoded module "node:stream/consumers" / "readable-stream/consumer"
 const { Bun } = import.meta.primordials;
 
 export const arrayBuffer = Bun.readableStreamToArrayBuffer;

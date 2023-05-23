@@ -1,4 +1,4 @@
-// @module "bun:jsc"
+// Hardcoded module "bun:jsc"
 const jsc = globalThis[Symbol.for("Bun.lazy")]("bun:jsc");
 
 export const callerSourceOrigin = jsc.callerSourceOrigin;

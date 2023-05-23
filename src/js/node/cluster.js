@@ -1,4 +1,4 @@
-// @module "node:cluster"
+// Hardcoded module "node:cluster"
 
 // This is a stub
 // We leave it in here to provide a better error message

@@ -1,4 +1,4 @@
-// @module "node:async_hooks"
+// Hardcoded module "node:async_hooks"
 var drainMicrotasks = () => {
   ({ drainMicrotasks } = import.meta.require("bun:jsc"));
   drainMicrotasks();

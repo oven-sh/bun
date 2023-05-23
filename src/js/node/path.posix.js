@@ -1,4 +1,4 @@
-// @module "node:path/posix"
+// Hardcoded module "node:path/posix"
 function bound(obj) {
   return {
     basename: obj.basename.bind(obj),

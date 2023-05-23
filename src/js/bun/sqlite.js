@@ -1,4 +1,4 @@
-// @module "sqlite"
+// Hardcoded module "sqlite"
 var symbolFor = Symbol.for;
 
 const lazy = globalThis[symbolFor("Bun.lazy")];

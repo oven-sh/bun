@@ -1,4 +1,4 @@
-// @module "node:stream"
+// Hardcoded module "node:stream" / "readable-stream"
 // "readable-stream" npm package
 // just transpiled
 var { isPromise, isCallable, direct, Object } = import.meta.primordials;

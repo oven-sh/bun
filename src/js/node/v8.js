@@ -1,4 +1,4 @@
-// @module "node:v8"
+// Hardcoded module "node:v8"
 // This is a stub! None of this is actually implemented yet.
 
 class TODO extends Error {

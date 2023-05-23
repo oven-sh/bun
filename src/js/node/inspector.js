@@ -1,4 +1,4 @@
-// @module "node:inspector"
+// Hardcoded module "node:inspector" and "node:inspector/promises"
 // This is a stub! None of this is actually implemented yet.
 
 function hideFromStack(fns) {

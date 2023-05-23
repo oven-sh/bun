@@ -1,4 +1,4 @@
-// @module "node:readline/promises"
+// Hardcoded module "node:readline/promises"
 var {
   promises: { Readline, Interface, createInterface },
 } = import.meta.require("node:readline");

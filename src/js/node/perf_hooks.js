@@ -1,4 +1,4 @@
-// @module "node:perf_hooks"
+// Hardcoded module "node:perf_hooks"
 export var performance = globalThis.performance;
 
 export class PerformanceObserver {

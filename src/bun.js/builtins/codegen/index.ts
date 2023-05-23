@@ -41,7 +41,6 @@ interface ParsedBuiltin {
   params: string[];
   directives: Record<string, any>;
   source: string;
-  usesThis: boolean;
   async: boolean;
 }
 interface BundledBuiltin {
@@ -140,13 +139,12 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
         params.shift();
       }
 
-      const { result, rest, usesThis } = sliceSourceCode(contents.slice(declaration[0].length - 1), true);
+      const { result, rest } = sliceSourceCode(contents.slice(declaration[0].length - 1), true);
       functions.push({
         name,
         params,
         directives,
         source: result.trim().slice(1, -1),
-        usesThis,
         async,
       });
       contents = rest;
@@ -187,9 +185,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     const build = await Bun.build({
       entrypoints: [tmpFile],
       define,
-      minify: MINIFY || {
-        syntax: true,
-      },
+      minify: true,
     });
     if (!build.success) {
       throw new AggregateError(build.logs, "Failed bundling builtin function " + fn.name + " from " + basename + ".ts");
@@ -200,8 +196,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     const output = await build.outputs[0].text();
     const captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)![1];
     const finalReplacement =
-      captured
-        .replace(/function\s*\(.*?\)\s*{/, '$&"use strict";')
+      (fn.directives.sloppy ? captured : captured.replace(/function\s*\(.*?\)\s*{/, '$&"use strict";'))
         .replace(/^\((async )?function\(/, "($1function (")
         .replace(/__intrinsic__/g, "@") + "\n";
 

@@ -135,8 +135,9 @@ export function internalRequire(this: ImportMetaObject, resolved) {
   }
 }
 
+$sloppy;
 export function require(this: ImportMetaObject, name) {
-  const from = this?.path ?? arguments.callee.path;
+  var from = this?.path ?? arguments.callee.path;
 
   if (typeof name !== "string") {
     throw new TypeError("require(name) must be a string");

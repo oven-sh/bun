@@ -5390,10 +5390,10 @@ inline void WritableStreamDefaultControllerBuiltinsWrapper::exportNames()
 #undef EXPORT_FUNCTION_NAME
 }
 class JSBuiltinFunctions {
-  public:
-      explicit JSBuiltinFunctions(JSC::VM& vm)
-          : m_vm(vm)
-          , m_bundlerPluginBuiltins(m_vm)
+public:
+    explicit JSBuiltinFunctions(JSC::VM& vm)
+        : m_vm(vm)
+        , m_bundlerPluginBuiltins(m_vm)
         , m_byteLengthQueuingStrategyBuiltins(m_vm)
         , m_writableStreamInternalsBuiltins(m_vm)
         , m_transformStreamInternalsBuiltins(m_vm)
@@ -5448,9 +5448,9 @@ class JSBuiltinFunctions {
     ReadableByteStreamInternalsBuiltinsWrapper& readableByteStreamInternalsBuiltins() { return m_readableByteStreamInternalsBuiltins; }
     WritableStreamDefaultControllerBuiltinsWrapper& writableStreamDefaultControllerBuiltins() { return m_writableStreamDefaultControllerBuiltins; }
 
-  private:
-      JSC::VM& m_vm;
-      BundlerPluginBuiltinsWrapper m_bundlerPluginBuiltins;
+private:
+    JSC::VM& m_vm;
+    BundlerPluginBuiltinsWrapper m_bundlerPluginBuiltins;
     ByteLengthQueuingStrategyBuiltinsWrapper m_byteLengthQueuingStrategyBuiltins;
     WritableStreamInternalsBuiltinsWrapper m_writableStreamInternalsBuiltins;
     TransformStreamInternalsBuiltinsWrapper m_transformStreamInternalsBuiltins;
@@ -5474,23 +5474,23 @@ class JSBuiltinFunctions {
     ReadableByteStreamInternalsBuiltinsWrapper m_readableByteStreamInternalsBuiltins;
     WritableStreamDefaultControllerBuiltinsWrapper m_writableStreamDefaultControllerBuiltins;
 ;
-  };
-  
-  class JSBuiltinInternalFunctions {
-  public:
-      explicit JSBuiltinInternalFunctions(JSC::VM&);
-  
-      template<typename Visitor> void visit(Visitor&);
-      void initialize(Zig::GlobalObject&);
-      WritableStreamInternalsBuiltinFunctions& writableStreamInternals() { return m_writableStreamInternals; }
+};
+
+class JSBuiltinInternalFunctions {
+public:
+    explicit JSBuiltinInternalFunctions(JSC::VM&);
+
+    template<typename Visitor> void visit(Visitor&);
+    void initialize(Zig::GlobalObject&);
+    WritableStreamInternalsBuiltinFunctions& writableStreamInternals() { return m_writableStreamInternals; }
     TransformStreamInternalsBuiltinFunctions& transformStreamInternals() { return m_transformStreamInternals; }
     ReadableStreamInternalsBuiltinFunctions& readableStreamInternals() { return m_readableStreamInternals; }
     StreamInternalsBuiltinFunctions& streamInternals() { return m_streamInternals; }
     ReadableByteStreamInternalsBuiltinFunctions& readableByteStreamInternals() { return m_readableByteStreamInternals; }
 
-  private:
-      JSC::VM& m_vm;
-      WritableStreamInternalsBuiltinFunctions m_writableStreamInternals;
+private:
+    JSC::VM& m_vm;
+    WritableStreamInternalsBuiltinFunctions m_writableStreamInternals;
     TransformStreamInternalsBuiltinFunctions m_transformStreamInternals;
     ReadableStreamInternalsBuiltinFunctions m_readableStreamInternals;
     StreamInternalsBuiltinFunctions m_streamInternals;

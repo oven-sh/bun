@@ -14,6 +14,8 @@ declare var $nakedConstructor: never;
 /** Assign to this directly above a function declaration (like a decorator) to set intrinsic */
 declare var $intrinsic: string;
 declare var $constructor;
+/** Place this directly above a function declaration (like a decorator) to NOT include "use strict" */
+declare var $sloppy;
 
 declare function $extractHighWaterMarkFromQueuingStrategyInit(obj: any): any;
 

@@ -803,13 +803,13 @@ pub const Loader = struct {
 
     pub fn printLoaded(this: *Loader, start: i128) void {
         const count =
+            @intCast(u8, @boolToInt(this.@".env.development.local" != null)) +
+            @intCast(u8, @boolToInt(this.@".env.production.local" != null)) +
+            @intCast(u8, @boolToInt(this.@".env.test.local" != null)) +
             @intCast(u8, @boolToInt(this.@".env.local" != null)) +
             @intCast(u8, @boolToInt(this.@".env.development" != null)) +
             @intCast(u8, @boolToInt(this.@".env.production" != null)) +
             @intCast(u8, @boolToInt(this.@".env.test" != null)) +
-            @intCast(u8, @boolToInt(this.@".env.test.local" != null)) +
-            @intCast(u8, @boolToInt(this.@".env.development.local" != null)) +
-            @intCast(u8, @boolToInt(this.@".env.production.local" != null)) +
             @intCast(u8, @boolToInt(this.@".env" != null));
 
         if (count == 0) return;
@@ -826,13 +826,13 @@ pub const Loader = struct {
             ".env",
         };
         const loaded = [_]bool{
+            this.@".env.development.local" != null,
+            this.@".env.production.local" != null,
+            this.@".env.test.local" != null,
             this.@".env.local" != null,
             this.@".env.development" != null,
             this.@".env.production" != null,
             this.@".env.test" != null,
-            this.@".env.development.local" != null,
-            this.@".env.production.local" != null,
-            this.@".env.test.local" != null,
             this.@".env" != null,
         };
 

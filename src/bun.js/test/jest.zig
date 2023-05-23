@@ -4082,7 +4082,12 @@ pub const TestRunnerTask = struct {
         if (jsc_vm.onUnhandledRejectionCtx) |ctx| {
             var this = bun.cast(*TestRunnerTask, ctx);
             jsc_vm.onUnhandledRejectionCtx = null;
-            this.handleResult(.{ .fail = active_test_expectation_counter.actual }, .unhandledRejection);
+            var test_ = this.describe.tests.items[this.test_id];
+            if(!test_.is_todo) {
+                this.handleResult(.{ .fail = active_test_expectation_counter.actual }, .unhandledRejection);
+            } else {
+                this.handleResult(.{ .todo = {} }, .unhandledRejection);
+            }
         }
     }
 
@@ -4131,8 +4136,7 @@ pub const TestRunnerTask = struct {
         const result = TestScope.run(&test_, this);
 
         // rejected promises should fail the test
-        if (result != .fail)
-            globalThis.handleRejectedPromises();
+        globalThis.handleRejectedPromises();
 
         if (result == .pending and this.sync_state == .pending and (this.done_callback_state == .pending or this.promise_state == .pending)) {
             this.sync_state = .fulfilled;
@@ -4142,9 +4146,7 @@ pub const TestRunnerTask = struct {
 
         this.handleResult(result, .sync);
 
-        if (result == .fail) {
-            globalThis.handleRejectedPromises();
-        }
+        globalThis.handleRejectedPromises();
 
         return false;
     }

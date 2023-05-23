@@ -1,0 +1,45 @@
+// @module "node:dns/promises"
+const { promises } = import.meta.require("node:dns");
+
+export const {
+  lookup,
+  lookupService,
+  resolve,
+  resolve4,
+  resolveAny,
+  resolveCname,
+  resolveCaa,
+  resolveMx,
+  resolveNaptr,
+  resolveNs,
+  resolvePtr,
+  resolveSoa,
+  resolveSrv,
+  resolveTxt,
+  reverse,
+  Resolver,
+  setServers,
+  setDefaultResultOrder,
+} = promises;
+
+export default {
+  lookup,
+  lookupService,
+  resolve,
+  resolve4,
+  resolveAny,
+  resolveCname,
+  resolveCaa,
+  resolveMx,
+  resolveNaptr,
+  resolveNs,
+  resolvePtr,
+  resolveSoa,
+  resolveSrv,
+  resolveTxt,
+  reverse,
+  Resolver,
+  setServers,
+  setDefaultResultOrder,
+  [Symbol.for("CommonJS")]: 0,
+};

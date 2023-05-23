@@ -1,0 +1,30 @@
+// @module "node:stream/web"
+export const {
+  ReadableStream,
+  ReadableStreamDefaultController,
+  WritableStream,
+  WritableStreamDefaultController,
+  WritableStreamDefaultWriter,
+  TransformStream,
+  TransformStreamDefaultController,
+  ByteLengthQueuingStrategy,
+  CountQueuingStrategy,
+  ReadableStreamBYOBReader,
+  ReadableStreamBYOBRequest,
+  ReadableStreamDefaultReader,
+} = globalThis;
+export default {
+  ReadableStream,
+  ReadableStreamDefaultController,
+  WritableStream,
+  WritableStreamDefaultController,
+  WritableStreamDefaultWriter,
+  TransformStream,
+  TransformStreamDefaultController,
+  ByteLengthQueuingStrategy,
+  CountQueuingStrategy,
+  ReadableStreamBYOBReader,
+  ReadableStreamBYOBRequest,
+  ReadableStreamDefaultReader,
+  [Symbol.for("CommonJS")]: 0,
+};

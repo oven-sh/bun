@@ -59,7 +59,7 @@ Bun.listen<SocketData>({
 });
 ```
 
-To enable TLS, pass a `tls` object containing `keyFile` and `certFile` properties.
+To enable TLS, pass a `tls` object containing `key` and `cert` fields.
 
 ```ts
 Bun.listen({
@@ -69,13 +69,38 @@ Bun.listen({
     data(socket, data) {},
   },
   tls: {
-    certFile: "cert.pem",
-    keyFile: "key.pem",
+    // can be string, BunFile, TypedArray, Buffer, or array thereof
+    key: Bun.file("./key.pem"),
+    cert: Bun.file("./cert.pem"),
   },
 });
 ```
 
-The result of `Bun.listen` is a server that conforms to the `TCPSocket` instance.
+{% callout %}
+
+**Note** — Earlier versions of Bun supported passing a file path as `keyFile` and `certFile`; this has been deprecated as of `v0.6.3`.
+
+{% /callout %}
+
+The `key` and `cert` fields expect the _contents_ of your TLS key and certificate. This can be a string, `BunFile`, `TypedArray`, or `Buffer`.
+
+```ts
+Bun.listen({
+  // ...
+  tls: {
+    // BunFile
+    key: Bun.file("./key.pem"),
+    // Buffer
+    key: fs.readFileSync("./key.pem"),
+    // string
+    key: fs.readFileSync("./key.pem", "utf8"),
+    // array of above
+    key: [Bun.file('./key1.pem'), Bun.file('./key2.pem']
+  },
+});
+```
+
+The result of `Bun.listen` is a server that conforms to the `TCPSocket` interface.
 
 ```ts
 const server = Bun.listen({

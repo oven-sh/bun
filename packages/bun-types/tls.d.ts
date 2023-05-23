@@ -884,7 +884,7 @@ declare module "tls" {
       | Buffer
       | TypedArray
       | BunFile
-      | Array<string | Buffer | BunFile>
+      | Array<string | Buffer | TypedArray | BunFile>
       | undefined;
     /**
      *  Colon-separated list of supported signature algorithms. The list

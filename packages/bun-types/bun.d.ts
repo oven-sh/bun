@@ -1668,7 +1668,7 @@ declare module "bun" {
      *
      * @deprecated since v0.6.3 - Use `key: Bun.file(path)` instead.
      */
-    keyFile: string;
+    keyFile?: string;
     /**
      * File path to a TLS certificate
      *
@@ -1676,7 +1676,7 @@ declare module "bun" {
      *
      * @deprecated since v0.6.3 - Use `cert: Bun.file(path)` instead.
      */
-    certFile: string;
+    certFile?: string;
 
     /**
      * Passphrase for the TLS key

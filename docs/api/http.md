@@ -133,23 +133,17 @@ Bun.serve({
   key: fs.readFileSync("./key.pem"),
   // string
   key: fs.readFileSync("./key.pem", "utf8"),
-  // array
+  // array of above
   key: [Bun.file('./key1.pem'), Bun.file('./key2.pem']
+
 });
 ```
 
-Earlier versions of Bun supported passing a file path as `keyFile` and `certFile`; this has been deprecated as of `v0.6.3`.
+{% callout %}
 
-```ts
-// deprecated 🚧
-Bun.serve({
-  fetch() {
-    /* ... */
-  },
-  keyFile: "/path/to/key.pem", // path to TLS key
-  certFile: "/path/to/cert.pem", // path to TLS cert
-});
-```
+**Note** — Earlier versions of Bun supported passing a file path as `keyFile` and `certFile`; this has been deprecated as of `v0.6.3`.
+
+{% /callout %}
 
 Optionally, you can override the trusted CA certificates by passing a value for `ca`. By default, the server will trust the list of well-known CAs curated by Mozilla. When `ca` is specified, the Mozilla list is overwritten.
 

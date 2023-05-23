@@ -35,8 +35,6 @@ const getAllocator = @import("../base.zig").getAllocator;
 const JSPrivateDataPtr = @import("../base.zig").JSPrivateDataPtr;
 const GetJSPrivateData = @import("../base.zig").GetJSPrivateData;
 
-const default_timeout = std.time.ms_per_min * 5;
-
 const ZigString = JSC.ZigString;
 const JSInternalPromise = JSC.JSInternalPromise;
 const JSPromise = JSC.JSPromise;
@@ -360,8 +358,6 @@ pub const TestRunner = struct {
     only: bool = false,
     last_file: u64 = 0,
 
-    timeout_seconds: f64 = 5.0,
-
     allocator: std.mem.Allocator,
     callback: *Callback = undefined,
 
@@ -376,6 +372,7 @@ pub const TestRunner = struct {
 
     snapshots: Snapshots,
 
+    default_timeout_ms: u32 = 0,
     test_timeout_timer: ?*bun.uws.Timer = null,
     last_test_timeout_timer_duration: u32 = 0,
     active_test_for_timeout: ?TestRunner.Test.ID = null,
@@ -3243,7 +3240,7 @@ pub const TestScope = struct {
     skipped: bool = false,
     is_todo: bool = false,
     snapshot_count: usize = 0,
-    timeout_millis: u32 = default_timeout,
+    timeout_millis: u32 = 0,
 
     pub const Class = NewClass(
         void,
@@ -3382,7 +3379,7 @@ pub const TestScope = struct {
             .label = label,
             .callback = function.asObjectRef(),
             .parent = DescribeScope.active,
-            .timeout_millis = if (arguments.len > 2) @intCast(u32, @max(args[2].coerce(i32, ctx), 0)) else default_timeout,
+            .timeout_millis = if (arguments.len > 2) @intCast(u32, @max(args[2].coerce(i32, ctx), 0)) else Jest.runner.?.default_timeout_ms,
         }) catch unreachable;
 
         if (test_elapsed_timer == null) create_tiemr: {

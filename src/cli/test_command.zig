@@ -414,6 +414,7 @@ pub const TestCommand = struct {
                 .allocator = ctx.allocator,
                 .log = ctx.log,
                 .callback = undefined,
+                .default_timeout_ms = ctx.test_options.default_timeout_ms,
                 .snapshots = Snapshots{
                     .allocator = ctx.allocator,
                     .update_snapshots = ctx.test_options.update_snapshots,

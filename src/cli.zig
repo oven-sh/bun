@@ -211,6 +211,7 @@ pub const Arguments = struct {
 
     // TODO: update test completions
     const test_only_params = [_]ParamType{
+        clap.parseParam("--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000.") catch unreachable,
         clap.parseParam("--update-snapshots               Update snapshot files") catch unreachable,
         clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
     };
@@ -371,6 +372,14 @@ pub const Arguments = struct {
         }
 
         if (cmd == .TestCommand) {
+            if (args.option("--timeout")) |timeout_ms| {
+                if (timeout_ms.len > 0) {
+                    ctx.test_options.default_timeout_ms = std.fmt.parseInt(u32, timeout_ms, 10) catch {
+                        Output.prettyErrorln("<r><red>error<r>: Invalid timeout: \"{s}\"", .{timeout_ms});
+                        Global.exit(1);
+                    };
+                }
+            }
             ctx.test_options.update_snapshots = args.flag("--update-snapshots");
             if (args.option("--rerun-each")) |repeat_count| {
                 if (repeat_count.len > 0) {
@@ -904,6 +913,7 @@ pub const Command = struct {
     };
 
     pub const TestOptions = struct {
+        default_timeout_ms: u32 = 5 * std.time.ms_per_s,
         update_snapshots: bool = false,
         repeat_count: u32 = 0,
     };

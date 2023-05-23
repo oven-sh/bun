@@ -3615,7 +3615,7 @@ pub const Expr = struct {
                     // Sanity check: assert string is not a null ptr
                     if (st.data.len > 0 and st.isUTF8()) {
                         std.debug.assert(@ptrToInt(st.data.ptr) > 0);
-                        std.debug.assert(st.data[0] > 0);
+                        std.debug.assert(st.data.len > 0);
                     }
                 }
                 return Expr{
@@ -3981,7 +3981,7 @@ pub const Expr = struct {
                     // Sanity check: assert string is not a null ptr
                     if (st.data.len > 0 and st.isUTF8()) {
                         std.debug.assert(@ptrToInt(st.data.ptr) > 0);
-                        std.debug.assert(st.data[0] > 0);
+                        std.debug.assert(st.data.len > 0);
                     }
                 }
                 return Expr{

@@ -666,6 +666,7 @@ require:
 	@which aclocal > /dev/null || (echo -e  "ERROR: automake is required. Install with:\n\n    $(POSIX_PKG_MANAGER) install automake"; exit 1)
 	@which $(LIBTOOL) > /dev/null || (echo -e "ERROR: libtool is required. Install with:\n\n    $(POSIX_PKG_MANAGER) install libtool"; exit 1)
 	@which ninja > /dev/null || (echo -e "ERROR: Ninja is required. Install with:\n\n    $(POSIX_PKG_MANAGER) install $(PKGNAME_NINJA)"; exit 1)
+	@which pkg-config > /dev/null || (echo -e "ERROR: pkg-config is required. Install with:\n\n    $(POSIX_PKG_MANAGER) install pkg-config"; exit 1)
 	@echo "You have the dependencies installed! Woo"
 
 init-submodules:

@@ -23,7 +23,7 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-export function initializeTransformStream() {
+export function initializeTransformStream(this) {
   let transformer = arguments[0];
 
   // This is the path for CreateTransformStream.
@@ -54,8 +54,8 @@ export function initializeTransformStream() {
       if (typeof transformerDict["flush"] !== "function") $throwTypeError("transformer.flush should be a function");
     }
 
-    if ("readableType" in transformer) $throwRangeError("TransformStream transformer has a readableType");
-    if ("writableType" in transformer) $throwRangeError("TransformStream transformer has a writableType");
+    if ("readableType" in transformer) throw new RangeError("TransformStream transformer has a readableType");
+    if ("writableType" in transformer) throw new RangeError("TransformStream transformer has a writableType");
   }
 
   const readableHighWaterMark = $extractHighWaterMark(readableStrategy, 0);
@@ -64,7 +64,7 @@ export function initializeTransformStream() {
   const writableHighWaterMark = $extractHighWaterMark(writableStrategy, 1);
   const writableSizeAlgorithm = $extractSizeAlgorithm(writableStrategy);
 
-  const startPromiseCapability = $newPromiseCapability($Promise);
+  const startPromiseCapability = $newPromiseCapability(Promise);
   $initializeTransformStream(
     this,
     startPromiseCapability.$promise,

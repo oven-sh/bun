@@ -1,24 +1,15 @@
-// clang-format off
-
 #pragma once
 
-#include "root.h"
-
-
 #include "JavaScriptCore/BuiltinUtils.h"
-
+#include "root.h"
 
 namespace WebCore {
 
 using namespace JSC;
 
-
 #if !defined(BUN_ADDITIONAL_PRIVATE_IDENTIFIERS)
 #define BUN_ADDITIONAL_PRIVATE_IDENTIFIERS(macro)
 #endif
-
-
-
 
 #define BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
     macro(AbortSignal) \
@@ -265,7 +256,6 @@ public:
 #undef EXPORT_NAME
     }
 
-
     BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
 
 private:
@@ -273,7 +263,4 @@ private:
     BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(DECLARE_BUILTIN_NAMES)
 };
 
-
-
 } // namespace WebCore
-

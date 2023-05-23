@@ -6,6 +6,7 @@ export const replacements: ReplacementRule[] = [
   { from: /\bthrow new TypeError\b/g, to: "$throwTypeError" },
   { from: /\bthrow new RangeError\b/g, to: "$throwRangeError" },
   { from: /\bthrow new OutOfMemoryError\b/g, to: "$throwOutOfMemoryError" },
+  { from: /\bnew TypeError\b/g, to: "$makeTypeError" },
 ];
 
 // These rules are run on the entire file, including within strings.
@@ -14,6 +15,10 @@ export const globalReplacements: ReplacementRule[] = [
     from: /\bnotImplementedIssue\(\s*([0-9]+)\s*,\s*((?:"[^"]*"|'[^']+'))\s*\)/g,
     to: "new TypeError(`${$2} is not implemented yet. See https://github.com/oven-sh/bun/issues/$1`)",
   },
+  {
+    from: /\bnotImplementedIssueFn\(\s*([0-9]+)\s*,\s*((?:"[^"]*"|'[^']+'))\s*\)/g,
+    to: "() => $throwTypeError(`${$2} is not implemented yet. See https://github.com/oven-sh/bun/issues/$1`)",
+  },
 ];
 
 // This is a list of globals we should access using @ notation
@@ -21,6 +26,7 @@ export const globalReplacements: ReplacementRule[] = [
 export const globalsToPrefix = [
   "AbortSignal",
   "Array",
+  "ArrayBuffer",
   "Buffer",
   "Bun",
   "Infinity",
@@ -61,10 +67,12 @@ export const enums = {
 
 // These identifiers have typedef but not present at runtime (converted with replacements)
 // If they are present in the bundle after runtime, we warn at the user.
+// TODO: implement this check.
 export const warnOnIdentifiersNotPresentAtRuntime = [
   //
   "OutOfMemoryError",
   "notImplementedIssue",
+  "notImplementedIssueFn",
 ];
 
 export interface ReplacementRule {

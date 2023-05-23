@@ -23,9 +23,9 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-export function initializeReadableStreamDefaultReader(stream) {
-  if (!$isReadableStream(stream)) $throwTypeError("ReadableStreamDefaultReader needs a ReadableStream");
-  if ($isReadableStreamLocked(stream)) $throwTypeError("ReadableStream is locked");
+export function initializeReadableStreamDefaultReader(this, stream) {
+  if (!$isReadableStream(stream)) throw new TypeError("ReadableStreamDefaultReader needs a ReadableStream");
+  if ($isReadableStreamLocked(stream)) throw new TypeError("ReadableStream is locked");
 
   $readableStreamReaderGenericInitialize(this, stream);
   $putByIdDirectPrivate(this, "readRequests", $createFIFO());
@@ -33,22 +33,22 @@ export function initializeReadableStreamDefaultReader(stream) {
   return this;
 }
 
-export function cancel(reason) {
+export function cancel(this, reason) {
   if (!$isReadableStreamDefaultReader(this))
-    return $Promise.$reject($makeThisTypeError("ReadableStreamDefaultReader", "cancel"));
+    return Promise.$reject($makeThisTypeError("ReadableStreamDefaultReader", "cancel"));
 
   if (!$getByIdDirectPrivate(this, "ownerReadableStream"))
-    return $Promise.$reject($makeTypeError("cancel() called on a reader owned by no readable stream"));
+    return Promise.$reject(new TypeError("cancel() called on a reader owned by no readable stream"));
 
   return $readableStreamReaderGenericCancel(this, reason);
 }
 
-export function readMany() {
+export function readMany(this) {
   if (!$isReadableStreamDefaultReader(this))
-    $throwTypeError("ReadableStreamDefaultReader.readMany() should not be called directly");
+    throw new TypeError("ReadableStreamDefaultReader.readMany() should not be called directly");
 
   const stream = $getByIdDirectPrivate(this, "ownerReadableStream");
-  if (!stream) $throwTypeError("readMany() called on a reader owned by no readable stream");
+  if (!stream) throw new TypeError("readMany() called on a reader owned by no readable stream");
 
   const state = $getByIdDirectPrivate(stream, "state");
   $putByIdDirectPrivate(stream, "disturbed", true);
@@ -79,8 +79,8 @@ export function readMany() {
     if ($isReadableByteStreamController(controller)) {
       {
         const buf = values[0];
-        if (!($ArrayBuffer.$isView(buf) || buf instanceof $ArrayBuffer)) {
-          $putByValDirect(outValues, 0, new $Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
+        if (!(ArrayBuffer.$isView(buf) || buf instanceof ArrayBuffer)) {
+          $putByValDirect(outValues, 0, new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
         } else {
           $putByValDirect(outValues, 0, buf);
         }
@@ -88,8 +88,8 @@ export function readMany() {
 
       for (var i = 1; i < length; i++) {
         const buf = values[i];
-        if (!($ArrayBuffer.$isView(buf) || buf instanceof $ArrayBuffer)) {
-          $putByValDirect(outValues, i, new $Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
+        if (!(ArrayBuffer.$isView(buf) || buf instanceof ArrayBuffer)) {
+          $putByValDirect(outValues, i, new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
         } else {
           $putByValDirect(outValues, i, buf);
         }
@@ -125,9 +125,9 @@ export function readMany() {
     if ($isReadableByteStreamController(controller)) {
       for (var i = 0; i < length; i++) {
         const buf = value[i];
-        if (!($ArrayBuffer.$isView(buf) || buf instanceof $ArrayBuffer)) {
+        if (!(ArrayBuffer.$isView(buf) || buf instanceof ArrayBuffer)) {
           const { buffer, byteOffset, byteLength } = buf;
-          $putByValDirect(value, i, new $Uint8Array(buffer, byteOffset, byteLength));
+          $putByValDirect(value, i, new Uint8Array(buffer, byteOffset, byteLength));
         }
       }
     } else {
@@ -156,30 +156,30 @@ export function readMany() {
   return onPullMany(pullResult);
 }
 
-export function read() {
+export function read(this) {
   if (!$isReadableStreamDefaultReader(this))
-    return $Promise.$reject($makeThisTypeError("ReadableStreamDefaultReader", "read"));
+    return Promise.$reject($makeThisTypeError("ReadableStreamDefaultReader", "read"));
   if (!$getByIdDirectPrivate(this, "ownerReadableStream"))
-    return $Promise.$reject($makeTypeError("read() called on a reader owned by no readable stream"));
+    return Promise.$reject(new TypeError("read() called on a reader owned by no readable stream"));
 
   return $readableStreamDefaultReaderRead(this);
 }
 
-export function releaseLock() {
+export function releaseLock(this) {
   if (!$isReadableStreamDefaultReader(this)) throw $makeThisTypeError("ReadableStreamDefaultReader", "releaseLock");
 
   if (!$getByIdDirectPrivate(this, "ownerReadableStream")) return;
 
   if ($getByIdDirectPrivate(this, "readRequests")?.isNotEmpty())
-    $throwTypeError("There are still pending read requests, cannot release the lock");
+    throw new TypeError("There are still pending read requests, cannot release the lock");
 
   $readableStreamReaderGenericRelease(this);
 }
 
 $getter;
-export function closed() {
+export function closed(this) {
   if (!$isReadableStreamDefaultReader(this))
-    return $Promise.$reject($makeGetterTypeError("ReadableStreamDefaultReader", "closed"));
+    return Promise.$reject($makeGetterTypeError("ReadableStreamDefaultReader", "closed"));
 
   return $getByIdDirectPrivate(this, "closedPromiseCapability").$promise;
 }

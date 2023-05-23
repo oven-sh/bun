@@ -30,10 +30,10 @@ export function readableStreamReaderGenericInitialize(reader, stream) {
   $putByIdDirectPrivate(reader, "ownerReadableStream", stream);
   $putByIdDirectPrivate(stream, "reader", reader);
   if ($getByIdDirectPrivate(stream, "state") === $streamReadable)
-    $putByIdDirectPrivate(reader, "closedPromiseCapability", $newPromiseCapability($Promise));
+    $putByIdDirectPrivate(reader, "closedPromiseCapability", $newPromiseCapability(Promise));
   else if ($getByIdDirectPrivate(stream, "state") === $streamClosed)
     $putByIdDirectPrivate(reader, "closedPromiseCapability", {
-      $promise: $Promise.$resolve(),
+      $promise: Promise.$resolve(),
     });
   else {
     $assert($getByIdDirectPrivate(stream, "state") === $streamErrored);
@@ -43,12 +43,12 @@ export function readableStreamReaderGenericInitialize(reader, stream) {
   }
 }
 
-export function privateInitializeReadableStreamDefaultController(stream, underlyingSource, size, highWaterMark) {
-  if (!$isReadableStream(stream)) $throwTypeError("ReadableStreamDefaultController needs a ReadableStream");
+export function privateInitializeReadableStreamDefaultController(this, stream, underlyingSource, size, highWaterMark) {
+  if (!$isReadableStream(stream)) throw new TypeError("ReadableStreamDefaultController needs a ReadableStream");
 
   // readableStreamController is initialized with null value.
   if ($getByIdDirectPrivate(stream, "readableStreamController") !== null)
-    $throwTypeError("ReadableStream already has a controller");
+    throw new TypeError("ReadableStream already has a controller");
 
   $putByIdDirectPrivate(this, "controlledReadableStream", stream);
   $putByIdDirectPrivate(this, "underlyingSource", underlyingSource);
@@ -73,7 +73,7 @@ export function readableStreamDefaultControllerError(controller, error) {
 export function readableStreamPipeTo(stream, sink) {
   $assert($isReadableStream(stream));
 
-  const reader = new $ReadableStreamDefaultReader(stream);
+  const reader = new ReadableStreamDefaultReader(stream);
 
   $getByIdDirectPrivate(reader, "closedPromiseCapability").$promise.$then(
     () => {},
@@ -111,7 +111,7 @@ export function acquireReadableStreamDefaultReader(stream) {
     start.$call(stream);
   }
 
-  return new $ReadableStreamDefaultReader(stream);
+  return new ReadableStreamDefaultReader(stream);
 }
 
 // https://streams.spec.whatwg.org/#set-up-readable-stream-default-controller, starting from step 6.
@@ -125,7 +125,7 @@ export function setupReadableStreamDefaultController(
   pullMethod,
   cancelMethod,
 ) {
-  const controller = new $ReadableStreamDefaultController(
+  const controller = new ReadableStreamDefaultController(
     stream,
     underlyingSource,
     size,
@@ -153,20 +153,19 @@ export function createReadableStreamController(stream, underlyingSource, strateg
     // if (!$readableByteStreamAPIEnabled())
     //     $throwTypeError("ReadableByteStreamController is not implemented");
 
-    if (strategy.highWaterMark === $undefined) strategy.highWaterMark = 0;
-    if (strategy.size !== $undefined)
-      $throwRangeError("Strategy for a ReadableByteStreamController cannot have a size");
+    if (strategy.highWaterMark === undefined) strategy.highWaterMark = 0;
+    if (strategy.size !== undefined) $throwRangeError("Strategy for a ReadableByteStreamController cannot have a size");
 
     $putByIdDirectPrivate(
       stream,
       "readableStreamController",
-      new $ReadableByteStreamController(stream, underlyingSource, strategy.highWaterMark, $isReadableStream),
+      new ReadableByteStreamController(stream, underlyingSource, strategy.highWaterMark, $isReadableStream),
     );
   } else if (typeString === "direct") {
     var highWaterMark = strategy?.highWaterMark;
     $initializeArrayBufferStream.$call(stream, underlyingSource, highWaterMark);
-  } else if (type === $undefined) {
-    if (strategy.highWaterMark === $undefined) strategy.highWaterMark = 1;
+  } else if (type === undefined) {
+    if (strategy.highWaterMark === undefined) strategy.highWaterMark = 1;
 
     $setupReadableStreamDefaultController(
       stream,
@@ -177,7 +176,7 @@ export function createReadableStreamController(stream, underlyingSource, strateg
       underlyingSource.pull,
       underlyingSource.cancel,
     );
-  } else $throwRangeError("Invalid type for underlying source");
+  } else throw new RangeError("Invalid type for underlying source");
 }
 
 export function readableStreamDefaultControllerStart(controller) {
@@ -210,18 +209,18 @@ export function readableStreamPipeToWritableStream(
   preventCancel,
   signal,
 ) {
-  const isDirectStream = !!$getByIdDirectPrivate(source, "start");
+  // const isDirectStream = !!$getByIdDirectPrivate(source, "start");
 
   $assert($isReadableStream(source));
   $assert($isWritableStream(destination));
   $assert(!$isReadableStreamLocked(source));
   $assert(!$isWritableStreamLocked(destination));
-  $assert(signal === $undefined || $isAbortSignal(signal));
+  $assert(signal === undefined || $isAbortSignal(signal));
 
-  if ($getByIdDirectPrivate(source, "underlyingByteSource") !== $undefined)
-    return $Promise.$reject("Piping to a readable bytestream is not supported");
+  if ($getByIdDirectPrivate(source, "underlyingByteSource") !== undefined)
+    return Promise.$reject("Piping to a readable bytestream is not supported");
 
-  let pipeState = {
+  let pipeState: any = {
     source: source,
     destination: destination,
     preventAbort: preventAbort,
@@ -237,12 +236,12 @@ export function readableStreamPipeToWritableStream(
 
   pipeState.finalized = false;
   pipeState.shuttingDown = false;
-  pipeState.promiseCapability = $newPromiseCapability($Promise);
-  pipeState.pendingReadPromiseCapability = $newPromiseCapability($Promise);
+  pipeState.promiseCapability = $newPromiseCapability(Promise);
+  pipeState.pendingReadPromiseCapability = $newPromiseCapability(Promise);
   pipeState.pendingReadPromiseCapability.$resolve.$call();
-  pipeState.pendingWritePromise = $Promise.$resolve();
+  pipeState.pendingWritePromise = Promise.$resolve();
 
-  if (signal !== $undefined) {
+  if (signal !== undefined) {
     const algorithm = reason => {
       if (pipeState.finalized) return;
 
@@ -253,15 +252,15 @@ export function readableStreamPipeToWritableStream(
             !pipeState.preventAbort && $getByIdDirectPrivate(pipeState.destination, "state") === "writable";
           const promiseDestination = shouldAbortDestination
             ? $writableStreamAbort(pipeState.destination, reason)
-            : $Promise.$resolve();
+            : Promise.$resolve();
 
           const shouldAbortSource =
             !pipeState.preventCancel && $getByIdDirectPrivate(pipeState.source, "state") === $streamReadable;
           const promiseSource = shouldAbortSource
             ? $readableStreamCancel(pipeState.source, reason)
-            : $Promise.$resolve();
+            : Promise.$resolve();
 
-          let promiseCapability = $newPromiseCapability($Promise);
+          let promiseCapability = $newPromiseCapability(Promise);
           let shouldWait = true;
           let handleResolvedPromise = () => {
             if (shouldWait) {
@@ -271,7 +270,7 @@ export function readableStreamPipeToWritableStream(
             promiseCapability.$resolve.$call();
           };
           let handleRejectedPromise = e => {
-            promiseCapability.$reject.$call($undefined, e);
+            promiseCapability.$reject.$call(undefined, e);
           };
           promiseDestination.$then(handleResolvedPromise, handleRejectedPromise);
           promiseSource.$then(handleResolvedPromise, handleRejectedPromise);
@@ -304,29 +303,29 @@ export function pipeToLoop(pipeState) {
 export function pipeToDoReadWrite(pipeState) {
   $assert(!pipeState.shuttingDown);
 
-  pipeState.pendingReadPromiseCapability = $newPromiseCapability($Promise);
+  pipeState.pendingReadPromiseCapability = $newPromiseCapability(Promise);
   $getByIdDirectPrivate(pipeState.writer, "readyPromise").$promise.$then(
     () => {
       if (pipeState.shuttingDown) {
-        pipeState.pendingReadPromiseCapability.$resolve.$call($undefined, false);
+        pipeState.pendingReadPromiseCapability.$resolve.$call(undefined, false);
         return;
       }
 
       $readableStreamDefaultReaderRead(pipeState.reader).$then(
         result => {
-          const canWrite = !result.done && $getByIdDirectPrivate(pipeState.writer, "stream") !== $undefined;
-          pipeState.pendingReadPromiseCapability.$resolve.$call($undefined, canWrite);
+          const canWrite = !result.done && $getByIdDirectPrivate(pipeState.writer, "stream") !== undefined;
+          pipeState.pendingReadPromiseCapability.$resolve.$call(undefined, canWrite);
           if (!canWrite) return;
 
           pipeState.pendingWritePromise = $writableStreamDefaultWriterWrite(pipeState.writer, result.value);
         },
         e => {
-          pipeState.pendingReadPromiseCapability.$resolve.$call($undefined, false);
+          pipeState.pendingReadPromiseCapability.$resolve.$call(undefined, false);
         },
       );
     },
     e => {
-      pipeState.pendingReadPromiseCapability.$resolve.$call($undefined, false);
+      pipeState.pendingReadPromiseCapability.$resolve.$call(undefined, false);
     },
   );
   return pipeState.pendingReadPromiseCapability.$promise;
@@ -334,7 +333,7 @@ export function pipeToDoReadWrite(pipeState) {
 
 export function pipeToErrorsMustBePropagatedForward(pipeState) {
   const action = () => {
-    pipeState.pendingReadPromiseCapability.$resolve.$call($undefined, false);
+    pipeState.pendingReadPromiseCapability.$resolve.$call(undefined, false);
     const error = $getByIdDirectPrivate(pipeState.source, "storedError");
     if (!pipeState.preventAbort) {
       $pipeToShutdownWithAction(pipeState, () => $writableStreamAbort(pipeState.destination, error), error);
@@ -348,7 +347,7 @@ export function pipeToErrorsMustBePropagatedForward(pipeState) {
     return;
   }
 
-  $getByIdDirectPrivate(pipeState.reader, "closedPromiseCapability").$promise.$then($undefined, action);
+  $getByIdDirectPrivate(pipeState.reader, "closedPromiseCapability").$promise.$then(undefined, action);
 }
 
 export function pipeToErrorsMustBePropagatedBackward(pipeState) {
@@ -364,13 +363,13 @@ export function pipeToErrorsMustBePropagatedBackward(pipeState) {
     action();
     return;
   }
-  $getByIdDirectPrivate(pipeState.writer, "closedPromise").$promise.$then($undefined, action);
+  $getByIdDirectPrivate(pipeState.writer, "closedPromise").$promise.$then(undefined, action);
 }
 
 export function pipeToClosingMustBePropagatedForward(pipeState) {
   const action = () => {
-    pipeState.pendingReadPromiseCapability.$resolve.$call($undefined, false);
-    const error = $getByIdDirectPrivate(pipeState.source, "storedError");
+    pipeState.pendingReadPromiseCapability.$resolve.$call(undefined, false);
+    // const error = $getByIdDirectPrivate(pipeState.source, "storedError");
     if (!pipeState.preventClose) {
       $pipeToShutdownWithAction(pipeState, () =>
         $writableStreamDefaultWriterCloseWithErrorPropagation(pipeState.writer),
@@ -383,7 +382,7 @@ export function pipeToClosingMustBePropagatedForward(pipeState) {
     action();
     return;
   }
-  $getByIdDirectPrivate(pipeState.reader, "closedPromiseCapability").$promise.$then(action, $undefined);
+  $getByIdDirectPrivate(pipeState.reader, "closedPromiseCapability").$promise.$then(action, undefined);
 }
 
 export function pipeToClosingMustBePropagatedBackward(pipeState) {
@@ -395,7 +394,7 @@ export function pipeToClosingMustBePropagatedBackward(pipeState) {
 
   // $assert no chunks have been read/written
 
-  const error = $makeTypeError("closing is propagated backward");
+  const error = new TypeError("closing is propagated backward");
   if (!pipeState.preventCancel) {
     $pipeToShutdownWithAction(pipeState, () => $readableStreamCancel(pipeState.source, error), error);
     return;
@@ -473,7 +472,7 @@ export function pipeToFinalize(pipeState) {
   // Instead of removing the abort algorithm as per spec, we make it a no-op which is equivalent.
   pipeState.finalized = true;
 
-  if (arguments.length > 1) pipeState.promiseCapability.$reject.$call($undefined, arguments[1]);
+  if (arguments.length > 1) pipeState.promiseCapability.$reject.$call(undefined, arguments[1]);
   else pipeState.promiseCapability.$resolve.$call();
 }
 
@@ -483,7 +482,7 @@ export function readableStreamTee(stream, shouldClone) {
 
   var start_ = $getByIdDirectPrivate(stream, "start");
   if (start_) {
-    $putByIdDirectPrivate(stream, "start", $undefined);
+    $putByIdDirectPrivate(stream, "start", undefined);
     start_();
   }
 
@@ -493,11 +492,11 @@ export function readableStreamTee(stream, shouldClone) {
     closedOrErrored: false,
     canceled1: false,
     canceled2: false,
-    reason1: $undefined,
-    reason2: $undefined,
+    reason1: undefined,
+    reason2: undefined,
   };
 
-  teeState.cancelPromiseCapability = $newPromiseCapability($Promise);
+  teeState.cancelPromiseCapability = $newPromiseCapability(Promise);
 
   const pullFunction = $readableStreamTeePullFunction(teeState, reader, shouldClone);
 
@@ -512,7 +511,7 @@ export function readableStreamTee(stream, shouldClone) {
   const branch1 = new $ReadableStream(branch1Source);
   const branch2 = new $ReadableStream(branch2Source);
 
-  $getByIdDirectPrivate(reader, "closedPromiseCapability").$promise.$then($undefined, function (e) {
+  $getByIdDirectPrivate(reader, "closedPromiseCapability").$promise.$then(undefined, function (e) {
     if (teeState.closedOrErrored) return;
     $readableStreamDefaultControllerError(branch1.$readableStreamController, e);
     $readableStreamDefaultControllerError(branch2.$readableStreamController, e);
@@ -529,7 +528,7 @@ export function readableStreamTee(stream, shouldClone) {
 
 export function readableStreamTeePullFunction(teeState, reader, shouldClone) {
   return function () {
-    $Promise.prototype.$then.$call($readableStreamDefaultReaderRead(reader), function (result) {
+    Promise.prototype.$then.$call($readableStreamDefaultReaderRead(reader), function (result) {
       $assert($isObject(result));
       $assert(typeof result.done === "boolean");
       if (result.done && !teeState.closedOrErrored) {
@@ -582,7 +581,7 @@ export function isReadableStream(stream) {
   // Spec tells to return true only if stream has a readableStreamController internal slot.
   // However, since it is a private slot, it cannot be checked using hasOwnProperty().
   // Therefore, readableStreamController is initialized with null value.
-  return $isObject(stream) && $getByIdDirectPrivate(stream, "readableStreamController") !== $undefined;
+  return $isObject(stream) && $getByIdDirectPrivate(stream, "readableStreamController") !== undefined;
 }
 
 export function isReadableStreamDefaultReader(reader) {
@@ -601,8 +600,8 @@ export function isReadableStreamDefaultController(controller) {
 }
 
 export function readDirectStream(stream, sink, underlyingSource) {
-  $putByIdDirectPrivate(stream, "underlyingSource", $undefined);
-  $putByIdDirectPrivate(stream, "start", $undefined);
+  $putByIdDirectPrivate(stream, "underlyingSource", undefined);
+  $putByIdDirectPrivate(stream, "start", undefined);
 
   function close(stream, reason) {
     if (reason && underlyingSource?.cancel) {
@@ -611,19 +610,19 @@ export function readDirectStream(stream, sink, underlyingSource) {
         $markPromiseAsHandled(prom);
       } catch (e) {}
 
-      underlyingSource = $undefined;
+      underlyingSource = undefined;
     }
 
     if (stream) {
-      $putByIdDirectPrivate(stream, "readableStreamController", $undefined);
-      $putByIdDirectPrivate(stream, "reader", $undefined);
+      $putByIdDirectPrivate(stream, "readableStreamController", undefined);
+      $putByIdDirectPrivate(stream, "reader", undefined);
       if (reason) {
         $putByIdDirectPrivate(stream, "state", $streamErrored);
         $putByIdDirectPrivate(stream, "storedError", reason);
       } else {
         $putByIdDirectPrivate(stream, "state", $streamClosed);
       }
-      stream = $undefined;
+      stream = undefined;
     }
   }
 
@@ -649,7 +648,7 @@ export function readDirectStream(stream, sink, underlyingSource) {
   $putByIdDirectPrivate(stream, "reader", {});
 
   var maybePromise = underlyingSource.pull(sink);
-  sink = $undefined;
+  sink = undefined;
   if (maybePromise && $isPromise(maybePromise)) {
     return maybePromise.$then(() => {});
   }
@@ -667,9 +666,9 @@ export function assignToStream(stream, sink) {
     } catch (e) {
       throw e;
     } finally {
-      underlyingSource = $undefined;
-      stream = $undefined;
-      sink = $undefined;
+      underlyingSource = undefined;
+      stream = undefined;
+      sink = undefined;
     }
   }
 
@@ -692,7 +691,7 @@ export async function readStreamIntoSink(stream, sink, isNative) {
     var wroteCount = many.value.length;
     const highWaterMark = $getByIdDirectPrivate(stream, "highWaterMark");
     if (isNative)
-      $startDirectStream.$call(sink, stream, $undefined, () => !didThrow && $markPromiseAsHandled(stream.cancel()));
+      $startDirectStream.$call(sink, stream, undefined, () => !didThrow && $markPromiseAsHandled(stream.cancel()));
 
     sink.start({ highWaterMark: highWaterMark || 0 });
 
@@ -719,7 +718,7 @@ export async function readStreamIntoSink(stream, sink, isNative) {
     didThrow = true;
 
     try {
-      reader = $undefined;
+      reader = undefined;
       const prom = stream.cancel(e);
       $markPromiseAsHandled(prom);
     } catch (j) {}
@@ -739,9 +738,9 @@ export async function readStreamIntoSink(stream, sink, isNative) {
       try {
         reader.releaseLock();
       } catch (e) {}
-      reader = $undefined;
+      reader = undefined;
     }
-    sink = $undefined;
+    sink = undefined;
     var streamState = $getByIdDirectPrivate(stream, "state");
     if (stream) {
       // make it easy for this to be GC'd
@@ -749,20 +748,20 @@ export async function readStreamIntoSink(stream, sink, isNative) {
       var readableStreamController = $getByIdDirectPrivate(stream, "readableStreamController");
       if (readableStreamController) {
         if ($getByIdDirectPrivate(readableStreamController, "underlyingSource"))
-          $putByIdDirectPrivate(readableStreamController, "underlyingSource", $undefined);
+          $putByIdDirectPrivate(readableStreamController, "underlyingSource", undefined);
         if ($getByIdDirectPrivate(readableStreamController, "controlledReadableStream"))
-          $putByIdDirectPrivate(readableStreamController, "controlledReadableStream", $undefined);
+          $putByIdDirectPrivate(readableStreamController, "controlledReadableStream", undefined);
 
         $putByIdDirectPrivate(stream, "readableStreamController", null);
         if ($getByIdDirectPrivate(stream, "underlyingSource"))
-          $putByIdDirectPrivate(stream, "underlyingSource", $undefined);
-        readableStreamController = $undefined;
+          $putByIdDirectPrivate(stream, "underlyingSource", undefined);
+        readableStreamController = undefined;
       }
 
       if (!didThrow && streamState !== $streamClosed && streamState !== $streamErrored) {
         $readableStreamClose(stream);
       }
-      stream = $undefined;
+      stream = undefined;
     }
   }
 }
@@ -771,7 +770,7 @@ export function handleDirectStreamError(e) {
   var controller = this;
   var sink = controller.$sink;
   if (sink) {
-    $putByIdDirectPrivate(controller, "sink", $undefined);
+    $putByIdDirectPrivate(controller, "sink", undefined);
     try {
       sink.close(e);
     } catch (f) {}
@@ -788,7 +787,7 @@ export function handleDirectStreamError(e) {
   try {
     var pend = controller._pendingRead;
     if (pend) {
-      controller._pendingRead = $undefined;
+      controller._pendingRead = undefined;
       $rejectPromise(pend, e);
     }
   } catch (f) {}
@@ -798,7 +797,7 @@ export function handleDirectStreamError(e) {
 
 export function handleDirectStreamErrorReject(e) {
   $handleDirectStreamError.$call(this, e);
-  return $Promise.$reject(e);
+  return Promise.$reject(e);
 }
 
 export function onPullDirectStream(controller) {
@@ -827,11 +826,11 @@ export function onPullDirectStream(controller) {
     var result = controller.$underlyingSource.pull(controller);
 
     if (result && $isPromise(result)) {
-      if (controller._handleError === $undefined) {
+      if (controller._handleError === undefined) {
         controller._handleError = $handleDirectStreamErrorReject.bind(controller);
       }
 
-      $Promise.prototype.catch.$call(result, controller._handleError);
+      Promise.prototype.catch.$call(result, controller._handleError);
     }
   } catch (e) {
     return $handleDirectStreamErrorReject.$call(controller, e);
@@ -843,7 +842,7 @@ export function onPullDirectStream(controller) {
 
   var promiseToReturn;
 
-  if (controller._pendingRead === $undefined) {
+  if (controller._pendingRead === undefined) {
     controller._pendingRead = promiseToReturn = $newPromise();
   } else {
     promiseToReturn = $readableStreamAddReadRequest(stream);
@@ -853,7 +852,7 @@ export function onPullDirectStream(controller) {
   // we delay that
   if (deferClose === 1) {
     var reason = controller._deferCloseReason;
-    controller._deferCloseReason = $undefined;
+    controller._deferCloseReason = undefined;
     $onCloseDirectStream.$call(controller, reason);
     return promiseToReturn;
   }
@@ -867,7 +866,7 @@ export function onPullDirectStream(controller) {
 }
 
 export function noopDoneFunction() {
-  return $Promise.$resolve({ value: $undefined, done: true });
+  return Promise.$resolve({ value: undefined, done: true });
 }
 
 export function onReadableStreamDirectControllerClosed(reason) {
@@ -894,11 +893,11 @@ export function onCloseDirectStream(reason) {
   var flushed;
   try {
     flushed = this.$sink.end();
-    $putByIdDirectPrivate(this, "sink", $undefined);
+    $putByIdDirectPrivate(this, "sink", undefined);
   } catch (e) {
     if (this._pendingRead) {
       var read = this._pendingRead;
-      this._pendingRead = $undefined;
+      this._pendingRead = undefined;
       $rejectPromise(read, e);
     }
     $readableStreamError(stream, e);
@@ -912,7 +911,7 @@ export function onCloseDirectStream(reason) {
   if (reader && $isReadableStreamDefaultReader(reader)) {
     var _pendingRead = this._pendingRead;
     if (_pendingRead && $isPromise(_pendingRead) && flushed?.byteLength) {
-      this._pendingRead = $undefined;
+      this._pendingRead = undefined;
       $fulfillPromise(_pendingRead, { value: flushed, done: false });
       $readableStreamClose(stream);
       return;
@@ -933,16 +932,16 @@ export function onCloseDirectStream(reason) {
         value: flushed,
         done: false,
       });
-      flushed = $undefined;
+      flushed = undefined;
       $readableStreamClose(stream);
-      stream = $undefined;
+      stream = undefined;
       return thisResult;
     };
   } else if (this._pendingRead) {
     var read = this._pendingRead;
-    this._pendingRead = $undefined;
+    this._pendingRead = undefined;
     $putByIdDirectPrivate(this, "pull", $noopDoneFunction);
-    $fulfillPromise(read, { value: $undefined, done: true });
+    $fulfillPromise(read, { value: undefined, done: true });
   }
 
   $readableStreamClose(stream);
@@ -956,7 +955,7 @@ export function onFlushDirectStream() {
   }
 
   var _pendingRead = this._pendingRead;
-  this._pendingRead = $undefined;
+  this._pendingRead = undefined;
   if (_pendingRead && $isPromise(_pendingRead)) {
     var flushed = this.$sink.flush();
     if (flushed?.byteLength) {
@@ -982,7 +981,7 @@ export function createTextStream(highWaterMark) {
   var hasBuffer = false;
   var rope = "";
   var estimatedLength = $toLength(0);
-  var capability = $newPromiseCapability($Promise);
+  var capability = $newPromiseCapability(Promise);
   var calledDone = false;
 
   sink = {
@@ -1097,27 +1096,27 @@ export function initializeTextStream(underlyingSource, highWaterMark) {
     end: $onCloseDirectStream,
     $close: $onCloseDirectStream,
     flush: $onFlushDirectStream,
-    _pendingRead: $undefined,
+    _pendingRead: undefined,
     _deferClose: 0,
     _deferFlush: 0,
-    _deferCloseReason: $undefined,
-    _handleError: $undefined,
+    _deferCloseReason: undefined,
+    _handleError: undefined,
   };
 
   $putByIdDirectPrivate(this, "readableStreamController", controller);
-  $putByIdDirectPrivate(this, "underlyingSource", $undefined);
-  $putByIdDirectPrivate(this, "start", $undefined);
+  $putByIdDirectPrivate(this, "underlyingSource", undefined);
+  $putByIdDirectPrivate(this, "start", undefined);
   return closingPromise;
 }
 
 export function initializeArrayStream(underlyingSource, highWaterMark) {
   var array = [];
-  var closingPromise = $newPromiseCapability($Promise);
+  var closingPromise = $newPromiseCapability(Promise);
   var calledDone = false;
 
   function fulfill() {
     calledDone = true;
-    closingPromise.$resolve.$call($undefined, array);
+    closingPromise.$resolve.$call(undefined, array);
     return array;
   }
 
@@ -1157,16 +1156,16 @@ export function initializeArrayStream(underlyingSource, highWaterMark) {
     end: $onCloseDirectStream,
     $close: $onCloseDirectStream,
     flush: $onFlushDirectStream,
-    _pendingRead: $undefined,
+    _pendingRead: undefined,
     _deferClose: 0,
     _deferFlush: 0,
-    _deferCloseReason: $undefined,
-    _handleError: $undefined,
+    _deferCloseReason: undefined,
+    _handleError: undefined,
   };
 
   $putByIdDirectPrivate(this, "readableStreamController", controller);
-  $putByIdDirectPrivate(this, "underlyingSource", $undefined);
-  $putByIdDirectPrivate(this, "start", $undefined);
+  $putByIdDirectPrivate(this, "underlyingSource", undefined);
+  $putByIdDirectPrivate(this, "start", undefined);
   return closingPromise;
 }
 
@@ -1193,16 +1192,16 @@ export function initializeArrayBufferStream(underlyingSource, highWaterMark) {
     end: $onCloseDirectStream,
     $close: $onCloseDirectStream,
     flush: $onFlushDirectStream,
-    _pendingRead: $undefined,
+    _pendingRead: undefined,
     _deferClose: 0,
     _deferFlush: 0,
-    _deferCloseReason: $undefined,
-    _handleError: $undefined,
+    _deferCloseReason: undefined,
+    _handleError: undefined,
   };
 
   $putByIdDirectPrivate(this, "readableStreamController", controller);
-  $putByIdDirectPrivate(this, "underlyingSource", $undefined);
-  $putByIdDirectPrivate(this, "start", $undefined);
+  $putByIdDirectPrivate(this, "underlyingSource", undefined);
+  $putByIdDirectPrivate(this, "start", undefined);
 }
 
 export function readableStreamError(stream, error) {
@@ -1226,7 +1225,7 @@ export function readableStreamError(stream, error) {
     for (var request = requests.shift(); request; request = requests.shift()) $rejectPromise(request, error);
   }
 
-  $getByIdDirectPrivate(reader, "closedPromiseCapability").$reject.$call($undefined, error);
+  $getByIdDirectPrivate(reader, "closedPromiseCapability").$reject.$call(undefined, error);
   const promise = $getByIdDirectPrivate(reader, "closedPromiseCapability").$promise;
   $markPromiseAsHandled(promise);
 }
@@ -1269,7 +1268,7 @@ export function readableStreamDefaultControllerCallPullIfNeeded(controller) {
   $putByIdDirectPrivate(controller, "pulling", true);
 
   $getByIdDirectPrivate(controller, "pullAlgorithm")
-    .$call($undefined)
+    .$call(undefined)
     .$then(
       function () {
         $putByIdDirectPrivate(controller, "pulling", false);
@@ -1309,8 +1308,8 @@ export function readableStreamReaderGenericCancel(reader, reason) {
 export function readableStreamCancel(stream, reason) {
   $putByIdDirectPrivate(stream, "disturbed", true);
   const state = $getByIdDirectPrivate(stream, "state");
-  if (state === $streamClosed) return $Promise.$resolve();
-  if (state === $streamErrored) return $Promise.$reject($getByIdDirectPrivate(stream, "storedError"));
+  if (state === $streamClosed) return Promise.$resolve();
+  if (state === $streamErrored) return Promise.$reject($getByIdDirectPrivate(stream, "storedError"));
   $readableStreamClose(stream);
 
   var controller = $getByIdDirectPrivate(stream, "readableStreamController");
@@ -1321,7 +1320,7 @@ export function readableStreamCancel(stream, reason) {
 
   var close = controller.close;
   if (close) {
-    return $Promise.$resolve(controller.close(reason));
+    return Promise.$resolve(controller.close(reason));
   }
 
   $throwTypeError("ReadableStreamController has no cancel or close method");
@@ -1329,7 +1328,7 @@ export function readableStreamCancel(stream, reason) {
 
 export function readableStreamDefaultControllerCancel(controller, reason) {
   $putByIdDirectPrivate(controller, "queue", $newQueue());
-  return $getByIdDirectPrivate(controller, "cancelAlgorithm").$call($undefined, reason);
+  return $getByIdDirectPrivate(controller, "cancelAlgorithm").$call(undefined, reason);
 }
 
 export function readableStreamDefaultControllerPull(controller) {
@@ -1365,7 +1364,7 @@ export function readableStreamClose(stream) {
       $putByIdDirectPrivate($getByIdDirectPrivate(stream, "reader"), "readRequests", $createFIFO());
 
       for (var request = requests.shift(); request; request = requests.shift())
-        $fulfillPromise(request, { value: $undefined, done: true });
+        $fulfillPromise(request, { value: undefined, done: true });
     }
   }
 
@@ -1393,7 +1392,7 @@ export function readableStreamDefaultControllerEnqueue(controller, chunk) {
 
   try {
     let chunkSize = 1;
-    if ($getByIdDirectPrivate(controller, "strategy").size !== $undefined)
+    if ($getByIdDirectPrivate(controller, "strategy").size !== undefined)
       chunkSize = $getByIdDirectPrivate(controller, "strategy").size(chunk);
     $enqueueValueWithSize($getByIdDirectPrivate(controller, "queue"), chunk, chunkSize);
   } catch (error) {
@@ -1409,8 +1408,8 @@ export function readableStreamDefaultReaderRead(reader) {
   const state = $getByIdDirectPrivate(stream, "state");
 
   $putByIdDirectPrivate(stream, "disturbed", true);
-  if (state === $streamClosed) return $createFulfilledPromise({ value: $undefined, done: true });
-  if (state === $streamErrored) return $Promise.$reject($getByIdDirectPrivate(stream, "storedError"));
+  if (state === $streamClosed) return $createFulfilledPromise({ value: undefined, done: true });
+  if (state === $streamErrored) return Promise.$reject($getByIdDirectPrivate(stream, "storedError"));
   $assert(state === $streamReadable);
 
   return $getByIdDirectPrivate(stream, "readableStreamController").$pull(
@@ -1440,7 +1439,7 @@ export function readableStreamReaderGenericRelease(reader) {
 
   if ($getByIdDirectPrivate($getByIdDirectPrivate(reader, "ownerReadableStream"), "state") === $streamReadable)
     $getByIdDirectPrivate(reader, "closedPromiseCapability").$reject.$call(
-      $undefined,
+      undefined,
       $makeTypeError("releasing lock of reader whose stream is still in readable state"),
     );
   else
@@ -1450,8 +1449,8 @@ export function readableStreamReaderGenericRelease(reader) {
 
   const promise = $getByIdDirectPrivate(reader, "closedPromiseCapability").$promise;
   $markPromiseAsHandled(promise);
-  $putByIdDirectPrivate($getByIdDirectPrivate(reader, "ownerReadableStream"), "reader", $undefined);
-  $putByIdDirectPrivate(reader, "ownerReadableStream", $undefined);
+  $putByIdDirectPrivate($getByIdDirectPrivate(reader, "ownerReadableStream"), "reader", undefined);
+  $putByIdDirectPrivate(reader, "ownerReadableStream", undefined);
 }
 
 export function readableStreamDefaultControllerCanCloseOrEnqueue(controller) {
@@ -1465,14 +1464,14 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
   var nativeType = $getByIdDirectPrivate(stream, "bunNativeType");
   var nativePtr = $getByIdDirectPrivate(stream, "bunNativePtr");
   var Prototype = $lazyStreamPrototypeMap.$get(nativeType);
-  if (Prototype === $undefined) {
+  if (Prototype === undefined) {
     var [pull, start, cancel, setClose, deinit, setRefOrUnref, drain] = $lazyLoad(nativeType);
     var closer = [false];
     var handleResult;
     function handleNativeReadableStreamPromiseResult(val) {
       var { c, v } = this;
-      this.c = $undefined;
-      this.v = $undefined;
+      this.c = undefined;
+      this.v = undefined;
       handleResult(val, c, v);
     }
 
@@ -1531,7 +1530,7 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
         this.cancel = this.#cancel.bind(this);
         this.autoAllocateChunkSize = autoAllocateChunkSize;
 
-        if (drainValue !== $undefined) {
+        if (drainValue !== undefined) {
           this.start = controller => {
             controller.enqueue(drainValue);
           };
@@ -1642,17 +1641,17 @@ export function readableStreamIntoText(stream) {
   const [textStream, closer] = $createTextStream($getByIdDirectPrivate(stream, "highWaterMark"));
   const prom = $readStreamIntoSink(stream, textStream, false);
   if (prom && $isPromise(prom)) {
-    return $Promise.$resolve(prom).$then(closer.$promise);
+    return Promise.$resolve(prom).$then(closer.$promise);
   }
   return closer.$promise;
 }
 
 export function readableStreamToArrayBufferDirect(stream, underlyingSource) {
   var sink = new $Bun.ArrayBufferSink();
-  $putByIdDirectPrivate(stream, "underlyingSource", $undefined);
+  $putByIdDirectPrivate(stream, "underlyingSource", undefined);
   var highWaterMark = $getByIdDirectPrivate(stream, "highWaterMark");
   sink.start(highWaterMark ? { highWaterMark } : {});
-  var capability = $newPromiseCapability($Promise);
+  var capability = $newPromiseCapability(Promise);
   var ended = false;
   var pull = underlyingSource.pull;
   var close = underlyingSource.close;
@@ -1700,15 +1699,15 @@ export function readableStreamToArrayBufferDirect(stream, underlyingSource) {
   } catch (e) {
     didError = true;
     $readableStreamError(stream, e);
-    return $Promise.$reject(e);
+    return Promise.$reject(e);
   } finally {
     if (!didError && stream) $readableStreamClose(stream);
-    controller = close = sink = pull = stream = $undefined;
+    controller = close = sink = pull = stream = undefined;
   }
 }
 
 export async function readableStreamToTextDirect(stream, underlyingSource) {
-  const capability = $initializeTextStream.$call(stream, underlyingSource, $undefined);
+  const capability = $initializeTextStream.$call(stream, underlyingSource, undefined);
   var reader = stream.getReader();
 
   while ($getByIdDirectPrivate(stream, "state") === $streamReadable) {
@@ -1721,15 +1720,15 @@ export async function readableStreamToTextDirect(stream, underlyingSource) {
   try {
     reader.releaseLock();
   } catch (e) {}
-  reader = $undefined;
-  stream = $undefined;
+  reader = undefined;
+  stream = undefined;
 
   return capability.$promise;
 }
 
 export async function readableStreamToArrayDirect(stream, underlyingSource) {
-  const capability = $initializeArrayStream.$call(stream, underlyingSource, $undefined);
-  underlyingSource = $undefined;
+  const capability = $initializeArrayStream.$call(stream, underlyingSource, undefined);
+  underlyingSource = undefined;
   var reader = stream.getReader();
   try {
     while ($getByIdDirectPrivate(stream, "state") === $streamReadable) {
@@ -1742,14 +1741,14 @@ export async function readableStreamToArrayDirect(stream, underlyingSource) {
     try {
       reader.releaseLock();
     } catch (e) {}
-    reader = $undefined;
+    reader = undefined;
 
-    return $Promise.$resolve(capability.$promise);
+    return Promise.$resolve(capability.$promise);
   } catch (e) {
     throw e;
   } finally {
-    stream = $undefined;
-    reader = $undefined;
+    stream = undefined;
+    reader = undefined;
   }
 
   return capability.$promise;

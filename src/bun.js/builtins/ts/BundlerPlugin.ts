@@ -1,11 +1,26 @@
-import type { AnyFunction, BuildConfig, BunPlugin, PluginBuilder, PluginConstraints } from "bun";
+import type {
+  AnyFunction,
+  BuildConfig,
+  BunPlugin,
+  OnLoadCallback,
+  OnLoadResult,
+  OnLoadResultObject,
+  OnLoadResultSourceCode,
+  OnResolveCallback,
+  PluginBuilder,
+  PluginConstraints,
+} from "bun";
 
 // This API expects 4 functions:
 // It should be generic enough to reuse for Bun.plugin() eventually, too.
 interface BundlerPlugin {
-  onLoad: Map<string, [RegExp, Function][]>;
-  onResolve: Map<string, [RegExp, Function][]>;
-  onLoadAsync(internalID, a, b, c): void;
+  onLoad: Map<string, [RegExp, OnLoadCallback][]>;
+  onResolve: Map<string, [RegExp, OnResolveCallback][]>;
+  onLoadAsync(
+    internalID,
+    sourceCode: string | Uint8Array | ArrayBuffer | DataView | null,
+    loaderKey: number | null,
+  ): void;
   onResolveAsync(internalID, a, b, c): void;
   addError(internalID, error, number): void;
   addFilter(filter, namespace, number): void;
@@ -34,8 +49,8 @@ interface PluginBuilderExt extends PluginBuilder {
 }
 
 export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: BuildConfigExt) {
-  var onLoadPlugins = new Map();
-  var onResolvePlugins = new Map();
+  var onLoadPlugins = new Map<string, [RegExp, AnyFunction][]>();
+  var onResolvePlugins = new Map<string, [RegExp, AnyFunction][]>();
 
   function validate(filterObject: PluginConstraints, callback, map) {
     if (!filterObject || !$isObject(filterObject)) {
@@ -85,22 +100,6 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
     validate(filterObject, callback, onResolvePlugins);
   }
 
-  function onStart(callback) {
-    throw notImplementedIssue(2771, "On-start callbacks");
-  }
-
-  function onEnd(callback) {
-    throw notImplementedIssue(2771, "On-end callbacks");
-  }
-
-  function onDispose(callback) {
-    throw notImplementedIssue(2771, "On-dispose callbacks");
-  }
-
-  function resolve(callback) {
-    throw notImplementedIssue(2771, "build.resolve()");
-  }
-
   const processSetupResult = () => {
     var anyOnLoad = false,
       anyOnResolve = false;
@@ -125,7 +124,7 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
         this.onResolve = onResolvePlugins;
       } else {
         for (var [namespace, callbacks] of onResolvePlugins.entries()) {
-          var existing = onResolveObject.$get(namespace);
+          var existing = onResolveObject.$get(namespace) as [RegExp, AnyFunction][];
 
           if (!existing) {
             onResolveObject.$set(namespace, callbacks);
@@ -142,7 +141,7 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
         this.onLoad = onLoadPlugins;
       } else {
         for (var [namespace, callbacks] of onLoadPlugins.entries()) {
-          var existing = onLoadObject.$get(namespace);
+          var existing = onLoadObject.$get(namespace) as [RegExp, AnyFunction][];
 
           if (!existing) {
             onLoadObject.$set(namespace, callbacks);
@@ -158,12 +157,12 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
 
   var setupResult = setup({
     config: config,
-    onDispose,
-    onEnd,
+    onDispose: notImplementedIssueFn(2771, "On-dispose callbacks"),
+    onEnd: notImplementedIssueFn(2771, "On-end callbacks"),
     onLoad,
     onResolve,
-    onStart,
-    resolve,
+    onStart: notImplementedIssueFn(2771, "On-start callbacks"),
+    resolve: notImplementedIssueFn(2771, "build.resolve()"),
     // esbuild's options argument is different, we provide some interop
     initialOptions: {
       ...config,
@@ -299,7 +298,7 @@ export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespac
   var promiseResult = (async (internalID, path, namespace, defaultLoader) => {
     var results = this.onLoad.$get(namespace);
     if (!results) {
-      this.onLoadAsync(internalID, null, null, null);
+      this.onLoadAsync(internalID, null, null);
       return null;
     }
 
@@ -329,7 +328,7 @@ export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespac
           continue;
         }
 
-        var { contents, loader = defaultLoader } = result;
+        var { contents, loader = defaultLoader } = result as OnLoadResultSourceCode & OnLoadResultObject;
         if (!(typeof contents === "string") && !$isTypedArrayView(contents)) {
           throw new TypeError('onLoad plugins must return an object with "contents" as a string or Uint8Array');
         }

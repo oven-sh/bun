@@ -1,10 +1,7 @@
 {
   "extends": "../../../tsconfig.base.json",
   "compilerOptions": {
-    "experimentalDecorators": true,
-    "noEmit": true,
-    // "skipLibCheck": true,
-    "allowJs": true
+    "noEmit": true
   },
-  "include": [".", "../../../packages/bun-types/index.d.ts"]
+  "include": [".", "builtins.d.ts", "WebCoreJSBuiltins.d.ts", "../../../packages/bun-types/index.d.ts"]
 }

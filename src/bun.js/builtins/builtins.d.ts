@@ -1,4 +1,5 @@
 // Typedefs for JSC intrinsics. Instead of @, we use $
+type TODO = any;
 
 /** Place this directly above a function declaration (like a decorator) to make it a getter. */
 declare const $getter: never;
@@ -7,12 +8,12 @@ declare var $overriddenName: string;
 /** ??? */
 declare var $linkTimeConstant: never;
 /** Assign to this directly above a function declaration (like a decorator) to set visibility */
-declare var $visibility: 'Public' | 'Private'
+declare var $visibility: "Public" | "Private";
 /** ??? */
 declare var $nakedConstructor: never;
 /** Assign to this directly above a function declaration (like a decorator) to set intrinsic */
 declare var $intrinsic: string;
-declare var $constructor
+declare var $constructor;
 
 declare function $extractHighWaterMarkFromQueuingStrategyInit(obj: any): any;
 
@@ -186,9 +187,8 @@ declare const $AsyncGeneratorSuspendReasonNone: TODO;
 declare const $abstractModuleRecordFieldState: TODO;
 
 // We define our intrinsics in ./BunBuiltinNames.h. Some of those are globals.
-// Many of thse are unused and commented out.
 
-// declare var $_events: TODO;
+declare var $_events: TODO;
 declare function $abortAlgorithm(): TODO;
 declare function $abortSteps(): TODO;
 declare function $addEventListener(): TODO;
@@ -391,7 +391,7 @@ declare function $username(): TODO;
 declare function $version(): TODO;
 declare function $versions(): TODO;
 declare function $view(): TODO;
-declare function $whenSignalAborted(): TODO;
+declare function $whenSignalAborted(signal: AbortSignal, cb: (reason: any) => void): TODO;
 declare function $writable(): TODO;
 declare function $write(): TODO;
 declare function $writeAlgorithm(): TODO;
@@ -400,95 +400,24 @@ declare function $writer(): TODO;
 declare function $writing(): TODO;
 declare function $written(): TODO;
 
-// The following are functions we define in our own builtins, but to call them from other builtins
-// you need to use the '@' syntax.
-declare const $loadCJS2ESM: RemoveThis<typeof import("./js/ImportMetaObject")["loadCJS2ESM"]>;
-
-// Readable stream ????
-declare function $isReadableStream(stream: unknown): stream is ReadableStream;
-declare function $isWritableStream(stream: unknown): stream is WritableStream;
-declare function $privateInitializeReadableByteStreamController(
-  stream: unknown,
-  underlyingByteSource: unknown,
-  highWaterMark: unknown,
-): stream is ReadableStream;
-declare function $isReadableByteStreamController(stream: unknown): stream is ReadableStream;
-declare function $readableByteStreamControllerEnqueue(stream: unknown, chunk: unknown): TODO;
-declare function $readableByteStreamControllerError(stream: unknown, chunk: unknown): TODO;
-declare function $readableByteStreamControllerClose(stream: unknown): TODO;
-declare function $readableByteStreamControllerGetDesiredSize(stream: unknown): TODO;
-declare function $readableByteStreamControllerClearPendingPullIntos(stream: unknown): TODO;
-declare function $newQueue(): TODO;
-declare function $promiseInvokeOrNoopNoCatch(obj: unknown, method: unknown, args: unknown[]): Promise<any>;
-declare function $readableByteStreamControllerCallPullIfNeeded(obj): TODO;
-declare function $readableByteStreamControllerCancel(): TODO;
-declare function $readableByteStreamControllerPull(): TODO;
-declare function $promiseInvokeOrNoop(obj: unknown, method: unknown, args: unknown[]): Promise<any>;
-declare function $readableStreamError(obj: unknown, err: unknown): void;
-declare function $makeTypeError(err: string): TypeError;
-declare function $readableStreamClose(obj: unknown): void;
-declare function $readableByteStreamControllerInvalidateBYOBRequest(obj: unknown): void;
-declare function $isReadableStreamBYOBReader(obj: unknown): obj is ReadableStreamBYOBReader;
-declare function $isReadableStreamDefaultReader(obj: unknown): void;
-declare function $readableStreamHasDefaultReader(obj: unknown): void;
-declare function $readableByteStreamControllerHandleQueueDrain(obj: unknown): void;
-declare function $createFulfilledPromise(obj: unknown): void;
-declare function $readableStreamAddReadRequest(stream: unknown): void;
-declare function $readableStreamHasBYOBReader(stream: unknown): boolean;
-declare function $readableByteStreamControllerShouldCallPull(stream: unknown): boolean;
-declare function $readableStreamReaderKind(reader: unknown): number;
-declare function $readableByteStreamControllerEnqueueChunk(a, b, c, d): any;
-declare function $transferBufferToCurrentRealm(a): any;
-declare function $readableStreamFulfillReadRequest(a, b, c): any;
-declare function $readableByteStreamControllerProcessPullDescriptors(a): any;
-declare function $isReadableStreamLocked(a): any;
-declare function $isWritableStreamLocked(a): any;
-declare function $readableByteStreamControllerRespondInternal(a, b): any;
-declare function $readableByteStreamControllerRespondInClosedState(a, b): any;
-declare function $readableByteStreamControllerRespondInReadableState(a, b): any;
-declare function $readableByteStreamControllerShiftPendingDescriptor(a): any;
-declare function $readableByteStreamControllerCommitDescriptor(a, b): any;
-declare function $readableByteStreamControllerFillDescriptorFromQueue(a, b): any;
-declare function $readableByteStreamControllerConvertDescriptor(a): any;
-declare function $readableStreamFulfillReadIntoRequest(a, b, c): any;
-declare function $fulfillPromise(a, b): any;
-declare function $readableByteStreamControllerPullInto(a, b): any;
-declare function $readableStreamAddReadIntoRequest(a): any;
-declare function $setupReadableStreamDefaultController(a, b, c, d, e, f, g): any;
-declare function $createReadableStreamController(a, b, c): any;
-declare function $lazyLoadStream(a, b): any;
-declare function $readableStreamCancel(a, b): any;
-declare function $toDictionary(a, b, e): any;
-declare function $readableStreamPipeToWritableStream(a, b, c, d, e, f): any;
-declare function $readableStreamDefineLazyIterators(prototype): any;
-declare function $readableStreamReaderGenericInitialize(thisvalue, stream): any;
-declare function $readableStreamTee(stream: ReadableStream, a: boolean): any;
-declare function $readableStreamBYOBReaderRead(stream: any, view: DataView): any;
-declare function $readableStreamReaderGenericRelease(x: any): any;
-declare function $readableStreamReaderGenericCancel(x: any, reason: any): any;
-declare function $readableStreamToArrayDirect(a: any, b: any): any;
-declare function $readableStreamToArrayBufferDirect(a: any, b: any): any;
-declare function $readableStreamIntoArray(a: any): any;
-declare function $readableStreamToTextDirect(a: any, b): any;
-declare function $readableStreamIntoText(a: any): any;
-declare function $shieldingPromiseResolve(a: any): any;
-declare function $promiseInvokeOrNoopMethodNoCatch(a: any, b: any, c: any): any;
-
 // The following I cannot find any definitions of, but they are functional.
 declare function $toLength(length: number): number;
 declare function $isTypedArrayView(obj: unknown): obj is ArrayBufferView | DataView | Uint8Array;
 declare function $setStateToMax(target: any, state: number): void;
 declare function $trunc(target: number): number;
+declare function $newPromiseCapability(C: PromiseConstructor): TODO;
+/** @deprecated, use new TypeError instead */
+declare function $makeTypeError(message: string): TypeError;
+declare function $newHandledRejectedPromise(error: unknown): Promise<never>;
 
 // Types used in the above functions
-type PromiseField = typeof $promiseFieldFlags | typeof $promiseFieldReactionsOrResult;
-type PromiseFieldToValue<X extends PromiseField, V> = X extends typeof $promiseFieldFlags
+type PromiseFieldType = typeof $promiseFieldFlags | typeof $promiseFieldReactionsOrResult;
+type PromiseFieldToValue<X extends PromiseFieldType, V> = X extends typeof $promiseFieldFlags
   ? number
   : X extends typeof $promiseFieldReactionsOrResult
   ? V | any
   : any;
 type WellKnownSymbol = keyof { [K in keyof SymbolConstructor as SymbolConstructor[K] extends symbol ? K : never]: K };
-type RemoveThis<F> = F extends (this: infer T, ...args: infer A) => infer R ? (...args: A) => R : F;
 
 // You can also `@` on any method on a classes to avoid prototype pollution and secret internals
 type ClassWithIntrinsics<T> = { [K in keyof T as T[K] extends Function ? `$${K}` : never]: T[K] };
@@ -510,6 +439,27 @@ declare class OutOfMemoryError {
   constructor();
 }
 
+declare class ReadableStream {
+  constructor(stream: unknown, view?: unknown);
+  values(options?: unknown): AsyncIterableIterator<unknown>;
+}
+declare class ReadableStreamDefaultController {
+  constructor(
+    stream: unknown,
+    underlyingSource: unknown,
+    size: unknown,
+    highWaterMark: unknown,
+    $isReadableStream: typeof $isReadableStream,
+  );
+}
+declare class ReadableByteStreamController {
+  constructor(
+    stream: unknown,
+    underlyingSource: unknown,
+    strategy: unknown,
+    $isReadableStream: typeof $isReadableStream,
+  );
+}
 declare class ReadableStreamBYOBRequest {
   constructor(stream: unknown, view: unknown, $isReadableStream: typeof $isReadableStream);
 }
@@ -523,8 +473,11 @@ declare const $ImportKindLabelToId: Record<import("bun").ImportKind, number>;
 declare const $LoaderIdToLabel: Array<import("bun").Loader>;
 declare const $LoaderLabelToId: Record<import("bun").Loader, number>;
 
-// not a builtin, but a macro of our own
+// not a builtin, but a build-time macro of our own
+/** Returns a not implemented error that points to a github issue. */
 declare function notImplementedIssue(issueNumber: number, description: string): Error;
+/** Return a function that throws a not implemented error that points to a github issue */
+declare function notImplementedIssueFn(issueNumber: number, description: string): (...args: any[]) => never;
 
 declare type JSCSourceCodeObject = unique symbol;
 

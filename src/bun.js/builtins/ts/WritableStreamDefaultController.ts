@@ -23,10 +23,10 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-export function initializeWritableStreamDefaultController() {
+export function initializeWritableStreamDefaultController(this) {
   $putByIdDirectPrivate(this, "queue", $newQueue());
   $putByIdDirectPrivate(this, "abortSteps", reason => {
-    const result = $getByIdDirectPrivate(this, "abortAlgorithm").$call($undefined, reason);
+    const result = $getByIdDirectPrivate(this, "abortAlgorithm").$call(undefined, reason);
     $writableStreamDefaultControllerClearAlgorithms(this);
     return result;
   });
@@ -38,8 +38,8 @@ export function initializeWritableStreamDefaultController() {
   return this;
 }
 
-export function error(e) {
-  if ($getByIdDirectPrivate(this, "abortSteps") === $undefined)
+export function error(this, e) {
+  if ($getByIdDirectPrivate(this, "abortSteps") === undefined)
     throw $makeThisTypeError("WritableStreamDefaultController", "error");
 
   const stream = $getByIdDirectPrivate(this, "stream");

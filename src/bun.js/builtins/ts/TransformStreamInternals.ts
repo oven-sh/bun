@@ -52,8 +52,8 @@ export function createTransformStream(
   const transform = {};
   $putByIdDirectPrivate(transform, "TransformStream", true);
 
-  const stream = new $TransformStream(transform);
-  const startPromiseCapability = $newPromiseCapability($Promise);
+  const stream = new TransformStream(transform);
+  const startPromiseCapability = $newPromiseCapability(Promise);
   $initializeTransformStream(
     stream,
     startPromiseCapability.$promise,
@@ -63,7 +63,7 @@ export function createTransformStream(
     readableSizeAlgorithm,
   );
 
-  const controller = new $TransformStreamDefaultController();
+  const controller = new TransformStreamDefaultController();
   $setUpTransformStreamDefaultController(stream, controller, transformAlgorithm, flushAlgorithm);
 
   startAlgorithm().$then(
@@ -112,7 +112,7 @@ export function initializeTransformStream(
   };
   const cancelAlgorithm = reason => {
     $transformStreamErrorWritableAndUnblockWrite(stream, reason);
-    return $Promise.$resolve();
+    return Promise.$resolve();
   };
   const underlyingSource = {};
   $putByIdDirectPrivate(underlyingSource, "start", startAlgorithm);
@@ -121,7 +121,7 @@ export function initializeTransformStream(
   const options = {};
   $putByIdDirectPrivate(options, "size", readableSizeAlgorithm);
   $putByIdDirectPrivate(options, "highWaterMark", readableHighWaterMark);
-  const readable = new $ReadableStream(underlyingSource, options);
+  const readable = new ReadableStream(underlyingSource, options);
 
   // The writable to expose to JS through writable getter.
   $putByIdDirectPrivate(stream, "writable", writable);
@@ -159,7 +159,7 @@ export function transformStreamSetBackpressure(stream, backpressure) {
   const backpressureChangePromise = $getByIdDirectPrivate(stream, "backpressureChangePromise");
   if (backpressureChangePromise !== undefined) backpressureChangePromise.$resolve.$call();
 
-  $putByIdDirectPrivate(stream, "backpressureChangePromise", $newPromiseCapability($Promise));
+  $putByIdDirectPrivate(stream, "backpressureChangePromise", $newPromiseCapability(Promise));
   $putByIdDirectPrivate(stream, "backpressure", backpressure);
 }
 
@@ -174,17 +174,17 @@ export function setUpTransformStreamDefaultController(stream, controller, transf
 }
 
 export function setUpTransformStreamDefaultControllerFromTransformer(stream, transformer, transformerDict) {
-  const controller = new $TransformStreamDefaultController();
+  const controller = new TransformStreamDefaultController();
   let transformAlgorithm = chunk => {
     try {
       $transformStreamDefaultControllerEnqueue(controller, chunk);
     } catch (e) {
-      return $Promise.$reject(e);
+      return Promise.$reject(e);
     }
-    return $Promise.$resolve();
+    return Promise.$resolve();
   };
   let flushAlgorithm = () => {
-    return $Promise.$resolve();
+    return Promise.$resolve();
   };
 
   if ("transform" in transformerDict)
@@ -235,7 +235,7 @@ export function transformStreamDefaultControllerError(controller, e) {
 }
 
 export function transformStreamDefaultControllerPerformTransform(controller, chunk) {
-  const promiseCapability = $newPromiseCapability($Promise);
+  const promiseCapability = $newPromiseCapability(Promise);
 
   const transformPromise = $getByIdDirectPrivate(controller, "transformAlgorithm").$call(undefined, chunk);
   transformPromise.$then(
@@ -270,7 +270,7 @@ export function transformStreamDefaultSinkWriteAlgorithm(stream, chunk) {
   const controller = $getByIdDirectPrivate(stream, "controller");
 
   if ($getByIdDirectPrivate(stream, "backpressure")) {
-    const promiseCapability = $newPromiseCapability($Promise);
+    const promiseCapability = $newPromiseCapability(Promise);
 
     const backpressureChangePromise = $getByIdDirectPrivate(stream, "backpressureChangePromise");
     $assert(backpressureChangePromise !== undefined);
@@ -304,7 +304,7 @@ export function transformStreamDefaultSinkWriteAlgorithm(stream, chunk) {
 
 export function transformStreamDefaultSinkAbortAlgorithm(stream, reason) {
   $transformStreamError(stream, reason);
-  return $Promise.$resolve();
+  return Promise.$resolve();
 }
 
 export function transformStreamDefaultSinkCloseAlgorithm(stream) {
@@ -317,7 +317,7 @@ export function transformStreamDefaultSinkCloseAlgorithm(stream) {
   const flushPromise = $getByIdDirectPrivate(controller, "flushAlgorithm").$call();
   $transformStreamDefaultControllerClearAlgorithms(controller);
 
-  const promiseCapability = $newPromiseCapability($Promise);
+  const promiseCapability = $newPromiseCapability(Promise);
   flushPromise.$then(
     () => {
       if ($getByIdDirectPrivate(readable, "state") === $streamErrored) {

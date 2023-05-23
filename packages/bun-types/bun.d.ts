@@ -2746,6 +2746,7 @@ declare module "bun" {
      * ```
      */
     namespace?: string;
+    external: boolean;
   }
 
   type OnResolveCallback = (

@@ -370,14 +370,14 @@ export function pipeTo(this, destination) {
     }
 
     if (signal !== undefined && !$isAbortSignal(signal))
-      return Promise.$reject($makeTypeError("options.signal must be AbortSignal"));
+      return Promise.$reject(new TypeError("options.signal must be AbortSignal"));
   }
 
   const internalDestination = $getInternalWritableStream(destination);
   if (!$isWritableStream(internalDestination))
-    return Promise.$reject($makeTypeError("ReadableStream pipeTo requires a WritableStream"));
+    return Promise.$reject(new TypeError("ReadableStream pipeTo requires a WritableStream"));
 
-  if ($isWritableStreamLocked(internalDestination)) return Promise.$reject($makeTypeError("WritableStream is locked"));
+  if ($isWritableStreamLocked(internalDestination)) return Promise.$reject(new TypeError("WritableStream is locked"));
 
   return $readableStreamPipeToWritableStream(
     this,

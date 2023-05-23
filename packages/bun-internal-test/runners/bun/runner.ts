@@ -37,11 +37,12 @@ export type TestErrorStack = {
   column?: number;
 };
 
-export type TestStatus = "pass" | "fail" | "skip";
+export type TestStatus = "pass" | "fail" | "skip" | "todo";
 
 export type Test = {
   name: string;
   status: TestStatus;
+  duration: number;
   errors?: TestError[];
 };
 
@@ -49,6 +50,7 @@ export type TestSummary = {
   pass: number;
   fail: number;
   skip: number;
+  todo: number;
   tests: number;
   files: number;
   duration: number;
@@ -69,15 +71,16 @@ export async function* runTests(options: RunTestsOptions = {}): AsyncGenerator<R
   if (!paths.length) {
     throw new Error(`No tests found; ${knownPaths.length} files did not match: ${filters}`);
   }
-  const startTest = (path: string) => runTest({
-    cwd,
-    path,
-    knownPaths,
-    preload,
-    timeout,
-    env,
-    args,
-  });
+  const startTest = (path: string) =>
+    runTest({
+      cwd,
+      path,
+      knownPaths,
+      preload,
+      timeout,
+      env,
+      args,
+    });
   const results: RunTestResult[] = [];
   const batchSize = 10;
   for (let i = 0; i < paths.length; i += batchSize) {
@@ -96,6 +99,7 @@ export async function* runTests(options: RunTestsOptions = {}): AsyncGenerator<R
         summary.pass += result.pass;
         summary.fail += result.fail;
         summary.skip += result.skip;
+        summary.todo += result.todo;
         summary.tests += result.tests;
         summary.files += result.files;
         summary.duration += result.duration;
@@ -126,7 +130,7 @@ export async function runTest(options: RunTestOptions): Promise<RunTestResult> {
     file = `${file.substring(0, i)}.test.${file.substring(i + 1)}`;
     try {
       symlinkSync(join(cwd, path), join(cwd, file));
-    } catch { }
+    } catch {}
   }
   const { exitCode, stdout, stderr } = await bunSpawn({
     cwd,
@@ -142,7 +146,7 @@ export async function runTest(options: RunTestOptions): Promise<RunTestResult> {
   if (file !== path) {
     try {
       unlinkSync(join(cwd, file));
-    } catch { }
+    } catch {}
   }
   const result = parseTest(stderr, { cwd, knownPaths });
   result.info.os ||= process.platform;
@@ -291,7 +295,6 @@ export function parseTest(stderr: string, options: ParseTestOptions = {}): Parse
     let file = line.slice(0, -1);
     if (!isJavaScript(file) || !line.endsWith(":")) {
       return undefined;
-
     }
     for (const path of knownPaths ?? []) {
       if (path.endsWith(file)) {
@@ -309,25 +312,53 @@ export function parseTest(stderr: string, options: ParseTestOptions = {}): Parse
         pass: 0,
         fail: 0,
         skip: 0,
+        todo: 0,
         duration: 0,
       },
     };
   };
   const parseTestLine = (line: string): Test | undefined => {
-    const match = /^(✓|‚úì|✗|‚úó|-) (.*)$/.exec(line);
+    const match = /^(✓|‚úì|✗|‚úó|-|✎) (.*)$/.exec(line);
     if (!match) {
       return undefined;
     }
     const [, icon, name] = match;
+    let status: TestStatus = "fail";
+    switch (icon) {
+      case "✓":
+      case "‚úì":
+        status = "pass";
+        break;
+      case "✗":
+      case "‚úó":
+        status = "fail";
+        break;
+      case "-":
+        status = "skip";
+        break;
+      case "✎":
+        status = "todo";
+        break;
+    }
+    const match2 = /^(.*) \[([0-9]+\.[0-9]+)(m?s)\]$/.exec(name);
+    if (!match2) {
+      return {
+        name,
+        status,
+        duration: 0,
+      };
+    }
+    const [, title, duration, unit] = match2;
     return {
-      name,
-      status: icon === "✓" || icon === "‚úì" ? "pass" : icon === "✗" || icon === "‚úó" ? "fail" : "skip",
+      name: title,
+      status,
+      duration: parseFloat(duration ?? "0") * (unit === "ms" ? 1000 : 1) || 0,
     };
   };
   let errors: TestError[] = [];
   let error: TestError | undefined;
   const parseError = (line: string): TestError | undefined => {
-    const match = /^(.*error)\: (.*)$/i.exec(line);
+    const match = /^(.*error|timeout)\: (.*)$/i.exec(line);
     if (!match) {
       return undefined;
     }
@@ -365,10 +396,10 @@ export function parseTest(stderr: string, options: ParseTestOptions = {}): Parse
       return line;
     }
     return undefined;
-  }
+  };
   let summary: TestSummary | undefined;
   const parseSummary = (line: string): TestSummary | undefined => {
-    const match = /^Ran ([0-9]+) tests across ([0-9]+) files \[([0-9]+\.[0-9]+)(m?s)\]$/.exec(line);
+    const match = /^Ran ([0-9]+) tests across ([0-9]+) files\. .* \[([0-9]+\.[0-9]+)(m?s)\]$/.exec(line);
     if (!match) {
       return undefined;
     }
@@ -377,16 +408,18 @@ export function parseTest(stderr: string, options: ParseTestOptions = {}): Parse
       pass: 0,
       fail: 0,
       skip: 0,
+      todo: 0,
       tests: parseInt(tests),
       files: parseInt(files),
       duration: parseFloat(duration) * (unit === "s" ? 1000 : 1),
     };
-  }
+  };
   const createSummary = (files: TestFile[]): TestSummary => {
     const summary = {
       pass: 0,
       fail: 0,
       skip: 0,
+      todo: 0,
       tests: 0,
       files: 0,
       duration: 0,
@@ -405,7 +438,7 @@ export function parseTest(stderr: string, options: ParseTestOptions = {}): Parse
     return summary;
   };
   const parseSkip = (line: string): number => {
-    const match = /^([0-9]+) tests (?:skipped|failed)\:$/.exec(line);
+    const match = /^([0-9]+) tests (?:skipped|failed|todo)\:$/.exec(line);
     if (match) {
       return parseInt(match[1]);
     }
@@ -426,13 +459,13 @@ export function parseTest(stderr: string, options: ParseTestOptions = {}): Parse
     const newFile = parseFile(line);
     if (newFile) {
       endOfFile(file);
-      files.push(file = newFile);
+      files.push((file = newFile));
       continue;
     }
     const newError = parseError(line);
     if (newError) {
       errorStart = i;
-      errors.push(error = newError);
+      errors.push((error = newError));
       for (let j = 1; j < 8 && i - j >= 0; j++) {
         const line = lines[i - j];
         const preview = parseErrorPreview(line);
@@ -496,6 +529,7 @@ export function parseTest(stderr: string, options: ParseTestOptions = {}): Parse
   summary.pass ||= count("pass");
   summary.fail ||= count("fail");
   summary.skip ||= count("skip");
+  summary.todo ||= count("todo");
   const getStatus = (summary: TestSummary) => {
     return summary.fail ? "fail" : !summary.pass && summary.skip ? "skip" : "pass";
   };
@@ -652,18 +686,13 @@ export async function bunSpawn(options: SpawnOptions): Promise<SpawnResult> {
     return result;
   };
   const exitCode = await Promise.race([
-    timeout
-      ? Bun.sleep(timeout).then(() => null)
-      : subprocess.exited,
+    timeout ? Bun.sleep(timeout).then(() => null) : subprocess.exited,
     subprocess.exited,
   ]);
   if (!subprocess.killed) {
     subprocess.kill();
   }
-  const [stdout, stderr] = await Promise.all([
-    consume(subprocess.stdout),
-    consume(subprocess.stderr),
-  ]);
+  const [stdout, stderr] = await Promise.all([consume(subprocess.stdout), consume(subprocess.stderr)]);
   return {
     exitCode,
     stdout,

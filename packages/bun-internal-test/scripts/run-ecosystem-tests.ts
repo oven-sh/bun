@@ -60,7 +60,7 @@ for (const pkg of packagesList) {
       result = value;
       break;
     } else if (filter || value.summary.fail) {
-      printTest(value)
+      printTest(value);
     }
   }
   if (!summaryPath) {
@@ -108,12 +108,7 @@ for (const pkg of packagesList) {
 }
 
 if (summaryPath) {
-  let html = summary
-    + table(
-      ["Package", "Status", "Passed", "Failed", "Skipped", "Duration"],
-      summaries,
-    )
-    + errors;
+  let html = summary + table(["Package", "Status", "Passed", "Failed", "Skipped", "Duration"], summaries) + errors;
   appendFileSync(summaryPath, html, "utf-8");
 }
 
@@ -162,18 +157,10 @@ function gitClone(pkg: Package): string {
   const path = resolve(`packages/${name}`);
   if (!existsSync(path)) {
     const url = `https://github.com/${repository.github}.git`;
-    spawnSync("git", [
-      "clone",
-      "--single-branch",
-      "--depth=1",
-      url,
-      path
-    ], {
+    spawnSync("git", ["clone", "--single-branch", "--depth=1", url, path], {
       stdio: "inherit",
     });
-    spawnSync("bun", [
-      "install"
-    ], {
+    spawnSync("bun", ["install"], {
       cwd: path,
       stdio: "inherit",
     });

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FindTestOptions, ParseTestResult, RunTestResult } from "./runner";
-import { bunSpawn, nodeSpawn, findTests, parseTest, runTest, runTests } from "./runner";
+import { bunSpawn, nodeSpawn, findTests, runTest, runTests } from "./runner";
 
 describe("runTests()", () => {
   const cwd = createFs({
@@ -21,6 +21,10 @@ describe("runTests()", () => {
       test("this should fail", () => {
         expect(true).toBe(false);
       });
+
+      test("this should timeout", async () => {
+        await Bun.sleep(2);
+      }, 1);
     `,
     "path": {
       "to": {
@@ -30,9 +34,19 @@ describe("runTests()", () => {
           test.skip("this should skip", () => {
             expect(true).toBe(true);
           });
-        `
-      }
-    }
+
+          test.todo("this should todo");
+
+          test.todo("this should todo and fail", () => {
+            expect(true).toBe(false);
+          });
+
+          test.todo("this should todo and pass", () => {
+            expect(true).toBe(true);
+          });
+        `,
+      },
+    },
   });
   test("can run all tests", async () => {
     const results = runTests({ cwd });
@@ -62,6 +76,8 @@ describe("runTest()", () => {
       test.skip("this should skip", () => {
         expect(true).toBe(true);
       });
+
+      test.todo("this should todo");
     `,
     "path": {
       "to": {
@@ -71,8 +87,8 @@ describe("runTest()", () => {
           test("this should pass", () => {
             expect(true).toBe(true);
           });
-        `
-      }
+        `,
+      },
     },
     "preload": {
       "preload.test.ts": `
@@ -84,8 +100,8 @@ describe("runTest()", () => {
       `,
       "preload.ts": `
         globalThis.preload = true;
-      `
-    }
+      `,
+    },
   });
   test("can run a test", async () => {
     const result = await runTest({
@@ -105,67 +121,29 @@ describe("runTest()", () => {
     const result = await runTest({
       cwd,
       path: "preload/preload.test.ts",
-      preload: ["./preload/preload.ts"]
+      preload: ["./preload/preload.ts"],
     });
-    toMatchResult(result);
-  });
-});
-
-describe("parseTest()", () => {
-  const cwd = createFs({
-    "example1.test.ts": `
-      import { test, expect } from "bun:test";
-
-      test("this should pass", () => {
-        expect(true).toBe(true);
-      });
-
-      test("this should fail", () => {
-        expect(true).toBe(false);
-      });
-
-      test.skip("this should skip", () => {
-        expect(true).toBe(true);
-      });
-    `,
-    "path": {
-      "to": {
-        "example2.test.js": "",
-        "example3.spec.tsx": `
-          import { describe, test, expect } from "bun:test";
-
-          describe("tests", () => {
-            test("this should pass", () => {
-              expect(true).toBe(true);
-            });
-
-            test("this should fail", () => {
-              throw new TypeError("Oops!");
-            });
-          });
-        `,
-      }
-    }
-  });
-  test("can parse test results", async () => {
-    const { stderr } = await bunSpawn({
-      cwd,
-      cmd: "bun",
-      args: ["test"],
-    });
-    const result = parseTest(stderr, { cwd });
     toMatchResult(result);
   });
 });
 
 function toMatchResult(result: ParseTestResult | RunTestResult): void {
-  result.summary.duration = 0;
+  if (result.summary.duration) {
+    result.summary.duration = 1;
+  }
   result.info.revision = "";
   result.info.version = "";
   result.info.os = undefined;
   result.info.arch = undefined;
   for (const file of result.files) {
-    file.summary.duration = 0;
+    if (file.summary.duration) {
+      file.summary.duration = 1;
+    }
+    for (const test of file.tests) {
+      if (test.duration) {
+        test.duration = 1;
+      }
+    }
   }
   if ("stderr" in result) {
     result.stderr = "";
@@ -188,7 +166,7 @@ describe("findTests()", () => {
       "example4.js.map": "",
       "example4.js": "",
       "example5.test.ts": "",
-    }
+    },
   });
   const find = (options: FindTestOptions = {}) => {
     const results = findTests({ cwd, ...options });
@@ -208,41 +186,23 @@ describe("findTests()", () => {
     const results = find({
       filters: ["path/to/"],
     });
-    expect(results).toEqual([
-      "path/to/example1.js",
-      "path/to/example2.test.ts",
-      "path/to/example3.spec.js",
-    ]);
+    expect(results).toEqual(["path/to/example1.js", "path/to/example2.test.ts", "path/to/example3.spec.js"]);
   });
   test("can find tests that match a file", () => {
     const results = find({
-      filters: [
-        "example1.js",
-        "example5.test.ts"
-      ],
+      filters: ["example1.js", "example5.test.ts"],
     });
-    expect(results).toEqual([
-      "path/example5.test.ts",
-      "path/to/example1.js",
-    ]);
+    expect(results).toEqual(["path/example5.test.ts", "path/to/example1.js"]);
   });
   test("can find tests that match a glob", () => {
     const results = find({
-      filters: [
-        "path/to/*.js",
-        "*.spec.*",
-      ],
+      filters: ["path/to/*.js", "*.spec.*"],
     });
-    expect(results).toEqual([
-      "path/to/example1.js",
-      "path/to/example3.spec.js",
-    ]);
+    expect(results).toEqual(["path/to/example1.js", "path/to/example3.spec.js"]);
   });
   test("can find no tests", () => {
     const results = find({
-      filters: [
-        "path/to/nowhere/*",
-      ],
+      filters: ["path/to/nowhere/*"],
     });
     expect(results).toEqual([]);
   });

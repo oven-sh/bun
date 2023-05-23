@@ -1,10 +1,13 @@
 import { escapeHTML } from "bun";
 
 export function table(headers: unknown[], rows: unknown[][]): string {
-  return "<table>"
-    + headers.reduce((html, header) => html + `<th>${header}</th>`, "<tr>") + "</tr>"
-    + rows.reduce((html, row) => html + row.reduce((html, cell) => html + `<td>${cell}</td>`, "<tr>") + "</tr>", "")
-    + "</table>";
+  return (
+    "<table>" +
+    headers.reduce((html, header) => html + `<th>${header}</th>`, "<tr>") +
+    "</tr>" +
+    rows.reduce((html, row) => html + row.reduce((html, cell) => html + `<td>${cell}</td>`, "<tr>") + "</tr>", "") +
+    "</table>"
+  );
 }
 
 export function h(level: number, content: string): string {
@@ -16,7 +19,7 @@ export function ul(items: unknown[]): string {
 }
 
 export function a(content: string, baseUrl?: string, url?: string): string {
-  const href = baseUrl && url ? `${baseUrl}/${url}` : baseUrl;
+  const href = baseUrl && url ? new URL(url, baseUrl).toString() : baseUrl;
   return href ? `<a href="${href}">${escape(content)}</a>` : escape(content);
 }
 
@@ -33,14 +36,11 @@ export function code(content: string, lang: string = ""): string {
 }
 
 export function escape(content: string): string {
-  return escapeHTML(content)
-    .replace(/\+/g, "&#43;")
-    .replace(/\-/g, "&#45;")
-    .replace(/\*/g, "&#42;");
+  return escapeHTML(content).replace(/\+/g, "&#43;").replace(/\-/g, "&#45;").replace(/\*/g, "&#42;");
 }
 
 export function percent(numerator: number, demonimator: number): number {
-  const percent = Math.floor(numerator / demonimator * 100);
+  const percent = Math.floor((numerator / demonimator) * 100);
   if (isNaN(percent) || percent < 0) {
     return 0;
   }
@@ -55,10 +55,13 @@ export function count(n: number): string {
 }
 
 export function duration(milliseconds: number): string {
-  const seconds = Math.floor(milliseconds / 1000);
-  if (seconds === 0) {
-    return "< 1s";
+  if (milliseconds === 0) {
+    return "";
   }
+  if (milliseconds < 1000) {
+    return `${Math.ceil(milliseconds)} ms`;
+  }
+  const seconds = Math.floor(milliseconds / 1000);
   const minutes = Math.floor(seconds / 60);
   const hours = Math.floor(minutes / 60);
   let result = [];

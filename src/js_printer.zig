@@ -1992,9 +1992,9 @@ fn NewPrinter(
                                     p.print(".");
                                     p.print(key);
                                 } else {
-                                    p.print("[\"");
-                                    p.print(key);
-                                    p.print("\"]");
+                                    p.print("[");
+                                    p.printPossiblyEscapedIdentifierString(key, true);
+                                    p.print("]");
                                 }
                             } else {
                                 p.printSymbol(value.loc_ref.ref.?);

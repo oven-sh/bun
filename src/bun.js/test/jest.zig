@@ -546,6 +546,7 @@ pub const TestRunner = struct {
             fail,
             skip,
             todo,
+            fail_because_todo_passed,
         };
     };
 };
@@ -3551,11 +3552,6 @@ pub const TestScope = struct {
             return .{ .fail = active_test_expectation_counter.actual };
         }
 
-        if (this.is_todo) {
-            Output.prettyErrorln("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` or check that test is correct.<r>", .{});
-            return .{ .fail = active_test_expectation_counter.actual };
-        }
-
         return .{ .pass = active_test_expectation_counter.actual };
     }
 
@@ -4208,7 +4204,7 @@ pub const TestRunnerTask = struct {
     }
 
     fn processTestResult(this: *TestRunnerTask, globalThis: *JSC.JSGlobalObject, result: Result, test_: TestScope, test_id: u32, describe: *DescribeScope) void {
-        switch (result) {
+        switch (result.forceTODO(test_.is_todo)) {
             .pass => |count| Jest.runner.?.reportPass(
                 test_id,
                 this.source_file_path,
@@ -4233,6 +4229,20 @@ pub const TestRunnerTask = struct {
             ),
             .skip => Jest.runner.?.reportSkip(test_id, this.source_file_path, test_.label, describe),
             .todo => Jest.runner.?.reportTodo(test_id, this.source_file_path, test_.label, describe),
+            .fail_because_todo_passed => |count| {
+                Output.prettyErrorln("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` or check that test is correct.<r>", .{});
+                Jest.runner.?.reportFailure(
+                    test_id,
+                    this.source_file_path,
+                    test_.label,
+                    count,
+                    if (test_elapsed_timer) |timer|
+                        timer.read()
+                    else
+                        0,
+                    describe,
+                );
+            },
             .pending => @panic("Unexpected pending test"),
         }
         describe.onTestComplete(globalThis, test_id, result == .skip);
@@ -4268,4 +4278,15 @@ pub const Result = union(TestRunner.Test.Status) {
     pending: void,
     skip: void,
     todo: void,
+    fail_because_todo_passed: u32,
+
+    pub fn forceTODO(this: Result, is_todo: bool) Result {
+        if (is_todo and this == .pass)
+            return .{ .fail_because_todo_passed = this.pass };
+
+        if (is_todo and this == .fail) {
+            return .{ .todo = {} };
+        }
+        return this;
+    }
 };

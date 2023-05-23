@@ -2772,11 +2772,15 @@ it("test.todo", () => {
     env: bunEnv,
     cwd: realpathSync(dirname(path)),
   });
-
   const err = stderr!.toString();
   expect(err).toContain("this test is marked as todo but passes");
-  expect(err).toContain("2 todo");
-  expect(err).toContain("1 fail");
+  expect(err).toContain("this async error is shown");
+  expect(err).toContain("this async error with an await is shown");
+  expect(err).toContain("this error is shown");
+  expect(err).toContain("4 todo");
+  expect(err).toContain("0 pass");
+  expect(err).toContain("3 fail");
+  expect(exitCode).toBe(1);
 });
 
 it("test.todo doesnt cause exit code 1", () => {

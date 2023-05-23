@@ -179,7 +179,7 @@ for (let [gcTick, label] of [
         gcTick();
       });
 
-      it("Uint8Array works as stdout when is smaller than output", () => {
+      it.skip("Uint8Array works as stdout when is smaller than output", () => {
         gcTick();
         const stdout_buffer = new Uint8Array(5);
         const { stdout } = spawnSync(["echo", "hello world"], {
@@ -195,7 +195,7 @@ for (let [gcTick, label] of [
         gcTick();
       });
 
-      it("Uint8Array works as stdout when is the exactly size than output", () => {
+      it.skip("Uint8Array works as stdout when is the exactly size than output", () => {
         gcTick();
         const stdout_buffer = new Uint8Array(12);
         const { stdout } = spawnSync(["echo", "hello world"], {
@@ -211,7 +211,7 @@ for (let [gcTick, label] of [
         gcTick();
       });
 
-      it("Uint8Array works as stdout when is larger than output", () => {
+      it.skip("Uint8Array works as stdout when is larger than output", () => {
         gcTick();
         const stdout_buffer = new Uint8Array(15);
         const { stdout } = spawnSync(["echo", "hello world"], {

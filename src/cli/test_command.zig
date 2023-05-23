@@ -382,6 +382,7 @@ const Scanner = struct {
 pub const TestCommand = struct {
     pub const name = "test";
     pub const old_name = "wiptest";
+
     pub fn exec(ctx: Command.Context) !void {
         if (comptime is_bindgen) unreachable;
         // print the version so you know its doing stuff if it takes a sec
@@ -459,6 +460,18 @@ pub const TestCommand = struct {
         vm.loadExtraEnv();
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
+
+        // For tests, we default to UTC time zone
+        // unless the user inputs TZ="", in which case we use local time zone
+        var TZ_NAME: string =
+            // We use the string "Etc/UTC" instead of "UTC" so there is no normalization difference.
+            "Etc/UTC";
+        if (vm.bundler.env.get("TZ")) |tz| {
+            TZ_NAME = tz;
+        }
+        if (TZ_NAME.len > 0) {
+            _ = vm.global.setTimeZone(&JSC.ZigString.init(TZ_NAME));
+        }
 
         var scanner = Scanner{
             .dirs_to_scan = Scanner.Fifo.init(ctx.allocator),

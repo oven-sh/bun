@@ -204,6 +204,13 @@ pub const Run = struct {
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
 
+        // Allow setting a custom timezone
+        if (vm.bundler.env.get("TZ")) |tz| {
+            if (tz.len > 0) {
+                _ = vm.global.setTimeZone(&JSC.ZigString.init(tz));
+            }
+        }
+
         var callback = OpaqueWrap(Run, Run.start);
         vm.global.vm().holdAPILock(&run, callback);
     }

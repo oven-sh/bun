@@ -34,7 +34,8 @@
       "cwd": "${workspaceFolder}/test",
       "env": {
         "FORCE_COLOR": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+        "BUN_DEBUG_QUIET_LOGS": "1"
       },
       "console": "internalConsole"
     },

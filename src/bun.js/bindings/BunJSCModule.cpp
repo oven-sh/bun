@@ -420,6 +420,38 @@ JSC_DEFINE_HOST_FUNCTION(functionDrainMicrotasks, (JSGlobalObject * globalObject
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionSetTimeZone, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 1) {
+        throwTypeError(globalObject, scope, "setTimeZone requires a timezone string"_s);
+        return encodedJSValue();
+    }
+
+    if (!callFrame->argument(0).isString()) {
+        throwTypeError(globalObject, scope, "setTimeZone requires a timezone string"_s);
+        return encodedJSValue();
+    }
+
+    String timeZoneName = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
+    double time = callFrame->argument(1).toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
+    if (!WTF::setTimeZoneOverride(timeZoneName)) {
+        throwTypeError(globalObject, scope, makeString("Invalid timezone: \""_s, timeZoneName, "\""_s));
+        return encodedJSValue();
+    }
+    vm.dateCache.resetIfNecessarySlow();
+    WTF::Vector<UChar, 32> buffer;
+    WTF::getTimeZoneOverride(buffer);
+    WTF::String timeZoneString(buffer.data(), buffer.size());
+    return JSValue::encode(jsString(vm, timeZoneString));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
@@ -528,6 +560,7 @@ JSC::JSObject* createJSCModule(JSC::JSGlobalObject* globalObject)
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getProtectedObjects"_s), 1, functionGetProtectedObjects, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "generateHeapSnapshotForDebugging"_s), 0, functionGenerateHeapSnapshotForDebugging, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "profile"_s), 0, functionRunProfiler, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "setTimeZone"_s), 0, functionSetTimeZone, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
     }
 
     return object;

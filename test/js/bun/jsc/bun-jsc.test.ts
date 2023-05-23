@@ -22,6 +22,7 @@ import {
   reoptimizationRetryCount,
   drainMicrotasks,
   startRemoteDebugger,
+  setTimeZone,
 } from "bun:jsc";
 
 describe("bun:jsc", () => {
@@ -109,5 +110,34 @@ describe("bun:jsc", () => {
   });
   it("getProtectedObjects", () => {
     expect(getProtectedObjects().length).toBeGreaterThan(0);
+  });
+
+  it("setTimeZone", () => {
+    var origTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const realOrigTimezone = origTimezone;
+    if (origTimezone === "America/Anchorage") {
+      origTimezone = "America/New_York";
+    }
+    const origDate = new Date();
+    origDate.setSeconds(0);
+    origDate.setMilliseconds(0);
+    origDate.setMinutes(0);
+    const origDateString = origDate.toString();
+    expect(origTimezone).toBeDefined();
+    expect(origTimezone).not.toBe("America/Anchorage");
+    expect(setTimeZone("America/Anchorage")).toBe("America/Anchorage");
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe("America/Anchorage");
+    if (realOrigTimezone === origTimezone) {
+      const newDate = new Date();
+      newDate.setSeconds(0);
+      newDate.setMilliseconds(0);
+      newDate.setMinutes(0);
+      const newDateString = newDate.toString();
+      expect(newDateString).not.toBe(origDateString);
+    }
+
+    expect(setTimeZone(realOrigTimezone)).toBe(realOrigTimezone);
+
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(origTimezone);
   });
 });

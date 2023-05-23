@@ -40,6 +40,18 @@ declare module "bun:jsc" {
   export function drainMicrotasks(): void;
 
   /**
+   * Set the timezone used by Intl, Date, etc.
+   *
+   * @param timeZone A string representing the time zone to use, such as "America/Los_Angeles"
+   *
+   * @returns The normalized time zone string
+   *
+   * You can also set process.env.TZ to the time zone you want to use.
+   * You can also view the current timezone with `Intl.DateTimeFormat().resolvedOptions().timeZone`
+   */
+  export function setTimeZone(timeZone: string): string;
+
+  /**
    * Run JavaScriptCore's sampling profiler for a particular function
    *
    * This is pretty low-level.

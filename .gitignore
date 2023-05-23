@@ -119,3 +119,5 @@ myscript.sh
 
 cold-jsc-start
 cold-jsc-start.d
+
+/test.ts

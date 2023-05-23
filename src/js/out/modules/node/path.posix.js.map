@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "sources": ["src/js/node/path.posix.js"],
+  "sourcesContent": [
+    "// Hardcoded module \"node:path/posix\"\nfunction bound(obj) {\n  return {\n    basename: obj.basename.bind(obj),\n    dirname: obj.dirname.bind(obj),\n    extname: obj.extname.bind(obj),\n    format: obj.format.bind(obj),\n    isAbsolute: obj.isAbsolute.bind(obj),\n    join: obj.join.bind(obj),\n    normalize: obj.normalize.bind(obj),\n    parse: obj.parse.bind(obj),\n    relative: obj.relative.bind(obj),\n    resolve: obj.resolve.bind(obj),\n    toNamespacedPath: obj.toNamespacedPath.bind(obj),\n    sep: obj.sep,\n    delimiter: obj.delimiter,\n  };\n}\nvar path = bound(Bun._Path(false));\npath[Symbol.for(\"CommonJS\")] = 0;\n\nexport var {\n  basename,\n  dirname,\n  extname,\n  format,\n  isAbsolute,\n  join,\n  normalize,\n  parse,\n  relative,\n  resolve,\n  toNamespacedPath,\n  sep,\n  delimiter,\n} = path;\nexport default path;\n"
+  ],
+  "mappings": ";;A//////DACA,IAAS,gBAAK,CAAC,KAAK;AAClB,SAAO;AAAA,IACL,UAAU,IAAI,SAAS,KAAK,GAAG;AAAA,IAC/B,SAAS,IAAI,QAAQ,KAAK,GAAG;AAAA,IAC7B,SAAS,IAAI,QAAQ,KAAK,GAAG;AAAA,IAC7B,QAAQ,IAAI,OAAO,KAAK,GAAG;AAAA,IAC3B,YAAY,IAAI,WAAW,KAAK,GAAG;AAAA,IACnC,MAAM,IAAI,KAAK,KAAK,GAAG;AAAA,IACvB,WAAW,IAAI,UAAU,KAAK,GAAG;AAAA,IACjC,OAAO,IAAI,MAAM,KAAK,GAAG;AAAA,IACzB,UAAU,IAAI,SAAS,KAAK,GAAG;AAAA,IAC/B,SAAS,IAAI,QAAQ,KAAK,GAAG;AAAA,IAC7B,kBAAkB,IAAI,iBAAiB,KAAK,GAAG;AAAA,IAC/C,KAAK,IAAI;AAAA,IACT,WAAW,IAAI;AAAA,EACjB;AAAA;AAEF,IAAI,OAAO,MAAM,IAAI,MAAM,KAAK,CAAC;AACjC,KAAK,OAAO,IAAI,UAAU,KAAK;AAExB;AAAA,EACL;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,IACE;AACJ,IAAe;",
+  "debugId": "83048B41DC9CEC8F64756e2164756e21",
+  "names": []
+}

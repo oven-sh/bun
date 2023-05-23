@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "sources": ["src/js/node/assert.strict.ts"],
+  "sourcesContent": [
+    "// Hardcoded module \"node:assert/strict\"\nimport { strict as strictBase } from \"node:assert\";\n\nexport var {\n  fail,\n  AssertionError,\n  ok,\n  equal,\n  notEqual,\n  deepEqual,\n  notDeepEqual,\n  deepStrictEqual,\n  notDeepStrictEqual,\n  strictEqual,\n  notStrictEqual,\n  throws,\n  rejects,\n  doesNotThrow,\n  doesNotReject,\n  ifError,\n  match,\n  doesNotMatch,\n  CallTracker,\n} = strictBase;\n\nconst defaultObject = {\n  fail,\n  AssertionError,\n  ok,\n  equal,\n  notEqual,\n  deepEqual,\n  notDeepEqual,\n  deepStrictEqual,\n  notDeepStrictEqual,\n  strictEqual,\n  notStrictEqual,\n  throws,\n  rejects,\n  doesNotThrow,\n  doesNotReject,\n  ifError,\n  match,\n  doesNotMatch,\n  CallTracker,\n  [Symbol.for(\"CommonJS\")]: 0,\n};\n\nexport { defaultObject as default, strictBase as strict };\n"
+  ],
+  "mappings": ";;A//////DACA;AAEO;AAAA,EACL;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,IACE,YAEE,gBAAgB;AAAA,EACpB;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,GACC,OAAO,IAAI,UAAU,IAAI;AAC5B;",
+  "debugId": "24589A249F6A4E4D64756e2164756e21",
+  "names": []
+}

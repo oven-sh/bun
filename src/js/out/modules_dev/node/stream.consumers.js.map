@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "sources": ["src/js/node/stream.consumers.js"],
+  "sourcesContent": [
+    "// Hardcoded module \"node:stream/consumers\" / \"readable-stream/consumer\"\nconst { Bun } = import.meta.primordials;\n\nexport const arrayBuffer = Bun.readableStreamToArrayBuffer;\nexport const text = Bun.readableStreamToText;\nexport const json = stream => Bun.readableStreamToText(stream).then(JSON.parse);\n\nexport const buffer = async readableStream => {\n  return new Buffer(await arrayBuffer(readableStream));\n};\n\nexport const blob = Bun.readableStreamToBlob;\n\nexport default {\n  [Symbol.for(\"CommonJS\")]: 0,\n  arrayBuffer,\n  text,\n  json,\n  buffer,\n  blob,\n};\n"
+  ],
+  "mappings": ";;A//////DACA,MAAQ,QAAQ,YAAY,aAEf,cAAc,IAAI,6BAClB,OAAO,IAAI,sBACX,OAAO,YAAU,IAAI,qBAAqB,MAAM,EAAE,KAAK,KAAK,KAAK,GAEjE,SAAS,0BAAwB;AAC5C,SAAO,IAAI,OAAO,MAAM,YAAY,cAAc,CAAC;AAAA,GAGxC,OAAO,IAAI,sBANoC;AAAA,GASzD,OAAO,IAAI,UAAU,IAAI;AAAA,EAC1B;AAAA,EACA;AAAA,EACA;AAAA,EACA;AAAA,EACA;AACF;",
+  "debugId": "25D1F44693FB046864756e2164756e21",
+  "names": []
+}

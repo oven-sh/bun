@@ -1,5 +1,14 @@
 // --- FFIType ---
 
+export const suffix =
+  process.platform === "darwin"
+    ? "dylib"
+    : process.platform === "linux"
+    ? "so"
+    : process.platform === "win32"
+    ? "dll"
+    : $bundleError("Unsupported platform");
+
 var ffi = globalThis.Bun.FFI;
 export const ptr = (arg1, arg2) => (typeof arg2 === "undefined" ? ffi.ptr(arg1) : ffi.ptr(arg1, arg2));
 export const toBuffer = ffi.toBuffer;

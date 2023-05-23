@@ -4,7 +4,7 @@ export function family() {
 }
 
 export function familySync() {
-  if (process.platform === 'linux') {
+  if (process.platform === "linux") {
     return GLIBC;
   } else {
     return null;
@@ -19,7 +19,7 @@ export function versionAsync() {
 }
 
 export function version() {
-  if (process.platform === 'linux') {
+  if (process.platform === "linux") {
     return "2.29";
   } else {
     return null;

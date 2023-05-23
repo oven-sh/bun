@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "sources": ["src/js/node/https.js"],
+  "sourcesContent": [
+    "// Hardcoded module \"node:https\"\nexport * from \"node:http\";\nconst HTTP = import.meta.require(\"node:http\");\nexport default HTTP;\n"
+  ],
+  "mappings": ";;A//////DACA;AACA,IAAM,OAAO,YAAY,QAAQ,WAAW,GADnB;",
+  "debugId": "D3FE3A7F158ADEF364756e2164756e21",
+  "names": []
+}

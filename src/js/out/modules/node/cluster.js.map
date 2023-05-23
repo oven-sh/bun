@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "sources": ["src/js/node/cluster.js"],
+  "sourcesContent": [
+    "// Hardcoded module \"node:cluster\"\n\n// This is a stub\n// We leave it in here to provide a better error message\n// TODO: implement node cluster\nconst { EventEmitter } = import.meta.require(\"node:events\");\nclass TODO extends Error {\n  constructor(\n    message = \"node:cluster is not implemented yet in Bun. Track the status: https://github.com/oven-sh/bun/issues/2428\",\n  ) {\n    super(message);\n    this.name = \"TODO\";\n  }\n}\n\nexport var SCHED_NONE = 0,\n  SCHED_RR = 1,\n  Worker,\n  schedulingPolicy = 2,\n  isWorker = false,\n  isPrimary = true,\n  isMaster = true,\n  cluster;\n\nWorker = function Worker() {\n  throw new TODO(\"Worker is not implemented yet in Bun\");\n};\n\n// TODO: is it okay for this to be a class?\nclass Cluster extends EventEmitter {\n  static isWorker = false;\n  static isPrimary = true;\n  static isMaster = true;\n\n  static Worker = Worker;\n\n  fork() {\n    throw new TODO();\n  }\n\n  disconnect() {\n    throw new TODO();\n  }\n\n  setupMaster() {\n    throw new TODO();\n  }\n\n  settings = {};\n  workers = {};\n  SCHED_NONE = 0;\n  SCHED_RR = 1;\n  schedulingPolicy = 2;\n  [Symbol.for(\"CommonJS\")] = 0;\n}\n\ncluster = new Cluster();\n\nexport { cluster as default };\n"
+  ],
+  "mappings": ";;A//////DAKA,MAAQ,iBAAiB,YAAY,QAAQ,aAAa;AAC1D;AAAA,MAAM,aAAa,MAAM;AAAA,EACvB,WAAW,CACT,UAAU,4GACV;AACA,UAAM,OAAO;AACb,SAAK,OAAO;AAAA;AAEhB;AAEO,IAAI,aAAa;AAAjB,IACL,WAAW;AADN,IAEL;AAFK,IAGL,mBAAmB;AAHd,IAIL,WAAW;AAJN,IAKL,YAAY;AALP,IAML,WAAW;AANN,IAOL;AAEF,kBAAkB,OAAM,GAAG;AACzB,QAAM,IAAI,KAAK,sCAAsC;AAAA;AAIvD;AAAA,MAAM,gBAAgB,aAAa;AAAA,SAC1B,WAAW;AAAA,SACX,YAAY;AAAA,SACZ,WAAW;AAAA,SAEX,SAAS;AAAA,EAEhB,IAAI,GAAG;AACL,UAAM,IAAI;AAAA;AAAA,EAGZ,UAAU,GAAG;AACX,UAAM,IAAI;AAAA;AAAA,EAGZ,WAAW,GAAG;AACZ,UAAM,IAAI;AAAA;AAAA,EAGZ,WAAW,CAAC;AAAA,EACZ,UAAU,CAAC;AAAA,EACX,aAAa;AAAA,EACb,WAAW;AAAA,EACX,mBAAmB;AAAA,GAClB,OAAO,IAAI,UAAU,KAAK;AAC7B;AAEA,UAAU,IAAI;",
+  "debugId": "E6BA42911150B46964756e2164756e21",
+  "names": []
+}

@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "sources": ["src/js/node/stream.promises.js"],
+  "sourcesContent": [
+    "// Hardcoded module \"node:stream\"\nvar { promises } = import.meta.require(\"node:stream\");\n\nexport var { pipeline, finished } = promises;\n\nexport default {\n  pipeline,\n  finished,\n  [Symbol.for(\"CommonJS\")]: 0,\n};\n"
+  ],
+  "mappings": ";;A//////DACA,MAAM,aAAa,YAAY,QAAQ,aAAa;AAE7C,MAAM,UAAU,aAAa;AAEpC,IALwB;AAAA,EAMtB;AAAA,EACA;AAAA,GACC,OAAO,IAAI,UAAU,IAAI;AAC5B;",
+  "debugId": "7109BF753AC653DD64756e2164756e21",
+  "names": []
+}

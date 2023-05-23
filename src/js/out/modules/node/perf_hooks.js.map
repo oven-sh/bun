@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "sources": ["src/js/node/perf_hooks.js"],
+  "sourcesContent": [
+    "// Hardcoded module \"node:perf_hooks\"\nexport var performance = globalThis.performance;\n\nexport class PerformanceObserver {\n  constructor() {\n    throw new Error(\"PerformanceEntry is not implemented yet\");\n  }\n}\n\nexport class PerformanceEntry {\n  constructor() {\n    throw new Error(\"PerformanceEntry is not implemented yet\");\n  }\n}\nexport class PerformanceNodeTiming {\n  constructor() {\n    throw new Error(\"PerformanceNodeTiming is not supported in this environment.\");\n  }\n}\n\nexport default {\n  performance,\n  PerformanceEntry,\n  PerformanceNodeTiming,\n  [Symbol.for(\"CommonJS\")]: 0,\n};\n"
+  ],
+  "mappings": ";;A//////DACO,IAAI,cAAc,WAAW;AAE7B;AAAA,MAAM,oBAAoB;AAAA,EAC/B,WAAW,GAAG;AACZ,UAAM,IAAI,MAAM,yCAAyC;AAAA;AAE7D;AAEO;AAAA,MAAM,iBAAiB;AAAA,EAC5B,WAAW,GAAG;AACZ,UAAM,IAAI,MAAM,yCAAyC;AAAA;AAE7D;AACO;AAAA,MAAM,sBAAsB;AAAA,EACjC,WAAW,GAAG;AACZ,UAAM,IAAI,MAAM,6DAA6D;AAAA;AAEjF;AAEA,IATuC;AAAA,EAUrC;AAAA,EACA;AAAA,EACA;AAAA,GACC,OAAO,IAAI,UAAU,IAAI;AAC5B;",
+  "debugId": "F7FD357A9B4AFE0C64756e2164756e21",
+  "names": []
+}

@@ -1,6 +1,6 @@
 src/fallback.html
 src/bun.js/WebKit
-src/bun.js/builtins/js/*.js
+src/js/out
 src/*.out.js
 src/*out.*.js
 src/deps
@@ -11,4 +11,3 @@ test/snapshots-no-hmr
 test/js/deno/*.test.ts
 test/js/deno/**/*.test.ts
 bench/react-hello-world/react-hello-world.node.js
-src/bun.js/builtins/WebCoreJSBuiltins.d.ts

@@ -1,5 +1,6 @@
 // Hardcoded module "node:fs/promises"
-// @fsConstants
+// Note: `constants` is injected into the top of this file
+
 var fs = Bun.fs();
 
 // note: this is not quite the same as how node does it

@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "sources": ["src/js/bun/wasi-runner.js"],
+  "sourcesContent": [
+    "/** This file is used when a .wasm file is ran.\n *  The contents of `../node/wasi.js` is pasted into the top of this file.\n */\n\nconst filePath = process.argv.at(1);\nif (!filePath) {\n  var err = new Error(\"To run a wasm file with Bun, the first argument must be a path to a .wasm file\");\n  err.name = \"WasmFileNotFound\";\n  throw err;\n}\n\n// The module specifier is the resolved path to the wasm file\n\nvar { WASM_CWD = process.cwd(), WASM_ROOT_DIR = \"/\", WASM_ENV_STR = undefined, WASM_USE_ASYNC_INIT = \"\" } = process.env;\n\nvar env = process.env;\nif (WASM_ENV_STR?.length) {\n  env = JSON.parse(WASM_ENV_STR);\n}\n\nconst wasi = new WASI({\n  args: process.argv.slice(1),\n  env,\n  preopens: {\n    \".\": WASM_CWD || process.cwd(),\n    \"/\": WASM_ROOT_DIR || \"/\",\n  },\n});\n\nlet source = globalThis.wasmSourceBytes;\nif (!source) {\n  const fs = Bun.fs();\n  const file = import.meta.path;\n  source = fs.readFileSync(file);\n}\n\nconst wasm = new WebAssembly.Module(source);\nconst instance = !WASM_USE_ASYNC_INIT\n  ? new WebAssembly.Instance(wasm, wasi.getImports(wasm))\n  : await WebAssembly.instantiate(wasm, wasi.getImports(wasm));\nwasi.start(instance);\n\nprocess.exit(0);\n"
+  ],
+  "mappings": ";;A//////DAIA,IAAM,WAAW,QAAQ,KAAK,GAAG,CAAC;AAClC,KAAK;AAGH,QAFI,MAAM,IAAI,MAAM,gFAAgF,GACpG,IAAI,OAAO,oBACL;AAFF,WAOA,WAAW,QAAQ,IAAI,GAAG,gBAAgB,KAAK,eAAe,QAAW,sBAAsB,OAAO,QAAQ,KAEhH,MAAM,QAAQ;AAClB,IAAI,cAAc;AAChB,QAAM,KAAK,MAAM,YAAY;AAG/B,IAAM,OAAO,IAAI,KAAK;AAAA,EACpB,MAAM,QAAQ,KAAK,MAAM,CAAC;AAAA,EAC1B;AAAA,EACA,UAAU;AAAA,IACR,KAAK,YAAY,QAAQ,IAAI;AAAA,IAC7B,KAAK,iBAAiB;AAAA,EACxB;AACF,CAAC,GAEG,SAAS,WAAW;AACxB,KAAK,QAAQ;AACX,QAAM,KAAK,IAAI,GAAG,GACZ,OAAO,YAAY;AACzB,WAAS,GAAG,aAAa,IAAI;AAAA;AAG/B,IAAM,OAAO,IAAI,YAAY,OAAO,MAAM,GACpC,YAAY,sBACd,IAAI,YAAY,SAAS,MAAM,KAAK,WAAW,IAAI,CAAC,IACpD,MAAM,YAAY,YAAY,MAAM,KAAK,WAAW,IAAI,CAAC;AAC7D,KAAK,MAAM,QAAQ;AAEnB,QAAQ,KAAK,CAAC;",
+  "debugId": "1CDBF0C35B4CD94A64756e2164756e21",
+  "names": []
+}

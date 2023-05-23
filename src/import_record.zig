@@ -37,7 +37,7 @@ pub const ImportKind = enum(u8) {
     pub const Label = std.EnumArray(ImportKind, []const u8);
     pub const all_labels: Label = brk: {
         // If these are changed, make sure to update
-        // - src/bun.js/builtins/builtins-codegen.ts
+        // - src/js/builtins/codegen/replacements.ts
         // - packages/bun-types/bun.d.ts
         var labels = Label.initFill("");
         labels.set(ImportKind.entry_point, "entry-point");

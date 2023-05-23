@@ -398,8 +398,11 @@ describe("node:http", () => {
           });
           res.on("error", err => done(err));
         });
-        req.end();
         expect(req.getHeader("X-Test")).toBe("test");
+        // node returns undefined
+        // Headers returns null
+        expect(req.getHeader("X-Not-Exists")).toBe(undefined);
+        req.end();
       });
     });
 

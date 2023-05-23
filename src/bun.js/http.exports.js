@@ -56,6 +56,12 @@ function isValidTLSArray(obj) {
   }
 }
 
+function getHeader(headers, name) {
+  if (!headers) return;
+  const result = headers.get(name);
+  return result == null ? undefined : result;
+}
+
 var FakeSocket = class Socket extends Duplex {
   bytesRead = 0;
   bytesWritten = 0;
@@ -858,8 +864,7 @@ export class OutgoingMessage extends Writable {
   flushHeaders() {}
 
   getHeader(name) {
-    if (!this.#headers) return;
-    return this.#headers.get(name);
+    return getHeader(this.#headers, name);
   }
 
   getHeaders() {
@@ -1092,13 +1097,13 @@ export class ServerResponse extends Writable {
   flushHeaders() {}
 
   getHeader(name) {
-    if (!this.#headers) return;
-    return this.#headers.get(name);
+    return getHeader(this.#headers, name);
   }
 
   getHeaders() {
-    if (!this.#headers) return kEmptyObject;
-    return this.#headers.toJSON();
+    var headers = this.#headers;
+    if (!headers) return kEmptyObject;
+    return headers.toJSON();
   }
 
   getHeaderNames() {

@@ -493,7 +493,7 @@ describe("bundler", () => {
       "/test.json": `{"test": 123, "invalid-identifier": true}`,
     },
     format: "esm",
-    unsupportedJSFeatures: "ArbitraryModuleNamespaceNames",
+    unsupportedJSFeatures: ["ArbitraryModuleNamespaceNames"],
     mode: "convertformat",
   });
   itBundled("loader/JSONNoBundleES6ArbitraryModuleNamespaceNames", {

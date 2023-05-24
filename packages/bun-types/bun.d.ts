@@ -2015,6 +2015,37 @@ declare module "bun" {
   ): BunFile;
 
   /**
+   * Send a HTTP(s) request
+   *
+   * @param url URL string
+   * @param init A structured value that contains settings for the fetch() request.
+   *
+   * @returns A promise that resolves to {@link Response} object.
+   *
+   *
+   */
+  export function fetch(
+    url: string | URL | Request,
+    init?: FetchRequestInit,
+  ): Promise<Response>;
+
+  /**
+   * Send a HTTP(s) request
+   *
+   * @param request Request object
+   * @param init A structured value that contains settings for the fetch() request.
+   *
+   * @returns A promise that resolves to {@link Response} object.
+   *
+   *
+   */
+  // tslint:disable-next-line:unified-signatures
+  export function fetch(
+    request: Request,
+    init?: RequestInit,
+  ): Promise<Response>;
+
+  /**
    * Allocate a new [`Uint8Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) without zeroing the bytes.
    *
    * This can be 3.5x faster than `new Uint8Array(size)`, but if you send uninitialized memory to your users (even unintentionally), it can potentially leak anything recently in memory.
@@ -2761,7 +2792,7 @@ declare module "bun" {
      * ```
      */
     namespace?: string;
-    external: boolean;
+    external?: boolean;
   }
 
   type OnResolveCallback = (

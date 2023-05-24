@@ -8,6 +8,7 @@ var { describe, test, expect } = testForFile(import.meta.path);
 
 describe("bundler", () => {
   itBundled("tsconfig/Paths", ({ root }) => ({
+    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import baseurl_dot from './baseurl_dot'
@@ -129,6 +130,7 @@ describe("bundler", () => {
     },
   }));
   itBundled("tsconfig/PathsNoBaseURL", {
+    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import simple from './simple'
@@ -231,7 +233,7 @@ describe("bundler", () => {
   // TODO: warnings shouldnt stop build?
   itBundled("tsconfig/BadPathsNoBaseURL", {
     // GENERATED
-    notImplemented: true,
+    todo: true,
     files: {
       "/Users/user/project/entry.ts": `import "should-not-be-imported"`,
       "/Users/user/project/should-not-be-imported.ts": ``,

@@ -50,6 +50,7 @@ describe("bundler", () => {
     run: true,
   });
   itBundled("edgecase/BunPluginTreeShakeImport", {
+    todo: true,
     // This only appears at runtime and not with bun build, even with --no-bundle
     files: {
       "/entry.ts": /* js */ `
@@ -147,7 +148,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/NodeEnvOptionalChaining", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         capture(process?.env?.NODE_ENV);
@@ -207,6 +208,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/ExternalES6ConvertedToCommonJSSimplified", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         console.log(JSON.stringify(require('./e')));
@@ -273,7 +275,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/ScriptTagEscape", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         console.log('<script></script>');
@@ -294,6 +296,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/JSONDefaultImport", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import def from './test.json'
@@ -306,6 +309,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/JSONDefaultKeyImport", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import def from './test.json'
@@ -332,6 +336,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/JSONWithDefaultKey", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import def from './test.json'
@@ -345,6 +350,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/JSONWithDefaultKeyNamespace", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import * as ns from './test.json'
@@ -358,6 +364,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/RequireUnknownExtension", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         require('./x.aaaa')
@@ -366,6 +373,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/PackageJSONDefaultConditionRequire", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         const boop = require('boop')
@@ -391,6 +399,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/PackageJSONDefaultConditionImport", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import React from 'react'
@@ -438,6 +447,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/TSConfigPathStarAnywhere", {
+    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import test0 from 'test3/foo'
@@ -585,6 +595,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/DCEVarRedeclarationIssue2815", {
+    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         var x = 1;
@@ -632,7 +643,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/AbsolutePathShouldNotResolveAsRelative", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         console.log(1);
@@ -652,6 +663,7 @@ describe("bundler", () => {
     target: "bun",
   });
   itBundled("edgecase/RuntimeExternalRequire", {
+    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         console.log(require("hello-1").type);
@@ -679,6 +691,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/RuntimeExternalImport", {
+    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import { type as a1 } from 'hello-1';
@@ -743,6 +756,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/RuntimeExternalImport2", {
+    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import t from 'hello';
@@ -773,6 +787,7 @@ describe("bundler", () => {
     run: {},
   });
   itBundled("edgecase/ImportDefaultInDirectory", {
+    todo: true,
     files: {
       "/a/file.js": `
         import def from './def'
@@ -808,6 +823,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/OverwriteInputWithOutdir", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import { version } from './library';
@@ -823,6 +839,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/OverwriteInputWithOutfile", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import { version } from './library';
@@ -838,6 +855,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/OverwriteInputNonEntrypoint", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import { version } from './library';

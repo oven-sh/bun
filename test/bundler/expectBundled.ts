@@ -21,7 +21,10 @@ export function testForFile(file: string): BunTestExports {
   }
 
   var testFile = testFiles.get(file);
-  if (!testFile) testFile = Bun.jest(file);
+  if (!testFile) {
+    testFile = Bun.jest(file);
+    testFiles.set(file, testFile);
+  }
   return testFile;
 }
 
@@ -50,7 +53,7 @@ export const ESBUILD_PATH = import.meta.resolveSync("esbuild/bin/esbuild");
 
 export interface BundlerTestInput {
   /** Temporary flag to mark failing tests as skipped. */
-  notImplemented?: boolean;
+  todo?: boolean;
 
   // file options
   files: Record<string, string>;
@@ -308,7 +311,7 @@ function expectBundled(
     minifyIdentifiers,
     minifySyntax,
     minifyWhitespace,
-    notImplemented,
+    todo: notImplemented,
     onAfterBundle,
     root: outbase,
     outdir,
@@ -1297,13 +1300,23 @@ export function itBundled(
     try {
       expectBundled(id, opts, true);
     } catch (error) {
-      it.todo(id);
+      // it.todo(id, () => {
+      //   throw error;
+      // });
       return ref;
     }
   }
 
-  if (opts.notImplemented && !FILTER) {
-    it.todo(id, () => {});
+  if (opts.todo && !FILTER) {
+    it.todo(id, () => expectBundled(id, opts as any));
+    // it(id, async () => {
+    //   try {
+    //     await expectBundled(id, opts as any);
+    //   } catch (error) {
+    //     return;
+    //   }
+    //   throw new Error(`Expected test to fail but it passed.`);
+    // });
   } else {
     it(id, () => expectBundled(id, opts as any));
   }

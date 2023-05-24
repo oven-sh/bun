@@ -185,7 +185,7 @@ describe("bundler", () => {
     },
   });
   itBundled("browser/NodePolyfillExternal", {
-    notImplemented: true,
+    todo: true,
     skipOnEsbuild: true,
     files: {
       "/entry.js": NodePolyfills.options.files["/entry.js"],

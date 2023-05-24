@@ -529,8 +529,9 @@ pub const Bundler = struct {
             else => {},
         }
 
-        if (this.env.map.get("DISABLE_BUN_ANALYTICS")) |should_disable| {
-            if (strings.eqlComptime(should_disable, "1")) {
+        if (this.env.map.get("DO_NOT_TRACK")) |dnt| {
+            // https://do-not-track.dev/
+            if (strings.eqlComptime(dnt, "1")) {
                 Analytics.disabled = true;
             }
         }

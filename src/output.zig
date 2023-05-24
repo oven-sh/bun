@@ -107,7 +107,11 @@ pub const Source = struct {
         // - "1", "true", or "" to indicate 16-color support
         // - "2" to indicate 256-color support
         // - "3" to indicate 16 million-color support
-        return force_color.len == 0 or strings.eqlComptime(force_color, "1") or strings.eqlComptime(force_color, "true") or strings.eqlComptime(force_color, "2") or strings.eqlComptime(force_color, "3");
+        return force_color.len == 0 or
+            strings.eqlComptime(force_color, "1") or
+            strings.eqlComptime(force_color, "true") or
+            strings.eqlComptime(force_color, "2") or
+            strings.eqlComptime(force_color, "3");
     }
 
     pub fn isColorTerminal() bool {

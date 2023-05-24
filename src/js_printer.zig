@@ -1942,6 +1942,65 @@ fn NewPrinter(
             }
         }
 
+        fn printRawTemplateLiteral(p: *Printer, bytes: []const u8) void {
+            if (comptime is_json or !ascii_only) {
+                p.print(bytes);
+                return;
+            }
+
+            // Translate any non-ASCII to unicode escape sequences
+            // Note that this does not correctly handle malformed template literal strings
+            // template literal strings can contain invalid unicode code points
+            // and pretty much anything else
+            //
+            // we use WTF-8 here, but that's still not good enough.
+            //
+            var ascii_start: usize = 0;
+            var is_ascii = false;
+            var iter = CodepointIterator.init(bytes);
+            var cursor = CodepointIterator.Cursor{};
+
+            while (iter.next(&cursor)) {
+                switch (cursor.c) {
+                    // unlike other versions, we only want to mutate > 0x7F
+                    0...last_ascii => {
+                        if (!is_ascii) {
+                            ascii_start = cursor.i;
+                            is_ascii = true;
+                        }
+                    },
+                    else => {
+                        if (is_ascii) {
+                            p.print(bytes[ascii_start..cursor.i]);
+                            is_ascii = false;
+                        }
+
+                        switch (cursor.c) {
+                            0...0xFFFF => {
+                                p.print([_]u8{
+                                    '\\',
+                                    'u',
+                                    hex_chars[cursor.c >> 12],
+                                    hex_chars[(cursor.c >> 8) & 15],
+                                    hex_chars[(cursor.c >> 4) & 15],
+                                    hex_chars[cursor.c & 15],
+                                });
+                            },
+                            else => {
+                                p.print("\\u{");
+                                std.fmt.formatInt(cursor.c, 16, .lower, .{}, p) catch unreachable;
+                                p.print("}");
+                            },
+                        }
+                    },
+                }
+            }
+
+            if (is_ascii) {
+                p.print(bytes[ascii_start..]);
+            }
+        }
+
         pub fn printExpr(p: *Printer, expr: Expr, level: Level, _flags: ExprFlag.Set) void {
             var flags = _flags;
 
@@ -2553,7 +2612,7 @@ fn NewPrinter(
 
                     p.print("`");
                     switch (e.head) {
-                        .raw => |raw| p.print(raw),
+                        .raw => |raw| p.printRawTemplateLiteral(raw),
                         .cooked => |*cooked| {
                             if (cooked.isPresent()) {
                                 cooked.resolveRopeIfNeeded(p.options.allocator);
@@ -2567,7 +2626,7 @@ fn NewPrinter(
                         p.printExpr(part.value, .lowest, ExprFlag.None());
                         p.print("}");
                         switch (part.tail) {
-                            .raw => |raw| p.print(raw),
+                            .raw => |raw| p.printRawTemplateLiteral(raw),
                             .cooked => |*cooked| {
                                 if (cooked.isPresent()) {
                                     cooked.resolveRopeIfNeeded(p.options.allocator);

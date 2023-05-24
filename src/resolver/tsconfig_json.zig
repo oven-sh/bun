@@ -182,7 +182,7 @@ pub const TSConfigJSON = struct {
                         result.jsx_flags.insert(.runtime);
                     }
 
-                    result.jsx.package_name = options.JSX.Pragma.parsePackageName(str);
+                    result.jsx.package_name = str;
                     result.jsx.setImportSource(allocator);
                     result.jsx_flags.insert(.import_source);
                 }

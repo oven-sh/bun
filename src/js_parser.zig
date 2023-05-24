@@ -6417,7 +6417,7 @@ fn NewParser_(
             }
 
             if (p.lexer.jsx_pragma.jsxImportSource()) |import_source| {
-                p.options.jsx.classic_import_source = options.JSX.Pragma.parsePackageName(import_source.text);
+                p.options.jsx.classic_import_source = import_source.text;
                 p.options.jsx.package_name = p.options.jsx.classic_import_source;
                 p.options.jsx.setImportSource(p.allocator);
             }

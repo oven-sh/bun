@@ -1029,7 +1029,7 @@ pub const JSX = struct {
                 &pragma.import_source.development,
                 &[_]string{
                     pragma.package_name,
-                    "/react/jsx-dev-runtime",
+                    "/jsx-dev-runtime",
                 },
                 &.{
                     Defaults.ImportSourceDev,
@@ -1041,7 +1041,7 @@ pub const JSX = struct {
                 &pragma.import_source.production,
                 &[_]string{
                     pragma.package_name,
-                    "/react/jsx-runtime",
+                    "/jsx-runtime",
                 },
                 &.{
                     Defaults.ImportSource,
@@ -1116,7 +1116,7 @@ pub const JSX = struct {
             pragma.runtime = jsx.runtime;
 
             if (jsx.import_source.len > 0) {
-                pragma.package_name = parsePackageName(pragma.importSource());
+                pragma.package_name = jsx.import_source;
                 pragma.setImportSource(allocator);
                 pragma.classic_import_source = pragma.package_name;
             }

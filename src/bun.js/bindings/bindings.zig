@@ -3773,6 +3773,10 @@ pub const JSValue = enum(JSValueReprInt) {
         return res;
     }
 
+    /// Returns true if
+    /// - `" string literal"`
+    /// - `new String("123")`
+    /// - `class DerivedString extends String; new DerivedString("123")`
     pub inline fn isString(this: JSValue) bool {
         if (!this.isCell())
             return false;

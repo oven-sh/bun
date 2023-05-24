@@ -211,6 +211,7 @@ pub const Arguments = struct {
 
     // TODO: update test completions
     const test_only_params = [_]ParamType{
+        clap.parseParam("--isolate                        Create a new global for each test file") catch unreachable,
         clap.parseParam("--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000.") catch unreachable,
         clap.parseParam("--update-snapshots               Update snapshot files") catch unreachable,
         clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
@@ -380,6 +381,8 @@ pub const Arguments = struct {
                     };
                 }
             }
+
+            ctx.test_options.isolate = args.flag("--isolate");
             ctx.test_options.update_snapshots = args.flag("--update-snapshots");
             if (args.option("--rerun-each")) |repeat_count| {
                 if (repeat_count.len > 0) {
@@ -916,6 +919,7 @@ pub const Command = struct {
         default_timeout_ms: u32 = 5 * std.time.ms_per_s,
         update_snapshots: bool = false,
         repeat_count: u32 = 0,
+        isolate: bool = false,
     };
 
     pub const Context = struct {

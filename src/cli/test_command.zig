@@ -436,6 +436,7 @@ pub const TestCommand = struct {
         reporter.repeat_count = @max(ctx.test_options.repeat_count, 1);
         reporter.jest.callback = &reporter.callback;
         jest.Jest.runner = &reporter.jest;
+        reporter.jest.isolate = ctx.test_options.isolate;
 
         js_ast.Expr.Data.Store.create(default_allocator);
         js_ast.Stmt.Data.Store.create(default_allocator);
@@ -721,8 +722,15 @@ pub const TestCommand = struct {
         vm.main_hash = @truncate(u32, bun.hash(resolution.path_pair.primary.text));
         var repeat_count = reporter.repeat_count;
         var repeat_index: u32 = 0;
+        const original_preload_len = vm.preload.len;
         while (repeat_index < repeat_count) : (repeat_index += 1) {
             var promise = try vm.loadEntryPoint(resolution.path_pair.primary.text);
+            defer {
+                if (reporter.jest.isolate) {
+                    vm.preload.len = original_preload_len;
+                    vm.resetDefaultGlobalObject();
+                }
+            }
 
             switch (promise.status(vm.global.vm())) {
                 .Rejected => {
@@ -772,6 +780,7 @@ pub const TestCommand = struct {
                         prev_unhandled_count = vm.unhandled_error_counter;
                     }
                 }
+
                 switch (vm.aggressive_garbage_collection) {
                     .none => {},
                     .mild => {

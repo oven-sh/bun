@@ -1,55 +1,5 @@
 // Bun Snapshot v1, https://goo.gl/fbAQLP
 
-exports[`Bun.build outdir + reading out blobs works 1`] = `
-"var __create = Object.create;
-var __descs = Object.getOwnPropertyDescriptors;
-var __defProp = Object.defineProperty;
-var __getProtoOf = Object.getPrototypeOf;
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, {
-      get: all[name],
-      enumerable: true,
-      configurable: true,
-      set: (newValue) => all[name] = () => newValue
-    });
-};
-var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
-
-// fixtures/trivial/fn.js
-var exports_fn = {};
-__export(exports_fn, {
-  fn: () => {
-    {
-      return fn;
-    }
-  }
-});
-function fn(a) {
-  return a + 42;
-}
-var init_fn = __esm(() => {
-});
-
-// fixtures/trivial/index.js
-var NS = Promise.resolve().then(() => (init_fn(), exports_fn));
-NS.then(({ fn: fn2 }) => {
-  console.log(fn2(42));
-});
-"
-`;
-
-exports[`Bun.build BuildArtifact properties: hash 1`] = `"0b00cce4004e6308"`;
-
-exports[`Bun.build BuildArtifact properties + entry.naming: hash 1`] = `"0aa19aefb10c4ad2"`;
-
-exports[`Bun.build BuildArtifact properties sourcemap: hash index.js 1`] = `"0b00cce4004e6308"`;
-
-exports[`Bun.build BuildArtifact properties sourcemap: hash index.js.map 1`] = `"0000000000000000"`;
-
 exports[`Bun.build Bun.write(BuildArtifact) 1`] = `
 "var __create = Object.create;
 var __descs = Object.getOwnPropertyDescriptors;
@@ -69,7 +19,7 @@ var __export = (target, all) => {
 };
 var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
 
-// fixtures/trivial/fn.js
+// test/bundler/fixtures/trivial/fn.js
 var exports_fn = {};
 __export(exports_fn, {
   fn: () => {
@@ -84,13 +34,63 @@ function fn(a) {
 var init_fn = __esm(() => {
 });
 
-// fixtures/trivial/index.js
+// test/bundler/fixtures/trivial/index.js
 var NS = Promise.resolve().then(() => (init_fn(), exports_fn));
 NS.then(({ fn: fn2 }) => {
   console.log(fn2(42));
 });
 "
 `;
+
+exports[`Bun.build outdir + reading out blobs works 1`] = `
+"var __create = Object.create;
+var __descs = Object.getOwnPropertyDescriptors;
+var __defProp = Object.defineProperty;
+var __getProtoOf = Object.getPrototypeOf;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, {
+      get: all[name],
+      enumerable: true,
+      configurable: true,
+      set: (newValue) => all[name] = () => newValue
+    });
+};
+var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
+
+// test/bundler/fixtures/trivial/fn.js
+var exports_fn = {};
+__export(exports_fn, {
+  fn: () => {
+    {
+      return fn;
+    }
+  }
+});
+function fn(a) {
+  return a + 42;
+}
+var init_fn = __esm(() => {
+});
+
+// test/bundler/fixtures/trivial/index.js
+var NS = Promise.resolve().then(() => (init_fn(), exports_fn));
+NS.then(({ fn: fn2 }) => {
+  console.log(fn2(42));
+});
+"
+`;
+
+exports[`Bun.build BuildArtifact properties: hash 1`] = `"c53a9396d76e0bed"`;
+
+exports[`Bun.build BuildArtifact properties + entry.naming: hash 1`] = `"256f5cfc7c537e4b"`;
+
+exports[`Bun.build BuildArtifact properties sourcemap: hash index.js 1`] = `"c53a9396d76e0bed"`;
+
+exports[`Bun.build BuildArtifact properties sourcemap: hash index.js.map 1`] = `"0000000000000000"`;
 
 exports[`Bun.build new Response(BuildArtifact) sets content type: response text 1`] = `
 "var __create = Object.create;
@@ -111,7 +111,7 @@ var __export = (target, all) => {
 };
 var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
 
-// fixtures/trivial/fn.js
+// test/bundler/fixtures/trivial/fn.js
 var exports_fn = {};
 __export(exports_fn, {
   fn: () => {
@@ -126,7 +126,7 @@ function fn(a) {
 var init_fn = __esm(() => {
 });
 
-// fixtures/trivial/index.js
+// test/bundler/fixtures/trivial/index.js
 var NS = Promise.resolve().then(() => (init_fn(), exports_fn));
 NS.then(({ fn: fn2 }) => {
   console.log(fn2(42));

@@ -209,7 +209,7 @@ export default Hello;
 });
 
 describe("errors", () => {
-  it.todo("valid loaders work", () => {
+  it("valid loaders work", () => {
     const validLoaders = ["js", "jsx", "ts", "tsx"];
     const inputs = ["export default 'hi';", "export default 'hi';", "export default 'hi';", "export default 'hi';"];
     for (let i = 0; i < validLoaders.length; i++) {

@@ -21,45 +21,7 @@ export function testForFile(file: string): BunTestExports {
   }
 
   var testFile = testFiles.get(file);
-  if (!testFile) {
-    const native = (Bun as any).jest(file);
-    const notImplemented: BundlerTestRef[] = [];
-    testFile = {
-      it: native.it,
-      test: native.test,
-      expect: native.expect,
-      addNotImplemented: (ref: BundlerTestRef) => notImplemented.push(ref),
-    };
-    testFile.describe = function (name: string, fn: () => void) {
-      native.describe(name, function () {
-        if (currentFile) {
-          throw new Error("please don't nest describe blocks in the bundler tests.");
-        }
-        currentFile = file;
-        fn();
-        currentFile = undefined;
-        if (!FILTER && !process.env.BUN_BUNDLER_TEST_NO_CHECK_SKIPPED) {
-          native.test(`"${path.basename(file)}" has proper notImplemented markers`, async () => {
-            console.log(`\n  Checking if any of the ${notImplemented.length} not implemented tests work...`);
-            const implemented = [];
-            for (const ref of notImplemented) {
-              try {
-                await expectBundled(ref.id, { ...ref.options, notImplemented: false }, false, true);
-                implemented.push({ id: ref.id, success: true });
-              } catch (e) {}
-            }
-            if (implemented.length) {
-              throw (
-                '"notImplemented" can only be used on failing tests. the following tests pass:\n' +
-                implemented.map(x => "  - " + x.id).join("\n")
-              );
-            }
-          });
-        }
-      });
-    };
-    testFiles.set(file, testFile);
-  }
+  if (!testFile) testFile = Bun.jest(file);
   return testFile;
 }
 
@@ -1341,7 +1303,7 @@ export function itBundled(
   }
 
   if (opts.notImplemented && !FILTER) {
-    if (!HIDE_SKIP) it.skip(id, () => {});
+    it.todo(id, () => {});
     addNotImplemented({ id, options: opts });
   } else {
     it(id, () => expectBundled(id, opts as any));

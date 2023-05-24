@@ -1,44 +1,7 @@
-import { describe, it as it_, expect as expect_ } from "bun:test";
-import { gcTick } from "harness";
+import { describe, it, expect } from "bun:test";
 import { ChildProcess, spawn, execFile, exec, fork, spawnSync, execFileSync, execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
-
-const expect = ((actual: unknown) => {
-  gcTick();
-  const ret = expect_(actual);
-  gcTick();
-  return ret;
-}) as typeof expect_;
-
-const it = ((label, fn) => {
-  const hasDone = fn.length === 1;
-  if (fn.constructor.name === "AsyncFunction" && hasDone) {
-    return it_(label, async done => {
-      gcTick();
-      await fn(done);
-      gcTick();
-    });
-  } else if (hasDone) {
-    return it_(label, done => {
-      gcTick();
-      fn(done);
-      gcTick();
-    });
-  } else if (fn.constructor.name === "AsyncFunction") {
-    return it_(label, async () => {
-      gcTick();
-      await fn(() => {});
-      gcTick();
-    });
-  } else {
-    return it_(label, () => {
-      gcTick();
-      fn(() => {});
-      gcTick();
-    });
-  }
-}) as typeof it_;
 
 const debug = process.env.DEBUG ? console.log : () => {};
 
@@ -112,12 +75,12 @@ describe("spawn()", () => {
     expect(SEMVER_REGEX.test(result.trim())).toBe(true);
   });
 
-  it("should allow stdout to be read via .read() API", async done => {
+  it("should allow stdout to be read via .read() API", async () => {
     const child = spawn("bun", ["-v"]);
-    const result: string = await new Promise(resolve => {
+    const result: string = await new Promise((resolve, reject) => {
       let finalData = "";
       child.stdout.on("error", e => {
-        done(e);
+        reject(e);
       });
       child.stdout.on("readable", () => {
         let data;
@@ -129,7 +92,6 @@ describe("spawn()", () => {
       });
     });
     expect(SEMVER_REGEX.test(result.trim())).toBe(true);
-    done();
   });
 
   it("should accept stdio option with 'ignore' for no stdio fds", async () => {

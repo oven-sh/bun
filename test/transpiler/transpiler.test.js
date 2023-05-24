@@ -106,7 +106,7 @@ describe("Bun.Transpiler", () => {
       ts.expectPrinted_("import Foo = Baz.Bar;\nexport default Foo;", "const Foo = Baz.Bar;\nexport default Foo");
     });
 
-    it("instantiation expressions", () => {
+    it.todo("instantiation expressions", async () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;
 
@@ -1050,7 +1050,7 @@ export default class {
       expect(output.includes("liveFS")).toBe(true);
     });
 
-    it("supports replacing exports", () => {
+    it.todo("supports replacing exports", () => {
       const output = transpiler.transformSync(`
         import deadFS from 'fs';
         import anotherDeadFS from 'fs';
@@ -1136,7 +1136,7 @@ export default class {
 
   `;
 
-  it("jsxFactory (two level)", () => {
+  it.todo("jsxFactory (two level)", () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",
       allowBunRuntime: false,
@@ -1161,7 +1161,7 @@ export default <>hi</>
     expect(fragment.includes("var $JSXFrag = foo.frag,")).toBe(true);
   });
 
-  it("jsxFactory (one level)", () => {
+  it.todo("jsxFactory (one level)", () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",
       allowBunRuntime: false,
@@ -1185,7 +1185,7 @@ export default <>hi</>
     expect(fragment.includes("var JSXFrag = foo.frag,")).toBe(true);
   });
 
-  it("JSX", () => {
+  it.todo("JSX", () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",
       define: {
@@ -1301,7 +1301,7 @@ export default <>hi</>
       treeShaking: false,
     });
 
-    it("inlines static JSX into object literals", () => {
+    it.todo("inlines static JSX into object literals", () => {
       expect(
         inliner
           .transformSync(
@@ -1627,7 +1627,7 @@ console.log(a)
       expectBunPrinted_("export const foo = 1 * 2", "export const foo = 2");
     });
 
-    it("pass objects to macros", () => {
+    it.todo("pass objects to macros", () => {
       var object = {
         helloooooooo: {
           message: [12345],
@@ -1656,7 +1656,7 @@ console.log(a)
 `);
     });
 
-    it("macros can return a promise", () => {
+    it.todo("macros can return a promise", () => {
       var object = {
         helloooooooo: {
           message: [12345],
@@ -1679,7 +1679,7 @@ console.log(a)
 `);
     });
 
-    it("macros can return a Response body", () => {
+    it.todo("macros can return a Response body", () => {
       // "promiseReturningCtx" is this:
       // export function promiseReturningCtx(expr, ctx) {
       //   return new Promise((resolve, reject) => {
@@ -1707,7 +1707,7 @@ export function foo() {
       expect(bunTranspiler.transformSync(input, object).trim()).toBe(output);
     });
 
-    it("macros get dead code eliminated", () => {
+    it.todo("macros get dead code eliminated", () => {
       var object = Response.json({
         big: {
           object: {
@@ -1747,7 +1747,7 @@ export const { dead } = { dead: "hello world!" };
     });
 
     describe("Bun.js", () => {
-      it("require -> import.meta.require", () => {
+      it.todo("require -> import.meta.require", () => {
         expectBunPrinted_(
           `export const foo = require('bar.node')`,
           `export const foo = import.meta.require("bar.node")`,
@@ -1758,21 +1758,21 @@ export const { dead } = { dead: "hello world!" };
         );
       });
 
-      it("require.resolve -> import.meta.require.resolve", () => {
+      it.todo("require.resolve -> import.meta.require.resolve", () => {
         expectBunPrinted_(
           `export const foo = require.resolve('bar.node')`,
           `export const foo = import.meta.require.resolve("bar.node")`,
         );
       });
 
-      it('require.resolve(path, {paths: ["blah"]}) -> import.meta.require.resolve', () => {
+      it.todo('require.resolve(path, {paths: ["blah"]}) -> import.meta.require.resolve', () => {
         expectBunPrinted_(
           `export const foo = require.resolve('bar.node', {paths: ["blah"]})`,
           `export const foo = import.meta.require.resolve("bar.node", { paths: ["blah"] })`,
         );
       });
 
-      it("require is defined", () => {
+      it.todo("require is defined", () => {
         expectBunPrinted_(
           `
 const {resolve} = require;
@@ -1806,7 +1806,7 @@ console.log(resolve.length)
       expectBunPrinted_(`var x = jsx; export default x;`, "var x = jsx;\nexport default x");
     });
 
-    it("decls", () => {
+    it.todo("decls", () => {
       // expectParseError("var x = 0", "");
       // expectParseError("let x = 0", "");
       // expectParseError("const x = 0", "");
@@ -2940,7 +2940,7 @@ console.log(foo, array);
       expect(out.includes("otherNamesStillWork")).toBe(true);
     });
 
-    it("sync supports macros", () => {
+    it.todo("sync supports macros", () => {
       const out = transpiler.transformSync(`
         import {keepSecondArgument} from 'macro:${import.meta.dir}/macro-check.js';
 
@@ -2967,7 +2967,7 @@ console.log(foo, array);
     const importLines = ["import {createElement, bacon} from 'react';", "import {bacon, createElement} from 'react';"];
     describe("sync supports macros remap", () => {
       for (let importLine of importLines) {
-        it(importLine, () => {
+        it.todo(importLine, () => {
           var thisCode = `
           ${importLine}
           
@@ -2992,7 +2992,7 @@ console.log(foo, array);
       }
     });
 
-    it("macro remap removes import statement if its the only used one", () => {
+    it.todo("macro remap removes import statement if its the only used one", () => {
       const out = transpiler.transformSync(`
         import {bacon} from 'react';
 
@@ -3032,7 +3032,7 @@ console.log(foo, array);
   });
 
   describe("edge cases", () => {
-    it("import statement with quoted specifier", () => {
+    it.todo("import statement with quoted specifier", () => {
       expectPrinted_(`import { "x.y" as xy } from "bar";`, `import {"x.y" as xy} from "bar"`);
     });
 

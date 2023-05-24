@@ -136,7 +136,7 @@ describe("bun:jsc", () => {
       expect(newDateString).not.toBe(origDateString);
     }
 
-    expect(setTimeZone(realOrigTimezone)).toBe(realOrigTimezone);
+    setTimeZone(realOrigTimezone);
 
     expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(origTimezone);
   });

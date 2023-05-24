@@ -180,7 +180,6 @@ pub const FileSystemRouter = struct {
         var origin_str: ZigString.Slice = .{};
         var asset_prefix_slice: ZigString.Slice = .{};
 
-        var out_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
         if (argument.get(globalThis, "style")) |style_val| {
             if (!style_val.getZigString(globalThis).eqlComptime("nextjs")) {
                 globalThis.throwInvalidArguments("Only 'nextjs' style is currently implemented", .{});
@@ -198,14 +197,7 @@ pub const FileSystemRouter = struct {
             }
             const root_dir_path_ = dir.toSlice(globalThis, globalThis.allocator());
             if (!(root_dir_path_.len == 0 or strings.eqlComptime(root_dir_path_.slice(), "."))) {
-                // resolve relative path if needed
-                const path = root_dir_path_.slice();
-                if (bun.path.Platform.isAbsolute(.auto, path)) {
-                    root_dir_path = root_dir_path_;
-                } else {
-                    var parts = [_][]const u8{path};
-                    root_dir_path = JSC.ZigString.Slice.fromUTF8NeverFree(bun.path.joinAbsStringBuf(Fs.FileSystem.instance.top_level_dir, &out_buf, &parts, .auto));
-                }
+                root_dir_path = root_dir_path_;
             }
         } else {
             // dir is not optional

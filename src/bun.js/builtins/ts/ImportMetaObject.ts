@@ -135,6 +135,99 @@ export function internalRequire(this: ImportMetaObject, resolved) {
   }
 }
 
+export function createRequireCache() {
+  class Module {
+    id;
+    parent;
+    filename;
+    children = [];
+    paths = [];
+
+    constructor(filename) {
+      this.id = filename;
+      // TODO: windows
+      const lastSlash = filename.lastIndexOf("/");
+      if (lastSlash !== -1 && filename.length > lastSlash + 1) {
+        this.filename = filename.substring(lastSlash + 1);
+      } else {
+        this.filename = filename;
+      }
+    }
+
+    get loaded() {
+      return true;
+    }
+
+    require(path) {
+      return $internalRequire($resolveSync(path, this.id));
+    }
+
+    get exports() {
+      return $requireMap.$get(this.id) ?? {};
+    }
+
+    set exports(value) {
+      $requireMap.$set(this.id, value);
+    }
+  }
+
+  var moduleMap = new Map();
+
+  return new Proxy(
+    {},
+    {
+      get(target, key: string) {
+        const entry = $requireMap.$get(key);
+        if (entry) {
+          var mod = moduleMap.$get(key);
+          if (!mod) {
+            mod = new Module(key);
+            moduleMap.$set(key, mod);
+          }
+          return mod;
+        }
+      },
+      set(target, key: string, value) {
+        if (!moduleMap.$has(key)) {
+          moduleMap.$set(key, new Module(key));
+        }
+
+        $requireMap.$set(key, value?.exports);
+
+        return true;
+      },
+
+      has(target, key: string) {
+        return $requireMap.$has(key);
+      },
+
+      deleteProperty(target, key: string) {
+        moduleMap.$delete(key);
+        $requireMap.$delete(key);
+        return Loader.registry.$delete(key);
+      },
+
+      ownKeys(target) {
+        return [...$requireMap.$keys()];
+      },
+
+      // In Node, require.cache has a null prototype
+      getPrototypeOf(target) {
+        return null;
+      },
+
+      getOwnPropertyDescriptor(target, key: string) {
+        if ($requireMap.$has(key)) {
+          return {
+            configurable: true,
+            enumerable: true,
+          };
+        }
+      },
+    },
+  );
+}
+
 $sloppy;
 export function require(this: ImportMetaObject, name) {
   var from = this?.path ?? arguments.callee.path;

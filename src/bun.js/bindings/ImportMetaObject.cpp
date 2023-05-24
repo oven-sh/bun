@@ -229,6 +229,24 @@ JSC::Structure* Zig::ImportMetaObject::createResolveFunctionStructure(JSC::VM& v
     return JSRequireResolveFunction::createStructure(vm, globalObject, prototype);
 }
 
+JSC_DEFINE_CUSTOM_GETTER(jsRequireCacheGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = jsCast<Zig::GlobalObject*>(globalObject);
+    return JSValue::encode(thisObject->lazyRequireCacheObject());
+}
+
+JSC_DEFINE_CUSTOM_SETTER(jsRequireCacheSetter,
+    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
+        JSC::EncodedJSValue value, JSC::PropertyName propertyName))
+{
+    JSObject* thisObject = jsDynamicCast<JSObject*>(JSValue::decode(thisValue));
+    if (!thisObject)
+        return false;
+
+    thisObject->putDirect(globalObject->vm(), propertyName, JSValue::decode(value), 0);
+    return true;
+}
+
 JSObject* Zig::ImportMetaObject::createRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString)
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -237,6 +255,7 @@ JSObject* Zig::ImportMetaObject::createRequireFunction(VM& vm, JSGlobalObject* l
     auto clientData = WebCore::clientData(vm);
     requireFunction->putDirect(vm, clientData->builtinNames().pathPublicName(), jsString(vm, pathString), PropertyAttribute::DontEnum | 0);
     requireFunction->putDirect(vm, clientData->builtinNames().resolvePublicName(), resolveFunction, PropertyAttribute::Function | PropertyAttribute::DontDelete | 0);
+    requireFunction->putDirectCustomAccessor(vm, Identifier::fromString(vm, "cache"_s), JSC::CustomGetterSetter::create(vm, jsRequireCacheGetter, jsRequireCacheSetter), 0);
     return requireFunction;
 }
 
@@ -418,7 +437,7 @@ void ImportMetaObjectPrototype::finishCreation(VM& vm, JSGlobalObject* globalObj
         builtinNames.mainPublicName(),
         GetterSetter::create(vm, globalObject, JSFunction::create(vm, importMetaObjectMainCodeGenerator(vm), globalObject), nullptr),
         JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin | 0);
-        
+
     this->putDirect(vm, Identifier::fromString(vm, "primordials"_s), jsUndefined(), JSC::PropertyAttribute::DontEnum | 0);
 
     String requireString = "[[require]]"_s;

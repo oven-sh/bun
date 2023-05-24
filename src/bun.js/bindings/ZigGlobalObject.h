@@ -250,6 +250,8 @@ public:
     Structure* requireResolveFunctionStructure() { return m_requireResolveFunctionStructure.getInitializedOnMainThread(this); }
     JSObject* requireResolveFunctionPrototype() { return m_resolveFunctionPrototype.getInitializedOnMainThread(this); }
 
+    JSObject* lazyRequireCacheObject() { return m_lazyRequireCacheObject.getInitializedOnMainThread(this); }
+
     JSFunction* bunSleepThenCallback() { return m_bunSleepThenCallback.getInitializedOnMainThread(this); }
 
     JSObject* dnsObject() { return m_dnsObject.getInitializedOnMainThread(this); }
@@ -466,6 +468,7 @@ private:
     LazyProperty<JSGlobalObject, JSObject> m_resolveFunctionPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_dnsObject;
     LazyProperty<JSGlobalObject, JSWeakMap> m_vmModuleContextMap;
+    LazyProperty<JSGlobalObject, JSObject> m_lazyRequireCacheObject;
 
     LazyProperty<JSGlobalObject, JSFunction> m_bunSleepThenCallback;
     LazyProperty<JSGlobalObject, Structure> m_cachedGlobalObjectStructure;

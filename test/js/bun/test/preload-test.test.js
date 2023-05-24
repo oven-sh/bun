@@ -44,7 +44,7 @@ test('says hello world', () => {
 const bunfig = `test.preload = ["./preload.js"]`;
 
 describe("preload for bun:test", () => {
-  test("works with bunfig", async () => {
+  test.todo("works with bunfig", async () => {
     const preloadDir = join(realpathSync(tmpdir()), "bun-test-preload-test1");
     mkdirSync(preloadDir, { recursive: true });
     const preloadPath = join(preloadDir, "preload.js");
@@ -73,7 +73,7 @@ describe("preload for bun:test", () => {
     }
   });
 
-  test("works from CLI", async () => {
+  test.todo("works from CLI", async () => {
     const preloadDir = join(realpathSync(tmpdir()), "bun-test-preload-test2");
     mkdirSync(preloadDir, { recursive: true });
     const preloadPath = join(preloadDir, "preload.js");

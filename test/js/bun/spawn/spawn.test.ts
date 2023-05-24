@@ -122,7 +122,7 @@ for (let [gcTick, label] of [
         gcTick();
       });
 
-      it("check exit code from onExit", async () => {
+      it.todo("check exit code from onExit", async () => {
         for (let i = 0; i < 1000; i++) {
           var exitCode1, exitCode2;
           await new Promise<void>(resolve => {

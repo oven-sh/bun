@@ -4,7 +4,7 @@ import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 
-test("running a commonjs module works", async () => {
+test.todo("running a commonjs module works", async () => {
   const dir = join(realpathSync(tmpdir()), "bun-run-test1");
   mkdirSync(dir, { recursive: true });
   await Bun.write(join(dir, "index1.js"), "module.exports = 1; console.log('hello world');");

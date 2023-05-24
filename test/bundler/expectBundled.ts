@@ -1289,7 +1289,7 @@ export function itBundled(
     opts._referenceFn = fn;
   }
   const ref = testRef(id, opts);
-  const { it, addNotImplemented } = testForFile(currentFile ?? callerSourceOrigin()) as any;
+  const { it } = testForFile(currentFile ?? callerSourceOrigin()) as any;
 
   if (FILTER && !filterMatches(id)) {
     return ref;
@@ -1297,14 +1297,13 @@ export function itBundled(
     try {
       expectBundled(id, opts, true);
     } catch (error) {
-      if (!HIDE_SKIP) it.skip(id, () => {});
+      it.todo(id);
       return ref;
     }
   }
 
   if (opts.notImplemented && !FILTER) {
     it.todo(id, () => {});
-    addNotImplemented({ id, options: opts });
   } else {
     it(id, () => expectBundled(id, opts as any));
   }

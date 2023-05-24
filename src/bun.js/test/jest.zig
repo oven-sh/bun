@@ -376,7 +376,6 @@ pub const TestRunner = struct {
     test_timeout_timer: ?*bun.uws.Timer = null,
     last_test_timeout_timer_duration: u32 = 0,
     active_test_for_timeout: ?TestRunner.Test.ID = null,
-    isolate: bool = false,
 
     global_callbacks: struct {
         beforeAll: std.ArrayListUnmanaged(JSC.JSValue) = .{},

@@ -180,7 +180,6 @@ pub const FileSystemRouter = struct {
         var origin_str: ZigString.Slice = .{};
         var asset_prefix_slice: ZigString.Slice = .{};
 
-        var out_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
         if (argument.get(globalThis, "style")) |style_val| {
             if (!style_val.getZigString(globalThis).eqlComptime("nextjs")) {
                 globalThis.throwInvalidArguments("Only 'nextjs' style is currently implemented", .{});
@@ -198,14 +197,7 @@ pub const FileSystemRouter = struct {
             }
             const root_dir_path_ = dir.toSlice(globalThis, globalThis.allocator());
             if (!(root_dir_path_.len == 0 or strings.eqlComptime(root_dir_path_.slice(), "."))) {
-                // resolve relative path if needed
-                const path = root_dir_path_.slice();
-                if (bun.path.Platform.isAbsolute(.auto, path)) {
-                    root_dir_path = root_dir_path_;
-                } else {
-                    var parts = [_][]const u8{path};
-                    root_dir_path = JSC.ZigString.Slice.fromUTF8NeverFree(bun.path.joinAbsStringBuf(Fs.FileSystem.instance.top_level_dir, &out_buf, &parts, .auto));
-                }
+                root_dir_path = root_dir_path_;
             }
         } else {
             // dir is not optional
@@ -251,7 +243,6 @@ pub const FileSystemRouter = struct {
 
             asset_prefix_slice = asset_prefix.toSlice(globalThis, allocator).clone(allocator) catch unreachable;
         }
-        routerLog("arguments parsed", .{});
         var orig_log = vm.bundler.resolver.log;
         var log = Log.Log.init(allocator);
         vm.bundler.resolver.log = &log;
@@ -259,7 +250,6 @@ pub const FileSystemRouter = struct {
 
         var path_to_use = (root_dir_path.cloneWithTrailingSlash(allocator) catch unreachable).slice();
 
-        routerLog("path_to_use sliced {s}", .{path_to_use});
         var root_dir_info = vm.bundler.resolver.readDirInfo(path_to_use) catch {
             globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "reading root directory"));
             origin_str.deinit();
@@ -274,14 +264,12 @@ pub const FileSystemRouter = struct {
             return null;
         };
 
-        routerLog("root_dir_info ok", .{});
         var router = Router.init(vm.bundler.fs, allocator, .{
             .dir = path_to_use,
             .extensions = if (extensions.items.len > 0) extensions.items else default_extensions,
             .asset_prefix_path = asset_prefix_slice.slice(),
         }) catch unreachable;
 
-        routerLog("Router init ok", .{});
         router.loadRoutes(&log, root_dir_info, Resolver, &vm.bundler.resolver, router.config.dir) catch {
             globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "loading routes"));
             origin_str.deinit();
@@ -289,7 +277,6 @@ pub const FileSystemRouter = struct {
             globalThis.allocator().destroy(arena);
             return null;
         };
-        routerLog("loadModules ok", .{});
 
         if (argument.get(globalThis, "origin")) |origin| {
             if (!origin.isString()) {
@@ -321,11 +308,9 @@ pub const FileSystemRouter = struct {
             .arena = arena,
             .allocator = allocator,
         };
-        routerLog("fs_router ok", .{});
 
         router.config.dir = fs_router.base_dir.?.slice();
         fs_router.base_dir.?.ref();
-        routerLog("fs_router dir and base_dir ok", .{});
 
         return fs_router;
     }

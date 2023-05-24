@@ -2685,7 +2685,7 @@ it("should handle Git URL in dependencies", async () => {
   const package_json = await file(join(package_dir, "node_modules", "uglify-js", "package.json")).json();
   expect(package_json.name).toBe("uglify-js");
   await access(join(package_dir, "bun.lockb"));
-});
+}, 20000);
 
 it("should handle Git URL in dependencies (SCP-style)", async () => {
   const urls: string[] = [];
@@ -2746,7 +2746,7 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
   const package_json = await file(join(package_dir, "node_modules", "uglify", "package.json")).json();
   expect(package_json.name).toBe("uglify-js");
   await access(join(package_dir, "bun.lockb"));
-});
+}, 20000);
 
 it("should handle Git URL with committish in dependencies", async () => {
   const urls: string[] = [];
@@ -2809,7 +2809,7 @@ it("should handle Git URL with committish in dependencies", async () => {
   expect(package_json.name).toBe("uglify-js");
   expect(package_json.version).toBe("3.14.1");
   await access(join(package_dir, "bun.lockb"));
-});
+}, 20000);
 
 it("should fail on invalid Git URL", async () => {
   const urls: string[] = [];
@@ -2887,7 +2887,7 @@ it("should fail on Git URL with invalid committish", async () => {
   } catch (err: any) {
     expect(err.code).toBe("ENOENT");
   }
-});
+}, 20000);
 
 it("should de-duplicate committish in Git URLs", async () => {
   const urls: string[] = [];
@@ -2974,7 +2974,7 @@ it("should de-duplicate committish in Git URLs", async () => {
   expect(ver_json.name).toBe("uglify-js");
   expect(ver_json.version).toBe("3.14.1");
   await access(join(package_dir, "bun.lockb"));
-});
+}, 20000);
 
 it("should handle Git URL with existing lockfile", async () => {
   const urls: string[] = [];
@@ -3169,7 +3169,7 @@ cache = false
     join("..", "uglify-js", "bin", "uglifyjs"),
   );
   await access(join(package_dir, "bun.lockb"));
-});
+}, 20000);
 
 it("should prefer optionalDependencies over dependencies of the same name", async () => {
   const urls: string[] = [];

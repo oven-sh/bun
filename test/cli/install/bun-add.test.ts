@@ -1000,7 +1000,7 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
   expect(await exited2).toBe(0);
   expect(urls.sort()).toEqual([]);
   expect(requested).toBe(0);
-});
+}, 20000);
 
 it("should prefer optionalDependencies over dependencies of the same name", async () => {
   const urls: string[] = [];

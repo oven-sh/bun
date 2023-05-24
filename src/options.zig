@@ -965,7 +965,7 @@ pub const JSX = struct {
         .{ "automatic", JSX.Runtime.automatic },
         .{ "react", JSX.Runtime.classic },
         .{ "react-jsx", JSX.Runtime.automatic },
-        .{ "react-jsxDEV", JSX.Runtime.automatic },
+        .{ "react-jsxdev", JSX.Runtime.automatic },
         .{ "solid", JSX.Runtime.solid },
     });
 
@@ -1029,7 +1029,7 @@ pub const JSX = struct {
                 &pragma.import_source.development,
                 &[_]string{
                     pragma.package_name,
-                    "/jsx-dev-runtime",
+                    "/react/jsx-dev-runtime",
                 },
                 &.{
                     Defaults.ImportSourceDev,
@@ -1041,7 +1041,7 @@ pub const JSX = struct {
                 &pragma.import_source.production,
                 &[_]string{
                     pragma.package_name,
-                    "/jsx-runtime",
+                    "/react/jsx-runtime",
                 },
                 &.{
                     Defaults.ImportSource,
@@ -1054,8 +1054,8 @@ pub const JSX = struct {
         }
 
         pub const Defaults = struct {
-            pub const Factory = &[_]string{"createElement"};
-            pub const Fragment = &[_]string{"Fragment"};
+            pub const Factory = &[_]string{"React.createElement"};
+            pub const Fragment = &[_]string{"React.Fragment"};
             pub const ImportSourceDev = "react/jsx-dev-runtime";
             pub const ImportSource = "react/jsx-runtime";
             pub const JSXFunction = "jsx";

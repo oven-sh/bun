@@ -111,7 +111,7 @@ const JSXImport = enum {
         jsxs: ?LocRef = null,
         Fragment: ?LocRef = null,
         createElement: ?LocRef = null,
-        factory_name: []const u8 = "createElement",
+        factory_name: []const u8 = "React.createElement",
         fragment_name: []const u8 = "Fragment",
 
         pub fn get(this: *const Symbols, name: []const u8) ?Ref {
@@ -133,67 +133,31 @@ const JSXImport = enum {
             };
         }
 
-        const Runtime = struct {
-            pub const full: []const string = &[_]string{ "jsx", "jsxs" };
-            pub const jsxs_: []const string = &[_]string{"jsxs"};
-            pub const jsx_: []const string = &[_]string{"jsx"};
-        };
-
-        const DevRuntime = struct {
-            pub const full: []const string = &[_]string{ "jsxDEV", "jsxs" };
-            pub const jsxs_: []const string = &[_]string{"jsxs"};
-            pub const jsx_: []const string = &[_]string{"jsxDEV"};
-        };
-        pub fn runtimeImportNames(this: *const Symbols) []const string {
+        pub fn runtimeImportNames(this: *const Symbols, buf: *[3]string) []const string {
+            var i: usize = 0;
             if (this.jsxDEV != null) {
                 std.debug.assert(this.jsx == null); // we should never end up with this in the same file
-
-                if (this.jsxs != null)
-                    return DevRuntime.full;
-
-                return DevRuntime.jsx_;
+                buf[0] = "jsxDEV";
+                i += 1;
             }
 
-            if (this.jsx != null and this.jsxs != null)
-                return Runtime.full;
-
-            if (this.jsxs != null)
-                return Runtime.jsxs_;
-
-            if (this.jsx != null)
-                return Runtime.jsx_;
-
-            return &[_]string{};
-        }
-
-        const Legacy = struct {
-            pub const full: []const string = &[_]string{ "createElement", "Fragment" };
-            pub const createElement_: []const string = &[_]string{"createElement"};
-            pub const Fragment_: []const string = &[_]string{"Fragment"};
-        };
-
-        pub fn legacyImportNames(this: *const Symbols, jsx: *const options.JSX.Pragma, buf: *[2]string) []const string {
-            _ = jsx;
-            if (this.Fragment != null and this.createElement != null) {
-                buf[0..2].* = .{
-                    this.factory_name,
-                    this.fragment_name,
-                };
-                return buf[0..2];
+            if (this.jsx != null) {
+                std.debug.assert(this.jsxDEV == null); // we should never end up with this in the same file
+                buf[0] = "jsx";
+                i += 1;
             }
 
-            if (this.createElement != null) {
-                buf[0] =
-                    this.factory_name;
-                return buf[0..1];
+            if (this.jsxs != null) {
+                buf[i] = "jsxs";
+                i += 1;
             }
 
             if (this.Fragment != null) {
-                buf[0] = this.fragment_name;
-                return buf[0..1];
+                buf[i] = this.fragment_name;
+                i += 1;
             }
 
-            return &[_]string{};
+            return buf[0..i];
         }
     };
 };
@@ -4199,27 +4163,14 @@ pub const Parser = struct {
         }
 
         // handle new way to do automatic JSX imports which fixes symbol collision issues
-        if (p.options.jsx.parse and p.options.features.auto_import_jsx) {
-            var legacy_import_names_buf = [2]string{ "", "" };
-            const runtime_import_names = p.jsx_imports.runtimeImportNames();
-            const legacy_import_names = p.jsx_imports.legacyImportNames(&p.options.jsx, &legacy_import_names_buf);
+        if (p.options.jsx.parse and p.options.features.auto_import_jsx and p.options.jsx.runtime == .automatic) {
+            var buf = [3]string{ "", "", "" };
+            const runtime_import_names = p.jsx_imports.runtimeImportNames(&buf);
 
             if (runtime_import_names.len > 0) {
                 p.generateImportStmt(
                     p.options.jsx.importSource(),
                     runtime_import_names,
-                    &before,
-                    &p.jsx_imports,
-                    null,
-                    "",
-                    false,
-                ) catch unreachable;
-            }
-
-            if (legacy_import_names.len > 0) {
-                p.generateImportStmt(
-                    p.options.jsx.classic_import_source,
-                    legacy_import_names,
                     &before,
                     &p.jsx_imports,
                     null,
@@ -6557,8 +6508,11 @@ fn NewParser_(
             //  "Foo.Bar.createElement" becomes:
             //      import { Bar } from 'foo';
             //      Usages become Bar.createElement
-            if (p.options.jsx.fragment.len > 0)
-                p.jsx_imports.fragment_name = p.options.jsx.fragment[if (p.options.jsx.fragment.len > 1) 1 else 0];
+
+            if (p.options.jsx.runtime == .classic) {
+                if (p.options.jsx.fragment.len > 0)
+                    p.jsx_imports.fragment_name = p.options.jsx.fragment[if (p.options.jsx.fragment.len > 1) 1 else 0];
+            }
 
             if (p.options.jsx.factory.len > 0)
                 p.jsx_imports.factory_name = p.options.jsx.factory[if (p.options.jsx.factory.len > 1) 1 else 0];

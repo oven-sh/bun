@@ -1962,7 +1962,8 @@ fn NewPrinter(
 
             while (iter.next(&cursor)) {
                 switch (cursor.c) {
-                    first_ascii...last_ascii => {
+                    // unlike other versions, we only want to mutate > 0x7F
+                    0...last_ascii => {
                         if (!is_ascii) {
                             ascii_start = cursor.i;
                             is_ascii = true;

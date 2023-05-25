@@ -41,23 +41,41 @@ class EventSource extends EventTarget {
 
     for (;;) {
       const event_data = chunk.substring(start_idx + 2, event_idx);
-      const event_name_idx = event_data.indexOf("\n");
-      // invalid data
-      if (event_name_idx === -1) {
-        return;
+
+      let event_name;
+      let event_info;
+      let event_id;
+      let event_line_idx = 0;
+      for (;;) {
+        let idx = event_data.indexOf("\n", event_line_idx);
+        if (idx === -1) {
+          if (event_line_idx >= event_data.length) {
+            break;
+          }
+          idx = event_data.length;
+        }
+        const line = event_data.substring(event_line_idx, idx);
+        if (line.startsWith("id:")) {
+          event_id = line.substring(3).trim();
+        } else if (line.startsWith("event:")) {
+          event_name = line.substring(6).trim();
+        } else if (line.startsWith("data:")) {
+          event_info = line.substring(5).trim();
+        }
+        event_line_idx = idx + 1;
       }
 
-      const name = event_data.substring(6, event_name_idx + 1).trim();
-      const data = event_data.substring(event_name_idx + 6).trim();
+      if (event_info) {
+        self.dispatchEvent(
+          new MessageEvent(event_name || "message", {
+            data: event_info,
+            origin: self.#url.origin,
+            // @ts-ignore
+            source: self,
+          }),
+        );
+      }
 
-      self.dispatchEvent(
-        new MessageEvent(name, {
-          data,
-          origin: self.#url.origin,
-          // @ts-ignore
-          source: self,
-        }),
-      );
       // no more events
       if (chunk.length === event_idx + 2) {
         return;

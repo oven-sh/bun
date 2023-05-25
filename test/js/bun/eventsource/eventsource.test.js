@@ -1,8 +1,5 @@
 import EventSource from "eventsource";
 
-function sendSSEMessage(controller, eventName, data) {
-  return controller.write(`event: ${eventName}\ndata:${data}\n\n`);
-}
 function sse(req) {
   const signal = req.signal;
   return new Response(
@@ -10,8 +7,8 @@ function sse(req) {
       type: "direct",
       async pull(controller) {
         while (!signal.aborted) {
-          await sendSSEMessage(controller, "message", "Hello, World!");
-          await sendSSEMessage(controller, "bun", "Hello, World!");
+          await controller.write(`data:Hello, World!\n\n`);
+          await controller.write(`event: bun\ndata: Hello, World!\n\n`);
           await controller.flush();
           await Bun.sleep(1000);
         }

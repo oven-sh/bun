@@ -48,12 +48,21 @@ const uws = @import("root").bun.uws;
 
 fn fmtStatusTextLine(comptime status: @Type(.EnumLiteral), comptime emoji: bool) []const u8 {
     comptime {
-        return switch (status) {
-            .pass => Output.prettyFmt("<r><green>✓<r>", emoji),
-            .fail => Output.prettyFmt("<r><red>✗<r>", emoji),
-            .skip => Output.prettyFmt("<r><yellow>»<d>", emoji),
-            .todo => Output.prettyFmt("<r><magenta>✎<r>", emoji),
-            else => @compileError("Invalid status " ++ @tagName(status)),
+        return switch (emoji) {
+            true => switch (status) {
+                .pass => Output.prettyFmt("<r><green>✓<r>", true),
+                .fail => Output.prettyFmt("<r><red>✗<r>", true),
+                .skip => Output.prettyFmt("<r><yellow>»<d>", true),
+                .todo => Output.prettyFmt("<r><magenta>✎<r>", true),
+                else => @compileError("Invalid status " ++ @tagName(status)),
+            },
+            else => switch (status) {
+                .pass => Output.prettyFmt("<r><green>(pass)<r>", true),
+                .fail => Output.prettyFmt("<r><red>(fail)<r>", true),
+                .skip => Output.prettyFmt("<r><yellow>(skip)<d>", true),
+                .todo => Output.prettyFmt("<r><magenta>(todo)<r>", true),
+                else => @compileError("Invalid status " ++ @tagName(status)),
+            },
         };
     }
 }

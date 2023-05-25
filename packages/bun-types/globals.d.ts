@@ -2388,6 +2388,9 @@ interface UnderlyingSource<R = any> {
   cancel?: UnderlyingSourceCancelCallback;
   pull?: UnderlyingSourcePullCallback<R>;
   start?: UnderlyingSourceStartCallback<R>;
+  /**
+   * Mode "bytes" is not currently supported.
+   */
   type?: undefined;
 }
 

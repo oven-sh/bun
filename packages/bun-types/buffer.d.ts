@@ -548,6 +548,9 @@ declare module "buffer" {
         data: number[];
       };
       /**
+       * Returns a string representation of the Buffer. This string is equivalent to what would be logged using `console.log(buf)`.
+       */
+      /**
        * Returns `true` if both `buf` and `otherBuffer` have exactly the same bytes,`false` otherwise. Equivalent to `buf.compare(otherBuffer) === 0`.
        *
        * ```js

@@ -230,6 +230,9 @@ export default {
     page("api/binary-data", "Binary data", {
       description: `How to represent and manipulate binary data in Bun.`,
     }), // "`Bun.serve`"),
+    page("api/streams", "Streams", {
+      description: `Reading, writing, and manipulating streams of data in Bun.`,
+    }), // "`Bun.serve`"),
     page("api/file-io", "File I/O", {
       description: `Read and write files fast with Bun's heavily optimized file system API.`,
     }), // "`Bun.write`"),

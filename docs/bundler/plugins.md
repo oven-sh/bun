@@ -31,6 +31,16 @@ Bun.build({
 });
 ```
 
+<!-- It can also be "registered" with the Bun runtime using the `Bun.plugin()` function. Once registered, the currently executing `bun` process will incorporate the plugin into its module resolution algorithm.
+
+```ts
+import {plugin} from "bun";
+
+plugin(myPlugin);
+``` -->
+
+## `--preload`
+
 To consume this plugin, add this file to the `preload` option in your [`bunfig.toml`](/docs/runtime/configuration). Bun automatically loads the files/modules specified in `preload` before running a file.
 
 ```toml

@@ -181,8 +181,11 @@ export default {
       description:
         "Write your tests using Jest-like expect matchers, plus setup/teardown hooks, snapshot testing, and more",
     }),
-    page("test/extending", "Extending the test runner", {
-      description: "Add lifecycle hooks to your tests that run before/after each test, or before/after all tests.",
+    page("test/lifecycle", "Lifecycle hooks", {
+      description: "Add lifecycle hooks to your tests that run before/after each test or test run",
+    }),
+    page("test/snapshots", "Snapshots", {
+      description: "Add lifecycle hooks to your tests that run before/after each test or test run",
     }),
     page("test/hot", "Watch mode", {
       description: "Reload your tests automatically on change.",

@@ -19,7 +19,23 @@ If both a global and local `bunfig` are detected, the results are shallow-merged
 - `DISABLE_BUN_ANALYTICS=1` this disables Bun's analytics. Bun records bundle timings (so we can answer with data, "is Bun getting faster?") and feature usage (e.g., "are people actually using macros?"). The request body size is about 60 bytes, so it’s not a lot of data
 - `TMPDIR`: Bun occasionally requires a directory to store intermediate assets during bundling or other operations. If unset, `TMPDIR` defaults to the platform-specific temporary directory (on Linux, `/tmp` and on macOS `/private/tmp`).
 
-## Configure `bun install`
+## Runtime
+
+```toml
+# scripts to run before `bun run`ning a file or script
+# useful for registering plugins
+preload = ["./preload.ts"]
+```
+
+## Test runner
+
+```toml
+[test]
+# setup scripts to run before all test files
+preload = ["./setup.ts"]
+```
+
+## Package manager
 
 Package management is a complex issue; to support a range of use cases, the behavior of `bun install` can be configured in [`bunfig.toml`](/docs/runtime/configuration).
 
@@ -120,7 +136,7 @@ save = true
 print = "yarn"
 ```
 
-## Configure `bun dev`
+## Dev server
 
 Here is an example:
 

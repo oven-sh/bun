@@ -443,6 +443,7 @@ pub const Bundler = struct {
             loader.* = DotEnv.Loader.init(map, allocator);
             break :brk loader;
         };
+        env_loader.loadProcess();
 
         if (DotEnv.instance == null) {
             DotEnv.instance = env_loader;

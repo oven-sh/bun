@@ -2546,7 +2546,7 @@ it("a describe scope throwing doesn't cause all other tests in the file to fail"
   expect(true).toBe(true);
 });
 
-test.todo("test async exceptions fail tests", () => {
+test("test async exceptions fail tests", () => {
   const code = `
   import {test, expect} from 'bun:test';
   import {EventEmitter} from 'events';

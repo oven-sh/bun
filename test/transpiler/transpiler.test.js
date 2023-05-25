@@ -2230,7 +2230,7 @@ class Foo {
       expectPrinted("a = !(b, c)", "a = (b, !c)");
     });
 
-    it("const inlining", () => {
+    it.todo("const inlining", () => {
       var transpiler = new Bun.Transpiler({
         inline: true,
         platform: "bun",

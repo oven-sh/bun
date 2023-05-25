@@ -3,7 +3,7 @@ import { describe, expect, it, test } from "bun:test";
 import { bunExe } from "harness";
 import { isatty } from "tty";
 
-test.todo("process.stdin", () => {
+test("process.stdin", () => {
   expect(process.stdin).toBeDefined();
   expect(process.stdout.isTTY).toBe(isatty(0));
   expect(process.stdin.on("close", function () {})).toBe(process.stdin);

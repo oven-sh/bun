@@ -6591,10 +6591,10 @@ pub const PackageManager = struct {
                         const bin = this.bins[package_id];
                         if (bin.tag != .none) {
                             if (!this.has_created_bin) {
+                                if (!this.options.global) {
+                                    this.root_node_modules_folder.dir.makeDirZ(".bin") catch {};
+                                }
                                 Bin.Linker.umask = C.umask(0);
-                                if (!this.options.global)
-                                    this.node_modules_folder.dir.makeDirZ(".bin") catch {};
-
                                 this.has_created_bin = true;
                             }
 

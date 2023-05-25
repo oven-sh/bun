@@ -4081,7 +4081,7 @@ it("should ignore invalid workspaces from parent directory", async () => {
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
   expect(requested).toBe(2);
-  expect(await readdirSorted(join(package_dir))).toEqual(["bunfig.toml", "moo", "package.json"]);
+  expect(await readdirSorted(package_dir)).toEqual(["bunfig.toml", "moo", "package.json"]);
   expect(await file(join(package_dir, "package.json")).text()).toEqual(foo_package);
   expect(await readdirSorted(join(package_dir, "moo"))).toEqual([
     "bun.lockb",
@@ -4137,7 +4137,7 @@ it("should handle --cwd", async () => {
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
   expect(requested).toBe(2);
-  expect(await readdirSorted(join(package_dir))).toEqual(["bunfig.toml", "moo", "package.json"]);
+  expect(await readdirSorted(package_dir)).toEqual(["bunfig.toml", "moo", "package.json"]);
   expect(await file(join(package_dir, "package.json")).text()).toEqual(foo_package);
   expect(await readdirSorted(join(package_dir, "moo"))).toEqual([
     "bun.lockb",
@@ -4153,3 +4153,158 @@ it("should handle --cwd", async () => {
     version: "0.0.2",
   });
 });
+
+it("should perform bin-linking across multiple dependencies", async () => {
+  const foo_package = JSON.stringify({
+    name: "foo",
+    devDependencies: {
+      "conditional-type-checks": "1.0.6",
+      "prettier": "2.8.8",
+      "tsd": "0.22.0",
+      "typescript": "5.0.4",
+    },
+  });
+  await writeFile(join(package_dir, "package.json"), foo_package);
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    `
+[install]
+cache = false
+`,
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + conditional-type-checks@1.0.6",
+    " + prettier@2.8.8",
+    " + tsd@0.22.0",
+    " + typescript@5.0.4",
+    "",
+    " 119 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(await readdirSorted(package_dir)).toEqual(["bun.lockb", "bunfig.toml", "node_modules", "package.json"]);
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(foo_package);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".bin",
+    ".cache",
+    "@babel",
+    "@nodelib",
+    "@tsd",
+    "@types",
+    "ansi-escapes",
+    "ansi-regex",
+    "ansi-styles",
+    "array-union",
+    "arrify",
+    "braces",
+    "camelcase",
+    "camelcase-keys",
+    "chalk",
+    "color-convert",
+    "color-name",
+    "conditional-type-checks",
+    "decamelize",
+    "decamelize-keys",
+    "dir-glob",
+    "emoji-regex",
+    "error-ex",
+    "escape-string-regexp",
+    "eslint-formatter-pretty",
+    "eslint-rule-docs",
+    "fast-glob",
+    "fastq",
+    "fill-range",
+    "find-up",
+    "function-bind",
+    "glob-parent",
+    "globby",
+    "hard-rejection",
+    "has",
+    "has-flag",
+    "hosted-git-info",
+    "ignore",
+    "indent-string",
+    "irregular-plurals",
+    "is-arrayish",
+    "is-core-module",
+    "is-extglob",
+    "is-fullwidth-code-point",
+    "is-glob",
+    "is-number",
+    "is-plain-obj",
+    "is-unicode-supported",
+    "js-tokens",
+    "json-parse-even-better-errors",
+    "kind-of",
+    "lines-and-columns",
+    "locate-path",
+    "log-symbols",
+    "lru-cache",
+    "map-obj",
+    "meow",
+    "merge2",
+    "micromatch",
+    "min-indent",
+    "minimist-options",
+    "normalize-package-data",
+    "p-limit",
+    "p-locate",
+    "p-try",
+    "parse-json",
+    "path-exists",
+    "path-parse",
+    "path-type",
+    "picomatch",
+    "plur",
+    "prettier",
+    "queue-microtask",
+    "quick-lru",
+    "read-pkg",
+    "read-pkg-up",
+    "redent",
+    "resolve",
+    "reusify",
+    "run-parallel",
+    "semver",
+    "slash",
+    "spdx-correct",
+    "spdx-exceptions",
+    "spdx-expression-parse",
+    "spdx-license-ids",
+    "string-width",
+    "strip-ansi",
+    "strip-indent",
+    "supports-color",
+    "supports-hyperlinks",
+    "supports-preserve-symlinks-flag",
+    "to-regex-range",
+    "trim-newlines",
+    "tsd",
+    "type-fest",
+    "typescript",
+    "validate-npm-package-license",
+    "yallist",
+    "yargs-parser",
+  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual([
+    "prettier",
+    "resolve",
+    "semver",
+    "tsc",
+    "tsd",
+    "tsserver",
+  ]);
+}, 10000);

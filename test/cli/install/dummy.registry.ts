@@ -8,7 +8,7 @@ import { mkdtempSync, realpathSync } from "fs";
 
 let expect: typeof import("bun:test")["expect"];
 
-import { mkdtemp, readdir, realpath, rm, writeFile } from "fs/promises";
+import { readdir, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { basename, join } from "path";
 

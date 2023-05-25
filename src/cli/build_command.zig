@@ -50,9 +50,6 @@ pub const BuildCommand = struct {
 
         var this_bundler = try bundler.Bundler.init(allocator, log, ctx.args, null, null);
 
-        this_bundler.options.jsx.development = !this_bundler.env.isProduction();
-        this_bundler.resolver.opts.jsx.development = this_bundler.options.jsx.development;
-
         this_bundler.options.source_map = options.SourceMapOption.fromApi(ctx.args.source_map);
         this_bundler.resolver.opts.source_map = options.SourceMapOption.fromApi(ctx.args.source_map);
 
@@ -206,6 +203,9 @@ pub const BuildCommand = struct {
             this_bundler.options.node_modules_bundle_pretty_path = "";
             this_bundler.options.node_modules_bundle_url = "";
         };
+
+        this_bundler.options.jsx.development = !this_bundler.env.isProduction();
+        this_bundler.resolver.opts.jsx.development = this_bundler.options.jsx.development;
 
         if (ctx.debug.macros) |macros| {
             this_bundler.options.macro_remap = macros;

@@ -2336,7 +2336,11 @@ const ThenCatchChain = struct {
     has_catch: bool = false,
 };
 
-const ParsedPath = struct { loc: logger.Loc, text: string };
+const ParsedPath = struct {
+    loc: logger.Loc,
+    text: string,
+    is_macro: bool,
+};
 
 const StrictModeFeature = enum {
     with_statement,
@@ -8104,7 +8108,7 @@ fn NewParser_(
         }
 
         fn processImportStatement(p: *P, stmt_: S.Import, path: ParsedPath, loc: logger.Loc, was_originally_bare_import: bool) anyerror!Stmt {
-            const is_macro = FeatureFlags.is_macro_enabled and js_ast.Macro.isMacroPath(path.text);
+            const is_macro = FeatureFlags.is_macro_enabled and (path.is_macro or js_ast.Macro.isMacroPath(path.text));
             var stmt = stmt_;
             if (is_macro) {
                 const id = p.addImportRecord(.stmt, path.loc, path.text);
@@ -8930,6 +8934,10 @@ fn NewParser_(
                                 // path.assertions
                             );
 
+                            if (path.is_macro) {
+                                try p.log.addError(p.source, path.loc, "cannot use macro in export statement");
+                            }
+
                             if (comptime track_symbol_usage_during_parse_pass) {
                                 // In the scan pass, we need _some_ way of knowing *not* to mark as unused
                                 p.import_records.items[import_record_index].calls_runtime_re_export_fn = true;
@@ -8963,6 +8971,10 @@ fn NewParser_(
                                     if (export_clause.clauses.len == 0 and export_clause.had_type_only_exports) {
                                         return p.s(S.TypeScript{}, loc);
                                     }
+                                }
+
+                                if (parsedPath.is_macro) {
+                                    try p.log.addError(p.source, loc, "export from cannot be used with \"type\": \"macro\"");
                                 }
 
                                 const import_record_index = p.addImportRecord(.stmt, parsedPath.loc, parsedPath.text);
@@ -10959,6 +10971,7 @@ fn NewParser_(
             var path = ParsedPath{
                 .loc = p.lexer.loc(),
                 .text = p.lexer.string_literal_slice,
+                .is_macro = false,
             };
 
             if (p.lexer.token == .t_no_substitution_template_literal) {
@@ -10980,15 +10993,28 @@ fn NewParser_(
                 try p.lexer.expect(.t_open_brace);
 
                 while (p.lexer.token != .t_close_brace) {
-                    // Parse the key
-                    if (p.lexer.isIdentifierOrKeyword()) {} else if (p.lexer.token == .t_string_literal) {} else {
-                        try p.lexer.expect(.t_identifier);
-                    }
+                    const is_type_flag = brk: {
+                        // Parse the key
+                        if (p.lexer.isIdentifierOrKeyword()) {
+                            break :brk strings.eqlComptime(p.lexer.identifier, "type");
+                        } else if (p.lexer.token == .t_string_literal) {
+                            break :brk p.lexer.string_literal_is_ascii and strings.eqlComptime(p.lexer.string_literal_slice, "type");
+                        } else {
+                            try p.lexer.expect(.t_identifier);
+                        }
+
+                        break :brk false;
+                    };
 
                     try p.lexer.next();
                     try p.lexer.expect(.t_colon);
 
                     try p.lexer.expect(.t_string_literal);
+                    if (is_type_flag and
+                        p.lexer.string_literal_is_ascii and strings.eqlComptime(p.lexer.string_literal_slice, "macro"))
+                    {
+                        path.is_macro = true;
+                    }
 
                     if (p.lexer.token != .t_comma) {
                         break;

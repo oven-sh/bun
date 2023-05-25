@@ -666,7 +666,6 @@ pub const BundleV2 = struct {
         var task = try this.graph.allocator.create(ParseTask);
         task.* = ParseTask.init(&result, source_index, this);
         task.loader = loader;
-        task.jsx = this.bundler.options.jsx;
         task.task.node.next = null;
         task.tree_shaking = this.linker.options.tree_shaking;
 

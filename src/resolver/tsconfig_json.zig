@@ -157,11 +157,14 @@ pub const TSConfigJSON = struct {
 
             if (compiler_opts.expr.asProperty("jsx")) |jsx_prop| {
                 if (jsx_prop.expr.asString(allocator)) |str| {
+                    var str_lower = allocator.alloc(u8, str.len) catch unreachable;
+                    defer allocator.free(str_lower);
+                    _ = strings.copyLowercase(str, str_lower);
                     // we don't support "preserve" yet
-                    if (options.JSX.RuntimeMap.get(str)) |runtime| {
+                    if (options.JSX.RuntimeMap.get(str_lower)) |runtime| {
                         result.jsx.runtime = runtime;
                         if (runtime == .automatic) {
-                            result.jsx.setProduction(!strings.contains(str, "jsxDEV"));
+                            result.jsx.setProduction(!strings.contains(str_lower, "jsxdev"));
                             is_jsx_development = result.jsx.development;
                             result.jsx_flags.insert(.development);
                         }
@@ -179,7 +182,7 @@ pub const TSConfigJSON = struct {
                         result.jsx_flags.insert(.runtime);
                     }
 
-                    result.jsx.package_name = options.JSX.Pragma.parsePackageName(str);
+                    result.jsx.package_name = str;
                     result.jsx.setImportSource(allocator);
                     result.jsx_flags.insert(.import_source);
                 }

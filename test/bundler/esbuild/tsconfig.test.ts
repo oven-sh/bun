@@ -364,6 +364,169 @@ describe("bundler", () => {
       "/Users/user/project/src/entry.ts": [`Could not resolve: "#/test". Maybe you need to "bun install"?`],
     },
   });
+  itBundled("tsconfig/JSX", {
+    // GENERATED
+    files: {
+      "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
+      "/Users/user/project/node_modules/react/jsx-dev-runtime.ts": `
+        export const Fragment = (props: { key?: string; children?: Child[] }): JSXNode => {
+          return new JSXFragmentNode('', {}, props.children || [])
+        }
+        export const jsx = (tag: string | JSXComponent, props: { key?: string; children?: Child[] }, ...children: Child[]): JSXNode => {
+          return new JSXNode(tag, props, children)
+        }
+      `,
+      "/Users/user/project/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "jsx": "react",
+            "jsxFactory": "R.c",
+            "jsxFragmentFactory": "R.F"
+          }
+        }
+      `,
+    },
+    outfile: "/Users/user/project/out.js",
+    external: ["react"],
+    onAfterBundle(api) {
+      api
+        .expectFile("/Users/user/project/out.js")
+        .toContain(`console.log(c(F, null, c(\"div\", null), c(\"div\", null)));\n`);
+    },
+  });
+  itBundled("tsconfig/ReactJSXNotReact", {
+    // GENERATED
+    files: {
+      "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
+      "/Users/user/project/node_modules/notreact/jsx-runtime.ts": `
+        export const Fragment = (props: { key?: string; children?: Child[] }): JSXNode => {
+          return new JSXFragmentNode('', {}, props.children || [])
+        }
+        export const jsx = (tag: string | JSXComponent, props: { key?: string; children?: Child[] }, ...children: Child[]): JSXNode => {
+          return new JSXNode(tag, props, children)
+        }
+      `,
+      "/Users/user/project/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "jsx": "react-jsx",
+            "jsxImportSource": "notreact"
+          }
+        }
+      `,
+    },
+    outfile: "/Users/user/project/out.js",
+    external: ["notreact"],
+    onAfterBundle(api) {
+      api.expectFile("/Users/user/project/out.js").toContain(`from "notreact/jsx-runtime`);
+    },
+  });
+  itBundled("tsconfig/ReactJSXNotReactScoped", {
+    // GENERATED
+    files: {
+      "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
+      "/Users/user/project/node_modules/@notreact/jsx/jsx-runtime.ts": `
+        export const Fragment = (props: { key?: string; children?: Child[] }): JSXNode => {
+          return new JSXFragmentNode('', {}, props.children || [])
+        }
+        export const jsx = (tag: string | JSXComponent, props: { key?: string; children?: Child[] }, ...children: Child[]): JSXNode => {
+          return new JSXNode(tag, props, children)
+        }
+      `,
+      "/Users/user/project/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "jsx": "react-jsx",
+            "jsxImportSource": "@notreact/jsx"
+          }
+        }
+      `,
+    },
+    outfile: "/Users/user/project/out.js",
+    external: ["@notreact/jsx"],
+    onAfterBundle(api) {
+      api.expectFile("/Users/user/project/out.js").toContain(`from "@notreact/jsx/jsx-runtime`);
+    },
+  });
+  itBundled("tsconfig/ReactJSXDevNotReact", {
+    // GENERATED
+    files: {
+      "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
+      "/Users/user/project/node_modules/notreact/jsx-dev-runtime.ts": `
+        export const Fragment = (props: { key?: string; children?: Child[] }): JSXNode => {
+          return new JSXFragmentNode('', {}, props.children || [])
+        }
+        export const jsx = (tag: string | JSXComponent, props: { key?: string; children?: Child[] }, ...children: Child[]): JSXNode => {
+          return new JSXNode(tag, props, children)
+        }
+      `,
+      "/Users/user/project/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "jsx": "react-jsxdev",
+            "jsxImportSource": "notreact"
+          }
+        }
+      `,
+    },
+    outfile: "/Users/user/project/out.js",
+    external: ["notreact"],
+    onAfterBundle(api) {
+      api.expectFile("/Users/user/project/out.js").toContain(`from "notreact/jsx-dev-runtime`);
+    },
+  });
+  itBundled("tsconfig/ReactJSXDev", {
+    // GENERATED
+    files: {
+      "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
+      "/Users/user/project/node_modules/react/jsx-dev-runtime.ts": `
+        export const Fragment = (props: { key?: string; children?: Child[] }): JSXNode => {
+          return new JSXFragmentNode('', {}, props.children || [])
+        }
+        export const jsx = (tag: string | JSXComponent, props: { key?: string; children?: Child[] }, ...children: Child[]): JSXNode => {
+          return new JSXNode(tag, props, children)
+        }
+      `,
+      "/Users/user/project/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "jsx": "react-jsxdev"
+          }
+        }
+      `,
+    },
+    external: ["react"],
+    outfile: "/Users/user/project/out.js",
+    onAfterBundle(api) {
+      api.expectFile("/Users/user/project/out.js").toContain(`from "react/jsx-dev-runtime`);
+    },
+  });
+  itBundled("tsconfig/ReactJSX", {
+    // GENERATED
+    files: {
+      "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
+      "/Users/user/project/node_modules/react/jsx-runtime.ts": `
+        export const Fragment = (props: { key?: string; children?: Child[] }): JSXNode => {
+          return new JSXFragmentNode('', {}, props.children || [])
+        }
+        export const jsx = (tag: string | JSXComponent, props: { key?: string; children?: Child[] }, ...children: Child[]): JSXNode => {
+          return new JSXNode(tag, props, children)
+        }
+      `,
+      "/Users/user/project/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "jsx": "react-jsx"
+          }
+        }
+      `,
+    },
+    external: ["react"],
+    outfile: "/Users/user/project/out.js",
+    onAfterBundle(api) {
+      api.expectFile("/Users/user/project/out.js").toContain(`from "react/jsx-runtime`);
+    },
+  });
   return;
   itBundled("tsconfig/PathsTypeOnly", {
     // GENERATED
@@ -389,20 +552,6 @@ describe("bundler", () => {
             "paths": {
               "fib": ["fib-local.d.ts"]
             }
-          }
-        }
-      `,
-    },
-  });
-  itBundled("tsconfig/JSX", {
-    // GENERATED
-    files: {
-      "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
-      "/Users/user/project/tsconfig.json": /* json */ `
-        {
-          "compilerOptions": {
-            "jsxFactory": "R.c",
-            "jsxFragmentFactory": "R.F"
           }
         }
       `,
@@ -443,35 +592,6 @@ describe("bundler", () => {
         }
       `,
     },
-  });
-  itBundled("tsconfig/ReactJSX", {
-    // GENERATED
-    files: {
-      "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
-      "/Users/user/project/tsconfig.json": /* json */ `
-        {
-          "compilerOptions": {
-            "jsx": "react-jsx",
-            "jsxImportSource": "notreact"
-          }
-        }
-      `,
-    },
-    outfile: "/Users/user/project/out.js",
-  });
-  itBundled("tsconfig/ReactJSXDev", {
-    // GENERATED
-    files: {
-      "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
-      "/Users/user/project/tsconfig.json": /* json */ `
-        {
-          "compilerOptions": {
-            "jsx": "react-jsxdev"
-          }
-        }
-      `,
-    },
-    outfile: "/Users/user/project/out.js",
   });
   itBundled("tsconfig/ReactJSXWithDevInMainConfig", {
     // GENERATED

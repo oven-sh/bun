@@ -3758,6 +3758,7 @@ pub const Resolver = struct {
                             merged_config.base_url_for_paths = parent_config.base_url_for_paths;
                         }
                         merged_config.jsx = parent_config.mergeJSX(merged_config.jsx);
+                        merged_config.jsx_flags.setUnion(parent_config.jsx_flags);
 
                         if (parent_config.preserve_imports_not_used_as_values) |value| {
                             merged_config.preserve_imports_not_used_as_values = value;

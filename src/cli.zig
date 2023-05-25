@@ -712,7 +712,7 @@ pub const Arguments = struct {
                     .factory = constStrToU8(jsx_factory orelse &default_factory),
                     .fragment = constStrToU8(jsx_fragment orelse &default_fragment),
                     .import_source = constStrToU8(jsx_import_source orelse &default_import_source),
-                    .runtime = if (jsx_runtime != null) try resolve_jsx_runtime(jsx_runtime.?) else Api.JsxRuntime.automatic,
+                    .runtime = if (jsx_runtime) |runtime| try resolve_jsx_runtime(runtime) else Api.JsxRuntime.automatic,
                     .development = false,
                     .react_fast_refresh = react_fast_refresh,
                 };
@@ -721,7 +721,7 @@ pub const Arguments = struct {
                     .factory = constStrToU8(jsx_factory orelse opts.jsx.?.factory),
                     .fragment = constStrToU8(jsx_fragment orelse opts.jsx.?.fragment),
                     .import_source = constStrToU8(jsx_import_source orelse opts.jsx.?.import_source),
-                    .runtime = if (jsx_runtime != null) try resolve_jsx_runtime(jsx_runtime.?) else opts.jsx.?.runtime,
+                    .runtime = if (jsx_runtime) |runtime| try resolve_jsx_runtime(runtime) else opts.jsx.?.runtime,
                     .development = false,
                     .react_fast_refresh = react_fast_refresh,
                 };

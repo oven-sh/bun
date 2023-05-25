@@ -1,4 +1,7 @@
-[Elysia](https://elysiajs.com) is a Bun-first web framework that takes full advantage of Bun's HTTP, file system, and hot reloading APIs.
+[Elysia](https://elysiajs.com) is a Bun-first performance focused web framework that takes full advantage of Bun's HTTP, file system, and hot reloading APIs.
+Designed with TypeScript in mind, you don't need to understand TypeScript to gain the benefit of TypeScript with Elysia. The library understands what you want and automatically infers the type from your code.
+
+:zap: Elysia is [one of the fastest Bun web frameworks](https://github.com/SaltyAom/bun-http-framework-benchmark)
 
 ```ts#server.ts
 import { Elysia } from 'elysia'

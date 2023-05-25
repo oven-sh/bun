@@ -4653,10 +4653,9 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
             defer args.deinit();
 
-            var url: URL = undefined;
             var first_arg = args.nextEat().?;
             var body: JSC.WebCore.Body.Value = .{ .Null = {} };
-            var existing_request: ?WebCore.Request = null;
+            var existing_request: WebCore.Request = undefined;
             // TODO: set Host header
             // TODO: set User-Agent header
             if (first_arg.isString()) {
@@ -4669,7 +4668,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                     return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
                 }
 
-                url = URL.parse(temp_url_str);
+                var url = URL.parse(temp_url_str);
 
                 if (url.hostname.len == 0) {
                     url = URL.parse(
@@ -4704,6 +4703,13 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                         }
                     }
                 }
+
+                existing_request = Request{
+                    .url = url.href,
+                    .headers = headers,
+                    .body = JSC.WebCore.InitRequestBodyValue(body) catch unreachable,
+                    .method = method,
+                };
             } else if (first_arg.as(Request)) |request_| {
                 existing_request = request_.*;
             } else {
@@ -4711,17 +4717,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
             }
 
-            if (existing_request == null) {
-                existing_request = Request{
-                    .url = url.href,
-                    .headers = headers,
-                    .body = JSC.WebCore.InitRequestBodyValue(body) catch unreachable,
-                    .method = method,
-                };
-            }
-
             var request = ctx.bunVM().allocator.create(Request) catch unreachable;
-            request.* = existing_request.?;
+            request.* = existing_request;
 
             var args_ = [_]JSC.C.JSValueRef{request.toJS(this.globalThis).asObjectRef()};
             const response_value = JSC.C.JSObjectCallAsFunctionReturnValue(
@@ -4745,9 +4742,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             }
 
             if (response_value.as(JSC.WebCore.Response)) |resp| {
-                resp.url = this.allocator.dupe(u8, url.href) catch unreachable;
+                resp.url = this.allocator.dupe(u8, existing_request.url) catch unreachable;
             }
-
             return JSC.JSPromise.resolvedPromiseValue(ctx, response_value).asObjectRef();
         }
 

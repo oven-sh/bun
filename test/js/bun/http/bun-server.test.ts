@@ -150,6 +150,39 @@ describe("Server", () => {
     }
   });
 
+  test("server.fetch should work with a string", async () => {
+    const server = Bun.serve({
+      fetch(req) {
+        return new Response("Hello World!");
+      },
+    });
+    try {
+      const url = `http://${server.hostname}:${server.port}`;
+      const response = await server.fetch(url);
+      expect(await response.text()).toBe("Hello World!");
+      expect(response.status).toBe(200);
+      expect(response.url).toBe(url);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("server.fetch should work with a Request object", async () => {
+    const server = Bun.serve({
+      fetch(req) {
+        return new Response("Hello World!");
+      },
+    });
+    try {
+      const url = `http://${server.hostname}:${server.port}`;
+      const response = await server.fetch(new Request(url));
+      expect(await response.text()).toBe("Hello World!");
+      expect(response.status).toBe(200);
+      expect(response.url).toBe(url);
+    } finally {
+      server.stop(true);
+    }
+  });
   test("abort signal on server with stream", async () => {
     {
       let signalOnServer = false;

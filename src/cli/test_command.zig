@@ -717,14 +717,21 @@ pub const TestCommand = struct {
         var resolution = try vm.bundler.resolveEntryPoint(file_name);
         vm.clearEntryPoint();
 
-        Output.prettyErrorln("<r>\n{s}:\n", .{resolution.path_pair.primary.name.filename});
-        Output.flush();
+        const file_path = resolution.path_pair.primary.text;
+        const file_title = bun.path.relative(FileSystem.instance.top_level_dir, file_path);
 
-        vm.main_hash = @truncate(u32, bun.hash(resolution.path_pair.primary.text));
+        vm.main_hash = @truncate(u32, bun.hash(file_path));
         var repeat_count = reporter.repeat_count;
         var repeat_index: u32 = 0;
         while (repeat_index < repeat_count) : (repeat_index += 1) {
-            var promise = try vm.loadEntryPoint(resolution.path_pair.primary.text);
+            if (repeat_count > 1) {
+                Output.prettyErrorln("<r>\n{s}: <d>(run #{d})<r>\n", .{ file_title, repeat_index + 1 });
+            } else {
+                Output.prettyErrorln("<r>\n{s}:\n", .{file_title});
+            }
+            Output.flush();
+
+            var promise = try vm.loadEntryPoint(file_path);
 
             switch (promise.status(vm.global.vm())) {
                 .Rejected => {
@@ -789,10 +796,8 @@ pub const TestCommand = struct {
             vm.global.handleRejectedPromises();
             if (repeat_index > 0) {
                 vm.clearEntryPoint();
-                var entry = JSC.ZigString.init(resolution.path_pair.primary.text);
+                var entry = JSC.ZigString.init(file_path);
                 vm.global.deleteModuleRegistryEntry(&entry);
-                Output.prettyErrorln("<r>{s} <d>[RUN {d:0>4}]:<r>\n", .{ resolution.path_pair.primary.name.filename, repeat_index + 1 });
-                Output.flush();
             }
         }
 

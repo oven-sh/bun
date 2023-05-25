@@ -1230,7 +1230,7 @@ pub const Expect = struct {
         var pass = false;
 
         var actual_length: f64 = undefined;
-        if (value.isString()) {
+        if (value.jsType() == .String) {
             actual_length = @intToFloat(f64, value.asString().length());
             if (actual_length == expected_length) pass = true;
         } else {

@@ -2208,6 +2208,14 @@ const int s_importMetaObjectInternalRequireCodeLength = 569;
 static const JSC::Intrinsic s_importMetaObjectInternalRequireCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_importMetaObjectInternalRequireCode = "(function (n){\"use strict\";var _=@requireMap.@get(n);const i=n.substring(n.length-5);if(_){if(i===\".node\")return _.exports;return _}if(i===\".json\"){var S=globalThis[Symbol.for(\"_fs\")]||=@Bun.fs(),F=JSON.parse(S.readFileSync(n,\"utf8\"));return @requireMap.@set(n,F),F}else if(i===\".node\"){var b={exports:{}};return process.dlopen(b,n),@requireMap.@set(n,b),b.exports}else if(i===\".toml\"){var S=globalThis[Symbol.for(\"_fs\")]||=@Bun.fs(),F=@Bun.TOML.parse(S.readFileSync(n,\"utf8\"));return @requireMap.@set(n,F),F}else{var F=@requireESM(n);return @requireMap.@set(n,F),F}})\n";
 
+// createRequireCache
+const JSC::ConstructAbility s_importMetaObjectCreateRequireCacheCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_importMetaObjectCreateRequireCacheCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_importMetaObjectCreateRequireCacheCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_importMetaObjectCreateRequireCacheCodeLength = 888;
+static const JSC::Intrinsic s_importMetaObjectCreateRequireCacheCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_importMetaObjectCreateRequireCacheCode = "(function (){\"use strict\";class r{id;parent;filename;children=[];paths=[];constructor(_){this.id=_;const c=_.lastIndexOf(\"/\");if(c!==-1&&_.length>c+1)this.filename=_.substring(c+1);else this.filename=_}get loaded(){return!0}require(_){return @internalRequire(@resolveSync(_,this.id))}get exports(){return @requireMap.@get(this.id)\?\?{}}set exports(_){@requireMap.@set(this.id,_)}}var w=new Map;return new Proxy({},{get(_,c){if(@requireMap.@get(c)){var b=w.@get(c);if(!b)b=new r(c),w.@set(c,b);return b}},set(_,c,t){if(!w.@has(c))w.@set(c,new r(c));return @requireMap.@set(c,t\?.exports),!0},has(_,c){return @requireMap.@has(c)},deleteProperty(_,c){return w.@delete(c),@requireMap.@delete(c),@Loader.registry.@delete(c)},ownKeys(_){return[...@requireMap.@keys()]},getPrototypeOf(_){return null},getOwnPropertyDescriptor(_,c){if(@requireMap.@has(c))return{configurable:!0,enumerable:!0}}})})\n";
+
 // require
 const JSC::ConstructAbility s_importMetaObjectRequireCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_importMetaObjectRequireCodeConstructorKind = JSC::ConstructorKind::None;

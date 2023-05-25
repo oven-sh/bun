@@ -376,3 +376,41 @@ it(".query works with dynamic routes, including params", () => {
     expect(filePath).toBe(`${dir}/posts/[id].tsx`);
   }
 });
+
+it("dir should be validated", async () => {
+  expect(() => {
+    //@ts-ignore
+    new Bun.FileSystemRouter({
+      style: "nextjs",
+    });
+  }).toThrow("Expected dir to be a string");
+
+  expect(() => {
+    new Bun.FileSystemRouter({
+      //@ts-ignore
+      dir: undefined,
+      style: "nextjs",
+    });
+  }).toThrow("Expected dir to be a string");
+
+  expect(() => {
+    new Bun.FileSystemRouter({
+      //@ts-ignore
+      dir: 123,
+      style: "nextjs",
+    });
+  }).toThrow("Expected dir to be a string");
+});
+
+it("origin should be validated", async () => {
+  const { dir } = make(["posts.tsx"]);
+
+  expect(() => {
+    new Bun.FileSystemRouter({
+      dir,
+      //@ts-ignore
+      origin: 123,
+      style: "nextjs",
+    });
+  }).toThrow("Expected origin to be a string");
+});

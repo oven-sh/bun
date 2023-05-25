@@ -362,6 +362,7 @@ pub const VirtualMachine = struct {
     preload: []const string = &[_][]const u8{},
     unhandled_pending_rejection_to_capture: ?*JSC.JSValue = null,
     standalone_module_graph: ?*bun.StandaloneModuleGraph = null,
+    initial_global_object: *JSC.JSGlobalObject,
 
     hot_reload: bun.CLI.Command.HotReload = .none,
 
@@ -683,6 +684,7 @@ pub const VirtualMachine = struct {
         const is_first = !VirtualMachine.get().has_loaded_constructors;
         if (is_first) {
             VirtualMachine.get().global = globalObject;
+            VirtualMachine.get().initial_global_object = globalObject;
             VirtualMachine.get().has_loaded_constructors = true;
         }
 
@@ -746,6 +748,7 @@ pub const VirtualMachine = struct {
 
         vm.* = VirtualMachine{
             .global = undefined,
+            .initial_global_object = undefined,
             .allocator = allocator,
             .entry_point = ServerEntryPoint{},
             .event_listeners = EventListenerMixin.Map.init(allocator),
@@ -813,6 +816,12 @@ pub const VirtualMachine = struct {
         return vm;
     }
 
+    extern fn GlobalObject__createNewDefault(*JSGlobalObject, *JSGlobalObject) *JSGlobalObject;
+    pub fn resetDefaultGlobalObject(this: *VirtualMachine) void {
+        this.global = GlobalObject__createNewDefault(this.global, this.initial_global_object);
+        this.event_loop.global = this.global;
+    }
+
     pub fn init(
         allocator: std.mem.Allocator,
         _args: Api.TransformOptions,
@@ -843,6 +852,7 @@ pub const VirtualMachine = struct {
 
         vm.* = VirtualMachine{
             .global = undefined,
+            .initial_global_object = undefined,
             .allocator = allocator,
             .entry_point = ServerEntryPoint{},
             .event_listeners = EventListenerMixin.Map.init(allocator),

@@ -217,6 +217,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::useResizableArrayBuffer() = true;
         JSC::Options::showPrivateScriptsInStackTraces() = true;
         JSC::Options::useSetMethods() = true;
+        JSC::Options::useCodeCache() = true;
 
         if (LIKELY(envc > 0)) {
             while (envc--) {
@@ -423,6 +424,26 @@ const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, n
 extern "C" JSClassRef* Zig__getAPIGlobals(size_t* count);
 extern "C" const JSC__JSValue* Zig__getAPIConstructors(size_t* count, JSC__JSGlobalObject*);
 
+extern "C" Zig::GlobalObject* GlobalObject__createNewDefault(Zig::GlobalObject* currentDefault, Zig::GlobalObject* initialDefault)
+{
+    auto& vm = currentDefault->vm();
+    auto* prototype = JSC::JSGlobalObject::create(vm, initialDefault->globalObjectStructure());
+    Zig::GlobalObject* newDefault = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, prototype, jsNull()));
+    newDefault->setConsole(newDefault);
+    size_t count = 0;
+    JSClassRef* globalObjectClass = Zig__getAPIGlobals(&count);
+
+    if (count > 0) {
+        newDefault->installAPIGlobals(globalObjectClass, count, vm);
+    }
+
+    if (initialDefault != currentDefault) {
+        gcUnprotect(currentDefault);
+    }
+
+    return newDefault;
+}
+
 static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
@@ -503,7 +524,6 @@ GlobalObject::~GlobalObject()
         finalizer(toNapi(this), napiInstanceData, napiInstanceDataFinalizerHint);
     }
 
-    delete crypto;
     scriptExecutionContext()->removeFromContextsMap();
 }
 

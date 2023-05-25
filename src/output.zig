@@ -121,12 +121,20 @@ pub const Source = struct {
         return false;
     }
 
+    pub fn isGithubAction() bool {
+        if (bun.getenvZ("GITHUB_ACTIONS")) |value| {
+            return strings.eqlComptime(value, "true");
+        }
+        return false;
+    }
+
     pub fn set(_source: *Source) void {
         source = _source.*;
 
         source_set = true;
         if (!stdout_stream_set) {
             stdout_stream_set = true;
+            is_github_action = isGithubAction();
             if (comptime Environment.isNative) {
                 var is_color_terminal: ?bool = null;
                 if (_source.stream.isTty()) {
@@ -168,6 +176,7 @@ pub var enable_ansi_colors = Environment.isNative;
 pub var enable_ansi_colors_stderr = Environment.isNative;
 pub var enable_ansi_colors_stdout = Environment.isNative;
 pub var enable_buffering = Environment.isNative;
+pub var is_github_action = false;
 
 pub var stderr_descriptor_type = OutputStreamDescriptor.unknown;
 pub var stdout_descriptor_type = OutputStreamDescriptor.unknown;

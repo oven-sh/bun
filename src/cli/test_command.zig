@@ -720,14 +720,19 @@ pub const TestCommand = struct {
         const file_path = resolution.path_pair.primary.text;
         const file_title = bun.path.relative(FileSystem.instance.top_level_dir, file_path);
 
+        // In Github Actions, append a special prefix that will group
+        // subsequent log lines into a collapsable group.
+        // https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#grouping-log-lines
+        const file_prefix = if (Output.is_github_action) "::group::" else "";
+
         vm.main_hash = @truncate(u32, bun.hash(file_path));
         var repeat_count = reporter.repeat_count;
         var repeat_index: u32 = 0;
         while (repeat_index < repeat_count) : (repeat_index += 1) {
             if (repeat_count > 1) {
-                Output.prettyErrorln("<r>\n{s}: <d>(run #{d})<r>\n", .{ file_title, repeat_index + 1 });
+                Output.prettyErrorln("<r>\n{s}{s}: <d>(run #{d})<r>\n", .{ file_prefix, file_title, repeat_index + 1 });
             } else {
-                Output.prettyErrorln("<r>\n{s}:\n", .{file_title});
+                Output.prettyErrorln("<r>\n{s}{s}:\n", .{ file_prefix, file_title });
             }
             Output.flush();
 
@@ -798,6 +803,11 @@ pub const TestCommand = struct {
                 vm.clearEntryPoint();
                 var entry = JSC.ZigString.init(file_path);
                 vm.global.deleteModuleRegistryEntry(&entry);
+            }
+
+            if (Output.is_github_action) {
+                Output.prettyErrorln("<r>\n::endgroup::\n", .{});
+                Output.flush();
             }
         }
 

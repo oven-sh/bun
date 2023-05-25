@@ -5086,7 +5086,7 @@ pub const PackageManager = struct {
         };
 
         env.loadProcess();
-        try env.load(&fs.fs, entries_option.entries, false);
+        try env.load(&fs.fs, entries_option.entries, .production);
 
         if (env.map.get("BUN_INSTALL_VERBOSE") != null) {
             PackageManager.verbose_install = true;

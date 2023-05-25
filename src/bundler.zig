@@ -510,14 +510,17 @@ pub const Bundler = struct {
                 // Process always has highest priority.
                 const was_production = this.options.production;
                 this.env.loadProcess();
-                if (!was_production and this.env.isProduction()) {
+                const has_production_env = this.env.isProduction();
+                if (!was_production and has_production_env) {
                     this.options.setProduction(true);
                 }
 
-                if (this.options.production) {
-                    try this.env.load(&this.fs.fs, dir, false);
+                if (!has_production_env and this.options.isTest()) {
+                    try this.env.load(&this.fs.fs, dir, .@"test");
+                } else if (this.options.production) {
+                    try this.env.load(&this.fs.fs, dir, .production);
                 } else {
-                    try this.env.load(&this.fs.fs, dir, true);
+                    try this.env.load(&this.fs.fs, dir, .development);
                 }
             },
             .disable => {
@@ -579,13 +582,15 @@ pub const Bundler = struct {
             if (NODE_ENV.len > 0 and NODE_ENV[0].data.value == .e_string and NODE_ENV[0].data.value.e_string.eqlComptime("production")) {
                 this.options.production = true;
 
-                if (strings.eqlComptime(this.options.jsx.package_name, "react")) {
-                    if (this.options.jsx_optimization_inline == null) {
-                        this.options.jsx_optimization_inline = true;
-                    }
+                if (this.options.target.isBun()) {
+                    if (strings.eqlComptime(this.options.jsx.package_name, "react")) {
+                        if (this.options.jsx_optimization_inline == null) {
+                            this.options.jsx_optimization_inline = true;
+                        }
 
-                    if (this.options.jsx_optimization_hoist == null and (this.options.jsx_optimization_inline orelse false)) {
-                        this.options.jsx_optimization_hoist = true;
+                        if (this.options.jsx_optimization_hoist == null and (this.options.jsx_optimization_inline orelse false)) {
+                            this.options.jsx_optimization_hoist = true;
+                        }
                     }
                 }
             }
@@ -1305,14 +1310,6 @@ pub const Bundler = struct {
         const path = this_parse.path;
         const loader = this_parse.loader;
 
-        if (FeatureFlags.tracing) {
-            bundler.timer.reset();
-        }
-        defer {
-            if (FeatureFlags.tracing) {
-                bundler.elapsed += bundler.timer.read();
-            }
-        }
         var input_fd: ?StoredFileDescriptorType = null;
 
         const source: logger.Source = brk: {

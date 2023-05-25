@@ -152,6 +152,7 @@ pub const DefineData = struct {
 
             user_defines.putAssumeCapacity(entry.key_ptr.*, DefineData{
                 .value = data,
+                .can_be_removed_if_unused = @as(js_ast.Expr.Tag, data).isPrimitiveLiteral(),
             });
         }
     }

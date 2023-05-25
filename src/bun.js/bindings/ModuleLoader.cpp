@@ -457,7 +457,7 @@ static JSValue fetchSourceCode(
         }
         default: {
             auto provider = Zig::SourceProvider::create(res->result.value);
-            return rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
+            return rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(WTFMove(provider))));
         }
         }
     }

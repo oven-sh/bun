@@ -2485,27 +2485,19 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         fn flushFromJSNoWait(this: *@This()) JSC.Node.Maybe(JSValue) {
             if (this.hasBackpressure() or this.done) {
-                log("flushFromJSNoWait: backpressure or done", .{});
-
                 return .{ .result = JSValue.jsNumberFromInt32(0) };
             }
 
             const slice = this.readableSlice();
             if (slice.len == 0) {
-                log("flushFromJSNoWait: no readableSlice", .{});
-
                 return .{ .result = JSValue.jsNumberFromInt32(0) };
             }
 
             const success = this.send(slice);
             if (success) {
-                log("flushFromJSNoWait: success", .{});
-
                 this.handleWrote(@truncate(Blob.SizeType, slice.len));
                 return .{ .result = JSValue.jsNumber(slice.len) };
             }
-
-            log("flushFromJSNoWait: fail to send", .{});
 
             return .{ .result = JSValue.jsNumberFromInt32(0) };
         }

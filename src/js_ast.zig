@@ -1435,21 +1435,16 @@ pub const E = struct {
             return ExprNodeList.init(out[0 .. out.len - remain.len]);
         }
 
-        pub fn toJS(this: @This(), ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-            var stack = std.heap.stackFallback(32 * @sizeOf(ExprNodeList), JSC.getAllocator(ctx));
-            var allocator = stack.get();
-            var results = allocator.alloc(JSC.C.JSValueRef, this.items.len) catch {
-                return JSC.C.JSValueMakeUndefined(ctx);
-            };
-            defer if (stack.fixed_buffer_allocator.end_index >= stack.fixed_buffer_allocator.buffer.len - 1) allocator.free(results);
-
-            var i: usize = 0;
+        pub fn toJS(this: @This(), allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {
             const items = this.items.slice();
-            while (i < results.len) : (i += 1) {
-                results[i] = items[i].toJS(ctx, exception);
+            var array = JSC.JSValue.createEmptyArray(globalObject, items.len);
+            array.protect();
+            defer array.unprotect();
+            for (items, 0..) |expr, j| {
+                array.putIndex(globalObject, @truncate(u32, j), try expr.data.toJS(allocator, globalObject));
             }
 
-            return JSC.C.JSObjectMakeArray(ctx, results.len, results.ptr, exception);
+            return array;
         }
     };
 
@@ -1762,8 +1757,8 @@ pub const E = struct {
             return try std.json.stringify(self.value, opts, o);
         }
 
-        pub fn toJS(this: @This(), _: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-            return JSC.JSValue.jsNumber(this.value).asObjectRef();
+        pub fn toJS(this: @This()) JSC.JSValue {
+            return JSC.JSValue.jsNumber(this.value);
         }
     };
 
@@ -1776,7 +1771,7 @@ pub const E = struct {
             return try std.json.stringify(self.value, opts, o);
         }
 
-        pub fn toJS(_: @This(), _: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+        pub fn toJS(_: @This()) JSC.JSValue {
             // TODO:
             return JSC.JSValue.jsNumber(0);
         }
@@ -1838,6 +1833,22 @@ pub const E = struct {
 
         pub fn get(self: *const Object, key: string) ?Expr {
             return if (asProperty(self, key)) |query| query.expr else @as(?Expr, null);
+        }
+
+        pub fn toJS(this: *Object, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {
+            var obj = JSC.JSValue.createEmptyObject(globalObject, this.properties.len);
+            obj.protect();
+            defer obj.unprotect();
+            const props: []const G.Property = this.properties.slice();
+            for (props) |prop| {
+                if (prop.kind != .normal or prop.class_static_block != null or prop.key == null or prop.key.?.data != .e_string or prop.value == null) {
+                    return error.@"Cannot convert argument type to JS";
+                }
+                var key = prop.key.?.data.e_string.toZigString(allocator);
+                obj.put(globalObject, &key, try prop.value.?.toJS(allocator, globalObject));
+            }
+
+            return obj;
         }
 
         pub fn put(self: *Object, allocator: std.mem.Allocator, key: string, expr: Expr) !void {
@@ -2336,6 +2347,18 @@ pub const E = struct {
             } else {
                 // hash utf-16
                 return std.hash.Wyhash.hash(0, @ptrCast([*]const u8, s.slice16().ptr)[0 .. s.slice16().len * 2]);
+            }
+        }
+
+        pub fn toJS(s: *String, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+            return s.toZigString(allocator).toValueGC(globalObject);
+        }
+
+        pub fn toZigString(s: *String, allocator: std.mem.Allocator) JSC.ZigString {
+            if (s.isUTF8()) {
+                return JSC.ZigString.fromUTF8(s.slice(allocator));
+            } else {
+                return JSC.ZigString.init16(s.slice16());
             }
         }
 
@@ -3090,8 +3113,8 @@ pub const Expr = struct {
         return false;
     }
 
-    pub fn toJS(this: Expr, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-        return this.data.toJS(ctx, exception);
+    pub fn toJS(this: Expr, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {
+        return this.data.toJS(allocator, globalObject);
     }
 
     pub fn get(expr: *const Expr, name: string) ?Expr {
@@ -5203,18 +5226,35 @@ pub const Expr = struct {
             return equality;
         }
 
-        pub fn toJS(this: Data, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+        pub fn toJS(this: Data, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {
             return switch (this) {
-                .e_array => |e| e.toJS(ctx, exception),
-                .e_null => |e| e.toJS(ctx, exception),
-                .e_undefined => |e| e.toJS(ctx, exception),
-                .e_object => |e| e.toJS(ctx, exception),
-                .e_boolean => |e| e.toJS(ctx, exception),
-                .e_number => |e| e.toJS(ctx, exception),
-                .e_big_int => |e| e.toJS(ctx, exception),
-                .e_string => |e| e.toJS(ctx, exception),
+                .e_array => |e| e.toJS(allocator, globalObject),
+                .e_object => |e| e.toJS(allocator, globalObject),
+                .e_string => |e| e.toJS(allocator, globalObject),
+                .e_null => JSC.JSValue.null,
+                .e_undefined => JSC.JSValue.undefined,
+                .e_boolean => |boolean| if (boolean.value)
+                    JSC.JSValue.true
+                else
+                    JSC.JSValue.false,
+                .e_number => |e| e.toJS(),
+                // .e_big_int => |e| e.toJS(ctx, exception),
+
+                .e_identifier,
+                .e_import_identifier,
+                .inline_identifier,
+                .e_private_identifier,
+                .e_commonjs_export_identifier,
+                => error.@"Cannot convert identifier to JS. Try a statically-known value",
+
+                // brk: {
+                //     // var node = try allocator.create(Macro.JSNode);
+                //     // node.* = Macro.JSNode.initExpr(Expr{ .data = this, .loc = logger.Loc.Empty });
+                //     // break :brk JSC.JSValue.c(Macro.JSNode.Class.make(globalObject, node));
+                // },
+
                 else => {
-                    return JSC.C.JSValueMakeUndefined(ctx);
+                    return error.@"Cannot convert argument type to JS";
                 },
             };
         }
@@ -9585,7 +9625,7 @@ pub const Macro = struct {
         threadlocal var args_buf: [3]js.JSObjectRef = undefined;
         threadlocal var expr_nodes_buf: [1]JSNode = undefined;
         threadlocal var exception_holder: Zig.ZigException.Holder = undefined;
-        pub const MacroError = error{MacroFailed};
+        pub const MacroError = error{ MacroFailed, OutOfMemory } || ToJSError;
 
         pub fn NewRun(comptime Visitor: type) type {
             return struct {
@@ -9609,6 +9649,7 @@ pub const Macro = struct {
                     function_name: string,
                     caller: Expr,
                     args_count: usize,
+                    args_ptr: [*]JSC.JSValue,
                     source: *const logger.Source,
                     id: i32,
                     visitor: Visitor,
@@ -9621,7 +9662,7 @@ pub const Macro = struct {
                         macro_callback,
                         null,
                         args_count,
-                        &args_buf,
+                        @ptrCast([*]js.JSObjectRef, args_ptr),
                     );
 
                     var runner = Run{
@@ -9936,13 +9977,47 @@ pub const Macro = struct {
             if (comptime Environment.isDebug) Output.prettyln("<r><d>[macro]<r> call <d><b>{s}<r>", .{function_name});
 
             exception_holder = Zig.ZigException.Holder.init();
-            expr_nodes_buf[0] = JSNode.initExpr(caller);
-            args_buf[0] = JSNode.Class.make(
-                macro.vm.global,
-                &expr_nodes_buf[0],
-            );
-            args_buf[1] = if (javascript_object.isEmpty()) null else javascript_object.asObjectRef();
-            args_buf[2] = null;
+            var js_args: []JSC.JSValue = &.{};
+            defer {
+                for (js_args[0 .. js_args.len - @as(usize, @boolToInt(!javascript_object.isEmpty()))]) |arg| {
+                    arg.unprotect();
+                }
+
+                allocator.free(js_args);
+            }
+
+            var globalObject = JSC.VirtualMachine.get().global;
+
+            switch (caller.data) {
+                .e_call => |call| {
+                    const call_args: []Expr = call.args.slice();
+                    js_args = try allocator.alloc(JSC.JSValue, call_args.len + @as(usize, @boolToInt(!javascript_object.isEmpty())));
+
+                    for (call_args, js_args[0..call_args.len]) |in, *out| {
+                        const value = try in.toJS(
+                            allocator,
+                            globalObject,
+                        );
+                        value.protect();
+                        out.* = value;
+                    }
+                },
+                .e_template => {
+                    @panic("TODO: support template literals in macros");
+                },
+                else => {
+                    @panic("Unexpected caller type");
+                },
+            }
+
+            if (!javascript_object.isEmpty()) {
+                if (js_args.len == 0) {
+                    js_args = try allocator.alloc(JSC.JSValue, 1);
+                }
+
+                js_args[js_args.len - 1] = javascript_object;
+            }
+
             const Run = NewRun(Visitor);
 
             const CallFunction = @TypeOf(Run.runAsync);
@@ -9970,7 +10045,8 @@ pub const Macro = struct {
                 allocator,
                 function_name,
                 caller,
-                2 + @as(usize, @boolToInt(!javascript_object.isEmpty())),
+                js_args.len,
+                js_args.ptr,
                 source,
                 id,
                 visitor,
@@ -10301,3 +10377,10 @@ pub const GlobalStoreHandle = struct {
 // Stmt               | 192
 // STry               | 384
 // -- ESBuild bit sizes
+
+const ToJSError = error{
+    @"Cannot convert argument type to JS",
+    @"Cannot convert identifier to JS. Try a statically-known value",
+    MacroError,
+    OutOfMemory,
+};

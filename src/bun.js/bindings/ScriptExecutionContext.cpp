@@ -10,7 +10,7 @@ extern "C" void Bun__startLoop(us_loop_t* loop);
 
 namespace WebCore {
 
-static unsigned lastUniqueIdentifier = 0;
+static std::atomic<unsigned> lastUniqueIdentifier = 0;
 
 static Lock allScriptExecutionContextsMapLock;
 static HashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>& allScriptExecutionContextsMap() WTF_REQUIRES_LOCK(allScriptExecutionContextsMapLock)
@@ -41,7 +41,7 @@ us_socket_context_t* ScriptExecutionContext::webSocketContextSSL()
         us_bun_socket_context_options_t opts;
         memset(&opts, 0, sizeof(us_bun_socket_context_options_t));
         // adds root ca
-        opts.request_cert = true; 
+        opts.request_cert = true;
         // but do not reject unauthorized
         opts.reject_unauthorized = false;
         this->m_ssl_client_websockets_ctx = us_create_bun_socket_context(1, loop, sizeof(size_t), opts);
@@ -108,12 +108,12 @@ void ScriptExecutionContext::regenerateIdentifier()
 {
     Locker locker { allScriptExecutionContextsMapLock };
 
-    ASSERT(allScriptExecutionContextsMap().contains(m_identifier));
-    allScriptExecutionContextsMap().remove(m_identifier);
+    // ASSERT(allScriptExecutionContextsMap().contains(m_identifier));
+    // allScriptExecutionContextsMap().remove(m_identifier);
 
     m_identifier = ++lastUniqueIdentifier;
 
-    ASSERT(!allScriptExecutionContextsMap().contains(m_identifier));
+    // ASSERT(!allScriptExecutionContextsMap().contains(m_identifier));
     allScriptExecutionContextsMap().add(m_identifier, this);
 }
 
@@ -121,14 +121,14 @@ void ScriptExecutionContext::addToContextsMap()
 {
     Locker locker { allScriptExecutionContextsMapLock };
     ASSERT(!allScriptExecutionContextsMap().contains(m_identifier));
-    allScriptExecutionContextsMap().add(m_identifier, this);
+    // allScriptExecutionContextsMap().add(m_identifier, this);
 }
 
 void ScriptExecutionContext::removeFromContextsMap()
 {
     Locker locker { allScriptExecutionContextsMapLock };
     ASSERT(allScriptExecutionContextsMap().contains(m_identifier));
-    allScriptExecutionContextsMap().remove(m_identifier);
+    // allScriptExecutionContextsMap().remove(m_identifier);
 }
 
 }

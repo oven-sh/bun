@@ -2377,8 +2377,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 this.has_backpressure = false;
                 return true;
             } else {
-                const backpressure = this.res.write(buf);
-                this.has_backpressure = backpressure;
+                this.has_backpressure = !this.res.write(buf);
                 return true;
             }
 

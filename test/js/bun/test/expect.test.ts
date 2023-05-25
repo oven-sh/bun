@@ -174,7 +174,7 @@ function label(value: unknown): string {
   switch (typeof value) {
     case "object":
       const string = inspect(value).replace(/\n/g, "");
-      return string || "\"\"";
+      return string || '""';
     default:
       return JSON.stringify(value);
   }

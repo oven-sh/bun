@@ -3113,6 +3113,10 @@ pub const JSValue = enum(JSValueReprInt) {
         pub const LastMaybeFalsyCellPrimitive = JSType.HeapBigInt;
         pub const LastJSCObject = JSType.DerivedStringObject; // This is the last "JSC" Object type. After this, we have embedder's (e.g., WebCore) extended object types.
 
+        pub inline fn isString(this: JSType) bool {
+            return this == .String;
+        }
+
         pub inline fn isStringLike(this: JSType) bool {
             return switch (this) {
                 .String, .StringObject, .DerivedStringObject => true,
@@ -3123,6 +3127,42 @@ pub const JSValue = enum(JSValueReprInt) {
         pub inline fn isArray(this: JSType) bool {
             return switch (this) {
                 .Array, .DerivedArray => true,
+                else => false,
+            };
+        }
+
+        pub inline fn isArrayLike(this: JSType) bool {
+            return switch (this) {
+                .Array,
+                .DerivedArray,
+
+                .ArrayBuffer,
+                .BigInt64Array,
+                .BigUint64Array,
+                .Float32Array,
+                .Float64Array,
+                .Int16Array,
+                .Int32Array,
+                .Int8Array,
+                .Uint16Array,
+                .Uint32Array,
+                .Uint8Array,
+                .Uint8ClampedArray,
+                => true,
+                else => false,
+            };
+        }
+
+        pub inline fn isSet(this: JSType) bool {
+            return switch (this) {
+                .JSSet, .JSWeakSet => true,
+                else => false,
+            };
+        }
+
+        pub inline fn isMap(this: JSType) bool {
+            return switch (this) {
+                .JSMap, .JSWeakMap => true,
                 else => false,
             };
         }
@@ -3787,6 +3827,7 @@ pub const JSValue = enum(JSValueReprInt) {
 
         return jsType(this).isStringLike();
     }
+
     pub fn isBigInt(this: JSValue) bool {
         return cppFn("isBigInt", .{this});
     }

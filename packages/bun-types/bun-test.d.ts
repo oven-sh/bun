@@ -523,6 +523,16 @@ declare module "bun:test" {
      * @param hint Hint used to identify the snapshot in the snapshot file.
      */
     toMatchSnapshot(propertyMatchers?: Object, hint?: string): void;
+    /**
+     * Asserts that a value is empty.
+     *
+     * @example
+     * expect("").toBeEmpty();
+     * expect([]).toBeEmpty();
+     * expect({}).toBeEmpty();
+     * expect(new Set()).toBeEmpty();
+     */
+    toBeEmpty(): void;
   };
 }
 

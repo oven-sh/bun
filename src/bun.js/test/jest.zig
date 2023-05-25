@@ -3008,6 +3008,77 @@ pub const Expect = struct {
         return thisValue;
     }
 
+    pub fn toBeEmpty(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+
+        const thisValue = callFrame.this();
+        const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalObject.throw("toBeEmpty() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+        var pass = false;
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+
+        const valueType = value.jsType();
+        if (valueType.isString()) {
+            pass = value.asString().length() == 0;
+        } else if (valueType.isStringLike()) {
+            pass = value.toString(globalObject).length() == 0;
+        } else if (valueType.isArrayLike()) {
+            pass = @truncate(u32, value.getLengthOfArray(globalObject)) == 0;
+        } else if (valueType.isSet() or valueType.isMap()) {
+            const size = value.get(globalObject, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
+            pass = size.toInt32() == 0;
+        } else if (value.isObject()) {
+            var props_iter = JSC.JSPropertyIterator(.{
+                .skip_empty_name = false,
+
+                .include_value = true,
+            }).init(globalObject, value.asObjectRef());
+            defer props_iter.deinit();
+            pass = props_iter.len == 0;
+        } else if (not) {
+            const signature = comptime getSignature("toBeEmpty", "", true);
+            const fmt = signature ++ "\n\nExpected value <b>not<r> to be a string, object, or iterable" ++
+                "\n\nReceived: <red>{any}<r>\n";
+            globalObject.throwPretty(fmt, .{value.toFmt(globalObject, &formatter)});
+            return .zero;
+        } else {
+            const signature = comptime getSignature("toBeEmpty", "", false);
+            const fmt = signature ++ "\n\nExpected value to be a string, object, or iterable" ++
+                "\n\nReceived: <red>{any}<r>\n";
+            globalObject.throwPretty(fmt, .{value.toFmt(globalObject, &formatter)});
+            return .zero;
+        }
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        if (not) {
+            const signature = comptime getSignature("toBeEmpty", "", true);
+            const fmt = signature ++ "\n\nExpected value <b>not<r> to be empty" ++
+                "\n\nReceived: <red>{any}<r>\n";
+            globalObject.throwPretty(fmt, .{value.toFmt(globalObject, &formatter)});
+            return .zero;
+        }
+
+        const signature = comptime getSignature("toBeEmpty", "", false);
+        const fmt = signature ++ "\n\nExpected value to be empty" ++
+            "\n\nReceived: <red>{any}<r>\n";
+        globalObject.throwPretty(fmt, .{value.toFmt(globalObject, &formatter)});
+        return .zero;
+    }
+
     pub const PropertyMatcherIterator = struct {
         received_object: JSValue,
         failed: bool,

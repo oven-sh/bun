@@ -1,3 +1,4 @@
+import { inspect } from "bun";
 import { describe, test, expect } from "bun:test";
 
 describe("expect()", () => {
@@ -127,4 +128,54 @@ describe("expect()", () => {
       }
     }
   });
+
+  describe("toBeEmpty()", () => {
+    const values = [
+      "",
+      [],
+      {},
+      new Set(),
+      new Map(),
+      new String(),
+      new Array(),
+      new Uint8Array(),
+      new Object(),
+      Buffer.from(""),
+    ];
+    for (const value of values) {
+      test(label(value), () => {
+        expect(value).toBeEmpty();
+      });
+    }
+  });
+
+  describe("not.toBeEmpty()", () => {
+    const values = [
+      " ",
+      [""],
+      [undefined],
+      { "": "" },
+      new Set([""]),
+      new Map([["", ""]]),
+      new String(" "),
+      new Array(1),
+      new Uint8Array(1),
+      Buffer.from(" "),
+    ];
+    for (const value of values) {
+      test(label(value), () => {
+        expect(value).not.toBeEmpty();
+      });
+    }
+  });
 });
+
+function label(value: unknown): string {
+  switch (typeof value) {
+    case "object":
+      const string = inspect(value).replace(/\n/g, "");
+      return string || "\"\"";
+    default:
+      return JSON.stringify(value);
+  }
+}

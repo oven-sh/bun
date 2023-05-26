@@ -112,13 +112,13 @@ function itBundledDevAndProd(
   opts: BundlerTestInput & {
     devStdout?: string;
     prodStdout?: string;
-    devNotImplemented?: boolean;
-    prodNotImplemented?: boolean;
+    devTodo?: boolean;
+    prodTodo?: boolean;
   },
 ) {
   const { devStdout, prodStdout, ...rest } = opts;
   itBundled(id + "Dev", {
-    todo: opts.devNotImplemented,
+    todo: opts.devTodo,
     ...rest,
     env: {
       NODE_ENV: "development",
@@ -131,7 +131,7 @@ function itBundledDevAndProd(
       : rest.run,
   });
   itBundled(id + "Prod", {
-    todo: opts.prodNotImplemented,
+    todo: opts.prodTodo,
     ...rest,
     env: {
       NODE_ENV: "production",
@@ -188,7 +188,7 @@ describe("bundler", () => {
     `,
   });
   itBundledDevAndProd("jsx/ImportSource", {
-    todo: true,
+    prodTodo: true,
     files: {
       "/index.jsx": /* js*/ `
         import { print } from 'bun-test-helpers'

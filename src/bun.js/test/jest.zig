@@ -931,7 +931,7 @@ pub const ExpectAnything = struct {
     }
 
     pub fn call(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
-        var anything = globalObject.bunVM().allocator.create(ExpectAnything) catch unreachable;
+        const anything = globalObject.bunVM().allocator.create(ExpectAnything) catch unreachable;
         if (Jest.runner.?.pending_test == null) {
             const err = globalObject.createErrorInstance("expect.anything() must be called in a test", .{});
             err.put(globalObject, ZigString.static("name"), ZigString.init("TestNotRunningError").toValueGC(globalObject));
@@ -949,6 +949,48 @@ pub const ExpectAnything = struct {
     }
 };
 
+pub const ExpectStringContaining = struct {
+    pub usingnamespace JSC.Codegen.JSExpectStringContaining;
+
+    pub fn finalize(
+        this: *ExpectStringContaining,
+    ) callconv(.C) void {
+        VirtualMachine.get().allocator.destroy(this);
+    }
+
+    pub fn call(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        const args = callFrame.arguments(1).slice();
+
+        if (args.len == 0) {
+            globalObject.throw("stringContaining() expects to be passed a string.", .{});
+            return .zero;
+        }
+
+        const string_value = args[0];
+        string_value.ensureStillAlive();
+        if (!string_value.isString()) {
+            const fmt = "<d>expect.<r>stringContaining<d>(<r>string<d>)<r>\n\nExpected a string\n";
+            globalObject.throwPretty(fmt, .{});
+            return .zero;
+        }
+
+        const string_containing = globalObject.bunVM().allocator.create(ExpectStringContaining) catch unreachable;
+
+        if (Jest.runner.?.pending_test == null) {
+            const err = globalObject.createErrorInstance("expect.stringContaining() must be called in a test", .{});
+            err.put(globalObject, ZigString.static("name"), ZigString.init("TestNotRunningError").toValueGC(globalObject));
+            globalObject.throwValue(err);
+            return .zero;
+        }
+
+        const string_containing_js_value = string_containing.toJS(globalObject);
+        ExpectStringContaining.stringValueSetCached(string_containing_js_value, globalObject, string_value);
+
+        var vm = globalObject.bunVM();
+        vm.autoGarbageCollect();
+        return string_containing_js_value;
+    }
+};
 pub const ExpectAny = struct {
     pub usingnamespace JSC.Codegen.JSExpectAny;
 
@@ -2988,9 +3030,10 @@ pub const Expect = struct {
             var received_object: JSValue = ctx.received_object;
 
             if (received_object.get(globalObject, key.slice())) |received_value| {
-                if (ExpectAnything.fromJS(value)) |_| return;
-                if (ExpectAny.fromJS(value)) |_| {
-                    var constructor_value = JSC.Jest.ExpectAny.constructorValueGetCached(value) orelse {
+                if (ExpectAnything.fromJS(value)) |_| {
+                    return;
+                } else if (ExpectAny.fromJS(value)) |_| {
+                    var constructor_value = ExpectAny.constructorValueGetCached(value) orelse {
                         globalObject.throw("Internal consistency error: the expect.any(constructor value) was garbage collected but it should not have been!", .{});
                         ctx.failed = true;
                         return;
@@ -3020,6 +3063,21 @@ pub const Expect = struct {
                     if (received_value.isBigInt() and constructor_name.eqlComptime("BigInt")) {
                         received_object.put(globalObject, &key, value);
                         return;
+                    }
+
+                    ctx.failed = true;
+                    return;
+                } else if (ExpectStringContaining.fromJS(value)) |_| {
+                    var expected_substring = ExpectStringContaining.stringValueGetCached(value) orelse {
+                        globalObject.throw("Internal consistency error: the expect.stringContaining(string value) was garbage collected but it should not have been!", .{});
+                        ctx.failed = true;
+                        return;
+                    };
+
+                    if (received_value.isString()) {
+                        if (received_value.stringIncludes(globalObject, expected_substring)) {
+                            return;
+                        }
                     }
 
                     ctx.failed = true;
@@ -3298,12 +3356,15 @@ pub const Expect = struct {
         return ExpectAnything.call(globalObject, callFrame);
     }
 
+    pub fn stringContaining(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        return ExpectStringContaining.call(globalObject, callFrame);
+    }
+
     pub const extend = notImplementedStaticFn;
     pub const arrayContaining = notImplementedStaticFn;
     pub const assertions = notImplementedStaticFn;
     pub const hasAssertions = notImplementedStaticFn;
     pub const objectContaining = notImplementedStaticFn;
-    pub const stringContaining = notImplementedStaticFn;
     pub const stringMatching = notImplementedStaticFn;
     pub const addSnapshotSerializer = notImplementedStaticFn;
 

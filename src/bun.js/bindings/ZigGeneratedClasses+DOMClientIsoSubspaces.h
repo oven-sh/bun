@@ -6,6 +6,7 @@ std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCryptoHasherConstructo
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDirentConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExpect;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExpectConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExpectAny;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExpectAnything;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExpectStringContaining;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFileSystemRouter;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFileSystemRouterConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForListener;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMD4;

@@ -25,6 +25,18 @@ export default [
     proto: {},
   }),
   define({
+    name: "ExpectStringContaining",
+    construct: false,
+    noConstructor: true,
+    call: true,
+    finalize: true,
+    JSType: "0b11101110",
+    values: ["stringValue"],
+    configurable: false,
+    klass: {},
+    proto: {},
+  }),
+  define({
     name: "Expect",
     construct: true,
     call: true,

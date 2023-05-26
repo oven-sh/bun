@@ -257,6 +257,9 @@ export default {
     page("api/transpiler", "Transpiler", {
       description: `Bun exposes its internal transpiler as a pluggable API.`,
     }), // "`Bun.Transpiler`"),
+    page("api/hashing", "Hashing", {
+      description: `Native support for a range of fast hashing algorithms.`,
+    }), // "`Bun.serve`"),
     page("api/console", "Console", {
       description: `Bun implements a Node.js-compatible \`console\` object with colorized output and deep pretty-printing.`,
     }), // "`Node-API`"),

@@ -1,4 +1,47 @@
-## `Bun.sleep`
+## `Bun.version`
+
+A `string` containing the version of the `bun` CLI that is currently running.
+
+```ts
+Bun.version;
+// => "0.6.4"
+```
+
+## `Bun.revision`
+
+The git commit of [Bun](https://github.com/oven-sh/bun) that was compiled to create the current `bun` CLI.
+
+```ts
+Bun.revision;
+// => "f02561530fda1ee9396f51c8bc99b38716e38296"
+```
+
+## `Bun.env`
+
+An alias for `process.env`.
+
+## `Bun.main`
+
+An absolute path to the entrypoint of the current program (the file that was executed with `bun run`).
+
+```ts#script.ts
+Bun.main;
+// /path/to/script.ts
+```
+
+This is particular useful for determining whether a script is being directly executed, as opposed to being imported by another script.
+
+```ts
+if (import.meta.path === Bun.main) {
+  // this script is being directly executed
+} else {
+  // this file is being imported from another script
+}
+```
+
+This is analogous to the [`require.main = module` trick](https://stackoverflow.com/questions/6398196/detect-if-called-through-require-or-directly-by-command-line) in Node.js.
+
+## `Bun.sleep()`
 
 `Bun.sleep(ms: number)` (added in Bun v0.5.6)
 
@@ -20,7 +63,7 @@ await Bun.sleep(oneSecondInFuture);
 console.log("hello one second later!");
 ```
 
-## `Bun.sleepSync`
+## `Bun.sleepSync()`
 
 `Bun.sleepSync(ms: number)` (added in Bun v0.5.6)
 
@@ -42,7 +85,7 @@ await Bun.sleep(oneSecondInFuture);
 console.log("hello one second later!");
 ```
 
-## `Bun.which`
+## `Bun.which()`
 
 `Bun.which(bin: string)`
 
@@ -73,7 +116,7 @@ const ls = Bun.which("ls", {
 console.log(ls); // null
 ```
 
-## `Bun.peek`
+## `Bun.peek()`
 
 `Bun.peek(prom: Promise)` (added in Bun v0.2.2)
 
@@ -139,7 +182,7 @@ test("peek.status", () => {
 });
 ```
 
-## `Bun.openInEditor`
+## `Bun.openInEditor()`
 
 Open a file in your default editor. Bun auto-detects your editor via the `$VISUAL` or `$EDITOR` environment variables.
 
@@ -210,23 +253,244 @@ class Foo {
 Bun.deepEquals(new Foo(), { a: 1 }, true); // false
 ```
 
-Bun.escapeHTML;
+## `Bun.escapeHTML()`
 
-new Bun.MD5();
-Bun.enableANSIColors;
-Bun.env;
-Bun.fileURLToPath;
-Bun.pathToFileURL;
-Bun.hash;
-Bun.deflateSync;
-Bun.inflateSync;
-Bun.inspect;
-Bun.main;
+`Bun.escapeHTML(value: string | object | number | boolean): boolean`
+
+A utility function that escapes the following characters:
+
+- `"` becomes `"&quot;"`
+- `&` becomes `"&amp;"`
+- `'` becomes `"&#x27;"`
+- `<` becomes `"&lt;"`
+- `>` becomes `"&gt;"`
+
+This function is optimized for large input. On an M1X, it processes 480 MB/s -
+20 GB/s, depending on how much data is being escaped and whether there is non-ascii
+text. Non-string types will be converted to a string before escaping.
+
+<!-- ## `Bun.enableANSIColors()` -->
+
+## `Bun.fileURLToPath()`
+
+A fast utility function to convert a `file://` URL to an absolute path.
+
+```ts
+const path = Bun.fileURLToPath(new URL("file:///foo/bar.txt"));
+console.log(path); // "/foo/bar.txt"
+```
+
+## `Bun.pathToFileURL()`
+
+A fast utility function to convert an absolute path to a `file://` URL.
+
+```ts
+const url = Bun.pathToFileURL("/foo/bar.txt");
+console.log(url); // "file:///foo/bar.txt"
+```
+
+<!-- Bun.hash; -->
+
+## `Bun.gzipSync()`
+
+Compress a `Uint8Array` using zlib's DEFLATE algorithm.
+
+```ts
+const buf = Buffer.from("hello".repeat(100)); // Buffer extends Uint8Array
+const compressed = Bun.gzipSync(buf);
+
+buf; // => Uint8Array(500)
+compressed; // => Uint8Array(30)
+```
+
+Optionally, pass a parameters object as the second argument:
+
+{% details summary="zlib compression options"%}
+
+```ts
+export type ZlibCompressionOptions = {
+  /**
+   * The compression level to use. Must be between `-1` and `9`.
+   * - A value of `-1` uses the default compression level (Currently `6`)
+   * - A value of `0` gives no compression
+   * - A value of `1` gives least compression, fastest speed
+   * - A value of `9` gives best compression, slowest speed
+   */
+  level?: -1 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+  /**
+   * How much memory should be allocated for the internal compression state.
+   *
+   * A value of `1` uses minimum memory but is slow and reduces compression ratio.
+   *
+   * A value of `9` uses maximum memory for optimal speed. The default is `8`.
+   */
+  memLevel?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+  /**
+   * The base 2 logarithm of the window size (the size of the history buffer).
+   *
+   * Larger values of this parameter result in better compression at the expense of memory usage.
+   *
+   * The following value ranges are supported:
+   * - `9..15`: The output will have a zlib header and footer (Deflate)
+   * - `-9..-15`: The output will **not** have a zlib header or footer (Raw Deflate)
+   * - `25..31` (16+`9..15`): The output will have a gzip header and footer (gzip)
+   *
+   * The gzip header will have no file name, no extra data, no comment, no modification time (set to zero) and no header CRC.
+   */
+  windowBits?:
+    | -9
+    | -10
+    | -11
+    | -12
+    | -13
+    | -14
+    | -15
+    | 9
+    | 10
+    | 11
+    | 12
+    | 13
+    | 14
+    | 15
+    | 25
+    | 26
+    | 27
+    | 28
+    | 29
+    | 30
+    | 31;
+  /**
+   * Tunes the compression algorithm.
+   *
+   * - `Z_DEFAULT_STRATEGY`: For normal data **(Default)**
+   * - `Z_FILTERED`: For data produced by a filter or predictor
+   * - `Z_HUFFMAN_ONLY`: Force Huffman encoding only (no string match)
+   * - `Z_RLE`: Limit match distances to one (run-length encoding)
+   * - `Z_FIXED` prevents the use of dynamic Huffman codes
+   *
+   * `Z_RLE` is designed to be almost as fast as `Z_HUFFMAN_ONLY`, but give better compression for PNG image data.
+   *
+   * `Z_FILTERED` forces more Huffman coding and less string matching, it is
+   * somewhat intermediate between `Z_DEFAULT_STRATEGY` and `Z_HUFFMAN_ONLY`.
+   * Filtered data consists mostly of small values with a somewhat random distribution.
+   */
+  strategy?: number;
+};
+```
+
+{% /details %}
+
+## `Bun.gunzipSync()`
+
+Uncompress a `Uint8Array` using zlib's INFLATE algorithm.
+
+```ts
+const buf = Buffer.from("hello".repeat(100)); // Buffer extends Uint8Array
+const compressed = Bun.gunzipSync(buf);
+
+const dec = new TextDecoder();
+const uncompressed = Bun.inflateSync(compressed);
+dec.decode(uncompressed);
+// => "hellohellohello..."
+```
+
+## `Bun.deflateSync()`
+
+Compress a `Uint8Array` using zlib's DEFLATE algorithm.
+
+```ts
+const buf = Buffer.from("hello".repeat(100));
+const compressed = Bun.deflateSync(buf);
+
+buf; // => Uint8Array(25)
+compressed; // => Uint8Array(10)
+```
+
+The second argument supports the same set of configuration options as [`Bun.gzipSync`](#bun.gzipSync).
+
+## `Bun.inflateSync()`
+
+Uncompress a `Uint8Array` using zlib's INFLATE algorithm.
+
+```ts
+const buf = Buffer.from("hello".repeat(100));
+const compressed = Bun.deflateSync(buf);
+
+const dec = new TextDecoder();
+const uncompressed = Bun.inflateSync(compressed);
+dec.decode(uncompressed);
+// => "hellohellohello..."
+```
+
+## `Bun.inspect()`
+
+Serialize an object to a `string` exactly as it would be printed by `console.log`.
+
+```ts
+const obj = { foo: "bar" };
+const str = Bun.inspect(obj);
+// => '{\nfoo: "bar" \n}'
+
+const arr = new Uint8Array([1, 2, 3]);
+const str = Bun.inspect(arr);
+// => "Uint8Array(3) [ 1, 2, 3 ]"
+```
+
+## `Bun.nanoseconds()`
+
+Returns the number of nanoseconds since the current `bun` process started, as a `number`. Useful for high-precision timing and benchmarking.
+
+```ts
 Bun.nanoseconds();
-Bun.readableStreamToArray;
-Bun.sha;
-Bun.version;
-Bun.revision;
-Bun.version;
-Bun.resolve;
-Bun.resolveSync;
+// => 7288958
+```
+
+## `Bun.readableStreamTo*()`
+
+Bun implements a set of convenience functions for asynchronously consuming the body of a `ReadableStream` and converting it to various binary formats.
+
+```ts
+const stream = (await fetch("https://bun.sh")).body;
+stream; // => ReadableStream
+
+await Bun.readableStreamToArrayBuffer(stream);
+// => ArrayBuffer
+
+await Bun.readableStreamToBlob(stream);
+// => Blob
+
+await Bun.readableStreamToJSON(stream);
+// => object
+
+await Bun.readableStreamToText(stream);
+// => string
+
+// returns all chunks as an array
+await Bun.readableStreamToArray(stream);
+// => unknown[]
+```
+
+## `Bun.resolveSync()`
+
+Resolve a file path or module specifier using Bun's internal module resolution algorithm. The first argument is the path to resolve, and the second argument is the "root". If no match is found, an `Error` is thrown.
+
+```ts
+Bun.resolveSync("./foo.ts", "/path/to/project");
+// => "/path/to/project/foo.ts"
+
+Bun.resolveSync("zod", "/path/to/project");
+// => "/path/to/project/node_modules/zod/index.ts"
+```
+
+To resolve relative to the current working directory, pass `process.cwd` or `"."` as the root.
+
+```ts
+Bun.resolveSync("./foo.ts", process.cwd());
+Bun.resolveSync("./foo.ts", "/path/to/project");
+```
+
+To resolve relative to the directory containing the current file, pass `import.meta.dir`.
+
+```ts
+Bun.resolveSync("./foo.ts", import.meta.dir);
+```

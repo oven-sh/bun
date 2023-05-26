@@ -1,6 +1,6 @@
 {% callout %}
 
-Bun implements the `createHash` and `createHmac` functions from `node:crypto`. These modules have been re-implemented using the Bun-native `CryptoHasher` API, documented below.
+Bun implements the `createHash` and `createHmac` functions from [`node:crypto`](https://nodejs.org/api/crypto.html) in addition to the Bun-native APIs documented below.
 
 {% /callout %}
 

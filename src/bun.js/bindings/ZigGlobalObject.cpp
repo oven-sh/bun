@@ -2041,6 +2041,17 @@ JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArraysFromIterator, (JSGlobalObject 
     return flattenArrayOfBuffersIntoArrayBuffer(globalObject, iter->getDirect(vm, vm.propertyNames->value));
 }
 
+extern "C" JSC__JSValue Bun__Jest__createTestModuleObject(JSC::JSGlobalObject*);
+extern "C" JSC__JSValue Bun__Jest__createTestPreloadObject(JSC::JSGlobalObject*);
+extern "C" JSC__JSValue Bun__Jest__testPreloadObject(Zig::GlobalObject* globalObject)
+{
+    return JSValue::encode(globalObject->lazyPreloadTestModuleObject());
+}
+extern "C" JSC__JSValue Bun__Jest__testModuleObject(Zig::GlobalObject* globalObject)
+{
+    return JSValue::encode(globalObject->lazyTestModuleObject());
+}
+
 static inline JSC__JSValue ZigGlobalObject__readableStreamToArrayBufferBody(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue);
 static inline JSC__JSValue ZigGlobalObject__readableStreamToArrayBufferBody(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue)
 {
@@ -2575,6 +2586,24 @@ void GlobalObject::finishCreation(VM& vm)
 
             NakedPtr<JSC::Exception> returnedException = nullptr;
             auto result = JSC::call(globalObject, function, JSC::getCallData(function), globalObject, ArgList(), returnedException);
+            init.set(result.toObject(globalObject));
+        });
+
+    m_lazyTestModuleObject.initLater(
+        [](const Initializer<JSObject>& init) {
+            JSC::VM& vm = init.vm;
+            JSC::JSGlobalObject* globalObject = init.owner;
+
+            JSValue result = JSValue::decode(Bun__Jest__createTestModuleObject(globalObject));
+            init.set(result.toObject(globalObject));
+        });
+
+    m_lazyPreloadTestModuleObject.initLater(
+        [](const Initializer<JSObject>& init) {
+            JSC::VM& vm = init.vm;
+            JSC::JSGlobalObject* globalObject = init.owner;
+
+            JSValue result = JSValue::decode(Bun__Jest__createTestPreloadObject(globalObject));
             init.set(result.toObject(globalObject));
         });
 
@@ -3767,7 +3796,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_lazyRequireCacheObject.visit(visitor);
     thisObject->m_vmModuleContextMap.visit(visitor);
     thisObject->m_bunSleepThenCallback.visit(visitor);
-
+    thisObject->m_lazyTestModuleObject.visit(visitor);
+    thisObject->m_lazyPreloadTestModuleObject.visit(visitor);
     thisObject->m_cachedGlobalObjectStructure.visit(visitor);
     thisObject->m_cachedGlobalProxyStructure.visit(visitor);
 

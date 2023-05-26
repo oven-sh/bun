@@ -2401,7 +2401,7 @@ pub const JSGlobalObject = extern struct {
     ) JSC.JSValue {
         return JSC.toTypeErrorWithCode(
             "NOT_ENOUGH_ARGUMENTS",
-            "Not enough arguments to '" ++ name_ ++ "''. Expected {d}, got {d}.",
+            "Not enough arguments to '" ++ name_ ++ "'. Expected {d}, got {d}.",
             .{ expected, got },
             this,
         );

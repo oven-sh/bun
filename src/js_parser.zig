@@ -18233,8 +18233,10 @@ fn NewParser_(
                         switch (data.yes.data) {
                             .s_expr => |yes_expr| {
                                 if (yes_expr.value.isMissing()) {
-                                    if (data.no == null and can_remove_test) {
-                                        return;
+                                    if (data.no == null) {
+                                        if (can_remove_test) {
+                                            return;
+                                        }
                                     } else if (data.no.?.isMissingExpr() and can_remove_test) {
                                         return;
                                     }

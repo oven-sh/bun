@@ -1182,6 +1182,7 @@ pub const ZigConsoleClient = struct {
         depth: u16 = 0,
         max_depth: u16 = 8,
         quote_strings: bool = false,
+        quote_keys: bool = false,
         failed: bool = false,
         estimated_line_length: usize = 0,
         always_newline_scope: bool = false,
@@ -1777,14 +1778,14 @@ pub const ZigConsoleClient = struct {
                     if (!is_symbol) {
 
                         // TODO: make this one pass?
-                        if (!key.is16Bit() and JSLexer.isLatin1Identifier(@TypeOf(key.slice()), key.slice())) {
+                        if (!key.is16Bit() and (!this.quote_keys and JSLexer.isLatin1Identifier(@TypeOf(key.slice()), key.slice()))) {
                             this.addForNewLine(key.len + 1);
 
                             writer.print(
                                 comptime Output.prettyFmt("<r>{}<d>:<r> ", enable_ansi_colors),
                                 .{key},
                             );
-                        } else if (key.is16Bit() and JSLexer.isLatin1Identifier(@TypeOf(key.utf16SliceAligned()), key.utf16SliceAligned())) {
+                        } else if (key.is16Bit() and (!this.quote_keys and JSLexer.isLatin1Identifier(@TypeOf(key.utf16SliceAligned()), key.utf16SliceAligned()))) {
                             this.addForNewLine(key.len + 1);
 
                             writer.print(
@@ -2163,6 +2164,9 @@ pub const ZigConsoleClient = struct {
                         if (value.get(this.globalThis, "toJSON")) |toJSONFunction| {
                             this.addForNewLine("Headers ".len);
                             writer.writeAll(comptime Output.prettyFmt("<r>Headers ", enable_ansi_colors));
+                            const prev_quote_keys = this.quote_keys;
+                            this.quote_keys = true;
+                            defer this.quote_keys = prev_quote_keys;
 
                             return this.printAs(
                                 .Object,
@@ -2175,6 +2179,10 @@ pub const ZigConsoleClient = struct {
                         }
                     } else if (value.as(JSC.DOMFormData) != null) {
                         if (value.get(this.globalThis, "toJSON")) |toJSONFunction| {
+                            const prev_quote_keys = this.quote_keys;
+                            this.quote_keys = true;
+                            defer this.quote_keys = prev_quote_keys;
+
                             return this.printAs(
                                 .Object,
                                 Writer,
@@ -2338,6 +2346,9 @@ pub const ZigConsoleClient = struct {
                     if (value.get(this.globalThis, "toJSON")) |func| {
                         const result = func.callWithThis(this.globalThis, value, &.{});
                         if (result.toError() == null) {
+                            const prev_quote_keys = this.quote_keys;
+                            this.quote_keys = true;
+                            defer this.quote_keys = prev_quote_keys;
                             this.printAs(.Object, Writer, writer_, result, value.jsType(), enable_ansi_colors);
                             return;
                         }

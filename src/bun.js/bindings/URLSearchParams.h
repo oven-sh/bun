@@ -52,6 +52,7 @@ public:
     String toString() const;
     void updateFromAssociatedURL();
     void sort();
+    size_t size() const { return m_pairs.size(); }
 
     class Iterator {
     public:

@@ -2980,6 +2980,10 @@ pub const JSValue = enum(JSValueReprInt) {
         Event = 0b11101111,
         DOMWrapper = 0b11101110,
         Blob = 0b11111100,
+
+        /// This means that we don't have Zig bindings for the type yet, but it
+        /// implements .toJSON()
+        JSAsJSONType = 0b11110000 | 1,
         _,
 
         pub fn canGet(this: JSType) bool {

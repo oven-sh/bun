@@ -54,6 +54,7 @@ it("Blob inspect", () => {
   expect(Bun.inspect(new Response(new Blob()))).toBe(`Response (0 KB) {
   ok: true,
   url: "",
+  headers: Headers {},
   statusText: "",
   redirected: false,
   bodyUsed: false,
@@ -63,6 +64,7 @@ it("Blob inspect", () => {
   expect(Bun.inspect(new Response("Hello"))).toBe(`Response (5 bytes) {
   ok: true,
   url: "",
+  headers: Headers {},
   statusText: "",
   redirected: false,
   bodyUsed: false,
@@ -105,7 +107,8 @@ it("Request object", () => {
     `
 Request (0 KB) {
   method: "GET",
-  url: "https://example.com"
+  url: "https://example.com",
+  headers: Headers {}
 }`.trim(),
   );
 });

@@ -89,7 +89,7 @@ console.log("hello one second later!");
 
 `Bun.which(bin: string)`
 
-Find the path to an executable, similar to typing `which` in your terminal.
+Returns the path to an executable, similar to typing `which` in your terminal.
 
 ```ts
 const ls = Bun.which("ls");
@@ -120,7 +120,7 @@ console.log(ls); // null
 
 `Bun.peek(prom: Promise)` (added in Bun v0.2.2)
 
-`Bun.peek` is a utility function that lets you read a promise's result without `await` or `.then`, but only if the promise has already fulfilled or rejected.
+Reads a promise's result without `await` or `.then`, but only if the promise has already fulfilled or rejected.
 
 ```ts
 import { peek } from "bun";
@@ -184,7 +184,7 @@ test("peek.status", () => {
 
 ## `Bun.openInEditor()`
 
-Open a file in your default editor. Bun auto-detects your editor via the `$VISUAL` or `$EDITOR` environment variables.
+Opens a file in your default editor. Bun auto-detects your editor via the `$VISUAL` or `$EDITOR` environment variables.
 
 ```ts
 const currentFile = import.meta.url;
@@ -212,7 +212,7 @@ Bun.ArrayBufferSink;
 
 ## `Bun.deepEquals()`
 
-Nestedly check if two objects are equivalent. This is used internally by `expect().toEqual()` in `bun:test`.
+Nestedly checks if two objects are equivalent. This is used internally by `expect().toEqual()` in `bun:test`.
 
 ```ts
 const foo = { a: 1, b: 2, c: { d: 3 } };
@@ -257,7 +257,7 @@ Bun.deepEquals(new Foo(), { a: 1 }, true); // false
 
 `Bun.escapeHTML(value: string | object | number | boolean): boolean`
 
-A utility function that escapes the following characters:
+Escapes the following characters from an input string:
 
 - `"` becomes `"&quot;"`
 - `&` becomes `"&amp;"`
@@ -273,7 +273,7 @@ text. Non-string types will be converted to a string before escaping.
 
 ## `Bun.fileURLToPath()`
 
-A fast utility function to convert a `file://` URL to an absolute path.
+Converts a `file://` URL to an absolute path.
 
 ```ts
 const path = Bun.fileURLToPath(new URL("file:///foo/bar.txt"));
@@ -282,7 +282,7 @@ console.log(path); // "/foo/bar.txt"
 
 ## `Bun.pathToFileURL()`
 
-A fast utility function to convert an absolute path to a `file://` URL.
+Converts an absolute path to a `file://` URL.
 
 ```ts
 const url = Bun.pathToFileURL("/foo/bar.txt");
@@ -293,7 +293,7 @@ console.log(url); // "file:///foo/bar.txt"
 
 ## `Bun.gzipSync()`
 
-Compress a `Uint8Array` using zlib's DEFLATE algorithm.
+Compresses a `Uint8Array` using zlib's DEFLATE algorithm.
 
 ```ts
 const buf = Buffer.from("hello".repeat(100)); // Buffer extends Uint8Array
@@ -382,7 +382,7 @@ export type ZlibCompressionOptions = {
 
 ## `Bun.gunzipSync()`
 
-Uncompress a `Uint8Array` using zlib's INFLATE algorithm.
+Uncompresses a `Uint8Array` using zlib's INFLATE algorithm.
 
 ```ts
 const buf = Buffer.from("hello".repeat(100)); // Buffer extends Uint8Array
@@ -396,7 +396,7 @@ dec.decode(uncompressed);
 
 ## `Bun.deflateSync()`
 
-Compress a `Uint8Array` using zlib's DEFLATE algorithm.
+Compresses a `Uint8Array` using zlib's DEFLATE algorithm.
 
 ```ts
 const buf = Buffer.from("hello".repeat(100));
@@ -410,7 +410,7 @@ The second argument supports the same set of configuration options as [`Bun.gzip
 
 ## `Bun.inflateSync()`
 
-Uncompress a `Uint8Array` using zlib's INFLATE algorithm.
+Uncompresses a `Uint8Array` using zlib's INFLATE algorithm.
 
 ```ts
 const buf = Buffer.from("hello".repeat(100));
@@ -424,7 +424,7 @@ dec.decode(uncompressed);
 
 ## `Bun.inspect()`
 
-Serialize an object to a `string` exactly as it would be printed by `console.log`.
+Serializes an object to a `string` exactly as it would be printed by `console.log`.
 
 ```ts
 const obj = { foo: "bar" };
@@ -472,7 +472,7 @@ await Bun.readableStreamToArray(stream);
 
 ## `Bun.resolveSync()`
 
-Resolve a file path or module specifier using Bun's internal module resolution algorithm. The first argument is the path to resolve, and the second argument is the "root". If no match is found, an `Error` is thrown.
+Resolves a file path or module specifier using Bun's internal module resolution algorithm. The first argument is the path to resolve, and the second argument is the "root". If no match is found, an `Error` is thrown.
 
 ```ts
 Bun.resolveSync("./foo.ts", "/path/to/project");

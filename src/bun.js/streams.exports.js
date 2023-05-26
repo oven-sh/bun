@@ -38,7 +38,7 @@ var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __ObjectSetPrototypeOf = Object.setPrototypeOf;
 var __require = x => import.meta.require(x);
 
-var _EE = __require("events");
+var _EE = __require("bun:events_native");
 
 function DebugEventEmitter(opts) {
   if (!(this instanceof DebugEventEmitter)) return new DebugEventEmitter(opts);
@@ -2083,7 +2083,7 @@ var require_legacy = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/legacy.js"(exports, module) {
     "use strict";
     var { ArrayIsArray, ObjectSetPrototypeOf } = require_primordials();
-    var { EventEmitter: _EE } = __require("events");
+    var { EventEmitter: _EE } = __require("bun:events_native");
     var EE;
     if (__TRACK_EE__) {
       EE = DebugEventEmitter;
@@ -2351,7 +2351,7 @@ var require_readable = __commonJS({
     } = require_primordials();
 
     var ReadableState = globalThis[Symbol.for("Bun.lazy")]("bun:stream").ReadableState;
-    var { EventEmitter: EE } = __require("events");
+    var { EventEmitter: EE } = __require("bun:events_native");
     var { Stream, prependListener } = require_legacy();
 
     function Readable(options) {
@@ -3421,7 +3421,7 @@ var require_writable = __commonJS({
       SymbolHasInstance,
     } = require_primordials();
 
-    var { EventEmitter: EE } = __require("events");
+    var { EventEmitter: EE } = __require("bun:events_native");
     var Stream = require_legacy().Stream;
     var destroyImpl = require_destroy();
     var { addAbortSignal } = require_add_abort_signal();

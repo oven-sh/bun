@@ -2202,7 +2202,6 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     Comment,
     DebugServer,
     DebugSSLServer,
-    DescribeScope,
     DocEnd,
     DocType,
     Element,

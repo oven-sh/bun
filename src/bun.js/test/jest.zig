@@ -28,12 +28,9 @@ const default_allocator = @import("root").bun.default_allocator;
 const FeatureFlags = @import("root").bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
-const NewClass = @import("../base.zig").NewClass;
 const d = @import("../base.zig").d;
 const castObj = @import("../base.zig").castObj;
 const getAllocator = @import("../base.zig").getAllocator;
-const JSPrivateDataPtr = @import("../base.zig").JSPrivateDataPtr;
-const GetJSPrivateData = @import("../base.zig").GetJSPrivateData;
 
 const ZigString = JSC.ZigString;
 const JSInternalPromise = JSC.JSInternalPromise;
@@ -48,22 +45,6 @@ const Task = @import("../javascript.zig").Task;
 
 const Fs = @import("../../fs.zig");
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
-
-fn notImplementedFn(_: *anyopaque, ctx: js.JSContextRef, _: js.JSObjectRef, _: js.JSObjectRef, _: []const js.JSValueRef, exception: js.ExceptionRef) js.JSValueRef {
-    JSError(getAllocator(ctx), "Not implemented yet!", .{}, ctx, exception);
-    return null;
-}
-
-fn notImplementedProp(
-    _: anytype,
-    ctx: js.JSContextRef,
-    _: js.JSObjectRef,
-    _: js.JSStringRef,
-    exception: js.ExceptionRef,
-) js.JSValueRef {
-    JSError(getAllocator(ctx), "Property not implemented yet!", .{}, ctx, exception);
-    return null;
-}
 
 pub const DiffFormatter = struct {
     received_string: ?string = null,
@@ -3319,7 +3300,7 @@ pub const Expect = struct {
 pub const TestScope = struct {
     label: string = "",
     parent: *DescribeScope,
-    callback: js.JSValueRef,
+    callback: JSC.JSValue,
     id: TestRunner.Test.ID = 0,
     promise: ?*JSInternalPromise = null,
     ran: bool = false,
@@ -3423,7 +3404,7 @@ pub const TestScope = struct {
                 .label = label,
                 .parent = DescribeScope.active,
                 .is_todo = true,
-                .callback = if (function == .zero) null else function.asObjectRef(),
+                .callback = function,
             }) catch unreachable;
 
             return;
@@ -3435,7 +3416,7 @@ pub const TestScope = struct {
                 .label = label,
                 .parent = DescribeScope.active,
                 .skipped = true,
-                .callback = null,
+                .callback = .zero,
             }) catch unreachable;
             return;
         }
@@ -3444,7 +3425,7 @@ pub const TestScope = struct {
 
         DescribeScope.active.tests.append(getAllocator(globalThis), TestScope{
             .label = label,
-            .callback = function.asObjectRef(),
+            .callback = function,
             .parent = DescribeScope.active,
             .timeout_millis = if (args.len > 2) @intCast(u32, @max(args[2].coerce(i32, globalThis), 0)) else Jest.runner.?.default_timeout_ms,
         }) catch unreachable;
@@ -3507,16 +3488,16 @@ pub const TestScope = struct {
     ) Result {
         if (comptime is_bindgen) return undefined;
         var vm = VirtualMachine.get();
-        var callback = this.callback;
+        const callback = this.callback;
         Jest.runner.?.did_pending_test_fail = false;
         defer {
-            js.JSValueUnprotect(vm.global, callback);
-            this.callback = null;
+            callback.unprotect();
+            this.callback = .zero;
             vm.autoGarbageCollect();
         }
         JSC.markBinding(@src());
 
-        const callback_length = JSValue.fromRef(callback).getLengthOfArray(vm.global);
+        const callback_length = callback.getLengthOfArray(vm.global);
 
         var initial_value = JSValue.zero;
         if (test_elapsed_timer) |timer| {
@@ -3539,9 +3520,9 @@ pub const TestScope = struct {
                 task,
             );
             task.done_callback_state = .pending;
-            initial_value = JSValue.fromRef(callback).call(vm.global, &.{callback_func});
+            initial_value = callback.call(vm.global, &.{callback_func});
         } else {
-            initial_value = js.JSObjectCallAsFunctionReturnValue(vm.global, callback, null, 0, null);
+            initial_value = callback.call(vm.global, &.{});
         }
 
         if (initial_value.isAnyError()) {
@@ -3603,8 +3584,6 @@ pub const TestScope = struct {
         if (callback_length > 0) {
             return .{ .pending = {} };
         }
-
-        this.callback = null;
 
         if (active_test_expectation_counter.expected > 0 and active_test_expectation_counter.expected < active_test_expectation_counter.actual) {
             Output.prettyErrorln("Test fail: {d} / {d} expectations\n (make this better!)", .{
@@ -3679,13 +3658,6 @@ pub const DescribeScope = struct {
         afterAll,
     };
 
-    pub const TestEntry = struct {
-        label: string,
-        callback: js.JSValueRef,
-
-        pub const List = std.MultiArrayList(TestEntry);
-    };
-
     pub threadlocal var active: *DescribeScope = undefined;
     pub threadlocal var module: *DescribeScope = undefined;
 
@@ -3744,7 +3716,7 @@ pub const DescribeScope = struct {
     pub const beforeAll = createCallback(.beforeAll);
     pub const beforeEach = createCallback(.beforeEach);
 
-    pub fn execCallback(this: *DescribeScope, ctx: js.JSContextRef, comptime hook: LifecycleHook) JSValue {
+    pub fn execCallback(this: *DescribeScope, globalObject: *JSC.JSGlobalObject, comptime hook: LifecycleHook) JSValue {
         const name = comptime @as(string, @tagName(hook));
         var hooks: []JSC.JSValue = @field(this, name).items;
         for (hooks, 0..) |cb, i| {
@@ -3758,28 +3730,28 @@ pub const DescribeScope = struct {
             Jest.runner.?.did_pending_test_fail = false;
 
             const vm = VirtualMachine.get();
-            var result: JSC.JSValue = if (cb.getLengthOfArray(ctx) > 0) brk: {
+            var result: JSC.JSValue = if (cb.getLengthOfArray(globalObject) > 0) brk: {
                 this.done = false;
                 const done_func = JSC.NewFunctionWithData(
-                    ctx,
+                    globalObject,
                     ZigString.static("done"),
                     0,
                     DescribeScope.onDone,
                     false,
                     this,
                 );
-                var result = cb.call(ctx, &.{done_func});
+                var result = cb.call(globalObject, &.{done_func});
                 vm.waitFor(&this.done);
                 break :brk result;
-            } else cb.call(ctx, &.{});
+            } else cb.call(globalObject, &.{});
             if (result.asAnyPromise()) |promise| {
-                if (promise.status(ctx.vm()) == .Pending) {
+                if (promise.status(globalObject.vm()) == .Pending) {
                     result.protect();
                     vm.waitForPromise(promise);
                     result.unprotect();
                 }
 
-                result = promise.result(ctx.vm());
+                result = promise.result(globalObject.vm());
             }
 
             Jest.runner.?.pending_test = pending_test;
@@ -3831,21 +3803,21 @@ pub const DescribeScope = struct {
         return null;
     }
 
-    pub fn runCallback(this: *DescribeScope, ctx: js.JSContextRef, comptime hook: LifecycleHook) JSValue {
-        if (runGlobalCallbacks(ctx, hook)) |err| {
+    pub fn runCallback(this: *DescribeScope, globalObject: *JSC.JSGlobalObject, comptime hook: LifecycleHook) JSValue {
+        if (runGlobalCallbacks(globalObject, hook)) |err| {
             return err;
         }
 
         var parent = this.parent;
         while (parent) |scope| {
-            const ret = scope.execCallback(ctx, hook);
+            const ret = scope.execCallback(globalObject, hook);
             if (!ret.isEmpty()) {
                 return ret;
             }
             parent = scope.parent;
         }
 
-        return this.execCallback(ctx, hook);
+        return this.execCallback(globalObject, hook);
     }
 
     pub fn skip(
@@ -3901,13 +3873,13 @@ pub const DescribeScope = struct {
             .skipped = skipped or active.skipped,
         };
 
-        return scope.run(globalThis, callback.asObjectRef());
+        return scope.run(globalThis, callback);
     }
 
-    pub fn run(this: *DescribeScope, globalObject: *JSC.JSGlobalObject, callback: js.JSObjectRef) JSC.JSValue {
+    pub fn run(this: *DescribeScope, globalObject: *JSC.JSGlobalObject, callback: JSC.JSValue) JSC.JSValue {
         if (comptime is_bindgen) return undefined;
-        js.JSValueProtect(globalObject, callback);
-        defer js.JSValueUnprotect(globalObject, callback);
+        callback.protect();
+        defer callback.unprotect();
         var original_active = active;
         defer active = original_active;
         if (this != module)
@@ -3917,7 +3889,7 @@ pub const DescribeScope = struct {
         {
             JSC.markBinding(@src());
             globalObject.clearTerminationException();
-            var result = js.JSObjectCallAsFunctionReturnValue(globalObject, callback, JSC.JSValue.undefined.asObjectRef(), 0, null);
+            var result = callback.call(globalObject, &.{});
 
             if (result.asAnyPromise()) |prom| {
                 globalObject.bunVM().waitForPromise(prom);
@@ -4093,7 +4065,7 @@ pub const TestRunnerTask = struct {
         describe.current_test_id = test_id;
         var globalThis = this.globalThis;
 
-        if (!describe.skipped and test_.is_todo and test_.callback == null) {
+        if (!describe.skipped and test_.is_todo and test_.callback.isEmpty()) {
             this.processTestResult(globalThis, .{ .todo = {} }, test_, test_id, describe);
             this.deinit();
             return false;

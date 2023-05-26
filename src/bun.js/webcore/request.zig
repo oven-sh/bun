@@ -143,8 +143,14 @@ pub const Request = struct {
             try writer.writeAll("url: \"");
             try this.ensureURL();
             try writer.print(comptime Output.prettyFmt("<r><b>{s}<r>", enable_ansi_colors), .{this.url});
-
             try writer.writeAll("\"");
+            formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+            try writer.writeAll("\n");
+
+            try formatter.writeIndent(Writer, writer);
+            try writer.writeAll(comptime Output.prettyFmt("<r>headers<d>:<r> ", enable_ansi_colors));
+            formatter.printAs(.Private, Writer, writer, this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
+
             if (this.body.value == .Blob) {
                 try writer.writeAll("\n");
                 try formatter.writeIndent(Writer, writer);

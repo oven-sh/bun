@@ -567,6 +567,13 @@ interface FormData {
     callback: (value: FormDataEntryValue, key: string, parent: this) => void,
     thisArg?: any,
   ): void;
+
+  /**
+   * Returns a count of how many key/value pairs are in the `FormData`.
+   *
+   * This is a non-standard getter that is not implemented in browsers.
+   */
+  readonly length: number;
 }
 
 declare var FormData: {
@@ -1945,6 +1952,13 @@ interface URLSearchParams {
   /** Returns a string containing a query string suitable for use in a URL. Does not include the question mark. */
   toString(): string;
   [Symbol.iterator](): IterableIterator<[string, FormDataEntryValue]>;
+
+  /**
+   * Returns a count of how many key/value pairs are in the `URLSearchParams`.
+   *
+   * This is a non-standard getter that is not implemented in browsers.
+   */
+  readonly length: number;
 }
 
 declare var URLSearchParams: {

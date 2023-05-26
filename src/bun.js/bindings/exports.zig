@@ -1266,6 +1266,7 @@ pub const ZigConsoleClient = struct {
             Promise,
 
             JSON,
+            toJSON,
             NativeCode,
             ArrayBuffer,
 
@@ -1484,6 +1485,8 @@ pub const ZigConsoleClient = struct {
                         .Event => .Event,
 
                         .GetterSetter, .CustomGetterSetter => .Getter,
+
+                        .JSAsJSONType => .toJSON,
 
                         else => .JSON,
                     },
@@ -2156,20 +2159,34 @@ pub const ZigConsoleClient = struct {
                     } else if (value.as(JSC.WebCore.Blob)) |blob| {
                         blob.writeFormat(ZigConsoleClient.Formatter, this, writer_, enable_ansi_colors) catch {};
                         return;
+                    } else if (value.as(JSC.FetchHeaders) != null) {
+                        if (value.get(this.globalThis, "toJSON")) |toJSONFunction| {
+                            this.addForNewLine("Headers ".len);
+                            writer.writeAll(comptime Output.prettyFmt("<r>Headers ", enable_ansi_colors));
+
+                            return this.printAs(
+                                .Object,
+                                Writer,
+                                writer_,
+                                toJSONFunction.callWithThis(this.globalThis, value, &.{}),
+                                .Object,
+                                enable_ansi_colors,
+                            );
+                        }
                     } else if (value.as(JSC.DOMFormData) != null) {
-                        const toJSONFunction = value.get(this.globalThis, "toJSON").?;
+                        if (value.get(this.globalThis, "toJSON")) |toJSONFunction| {
+                            return this.printAs(
+                                .Object,
+                                Writer,
+                                writer_,
+                                toJSONFunction.callWithThis(this.globalThis, value, &.{}),
+                                .Object,
+                                enable_ansi_colors,
+                            );
+                        }
 
-                        this.addForNewLine("FormData (entries) ".len);
-                        writer.writeAll(comptime Output.prettyFmt("<r><blue>FormData<r> <d>(entries)<r> ", enable_ansi_colors));
-
-                        return this.printAs(
-                            .Object,
-                            Writer,
-                            writer_,
-                            toJSONFunction.callWithThis(this.globalThis, value, &.{}),
-                            .Object,
-                            enable_ansi_colors,
-                        );
+                        // this case should never happen
+                        return this.printAs(.Undefined, Writer, writer_, .undefined, .Cell, enable_ansi_colors);
                     } else if (value.as(JSC.API.Bun.Timer.TimerObject)) |timer| {
                         this.addForNewLine("Timeout(# ) ".len + bun.fmt.fastDigitCount(@intCast(u64, @max(timer.id, 0))));
                         if (timer.kind == .setInterval) {
@@ -2316,6 +2333,17 @@ pub const ZigConsoleClient = struct {
                     }
                     this.writeIndent(Writer, writer_) catch {};
                     writer.writeAll("}");
+                },
+                .toJSON => {
+                    if (value.get(this.globalThis, "toJSON")) |func| {
+                        const result = func.callWithThis(this.globalThis, value, &.{});
+                        if (result.toError() == null) {
+                            this.printAs(.Object, Writer, writer_, result, value.jsType(), enable_ansi_colors);
+                            return;
+                        }
+                    }
+
+                    writer.writeAll("{}");
                 },
                 .JSON => {
                     var str = ZigString.init("");
@@ -2844,7 +2872,13 @@ pub const ZigConsoleClient = struct {
                 .GlobalObject => this.printAs(.GlobalObject, Writer, writer, value, result.cell, enable_ansi_colors),
                 .Private => this.printAs(.Private, Writer, writer, value, result.cell, enable_ansi_colors),
                 .Promise => this.printAs(.Promise, Writer, writer, value, result.cell, enable_ansi_colors),
+
+                // Call JSON.stringify on the value
                 .JSON => this.printAs(.JSON, Writer, writer, value, result.cell, enable_ansi_colors),
+
+                // Call value.toJSON() and print as an object
+                .toJSON => this.printAs(.toJSON, Writer, writer, value, result.cell, enable_ansi_colors),
+
                 .NativeCode => this.printAs(.NativeCode, Writer, writer, value, result.cell, enable_ansi_colors),
                 .JSX => this.printAs(.JSX, Writer, writer, value, result.cell, enable_ansi_colors),
                 .Event => this.printAs(.Event, Writer, writer, value, result.cell, enable_ansi_colors),

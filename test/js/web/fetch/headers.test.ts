@@ -412,6 +412,40 @@ describe("Headers", () => {
       ]);
     });
   });
+  describe("Bun.inspect()", () => {
+    const it = "toJSON" in new Headers() ? test : test.skip;
+    it("can convert to json when empty", () => {
+      const headers = new Headers();
+      expect(Bun.inspect(headers)).toStrictEqual(`Headers {}`);
+    });
+    it("can convert to json", () => {
+      const headers = new Headers({
+        "cache-control": "public, immutable",
+      });
+      expect(Bun.inspect(headers)).toStrictEqual(
+        "Headers {" + "\n  " + `"cache-control": "public, immutable"` + "\n" + "}",
+      );
+    });
+    it("can convert to json normalized", () => {
+      const headers = new Headers({
+        "user-agent": "bun",
+        "X-Custom-Header": "1",
+        "cache-control": "public, immutable",
+      });
+      expect(Bun.inspect(headers)).toStrictEqual(
+        "Headers " +
+          JSON.stringify(
+            {
+              "user-agent": "bun",
+              "cache-control": "public, immutable",
+              "x-custom-header": "1",
+            },
+            null,
+            2,
+          ),
+      );
+    });
+  });
   describe("toJSON()", () => {
     const it = "toJSON" in new Headers() ? test : test.skip;
     it("can convert to json when empty", () => {

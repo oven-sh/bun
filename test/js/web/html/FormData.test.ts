@@ -335,7 +335,27 @@ describe("FormData", () => {
     formData.append("foo", new Blob(["bar"]));
     formData.append("bar", "baz");
     formData.append("boop", Bun.file("missing"));
+    console.log(new Headers());
     expect(Bun.inspect(formData).length > 0).toBe(true);
+  });
+
+  describe("non-standard extensions", () => {
+    it("should support .length", () => {
+      const formData = new FormData();
+      formData.append("foo", "bar");
+      formData.append("foo", new Blob(["bar"]));
+      formData.append("bar", "baz");
+      expect(formData.length).toBe(3);
+      formData.delete("foo");
+      expect(formData.length).toBe(1);
+      formData.append("foo", "bar");
+      expect(formData.length).toBe(2);
+      formData.delete("foo");
+      formData.delete("foo");
+      expect(formData.length).toBe(1);
+      formData.delete("bar");
+      expect(formData.length).toBe(0);
+    });
   });
 
   describe("URLEncoded", () => {

@@ -797,7 +797,7 @@ pub const Fetch = struct {
         }
 
         pub fn onResolve(this: *FetchTasklet) JSValue {
-            var allocator = this.global_this.bunVM().allocator;
+            const allocator = bun.default_allocator;
             var response = allocator.create(Response) catch unreachable;
             response.* = this.toResponse(allocator);
             return Response.makeMaybePooled(@ptrCast(js.JSContextRef, this.global_this), response);

@@ -394,6 +394,9 @@ pub const TestCommand = struct {
 
     pub fn exec(ctx: Command.Context) !void {
         if (comptime is_bindgen) unreachable;
+
+        Output.is_github_action = Output.isGithubAction();
+
         // print the version so you know its doing stuff if it takes a sec
         if (strings.eqlComptime(ctx.positionals[0], old_name)) {
             Output.prettyErrorln("<r><b>bun wiptest <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});

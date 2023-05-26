@@ -303,6 +303,7 @@ describe("bundler", () => {
         const h = () => 'hello'
         const Fragment = 123;
 
+        import * as React from "react";
         import { print } from 'bun-test-helpers'
         print([<div props={123}>Hello World</div>, <>Fragment</>])
       `,
@@ -315,7 +316,7 @@ describe("bundler", () => {
     },
     run: {
       stdout: `
-        hello hello
+        [\"hello\",\"hello\"]
       `,
     },
   });

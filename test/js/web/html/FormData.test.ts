@@ -335,7 +335,6 @@ describe("FormData", () => {
     formData.append("foo", new Blob(["bar"]));
     formData.append("bar", "baz");
     formData.append("boop", Bun.file("missing"));
-    console.log(new Headers());
     expect(Bun.inspect(formData).length > 0).toBe(true);
   });
 
@@ -345,15 +344,20 @@ describe("FormData", () => {
       formData.append("foo", "bar");
       formData.append("foo", new Blob(["bar"]));
       formData.append("bar", "baz");
+      // @ts-ignore
       expect(formData.length).toBe(3);
       formData.delete("foo");
+      // @ts-ignore
       expect(formData.length).toBe(1);
       formData.append("foo", "bar");
+      // @ts-ignore
       expect(formData.length).toBe(2);
       formData.delete("foo");
       formData.delete("foo");
+      // @ts-ignore
       expect(formData.length).toBe(1);
       formData.delete("bar");
+      // @ts-ignore
       expect(formData.length).toBe(0);
     });
   });

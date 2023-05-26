@@ -447,7 +447,9 @@ describe("Headers", () => {
     });
   });
   describe("toJSON()", () => {
-    const it = "toJSON" in new Headers() ? test : test.skip;
+    // @ts-ignore
+    const it = new Headers()?.toJSON ? test : test.skip;
+
     it("can convert to json when empty", () => {
       const headers = new Headers();
       expect(headers.toJSON()).toStrictEqual({});
@@ -474,7 +476,8 @@ describe("Headers", () => {
     });
   });
   describe("count", () => {
-    const it = "count" in new Headers() ? test : test.skip;
+    // @ts-ignore
+    const it = typeof new Headers()?.count !== "undefined" ? test : test.skip;
     it("can count headers when empty", () => {
       const headers = new Headers();
       expect(headers.count).toBe(0);

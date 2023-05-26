@@ -73,21 +73,7 @@ describe("url", () => {
   pathname: "/",
   hash: "",
   search: "",
-  searchParams: URLSearchParams {
-    append: [Function: append],
-    delete: [Function: delete],
-    get: [Function: get],
-    getAll: [Function: getAll],
-    has: [Function: has],
-    set: [Function: set],
-    sort: [Function: sort],
-    entries: [Function: entries],
-    keys: [Function: keys],
-    values: [Function: values],
-    forEach: [Function: forEach],
-    toString: [Function: toString],
-    [Symbol(Symbol.iterator)]: [Function: entries]
-  },
+  searchParams: ${Bun.inspect(new URLSearchParams())},
   toJSON: [Function: toJSON],
   toString: [Function: toString]
 }`);
@@ -108,21 +94,7 @@ describe("url", () => {
   pathname: "/oven-sh/bun/issues/135",
   hash: "",
   search: "?hello%20i%20have%20spaces%20thank%20you%20good%20night",
-  searchParams: URLSearchParams {
-    append: [Function: append],
-    delete: [Function: delete],
-    get: [Function: get],
-    getAll: [Function: getAll],
-    has: [Function: has],
-    set: [Function: set],
-    sort: [Function: sort],
-    entries: [Function: entries],
-    keys: [Function: keys],
-    values: [Function: values],
-    forEach: [Function: forEach],
-    toString: [Function: toString],
-    [Symbol(Symbol.iterator)]: [Function: entries]
-  },
+  searchParams: URLSearchParams {\n    \"hello i have spaces thank you good night\": \"\"\n  },
   toJSON: [Function: toJSON],
   toString: [Function: toString]
 }`);

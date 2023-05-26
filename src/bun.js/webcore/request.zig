@@ -133,17 +133,17 @@ pub const Request = struct {
             defer formatter.indent -|= 1;
 
             try formatter.writeIndent(Writer, writer);
-            try writer.writeAll("method: \"");
+            try writer.writeAll(comptime Output.prettyFmt("<r>method<d>:<r> \"", enable_ansi_colors));
+
             try writer.writeAll(bun.asByteSlice(@tagName(this.method)));
             try writer.writeAll("\"");
             formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
             try writer.writeAll("\n");
 
             try formatter.writeIndent(Writer, writer);
-            try writer.writeAll("url: \"");
+            try writer.writeAll(comptime Output.prettyFmt("<r>url<d>:<r> ", enable_ansi_colors));
             try this.ensureURL();
-            try writer.print(comptime Output.prettyFmt("<r><b>{s}<r>", enable_ansi_colors), .{this.url});
-            try writer.writeAll("\"");
+            try writer.print(comptime Output.prettyFmt("\"<b>{s}<r>\"", enable_ansi_colors), .{this.url});
             formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
             try writer.writeAll("\n");
 

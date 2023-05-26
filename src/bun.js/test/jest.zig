@@ -4051,16 +4051,18 @@ pub const TestRunnerTask = struct {
 
     pub fn run(this: *TestRunnerTask) bool {
         var describe = this.describe;
+        var globalThis = this.globalThis;
+        var jsc_vm = globalThis.bunVM();
 
         // reset the global state for each test
         // prior to the run
         DescribeScope.active = describe;
         active_test_expectation_counter = .{};
+        jsc_vm.last_reported_error_for_dedupe = .zero;
 
         const test_id = this.test_id;
         var test_: TestScope = this.describe.tests.items[test_id];
         describe.current_test_id = test_id;
-        var globalThis = this.globalThis;
 
         if (!describe.skipped and test_.is_todo and test_.callback.isEmpty()) {
             this.processTestResult(globalThis, .{ .todo = {} }, test_, test_id, describe);
@@ -4074,7 +4076,7 @@ pub const TestRunnerTask = struct {
             return false;
         }
 
-        globalThis.bunVM().onUnhandledRejectionCtx = this;
+        jsc_vm.onUnhandledRejectionCtx = this;
 
         if (this.needs_before_each) {
             this.needs_before_each = false;
@@ -4084,7 +4086,7 @@ pub const TestRunnerTask = struct {
 
             if (!beforeEach.isEmpty()) {
                 Jest.runner.?.reportFailure(test_id, this.source_file_path, label, 0, 0, this.describe);
-                globalThis.bunVM().runErrorHandler(beforeEach, null);
+                jsc_vm.runErrorHandler(beforeEach, null);
                 return false;
             }
         }

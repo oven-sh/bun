@@ -1,5 +1,3 @@
-import EventSource from "eventsource";
-
 function sse(req) {
   const signal = req.signal;
   return new Response(

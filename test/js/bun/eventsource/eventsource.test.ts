@@ -1,4 +1,4 @@
-function sse(req) {
+function sse(req: Request) {
   const signal = req.signal;
   return new Response(
     new ReadableStream({
@@ -19,7 +19,7 @@ function sse(req) {
   );
 }
 
-function sse_unstable(req) {
+function sse_unstable(req: Request) {
   const signal = req.signal;
   let id = parseInt(req.headers.get("last-event-id") || "0", 10);
 
@@ -38,7 +38,11 @@ function sse_unstable(req) {
   );
 }
 
-function sseServer(done, pathname, callback) {
+function sseServer(
+  done: (err?: unknown) => void,
+  pathname: string,
+  callback: (evtSource: EventSource, done: (err?: unknown) => void) => void,
+) {
   const server = Bun.serve({
     port: 0,
     fetch(req) {
@@ -51,11 +55,11 @@ function sseServer(done, pathname, callback) {
       return new Response("Hello, World!");
     },
   });
-  let evtSource;
+  let evtSource: EventSource | undefined;
   try {
     evtSource = new EventSource(`http://localhost:${server.port}${pathname}`);
     callback(evtSource, err => {
-      evtSource.close();
+      evtSource?.close();
       done(err);
       server.stop(true);
     });
@@ -115,7 +119,7 @@ describe("events", () => {
 
   it("should reconnect with id", done => {
     sseServer(done, "/unstable", (evtSource, done) => {
-      const ids = [];
+      const ids : string[] = [];
       evtSource.onmessage = e => {
         ids.push(e.lastEventId);
         if (ids.length === 2) {

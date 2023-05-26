@@ -214,6 +214,7 @@ pub const Arguments = struct {
         clap.parseParam("--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000.") catch unreachable,
         clap.parseParam("--update-snapshots               Update snapshot files") catch unreachable,
         clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
+        clap.parseParam("--run-todo                       Runs tests that are marked as todo") catch unreachable,
     };
 
     const build_params_public = public_params ++ build_only_params;
@@ -389,6 +390,7 @@ pub const Arguments = struct {
                     };
                 }
             }
+            ctx.test_options.run_todo = args.flag("--run-todo");
         }
 
         ctx.args.absolute_working_dir = cwd;
@@ -916,6 +918,7 @@ pub const Command = struct {
         default_timeout_ms: u32 = 5 * std.time.ms_per_s,
         update_snapshots: bool = false,
         repeat_count: u32 = 0,
+        run_todo: bool = false,
     };
 
     pub const Context = struct {

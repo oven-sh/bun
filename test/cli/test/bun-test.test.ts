@@ -109,6 +109,31 @@ describe("bun test", () => {
     test.todo("can rerun with a default value");
     test.todo("can rerun with a provided value");
   });
+  describe("--run-todo", () => {
+    test("should not run todo by default", () => {
+      const stderr = runTest({
+        input: `
+          import { test, expect } from "bun:test";
+          test.todo("todo", async () => {
+            console.error("should not run");
+          });
+        `,
+      });
+      expect(stderr).not.toContain("should not run");
+    });
+    test("should run todo when enabled", () => {
+      const stderr = runTest({
+        args: ["--run-todo"],
+        input: `
+          import { test, expect } from "bun:test";
+          test.todo("todo", async () => {
+            console.error("should run");
+          });
+        `,
+      });
+      expect(stderr).toContain("should run");
+    });
+  });
   describe("--timeout", () => {
     test("must provide a number timeout", () => {
       const stderr = runTest({

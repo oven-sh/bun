@@ -440,6 +440,7 @@ pub const TestCommand = struct {
                 .log = ctx.log,
                 .callback = undefined,
                 .default_timeout_ms = ctx.test_options.default_timeout_ms,
+                .run_todo = ctx.test_options.run_todo,
                 .snapshots = Snapshots{
                     .allocator = ctx.allocator,
                     .update_snapshots = ctx.test_options.update_snapshots,

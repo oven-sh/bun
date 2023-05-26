@@ -337,6 +337,7 @@ pub const TestRunner = struct {
     files: File.List = .{},
     index: File.Map = File.Map{},
     only: bool = false,
+    run_todo: bool = false,
     last_file: u64 = 0,
 
     allocator: std.mem.Allocator,
@@ -3481,14 +3482,15 @@ pub const TestScope = struct {
         }
 
         if (tag == .todo) {
-            if (function != .zero)
+            const run_todo = Jest.runner.?.run_todo;
+            if (run_todo and function != .zero)
                 function.protect();
             DescribeScope.active.todo_counter += 1;
             DescribeScope.active.tests.append(getAllocator(globalThis), TestScope{
                 .label = label,
                 .parent = DescribeScope.active,
                 .is_todo = true,
-                .callback = function,
+                .callback = if (run_todo) function else .zero,
             }) catch unreachable;
 
             return;

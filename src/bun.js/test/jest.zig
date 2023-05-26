@@ -3351,6 +3351,8 @@ pub const TestScope = struct {
         }
 
         if (tag == .todo) {
+            if (function != .zero)
+                function.protect();
             DescribeScope.active.todo_counter += 1;
             DescribeScope.active.tests.append(getAllocator(ctx), TestScope{
                 .label = label,

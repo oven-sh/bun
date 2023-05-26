@@ -42,9 +42,9 @@ class EventSource extends EventTarget {
     for (;;) {
       const event_data = chunk.substring(start_idx + 2, event_idx);
 
-      let event_name;
-      let event_info;
-      let event_id;
+      let type;
+      let data = "";
+      let id;
       let event_line_idx = 0;
       for (;;) {
         let idx = event_data.indexOf("\n", event_line_idx);
@@ -55,20 +55,24 @@ class EventSource extends EventTarget {
           idx = event_data.length;
         }
         const line = event_data.substring(event_line_idx, idx);
-        if (line.startsWith("id:")) {
-          event_id = line.substring(3).trim();
+        if (line.startsWith("data:")) {
+          if (data.length) {
+            data += `\n${line.substring(5).trim()}`;
+          } else {
+            data = line.substring(5).trim();
+          }
         } else if (line.startsWith("event:")) {
-          event_name = line.substring(6).trim();
-        } else if (line.startsWith("data:")) {
-          event_info = line.substring(5).trim();
+          type = line.substring(6).trim();
+        } else if (line.startsWith("id:")) {
+          id = line.substring(3).trim();
         }
         event_line_idx = idx + 1;
       }
 
-      if (event_info) {
+      if (data) {
         self.dispatchEvent(
-          new MessageEvent(event_name || "message", {
-            data: event_info,
+          new MessageEvent(type || "message", {
+            data: data,
             origin: self.#url.origin,
             // @ts-ignore
             source: self,

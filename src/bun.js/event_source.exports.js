@@ -335,17 +335,14 @@ class EventSource extends EventTarget {
     },
     binaryType: "buffer",
   };
-  static #Retry(self) {
-    if (self.#state !== 2) return;
-    self.#connect();
-  }
+
   static #Close(socket) {
     const self = socket.data;
     self.#socket = null;
     self.#received_length = 0;
     self.#state = 2;
     if (self.#reconnect) {
-      setTimeout(EventSource.#Retry, 1000, self);
+      setTimeout(EventSource.#ConnectNextTick, 1000, self);
     }
     return self;
   }
@@ -374,7 +371,12 @@ class EventSource extends EventTarget {
             rejectUnauthorized: false,
           }
         : false,
-    }).catch(err => this.dispatchEvent(new ErrorEvent("error", { error: err })));
+    }).catch(err => {
+      this.dispatchEvent(new ErrorEvent("error", { error: err }));
+      if (self.#reconnect) {
+        setTimeout(EventSource.#ConnectNextTick, 1000, self);
+      }
+    });
   }
 
   get url() {

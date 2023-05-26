@@ -1119,6 +1119,65 @@ pub const JSExpectAny = struct {
         }
     }
 };
+pub const JSExpectAnything = struct {
+    const ExpectAnything = Classes.ExpectAnything;
+    const GetterType = fn (*ExpectAnything, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*ExpectAnything, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*ExpectAnything, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*ExpectAnything, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*ExpectAnything, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*ExpectAnything {
+        JSC.markBinding(@src());
+        return ExpectAnything__fromJS(value);
+    }
+
+    /// Create a new instance of ExpectAnything
+    pub fn toJS(this: *ExpectAnything, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = ExpectAnything__create(globalObject, this);
+            std.debug.assert(value__.as(ExpectAnything).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return ExpectAnything__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of ExpectAnything.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*ExpectAnything) bool {
+        JSC.markBinding(@src());
+        return ExpectAnything__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *ExpectAnything, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(ExpectAnything__dangerouslySetPtr(value, null));
+    }
+
+    extern fn ExpectAnything__fromJS(JSC.JSValue) ?*ExpectAnything;
+    extern fn ExpectAnything__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn ExpectAnything__create(globalObject: *JSC.JSGlobalObject, ptr: ?*ExpectAnything) JSC.JSValue;
+
+    extern fn ExpectAnything__dangerouslySetPtr(JSC.JSValue, ?*ExpectAnything) bool;
+
+    comptime {
+        if (@TypeOf(ExpectAnything.finalize) != (fn (*ExpectAnything) callconv(.C) void)) {
+            @compileLog("ExpectAnything.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(ExpectAnything.call) != StaticCallbackType)
+            @compileLog("Expected ExpectAnything.call to be a static callback");
+        if (!JSC.is_bindgen) {
+            @export(ExpectAnything.call, .{ .name = "ExpectAnythingClass__call" });
+            @export(ExpectAnything.finalize, .{ .name = "ExpectAnythingClass__finalize" });
+        }
+    }
+};
 pub const JSFileSystemRouter = struct {
     const FileSystemRouter = Classes.FileSystemRouter;
     const GetterType = fn (*FileSystemRouter, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
@@ -4565,6 +4624,7 @@ comptime {
     _ = JSDirent;
     _ = JSExpect;
     _ = JSExpectAny;
+    _ = JSExpectAnything;
     _ = JSFileSystemRouter;
     _ = JSListener;
     _ = JSMD4;

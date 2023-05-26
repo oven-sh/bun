@@ -921,6 +921,34 @@ pub const Jest = struct {
     }
 };
 
+pub const ExpectAnything = struct {
+    pub usingnamespace JSC.Codegen.JSExpectAnything;
+
+    pub fn finalize(
+        this: *ExpectAnything,
+    ) callconv(.C) void {
+        VirtualMachine.get().allocator.destroy(this);
+    }
+
+    pub fn call(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+        var anything = globalObject.bunVM().allocator.create(ExpectAnything) catch unreachable;
+        if (Jest.runner.?.pending_test == null) {
+            const err = globalObject.createErrorInstance("expect.anything() must be called in a test", .{});
+            err.put(globalObject, ZigString.static("name"), ZigString.init("TestNotRunningError").toValueGC(globalObject));
+            globalObject.throwValue(err);
+            return .zero;
+        }
+
+        const anything_js_value = anything.toJS(globalObject);
+        anything_js_value.ensureStillAlive();
+
+        var vm = globalObject.bunVM();
+        vm.autoGarbageCollect();
+
+        return anything_js_value;
+    }
+};
+
 pub const ExpectAny = struct {
     pub usingnamespace JSC.Codegen.JSExpectAny;
 
@@ -959,7 +987,7 @@ pub const ExpectAny = struct {
         any.* = .{};
         const any_js_value = any.toJS(globalObject);
         any_js_value.ensureStillAlive();
-        JSC.Jest.ExpectAny.constructorValueSetCached(any_js_value, globalObject, constructor);
+        ExpectAny.constructorValueSetCached(any_js_value, globalObject, constructor);
         any_js_value.ensureStillAlive();
 
         var vm = globalObject.bunVM();
@@ -1037,7 +1065,7 @@ pub const Expect = struct {
     pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         const arguments_ = callframe.arguments(1);
         if (arguments_.len < 1) {
-            globalObject.throw("expect() requires one argument", .{});
+            globalObject.throw("expect() requires one argument\n", .{});
             return .zero;
         }
         const arguments = arguments_.ptr[0..arguments_.len];
@@ -1680,26 +1708,23 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        const diff_formatter = DiffFormatter{ .received = value, .expected = expected, .globalObject = globalObject, .not = not };
+        const diff_formatter = DiffFormatter{
+            .received = value,
+            .expected = expected,
+            .globalObject = globalObject,
+            .not = not,
+        };
 
         if (not) {
             const signature = comptime getSignature("toEqual", "<green>expected<r>", true);
             const fmt = signature ++ "\n\n{any}\n";
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{diff_formatter});
-                return .zero;
-            }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{diff_formatter});
+            globalObject.throwPretty(fmt, .{diff_formatter});
             return .zero;
         }
 
         const signature = comptime getSignature("toEqual", "<green>expected<r>", false);
         const fmt = signature ++ "\n\n{any}\n";
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{diff_formatter});
-            return .zero;
-        }
-        globalObject.throw(Output.prettyFmt(fmt, false), .{diff_formatter});
+        globalObject.throwPretty(fmt, .{diff_formatter});
         return .zero;
     }
 
@@ -2883,7 +2908,6 @@ pub const Expect = struct {
 
             var itr = PropertyMatcherIterator{
                 .received_object = value,
-                .failed = false,
             };
 
             prop_matchers.forEachProperty(globalObject, &itr, PropertyMatcherIterator.forEach);
@@ -2945,7 +2969,7 @@ pub const Expect = struct {
 
     pub const PropertyMatcherIterator = struct {
         received_object: JSValue,
-        failed: bool,
+        failed: bool = false,
         i: usize = 0,
 
         pub fn forEach(
@@ -2964,7 +2988,8 @@ pub const Expect = struct {
             var received_object: JSValue = ctx.received_object;
 
             if (received_object.get(globalObject, key.slice())) |received_value| {
-                if (JSC.Jest.ExpectAny.fromJS(value)) |_| {
+                if (ExpectAnything.fromJS(value)) |_| return;
+                if (ExpectAny.fromJS(value)) |_| {
                     var constructor_value = JSC.Jest.ExpectAny.constructorValueGetCached(value) orelse {
                         globalObject.throw("Internal consistency error: the expect.any(constructor value) was garbage collected but it should not have been!", .{});
                         ctx.failed = true;
@@ -3005,7 +3030,6 @@ pub const Expect = struct {
                     if (received_object.get(globalObject, key.slice())) |new_object| {
                         var itr = PropertyMatcherIterator{
                             .received_object = new_object,
-                            .failed = false,
                         };
                         value.forEachProperty(globalObject, &itr, PropertyMatcherIterator.forEach);
                         if (itr.failed) {
@@ -3157,6 +3181,84 @@ pub const Expect = struct {
         return .zero;
     }
 
+    pub fn toMatchObject(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalObject);
+        const thisValue = callFrame.this();
+        const args = callFrame.arguments(1).slice();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalObject.throw("toMatchObject() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+
+        const received_object = Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+
+        if (!received_object.isObject()) {
+            const matcher_error = "\n\n<b>Matcher error<r>: <red>received<r> value must be a non-null object\n";
+            if (not) {
+                const fmt = comptime getSignature("toMatchObject", "<green>expected<r>", true) ++ matcher_error;
+                globalObject.throwPretty(fmt, .{});
+                return .zero;
+            }
+
+            const fmt = comptime getSignature("toMatchObject", "<green>expected<r>", false) ++ matcher_error;
+            globalObject.throwPretty(fmt, .{});
+            return .zero;
+        }
+
+        if (args.len < 1 or !args[0].isObject()) {
+            const matcher_error = "\n\n<b>Matcher error<r>: <green>expected<r> value must be a non-null object\n";
+            if (not) {
+                const fmt = comptime getSignature("toMatchObject", "", true) ++ matcher_error;
+                globalObject.throwPretty(fmt, .{});
+                return .zero;
+            }
+            const fmt = comptime getSignature("toMatchObject", "", false) ++ matcher_error;
+            globalObject.throwPretty(fmt, .{});
+            return .zero;
+        }
+
+        const property_matchers = args[0];
+
+        var itr = PropertyMatcherIterator{
+            .received_object = received_object,
+        };
+
+        property_matchers.forEachProperty(globalObject, &itr, PropertyMatcherIterator.forEach);
+
+        var pass = !itr.failed;
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // TODO: print diff with properties from propertyMatchers
+        // handle failure
+        const diff_formatter = DiffFormatter{
+            .received = received_object,
+            .expected = property_matchers,
+            .globalObject = globalObject,
+            .not = not,
+        };
+
+        if (not) {
+            const signature = comptime getSignature("toMatchObject", "<green>expected<r>", true);
+            const fmt = signature ++ "\n\n{any}\n";
+            globalObject.throwPretty(fmt, .{diff_formatter});
+            return .zero;
+        }
+
+        const signature = comptime getSignature("toMatchObject", "<green>expected<r>", false);
+        const fmt = signature ++ "\n\n{any}\n";
+        globalObject.throwPretty(fmt, .{diff_formatter});
+        return .zero;
+    }
+
     pub const toHaveBeenCalledTimes = notImplementedJSCFn;
     pub const toHaveBeenCalledWith = notImplementedJSCFn;
     pub const toHaveBeenLastCalledWith = notImplementedJSCFn;
@@ -3166,7 +3268,6 @@ pub const Expect = struct {
     pub const toHaveLastReturnedWith = notImplementedJSCFn;
     pub const toHaveNthReturnedWith = notImplementedJSCFn;
     pub const toContainEqual = notImplementedJSCFn;
-    pub const toMatchObject = notImplementedJSCFn;
     pub const toMatchInlineSnapshot = notImplementedJSCFn;
     pub const toThrowErrorMatchingSnapshot = notImplementedJSCFn;
     pub const toThrowErrorMatchingInlineSnapshot = notImplementedJSCFn;
@@ -3193,8 +3294,11 @@ pub const Expect = struct {
         return ExpectAny.call(globalObject, callFrame);
     }
 
+    pub fn anything(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        return ExpectAnything.call(globalObject, callFrame);
+    }
+
     pub const extend = notImplementedStaticFn;
-    pub const anything = notImplementedStaticFn;
     pub const arrayContaining = notImplementedStaticFn;
     pub const assertions = notImplementedStaticFn;
     pub const hasAssertions = notImplementedStaticFn;

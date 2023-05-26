@@ -6,6 +6,7 @@ pub const Classes = struct {
     pub const Dirent = JSC.Node.Dirent;
     pub const Expect = JSC.Jest.Expect;
     pub const ExpectAny = JSC.Jest.ExpectAny;
+    pub const ExpectAnything = JSC.Jest.ExpectAnything;
     pub const FileSystemRouter = JSC.API.FileSystemRouter;
     pub const Bundler = JSC.API.JSBundler;
     pub const JSBundler = Bundler;

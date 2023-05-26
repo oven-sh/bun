@@ -416,6 +416,56 @@ public:
     mutable JSC::WriteBarrier<JSC::Unknown> m_constructorValue;
 };
 
+class JSExpectAnything final : public JSC::JSDestructibleObject {
+public:
+    using Base = JSC::JSDestructibleObject;
+    static JSExpectAnything* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
+
+    DECLARE_EXPORT_INFO;
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<JSExpectAnything, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForExpectAnything.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForExpectAnything = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForExpectAnything.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForExpectAnything = std::forward<decltype(space)>(space); });
+    }
+
+    static void destroy(JSC::JSCell*);
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info());
+    }
+
+    static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
+    ;
+
+    ~JSExpectAnything();
+
+    void* wrapped() const { return m_ctx; }
+
+    void detach()
+    {
+        m_ctx = nullptr;
+    }
+
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+    static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSExpectAnything, m_ctx); }
+
+    void* m_ctx { nullptr };
+
+    JSExpectAnything(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
+        : Base(vm, structure)
+    {
+        m_ctx = sinkPtr;
+    }
+
+    void finishCreation(JSC::VM&);
+};
+
 class JSFileSystemRouter final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;

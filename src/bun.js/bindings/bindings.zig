@@ -2778,7 +2778,7 @@ pub const JSArrayIterator = struct {
         return .{
             .array = value,
             .global = global,
-            .len = @truncate(u32, value.getLengthOfArray(global)),
+            .len = @truncate(u32, value.getLength(global)),
         };
     }
 
@@ -4140,7 +4140,7 @@ pub const JSValue = enum(JSValueReprInt) {
                 return error.JSError;
             }
 
-            if (prop.getLengthOfArray(globalThis) == 0) {
+            if (prop.getLength(globalThis) == 0) {
                 return null;
             }
 
@@ -4366,8 +4366,53 @@ pub const JSValue = enum(JSValueReprInt) {
         return @intCast(u32, @max(this.toInt32(), 0));
     }
 
-    pub fn getLengthOfArray(this: JSValue, globalThis: *JSGlobalObject) u64 {
-        return cppFn("getLengthOfArray", .{
+    /// This function supports:
+    /// - Array, DerivedArray & friends
+    /// - String, DerivedString & friends
+    /// - TypedArray
+    /// - Map (size)
+    /// - WeakMap (size)
+    /// - Set (size)
+    /// - WeakSet (size)
+    /// - ArrayBuffer (byteLength)
+    /// - anything with a .length property returning a number
+    ///
+    /// If the "length" property does not exist, this function will return 0.
+    pub fn getLength(this: JSValue, globalThis: *JSGlobalObject) u64 {
+        const len = this.getLengthIfPropertyExistsInternal(globalThis);
+        if (len == std.math.f64_max) {
+            return 0;
+        }
+
+        return @floatToInt(u64, @max(len, 0));
+    }
+
+    /// This function supports:
+    /// - Array, DerivedArray & friends
+    /// - String, DerivedString & friends
+    /// - TypedArray
+    /// - Map (size)
+    /// - WeakMap (size)
+    /// - Set (size)
+    /// - WeakSet (size)
+    /// - ArrayBuffer (byteLength)
+    /// - anything with a .length property returning a number
+    ///
+    /// If the "length" property does not exist, this function will return null.
+    pub fn tryGetLength(this: JSValue, globalThis: *JSGlobalObject) ?f64 {
+        const len = this.getLengthIfPropertyExistsInternal(globalThis);
+        if (len == std.math.f64_max) {
+            return null;
+        }
+
+        return @floatToInt(u64, @max(len, 0));
+    }
+
+    /// Do not use this directly!
+    ///
+    /// If the property does not exist, this function will return max(f64) instead of 0.
+    pub fn getLengthIfPropertyExistsInternal(this: JSValue, globalThis: *JSGlobalObject) f64 {
+        return cppFn("getLengthIfPropertyExistsInternal", .{
             this,
             globalThis,
         });
@@ -4479,7 +4524,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "getIfExists",
         "getIfPropertyExistsFromPath",
         "getIfPropertyExistsImpl",
-        "getLengthOfArray",
+        "getLengthIfPropertyExistsInternal",
         "getNameProperty",
         "getPropertyByPropertyName",
         "getPropertyNames",

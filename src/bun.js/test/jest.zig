@@ -818,7 +818,7 @@ pub const Jest = struct {
                     return .zero;
                 }
 
-                if (function.getLengthOfArray(globalThis) > 0) {
+                if (function.getLength(globalThis) > 0) {
                     globalThis.throw("done() callback is not implemented in global hooks yet. Please make your function take no arguments", .{});
                     return .zero;
                 }
@@ -833,7 +833,9 @@ pub const Jest = struct {
         }.appendGlobalFunctionCallback;
     }
 
-    pub export fn Bun__Jest__createTestPreloadObject(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    pub fn Bun__Jest__createTestPreloadObject(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        JSC.markBinding(@src());
+
         var global_hooks_object = JSC.JSValue.createEmptyObject(globalObject, 8);
         global_hooks_object.ensureStillAlive();
 
@@ -866,7 +868,9 @@ pub const Jest = struct {
         return global_hooks_object;
     }
 
-    pub export fn Bun__Jest__createTestModuleObject(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    pub fn Bun__Jest__createTestModuleObject(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        JSC.markBinding(@src());
+
         const module = JSC.JSValue.createEmptyObject(globalObject, 7);
 
         const test_fn = JSC.NewFunction(globalObject, ZigString.static("test"), 2, TestScope.call, false);
@@ -949,6 +953,7 @@ pub const Jest = struct {
         arguments_: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
+        JSC.markBinding(@src());
         var runner_ = runner orelse {
             JSError(getAllocator(ctx), "Run \"bun test\" to run a test", .{}, ctx, exception);
             return js.JSValueMakeUndefined(ctx);
@@ -983,8 +988,8 @@ pub const Jest = struct {
 
     comptime {
         if (!JSC.is_bindgen) {
-            _ = Bun__Jest__createTestModuleObject;
-            _ = Bun__Jest__createTestPreloadObject;
+            @export(Bun__Jest__createTestModuleObject, .{ .name = "Bun__Jest__createTestModuleObject" });
+            @export(Bun__Jest__createTestPreloadObject, .{ .name = "Bun__Jest__createTestPreloadObject" });
         }
     }
 };
@@ -1297,27 +1302,19 @@ pub const Expect = struct {
         const not = this.op.contains(.not);
         var pass = false;
 
-        var actual_length: f64 = undefined;
-        if (value.jsType() == .String) {
-            actual_length = @intToFloat(f64, value.asString().length());
-            if (actual_length == expected_length) pass = true;
-        } else {
-            const length_value: JSValue = value.getIfPropertyExistsImpl(globalObject, "length", "length".len);
+        const actual_length = value.getLengthIfPropertyExistsInternal(globalObject);
 
-            if (length_value.isEmpty()) {
-                var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
-                globalObject.throw("Received value does not have a length property: {any}", .{value.toFmt(globalObject, &fmt)});
-                return .zero;
-            } else if (!length_value.isNumber()) {
-                var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
-                globalObject.throw("Received value has non-number length property: {any}", .{length_value.toFmt(globalObject, &fmt)});
-                return .zero;
-            }
+        if (actual_length == std.math.f64_max) {
+            var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+            globalObject.throw("Received value does not have a length property: {any}", .{value.toFmt(globalObject, &fmt)});
+            return .zero;
+        } else if (std.math.isNan(actual_length)) {
+            globalObject.throw("Received value has non-number length property: {}", .{actual_length});
+            return .zero;
+        }
 
-            actual_length = length_value.asNumber();
-            if (@round(actual_length) == actual_length) {
-                if (actual_length == expected_length) pass = true;
-            }
+        if (actual_length == expected_length) {
+            pass = true;
         }
 
         if (not) pass = !pass;
@@ -3497,7 +3494,7 @@ pub const TestScope = struct {
         }
         JSC.markBinding(@src());
 
-        const callback_length = callback.getLengthOfArray(vm.global);
+        const callback_length = callback.getLength(vm.global);
 
         var initial_value = JSValue.zero;
         if (test_elapsed_timer) |timer| {
@@ -3730,7 +3727,7 @@ pub const DescribeScope = struct {
             Jest.runner.?.did_pending_test_fail = false;
 
             const vm = VirtualMachine.get();
-            var result: JSC.JSValue = if (cb.getLengthOfArray(globalObject) > 0) brk: {
+            var result: JSC.JSValue = if (cb.getLength(globalObject) > 0) brk: {
                 this.done = false;
                 const done_func = JSC.NewFunctionWithData(
                     globalObject,

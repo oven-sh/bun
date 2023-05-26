@@ -593,7 +593,7 @@ pub const Blob = struct {
 
         var needs_async = false;
         if (data.isString()) {
-            const len = data.getLengthOfArray(ctx);
+            const len = data.getLength(ctx);
 
             if (len < 256 * 1024 or bun.isMissingIOUring()) {
                 const str = data.getZigString(ctx);
@@ -2594,6 +2594,35 @@ pub const Blob = struct {
         }
 
         return JSValue.jsNumber(init_timestamp);
+    }
+
+    pub fn getSizeForBindings(this: *Blob) u64 {
+        if (this.size == Blob.max_size) {
+            this.resolveSize();
+        }
+
+        // If the file doesn't exist or is not seekable
+        // signal that the size is unknown.
+        if (this.store != null and this.store.?.data == .file and
+            !(this.store.?.data.file.seekable orelse false))
+        {
+            return std.math.maxInt(u64);
+        }
+
+        if (this.size == Blob.max_size)
+            return std.math.maxInt(u64);
+
+        return this.size;
+    }
+
+    export fn Bun__Blob__getSizeForBindings(this: *Blob) callconv(.C) u64 {
+        return this.getSizeForBindings();
+    }
+
+    comptime {
+        if (!JSC.is_bindgen) {
+            _ = Bun__Blob__getSizeForBindings;
+        }
     }
 
     pub fn getSize(this: *Blob, _: *JSC.JSGlobalObject) callconv(.C) JSValue {

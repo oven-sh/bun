@@ -92,6 +92,9 @@
 #include "ZigGeneratedClasses.h"
 #include "JavaScriptCore/JSMapInlines.h"
 
+#include <JavaScriptCore/JSWeakMap.h>
+#include "JSURLSearchParams.h"
+
 template<typename UWSResponse>
 static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
 {
@@ -1118,11 +1121,78 @@ JSC__JSValue JSC__JSValue__createEmptyObject(JSC__JSGlobalObject* globalObject,
         JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), initialCapacity));
 }
 
-uint64_t JSC__JSValue__getLengthOfArray(JSC__JSValue value, JSC__JSGlobalObject* globalObject)
+extern "C" uint64_t Bun__Blob__getSizeForBindings(void* blob);
+
+double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC__JSValue value, JSC__JSGlobalObject* globalObject)
 {
     JSC::JSValue jsValue = JSC::JSValue::decode(value);
-    JSC::JSObject* object = jsValue.toObject(globalObject);
-    return JSC::toLength(globalObject, object);
+    if (!jsValue || !jsValue.isCell())
+        return 0;
+    JSCell* cell = jsValue.asCell();
+    JSC::JSType type = cell->type();
+
+    switch (type) {
+    case JSC::JSType::StringType:
+        return static_cast<double>(jsValue.toString(globalObject)->length());
+    case JSC::JSType::ArrayType:
+        return static_cast<double>(jsCast<JSC::JSArray*>(cell)->length());
+
+    case JSC::JSType::Int8ArrayType:
+    case JSC::JSType::Uint8ArrayType:
+    case JSC::JSType::Uint8ClampedArrayType:
+    case JSC::JSType::Int16ArrayType:
+    case JSC::JSType::Uint16ArrayType:
+    case JSC::JSType::Int32ArrayType:
+    case JSC::JSType::Uint32ArrayType:
+    case JSC::JSType::Float32ArrayType:
+    case JSC::JSType::Float64ArrayType:
+    case JSC::JSType::BigInt64ArrayType:
+    case JSC::JSType::BigUint64ArrayType:
+        return static_cast<double>(jsCast<JSC::JSArrayBufferView*>(cell)->length());
+
+    case JSC::JSType::JSMapType:
+        return static_cast<double>(jsCast<JSC::JSMap*>(cell)->size());
+
+    case JSC::JSType::JSSetType:
+        return static_cast<double>(jsCast<JSC::JSSet*>(cell)->size());
+
+    case JSC::JSType::JSWeakMapType:
+        return static_cast<double>(jsCast<JSC::JSWeakMap*>(cell)->size());
+
+    case JSC::JSType::ArrayBufferType: {
+        auto* arrayBuffer = jsCast<JSC::JSArrayBuffer*>(cell);
+        if (auto* impl = arrayBuffer->impl()) {
+            return static_cast<double>(impl->byteLength());
+        }
+
+        return 0;
+    }
+
+    case JSC::JSType(JSDOMWrapperType): {
+        if (auto* headers = jsDynamicCast<WebCore::JSFetchHeaders*>(cell))
+            return static_cast<double>(jsCast<WebCore::JSFetchHeaders*>(cell)->wrapped().size());
+
+        if (auto* blob = jsDynamicCast<WebCore::JSBlob*>(cell)) {
+            uint64_t size = Bun__Blob__getSizeForBindings(blob->wrapped());
+            if (size == std::numeric_limits<uint64_t>::max())
+                return std::numeric_limits<double>::max();
+            return static_cast<double>(size);
+        }
+    }
+
+    default: {
+
+        if (auto* object = jsDynamicCast<JSObject*>(cell)) {
+            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+            if (JSValue lengthValue = object->getIfPropertyExists(globalObject, globalObject->vm().propertyNames->length)) {
+                RETURN_IF_EXCEPTION(scope, 0);
+                RELEASE_AND_RETURN(scope, lengthValue.toNumber(globalObject));
+            }
+        }
+    }
+    }
+
+    return std::numeric_limits<double>::infinity();
 }
 
 void JSC__JSObject__putRecord(JSC__JSObject* object, JSC__JSGlobalObject* global, ZigString* key,

@@ -12,6 +12,7 @@ class EventSource extends EventTarget {
   #reconnect = true;
   #content_length = 0; // 0 means chunked
   #received_length = 0;
+  #reconnection_time = 0;
 
   static #ConnectNextTick(self) {
     self.#connect();
@@ -79,6 +80,7 @@ class EventSource extends EventTarget {
         let data = "";
         let id;
         let event_line_idx = 0;
+        let retry = -1;
         for (;;) {
           let idx = event_data.indexOf("\n", event_line_idx);
           if (idx === -1) {
@@ -98,10 +100,18 @@ class EventSource extends EventTarget {
             type = line.substring(6).trim();
           } else if (line.startsWith("id:")) {
             id = line.substring(3).trim();
+          } else if (line.startsWith("retry:")) {
+            retry = parseInt(line.substring(6).trim(), 10);
+            if (isNaN(retry)) {
+              retry = -1;
+            }
           }
           event_line_idx = idx + 1;
         }
         self.#lastEventID = id || "";
+        if (retry >= 0) {
+          self.#reconnection_time = retry;
+        }
 
         if (data || id || type) {
           self.dispatchEvent(
@@ -342,7 +352,7 @@ class EventSource extends EventTarget {
     self.#received_length = 0;
     self.#state = 2;
     if (self.#reconnect) {
-      setTimeout(EventSource.#ConnectNextTick, 1000, self);
+      setTimeout(EventSource.#ConnectNextTick, self.#reconnection_time, self);
     }
     return self;
   }

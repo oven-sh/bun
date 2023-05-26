@@ -30,7 +30,7 @@ function sse_unstable(req) {
       type: "direct",
       async pull(controller) {
         if (!signal.aborted) {
-          await controller.write(`id:${++id}\ndata: Hello, World!\n\n`);
+          await controller.write(`id:${++id}\ndata: Hello, World!\nretry:100\n\n`);
           await controller.flush();
         }
         controller.close();

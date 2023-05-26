@@ -119,7 +119,7 @@ describe("events", () => {
 
   it("should reconnect with id", done => {
     sseServer(done, "/unstable", (evtSource, done) => {
-      const ids : string[] = [];
+      const ids: string[] = [];
       evtSource.onmessage = e => {
         ids.push(e.lastEventId);
         if (ids.length === 2) {

@@ -288,7 +288,7 @@ pub const ServerConfig = struct {
 
             if (obj.getTruthy(global, "key")) |js_obj| {
                 if (js_obj.jsType().isArray()) {
-                    const count = js_obj.getLengthOfArray(global);
+                    const count = js_obj.getLength(global);
                     if (count > 0) {
                         const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
 
@@ -389,7 +389,7 @@ pub const ServerConfig = struct {
 
             if (obj.getTruthy(global, "cert")) |js_obj| {
                 if (js_obj.jsType().isArray()) {
-                    const count = js_obj.getLengthOfArray(global);
+                    const count = js_obj.getLength(global);
                     if (count > 0) {
                         const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
 
@@ -504,7 +504,7 @@ pub const ServerConfig = struct {
 
             if (obj.getTruthy(global, "ca")) |js_obj| {
                 if (js_obj.jsType().isArray()) {
-                    const count = js_obj.getLengthOfArray(global);
+                    const count = js_obj.getLength(global);
                     if (count > 0) {
                         const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
 

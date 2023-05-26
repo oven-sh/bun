@@ -169,19 +169,19 @@ WebSocket::~WebSocket()
     if (m_upgradeClient != nullptr) {
         void* upgradeClient = m_upgradeClient;
         if (m_isSecure) {
-            Bun__WebSocketHTTPSClient__cancel(upgradeClient);
+            Bun__WebSocketHTTPSClient__cancel(reinterpret_cast<void*>(upgradeClient));
         } else {
-            Bun__WebSocketHTTPClient__cancel(upgradeClient);
+            Bun__WebSocketHTTPClient__cancel(reinterpret_cast<void*>(upgradeClient));
         }
     }
 
     switch (m_connectedWebSocketKind) {
     case ConnectedWebSocketKind::Client: {
-        Bun__WebSocketClient__finalize(this->m_connectedWebSocket.client);
+        Bun__WebSocketClient__finalize(reinterpret_cast<void*>(this->m_connectedWebSocket.client));
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
-        Bun__WebSocketClientTLS__finalize(this->m_connectedWebSocket.clientSSL);
+        Bun__WebSocketClientTLS__finalize(reinterpret_cast<void*>(this->m_connectedWebSocket.clientSSL));
         break;
     }
     // case ConnectedWebSocketKind::Server: {
@@ -409,11 +409,11 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     if (is_secure) {
         us_socket_context_t* ctx = scriptExecutionContext()->webSocketContext<true>();
         RELEASE_ASSERT(ctx);
-        this->m_upgradeClient = Bun__WebSocketHTTPSClient__connect(scriptExecutionContext()->jsGlobalObject(), ctx, this, &host, port, &path, &clientProtocolString, headerNames.data(), headerValues.data(), headerNames.size());
+        this->m_upgradeClient = Bun__WebSocketHTTPSClient__connect(scriptExecutionContext()->jsGlobalObject(), ctx, reinterpret_cast<CppWebSocket*>(this), &host, port, &path, &clientProtocolString, headerNames.data(), headerValues.data(), headerNames.size());
     } else {
         us_socket_context_t* ctx = scriptExecutionContext()->webSocketContext<false>();
         RELEASE_ASSERT(ctx);
-        this->m_upgradeClient = Bun__WebSocketHTTPClient__connect(scriptExecutionContext()->jsGlobalObject(), ctx, this, &host, port, &path, &clientProtocolString, headerNames.data(), headerValues.data(), headerNames.size());
+        this->m_upgradeClient = Bun__WebSocketHTTPClient__connect(scriptExecutionContext()->jsGlobalObject(), ctx, reinterpret_cast<CppWebSocket*>(this), &host, port, &path, &clientProtocolString, headerNames.data(), headerValues.data(), headerNames.size());
     }
 
     headerValues.clear();
@@ -1022,11 +1022,11 @@ void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t buffe
     this->m_upgradeClient = nullptr;
     if (m_isSecure) {
         us_socket_context_t* ctx = (us_socket_context_t*)this->scriptExecutionContext()->connectedWebSocketContext<true, false>();
-        this->m_connectedWebSocket.clientSSL = Bun__WebSocketClientTLS__init(this, socket, ctx, this->scriptExecutionContext()->jsGlobalObject(), reinterpret_cast<unsigned char*>(bufferedData), bufferedDataSize);
+        this->m_connectedWebSocket.clientSSL = Bun__WebSocketClientTLS__init(reinterpret_cast<CppWebSocket*>(this), socket, ctx, this->scriptExecutionContext()->jsGlobalObject(), reinterpret_cast<unsigned char*>(bufferedData), bufferedDataSize);
         this->m_connectedWebSocketKind = ConnectedWebSocketKind::ClientSSL;
     } else {
         us_socket_context_t* ctx = (us_socket_context_t*)this->scriptExecutionContext()->connectedWebSocketContext<false, false>();
-        this->m_connectedWebSocket.client = Bun__WebSocketClient__init(this, socket, ctx, this->scriptExecutionContext()->jsGlobalObject(), reinterpret_cast<unsigned char*>(bufferedData), bufferedDataSize);
+        this->m_connectedWebSocket.client = Bun__WebSocketClient__init(reinterpret_cast<CppWebSocket*>(this), socket, ctx, this->scriptExecutionContext()->jsGlobalObject(), reinterpret_cast<unsigned char*>(bufferedData), bufferedDataSize);
         this->m_connectedWebSocketKind = ConnectedWebSocketKind::Client;
     }
 

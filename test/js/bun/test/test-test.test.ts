@@ -1765,6 +1765,52 @@ test("toHaveLength()", () => {
   expect("123").not.toHaveLength(-0);
 });
 
+test("toHaveLength() extended", () => {
+  // Headers
+  expect(new Headers()).toHaveLength(0);
+  expect(new Headers({ a: "1" })).toHaveLength(1);
+
+  // FormData
+  const form = new FormData();
+  expect(form).toHaveLength(0);
+  form.append("a", "1");
+  expect(form).toHaveLength(1);
+
+  // URLSearchParams
+  expect(new URLSearchParams()).toHaveLength(0);
+  expect(new URLSearchParams("a=1")).toHaveLength(1);
+  expect(new URLSearchParams([["a", "1"]])).toHaveLength(1);
+
+  // files
+  const thisFile = Bun.file(import.meta.path);
+  const thisFileSize = thisFile.size;
+
+  expect(thisFile).toHaveLength(thisFileSize);
+  expect(thisFile).toHaveLength(Bun.file(import.meta.path).size);
+
+  // empty file should have length 0
+  writeFileSync("/tmp/empty.txt", "");
+  expect(Bun.file("/tmp/empty.txt")).toHaveLength(0);
+
+  // if a file doesn't exist, it should throw (not return 0 size)
+  expect(() => expect(Bun.file("/does-not-exist/file.txt")).toHaveLength(0)).toThrow();
+
+  // Blob
+  expect(new Blob([1, 2, 3])).toHaveLength(3);
+  expect(new Blob()).toHaveLength(0);
+
+  // Set
+  expect(new Set()).toHaveLength(0);
+  expect(new Set([1, 2, 3])).toHaveLength(3);
+
+  // Map
+  expect(new Map()).toHaveLength(0);
+  expect(new Map([["a", 1]])).toHaveLength(1);
+
+  // WeakMap
+  expect(new WeakMap([[globalThis, 1]])).toHaveLength(1);
+});
+
 test("toContain()", () => {
   const s1 = new String("123");
   expect(s1).not.toContain("12");

@@ -2,6 +2,8 @@
 
 typedef uint16_t ZigErrorCode;
 typedef struct VirtualMachine VirtualMachine;
+// exists to make headers.h happy
+typedef struct CppWebSocket CppWebSocket;
 
 typedef struct ZigString {
     const unsigned char* ptr;

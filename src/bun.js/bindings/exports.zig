@@ -2061,7 +2061,7 @@ pub const ZigConsoleClient = struct {
                     writer.print(comptime Output.prettyFmt("<cyan>[Getter]<r>", enable_ansi_colors), .{});
                 },
                 .Array => {
-                    const len = @truncate(u32, value.getLengthOfArray(this.globalThis));
+                    const len = @truncate(u32, value.getLength(this.globalThis));
                     if (len == 0) {
                         writer.writeAll("[]");
                         this.addForNewLine(2);
@@ -2573,7 +2573,7 @@ pub const ZigConsoleClient = struct {
                                                 this.writeIndent(Writer, writer_) catch unreachable;
                                             },
                                             .Array => {
-                                                const length = children.getLengthOfArray(this.globalThis);
+                                                const length = children.getLength(this.globalThis);
                                                 if (length == 0) break :print_children;
                                                 writer.writeAll(">\n");
 

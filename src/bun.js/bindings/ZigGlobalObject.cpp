@@ -1499,6 +1499,82 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     return JSC::JSValue::encode(JSC::jsString(vm, url.fileSystemPath()));
 }
 
+// JSC_DEFINE_HOST_FUNCTION(asyncHooksGetContext, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+// {
+//     auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+//     if (zigGlobalObject->m_asyncHooksContext.isInitialized()) {
+//         return JSC::JSValue::encode(zigGlobalObject->asyncHooksContext());
+//     }
+//     return JSC::JSValue::encode(JSC::jsUndefined());
+// }
+
+// JSC_DEFINE_HOST_FUNCTION(asyncHooksGetContextInit, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+// {
+//     auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+//     return JSC::JSValue::encode(zigGlobalObject->asyncHooksContext());
+// }
+
+// JSC_DEFINE_HOST_FUNCTION(asyncHooksCopyContext, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+// {
+//     auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+//     if (!zigGlobalObject->m_asyncHooksContext.isInitialized()) {
+//         return JSC::JSValue::encode(JSC::jsUndefined());
+//     }
+
+//     JSMap* map = zigGlobalObject->asyncHooksContext();
+//     if (map->size() == 0) return JSC::JSValue::encode(JSC::jsUndefined());
+
+//     return JSC::JSValue::encode(map);
+// }
+
+// JSC_DEFINE_HOST_FUNCTION(asyncHooksRunInContext, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+// {
+//     auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+
+//     auto newContext = callFrame->getArgumentUnsafe(0);
+
+//     JSC::JSFunction* fn = JSC::jsDynamicCast<JSC::JSFunction*>(callFrame->getArgumentUnsafe(1));
+//     JSC::CallData callData = JSC::getCallData(fn);
+
+//     JSC::MarkedArgumentBuffer arguments;
+//     size_t argCount = callFrame->argumentCount();
+//     for (size_t i = 2; i < argCount; ++i) {
+//         arguments.append(callFrame->getArgumentUnsafe(i));
+//     }
+
+//     // fast path for when both contexts are empty.
+//     if (
+//         newContext.isUndefinedOrNull()
+//         && (
+//             !zigGlobalObject->m_asyncHooksContext.isInitialized()
+//             || zigGlobalObject->asyncHooksContext()->size() == 0
+//         )
+//     ) {
+//         return JSC::JSValue::encode(JSC::call(globalObject, fn, callData, JSC::jsUndefined(), arguments));
+//     } else {
+//         auto newContextMap = JSC::jsDynamicCast<JSC::JSMap*>(newContext);
+//         auto& vm = globalObject->vm();
+
+//         JSC::JSMap* prevContext = zigGlobalObject->asyncHooksContext();
+//         zigGlobalObject->m_asyncHooksContext.set(vm, globalObject, newContext);
+
+//         JSC::JSValue ret = JSC::call(globalObject, fn, callData, JSC::jsUndefined(), arguments);
+
+//         zigGlobalObject->m_asyncHooksContext.set(vm, globalObject, prevContext);
+
+//         return JSC::JSValue::encode(ret);
+//     }
+// }
+
+JSC_DEFINE_HOST_FUNCTION(asyncHooksInject, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    globalObject->putDirect(vm, vm.propertyNames->builtinNames().pushAsyncContextFramePrivateName(), callFrame->argument(0), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
+    globalObject->putDirect(vm, vm.propertyNames->builtinNames().popAsyncContextFramePrivateName(), callFrame->argument(1), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
+    globalObject->putDirect(vm, vm.propertyNames->builtinNames().getAsyncContextFramePrivateName(), callFrame->argument(2), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
 JSC_DEFINE_CUSTOM_GETTER(noop_getter, (JSGlobalObject*, EncodedJSValue, PropertyName))
 {
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -1563,7 +1639,6 @@ JSC:
         return JSC::JSValue::encode(JSC::JSValue {});
     }
     default: {
-
         JSC::JSValue moduleName = callFrame->argument(0);
         if (moduleName.isNumber()) {
             switch (moduleName.toInt32(globalObject)) {
@@ -1695,6 +1770,27 @@ JSC:
             }
 
             auto* obj = globalObject->primordialsObject();
+            return JSValue::encode(obj);
+        }
+
+        if (string == "async_hooks"_s) {
+            auto* obj = constructEmptyObject(globalObject);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "inject"_s)),
+                JSFunction::create(vm, globalObject, 1, "inject"_s, asyncHooksInject, ImplementationVisibility::Public, NoIntrinsic),
+                0);
+            // obj->putDirect(
+            //     vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "getContextInit"_s)),
+            //     JSFunction::create(vm, globalObject, 1, "getContextInit"_s, asyncHooksGetContextInit, ImplementationVisibility::Public, NoIntrinsic),
+            //     0);
+            // obj->putDirect(
+            //     vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "copyContext"_s)),
+            //     JSFunction::create(vm, globalObject, 1, "copyContext"_s, asyncHooksCopyContext, ImplementationVisibility::Public, NoIntrinsic),
+            //     0);
+            // obj->putDirect(
+            //     vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "runInContext"_s)),
+            //     JSFunction::create(vm, globalObject, 1, "runInContext"_s, asyncHooksRunInContext, ImplementationVisibility::Public, NoIntrinsic),
+            //     0);
             return JSValue::encode(obj);
         }
 
@@ -3194,6 +3290,10 @@ void GlobalObject::finishCreation(VM& vm)
         [](const Initializer<JSWeakMap>& init) {
             init.set(JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
         });
+    // m_asyncHooksContext.initLater(
+    //     [](const Initializer<JSC::JSMap>& init) {
+    //         init.set(JSC::JSMap::create(init.vm, init.owner->mapStructure()));
+    //     });
 
     m_JSBufferSubclassStructure.initLater(
         [](const Initializer<Structure>& init) {
@@ -4552,6 +4652,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_dnsObject.visit(visitor);
     thisObject->m_lazyRequireCacheObject.visit(visitor);
     thisObject->m_vmModuleContextMap.visit(visitor);
+    // thisObject->m_asyncHooksContext.visit(visitor);
     thisObject->m_bunSleepThenCallback.visit(visitor);
     thisObject->m_lazyTestModuleObject.visit(visitor);
     thisObject->m_lazyPreloadTestModuleObject.visit(visitor);

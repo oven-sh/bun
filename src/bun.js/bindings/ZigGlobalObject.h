@@ -283,6 +283,7 @@ public:
     JSObject* passwordObject() { return m_lazyPasswordObject.getInitializedOnMainThread(this); }
 
     JSWeakMap* vmModuleContextMap() { return m_vmModuleContextMap.getInitializedOnMainThread(this); }
+    // JSMap* asyncHooksContext() { return m_asyncHooksContext.getInitializedOnMainThread(this); }
 
     bool hasProcessObject() const { return m_processObject.isInitialized(); }
 
@@ -441,6 +442,8 @@ public:
     Bun::JSMockModule mockModule;
 
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
+
+    // LazyProperty<JSGlobalObject, JSMap> m_asyncHooksContext;
 
 private:
     void addBuiltinGlobals(JSC::VM&);

@@ -1,74 +1,214 @@
 // Hardcoded module "node:async_hooks"
-import { drainMicrotasks } from "bun:jsc";
+const { inject } = globalThis[Symbol.for("Bun.lazy")]("async_hooks");
 
-var notImplemented = () => {
-  console.warn(
-    "[bun] Warning: async_hooks has not been implemented yet. See https://github.com/oven-sh/bun/issues/1832",
-  );
-  notImplemented = () => {};
-};
+let current = undefined;
+function getAsyncContextFrame(jscContext) {
+  return current ? [jscContext, new Map(current)] : jscContext;
+}
+
+function pushAsyncContextFrame(param) {
+  let last = current;
+  current = param;
+  return last;
+}
+
+function popAsyncContextFrame(param) {
+  current = param;
+}
+
+inject(pushAsyncContextFrame, popAsyncContextFrame, getAsyncContextFrame);
 
 class AsyncLocalStorage {
-  #store;
-  _enabled;
+  #disableCalled = false;
 
-  constructor() {
-    this._enabled = false;
-    this.#store = null;
+  constructor() {}
+
+  static bind(fn) {
+    return this.snapshot().bind(fn);
+  }
+
+  static snapshot() {
+    // const context = copyContext();
+    // return (fn, ...args) => runWithContext(context, fn, ...args);
   }
 
   enterWith(store) {
-    this.#store = store;
-    notImplemented();
-
-    return this;
+    // this.#disableCalled = false;
+    // getContextInit().set(this, store);
   }
 
   exit(cb, ...args) {
-    this.#store = null;
-    notImplemented();
-    typeof cb === "function" && cb(...args);
+    return this.run(undefined, cb, ...args);
   }
 
   run(store, callback, ...args) {
-    if (typeof callback !== "function") throw new TypeError("ERR_INVALID_CALLBACK");
-    var result, err;
-
-    process.nextTick(store => {
-      const prev = this.#store;
-      this.enterWith(store);
-      try {
-        result = callback(...args);
-      } catch (e) {
-        err = e;
-      } finally {
-        this.#store = prev;
+    if (!current) current = new Map();
+    var hasPrevious = current.has(this);
+    var previous = hasPrevious ? current.get(this) : undefined;
+    current.set(this, store);
+    try {
+      return callback(...args);
+    } catch (e) {
+      throw e;
+    } finally {
+      if (this.#disableCalled) {
+        this.#disableCalled = false;
+        // was already deleted
+      } else {
+        if (hasPrevious) {
+          current.set(this, previous);
+        } else {
+          current.delete(this);
+          if (current.size === 0) current = undefined;
+        }
       }
-    }, store);
-    drainMicrotasks();
-    if (typeof err !== "undefined") {
-      throw err;
     }
-    return result;
+  }
+
+  disable() {
+    // TODO: i dont think this will work correctly
+    this.#disableCalled = true;
+    if (current) {
+      current.delete(this);
+      if (current.size === 0) current = undefined;
+    }
   }
 
   getStore() {
-    return this.#store;
+    return current ? current.get(this) : undefined;
   }
 }
 
-function createHook() {
+// class AsyncResource {
+//   type;
+//   #ctx;
+
+//   constructor(type, options) {
+//     if (typeof type !== "string") {
+//       throw new TypeError('The "type" argument must be of type string. Received type ' + typeof type);
+//     }
+//     this.type = type;
+//     this.#ctx = copyContext();
+//   }
+
+//   emitBefore() {
+//     return true;
+//   }
+
+//   emitAfter() {
+//     return true;
+//   }
+
+//   asyncId() {
+//     return 0;
+//   }
+
+//   triggerAsyncId() {
+//     return 0;
+//   }
+
+//   emitDestroy() {}
+
+//   runInAsyncScope(fn, ...args) {
+//     runWithContext(this.#ctx, fn, ...args);
+//   }
+// }
+
+// todo move this into global scope/native code
+// stage 2 proposal: https://github.com/tc39/proposal-async-context
+// export class AsyncContext {
+//   static wrap(fn) {
+//     const ctx = copyContext();
+//     return (...args) => runWithContext(ctx, fn, ...args);
+//   }
+
+//   constructor(options) {
+//     var { name = "AsyncContext", defaultValue } = options || {};
+//     this.#name = String(name);
+//     this.#defaultValue = defaultValue;
+//   }
+
+//   get name() {
+//     return this.#name;
+//   }
+
+//   run(fn, ...args) {
+//     var context = getContextInit();
+//     var hasPrevious = context.has(this);
+//     var previous = hasPrevious ? context.get(this) : undefined;
+//     context.set(this, store);
+//     try {
+//       return fn(...args);
+//     } catch (e) {
+//       throw e;
+//     } finally {
+//       if (hasPrevious) {
+//         context.set(this, previous);
+//       } else {
+//         context.delete(this);
+//       }
+//     }
+//   }
+
+//   get() {
+//     const context = getContext();
+//     if (!context) return this.#defaultValue;
+//     return context.has(this) ? context.get(this) : this.#defaultValue;
+//   }
+// }
+
+// todo move this into events
+// class EventEmitterAsyncResource extends EventEmitter {
+//   triggerAsyncId;
+//   asyncResource;
+
+//   constructor(options) {
+//     var { captureRejections = false, triggerAsyncId, name = new.target.name, requireManualDestroy } = options || {};
+//     super({ captureRejections });
+//     this.triggerAsyncId = triggerAsyncId ?? 0;
+//     this.asyncResource = new AsyncResource(name, { triggerAsyncId, requireManualDestroy });
+//   }
+
+//   emit(...args) {
+//     this.asyncResource.runInAsyncScope(() => super.emit(...args));
+//   }
+
+//   emitDestroy() {
+//     this.asyncResource.emitDestroy();
+//   }
+// }
+
+// The rest of async_hooks is not implemented and is stubbed with no-ops and warnings.
+
+function createWarning(message) {
+  let warned = false;
+  return function () {
+    if (warned) return;
+    warned = true;
+    process.emitWarning(message);
+  };
+}
+
+const createHookNotImpl = createWarning(
+  "async_hooks.createHook is not implemented in Bun. Hooks can still be created but will never be called.",
+);
+
+function createHook(callbacks) {
   return {
     enable() {
-      notImplemented();
+      createHookNotImpl();
     },
     disable() {
-      notImplemented();
+      createHookNotImpl();
     },
   };
 }
 
+const executionAsyncIdNotImpl = createWarning(
+  "async_hooks.executionAsyncId/triggerAsyncId are not implemented in Bun. It returns 0 every time.",
+);
 function executionAsyncId() {
+  executionAsyncIdNotImpl();
   return 0;
 }
 
@@ -76,8 +216,11 @@ function triggerAsyncId() {
   return 0;
 }
 
+const executionAsyncResourceWarning = createWarning("async_hooks.executionAsyncResource is not implemented in Bun.");
+const stubAsyncResource = {};
 function executionAsyncResource() {
-  return null;
+  executionAsyncResourceWarning();
+  return stubAsyncResource;
 }
 
 const asyncWrapProviders = {
@@ -141,54 +284,6 @@ const asyncWrapProviders = {
   INSPECTORJSBINDING: 57,
 };
 
-class AsyncResource {
-  constructor(type, triggerAsyncId) {
-    this.type = type;
-    this.triggerAsyncId = triggerAsyncId;
-
-    if (AsyncResource.allowedRunInAsyncScope.has(type)) {
-      this.runInAsyncScope = this.#runInAsyncScope;
-    }
-  }
-
-  // We probably will not fully support AsyncResource
-  // But some packages in the wild do depend on it
-  static allowedRunInAsyncScope = new Set(["prisma-client-request"]);
-
-  type;
-  triggerAsyncId;
-
-  emitBefore() {
-    return true;
-  }
-
-  emitAfter() {
-    return true;
-  }
-
-  emitDestroy() {}
-
-  runInAsyncScope;
-
-  #runInAsyncScope(fn, ...args) {
-    var result, err;
-    process.nextTick(fn => {
-      try {
-        result = fn(...args);
-      } catch (err2) {
-        err = err2;
-      }
-    }, fn);
-    drainMicrotasks();
-    if (err) throw err;
-    return result;
-  }
-
-  asyncId() {
-    return 0;
-  }
-}
-
 export {
   AsyncLocalStorage,
   createHook,
@@ -196,7 +291,9 @@ export {
   triggerAsyncId,
   executionAsyncResource,
   asyncWrapProviders,
-  AsyncResource,
+  // AsyncResource,
+  // TODO: move to node:events
+  // EventEmitterAsyncResource,
 };
 
 export default {
@@ -206,7 +303,8 @@ export default {
   triggerAsyncId,
   executionAsyncResource,
   asyncWrapProviders,
-  AsyncResource,
-  [Symbol.toStringTag]: "Module (not implemented yet)",
+  // AsyncResource,
+  // TODO: move to node:events
+  // EventEmitterAsyncResource,
   [Symbol.for("CommonJS")]: 0,
 };

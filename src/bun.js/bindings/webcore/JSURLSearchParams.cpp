@@ -152,6 +152,16 @@ template<> void JSURLSearchParamsDOMConstructor::initializeProperties(VM& vm, JS
     putDirect(vm, vm.propertyNames->prototype, JSURLSearchParams::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
 }
 
+JSC_DEFINE_CUSTOM_GETTER(jsURLSearchParamsPrototype_getLength, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* thisObject = jsDynamicCast<JSURLSearchParams*>(JSValue::decode(thisValue));
+    if (UNLIKELY(!thisObject))
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    return JSValue::encode(jsNumber(thisObject->wrapped().size()));
+}
+
 /* Hash table for prototype */
 
 static const HashTableValue JSURLSearchParamsPrototypeTableValues[] = {
@@ -168,6 +178,7 @@ static const HashTableValue JSURLSearchParamsPrototypeTableValues[] = {
     { "values"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsURLSearchParamsPrototypeFunction_values, 0 } },
     { "forEach"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsURLSearchParamsPrototypeFunction_forEach, 1 } },
     { "toString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsURLSearchParamsPrototypeFunction_toString, 0 } },
+    { "length"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsURLSearchParamsPrototype_getLength, 0 } },
 };
 
 const ClassInfo JSURLSearchParamsPrototype::s_info = { "URLSearchParams"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSURLSearchParamsPrototype) };

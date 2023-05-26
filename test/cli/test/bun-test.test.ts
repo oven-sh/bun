@@ -46,7 +46,7 @@ describe("bun test", () => {
     });
   });
   describe("GITHUB_ACTIONS", () => {
-    test("should not group logs when unset", () => {
+    test("should not group logs by default", () => {
       const stderr = runTest({
         env: {
           GITHUB_ACTIONS: undefined,
@@ -129,6 +129,31 @@ describe("bun test", () => {
       expect(stderr.match(/::group::/g)).toHaveLength(6);
       expect(stderr).toContain("::endgroup::");
       expect(stderr.match(/::endgroup::/g)).toHaveLength(6);
+    });
+    test("should not annotate errors by default", () => {
+      const stderr = runTest({
+        input: `
+          import { test, expect } from "bun:test";
+          test("fail", () => {
+            expect(true).toBe(false);
+          });
+        `,
+      });
+      expect(stderr).not.toContain("::error");
+    });
+    test("should annotate errors when enabled", () => {
+      const stderr = runTest({
+        input: `
+          import { test, expect } from "bun:test";
+          test("fail", () => {
+            expect(true).toBe(false);
+          });
+        `,
+        env: {
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+::/);
     });
   });
 });

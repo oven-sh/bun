@@ -2092,11 +2092,12 @@ pub const VirtualMachine = struct {
         var name = exception.name;
 
         const message = exception.message;
+        const top_frame = if (exception.stack.frames_len > 0) exception.stack.frames()[0] else null;
+
         var did_print_name = false;
         if (source_lines.next()) |source| brk: {
             if (source.text.len == 0) break :brk;
 
-            const top_frame = if (exception.stack.frames_len > 0) exception.stack.frames()[0] else null;
             if (top_frame == null or top_frame.?.position.isInvalid()) {
                 defer did_print_name = true;
                 var text = std.mem.trim(u8, source.text, "\n");
@@ -2227,7 +2228,7 @@ pub const VirtualMachine = struct {
         }
 
         if (show.syscall) {
-            try writer.print(comptime Output.prettyFmt("syscall<d>: <r><cyan>\"{s}\"<r>\n", allow_ansi_color), .{exception.syscall});
+            try writer.print(comptime Output.prettyFmt(" syscall<d>: <r><cyan>\"{s}\"<r>\n", allow_ansi_color), .{exception.syscall});
             add_extra_line = true;
         }
 
@@ -2235,13 +2236,62 @@ pub const VirtualMachine = struct {
             if (show.syscall) {
                 try writer.writeAll("  ");
             }
-            try writer.print(comptime Output.prettyFmt("errno<d>: <r><yellow>{d}<r>\n", allow_ansi_color), .{exception.errno});
+            try writer.print(comptime Output.prettyFmt(" errno<d>: <r><yellow>{d}<r>\n", allow_ansi_color), .{exception.errno});
             add_extra_line = true;
         }
 
         if (add_extra_line) try writer.writeAll("\n");
 
         try printStackTrace(@TypeOf(writer), writer, exception.stack, allow_ansi_color);
+
+        // In Github Actions, emit an annotation that renders the error and location.
+        // https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-an-error-message
+        if (Output.is_github_action) {
+            var has_location = false;
+
+            if (top_frame) |frame| {
+                if (!frame.position.isInvalid()) {
+                    const file = bun.path.relative(bun.fs.FileSystem.instance.top_level_dir, frame.source_url.slice());
+                    try writer.print(comptime Output.prettyFmt("\n::error file={s},line={d},col={d}::", false), .{
+                        file,
+                        frame.position.line_start + 1,
+                        frame.position.column_start,
+                    });
+                    has_location = true;
+                }
+            }
+
+            if (!has_location) {
+                try writer.print(comptime Output.prettyFmt("\n::error::", false), .{});
+            }
+
+            // Annotations must encode "\n" as "%0A" to support multi-line strings.
+            // https://github.com/actions/toolkit/issues/193#issuecomment-605394935
+            try this.printErrorNameAndMessageEscaped(name, message, Writer, writer, allow_ansi_color);
+
+            try writer.print(comptime Output.prettyFmt("\n", false), .{});
+        }
+    }
+
+    fn printErrorNameAndMessageEscaped(_: *VirtualMachine, name: ZigString, message: ZigString, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool) !void {
+        if (name.len > 0 and message.len > 0) {
+            const display_name: ZigString = if (!name.is16Bit() and strings.eqlComptime(name.slice(), "Error")) ZigString.init("error") else name;
+
+            try writer.print(comptime Output.prettyFmt("<r><red>{s}<r><d>:<r> <b>{s}<r>", allow_ansi_color), .{
+                bun.fmt.escapeEol(display_name.slice()),
+                bun.fmt.escapeEol(message.slice()),
+            });
+        } else if (name.len > 0) {
+            if (name.is16Bit() or !strings.hasPrefixComptime(name.slice(), "error")) {
+                try writer.print(comptime Output.prettyFmt("<r><red>error<r><d>:<r> <b>{s}<r>", allow_ansi_color), .{bun.fmt.escapeEol(name.slice())});
+            } else {
+                try writer.print(comptime Output.prettyFmt("<r><red>{s}<r>", allow_ansi_color), .{bun.fmt.escapeEol(name.slice())});
+            }
+        } else if (message.len > 0) {
+            try writer.print(comptime Output.prettyFmt("<r><red>error<r><d>:<r> <b>{s}<r>", allow_ansi_color), .{bun.fmt.escapeEol(message.slice())});
+        } else {
+            try writer.print(comptime Output.prettyFmt("<r><red>error<r>", allow_ansi_color), .{});
+        }
     }
 
     fn printErrorNameAndMessage(_: *VirtualMachine, name: ZigString, message: ZigString, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool) !void {

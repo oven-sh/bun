@@ -40,6 +40,12 @@ pub const fmt = struct {
         };
     }
 
+    pub fn escapeEol(self: string) strings.EscapeEolFormatter {
+        return strings.EscapeEolFormatter{
+            .text = self,
+        };
+    }
+
     pub fn EnumTagListFormatter(comptime Enum: type, comptime Separator: @Type(.EnumLiteral)) type {
         return struct {
             pretty: bool = true,

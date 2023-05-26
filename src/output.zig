@@ -121,20 +121,12 @@ pub const Source = struct {
         return false;
     }
 
-    pub fn isGithubAction() bool {
-        if (bun.getenvZ("GITHUB_ACTIONS")) |value| {
-            return strings.eqlComptime(value, "true");
-        }
-        return false;
-    }
-
     pub fn set(_source: *Source) void {
         source = _source.*;
 
         source_set = true;
         if (!stdout_stream_set) {
             stdout_stream_set = true;
-            is_github_action = isGithubAction();
             if (comptime Environment.isNative) {
                 var is_color_terminal: ?bool = null;
                 if (_source.stream.isTty()) {
@@ -183,6 +175,13 @@ pub var stdout_descriptor_type = OutputStreamDescriptor.unknown;
 
 pub inline fn isEmojiEnabled() bool {
     return enable_ansi_colors and !Environment.isWindows;
+}
+
+pub fn isGithubAction() bool {
+    if (bun.getenvZ("GITHUB_ACTIONS")) |value| {
+        return strings.eqlComptime(value, "true");
+    }
+    return false;
 }
 
 var _source_for_test: if (Environment.isTest) Output.Source else void = undefined;

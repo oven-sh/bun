@@ -689,6 +689,40 @@ pub fn endsWithAny(self: string, str: string) bool {
     return false;
 }
 
+pub fn escapeEolWriter(writer: anytype, self: string) !void {
+    var offset: usize = 0;
+    const end = @truncate(u32, self.len);
+    while (offset < end) {
+        if (strings.indexOfNewlineOrNonASCII(self, @truncate(u32, offset))) |i| {
+            const byte = self[i];
+            if (byte > 0x7F) {
+                offset += @max(strings.wtf8ByteSequenceLength(byte), 1);
+                continue;
+            }
+            if (i > 0) {
+                try writer.writeAll(self[offset..i]);
+                try writer.writeAll("%0A");
+            }
+            if (byte == '\r' and i + 1 < self.len and self[i + 1] == '\n') {
+                offset = i + 2;
+            } else {
+                offset = i + 1;
+            }
+        } else {
+            try writer.writeAll(self[offset..end]);
+            break;
+        }
+    }
+}
+
+pub const EscapeEolFormatter = struct {
+    text: string,
+
+    pub fn format(this: EscapeEolFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try strings.escapeEolWriter(writer, this.text);
+    }
+};
+
 pub fn quotedWriter(writer: anytype, self: string) !void {
     var remain = self;
     if (strings.containsNewlineOrNonASCIIOrQuote(remain)) {

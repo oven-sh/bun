@@ -10,6 +10,7 @@ function sse(req) {
           await controller.write(`data:Hello, World!\n\n`);
           await controller.write(`event: bun\ndata: Hello, World!\n\n`);
           await controller.write(`event: lines\ndata: Line 1!\ndata: Line 2!\n\n`);
+          await controller.write(`event: id_test\nid:1\n\n`);
           await controller.flush();
           await Bun.sleep(1000);
         }
@@ -80,6 +81,17 @@ describe("events", () => {
 
       evtSource.addEventListener("lines", e => {
         expect(e.data).toBe("Line 1!\nLine 2!");
+        done();
+      });
+    });
+  });
+
+  it("should receive id", done => {
+    sseServer(done, "/stream", (url, done) => {
+      const evtSource = new EventSource(url);
+
+      evtSource.addEventListener("id_test", e => {
+        expect(e.lastEventId).toBe("1");
         done();
       });
     });

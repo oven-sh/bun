@@ -8,6 +8,7 @@ class EventSource extends EventTarget {
   #socket = null;
   #data_buffer = "";
   #send_buffer = "";
+  #lastEventID = "";
 
   static #SendRequest(socket, url) {
     const request = `GET ${url.pathname}${url.search} HTTP/1.1\r\nHost: bun\r\nContent-type: text/event-stream\r\nContent-length: 0\r\n\r\n`;
@@ -68,14 +69,16 @@ class EventSource extends EventTarget {
         }
         event_line_idx = idx + 1;
       }
+      self.#lastEventID = id || "";
 
-      if (data) {
+      if (data || id || type) {
         self.dispatchEvent(
           new MessageEvent(type || "message", {
-            data: data,
+            data: data || "",
             origin: self.#url.origin,
             // @ts-ignore
             source: self,
+            lastEventId: id,
           }),
         );
       }

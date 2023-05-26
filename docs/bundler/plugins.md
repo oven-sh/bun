@@ -274,19 +274,19 @@ Plugins can read and write to the [build config](/docs/cli/build#api) with `buil
 Bun.build({
   entrypoints: ["./app.ts"],
   outdir: "./dist",
-  sourcemap: 'external',
+  sourcemap: "external",
   plugins: [
     {
-      name: 'demo',
+      name: "demo",
       setup(build) {
         console.log(build.config.sourcemap); // "external"
 
         build.config.minify = true; // enable minification
 
         // `plugins` is readonly
-        console.log(`Number of plugins: ${build.config.plugins.length}`); 
-      }
-    }
+        console.log(`Number of plugins: ${build.config.plugins.length}`);
+      },
+    },
   ],
 });
 ```

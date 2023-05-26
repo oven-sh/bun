@@ -45,7 +45,7 @@ describe("bun test", () => {
       expect(stderr).toContain("timed out after 5000ms");
     });
   });
-  describe("GITHUB_ACTIONS", () => {
+  describe("support for Github Actions", () => {
     test("should not group logs by default", () => {
       const stderr = runTest({
         env: {
@@ -138,6 +138,9 @@ describe("bun test", () => {
             expect(true).toBe(false);
           });
         `,
+        env: {
+          GITHUB_ACTIONS: undefined,
+        }
       });
       expect(stderr).not.toContain("::error");
     });
@@ -146,14 +149,31 @@ describe("bun test", () => {
         input: `
           import { test, expect } from "bun:test";
           test("fail", () => {
-            expect(true).toBe(false);
+            throw new Error();
           });
         `,
         env: {
           GITHUB_ACTIONS: "true",
         },
       });
-      expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+::/);
+      expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+::error/);
+    });
+    test("should annotate errors with escaped strings", () => {
+      const stderr = runTest({
+        input: `
+          import { test, expect } from "bun:test";
+          test("fail", () => {
+            expect(true).toBe(false);
+          });
+        `,
+        env: {
+          FORCE_COLOR: "1",
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+::error/);
+      expect(stderr).toMatch(/error: expect\(received\)\.toBe\(expected\)/); // stripped ansi
+      expect(stderr).toMatch(/0AExpected: false%0AReceived: true%0A/); // escaped newlines
     });
   });
 });

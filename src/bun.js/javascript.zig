@@ -2265,30 +2265,28 @@ pub const VirtualMachine = struct {
                 try writer.print(comptime Output.prettyFmt("\n::error::", false), .{});
             }
 
-            // Annotations must encode "\n" as "%0A" to support multi-line strings.
-            // https://github.com/actions/toolkit/issues/193#issuecomment-605394935
-            try this.printErrorNameAndMessageEscaped(name, message, Writer, writer);
+            try this.printErrorNameAndMessageAnnotation(name, message, Writer, writer);
 
             try writer.print(comptime Output.prettyFmt("\n", false), .{});
         }
     }
 
-    fn printErrorNameAndMessageEscaped(_: *VirtualMachine, name: ZigString, message: ZigString, comptime Writer: type, writer: Writer) !void {
+    fn printErrorNameAndMessageAnnotation(_: *VirtualMachine, name: ZigString, message: ZigString, comptime Writer: type, writer: Writer) !void {
         if (name.len > 0 and message.len > 0) {
             const display_name: ZigString = if (!name.is16Bit() and strings.eqlComptime(name.slice(), "Error")) ZigString.init("error") else name;
 
             try writer.print(comptime Output.prettyFmt("{s}: {s}", false), .{
-                bun.fmt.escapeEol(display_name.slice()),
-                bun.fmt.escapeEol(message.slice()),
+                strings.githubAction(display_name.slice()),
+                strings.githubAction(message.slice()),
             });
         } else if (name.len > 0) {
             if (name.is16Bit() or !strings.hasPrefixComptime(name.slice(), "error")) {
-                try writer.print(comptime Output.prettyFmt("error: {s}", false), .{bun.fmt.escapeEol(name.slice())});
+                try writer.print(comptime Output.prettyFmt("error: {s}", false), .{strings.githubAction(name.slice())});
             } else {
-                try writer.print(comptime Output.prettyFmt("{s}", false), .{bun.fmt.escapeEol(name.slice())});
+                try writer.print(comptime Output.prettyFmt("{s}", false), .{strings.githubAction(name.slice())});
             }
         } else if (message.len > 0) {
-            try writer.print(comptime Output.prettyFmt("error: {s}", false), .{bun.fmt.escapeEol(message.slice())});
+            try writer.print(comptime Output.prettyFmt("error: {s}", false), .{strings.githubAction(message.slice())});
         } else {
             try writer.print(comptime Output.prettyFmt("error", false), .{});
         }

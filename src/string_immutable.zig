@@ -689,25 +689,42 @@ pub fn endsWithAny(self: string, str: string) bool {
     return false;
 }
 
-pub fn escapeEolWriter(writer: anytype, self: string) !void {
+// Formats a string to be safe to output in a Github action.
+// - Encodes "\n" as "%0A" to support multi-line strings.
+//   https://github.com/actions/toolkit/issues/193#issuecomment-605394935
+// - Strips ANSI output as it will appear malformed.
+pub fn githubActionWriter(writer: anytype, self: string) !void {
     var offset: usize = 0;
     const end = @truncate(u32, self.len);
     while (offset < end) {
-        if (strings.indexOfNewlineOrNonASCII(self, @truncate(u32, offset))) |i| {
+        if (indexOfNewlineOrNonASCIIOrANSI(self, @truncate(u32, offset))) |i| {
             const byte = self[i];
             if (byte > 0x7F) {
-                offset += @max(strings.wtf8ByteSequenceLength(byte), 1);
+                offset += @max(wtf8ByteSequenceLength(byte), 1);
                 continue;
             }
             if (i > 0) {
                 try writer.writeAll(self[offset..i]);
+            }
+            var n: usize = 1;
+            if (byte == '\n') {
                 try writer.writeAll("%0A");
+            } else if (i + 1 < end) {
+                const next = self[i + 1];
+                if (byte == '\r' and next == '\n') {
+                    n += 1;
+                    try writer.writeAll("%0A");
+                } else if (byte == '\x1b' and next == '[') {
+                    n += 1;
+                    if (i + 2 < end) {
+                        const remain = self[(i + 2)..@min(i + 5, end)];
+                        if (indexOfChar(remain, 'm')) |j| {
+                            n += j + 1;
+                        }
+                    }
+                }
             }
-            if (byte == '\r' and i + 1 < self.len and self[i + 1] == '\n') {
-                offset = i + 2;
-            } else {
-                offset = i + 1;
-            }
+            offset = i + n;
         } else {
             try writer.writeAll(self[offset..end]);
             break;
@@ -715,13 +732,19 @@ pub fn escapeEolWriter(writer: anytype, self: string) !void {
     }
 }
 
-pub const EscapeEolFormatter = struct {
+pub const GithubActionFormatter = struct {
     text: string,
 
-    pub fn format(this: EscapeEolFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try strings.escapeEolWriter(writer, this.text);
+    pub fn format(this: GithubActionFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try githubActionWriter(writer, this.text);
     }
 };
+
+pub fn githubAction(self: string) strings.GithubActionFormatter {
+    return GithubActionFormatter{
+        .text = self,
+    };
+}
 
 pub fn quotedWriter(writer: anytype, self: string) !void {
     var remain = self;
@@ -3207,6 +3230,44 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
         if (char.* > 127) {
             // try to prevent it from reading the length of the slice
             return @truncate(u32, @ptrToInt(char) - @ptrToInt(slice.ptr));
+        }
+    }
+
+    return null;
+}
+
+pub fn indexOfNewlineOrNonASCIIOrANSI(slice_: []const u8, offset: u32) ?u32 {
+    const slice = slice_[offset..];
+    var remaining = slice;
+
+    if (remaining.len == 0)
+        return null;
+
+    if (comptime Environment.enableSIMD) {
+        while (remaining.len >= ascii_vector_size) {
+            const vec: AsciiVector = remaining[0..ascii_vector_size].*;
+            const cmp = @bitCast(AsciiVectorU1, (vec > max_16_ascii)) | @bitCast(AsciiVectorU1, (vec < min_16_ascii)) |
+                @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '\r'))) |
+                @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '\n'))) |
+                @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '\x1b')));
+
+            if (@reduce(.Max, cmp) > 0) {
+                const bitmask = @bitCast(AsciiVectorInt, cmp);
+                const first = @ctz(bitmask);
+
+                return @as(u32, first) + @intCast(u32, slice.len - remaining.len) + offset;
+            }
+
+            remaining = remaining[ascii_vector_size..];
+        }
+
+        if (comptime Environment.allow_assert) std.debug.assert(remaining.len < ascii_vector_size);
+    }
+
+    for (remaining) |*char_| {
+        const char = char_.*;
+        if (char > 127 or char < 0x20 or char == '\n' or char == '\r' or char == '\x1b') {
+            return @truncate(u32, (@ptrToInt(char_) - @ptrToInt(slice.ptr))) + offset;
         }
     }
 

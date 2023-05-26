@@ -668,7 +668,7 @@ declare module "bun" {
      */
     lastModified: number;
     /**
-     * A UNIX timestamp indicating when the file was last modified.
+     * The name or path of the file, as specified in the constructor.
      */
     name?: number;
   }

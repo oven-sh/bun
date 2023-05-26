@@ -1,11 +1,114 @@
-import { join } from "node:path";
+import { join, resolve, dirname } from "node:path";
 import { tmpdir } from "node:os";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
 import { spawnSync } from "bun";
 import { describe, test, expect } from "bun:test";
 import { bunExe, bunEnv } from "harness";
 
 describe("bun test", () => {
+  test("can provide no arguments", () => {
+    const stderr = runTest({
+      args: [],
+      input: [
+        `
+          import { test, expect } from "bun:test";
+          test("test #1", () => {
+            expect(true).toBe(true);
+          });
+        `,
+        `
+          import { test, expect } from "bun:test";
+          test.todo("test #2");
+        `,
+        `
+          import { test, expect } from "bun:test";
+          test("test #3", () => {
+            expect(true).toBe(false);
+          });
+        `,
+      ],
+    });
+    expect(stderr).toContain("test #1");
+    expect(stderr).toContain("test #2");
+    expect(stderr).toContain("test #3");
+  });
+  test("can provide a relative file", () => {
+    const path = join("path", "to", "relative.test.ts");
+    const cwd = createTest(
+      `
+      import { test, expect } from "bun:test";
+      test("${path}", () => {
+        expect(true).toBe(true);
+      });
+    `,
+      path,
+    );
+    const stderr = runTest({
+      cwd,
+      args: [path],
+    });
+    expect(stderr).toContain(path);
+  });
+  // This fails on macOS because /private/var symlinks to /var
+  test.todo("can provide an absolute file", () => {
+    const path = join("path", "to", "absolute.test.ts");
+    const cwd = createTest(
+      `
+      import { test, expect } from "bun:test";
+      test("${path}", () => {
+        expect(true).toBe(true);
+      });
+    `,
+      path,
+    );
+    const absolutePath = resolve(cwd, path);
+    const stderr = runTest({
+      cwd,
+      args: [absolutePath],
+    });
+    expect(stderr).toContain(path);
+  });
+  test("can provide a relative path to a directory", () => {
+    const path = join("path", "to", "relative.test.ts");
+    const dir = dirname(path);
+    const cwd = createTest(
+      `
+      import { test, expect } from "bun:test";
+      test("${dir}", () => {
+        expect(true).toBe(true);
+      });
+    `,
+      path,
+    );
+    const stderr = runTest({
+      cwd,
+      args: [dir],
+    });
+    expect(stderr).toContain(dir);
+  });
+  test.todo("can provide an absolute path to a directory", () => {
+    const path = join("path", "to", "absolute.test.ts");
+    const cwd = createTest(
+      `
+      import { test, expect } from "bun:test";
+      test("${path}", () => {
+        expect(true).toBe(true);
+      });
+    `,
+      path,
+    );
+    const absoluteDir = resolve(cwd, dirname(path));
+    const stderr = runTest({
+      cwd,
+      args: [absoluteDir],
+    });
+    expect(stderr).toContain(path);
+  });
+  test.todo("can provide a mixture of paths");
+  describe("--rerun-each", () => {
+    test.todo("can rerun with a default value");
+    test.todo("can rerun with a provided value");
+  });
   describe("--timeout", () => {
     test("must provide a number timeout", () => {
       const stderr = runTest({
@@ -178,21 +281,33 @@ describe("bun test", () => {
   });
 });
 
+function createTest(input?: string | string[], filename?: string): string {
+  const cwd = mkdtempSync(join(tmpdir(), "bun-test-"));
+  const inputs = Array.isArray(input) ? input : [input ?? ""];
+  for (const input of inputs) {
+    const path = join(cwd, filename ?? `bun-test-${Math.random()}.test.ts`);
+    try {
+      writeFileSync(path, input);
+    } catch {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, input);
+    }
+  }
+  return cwd;
+}
+
 function runTest({
   input = "",
+  cwd,
   args = [],
   env = {},
 }: {
   input?: string | string[];
+  cwd?: string;
   args?: string[];
   env?: Record<string, string>;
 } = {}): string {
-  const cwd = mkdtempSync(join(tmpdir(), "bun-test-"));
-  const inputs = Array.isArray(input) ? input : [input];
-  for (const input of inputs) {
-    const path = join(cwd, `bun-test-${Math.random()}.test.ts`);
-    writeFileSync(path, input);
-  }
+  cwd ??= createTest(input);
   try {
     const { stderr } = spawnSync({
       cwd,

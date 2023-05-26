@@ -338,6 +338,16 @@ const Scanner = struct {
         if (this.filter_names.len == 0) return true;
 
         for (this.filter_names) |filter_name| {
+            if (strings.startsWith(name, filter_name)) return true;
+        }
+
+        return false;
+    }
+
+    pub fn doesPathMatchFilter(this: *Scanner, name: string) bool {
+        if (this.filter_names.len == 0) return true;
+
+        for (this.filter_names) |filter_name| {
             if (strings.contains(name, filter_name)) return true;
         }
 
@@ -345,7 +355,7 @@ const Scanner = struct {
     }
 
     pub fn isTestFile(this: *Scanner, name: string) bool {
-        return this.couldBeTestFile(name) and this.doesAbsolutePathMatchFilter(name);
+        return this.couldBeTestFile(name) and this.doesPathMatchFilter(name);
     }
 
     pub fn next(this: *Scanner, entry: *FileSystem.Entry, fd: bun.StoredFileDescriptorType) void {
@@ -379,7 +389,10 @@ const Scanner = struct {
                 var parts = &[_]string{ entry.dir, entry.base() };
                 const path = this.fs.absBuf(parts, &this.open_dir_buf);
 
-                if (!this.doesAbsolutePathMatchFilter(path)) return;
+                if (!this.doesAbsolutePathMatchFilter(path)) {
+                    const rel_path = bun.path.relative(this.fs.top_level_dir, path);
+                    if (!this.doesPathMatchFilter(rel_path)) return;
+                }
 
                 entry.abs_path = bun.PathString.init(this.fs.filename_store.append(@TypeOf(path), path) catch unreachable);
                 this.results.append(entry.abs_path) catch unreachable;

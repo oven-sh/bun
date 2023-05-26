@@ -140,7 +140,7 @@ describe("bun test", () => {
         `,
         env: {
           GITHUB_ACTIONS: undefined,
-        }
+        },
       });
       expect(stderr).not.toContain("::error");
     });

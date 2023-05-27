@@ -141,9 +141,18 @@ describe("expect()", () => {
       new Uint8Array(),
       new Object(),
       Buffer.from(""),
+      Bun.file("/tmp/empty.txt"),
+      new Headers(),
+      new URLSearchParams(),
+      new FormData(),
+      (function* () {})(),
     ];
     for (const value of values) {
       test(label(value), () => {
+        if (value && typeof value === "object" && value instanceof Blob) {
+          require("fs").writeFileSync("/tmp/empty.txt", "");
+        }
+
         expect(value).toBeEmpty();
       });
     }
@@ -161,9 +170,24 @@ describe("expect()", () => {
       new Array(1),
       new Uint8Array(1),
       Buffer.from(" "),
+      Bun.file(import.meta.path),
+      new Headers({
+        a: "b",
+        c: "d",
+      }),
+      new URL("https://example.com?d=e&f=g").searchParams,
+      (() => {
+        var a = new FormData();
+        a.append("a", "b");
+        a.append("c", "d");
+        return a;
+      })(),
+      (function* () {
+        yield "123";
+      })(),
     ];
     for (const value of values) {
-      test(label(value), () => {
+      test.only(label(value), () => {
         expect(value).not.toBeEmpty();
       });
     }

@@ -224,7 +224,7 @@ export default {
     }),
 
     divider("API"),
-    page("api/http", "HTTP", {
+    page("api/http", "HTTP server", {
       description: `Bun implements Web-standard fetch, plus a Bun-native API for building fast HTTP servers.`,
     }), // "`Bun.serve`"),
     page("api/websockets", "WebSockets", {
@@ -239,19 +239,22 @@ export default {
     page("api/file-io", "File I/O", {
       description: `Read and write files fast with Bun's heavily optimized file system API.`,
     }), // "`Bun.write`"),
+    page("api/import-meta", "import.meta", {
+      description: `Module-scoped metadata and utilities`,
+    }), // "`bun:sqlite`"),
     page("api/sqlite", "SQLite", {
       description: `The fastest SQLite driver for JavaScript is baked directly into Bun.`,
     }), // "`bun:sqlite`"),
     page("api/file-system-router", "FileSystemRouter", {
       description: `Resolve incoming HTTP requests against a local file system directory with Bun's fast, Next.js-compatible router.`,
     }), // "`Bun.FileSystemRouter`"),
-    page("api/tcp", "TCP Sockets", {
+    page("api/tcp", "TCP sockets", {
       description: `Bun's native API implements Web-standard TCP Sockets, plus a Bun-native API for building fast TCP servers.`,
     }), // "`Bun.{listen|connect}`")
     page("api/globals", "Globals", {
       description: `Bun implements a range of Web APIs, Node.js APIs, and Bun-native APIs that are available in the global scope.`,
     }), // "`Bun.write`"),
-    page("api/spawn", "Spawn", {
+    page("api/spawn", "Child processes", {
       description: `Spawn sync and async child processes with easily configurable input and output streams.`,
     }), // "`Bun.spawn`"),
     page("api/transpiler", "Transpiler", {

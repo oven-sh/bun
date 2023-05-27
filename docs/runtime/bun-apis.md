@@ -1,4 +1,16 @@
-Bun implements a set of native APIs on the `Bun` global object and through a number of built-in modules. These APIs represent the canonical "Bun-native" way to perform some common development tasks. They are all heavily optimized for performance. Click the link in the left column to view the associated documentation.
+Bun implements a set of native APIs on the `Bun` global object and through a number of built-in modules. These APIs are heavily optimized and represent the canonical "Bun-native" way to implement some common functionality.
+
+Bun strives to implement standard Web APIs wherever possible. Bun introduces new APIs primarily for server-side tasks where no standard exists, such as file I/O and starting an HTTP server. In these cases, Bun's approach still builds atop standard APIs like `Blob`, `URL`, and `Request`.
+
+```ts
+Bun.serve({
+  fetch(req: Request) {
+    return new Response("Success!");
+  },
+});
+```
+
+Click the link in the right column to jump to the associated documentation.
 
 {% table %}
 
@@ -7,38 +19,53 @@ Bun implements a set of native APIs on the `Bun` global object and through a num
 
 ---
 
-- [HTTP](/docs/api/http)
-- `Bun.serve`
+- HTTP server
+- [`Bun.serve`](/docs/api/http#bun-serve)
 
 ---
 
-- [File I/O](/docs/api/file-io)
-- `Bun.file` `Bun.write`
+- Bundler
+- [`Bun.build`](/docs/bundler)
 
 ---
 
-- [Processes](/docs/api/spawn)
-- `Bun.spawn` `Bun.spawnSync`
+- File I/O
+- [`Bun.file`](/docs/api/file-io#reading-files-bun-file) [`Bun.write`](/docs/api/file-io#writing-files-bun-write)
 
 ---
 
-- [TCP](/docs/api/tcp)
-- `Bun.listen` `Bun.connect`
+- Child processes
+- [`Bun.spawn`](/docs/api/spawn#spawn-a-process-bun-spawn) [`Bun.spawnSync`](/docs/api/spawn#blocking-api-bun-spawnsync)
 
 ---
 
-- [Transpiler](/docs/api/transpiler)
-- `Bun.Transpiler`
+- TCP
+- [`Bun.listen`](/docs/api/tcp#start-a-server-bun-listen) [`Bun.connect`](/docs/api/tcp#start-a-server-bun-listen)
 
 ---
 
-- [Routing](/docs/api/file-system-router)
-- `Bun.FileSystemRouter`
+- Transpiler
+- [`Bun.Transpiler`](/docs/api/transpiler)
 
 ---
 
-- [HTMLRewriter](/docs/api/html-rewriter)
-- `HTMLRewriter`
+- Routing
+- [`Bun.FileSystemRouter`](/docs/api/file-system-router)
+
+---
+
+- HTML Rewriting
+- [`HTMLRewriter`](/docs/api/html-rewriter)
+
+---
+
+- Hashing
+- [`Bun.hash`](/docs/api/hashing#bun-hash) [`Bun.CryptoHasher`](/docs/api/hashing#bun-cryptohasher)
+
+---
+
+- import.meta
+- [`import.meta`](/docs/api/import-meta)
 
 ---
 
@@ -47,29 +74,27 @@ Bun implements a set of native APIs on the `Bun` global object and through a num
 
 --- -->
 
-- [Utils](/docs/api/utils)
-- `Bun.peek` `Bun.which`
+- SQLite
+- [`bun:sqlite`](/docs/api/sqlite)
 
 ---
 
-- [SQLite](/docs/api/sqlite)
-- `bun:sqlite`
+- FFI
+- [`bun:ffi`](/docs/api/ffi)
 
 ---
 
-- [FFI](/docs/api/ffi)
-- `bun:ffi`
+- Testing
+- [`bun:test`](/docs/cli/test)
 
 ---
 
-- [Testing](/docs/api/test)
-- `bun:test`
+- Node-API
+- [`Node-API`](/docs/api/node-api)
 
 ---
 
-- [Node-API](/docs/api/node-api)
-- `Node-API`
-
----
+- Utilities
+- [`Bun.version`](/docs/api/utils#bun-version) [`Bun.revision`](/docs/api/utils#bun-revision) [`Bun.env`](/docs/api/utils#bun-env) [`Bun.main`](/docs/api/utils#bun-main) [`Bun.sleep()`](/docs/api/utils#bun-sleep) [`Bun.sleepSync()`](/docs/api/utils#bun-sleepsync) [`Bun.which()`](/docs/api/utils#bun-which) [`Bun.peek()`](/docs/api/utils#bun-peek) [`Bun.openInEditor()`](/docs/api/utils#bun-openineditor) [`Bun.deepEquals()`](/docs/api/utils#bun-deepequals) [`Bun.escapeHTML()`](/docs/api/utils#bun-escapehtlm) [`Bun.enableANSIColors()`](/docs/api/utils#bun-enableansicolors) [`Bun.fileURLToPath()`](/docs/api/utils#bun-fileurltopath) [`Bun.pathToFileURL()`](/docs/api/utils#bun-pathtofileurl) [`Bun.gzipSync()`](/docs/api/utils#bun-gzipsync) [`Bun.gunzipSync()`](/docs/api/utils#bun-gunzipsync) [`Bun.deflateSync()`](/docs/api/utils#bun-deflatesync) [`Bun.inflateSync()`](/docs/api/utils#bun-inflatesync) [`Bun.inspect()`](/docs/api/utils#bun-inspect) [`Bun.nanoseconds()`](/docs/api/utils#bun-nanoseconds) [`Bun.readableStreamTo*()`](/docs/api/utils#bun-readablestreamto) [`Bun.resolveSync()`](/docs/api/utils#bun-resolvesync)
 
 {% /table %}

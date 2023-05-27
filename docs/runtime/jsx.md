@@ -14,7 +14,9 @@ console.log(<Component message="Hello world!" />);
 
 ## Configuration
 
-Bun reads the `tsconfig.json` to determine how to perform the JSX transform. The following options are respected.
+Bun reads your `tsconfig.json` or `jsconfig.json` configuration files to determines how to perform the JSX transform internally. To avoid using either of these, the following options can also be defined in [`bunfig.json`](/docs/runtime/configuration).
+
+The following compiler options are respected.
 
 ### [`jsx`](https://www.typescriptlang.org/tsconfig#jsx)
 
@@ -277,12 +279,22 @@ All of these values can be set on a per-file basis using _pragmas_. A pragma is 
 
 ## Logging
 
-Bun implements special logging for JSX to make debugging easier.
+Bun implements special logging for JSX to make debugging easier. Given the following file:
 
-```bash
-$ bun run react.tsx
-<Component message="Hello world!" />
+```tsx#index.tsx
+import { Stack, UserCard } from "./components";
+
+console.log(
+  <Stack>
+    <UserCard name="Dom" bio="Street racer and Corona lover" />
+    <UserCard name="Jakob" bio="Super spy and Dom's secret brother" />
+  </Stack>
+);
 ```
+
+Bun will pretty-print the component tree when logged:
+
+{% image src="https://github.com/oven-sh/bun/assets/3084745/d29db51d-6837-44e2-b8be-84fc1b9e9d97" / %}
 
 ## Prop punning
 

@@ -121,7 +121,7 @@ Bun respects subpath [`"exports"`](https://nodejs.org/api/packages.html#subpath-
   "name": "foo",
   "exports": {
     ".": "./index.js",
-    "./package.json": "./package.json" # subpath
+    "./package.json": "./package.json" // subpath
   }
 }
 ```

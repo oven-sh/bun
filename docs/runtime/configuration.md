@@ -25,6 +25,60 @@ If both a global and local `bunfig` are detected, the results are shallow-merged
 # scripts to run before `bun run`ning a file or script
 # useful for registering plugins
 preload = ["./preload.ts"]
+
+# equivalent to corresponding tsconfig compilerOptions
+jsx = "react"
+jsxFactory = "h"
+jsxFragment = "Fragment"
+jsxImportSource = "react"
+
+# Set a default framework to use
+# By default, Bun will look for an npm package like `bun-framework-${framework}`, followed by `${framework}`
+logLevel = "debug"
+
+# publicDir = "public"
+# external = ["jquery"]
+
+[macros]
+# Remap any import like this:
+#     import {graphql} from 'react-relay';
+# To:
+#     import {graphql} from 'macro:bun-macro-relay';
+react-relay = { "graphql" = "bun-macro-relay" }
+
+[define]
+# Replace any usage of "process.env.bagel" with the string `lox`.
+# The values are parsed as JSON, except single-quoted strings are supported and `'undefined'` becomes `undefined` in JS.
+# This will probably change in a future release to be just regular TOML instead. It is a holdover from the CLI argument parsing.
+"process.env.bagel" = "'lox'"
+
+[loaders]
+# When loading a .bagel file, run the JS parser
+".bagel" = "js"
+# - "atom"
+# If you pass it a file path, it will open with the file path instead
+# It will recognize non-GUI editors, but I don't think it will work yet
+```
+
+### Debugging
+
+```toml
+[debug]
+# When navigating to a blob: or src: link, open the file in your editor
+# If not, it tries $EDITOR or $VISUAL
+# If that still fails, it will try Visual Studio Code, then Sublime Text, then a few others
+# This is used by Bun.openInEditor()
+editor = "code"
+
+# List of editors:
+# - "subl", "sublime"
+# - "vscode", "code"
+# - "textmate", "mate"
+# - "idea"
+# - "webstorm"
+# - "nvim", "neovim"
+# - "vim","vi"
+# - "emacs"
 ```
 
 ## Test runner
@@ -136,7 +190,9 @@ save = true
 print = "yarn"
 ```
 
-## Dev server
+## Dev server (`bun dev`)
+
+{% The `bun dev` command is likely to change soon and will likely be deprecated in an upcoming release. We recommend %}
 
 Here is an example:
 
@@ -144,17 +200,6 @@ Here is an example:
 # Set a default framework to use
 # By default, Bun will look for an npm package like `bun-framework-${framework}`, followed by `${framework}`
 framework = "next"
-logLevel = "debug"
-
-# publicDir = "public"
-# external = ["jquery"]
-
-[macros]
-# Remap any import like this:
-#     import {graphql} from 'react-relay';
-# To:
-#     import {graphql} from 'macro:bun-macro-relay';
-react-relay = { "graphql" = "bun-macro-relay" }
 
 [bundle]
 saveTo = "node_modules.bun"
@@ -170,33 +215,4 @@ entryPoints = ["./app/index.ts"]
 # Also inherited by Bun.serve
 port = 5000
 
-[define]
-# Replace any usage of "process.env.bagel" with the string `lox`.
-# The values are parsed as JSON, except single-quoted strings are supported and `'undefined'` becomes `undefined` in JS.
-# This will probably change in a future release to be just regular TOML instead. It is a holdover from the CLI argument parsing.
-"process.env.bagel" = "'lox'"
-
-[loaders]
-# When loading a .bagel file, run the JS parser
-".bagel" = "js"
-
-[debug]
-# When navigating to a blob: or src: link, open the file in your editor
-# If not, it tries $EDITOR or $VISUAL
-# If that still fails, it will try Visual Studio Code, then Sublime Text, then a few others
-# This is used by Bun.openInEditor()
-editor = "code"
-
-# List of editors:
-# - "subl", "sublime"
-# - "vscode", "code"
-# - "textmate", "mate"
-# - "idea"
-# - "webstorm"
-# - "nvim", "neovim"
-# - "vim","vi"
-# - "emacs"
-# - "atom"
-# If you pass it a file path, it will open with the file path instead
-# It will recognize non-GUI editors, but I don't think it will work yet
 ```

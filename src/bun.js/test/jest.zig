@@ -3511,6 +3511,7 @@ pub const TestScope = struct {
                 function = .zero;
             }
         } else if (tag == .skip) {
+            function = .zero;
             DescribeScope.active.skipped_counter += 1;
         }
 

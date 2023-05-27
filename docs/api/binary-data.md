@@ -964,8 +964,10 @@ new Response(stream)
 
 #### To `ReadableStream`
 
+To split a `ReadableStream` into two streams that can be consumed independently:
+
 ```ts
-stream.clone();
+const [a, b] = stream.tee();
 ```
 
 <!-- - Use Buffer

@@ -2190,6 +2190,30 @@ pub const ZigConsoleClient = struct {
                     } else if (value.as(JSC.ResolveMessage)) |resolve_log| {
                         resolve_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
                         return;
+                    } else if (value.as(JSC.Jest.ExpectAnything) != null) {
+                        writer.writeAll("expect.anything");
+                        return;
+                    } else if (value.as(JSC.Jest.ExpectAny) != null) {
+                        writer.writeAll("expect.any<");
+                        const constructor_value = JSC.Jest.ExpectAny.constructorValueGetCached(value) orelse .zero;
+                        var class_name = ZigString.init(&name_buf);
+                        constructor_value.getClassName(this.globalThis, &class_name);
+                        this.addForNewLine(class_name.len);
+                        writer.print(comptime Output.prettyFmt("<cyan>{}<r>", enable_ansi_colors), .{class_name});
+                        writer.writeAll(">");
+                        return;
+                    } else if (value.as(JSC.Jest.ExpectStringContaining) != null) {
+                        const substring_value = JSC.Jest.ExpectStringContaining.stringValueGetCached(value) orelse .zero;
+                        writer.writeAll("expect.stringContaining(");
+                        this.printAs(.String, Writer, writer_, substring_value, .String, enable_ansi_colors);
+                        writer.writeAll(")");
+                        return;
+                    } else if (value.as(JSC.Jest.ExpectStringMatching) != null) {
+                        const test_value = JSC.Jest.ExpectStringMatching.testValueGetCached(value) orelse .zero;
+                        writer.writeAll("expect.stringMatching(");
+                        this.printAs(.String, Writer, writer_, test_value, .String, enable_ansi_colors);
+                        writer.writeAll(")");
+                        return;
                     } else if (jsType != .DOMWrapper) {
                         if (value.isCallable(this.globalThis.vm())) {
                             return this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors);

@@ -3044,6 +3044,7 @@ pub const Expect = struct {
     pub const PropertyMatcherIterator = struct {
         received_object: JSValue,
         failed: bool = false,
+        fail_on_asymmetric_matcher: bool = false,
         i: usize = 0,
 
         pub fn forEach(
@@ -3063,6 +3064,12 @@ pub const Expect = struct {
 
             if (received_object.get(globalObject, key.slice())) |received_value| {
                 if (ExpectAnything.fromJS(value) != null) {
+                    if (!received_value.isUndefinedOrNull()) {
+                        return;
+                    }
+
+                    ctx.failed = true;
+                    ctx.fail_on_asymmetric_matcher = true;
                     return;
                 } else if (ExpectAny.fromJS(value) != null) {
                     var constructor_value = ExpectAny.constructorValueGetCached(value) orelse {
@@ -3098,6 +3105,7 @@ pub const Expect = struct {
                     }
 
                     ctx.failed = true;
+                    ctx.fail_on_asymmetric_matcher = true;
                     return;
                 } else if (ExpectStringContaining.fromJS(value) != null) {
                     var expected_substring = ExpectStringContaining.stringValueGetCached(value) orelse {
@@ -3113,6 +3121,7 @@ pub const Expect = struct {
                     }
 
                     ctx.failed = true;
+                    ctx.fail_on_asymmetric_matcher = true;
                     return;
                 } else if (ExpectStringMatching.fromJS(value) != null) {
                     const test_value = ExpectStringMatching.testValueGetCached(value) orelse {
@@ -3128,6 +3137,7 @@ pub const Expect = struct {
                     }
 
                     ctx.failed = true;
+                    ctx.fail_on_asymmetric_matcher = true;
                     return;
                 }
 
@@ -3348,7 +3358,7 @@ pub const Expect = struct {
             .received = received_object,
             .expected = property_matchers,
             .globalObject = globalObject,
-            .not = not,
+            .not = if (itr.fail_on_asymmetric_matcher) false else not,
         };
 
         if (not) {

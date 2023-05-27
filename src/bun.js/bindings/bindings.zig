@@ -432,10 +432,22 @@ pub const ZigString = extern struct {
     }
 
     pub inline fn utf16Slice(this: *const ZigString) []align(1) const u16 {
+        if (comptime bun.Environment.allow_assert) {
+            if (this.len > 0 and !this.is16Bit()) {
+                @panic("ZigString.utf16Slice() called on a latin1 string.\nPlease use .toSlice() instead or carefully check that .is16Bit() is false first.");
+            }
+        }
+
         return @ptrCast([*]align(1) const u16, untagged(this.ptr))[0..this.len];
     }
 
     pub inline fn utf16SliceAligned(this: *const ZigString) []const u16 {
+        if (comptime bun.Environment.allow_assert) {
+            if (this.len > 0 and !this.is16Bit()) {
+                @panic("ZigString.utf16SliceAligned() called on a latin1 string.\nPlease use .toSlice() instead or carefully check that .is16Bit() is false first.");
+            }
+        }
+
         return @ptrCast([*]const u16, @alignCast(@alignOf(u16), untagged(this.ptr)))[0..this.len];
     }
 
@@ -596,6 +608,12 @@ pub const ZigString = extern struct {
     }
 
     pub fn slice(this: *const ZigString) []const u8 {
+        if (comptime bun.Environment.allow_assert) {
+            if (this.len > 0 and this.is16Bit()) {
+                @panic("ZigString.slice() called on a UTF-16 string.\nPlease use .toSlice() instead or carefully check that .is16Bit() is false first.");
+            }
+        }
+
         return untagged(this.ptr)[0..@min(this.len, std.math.maxInt(u32))];
     }
 

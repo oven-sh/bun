@@ -898,6 +898,11 @@ pub const Jest = struct {
         );
         test_fn.put(
             globalObject,
+            ZigString.static("runIf"),
+            JSC.NewFunction(globalObject, ZigString.static("runIf"), 2, TestScope.runIf, false),
+        );
+        test_fn.put(
+            globalObject,
             ZigString.static("only"),
             JSC.NewFunction(globalObject, ZigString.static("only"), 2, TestScope.only, false),
         );
@@ -3461,6 +3466,26 @@ pub const TestScope = struct {
         }
 
         return JSC.NewFunction(globalThis, ZigString.static("skipIf"), 2, TestScope.call, false);
+    }
+
+    pub fn runIf(
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        const arguments = callframe.arguments(1);
+        const args: []const JSValue = arguments.ptr[0..arguments.len];
+
+        if (args.len == 0) {
+            globalThis.throwPretty("test.runIf() expects a condition", .{});
+            return .zero;
+        }
+
+        // TODO: should pass comptime signature to TestScope.{skip,call}
+        if (args[0].toBooleanSlow(globalThis)) {
+            return JSC.NewFunction(globalThis, ZigString.static("runIf"), 2, TestScope.call, false);
+        }
+
+        return JSC.NewFunction(globalThis, ZigString.static("runIf"), 2, TestScope.skip, false);
     }
 
     pub fn todo(

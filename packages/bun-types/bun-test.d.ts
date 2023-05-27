@@ -238,6 +238,22 @@ declare module "bun:test" {
       options?: number | TestOptions,
     ) => void;
     /**
+     * Runs this test, if `condition` is true.
+     *
+     * This is the opposite of `test.skipIf()`.
+     *
+     * @param condition if the test should be skipped
+     */
+    runIf(
+      condition: boolean,
+    ): (
+      label: string,
+      fn:
+        | (() => void | Promise<unknown>)
+        | ((done: (err?: unknown) => void) => void),
+      options?: number | TestOptions,
+    ) => void;
+    /**
      * Indicate a test is yet to be written or implemented correctly.
      *
      * When a test function is passed, it will be marked as `todo` in the test results

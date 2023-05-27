@@ -2933,5 +2933,5 @@ it("skip() and skipIf()", () => {
   const result = stdout!.toString();
   expect(result).not.toContain("unreachable");
   expect(result).toMatch(/reachable/);
-  expect(result.match(/reachable/g)).toHaveLength(4);
+  expect(result.match(/reachable/g)).toHaveLength(6);
 });

@@ -9,7 +9,6 @@ type Handler = (req: Request) => Response;
 afterEach(() => gc(true));
 
 const count = 200;
-let port = 10000;
 let server: Server | undefined;
 
 async function runTest({ port, ...serverOptions }: Serve<any>, test: (server: Server) => Promise<void> | void) {

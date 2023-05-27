@@ -187,7 +187,7 @@ describe("expect()", () => {
       })(),
     ];
     for (const value of values) {
-      test.only(label(value), () => {
+      test(label(value), () => {
         expect(value).not.toBeEmpty();
       });
     }

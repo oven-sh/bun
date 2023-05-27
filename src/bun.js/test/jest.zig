@@ -893,6 +893,11 @@ pub const Jest = struct {
         );
         test_fn.put(
             globalObject,
+            ZigString.static("skipIf"),
+            JSC.NewFunction(globalObject, ZigString.static("skipIf"), 2, TestScope.skipIf, false),
+        );
+        test_fn.put(
+            globalObject,
             ZigString.static("only"),
             JSC.NewFunction(globalObject, ZigString.static("only"), 2, TestScope.only, false),
         );
@@ -907,6 +912,11 @@ pub const Jest = struct {
             globalObject,
             ZigString.static("skip"),
             JSC.NewFunction(globalObject, ZigString.static("skip"), 2, DescribeScope.skip, false),
+        );
+        describe.put(
+            globalObject,
+            ZigString.static("skipIf"),
+            JSC.NewFunction(globalObject, ZigString.static("skipIf"), 2, DescribeScope.skipIf, false),
         );
 
         module.put(
@@ -3433,6 +3443,26 @@ pub const TestScope = struct {
         return thisValue;
     }
 
+    pub fn skipIf(
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        const arguments = callframe.arguments(1);
+        const args: []const JSValue = arguments.ptr[0..arguments.len];
+
+        if (args.len == 0) {
+            globalThis.throwPretty("test.skipIf() expects a condition", .{});
+            return .zero;
+        }
+
+        // TODO: should pass comptime signature to TestScope.{skip,call}
+        if (args[0].toBooleanSlow(globalThis)) {
+            return JSC.NewFunction(globalThis, ZigString.static("skipIf"), 2, TestScope.skip, false);
+        }
+
+        return JSC.NewFunction(globalThis, ZigString.static("skipIf"), 2, TestScope.call, false);
+    }
+
     pub fn todo(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
@@ -3930,6 +3960,26 @@ pub const DescribeScope = struct {
         const arguments = callframe.arguments(3);
         var this: *DescribeScope = DescribeScope.module;
         return runDescribe(this, globalThis, arguments.ptr[0..arguments.len], true);
+    }
+
+    pub fn skipIf(
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        const arguments = callframe.arguments(1);
+        const args: []const JSValue = arguments.ptr[0..arguments.len];
+
+        if (args.len == 0) {
+            globalThis.throwPretty("describe.skipIf() expects a condition", .{});
+            return .zero;
+        }
+
+        // TODO: should pass comptime signature to DescribeScope.{skip,call}
+        if (args[0].toBooleanSlow(globalThis)) {
+            return JSC.NewFunction(globalThis, ZigString.static("skipIf"), 2, DescribeScope.skip, false);
+        }
+
+        return JSC.NewFunction(globalThis, ZigString.static("skipIf"), 2, DescribeScope.describe, false);
     }
 
     pub fn describe(

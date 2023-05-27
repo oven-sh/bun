@@ -33,7 +33,19 @@ declare module "bun:test" {
    */
   export type Describe = {
     (label: string, fn: () => void): void;
+    /**
+     * Skips this group of tests.
+     *
+     * @param label the label for the tests
+     * @param fn the function that defines the tests
+     */
     skip: (label: string, fn: () => void) => void;
+    /**
+     * Skips this group of tests, if `condition` is true.
+     *
+     * @param condition if these tests should be skipped
+     */
+    skipIf: (condition: boolean) => (label: string, fn: () => void) => void;
   };
   /**
    * Describes a group of related tests.
@@ -211,6 +223,20 @@ declare module "bun:test" {
         | ((done: (err?: unknown) => void) => void),
       options?: number | TestOptions,
     ): void;
+    /**
+     * Skips this test, if `condition` is true.
+     *
+     * @param condition if the test should be skipped
+     */
+    skipIf(
+      condition: boolean,
+    ): (
+      label: string,
+      fn:
+        | (() => void | Promise<unknown>)
+        | ((done: (err?: unknown) => void) => void),
+      options?: number | TestOptions,
+    ) => void;
     /**
      * Indicate a test is yet to be written or implemented correctly.
      *

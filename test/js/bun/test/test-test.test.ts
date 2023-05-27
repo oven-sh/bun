@@ -2919,3 +2919,19 @@ afterAll: #2
 `.trim(),
   );
 });
+
+it("skip() and skipIf()", () => {
+  const path = join(tmp, "skip-test-fixture.test.js");
+  copyFileSync(join(import.meta.dir, "skip-test-fixture.js"), path);
+  const { stdout } = spawnSync({
+    cmd: [bunExe(), "test", path],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+    cwd: realpathSync(dirname(path)),
+  });
+  const result = stdout!.toString();
+  expect(result).not.toContain("unreachable");
+  expect(result).toMatch(/reachable/);
+  expect(result.match(/reachable/g)).toHaveLength(4);
+});

@@ -122,6 +122,31 @@ declare module "bun:test" {
       | (() => void | Promise<unknown>)
       | ((done: (err?: unknown) => void) => void),
   ): void;
+  export type TestOptions = {
+    /**
+     * Sets the timeout for the test in milliseconds.
+     *
+     * If the test does not complete within this time, the test will fail with:
+     * ```ts
+     * 'Timeout: test {name} timed out after 5000ms'
+     * ```
+     *
+     * @default 5000 // 5 seconds
+     */
+    timeout?: number;
+    /**
+     * Sets the number of times to retry the test if it fails.
+     *
+     * @default 0
+     */
+    retry?: number;
+    /**
+     * Sets the number of times to repeat the test, regardless of whether it passed or failed.
+     *
+     * @default 0
+     */
+    repeats?: number;
+  };
   /**
    * Runs a test.
    *
@@ -135,8 +160,13 @@ declare module "bun:test" {
    *   expect(response.ok).toBe(true);
    * });
    *
+   * test("can set a timeout", async () => {
+   *   await Bun.sleep(100);
+   * }, 50); // or { timeout: 50 }
+   *
    * @param label the label for the test
    * @param fn the test function
+   * @param options the test timeout or options
    */
   export type Test = {
     (
@@ -145,14 +175,13 @@ declare module "bun:test" {
         | (() => void | Promise<unknown>)
         | ((done: (err?: unknown) => void) => void),
       /**
-       * @default 300_000 milliseconds (5 minutes)
-       *
-       * After this many milliseconds, the test will fail with an error message like:
-       * ```ts
-       * 'Timeout: test "name" timed out after 300_000ms'
-       * ```
+       * - If a `number`, sets the timeout for the test in milliseconds.
+       * - If an `object`, sets the options for the test.
+       *   - `timeout` sets the timeout for the test in milliseconds.
+       *   - `retry` sets the number of times to retry the test if it fails.
+       *   - `repeats` sets the number of times to repeat the test, regardless of whether it passed or failed.
        */
-      timeoutMs?: number,
+      options?: number | TestOptions,
     ): void;
     /**
      * Skips all other tests, except this test.
@@ -167,7 +196,7 @@ declare module "bun:test" {
       fn:
         | (() => void | Promise<unknown>)
         | ((done: (err?: unknown) => void) => void),
-      timeoutMs?: number,
+      options?: number | TestOptions,
     ): void;
     /**
      * Skips this test.
@@ -180,7 +209,7 @@ declare module "bun:test" {
       fn:
         | (() => void | Promise<unknown>)
         | ((done: (err?: unknown) => void) => void),
-      timeoutMs?: number,
+      options?: number | TestOptions,
     ): void;
     /**
      * Indicate a test is yet to be written or implemented correctly.
@@ -198,6 +227,7 @@ declare module "bun:test" {
       fn?:
         | (() => void | Promise<unknown>)
         | ((done: (err?: unknown) => void) => void),
+      options?: number | TestOptions,
     ): void;
   };
   /**

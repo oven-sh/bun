@@ -15928,8 +15928,6 @@ fn NewParser_(
                                         if (!define.data.valueless) {
                                             return p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &define.data);
                                         }
-
-                                        return p.newExpr(E.Undefined{}, expr.loc);
                                     }
                                 }
                             }

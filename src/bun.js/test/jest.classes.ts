@@ -121,10 +121,6 @@ export default [
         fn: "toBeCloseTo",
         length: 1,
       },
-      toBeEven: {
-        fn: "toBeEven",
-        length: 0,
-      },
       toBeGreaterThan: {
         fn: "toBeGreaterThan",
         length: 1,
@@ -140,10 +136,6 @@ export default [
       toBeLessThanOrEqual: {
         fn: "toBeLessThanOrEqual",
         length: 1,
-      },
-      toBeOdd: {
-        fn: "toBeOdd",
-        length: 0,
       },
       toBeInstanceOf: {
         fn: "toBeInstanceOf",
@@ -228,6 +220,19 @@ export default [
       rejects: {
         getter: "getRejects",
         this: true,
+      },
+      // jest-extended
+      toBeEmpty: {
+        fn: "toBeEmpty",
+        length: 0,
+      },
+      toBeEven: {
+        fn: "toBeEven",
+        length: 0,
+      },
+      toBeOdd: {
+        fn: "toBeOdd",
+        length: 0,
       },
     },
   }),

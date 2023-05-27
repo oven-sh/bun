@@ -52,6 +52,12 @@ JSC::Structure* JSExpectStringContainingStructure() { return m_JSExpectStringCon
   JSC::LazyClassStructure m_JSExpectStringContaining;
   bool hasJSExpectStringContainingSetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_JSExpectStringContainingSetterValue;
+JSC::Structure* JSExpectStringMatchingStructure() { return m_JSExpectStringMatching.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSExpectStringMatchingConstructor() { return m_JSExpectStringMatching.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSExpectStringMatchingPrototype() { return m_JSExpectStringMatching.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSExpectStringMatching;
+  bool hasJSExpectStringMatchingSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSExpectStringMatchingSetterValue;
 JSC::Structure* JSFileSystemRouterStructure() { return m_JSFileSystemRouter.getInitializedOnMainThread(this); }
         JSC::JSObject* JSFileSystemRouterConstructor() { return m_JSFileSystemRouter.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSFileSystemRouterPrototype() { return m_JSFileSystemRouter.prototypeInitializedOnMainThread(this); }

@@ -949,6 +949,43 @@ pub const ExpectAnything = struct {
     }
 };
 
+pub const ExpectStringMatching = struct {
+    pub usingnamespace JSC.Codegen.JSExpectStringMatching;
+
+    pub fn finalize(
+        this: *ExpectStringMatching,
+    ) callconv(.C) void {
+        VirtualMachine.get().allocator.destroy(this);
+    }
+
+    pub fn call(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        const args = callFrame.arguments(1).slice();
+
+        if (args.len == 0 or (!args[0].isString() and !args[0].isRegExp())) {
+            const fmt = "<d>expect.<r>stringContaining<d>(<r>string<d>)<r>\n\nExpected a string or regular expression\n";
+            globalObject.throwPretty(fmt, .{});
+            return .zero;
+        }
+
+        const test_value = args[0];
+        const string_matching = globalObject.bunVM().allocator.create(ExpectStringMatching) catch unreachable;
+
+        if (Jest.runner.?.pending_test == null) {
+            const err = globalObject.createErrorInstance("expect.stringContaining() must be called in a test", .{});
+            err.put(globalObject, ZigString.static("name"), ZigString.init("TestNotRunningError").toValueGC(globalObject));
+            globalObject.throwValue(err);
+            return .zero;
+        }
+
+        const string_matching_js_value = string_matching.toJS(globalObject);
+        ExpectStringMatching.testValueSetCached(string_matching_js_value, globalObject, test_value);
+
+        var vm = globalObject.bunVM();
+        vm.autoGarbageCollect();
+        return string_matching_js_value;
+    }
+};
+
 pub const ExpectStringContaining = struct {
     pub usingnamespace JSC.Codegen.JSExpectStringContaining;
 
@@ -961,18 +998,13 @@ pub const ExpectStringContaining = struct {
     pub fn call(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
         const args = callFrame.arguments(1).slice();
 
-        if (args.len == 0) {
-            globalObject.throw("stringContaining() expects to be passed a string.", .{});
-            return .zero;
-        }
-
-        const string_value = args[0];
-        string_value.ensureStillAlive();
-        if (!string_value.isString()) {
+        if (args.len == 0 or !args[0].isString()) {
             const fmt = "<d>expect.<r>stringContaining<d>(<r>string<d>)<r>\n\nExpected a string\n";
             globalObject.throwPretty(fmt, .{});
             return .zero;
         }
+
+        const string_value = args[0];
 
         const string_containing = globalObject.bunVM().allocator.create(ExpectStringContaining) catch unreachable;
 
@@ -3030,9 +3062,9 @@ pub const Expect = struct {
             var received_object: JSValue = ctx.received_object;
 
             if (received_object.get(globalObject, key.slice())) |received_value| {
-                if (ExpectAnything.fromJS(value)) |_| {
+                if (ExpectAnything.fromJS(value) != null) {
                     return;
-                } else if (ExpectAny.fromJS(value)) |_| {
+                } else if (ExpectAny.fromJS(value) != null) {
                     var constructor_value = ExpectAny.constructorValueGetCached(value) orelse {
                         globalObject.throw("Internal consistency error: the expect.any(constructor value) was garbage collected but it should not have been!", .{});
                         ctx.failed = true;
@@ -3067,7 +3099,7 @@ pub const Expect = struct {
 
                     ctx.failed = true;
                     return;
-                } else if (ExpectStringContaining.fromJS(value)) |_| {
+                } else if (ExpectStringContaining.fromJS(value) != null) {
                     var expected_substring = ExpectStringContaining.stringValueGetCached(value) orelse {
                         globalObject.throw("Internal consistency error: the expect.stringContaining(string value) was garbage collected but it should not have been!", .{});
                         ctx.failed = true;
@@ -3078,6 +3110,21 @@ pub const Expect = struct {
                         if (received_value.stringIncludes(globalObject, expected_substring)) {
                             return;
                         }
+                    }
+
+                    ctx.failed = true;
+                    return;
+                } else if (ExpectStringMatching.fromJS(value) != null) {
+                    const test_value = ExpectStringMatching.testValueGetCached(value) orelse {
+                        globalObject.throw("Internal consistency error: the expect.stringMatching(test value) was garbage collected but it should not have been!", .{});
+                        ctx.failed = true;
+                        return;
+                    };
+
+                    if (test_value.isString()) {
+                        if (received_value.stringIncludes(globalObject, test_value)) return;
+                    } else if (test_value.isRegExp()) {
+                        if (test_value.toMatch(globalObject, received_value)) return;
                     }
 
                     ctx.failed = true;
@@ -3330,7 +3377,12 @@ pub const Expect = struct {
     pub const toThrowErrorMatchingSnapshot = notImplementedJSCFn;
     pub const toThrowErrorMatchingInlineSnapshot = notImplementedJSCFn;
 
-    pub const getStaticNot = notImplementedStaticProp;
+    pub fn getStaticNot(globalObject: *JSGlobalObject, expectValue: JSValue, _: JSValue) callconv(.C) JSValue {
+        _ = globalObject;
+        return expectValue;
+    }
+
+    // pub const getStaticNot = notImplementedStaticProp;
     pub const getStaticResolves = notImplementedStaticProp;
     pub const getStaticRejects = notImplementedStaticProp;
 
@@ -3360,12 +3412,15 @@ pub const Expect = struct {
         return ExpectStringContaining.call(globalObject, callFrame);
     }
 
+    pub fn stringMatching(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        return ExpectStringMatching.call(globalObject, callFrame);
+    }
+
     pub const extend = notImplementedStaticFn;
     pub const arrayContaining = notImplementedStaticFn;
     pub const assertions = notImplementedStaticFn;
     pub const hasAssertions = notImplementedStaticFn;
     pub const objectContaining = notImplementedStaticFn;
-    pub const stringMatching = notImplementedStaticFn;
     pub const addSnapshotSerializer = notImplementedStaticFn;
 
     pub fn notImplementedJSCFn(_: *Expect, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {

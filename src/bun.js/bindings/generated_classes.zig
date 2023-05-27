@@ -1259,6 +1259,87 @@ pub const JSExpectStringContaining = struct {
         }
     }
 };
+pub const JSExpectStringMatching = struct {
+    const ExpectStringMatching = Classes.ExpectStringMatching;
+    const GetterType = fn (*ExpectStringMatching, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*ExpectStringMatching, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*ExpectStringMatching, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*ExpectStringMatching, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*ExpectStringMatching, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*ExpectStringMatching {
+        JSC.markBinding(@src());
+        return ExpectStringMatching__fromJS(value);
+    }
+
+    extern fn ExpectStringMatchingPrototype__testValueSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn ExpectStringMatchingPrototype__testValueGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `ExpectStringMatching.testValue` setter
+    /// This value will be visited by the garbage collector.
+    pub fn testValueSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        ExpectStringMatchingPrototype__testValueSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `ExpectStringMatching.testValue` getter
+    /// This value will be visited by the garbage collector.
+    pub fn testValueGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = ExpectStringMatchingPrototype__testValueGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Create a new instance of ExpectStringMatching
+    pub fn toJS(this: *ExpectStringMatching, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = ExpectStringMatching__create(globalObject, this);
+            std.debug.assert(value__.as(ExpectStringMatching).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return ExpectStringMatching__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of ExpectStringMatching.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*ExpectStringMatching) bool {
+        JSC.markBinding(@src());
+        return ExpectStringMatching__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *ExpectStringMatching, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(ExpectStringMatching__dangerouslySetPtr(value, null));
+    }
+
+    extern fn ExpectStringMatching__fromJS(JSC.JSValue) ?*ExpectStringMatching;
+    extern fn ExpectStringMatching__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn ExpectStringMatching__create(globalObject: *JSC.JSGlobalObject, ptr: ?*ExpectStringMatching) JSC.JSValue;
+
+    extern fn ExpectStringMatching__dangerouslySetPtr(JSC.JSValue, ?*ExpectStringMatching) bool;
+
+    comptime {
+        if (@TypeOf(ExpectStringMatching.finalize) != (fn (*ExpectStringMatching) callconv(.C) void)) {
+            @compileLog("ExpectStringMatching.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(ExpectStringMatching.call) != StaticCallbackType)
+            @compileLog("Expected ExpectStringMatching.call to be a static callback");
+        if (!JSC.is_bindgen) {
+            @export(ExpectStringMatching.call, .{ .name = "ExpectStringMatchingClass__call" });
+            @export(ExpectStringMatching.finalize, .{ .name = "ExpectStringMatchingClass__finalize" });
+        }
+    }
+};
 pub const JSFileSystemRouter = struct {
     const FileSystemRouter = Classes.FileSystemRouter;
     const GetterType = fn (*FileSystemRouter, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
@@ -4707,6 +4788,7 @@ comptime {
     _ = JSExpectAny;
     _ = JSExpectAnything;
     _ = JSExpectStringContaining;
+    _ = JSExpectStringMatching;
     _ = JSFileSystemRouter;
     _ = JSListener;
     _ = JSMD4;

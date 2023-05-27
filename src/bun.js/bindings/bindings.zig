@@ -3866,6 +3866,8 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("toZigString", .{ this, out, global });
     }
 
+    /// this: RegExp value
+    /// other: string value
     pub fn toMatch(this: JSValue, global: *JSGlobalObject, other: JSValue) bool {
         return cppFn("toMatch", .{ this, global, other });
     }

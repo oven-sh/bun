@@ -37,6 +37,18 @@ export default [
     proto: {},
   }),
   define({
+    name: "ExpectStringMatching",
+    construct: false,
+    noConstructor: true,
+    call: true,
+    finalize: true,
+    JSType: "0b11101110",
+    values: ["testValue"],
+    configurable: false,
+    klass: {},
+    proto: {},
+  }),
+  define({
     name: "Expect",
     construct: true,
     call: true,

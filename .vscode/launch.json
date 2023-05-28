@@ -7,10 +7,29 @@
       "name": "bun test",
       "program": "bun-debug",
       "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}",
+      "cwd": "${file}/../",
       "env": {
-        "FORCE_COLOR": "1"
+        "FORCE_COLOR": "1",
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
+      // SIGHUP must be ignored or the debugger will pause when a spawned subprocess exits.
+      "initCommands": ["process handle -p false -s false -n false SIGHUP"],
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun test (fast)",
+      "program": "bun-debug",
+      "args": ["test", "${file}"],
+      "cwd": "${file}/../",
+      "env": {
+        "FORCE_COLOR": "1",
+        "BUN_DEBUG_QUIET_LOGS": "1"
+      },
+      // SIGHUP must be ignored or the debugger will pause when a spawned subprocess exits.
+      "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"
     },
     {
@@ -23,21 +42,37 @@
       "env": {
         "FORCE_COLOR": "1"
       },
-      "console": "internalConsole"
+      "console": "internalConsole",
+      // SIGHUP must be ignored or the debugger will pause when a spawned subprocess exits.
+      "initCommands": ["process handle -p false -s false -n false SIGHUP"]
     },
     {
       "type": "lldb",
       "request": "launch",
       "name": "bun test (all)",
       "program": "bun-debug",
-      "args": ["test"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
+      },
+      "console": "internalConsole",
+      // SIGHUP must be ignored or the debugger will pause when a spawned subprocess exits.
+      "initCommands": ["process handle -p false -s false -n false SIGHUP"]
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun test (all, fast)",
+      "program": "bun-debug",
+      "args": ["test"],
+      "cwd": "${workspaceFolder}",
+      "env": {
         "BUN_DEBUG_QUIET_LOGS": "1"
       },
-      "console": "internalConsole"
+      "console": "internalConsole",
+      // SIGHUP must be ignored or the debugger will pause when a spawned subprocess exits.
+      "initCommands": ["process handle -p false -s false -n false SIGHUP"]
     },
     {
       "type": "lldb",
@@ -49,7 +84,9 @@
       "env": {
         "FORCE_COLOR": "1"
       },
-      "console": "internalConsole"
+      "console": "internalConsole",
+      // SIGHUP must be ignored or the debugger will pause when a spawned subprocess exits.
+      "initCommands": ["process handle -p false -s false -n false SIGHUP"]
     },
     {
       "type": "lldb",
@@ -73,7 +110,9 @@
       "env": {
         "FORCE_COLOR": "1"
       },
-      "console": "internalConsole"
+      "console": "internalConsole",
+      // SIGHUP must be ignored or the debugger will pause when a spawned subprocess exits.
+      "initCommands": ["process handle -p false -s false -n false SIGHUP"]
     },
     {
       "type": "lldb",
@@ -98,7 +137,9 @@
       "env": {
         "FORCE_COLOR": "1"
       },
-      "console": "internalConsole"
+      "console": "internalConsole",
+      // SIGHUP must be ignored or the debugger will pause when a spawned subprocess exits.
+      "initCommands": ["process handle -p false -s false -n false SIGHUP"]
     },
     {
       "type": "lldb",
@@ -139,12 +180,14 @@
       "request": "launch",
       "name": "bun build debug",
       "program": "bun-debug",
-      "args": ["bun", "./test/fixtures/bundle/trivial/index.js"],
+      "args": ["bun", "${file}"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole",
       "env": {
         "BUN_CONFIG_MINIFY_WHITESPACE": "1"
-      }
+      },
+      // SIGHUP must be ignored or the debugger will pause when a spawned subprocess exits.
+      "initCommands": ["process handle -p false -s false -n false SIGHUP"]
     },
     {
       "type": "lldb",

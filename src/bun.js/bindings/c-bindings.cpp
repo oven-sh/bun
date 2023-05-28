@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <sys/fcntl.h>
 #include <sys/stat.h>
+#include <sys/signal.h>
 
 extern "C" int32_t get_process_priority(uint32_t pid)
 {
@@ -33,4 +34,10 @@ extern "C" bool is_executable_file(const char* path)
 
     // regular file and user can execute
     return S_ISREG(st.st_mode) && (st.st_mode & S_IXUSR);
+}
+
+extern "C" void bun_ignore_sigpipe()
+{
+    // ignore SIGPIPE
+    signal(SIGPIPE, SIG_IGN);
 }

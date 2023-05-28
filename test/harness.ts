@@ -1,8 +1,8 @@
 import { gc as bunGC, unsafe } from "bun";
 import { heapStats } from "bun:jsc";
 import path from "path";
-import fs from 'fs';
-import os from 'os';
+import fs from "fs";
+import os from "os";
 
 export const bunEnv: any = {
   ...process.env,
@@ -129,8 +129,7 @@ export function bunRunAsScript(dir: string, script: string, env?: Record<string,
     },
   });
 
-  if (!result.success)
-      throw new Error(result.stderr.toString("utf8"));
+  if (!result.success) throw new Error(result.stderr.toString("utf8"));
 
   return {
     stdout: result.stdout.toString("utf8").trim(),

@@ -1,47 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import os from "os";
-import fs from "fs";
-import path from "path";
-import { bunEnv, bunExe } from "harness";
-
-export function tempDirWithFiles(basename: string, files: Record<string, string>) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), basename + "_"));
-  for (const [name, contents] of Object.entries(files)) {
-    fs.writeFileSync(path.join(dir, name), contents);
-  }
-  return dir;
-}
-
-function bunRun(file: string, env?: Record<string, string>) {
-  const result = Bun.spawnSync([bunExe(), file], {
-    cwd: path.dirname(file),
-    env: {
-      ...bunEnv,
-      NODE_ENV: undefined,
-      ...env,
-    },
-  });
-  if (!result.success) throw new Error(result.stderr.toString("utf8"));
-  return {
-    stdout: result.stdout.toString("utf8").trim(),
-    stderr: result.stderr.toString("utf8").trim(),
-  };
-}
-function bunTest(file: string, env?: Record<string, string>) {
-  const result = Bun.spawnSync([bunExe(), "test", path.basename(file)], {
-    cwd: path.dirname(file),
-    env: {
-      ...bunEnv,
-      NODE_ENV: undefined,
-      ...env,
-    },
-  });
-  if (!result.success) throw new Error(result.stderr.toString("utf8"));
-  return {
-    stdout: result.stdout.toString("utf8").trim(),
-    stderr: result.stderr.toString("utf8").trim(),
-  };
-}
+import { bunRun, bunTest, tempDirWithFiles } from "harness";
 
 describe(".env file is loaded", () => {
   test(".env", () => {

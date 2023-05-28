@@ -44,17 +44,7 @@ pub fn reloadHandlers() !void {
 
     try setup_sigactions(&act);
 
-    var pipe = os.Sigaction{
-        .handler = .{ .sigaction = sigpipe_handler },
-        .mask = os.empty_sigset,
-        .flags = (os.SA.SIGINFO | os.SA.RESTART | os.SA.RESETHAND),
-    };
-
-    try os.sigaction(
-        os.SIG.PIPE,
-        &pipe,
-        null,
-    );
+    bun_ignore_sigpipe();
 }
 const os = std.os;
 pub fn start() !void {
@@ -65,17 +55,7 @@ pub fn start() !void {
     };
 
     try setup_sigactions(&act);
-    {
-        var pipe = os.Sigaction{
-            .handler = .{ .sigaction = sigpipe_handler },
-            .mask = os.empty_sigset,
-            .flags = (os.SA.SIGINFO | os.SA.RESTART | os.SA.RESETHAND),
-        };
-
-        try os.sigaction(
-            os.SIG.PIPE,
-            &pipe,
-            null,
-        );
-    }
+    bun_ignore_sigpipe();
 }
+
+extern fn bun_ignore_sigpipe() void;

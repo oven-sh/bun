@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 import { bunEnv, bunExe } from "harness";
 
-function tempDirWithFiles(basename: string, files: Record<string, string>) {
+export function tempDirWithFiles(basename: string, files: Record<string, string>) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), basename + "_"));
   for (const [name, contents] of Object.entries(files)) {
     fs.writeFileSync(path.join(dir, name), contents);

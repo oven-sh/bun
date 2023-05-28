@@ -4775,6 +4775,7 @@ fn NewParser_(
         commonjs_named_exports_deoptimized: bool = false,
         commonjs_named_exports_needs_conversion: u32 = std.math.maxInt(u32),
         had_commonjs_named_exports_this_visit: bool = false,
+        commonjs_replacement_stmts: StmtNodeList = &.{},
 
         parse_pass_symbol_uses: ParsePassSymbolUsageType = undefined,
         // duplicate_case_checker: void,
@@ -17422,9 +17423,153 @@ fn NewParser_(
                             //      delete module.exports
                             //      module.exports();
 
-                            if (identifier_opts.is_call_target or identifier_opts.is_delete_target or identifier_opts.assign_target != .none) {
+                            if (identifier_opts.is_call_target or identifier_opts.is_delete_target or identifier_opts.assign_target == .update) {
                                 p.deoptimizeCommonJSNamedExports();
                                 return null;
+                            }
+
+                            // Detect if we are doing
+                            //
+                            //  module.exports = {
+                            //    foo: "bar"
+                            //  }
+                            //
+                            if (identifier_opts.assign_target == .replace and
+                                p.stmt_expr_value == .e_binary and
+                                p.stmt_expr_value.e_binary.op == .bin_assign)
+                            {
+                                if (
+                                // if it's not top-level, don't do this
+                                p.module_scope != p.current_scope or
+                                    // if you do
+                                    //
+                                    // exports.foo = 123;
+                                    // module.exports = {};
+                                    //
+                                    // that's a de-opt.
+                                    p.commonjs_named_exports.count() > 0 or
+
+                                    // anything which is not module.exports = {} is a de-opt.
+                                    p.stmt_expr_value.e_binary.right.data != .e_object or
+                                    p.stmt_expr_value.e_binary.left.data != .e_dot or
+                                    !strings.eqlComptime(p.stmt_expr_value.e_binary.left.data.e_dot.name, "exports") or
+                                    p.stmt_expr_value.e_binary.left.data.e_dot.target.data != .e_identifier or
+                                    !p.stmt_expr_value.e_binary.left.data.e_dot.target.data.e_identifier.ref.eql(p.module_ref))
+                                {
+                                    p.deoptimizeCommonJSNamedExports();
+                                    return null;
+                                }
+
+                                const props: []const G.Property = p.stmt_expr_value.e_binary.right.data.e_object.properties.slice();
+                                for (props) |prop| {
+                                    // if it's not a trivial object literal, de-opt
+                                    if (prop.kind != .normal or
+                                        prop.key == null or
+                                        prop.key.?.data != .e_string or
+                                        prop.flags.contains(Flags.Property.is_method) or
+                                        prop.flags.contains(Flags.Property.is_computed) or
+                                        prop.flags.contains(Flags.Property.is_spread) or
+                                        prop.flags.contains(Flags.Property.is_static) or
+                                        // If it creates a new scope, we can't do this optimization right now
+                                        // Our scope order verification stuff will get mad
+                                        // But we should let you do module.exports = { bar: foo(), baz: 123 }]
+                                        // just not module.exports = { bar: function() {}  }
+                                        // just not module.exports = { bar() {}  }
+                                        switch (prop.value.?.data) {
+                                        .e_commonjs_export_identifier, .e_import_identifier, .e_identifier => false,
+                                        .e_call => |call| switch (call.target.data) {
+                                            .e_commonjs_export_identifier, .e_import_identifier, .e_identifier => false,
+                                            else => |call_target| !@as(Expr.Tag, call_target).isPrimitiveLiteral(),
+                                        },
+                                        else => !prop.value.?.isPrimitiveLiteral(),
+                                    }) {
+                                        p.deoptimizeCommonJSNamedExports();
+                                        return null;
+                                    }
+                                }
+
+                                var stmts = std.ArrayList(Stmt).initCapacity(p.allocator, props.len * 2) catch unreachable;
+                                var decls = p.allocator.alloc(Decl, props.len) catch unreachable;
+                                var clause_items = p.allocator.alloc(js_ast.ClauseItem, props.len) catch unreachable;
+
+                                for (props) |prop| {
+                                    const key = prop.key.?.data.e_string.string(p.allocator) catch unreachable;
+                                    const visited_value = p.visitExpr(prop.value.?);
+                                    const value = SideEffects.simpifyUnusedExpr(p, visited_value) orelse visited_value;
+
+                                    // We are doing `module.exports = { ... }`
+                                    // lets rewrite it to a series of what will become export assignemnts
+                                    var named_export_entry = p.commonjs_named_exports.getOrPut(p.allocator, key) catch unreachable;
+                                    if (!named_export_entry.found_existing) {
+                                        const new_ref = p.newSymbol(
+                                            .other,
+                                            std.fmt.allocPrint(p.allocator, "${any}", .{strings.fmtIdentifier(key)}) catch unreachable,
+                                        ) catch unreachable;
+                                        p.module_scope.generated.push(p.allocator, new_ref) catch unreachable;
+                                        named_export_entry.value_ptr.* = .{
+                                            .loc_ref = LocRef{
+                                                .loc = name_loc,
+                                                .ref = new_ref,
+                                            },
+                                            .needs_decl = false,
+                                        };
+                                    }
+                                    const ref = named_export_entry.value_ptr.loc_ref.ref.?;
+                                    // module.exports = {
+                                    //   foo: "bar",
+                                    //   baz: "qux",
+                                    // }
+                                    // ->
+                                    // exports.foo = "bar", exports.baz = "qux"
+                                    // Which will become
+                                    // $foo = "bar";
+                                    // $baz = "qux";
+                                    // export { $foo as foo, $baz as baz }
+
+                                    decls[0] = .{
+                                        .binding = p.b(B.Identifier{ .ref = ref }, prop.key.?.loc),
+                                        .value = value,
+                                    };
+                                    // we have to ensure these are known to be top-level
+                                    p.declared_symbols.append(p.allocator, .{
+                                        .ref = ref,
+                                        .is_top_level = true,
+                                    }) catch unreachable;
+                                    p.had_commonjs_named_exports_this_visit = true;
+                                    clause_items[0] = js_ast.ClauseItem{
+                                        // We want the generated name to not conflict
+                                        .alias = key,
+                                        .alias_loc = prop.key.?.loc,
+                                        .name = named_export_entry.value_ptr.loc_ref,
+                                    };
+
+                                    stmts.appendSlice(
+                                        &[_]Stmt{
+                                            p.s(
+                                                S.Local{
+                                                    .kind = .k_var,
+                                                    .is_export = false,
+                                                    .was_commonjs_export = true,
+                                                    .decls = G.Decl.List.init(decls[0..1]),
+                                                },
+                                                prop.key.?.loc,
+                                            ),
+                                            p.s(
+                                                S.ExportClause{
+                                                    .items = clause_items[0..1],
+                                                    .is_single_line = true,
+                                                },
+                                                prop.key.?.loc,
+                                            ),
+                                        },
+                                    ) catch unreachable;
+                                    decls = decls[1..];
+                                    clause_items = clause_items[1..];
+                                }
+
+                                p.ignoreUsage(p.module_ref);
+                                p.commonjs_replacement_stmts = stmts.items;
+                                return p.newExpr(E.Missing{}, name_loc);
                             }
 
                             // rewrite `module.exports` to `exports`
@@ -17989,6 +18134,8 @@ fn NewParser_(
                 .s_expr => |data| {
                     const should_trim_primitive = !p.options.features.minify_syntax and !data.value.isPrimitiveLiteral();
                     p.stmt_expr_value = data.value.data;
+                    defer p.stmt_expr_value = .{ .e_missing = .{} };
+
                     const is_top_level = p.current_scope == p.module_scope;
                     if (comptime FeatureFlags.unwrap_commonjs_to_esm) {
                         p.commonjs_named_exports_needs_conversion = if (is_top_level)
@@ -18067,6 +18214,17 @@ fn NewParser_(
                                             return;
                                         }
                                     }
+                                } else if (p.commonjs_replacement_stmts.len > 0) {
+                                    if (stmts.items.len == 0) {
+                                        stmts.items = p.commonjs_replacement_stmts;
+                                        stmts.capacity = p.commonjs_replacement_stmts.len;
+                                        p.commonjs_replacement_stmts.len = 0;
+                                    } else {
+                                        stmts.appendSlice(p.commonjs_replacement_stmts) catch unreachable;
+                                        p.commonjs_replacement_stmts.len = 0;
+                                    }
+
+                                    return;
                                 }
                             }
                         }

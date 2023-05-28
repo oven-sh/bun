@@ -532,10 +532,10 @@ const Socket = (function (InternalSocket) {
 
 function createConnection(port, host, connectListener) {
   if (typeof port === "object") {
-    // port is option pass Socket options and let connection will handle connect options
+    // port is option pass Socket options and let connection handle connect options
     return new Socket(port).connect(port, host, connectListener);
   }
-  // port is path or host let connect handle this
+  // port is path or host, let connect handle this
   return new Socket().connect(port, host, connectListener);
 }
 

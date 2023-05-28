@@ -17486,6 +17486,11 @@ fn NewParser_(
                                         p.deoptimizeCommonJSNamedExports();
                                         return null;
                                     }
+                                } else {
+                                    // empty object de-opts because otherwise the statement becomes
+                                    // <empty space> = {};
+                                    p.deoptimizeCommonJSNamedExports();
+                                    return null;
                                 }
 
                                 var stmts = std.ArrayList(Stmt).initCapacity(p.allocator, props.len * 2) catch unreachable;

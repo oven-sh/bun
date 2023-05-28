@@ -36,7 +36,7 @@ export function getEventSource() {
     #send_buffer = "";
     #lastEventID = "";
     #reconnect = true;
-    #content_length = 0; // 0 means chunked
+    #content_length = 0; // 0 means chunked -1 means not informed aka no auto end
     #received_length = 0;
     #reconnection_time = 0;
 
@@ -242,18 +242,6 @@ export function getEventSource() {
                     );
                     socket.end();
                   }
-
-                  if (content_length === -1) {
-                    self.#state = 2;
-                    self.dispatchEvent(
-                      new ErrorEvent("error", {
-                        error: new Error(
-                          `Content-Length or Transfer-Encoding header missing. Aborting the connection.`,
-                        ),
-                      }),
-                    );
-                    socket.end();
-                  }
                   return;
                 }
 
@@ -270,9 +258,6 @@ export function getEventSource() {
               if (is_content_type) {
                 if (header.endsWith(" text/event-stream")) {
                   mime_type_ok = true;
-                  if (content_length !== -1) {
-                    break;
-                  }
                 } else {
                   // wrong mime type
                   self.#state = 2;

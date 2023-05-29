@@ -124,7 +124,6 @@ static bool canPerformFastEnumeration(Structure* s)
         return false;
     if (s->isUncacheableDictionary())
         return false;
-    // Cannot perform fast [[Put]] to |target| if the property names of the |source| contain "__proto__".
     if (s->hasUnderscoreProtoPropertyExcludingOriginalProto())
         return false;
     return true;
@@ -183,24 +182,26 @@ JSC::SourceCode createCommonJSModule(
 
                 auto* contextScope = JSC::JSWithScope::create(vm, globalObject, globalObject->globalScope(), scopeExtensionObject);
                 auto* requireMapKey = jsString(vm, sourceURL);
-                if (JSValue current = globalObject->requireMap()->get(globalObject, requireMapKey)) {
-                    globalObject->requireMap()->set(globalObject, requireMapKey, exportsObject);
-                }
+                globalObject->requireMap()->set(globalObject, requireMapKey, exportsObject);
 
                 auto catchScope = DECLARE_CATCH_SCOPE(vm);
                 vm.interpreter.executeEval(executable, globalObject, contextScope);
                 if (UNLIKELY(catchScope.exception())) {
                     auto returnedException = catchScope.exception();
                     catchScope.clearException();
+                    globalObject->requireMap()->remove(globalObject, requireMapKey);
                     JSC::throwException(globalObject, throwScope, returnedException);
                 }
 
                 if (throwScope.exception())
                     return;
 
-                exportNames.append(vm.propertyNames->defaultKeyword);
                 JSValue result = moduleObject->getDirect(0);
-                globalObject->requireMap()->set(globalObject, requireMapKey, result);
+
+                if (result != exportsObject)
+                    globalObject->requireMap()->set(globalObject, requireMapKey, result);
+
+                exportNames.append(vm.propertyNames->defaultKeyword);
                 exportValues.append(result);
                 exportNames.append(Identifier::fromUid(vm.symbolRegistry().symbolForKey("CommonJS"_s)));
                 exportValues.append(jsNumber(0));

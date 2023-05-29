@@ -12,7 +12,7 @@ import { expectMaxObjectTypeCount, gc } from "harness";
 // @ts-ignore
 import { renderToReadableStream as renderToReadableStreamBrowser } from "react-dom/server.browser";
 import { renderToReadableStream as renderToReadableStreamBun } from "react-dom/server";
-import React from "react";
+import * as React from "react";
 
 if (!import.meta.resolveSync("react-dom/server").endsWith("server.bun.js")) {
   throw new Error("react-dom/server is not the correct version:\n  " + import.meta.resolveSync("react-dom/server"));

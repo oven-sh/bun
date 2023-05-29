@@ -4140,6 +4140,7 @@ pub const Expr = struct {
         e_this,
         e_class,
         e_require_string,
+        e_require_call_target,
 
         e_commonjs_export_identifier,
 
@@ -4794,6 +4795,7 @@ pub const Expr = struct {
 
         e_require_string: E.RequireString,
         e_require_resolve_string: E.RequireResolveString,
+        e_require_call_target: void,
 
         e_missing: E.Missing,
         e_this: E.This,
@@ -5934,6 +5936,11 @@ pub const Ast = struct {
     target: bun.options.Target = .browser,
 
     const_values: ConstValuesMap = .{},
+
+    /// Not to be confused with `commonjs_named_exports`
+    /// This is a list of named exports that may exist in a CommonJS module
+    /// We use this with `commonjs_at_runtime` to re-export CommonJS
+    commonjs_export_names: []string = &([_]string{}),
 
     pub const CommonJSNamedExport = struct {
         loc_ref: LocRef,
@@ -7604,6 +7611,7 @@ pub const Macro = struct {
             e_reg_exp: *E.RegExp,
             e_require_resolve_string: E.RequireResolveString,
             e_require_string: E.RequireString,
+            e_require_call_target: void,
 
             g_property: *G.Property,
 
@@ -7651,6 +7659,7 @@ pub const Macro = struct {
             e_yield,
             e_if,
             e_require_resolve_string,
+            e_require_call_target,
             e_import,
             e_this,
             e_class,

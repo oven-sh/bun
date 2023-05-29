@@ -35,6 +35,7 @@
 #include "../modules/NodeModuleModule.h"
 #include "../modules/TTYModule.h"
 #include "node_util_types.h"
+#include "CommonJSModuleRecord.h"
 
 namespace Bun {
 using namespace Zig;
@@ -473,6 +474,11 @@ static JSValue fetchSourceCode(
         }
     } else {
         Bun__transpileFile(bunVM, globalObject, specifier, referrer, res, false);
+    }
+
+    if (res->success && res->result.value.commonJSExportsLen) {
+        auto source = Bun::createCommonJSModule(globalObject, res->result.value);
+        return rejectOrResolve(JSSourceCode::create(vm, WTFMove(source)));
     }
 
     if (!res->success) {

@@ -93,7 +93,7 @@ export function requireESM(this: ImportMetaObject, resolved) {
   var exports = Loader.getModuleNamespaceObject(entry.module);
   var commonJS = exports.default;
   var cjs = commonJS?.[$commonJSSymbol];
-  if (cjs === 0) {
+  if (cjs === 0 || exports[$commonJSSymbol] === 0) {
     return commonJS;
   } else if (cjs && $isCallable(commonJS)) {
     return commonJS();
@@ -130,6 +130,11 @@ export function internalRequire(this: ImportMetaObject, resolved) {
     return exports;
   } else {
     var exports = $requireESM(resolved);
+    const cachedExports = $requireMap.$get(resolved);
+    if (cachedExports) {
+      return cachedExports;
+    }
+
     $requireMap.$set(resolved, exports);
     return exports;
   }

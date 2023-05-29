@@ -112,6 +112,24 @@ JSC::JSObject* createCommonJSModuleObject(
     return moduleObject;
 }
 
+static bool canPerformFastEnumeration(Structure* s)
+{
+    if (s->typeInfo().overridesGetOwnPropertySlot())
+        return false;
+    if (s->typeInfo().overridesAnyFormOfGetOwnPropertyNames())
+        return false;
+    if (hasIndexedProperties(s->indexingType()))
+        return false;
+    if (s->hasAnyKindOfGetterSetterProperties())
+        return false;
+    if (s->isUncacheableDictionary())
+        return false;
+    // Cannot perform fast [[Put]] to |target| if the property names of the |source| contain "__proto__".
+    if (s->hasUnderscoreProtoPropertyExcludingOriginalProto())
+        return false;
+    return true;
+}
+
 JSC::SourceCode createCommonJSModule(
     Zig::GlobalObject* globalObject,
     ResolvedSource source)
@@ -189,18 +207,59 @@ JSC::SourceCode createCommonJSModule(
 
                 if (result.isObject()) {
                     auto* exports = asObject(result);
-                    JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::StringsAndSymbols, JSC::PrivateSymbolMode::Exclude);
-                    exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Include);
-                    if (throwScope.exception())
-                        return;
 
-                    for (auto propertyName : properties) {
-                        if (propertyName == vm.propertyNames->defaultKeyword)
-                            continue;
-                        exportNames.append(propertyName);
-                        exportValues.append(exports->get(globalObject, propertyName));
+                    auto* structure = exports->structure();
+                    uint32_t size = structure->inlineSize() + structure->outOfLineSize();
+                    exportNames.reserveCapacity(size);
+                    exportValues.ensureCapacity(size);
+
+                    if (canPerformFastEnumeration(structure)) {
+                        exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+                            auto key = entry.key();
+                            if (key->isSymbol() || key == vm.propertyNames->defaultKeyword)
+                                return true;
+
+                            exportNames.append(Identifier::fromUid(vm, key));
+                            exportValues.append(exports->getDirect(entry.offset()));
+                            return true;
+                        });
+                    } else {
+
+                        JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+                        exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Exclude);
                         if (throwScope.exception())
                             return;
+
+                        for (auto property : properties) {
+                            if (UNLIKELY(property.isEmpty() || property.isNull()))
+                                continue;
+
+                            // ignore constructor
+                            if (property == vm.propertyNames->constructor)
+                                continue;
+
+                            if (property.isSymbol() || property.isPrivateName() || property == vm.propertyNames->defaultKeyword)
+                                continue;
+
+                            JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
+                            if (!exports->getPropertySlot(globalObject, property, slot))
+                                continue;
+
+                            JSValue getterResult = slot.getValue(globalObject, property);
+
+                            if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
+                                if (catchScope.exception()) {
+                                    catchScope.clearException();
+                                    continue;
+                                }
+                            }
+
+                            exportNames.append(property);
+                            exportValues.append(getterResult);
+
+                            if (throwScope.exception())
+                                return;
+                        }
                     }
                 }
             },

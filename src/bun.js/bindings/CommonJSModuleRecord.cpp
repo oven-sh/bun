@@ -180,8 +180,16 @@ JSC::SourceCode createCommonJSModule(
                     globalObject, inputSource, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
                     false, false, EvalContextType::None, nullptr, nullptr, ECMAMode::sloppy());
 
+                RETURN_IF_EXCEPTION(throwScope, void());
+
+                if (UNLIKELY(!executable)) {
+                    throwSyntaxError(globalObject, throwScope, "Failed to compile CommonJS module."_s);
+                    return;
+                }
+
                 auto* contextScope = JSC::JSWithScope::create(vm, globalObject, globalObject->globalScope(), scopeExtensionObject);
                 auto* requireMapKey = jsString(vm, sourceURL);
+
                 globalObject->requireMap()->set(globalObject, requireMapKey, exportsObject);
 
                 auto catchScope = DECLARE_CATCH_SCOPE(vm);

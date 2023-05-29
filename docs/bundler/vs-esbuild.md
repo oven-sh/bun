@@ -1,5 +1,5 @@
 {% callout %}
-**Note** — Available in the Bun v0.6.0 nightly. Run `bun upgrade --canary` to try it out.
+**Note** — Available in Bun v0.6.0 and later.
 {% /callout %}
 
 Bun's bundler API is inspired heavily by [esbuild](https://esbuild.github.io/). Migrating to Bun's bundler from esbuild should be relatively painless. This guide will briefly explain why you might consider migrating to Bun's bundler and provide a side-by-side API comparison reference for those who are already familiar with esbuild's API.
@@ -11,9 +11,9 @@ There are a few behavioral differences to note.
 
 ## Performance
 
-This is the simplest reason to migrate to Bun's bundler. With an performance-minded API inspired by esbuild coupled with the extensively optimized Zig-based JS/TS parser, Bun's bundler is roughly 50% faster than esbuild on most benchmarks.
+With an performance-minded API coupled with the extensively optimized Zig-based JS/TS parser, Bun's bundler is 1.75x faster than esbuild on esbuild's [three.js benchmark](https://github.com/oven-sh/bun/tree/main/bench/bundle).
 
-IMAGE HERE
+{% image src="/images/bundler-speed.png" caption="Bundling 10 copies of three.js from scratch, with sourcemaps and minification" /%}
 
 ## CLI API
 

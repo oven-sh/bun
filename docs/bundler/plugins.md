@@ -31,6 +31,16 @@ Bun.build({
 });
 ```
 
+<!-- It can also be "registered" with the Bun runtime using the `Bun.plugin()` function. Once registered, the currently executing `bun` process will incorporate the plugin into its module resolution algorithm.
+
+```ts
+import {plugin} from "bun";
+
+plugin(myPlugin);
+``` -->
+
+## `--preload`
+
 To consume this plugin, add this file to the `preload` option in your [`bunfig.toml`](/docs/runtime/configuration). Bun automatically loads the files/modules specified in `preload` before running a file.
 
 ```toml
@@ -74,7 +84,7 @@ plugin(
 // application code
 ```
 
-Bun's plugin API is based on [esbuild](https://esbuild.github.io/plugins). Only [a subset](/docs/bundler/migration#plugin-api) of the esbuild API is implemented, but some esbuild plugins "just work" in Bun, like the official [MDX loader](https://mdxjs.com/packages/esbuild/):
+Bun's plugin API is based on [esbuild](https://esbuild.github.io/plugins). Only [a subset](/docs/bundler/vs-esbuild#plugin-api) of the esbuild API is implemented, but some esbuild plugins "just work" in Bun, like the official [MDX loader](https://mdxjs.com/packages/esbuild/):
 
 ```jsx
 import { plugin } from "bun";
@@ -268,7 +278,7 @@ console.log(mySvelteComponent.render());
 
 ## Reading `Bun.build`'s config
 
-Plugins can read and write to the [build config](/docs/cli/build#api) with `build.config`.
+Plugins can read and write to the [build config](/docs/bundler#api) with `build.config`.
 
 ```ts
 Bun.build({

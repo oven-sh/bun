@@ -667,6 +667,10 @@ declare module "bun" {
      * A UNIX timestamp indicating when the file was last modified.
      */
     lastModified: number;
+    /**
+     * The name or path of the file, as specified in the constructor.
+     */
+    name?: number;
   }
 
   /**
@@ -1668,7 +1672,7 @@ declare module "bun" {
      *
      * @deprecated since v0.6.3 - Use `key: Bun.file(path)` instead.
      */
-    keyFile: string;
+    keyFile?: string;
     /**
      * File path to a TLS certificate
      *
@@ -1676,7 +1680,7 @@ declare module "bun" {
      *
      * @deprecated since v0.6.3 - Use `cert: Bun.file(path)` instead.
      */
-    certFile: string;
+    certFile?: string;
 
     /**
      * Passphrase for the TLS key

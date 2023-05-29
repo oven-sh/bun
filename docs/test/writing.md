@@ -12,6 +12,17 @@ test("2 + 2", () => {
 });
 ```
 
+{% details summary="Jest-style globals" %}
+As in Jest, you can use `describe`, `test`, `expect`, and other functions without importing them. Unlike Jest, they are not injected into the global scope. Instead, the Bun transpiler will automatically inject an import from `bun:test` internally.
+
+```ts
+typeof globalThis.describe; // "undefined"
+typeof describe; // "function"
+```
+
+This transpiler integration only occurs during `bun test`, and only for test files & preloaded scripts. In practice there's no significant difference to the end user.
+{% /details %}
+
 Tests can be grouped into suites with `describe`.
 
 ```ts#math.test.ts
@@ -52,7 +63,7 @@ test("2 * 2", done => {
 });
 ```
 
-Skip individual tests with `test.skip`.
+Skip individual tests with `test.skip`. These tests will not be run.
 
 ```ts
 import { expect, test } from "bun:test";
@@ -63,41 +74,14 @@ test.skip("wat", () => {
 });
 ```
 
-## Setup and teardown
-
-Perform per-test setup and teardown logic with `beforeEach` and `afterEach`.
+Mark a test as a todo with `test.todo`. These tests _will_ be run, and the test runner will expect them to fail. If they pass, you will be prompted to mark it as a regular test.
 
 ```ts
 import { expect, test } from "bun:test";
 
-beforeEach(() => {
-  console.log("running test.");
+test.todo("fix this", () => {
+  myTestFunction();
 });
-
-afterEach(() => {
-  console.log("done with test.");
-});
-
-// tests...
-```
-
-Perform per-scope setup and teardown logic with `beforeAll` and `afterAll`. At the top-level, the _scope_ is the current file; in a `describe` block, the scope is the block itself.
-
-```ts
-import { expect, test, beforeAll, afterAll } from "bun:test";
-
-let db: Database;
-beforeAll(() => {
-  // connect to database
-  db = initializeDatabase();
-});
-
-afterAll(() => {
-  // close connection
-  db.close();
-});
-
-// tests...
 ```
 
 ## Matchers
@@ -105,6 +89,8 @@ afterAll(() => {
 Bun implements the following matchers. Full Jest compatibility is on the roadmap; track progress [here](https://github.com/oven-sh/bun/issues/1825).
 
 {% table %}
+
+---
 
 - 🟢
 - [`.not`](https://jestjs.io/docs/expect#not)

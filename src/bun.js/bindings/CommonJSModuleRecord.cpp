@@ -216,7 +216,7 @@ JSC::SourceCode createCommonJSModule(
                     if (canPerformFastEnumeration(structure)) {
                         exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                             auto key = entry.key();
-                            if (key->isSymbol() || key == vm.propertyNames->defaultKeyword)
+                            if (key->isSymbol() || key == vm.propertyNames->defaultKeyword || entry.attributes() & PropertyAttribute::DontEnum)
                                 return true;
 
                             exportNames.append(Identifier::fromUid(vm, key));
@@ -224,7 +224,6 @@ JSC::SourceCode createCommonJSModule(
                             return true;
                         });
                     } else {
-
                         JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
                         exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Exclude);
                         if (throwScope.exception())
@@ -245,20 +244,18 @@ JSC::SourceCode createCommonJSModule(
                             if (!exports->getPropertySlot(globalObject, property, slot))
                                 continue;
 
+                            exportNames.append(property);
+
                             JSValue getterResult = slot.getValue(globalObject, property);
 
-                            if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
-                                if (catchScope.exception()) {
-                                    catchScope.clearException();
-                                    continue;
-                                }
+                            // If it throws, we keep them in the exports list, but mark it as undefined
+                            // This is consistent with what Node.js does.
+                            if (catchScope.exception()) {
+                                catchScope.clearException();
+                                getterResult = jsUndefined();
                             }
 
-                            exportNames.append(property);
                             exportValues.append(getterResult);
-
-                            if (throwScope.exception())
-                                return;
                         }
                     }
                 }

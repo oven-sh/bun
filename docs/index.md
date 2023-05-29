@@ -11,7 +11,7 @@ $ bun run index.tsx  # TS and JSX supported out of the box
 ```bash
 $ bun run start                 # run the `start` script
 $ bun install <pkg>​             # install a package
-$ bun build ./index.tsx         # bundle a project
+$ bun build ./index.tsx         # bundle a project for browsers
 $ bun test                      # run tests
 $ bunx cowsay "Hello, world!"   # execute a package
 ```

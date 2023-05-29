@@ -3,7 +3,7 @@ interface VoidFunction {
 }
 
 declare namespace Bun {
-  interface Env extends Dict<string> {
+  export interface Env extends Dict<string> {
     NODE_ENV: string;
 
     /**

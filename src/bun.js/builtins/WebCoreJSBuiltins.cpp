@@ -2196,17 +2196,17 @@ const char* const s_importMetaObjectLoadCJS2ESMCode = "(function (_){\"use stric
 const JSC::ConstructAbility s_importMetaObjectRequireESMCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_importMetaObjectRequireESMCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_importMetaObjectRequireESMCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_importMetaObjectRequireESMCodeLength = 382;
+const int s_importMetaObjectRequireESMCodeLength = 406;
 static const JSC::Intrinsic s_importMetaObjectRequireESMCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_importMetaObjectRequireESMCode = "(function (a){\"use strict\";var i=@Loader.registry.@get(a);if(!i||!i.evaluated)i=@loadCJS2ESM(a);if(!i||!i.evaluated||!i.module)@throwTypeError(`require() failed to evaluate module \"${a}\". This is an internal consistentency error.`);var E=@Loader.getModuleNamespaceObject(i.module),_=E.default,b=_\?.[@commonJSSymbol];if(b===0)return _;else if(b&&@isCallable(_))return _();return E})\n";
+const char* const s_importMetaObjectRequireESMCode = "(function (a){\"use strict\";var _=@Loader.registry.@get(a);if(!_||!_.evaluated)_=@loadCJS2ESM(a);if(!_||!_.evaluated||!_.module)@throwTypeError(`require() failed to evaluate module \"${a}\". This is an internal consistentency error.`);var i=@Loader.getModuleNamespaceObject(_.module),u=i.default,E=u\?.[@commonJSSymbol];if(E===0||i[@commonJSSymbol]===0)return u;else if(E&&@isCallable(u))return u();return i})\n";
 
 // internalRequire
 const JSC::ConstructAbility s_importMetaObjectInternalRequireCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_importMetaObjectInternalRequireCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_importMetaObjectInternalRequireCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_importMetaObjectInternalRequireCodeLength = 569;
+const int s_importMetaObjectInternalRequireCodeLength = 611;
 static const JSC::Intrinsic s_importMetaObjectInternalRequireCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_importMetaObjectInternalRequireCode = "(function (n){\"use strict\";var _=@requireMap.@get(n);const i=n.substring(n.length-5);if(_){if(i===\".node\")return _.exports;return _}if(i===\".json\"){var S=globalThis[Symbol.for(\"_fs\")]||=@Bun.fs(),F=JSON.parse(S.readFileSync(n,\"utf8\"));return @requireMap.@set(n,F),F}else if(i===\".node\"){var b={exports:{}};return process.dlopen(b,n),@requireMap.@set(n,b),b.exports}else if(i===\".toml\"){var S=globalThis[Symbol.for(\"_fs\")]||=@Bun.fs(),F=@Bun.TOML.parse(S.readFileSync(n,\"utf8\"));return @requireMap.@set(n,F),F}else{var F=@requireESM(n);return @requireMap.@set(n,F),F}})\n";
+const char* const s_importMetaObjectInternalRequireCode = "(function (n){\"use strict\";var _=@requireMap.@get(n);const i=n.substring(n.length-5);if(_){if(i===\".node\")return _.exports;return _}if(i===\".json\"){var S=globalThis[Symbol.for(\"_fs\")]||=@Bun.fs(),F=JSON.parse(S.readFileSync(n,\"utf8\"));return @requireMap.@set(n,F),F}else if(i===\".node\"){var b={exports:{}};return process.dlopen(b,n),@requireMap.@set(n,b),b.exports}else if(i===\".toml\"){var S=globalThis[Symbol.for(\"_fs\")]||=@Bun.fs(),F=@Bun.TOML.parse(S.readFileSync(n,\"utf8\"));return @requireMap.@set(n,F),F}else{var F=@requireESM(n);const j=@requireMap.@get(n);if(j)return j;return @requireMap.@set(n,F),F}})\n";
 
 // createRequireCache
 const JSC::ConstructAbility s_importMetaObjectCreateRequireCacheCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;

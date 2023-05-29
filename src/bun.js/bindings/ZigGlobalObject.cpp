@@ -177,6 +177,7 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 #include "CallSite.h"
 #include "CallSitePrototype.h"
 #include "DOMWrapperWorld-class.h"
+#include "CommonJSModuleRecord.h"
 
 constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 
@@ -2607,6 +2608,45 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(result.toObject(globalObject));
         });
 
+    m_commonJSModuleObjectStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::createCommonJSModuleStructure(reinterpret_cast<Zig::GlobalObject*>(init.owner)));
+        });
+
+    m_commonJSFunctionArgumentsStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(init.owner);
+            JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(
+                globalObject,
+                globalObject->objectPrototype(),
+                3);
+            JSC::PropertyOffset offset;
+            auto& vm = globalObject->vm();
+
+            structure = structure->addPropertyTransition(
+                vm,
+                structure,
+                JSC::Identifier::fromString(vm, "module"_s),
+                0,
+                offset);
+
+            structure = structure->addPropertyTransition(
+                vm,
+                structure,
+                JSC::Identifier::fromString(vm, "exports"_s),
+                0,
+                offset);
+
+            structure = structure->addPropertyTransition(
+                vm,
+                structure,
+                JSC::Identifier::fromString(vm, "require"_s),
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::Builtin | 0,
+                offset);
+
+            init.set(structure);
+        });
+
     // Change prototype from null to object for synthetic modules.
     m_moduleNamespaceObjectStructure.initLater(
         [](const Initializer<Structure>& init) {
@@ -3798,6 +3838,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_bunSleepThenCallback.visit(visitor);
     thisObject->m_lazyTestModuleObject.visit(visitor);
     thisObject->m_lazyPreloadTestModuleObject.visit(visitor);
+    thisObject->m_commonJSModuleObjectStructure.visit(visitor);
+    thisObject->m_commonJSFunctionArgumentsStructure.visit(visitor);
     thisObject->m_cachedGlobalObjectStructure.visit(visitor);
     thisObject->m_cachedGlobalProxyStructure.visit(visitor);
 

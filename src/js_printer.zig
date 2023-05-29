@@ -1831,7 +1831,11 @@ fn NewPrinter(
                 }
 
                 if (comptime is_bun_platform) {
-                    p.print("import.meta.require");
+                    if (p.options.module_type == .esm) {
+                        p.print("import.meta.require");
+                    } else {
+                        p.print("require");
+                    }
                 } else {
                     p.printSymbol(p.options.require_ref.?);
                 }
@@ -2181,6 +2185,15 @@ fn NewPrinter(
                     p.print(")");
                     if (wrap) {
                         p.print(")");
+                    }
+                },
+                .e_require_call_target => {
+                    p.addSourceMapping(expr.loc);
+
+                    if (p.options.module_type == .cjs or !is_bun_platform) {
+                        p.print("require");
+                    } else {
+                        p.print("import.meta.require");
                     }
                 },
                 .e_require_string => |e| {

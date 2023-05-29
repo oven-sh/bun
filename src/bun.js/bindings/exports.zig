@@ -205,6 +205,9 @@ pub const ResolvedSource = extern struct {
     specifier: ZigString,
     source_code: ZigString,
     source_url: ZigString,
+    commonjs_exports: ?[*]ZigString = null,
+    commonjs_exports_len: u32 = 0,
+
     hash: u32,
 
     allocator: ?*anyopaque,

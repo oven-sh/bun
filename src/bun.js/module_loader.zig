@@ -820,11 +820,26 @@ pub const ModuleLoader = struct {
                 return resolved_source;
             }
 
+            var commonjs_exports = try bun.default_allocator.alloc(ZigString, parse_result.ast.commonjs_export_names.len);
+            for (parse_result.ast.commonjs_export_names, commonjs_exports) |name, *out| {
+                out.* = ZigString.fromUTF8(name);
+            }
+
             return ResolvedSource{
                 .allocator = null,
                 .source_code = ZigString.init(try default_allocator.dupe(u8, printer.ctx.getWritten())),
                 .specifier = ZigString.init(specifier),
                 .source_url = ZigString.init(path.text),
+                .commonjs_exports = if (commonjs_exports.len > 0)
+                    commonjs_exports.ptr
+                else
+                    null,
+                .commonjs_exports_len = if (commonjs_exports.len > 0)
+                    @truncate(u32, commonjs_exports.len)
+                else if (parse_result.ast.exports_kind == .cjs)
+                    std.math.maxInt(u32)
+                else
+                    0,
                 // // TODO: change hash to a bitfield
                 // .hash = 1,
 
@@ -943,6 +958,7 @@ pub const ModuleLoader = struct {
                     .virtual_source = virtual_source,
                     .hoist_bun_plugin = true,
                     .dont_bundle_twice = true,
+                    .allow_commonjs = true,
                     .inject_jest_globals = jsc_vm.bundler.options.rewrite_jest_for_tests and
                         jsc_vm.main.len == path.text.len and
                         jsc_vm.main_hash == hash and
@@ -1146,11 +1162,26 @@ pub const ModuleLoader = struct {
                     return resolved_source;
                 }
 
+                var commonjs_exports = try bun.default_allocator.alloc(ZigString, parse_result.ast.commonjs_export_names.len);
+                for (parse_result.ast.commonjs_export_names, commonjs_exports) |name, *out| {
+                    out.* = ZigString.fromUTF8(name);
+                }
+
                 return .{
                     .allocator = null,
                     .source_code = ZigString.init(try default_allocator.dupe(u8, printer.ctx.getWritten())),
                     .specifier = ZigString.init(display_specifier),
                     .source_url = ZigString.init(path.text),
+                    .commonjs_exports = if (commonjs_exports.len > 0)
+                        commonjs_exports.ptr
+                    else
+                        null,
+                    .commonjs_exports_len = if (commonjs_exports.len > 0)
+                        @truncate(u32, commonjs_exports.len)
+                    else if (parse_result.ast.exports_kind == .cjs)
+                        std.math.maxInt(u32)
+                    else
+                        0,
                     // // TODO: change hash to a bitfield
                     // .hash = 1,
 

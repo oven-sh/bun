@@ -2,27 +2,6 @@ interface VoidFunction {
   (): void;
 }
 
-declare namespace Bun {
-  export interface Env extends Dict<string> {
-    NODE_ENV: string;
-
-    /**
-     * The timezone used by Intl, Date, etc.
-     *
-     * To change the timezone, set `Bun.env.TZ` or `process.env.TZ` to the time zone you want to use.
-     *
-     * You can view the current timezone with `Intl.DateTimeFormat().resolvedOptions().timeZone`
-     *
-     * @example
-     * ```js
-     * Bun.env.TZ = "America/Los_Angeles";
-     * console.log(Intl.DateTimeFormat().resolvedOptions().timeZone); // "America/Los_Angeles"
-     * ```
-     */
-    TZ?: string;
-  }
-}
-
 /**
  *
  * Bun.js runtime APIs
@@ -43,6 +22,26 @@ declare namespace Bun {
 declare module "bun" {
   type ArrayBufferView = TypedArray | DataView;
   import { Encoding as CryptoEncoding } from "crypto";
+  
+  export interface Env extends Dict<string> {
+    NODE_ENV: string;
+
+    /**
+     * The timezone used by Intl, Date, etc.
+     *
+     * To change the timezone, set `Bun.env.TZ` or `process.env.TZ` to the time zone you want to use.
+     *
+     * You can view the current timezone with `Intl.DateTimeFormat().resolvedOptions().timeZone`
+     *
+     * @example
+     * ```js
+     * Bun.env.TZ = "America/Los_Angeles";
+     * console.log(Intl.DateTimeFormat().resolvedOptions().timeZone); // "America/Los_Angeles"
+     * ```
+     */
+    TZ?: string;
+  }
+  
   /**
    * The environment variables of the process
    *
@@ -51,7 +50,7 @@ declare module "bun" {
    * Changes to `process.env` at runtime won't automatically be reflected in the default value. For that, you can pass `process.env` explicitly.
    *
    */
-  export const env: Bun.Env;
+  export const env: Env;
   export const origin: string;
 
   /**

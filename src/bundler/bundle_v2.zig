@@ -8572,6 +8572,7 @@ const LinkerContext = struct {
             .const_values = c.graph.const_values,
             .minify_whitespace = c.options.minify_whitespace,
             .minify_syntax = c.options.minify_syntax,
+            .module_type = c.options.output_format,
 
             .allocator = allocator,
             .to_esm_ref = toESMRef,

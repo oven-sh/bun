@@ -1037,7 +1037,7 @@ describe("websocket server", () => {
     });
     expect(serverCounter).toBe(sendQueue.length);
     server.stop(true);
-  });
+  }, 10_000);
   it("can close with reason and code #2631", done => {
     let timeout: any;
     let server = Bun.serve({

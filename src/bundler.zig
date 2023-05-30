@@ -1203,6 +1203,7 @@ pub const Bundler = struct {
                         .minify_syntax = bundler.options.minify_syntax,
                         .minify_identifiers = bundler.options.minify_identifiers,
                         .transform_only = bundler.options.transform_only,
+                        .module_type = if (ast.exports_kind == .cjs) .cjs else .esm,
                     },
                     enable_source_map,
                 ),
@@ -1224,6 +1225,7 @@ pub const Bundler = struct {
                     .minify_syntax = bundler.options.minify_syntax,
                     .minify_identifiers = bundler.options.minify_identifiers,
                     .transform_only = bundler.options.transform_only,
+                    .module_type = if (ast.exports_kind == .cjs) .cjs else .esm,
                 },
                 enable_source_map,
             ),
@@ -1287,6 +1289,7 @@ pub const Bundler = struct {
         inject_jest_globals: bool = false,
 
         dont_bundle_twice: bool = false,
+        allow_commonjs: bool = false,
     };
 
     pub fn parse(
@@ -1389,6 +1392,8 @@ pub const Bundler = struct {
 
                 // @bun annotation
                 opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
+
+                opts.features.commonjs_at_runtime = this_parse.allow_commonjs;
 
                 opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
 

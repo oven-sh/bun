@@ -547,6 +547,7 @@ declare module "buffer" {
         type: "Buffer";
         data: number[];
       };
+
       /**
        * Returns `true` if both `buf` and `otherBuffer` have exactly the same bytes,`false` otherwise. Equivalent to `buf.compare(otherBuffer) === 0`.
        *

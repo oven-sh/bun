@@ -2774,7 +2774,7 @@ pub const Parser = struct {
             }
             break :brk .none;
         };
-        return .{ .ast = try p.toAST(parts, exports_kind, null, "") };
+        return .{ .ast = try p.toAST(parts, exports_kind, .{ .none = {} }, "") };
     }
 
     pub fn parse(self: *Parser) !js_ast.Result {
@@ -3351,7 +3351,7 @@ pub const Parser = struct {
 
         const uses_module_ref = p.symbols.items[p.module_ref.innerIndex()].use_count_estimate > 0;
 
-        var wrapper_expr: ?Expr = null;
+        var wrapper_expr: CommonJSWrapper = .{ .none = {} };
 
         if (p.isDeoptimizedCommonJS()) {
             exports_kind = .cjs;
@@ -3359,7 +3359,11 @@ pub const Parser = struct {
             exports_kind = .esm;
         } else if (uses_exports_ref or uses_module_ref or p.has_top_level_return) {
             exports_kind = .cjs;
-            if (!p.options.bundle and (!p.options.transform_only or p.options.features.dynamic_require)) {
+            if (p.options.features.commonjs_at_runtime) {
+                wrapper_expr = .{
+                    .bun_js = {},
+                };
+            } else if (!p.options.bundle and !p.options.features.commonjs_at_runtime and (!p.options.transform_only or p.options.features.dynamic_require)) {
                 if (p.options.legacy_transform_require_to_import or (p.options.features.dynamic_require and !p.options.enable_legacy_bundling)) {
                     var args = p.allocator.alloc(Expr, 2) catch unreachable;
 
@@ -3368,7 +3372,7 @@ pub const Parser = struct {
                         p.resolveGeneratedSymbol(&p.runtime_imports.__exportDefault.?);
                     }
 
-                    wrapper_expr = p.callRuntime(logger.Loc.Empty, "__cJS2eSM", args);
+                    wrapper_expr = .{ .bun_dev = p.callRuntime(logger.Loc.Empty, "__cJS2eSM", args) };
                     p.resolveGeneratedSymbol(&p.runtime_imports.__cJS2eSM.?);
 
                     // Disable HMR if we're wrapping it in CommonJS
@@ -4775,18 +4779,12 @@ fn NewParser_(
         commonjs_named_exports_deoptimized: bool = false,
         commonjs_named_exports_needs_conversion: u32 = std.math.maxInt(u32),
         had_commonjs_named_exports_this_visit: bool = false,
+        commonjs_replacement_stmts: StmtNodeList = &.{},
 
         parse_pass_symbol_uses: ParsePassSymbolUsageType = undefined,
-        // duplicate_case_checker: void,
-        // non_bmp_identifiers: StringBoolMap,
-        // legacy_octal_literals: void,
-        // legacy_octal_literals:      map[js_ast.E]logger.Range,
 
-        // For lowering private methods
-        // weak_map_ref: ?Ref,
-        // weak_set_ref: ?Ref,
-        // private_getters: RefRefMap,
-        // private_setters: RefRefMap,
+        /// Used by commonjs_at_runtime
+        commonjs_export_names: bun.StringArrayHashMapUnmanaged(void) = .{},
 
         /// When this flag is enabled, we attempt to fold all expressions that
         /// TypeScript would consider to be "constant expressions". This flag is
@@ -10045,14 +10043,13 @@ fn NewParser_(
             try p.skipTypeScriptObjectType();
         }
 
-        // This assumes the caller has already parsed the "import" token
-
-        fn importMetaRequire(p: *P, loc: logger.Loc) Expr {
-            return p.newExpr(E.Dot{
-                .target = p.newExpr(E.ImportMeta{}, loc),
-                .name = "require",
-                .name_loc = loc,
-            }, loc);
+        fn importMetaRequire(_: *P, loc: logger.Loc) Expr {
+            return Expr{
+                .data = .{
+                    .e_require_call_target = {},
+                },
+                .loc = loc,
+            };
         }
 
         fn parseTypeScriptImportEqualsStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions, default_name_loc: logger.Loc, default_name: string) anyerror!Stmt {
@@ -15928,8 +15925,6 @@ fn NewParser_(
                                         if (!define.data.valueless) {
                                             return p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &define.data);
                                         }
-
-                                        return p.newExpr(E.Undefined{}, expr.loc);
                                     }
                                 }
                             }
@@ -17424,9 +17419,158 @@ fn NewParser_(
                             //      delete module.exports
                             //      module.exports();
 
-                            if (identifier_opts.is_call_target or identifier_opts.is_delete_target or identifier_opts.assign_target != .none) {
+                            if (identifier_opts.is_call_target or identifier_opts.is_delete_target or identifier_opts.assign_target == .update) {
                                 p.deoptimizeCommonJSNamedExports();
                                 return null;
+                            }
+
+                            // Detect if we are doing
+                            //
+                            //  module.exports = {
+                            //    foo: "bar"
+                            //  }
+                            //
+                            if (identifier_opts.assign_target == .replace and
+                                p.stmt_expr_value == .e_binary and
+                                p.stmt_expr_value.e_binary.op == .bin_assign)
+                            {
+                                if (
+                                // if it's not top-level, don't do this
+                                p.module_scope != p.current_scope or
+                                    // if you do
+                                    //
+                                    // exports.foo = 123;
+                                    // module.exports = {};
+                                    //
+                                    // that's a de-opt.
+                                    p.commonjs_named_exports.count() > 0 or
+
+                                    // anything which is not module.exports = {} is a de-opt.
+                                    p.stmt_expr_value.e_binary.right.data != .e_object or
+                                    p.stmt_expr_value.e_binary.left.data != .e_dot or
+                                    !strings.eqlComptime(p.stmt_expr_value.e_binary.left.data.e_dot.name, "exports") or
+                                    p.stmt_expr_value.e_binary.left.data.e_dot.target.data != .e_identifier or
+                                    !p.stmt_expr_value.e_binary.left.data.e_dot.target.data.e_identifier.ref.eql(p.module_ref))
+                                {
+                                    p.deoptimizeCommonJSNamedExports();
+                                    return null;
+                                }
+
+                                const props: []const G.Property = p.stmt_expr_value.e_binary.right.data.e_object.properties.slice();
+                                for (props) |prop| {
+                                    // if it's not a trivial object literal, de-opt
+                                    if (prop.kind != .normal or
+                                        prop.key == null or
+                                        prop.key.?.data != .e_string or
+                                        prop.flags.contains(Flags.Property.is_method) or
+                                        prop.flags.contains(Flags.Property.is_computed) or
+                                        prop.flags.contains(Flags.Property.is_spread) or
+                                        prop.flags.contains(Flags.Property.is_static) or
+                                        // If it creates a new scope, we can't do this optimization right now
+                                        // Our scope order verification stuff will get mad
+                                        // But we should let you do module.exports = { bar: foo(), baz: 123 }
+                                        // just not module.exports = { bar: function() {}  }
+                                        // just not module.exports = { bar() {}  }
+                                        switch (prop.value.?.data) {
+                                        .e_commonjs_export_identifier, .e_import_identifier, .e_identifier => false,
+                                        .e_call => |call| switch (call.target.data) {
+                                            .e_commonjs_export_identifier, .e_import_identifier, .e_identifier => false,
+                                            else => |call_target| !@as(Expr.Tag, call_target).isPrimitiveLiteral(),
+                                        },
+                                        else => !prop.value.?.isPrimitiveLiteral(),
+                                    }) {
+                                        p.deoptimizeCommonJSNamedExports();
+                                        return null;
+                                    }
+                                } else {
+                                    // empty object de-opts because otherwise the statement becomes
+                                    // <empty space> = {};
+                                    p.deoptimizeCommonJSNamedExports();
+                                    return null;
+                                }
+
+                                var stmts = std.ArrayList(Stmt).initCapacity(p.allocator, props.len * 2) catch unreachable;
+                                var decls = p.allocator.alloc(Decl, props.len) catch unreachable;
+                                var clause_items = p.allocator.alloc(js_ast.ClauseItem, props.len) catch unreachable;
+
+                                for (props) |prop| {
+                                    const key = prop.key.?.data.e_string.string(p.allocator) catch unreachable;
+                                    const visited_value = p.visitExpr(prop.value.?);
+                                    const value = SideEffects.simpifyUnusedExpr(p, visited_value) orelse visited_value;
+
+                                    // We are doing `module.exports = { ... }`
+                                    // lets rewrite it to a series of what will become export assignemnts
+                                    var named_export_entry = p.commonjs_named_exports.getOrPut(p.allocator, key) catch unreachable;
+                                    if (!named_export_entry.found_existing) {
+                                        const new_ref = p.newSymbol(
+                                            .other,
+                                            std.fmt.allocPrint(p.allocator, "${any}", .{strings.fmtIdentifier(key)}) catch unreachable,
+                                        ) catch unreachable;
+                                        p.module_scope.generated.push(p.allocator, new_ref) catch unreachable;
+                                        named_export_entry.value_ptr.* = .{
+                                            .loc_ref = LocRef{
+                                                .loc = name_loc,
+                                                .ref = new_ref,
+                                            },
+                                            .needs_decl = false,
+                                        };
+                                    }
+                                    const ref = named_export_entry.value_ptr.loc_ref.ref.?;
+                                    // module.exports = {
+                                    //   foo: "bar",
+                                    //   baz: "qux",
+                                    // }
+                                    // ->
+                                    // exports.foo = "bar", exports.baz = "qux"
+                                    // Which will become
+                                    // $foo = "bar";
+                                    // $baz = "qux";
+                                    // export { $foo as foo, $baz as baz }
+
+                                    decls[0] = .{
+                                        .binding = p.b(B.Identifier{ .ref = ref }, prop.key.?.loc),
+                                        .value = value,
+                                    };
+                                    // we have to ensure these are known to be top-level
+                                    p.declared_symbols.append(p.allocator, .{
+                                        .ref = ref,
+                                        .is_top_level = true,
+                                    }) catch unreachable;
+                                    p.had_commonjs_named_exports_this_visit = true;
+                                    clause_items[0] = js_ast.ClauseItem{
+                                        // We want the generated name to not conflict
+                                        .alias = key,
+                                        .alias_loc = prop.key.?.loc,
+                                        .name = named_export_entry.value_ptr.loc_ref,
+                                    };
+
+                                    stmts.appendSlice(
+                                        &[_]Stmt{
+                                            p.s(
+                                                S.Local{
+                                                    .kind = .k_var,
+                                                    .is_export = false,
+                                                    .was_commonjs_export = true,
+                                                    .decls = G.Decl.List.init(decls[0..1]),
+                                                },
+                                                prop.key.?.loc,
+                                            ),
+                                            p.s(
+                                                S.ExportClause{
+                                                    .items = clause_items[0..1],
+                                                    .is_single_line = true,
+                                                },
+                                                prop.key.?.loc,
+                                            ),
+                                        },
+                                    ) catch unreachable;
+                                    decls = decls[1..];
+                                    clause_items = clause_items[1..];
+                                }
+
+                                p.ignoreUsage(p.module_ref);
+                                p.commonjs_replacement_stmts = stmts.items;
+                                return p.newExpr(E.Missing{}, name_loc);
                             }
 
                             // rewrite `module.exports` to `exports`
@@ -17447,40 +17591,45 @@ fn NewParser_(
                     }
 
                     if (comptime FeatureFlags.unwrap_commonjs_to_esm) {
-                        if (!p.is_control_flow_dead and id.ref.eql(p.exports_ref) and !p.commonjs_named_exports_deoptimized) {
-                            if (identifier_opts.is_delete_target) {
-                                p.deoptimizeCommonJSNamedExports();
-                                return null;
-                            }
+                        if (!p.is_control_flow_dead and id.ref.eql(p.exports_ref)) {
+                            if (!p.commonjs_named_exports_deoptimized) {
+                                if (identifier_opts.is_delete_target) {
+                                    p.deoptimizeCommonJSNamedExports();
+                                    return null;
+                                }
 
-                            var named_export_entry = p.commonjs_named_exports.getOrPut(p.allocator, name) catch unreachable;
-                            if (!named_export_entry.found_existing) {
-                                const new_ref = p.newSymbol(
-                                    .other,
-                                    std.fmt.allocPrint(p.allocator, "${any}", .{strings.fmtIdentifier(name)}) catch unreachable,
-                                ) catch unreachable;
-                                p.module_scope.generated.push(p.allocator, new_ref) catch unreachable;
-                                named_export_entry.value_ptr.* = .{
-                                    .loc_ref = LocRef{
-                                        .loc = name_loc,
-                                        .ref = new_ref,
+                                var named_export_entry = p.commonjs_named_exports.getOrPut(p.allocator, name) catch unreachable;
+                                if (!named_export_entry.found_existing) {
+                                    const new_ref = p.newSymbol(
+                                        .other,
+                                        std.fmt.allocPrint(p.allocator, "${any}", .{strings.fmtIdentifier(name)}) catch unreachable,
+                                    ) catch unreachable;
+                                    p.module_scope.generated.push(p.allocator, new_ref) catch unreachable;
+                                    named_export_entry.value_ptr.* = .{
+                                        .loc_ref = LocRef{
+                                            .loc = name_loc,
+                                            .ref = new_ref,
+                                        },
+                                        .needs_decl = true,
+                                    };
+                                    if (p.commonjs_named_exports_needs_conversion == std.math.maxInt(u32))
+                                        p.commonjs_named_exports_needs_conversion = @truncate(u32, p.commonjs_named_exports.count() - 1);
+                                }
+
+                                const ref = named_export_entry.value_ptr.*.loc_ref.ref.?;
+                                p.ignoreUsage(id.ref);
+                                p.recordUsage(ref);
+
+                                return p.newExpr(
+                                    E.CommonJSExportIdentifier{
+                                        .ref = ref,
                                     },
-                                    .needs_decl = true,
-                                };
-                                if (p.commonjs_named_exports_needs_conversion == std.math.maxInt(u32))
-                                    p.commonjs_named_exports_needs_conversion = @truncate(u32, p.commonjs_named_exports.count() - 1);
+                                    name_loc,
+                                );
+                            } else if (p.options.features.commonjs_at_runtime) {
+                                // Record this CommonJS export name for use later.
+                                _ = p.commonjs_export_names.getOrPut(p.allocator, name) catch unreachable;
                             }
-
-                            const ref = named_export_entry.value_ptr.*.loc_ref.ref.?;
-                            p.ignoreUsage(id.ref);
-                            p.recordUsage(ref);
-
-                            return p.newExpr(
-                                E.CommonJSExportIdentifier{
-                                    .ref = ref,
-                                },
-                                name_loc,
-                            );
                         }
                     }
 
@@ -17991,6 +18140,8 @@ fn NewParser_(
                 .s_expr => |data| {
                     const should_trim_primitive = !p.options.features.minify_syntax and !data.value.isPrimitiveLiteral();
                     p.stmt_expr_value = data.value.data;
+                    defer p.stmt_expr_value = .{ .e_missing = .{} };
+
                     const is_top_level = p.current_scope == p.module_scope;
                     if (comptime FeatureFlags.unwrap_commonjs_to_esm) {
                         p.commonjs_named_exports_needs_conversion = if (is_top_level)
@@ -18069,6 +18220,17 @@ fn NewParser_(
                                             return;
                                         }
                                     }
+                                } else if (p.commonjs_replacement_stmts.len > 0) {
+                                    if (stmts.items.len == 0) {
+                                        stmts.items = p.commonjs_replacement_stmts;
+                                        stmts.capacity = p.commonjs_replacement_stmts.len;
+                                        p.commonjs_replacement_stmts.len = 0;
+                                    } else {
+                                        stmts.appendSlice(p.commonjs_replacement_stmts) catch unreachable;
+                                        p.commonjs_replacement_stmts.len = 0;
+                                    }
+
+                                    return;
                                 }
                             }
                         }
@@ -20704,7 +20866,7 @@ fn NewParser_(
             p: *P,
             _parts: []js_ast.Part,
             exports_kind: js_ast.ExportsKind,
-            commonjs_wrapper_expr: ?Expr,
+            commonjs_wrapper_expr: CommonJSWrapper,
             hashbang: []const u8,
         ) !js_ast.Ast {
             const allocator = p.allocator;
@@ -20731,7 +20893,7 @@ fn NewParser_(
                     p.import_records_for_current_part.clearRetainingCapacity();
                     p.declared_symbols.clearRetainingCapacity();
 
-                    var result = try ImportScanner.scan(P, p, part.stmts, commonjs_wrapper_expr != null);
+                    var result = try ImportScanner.scan(P, p, part.stmts, commonjs_wrapper_expr != .none);
                     kept_import_equals = kept_import_equals or result.kept_import_equals;
                     removed_import_equals = removed_import_equals or result.removed_import_equals;
 
@@ -20792,504 +20954,589 @@ fn NewParser_(
             //     p.treeShake(&parts, commonjs_wrapper_expr != null or p.options.features.hot_module_reloading or p.options.enable_legacy_bundling);
             // }
 
-            if (commonjs_wrapper_expr) |commonjs_wrapper| {
-                var require_function_args = allocator.alloc(Arg, 2) catch unreachable;
-                var final_part_stmts_count: usize = 0;
+            switch (commonjs_wrapper_expr) {
+                .bun_dev => |commonjs_wrapper| {
+                    var require_function_args = allocator.alloc(Arg, 2) catch unreachable;
+                    var final_part_stmts_count: usize = 0;
 
-                var imports_count: u32 = 0;
-                // We have to also move export from, since we will preserve those
-                var exports_from_count: u32 = 0;
+                    var imports_count: u32 = 0;
+                    // We have to also move export from, since we will preserve those
+                    var exports_from_count: u32 = 0;
 
-                // Two passes. First pass just counts.
-                for (parts) |part| {
-                    for (part.stmts) |stmt| {
-                        imports_count += switch (stmt.data) {
-                            .s_import => @as(u32, 1),
-                            else => @as(u32, 0),
-                        };
+                    // Two passes. First pass just counts.
+                    for (parts) |part| {
+                        for (part.stmts) |stmt| {
+                            imports_count += switch (stmt.data) {
+                                .s_import => @as(u32, 1),
+                                else => @as(u32, 0),
+                            };
 
-                        exports_from_count += switch (stmt.data) {
-                            .s_export_star, .s_export_from => @as(u32, 1),
-                            else => @as(u32, 0),
-                        };
+                            exports_from_count += switch (stmt.data) {
+                                .s_export_star, .s_export_from => @as(u32, 1),
+                                else => @as(u32, 0),
+                            };
 
-                        final_part_stmts_count += switch (stmt.data) {
-                            .s_import, .s_export_star, .s_export_from => @as(usize, 0),
-                            else => @as(usize, 1),
-                        };
-                    }
-                }
-
-                var new_stmts_list = allocator.alloc(Stmt, exports_from_count + imports_count + 1) catch unreachable;
-                var final_stmts_list = allocator.alloc(Stmt, final_part_stmts_count) catch unreachable;
-                var remaining_final_stmts = final_stmts_list;
-                var imports_list = new_stmts_list[0..imports_count];
-
-                var exports_list: []Stmt = if (exports_from_count > 0) new_stmts_list[imports_list.len + 1 ..] else &[_]Stmt{};
-
-                require_function_args[0] = G.Arg{ .binding = p.b(B.Identifier{ .ref = p.module_ref }, logger.Loc.Empty) };
-                require_function_args[1] = G.Arg{ .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty) };
-
-                var imports_list_i: u32 = 0;
-                var exports_list_i: u32 = 0;
-
-                for (parts) |part| {
-                    for (part.stmts) |*stmt| {
-                        switch (stmt.data) {
-                            .s_import => {
-                                imports_list[imports_list_i] = stmt.*;
-                                stmt.loc = imports_list[imports_list_i].loc;
-                                imports_list_i += 1;
-                            },
-
-                            .s_export_star, .s_export_from => {
-                                exports_list[exports_list_i] = stmt.*;
-                                stmt.loc = exports_list[exports_list_i].loc;
-                                exports_list_i += 1;
-                            },
-                            else => {
-                                remaining_final_stmts[0] = stmt.*;
-                                remaining_final_stmts = remaining_final_stmts[1..];
-                            },
+                            final_part_stmts_count += switch (stmt.data) {
+                                .s_import, .s_export_star, .s_export_from => @as(usize, 0),
+                                else => @as(usize, 1),
+                            };
                         }
-                        stmt.* = Stmt.empty();
-                    }
-                }
-
-                commonjs_wrapper.data.e_call.args.ptr[0] = p.newExpr(
-                    E.Function{ .func = G.Fn{
-                        .name = null,
-                        .open_parens_loc = logger.Loc.Empty,
-                        .args = require_function_args,
-                        .body = .{ .loc = logger.Loc.Empty, .stmts = final_stmts_list },
-                        .flags = Flags.Function.init(.{ .is_export = true }),
-                    } },
-                    logger.Loc.Empty,
-                );
-                var sourcefile_name = p.source.path.pretty;
-                if (strings.lastIndexOf(sourcefile_name, "node_modules")) |node_modules_i| {
-                    // 1 for the separator
-                    const end = node_modules_i + 1 + "node_modules".len;
-                    // If you were to name your file "node_modules.js" it shouldn't appear as ".js"
-                    if (end < sourcefile_name.len) {
-                        sourcefile_name = sourcefile_name[end..];
-                    }
-                }
-                commonjs_wrapper.data.e_call.args.ptr[1] = p.newExpr(E.String{ .data = sourcefile_name }, logger.Loc.Empty);
-
-                new_stmts_list[imports_list.len] = p.s(
-                    S.ExportDefault{
-                        .value = .{
-                            .expr = commonjs_wrapper,
-                        },
-                        .default_name = LocRef{ .ref = null, .loc = logger.Loc.Empty },
-                    },
-                    logger.Loc.Empty,
-                );
-                parts[parts.len - 1].stmts = new_stmts_list;
-            } else if (p.options.features.hot_module_reloading and p.options.features.allow_runtime) {
-                var named_exports_count: usize = p.named_exports.count();
-                const named_imports: js_ast.Ast.NamedImports = p.named_imports;
-
-                // To transform to something HMR'able, we must:
-                // 1. Wrap the top level code in an IIFE
-                // 2. Move imports to the top of the file (preserving the order)
-                // 3. Remove export clauses (done during ImportScanner)
-                // 4. Move export * from and export from to the bottom of the file (or the top, it doesn't matter I don't think)
-                // 5. Export everything as getters in our HMR module
-                // 6. Call the HMRModule's exportAll function like so:
-                // __hmrModule.exportAll({
-                //   exportAlias: () => identifier,
-                //   exportAlias: () => identifier,
-                // });
-                // This has the unfortunate property of making property accesses of exports slower at runtime.
-                // But, I'm not sure there's a way to use regular properties without breaking stuff.
-                var imports_count: usize = 0;
-                // We have to also move export from, since we will preserve those
-                var exports_from_count: usize = 0;
-                // Two passes. First pass just counts.
-                for (parts[parts.len - 1].stmts) |stmt| {
-                    imports_count += switch (stmt.data) {
-                        .s_import => @as(usize, 1),
-                        else => @as(usize, 0),
-                    };
-                    exports_from_count += switch (stmt.data) {
-                        .s_export_star, .s_export_from => @as(usize, 1),
-                        else => @as(usize, 0),
-                    };
-                }
-                var part = &parts[parts.len - 1];
-
-                const end_iife_stmts_count = part.stmts.len - imports_count - exports_from_count + 1;
-                // Why 7?
-                // 1. HMRClient.activate(${isDebug});
-                // 2. var __hmrModule = new HMMRModule(id, file_path), __exports = __hmrModule.exports;
-                // 3. (__hmrModule.load = function() {
-                // ${...end_iffe_stmts_count - 1}
-                // ${end_iffe_stmts_count}
-                // __hmrModule.exportAll({exportAlias: () => identifier}) <-- ${named_exports_count}
-                // ();
-                // 4. var __hmrExport_exportName = __hmrModule.exports.exportName,
-                // 5. export { __hmrExport_exportName as blah, ... }
-                // 6. __hmrModule.onSetExports = (newExports) => {
-                // $named_exports_count   __hmrExport_exportName = newExports.exportName; <-- ${named_exports_count}
-                // }
-
-                // if there are no exports:
-                // - there shouldn't be an export statement
-                // - we don't need the S.Local for wrapping the exports
-                // We still call exportAll just with an empty object.
-                const has_any_exports = named_exports_count > 0;
-
-                const toplevel_stmts_count = 3 + (@intCast(usize, @boolToInt(has_any_exports)) * 2);
-                var _stmts = allocator.alloc(
-                    Stmt,
-                    end_iife_stmts_count + toplevel_stmts_count + (named_exports_count * 2) + imports_count + exports_from_count,
-                ) catch unreachable;
-                // Normally, we'd have to grow that inner function's stmts list by one
-                // But we can avoid that by just making them all use this same array.
-                var curr_stmts = _stmts;
-
-                // in debug: crash in the printer due to undefined memory
-                // in release: print ";" instead.
-                // this should never happen regardless, but i'm just being cautious here.
-                if (comptime !Environment.isDebug) {
-                    std.mem.set(Stmt, _stmts, Stmt.empty());
-                }
-
-                // Second pass: move any imports from the part's stmts array to the new stmts
-                var imports_list = curr_stmts[0..imports_count];
-                curr_stmts = curr_stmts[imports_list.len..];
-                var toplevel_stmts = curr_stmts[0..toplevel_stmts_count];
-                curr_stmts = curr_stmts[toplevel_stmts.len..];
-                var exports_from = curr_stmts[0..exports_from_count];
-                curr_stmts = curr_stmts[exports_from.len..];
-                // This is used for onSetExports
-                var update_function_stmts = curr_stmts[0..named_exports_count];
-                curr_stmts = curr_stmts[update_function_stmts.len..];
-                var export_all_function_body_stmts = curr_stmts[0..named_exports_count];
-                curr_stmts = curr_stmts[export_all_function_body_stmts.len..];
-                // This is the original part statements + 1
-                var part_stmts = curr_stmts;
-                if (comptime Environment.allow_assert) assert(part_stmts.len == end_iife_stmts_count);
-                var part_stmts_i: usize = 0;
-
-                var import_list_i: usize = 0;
-                var export_list_i: usize = 0;
-
-                // We must always copy it into the new stmts array
-                for (part.stmts) |stmt| {
-                    switch (stmt.data) {
-                        .s_import => {
-                            imports_list[import_list_i] = stmt;
-                            import_list_i += 1;
-                        },
-                        .s_export_star, .s_export_from => {
-                            exports_from[export_list_i] = stmt;
-                            export_list_i += 1;
-                        },
-                        else => {
-                            part_stmts[part_stmts_i] = stmt;
-                            part_stmts_i += 1;
-                        },
-                    }
-                }
-
-                const new_call_args_count: usize = if (p.options.features.react_fast_refresh) 3 else 2;
-                var call_args = try allocator.alloc(Expr, new_call_args_count + 1);
-                var new_call_args = call_args[0..new_call_args_count];
-                var hmr_module_ident = p.newExpr(E.Identifier{ .ref = p.hmr_module.ref }, logger.Loc.Empty);
-
-                new_call_args[0] = p.newExpr(E.Number{ .value = @intToFloat(f64, p.options.filepath_hash_for_hmr) }, logger.Loc.Empty);
-                // This helps us provide better error messages
-                new_call_args[1] = p.newExpr(E.String{ .data = p.source.path.pretty }, logger.Loc.Empty);
-                if (p.options.features.react_fast_refresh) {
-                    new_call_args[2] = p.newExpr(E.Identifier{ .ref = p.jsx_refresh_runtime.ref }, logger.Loc.Empty);
-                }
-
-                var toplevel_stmts_i: u8 = 0;
-
-                var decls = try allocator.alloc(G.Decl, 2 + named_exports_count);
-                var first_decl = decls[0..2];
-                // We cannot rely on import.meta.url because if we import it within a blob: url, it will be nonsensical
-                // var __hmrModule = new HMRModule(123123124, "/index.js"), __exports = __hmrModule.exports;
-                const hmr_import_module_ = if (p.options.features.react_fast_refresh)
-                    p.runtime_imports.__FastRefreshModule.?
-                else
-                    p.runtime_imports.__HMRModule.?;
-
-                const hmr_import_ref = hmr_import_module_.ref;
-                first_decl[0] = G.Decl{
-                    .binding = p.b(B.Identifier{ .ref = p.hmr_module.ref }, logger.Loc.Empty),
-                    .value = p.newExpr(E.New{
-                        .args = ExprNodeList.init(new_call_args),
-                        .target = p.newExpr(
-                            E.Identifier{
-                                .ref = hmr_import_ref,
-                            },
-                            logger.Loc.Empty,
-                        ),
-                        .close_parens_loc = logger.Loc.Empty,
-                    }, logger.Loc.Empty),
-                };
-                first_decl[1] = G.Decl{
-                    .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty),
-                    .value = p.newExpr(E.Dot{
-                        .target = p.newExpr(E.Identifier{ .ref = p.hmr_module.ref }, logger.Loc.Empty),
-                        .name = "exports",
-                        .name_loc = logger.Loc.Empty,
-                    }, logger.Loc.Empty),
-                };
-
-                var export_clauses = try allocator.alloc(js_ast.ClauseItem, named_exports_count);
-                var named_export_i: usize = 0;
-                var named_exports_iter = p.named_exports.iterator();
-                var export_properties = try allocator.alloc(G.Property, named_exports_count);
-
-                var export_name_string_length: usize = 0;
-                while (named_exports_iter.next()) |named_export| {
-                    export_name_string_length += named_export.key_ptr.len + "$$hmr_".len;
-                }
-
-                var export_name_string_all = try allocator.alloc(u8, export_name_string_length);
-                var export_name_string_remainder = export_name_string_all;
-                var hmr_module_exports_dot = p.newExpr(
-                    E.Dot{
-                        .target = hmr_module_ident,
-                        .name = "exports",
-                        .name_loc = logger.Loc.Empty,
-                    },
-                    logger.Loc.Empty,
-                );
-                var exports_decls = decls[first_decl.len..];
-                named_exports_iter = p.named_exports.iterator();
-                var update_function_args = try allocator.alloc(G.Arg, 1);
-                var exports_ident = p.newExpr(E.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty);
-                update_function_args[0] = G.Arg{ .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty) };
-
-                while (named_exports_iter.next()) |named_export| {
-                    const named_export_value = named_export.value_ptr.*;
-
-                    // Do not try to HMR export {foo} from 'bar';
-                    if (named_imports.get(named_export_value.ref)) |named_import| {
-                        if (named_import.is_exported) continue;
                     }
 
-                    const named_export_symbol: Symbol = p.symbols.items[named_export_value.ref.innerIndex()];
+                    var new_stmts_list = allocator.alloc(Stmt, exports_from_count + imports_count + 1) catch unreachable;
+                    var final_stmts_list = allocator.alloc(Stmt, final_part_stmts_count) catch unreachable;
+                    var remaining_final_stmts = final_stmts_list;
+                    var imports_list = new_stmts_list[0..imports_count];
 
-                    var export_name_string = export_name_string_remainder[0 .. named_export.key_ptr.len + "$$hmr_".len];
-                    export_name_string_remainder = export_name_string_remainder[export_name_string.len..];
-                    bun.copy(u8, export_name_string, "$$hmr_");
-                    bun.copy(u8, export_name_string["$$hmr_".len..], named_export.key_ptr.*);
+                    var exports_list: []Stmt = if (exports_from_count > 0) new_stmts_list[imports_list.len + 1 ..] else &[_]Stmt{};
 
-                    var name_ref = try p.declareSymbol(.other, logger.Loc.Empty, export_name_string);
+                    require_function_args[0] = G.Arg{ .binding = p.b(B.Identifier{ .ref = p.module_ref }, logger.Loc.Empty) };
+                    require_function_args[1] = G.Arg{ .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty) };
 
-                    var body_stmts = export_all_function_body_stmts[named_export_i .. named_export_i + 1];
-                    body_stmts[0] = p.s(
-                        // was this originally a named import?
-                        // preserve the identifier
-                        S.Return{ .value = if (named_export_symbol.namespace_alias != null)
-                            p.newExpr(E.ImportIdentifier{
-                                .ref = named_export_value.ref,
-                                .was_originally_identifier = true,
-                            }, logger.Loc.Empty)
-                        else
-                            p.newExpr(E.Identifier{
-                                .ref = named_export_value.ref,
-                            }, logger.Loc.Empty) },
-                        logger.Loc.Empty,
-                    );
-                    export_clauses[named_export_i] = js_ast.ClauseItem{
-                        .original_name = "",
-                        .alias = named_export.key_ptr.*,
-                        .alias_loc = named_export_value.alias_loc,
-                        .name = .{ .ref = name_ref, .loc = logger.Loc.Empty },
-                    };
+                    var imports_list_i: u32 = 0;
+                    var exports_list_i: u32 = 0;
 
-                    var decl_value = p.newExpr(
-                        E.Dot{ .target = hmr_module_exports_dot, .name = named_export.key_ptr.*, .name_loc = logger.Loc.Empty },
-                        logger.Loc.Empty,
-                    );
-                    exports_decls[named_export_i] = G.Decl{
-                        .binding = p.b(B.Identifier{ .ref = name_ref }, logger.Loc.Empty),
-                        .value = decl_value,
-                    };
-
-                    update_function_stmts[named_export_i] = Stmt.assign(
-                        p.newExpr(
-                            E.Identifier{ .ref = name_ref },
-                            logger.Loc.Empty,
-                        ),
-                        p.newExpr(E.Dot{
-                            .target = exports_ident,
-                            .name = named_export.key_ptr.*,
-                            .name_loc = logger.Loc.Empty,
-                        }, logger.Loc.Empty),
-                        allocator,
-                    );
-
-                    export_properties[named_export_i] = G.Property{
-                        .key = p.newExpr(E.String{ .data = named_export.key_ptr.* }, logger.Loc.Empty),
-                        .value = p.newExpr(
-                            E.Arrow{
-                                .args = &[_]G.Arg{},
-                                .body = .{
-                                    .stmts = body_stmts,
-                                    .loc = logger.Loc.Empty,
+                    for (parts) |part| {
+                        for (part.stmts) |*stmt| {
+                            switch (stmt.data) {
+                                .s_import => {
+                                    imports_list[imports_list_i] = stmt.*;
+                                    stmt.loc = imports_list[imports_list_i].loc;
+                                    imports_list_i += 1;
                                 },
-                                .prefer_expr = true,
-                            },
-                            logger.Loc.Empty,
-                        ),
-                    };
-                    named_export_i += 1;
-                }
-                var export_all_args = call_args[new_call_args.len..];
-                export_all_args[0] = p.newExpr(
-                    E.Object{ .properties = Property.List.init(export_properties[0..named_export_i]) },
-                    logger.Loc.Empty,
-                );
 
-                part_stmts[part_stmts.len - 1] = p.s(
-                    S.SExpr{
-                        .value = p.newExpr(
-                            E.Call{
+                                .s_export_star, .s_export_from => {
+                                    exports_list[exports_list_i] = stmt.*;
+                                    stmt.loc = exports_list[exports_list_i].loc;
+                                    exports_list_i += 1;
+                                },
+                                else => {
+                                    remaining_final_stmts[0] = stmt.*;
+                                    remaining_final_stmts = remaining_final_stmts[1..];
+                                },
+                            }
+                            stmt.* = Stmt.empty();
+                        }
+                    }
+
+                    commonjs_wrapper.data.e_call.args.ptr[0] = p.newExpr(
+                        E.Function{ .func = G.Fn{
+                            .name = null,
+                            .open_parens_loc = logger.Loc.Empty,
+                            .args = require_function_args,
+                            .body = .{ .loc = logger.Loc.Empty, .stmts = final_stmts_list },
+                            .flags = Flags.Function.init(.{ .is_export = true }),
+                        } },
+                        logger.Loc.Empty,
+                    );
+                    var sourcefile_name = p.source.path.pretty;
+                    if (strings.lastIndexOf(sourcefile_name, "node_modules")) |node_modules_i| {
+                        // 1 for the separator
+                        const end = node_modules_i + 1 + "node_modules".len;
+                        // If you were to name your file "node_modules.js" it shouldn't appear as ".js"
+                        if (end < sourcefile_name.len) {
+                            sourcefile_name = sourcefile_name[end..];
+                        }
+                    }
+                    commonjs_wrapper.data.e_call.args.ptr[1] = p.newExpr(E.String{ .data = sourcefile_name }, logger.Loc.Empty);
+
+                    new_stmts_list[imports_list.len] = p.s(
+                        S.ExportDefault{
+                            .value = .{
+                                .expr = commonjs_wrapper,
+                            },
+                            .default_name = LocRef{ .ref = null, .loc = logger.Loc.Empty },
+                        },
+                        logger.Loc.Empty,
+                    );
+                    parts[parts.len - 1].stmts = new_stmts_list;
+                },
+
+                // This becomes
+                //
+                //   (function (module, exports, require) {
+                //
+                //   })(module, exports, require);
+                .bun_js => {
+                    var args = allocator.alloc(Arg, 3) catch unreachable;
+                    args[0] = Arg{
+                        .binding = p.b(B.Identifier{ .ref = p.module_ref }, logger.Loc.Empty),
+                    };
+                    args[1] = Arg{
+                        .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty),
+                    };
+                    args[2] = Arg{
+                        .binding = p.b(B.Identifier{ .ref = p.require_ref }, logger.Loc.Empty),
+                    };
+                    var total_stmts_count: usize = 0;
+                    for (parts) |part| {
+                        total_stmts_count += part.stmts.len;
+                    }
+
+                    var stmts_to_copy = allocator.alloc(Stmt, total_stmts_count) catch unreachable;
+                    var remaining_stmts = stmts_to_copy;
+                    for (parts) |part| {
+                        for (part.stmts, remaining_stmts[0..part.stmts.len]) |src, *dest| {
+                            dest.* = src;
+                        }
+                        remaining_stmts = remaining_stmts[part.stmts.len..];
+                    }
+
+                    const wrapper = p.newExpr(
+                        E.Function{
+                            .func = G.Fn{
+                                .name = null,
+                                .open_parens_loc = logger.Loc.Empty,
+                                .args = args,
+                                .body = .{ .loc = logger.Loc.Empty, .stmts = stmts_to_copy },
+                                .flags = Flags.Function.init(.{ .is_export = false }),
+                            },
+                        },
+                        logger.Loc.Empty,
+                    );
+                    var call_args = allocator.alloc(Expr, 4) catch unreachable;
+
+                    //
+                    // (function(module, exports, require) {}).call(exports, module, exports, require)
+                    call_args[0..4].* = .{
+                        p.newExpr(E.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty),
+                        p.newExpr(E.Identifier{ .ref = p.module_ref }, logger.Loc.Empty),
+                        p.newExpr(E.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty),
+                        p.newExpr(E.Identifier{ .ref = p.require_ref }, logger.Loc.Empty),
+                    };
+
+                    const call = p.newExpr(
+                        E.Call{
+                            .target = p.newExpr(
+                                E.Dot{
+                                    .target = wrapper,
+                                    .name = "call",
+                                    .name_loc = logger.Loc.Empty,
+                                },
+                                logger.Loc.Empty,
+                            ),
+                            .args = ExprNodeList.init(call_args),
+                        },
+                        logger.Loc.Empty,
+                    );
+
+                    var only_stmt = try p.allocator.alloc(Stmt, 1);
+                    only_stmt[0] = p.s(
+                        S.SExpr{
+                            .value = call,
+                        },
+                        logger.Loc.Empty,
+                    );
+                    parts[0].stmts = only_stmt;
+                    parts.len = 1;
+                },
+
+                .none => {
+                    if (p.options.features.hot_module_reloading and p.options.features.allow_runtime) {
+                        var named_exports_count: usize = p.named_exports.count();
+                        const named_imports: js_ast.Ast.NamedImports = p.named_imports;
+
+                        // To transform to something HMR'able, we must:
+                        // 1. Wrap the top level code in an IIFE
+                        // 2. Move imports to the top of the file (preserving the order)
+                        // 3. Remove export clauses (done during ImportScanner)
+                        // 4. Move export * from and export from to the bottom of the file (or the top, it doesn't matter I don't think)
+                        // 5. Export everything as getters in our HMR module
+                        // 6. Call the HMRModule's exportAll function like so:
+                        // __hmrModule.exportAll({
+                        //   exportAlias: () => identifier,
+                        //   exportAlias: () => identifier,
+                        // });
+                        // This has the unfortunate property of making property accesses of exports slower at runtime.
+                        // But, I'm not sure there's a way to use regular properties without breaking stuff.
+                        var imports_count: usize = 0;
+                        // We have to also move export from, since we will preserve those
+                        var exports_from_count: usize = 0;
+                        // Two passes. First pass just counts.
+                        for (parts[parts.len - 1].stmts) |stmt| {
+                            imports_count += switch (stmt.data) {
+                                .s_import => @as(usize, 1),
+                                else => @as(usize, 0),
+                            };
+                            exports_from_count += switch (stmt.data) {
+                                .s_export_star, .s_export_from => @as(usize, 1),
+                                else => @as(usize, 0),
+                            };
+                        }
+                        var part = &parts[parts.len - 1];
+
+                        const end_iife_stmts_count = part.stmts.len - imports_count - exports_from_count + 1;
+                        // Why 7?
+                        // 1. HMRClient.activate(${isDebug});
+                        // 2. var __hmrModule = new HMMRModule(id, file_path), __exports = __hmrModule.exports;
+                        // 3. (__hmrModule.load = function() {
+                        // ${...end_iffe_stmts_count - 1}
+                        // ${end_iffe_stmts_count}
+                        // __hmrModule.exportAll({exportAlias: () => identifier}) <-- ${named_exports_count}
+                        // ();
+                        // 4. var __hmrExport_exportName = __hmrModule.exports.exportName,
+                        // 5. export { __hmrExport_exportName as blah, ... }
+                        // 6. __hmrModule.onSetExports = (newExports) => {
+                        // $named_exports_count   __hmrExport_exportName = newExports.exportName; <-- ${named_exports_count}
+                        // }
+
+                        // if there are no exports:
+                        // - there shouldn't be an export statement
+                        // - we don't need the S.Local for wrapping the exports
+                        // We still call exportAll just with an empty object.
+                        const has_any_exports = named_exports_count > 0;
+
+                        const toplevel_stmts_count = 3 + (@intCast(usize, @boolToInt(has_any_exports)) * 2);
+                        var _stmts = allocator.alloc(
+                            Stmt,
+                            end_iife_stmts_count + toplevel_stmts_count + (named_exports_count * 2) + imports_count + exports_from_count,
+                        ) catch unreachable;
+                        // Normally, we'd have to grow that inner function's stmts list by one
+                        // But we can avoid that by just making them all use this same array.
+                        var curr_stmts = _stmts;
+
+                        // in debug: crash in the printer due to undefined memory
+                        // in release: print ";" instead.
+                        // this should never happen regardless, but i'm just being cautious here.
+                        if (comptime !Environment.isDebug) {
+                            std.mem.set(Stmt, _stmts, Stmt.empty());
+                        }
+
+                        // Second pass: move any imports from the part's stmts array to the new stmts
+                        var imports_list = curr_stmts[0..imports_count];
+                        curr_stmts = curr_stmts[imports_list.len..];
+                        var toplevel_stmts = curr_stmts[0..toplevel_stmts_count];
+                        curr_stmts = curr_stmts[toplevel_stmts.len..];
+                        var exports_from = curr_stmts[0..exports_from_count];
+                        curr_stmts = curr_stmts[exports_from.len..];
+                        // This is used for onSetExports
+                        var update_function_stmts = curr_stmts[0..named_exports_count];
+                        curr_stmts = curr_stmts[update_function_stmts.len..];
+                        var export_all_function_body_stmts = curr_stmts[0..named_exports_count];
+                        curr_stmts = curr_stmts[export_all_function_body_stmts.len..];
+                        // This is the original part statements + 1
+                        var part_stmts = curr_stmts;
+                        if (comptime Environment.allow_assert) assert(part_stmts.len == end_iife_stmts_count);
+                        var part_stmts_i: usize = 0;
+
+                        var import_list_i: usize = 0;
+                        var export_list_i: usize = 0;
+
+                        // We must always copy it into the new stmts array
+                        for (part.stmts) |stmt| {
+                            switch (stmt.data) {
+                                .s_import => {
+                                    imports_list[import_list_i] = stmt;
+                                    import_list_i += 1;
+                                },
+                                .s_export_star, .s_export_from => {
+                                    exports_from[export_list_i] = stmt;
+                                    export_list_i += 1;
+                                },
+                                else => {
+                                    part_stmts[part_stmts_i] = stmt;
+                                    part_stmts_i += 1;
+                                },
+                            }
+                        }
+
+                        const new_call_args_count: usize = if (p.options.features.react_fast_refresh) 3 else 2;
+                        var call_args = try allocator.alloc(Expr, new_call_args_count + 1);
+                        var new_call_args = call_args[0..new_call_args_count];
+                        var hmr_module_ident = p.newExpr(E.Identifier{ .ref = p.hmr_module.ref }, logger.Loc.Empty);
+
+                        new_call_args[0] = p.newExpr(E.Number{ .value = @intToFloat(f64, p.options.filepath_hash_for_hmr) }, logger.Loc.Empty);
+                        // This helps us provide better error messages
+                        new_call_args[1] = p.newExpr(E.String{ .data = p.source.path.pretty }, logger.Loc.Empty);
+                        if (p.options.features.react_fast_refresh) {
+                            new_call_args[2] = p.newExpr(E.Identifier{ .ref = p.jsx_refresh_runtime.ref }, logger.Loc.Empty);
+                        }
+
+                        var toplevel_stmts_i: u8 = 0;
+
+                        var decls = try allocator.alloc(G.Decl, 2 + named_exports_count);
+                        var first_decl = decls[0..2];
+                        // We cannot rely on import.meta.url because if we import it within a blob: url, it will be nonsensical
+                        // var __hmrModule = new HMRModule(123123124, "/index.js"), __exports = __hmrModule.exports;
+                        const hmr_import_module_ = if (p.options.features.react_fast_refresh)
+                            p.runtime_imports.__FastRefreshModule.?
+                        else
+                            p.runtime_imports.__HMRModule.?;
+
+                        const hmr_import_ref = hmr_import_module_.ref;
+                        first_decl[0] = G.Decl{
+                            .binding = p.b(B.Identifier{ .ref = p.hmr_module.ref }, logger.Loc.Empty),
+                            .value = p.newExpr(E.New{
+                                .args = ExprNodeList.init(new_call_args),
                                 .target = p.newExpr(
-                                    E.Dot{
-                                        .target = hmr_module_ident,
-                                        .name = "exportAll",
-                                        .name_loc = logger.Loc.Empty,
+                                    E.Identifier{
+                                        .ref = hmr_import_ref,
                                     },
                                     logger.Loc.Empty,
                                 ),
-                                .args = ExprNodeList.init(export_all_args),
+                                .close_parens_loc = logger.Loc.Empty,
+                            }, logger.Loc.Empty),
+                        };
+                        first_decl[1] = G.Decl{
+                            .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty),
+                            .value = p.newExpr(E.Dot{
+                                .target = p.newExpr(E.Identifier{ .ref = p.hmr_module.ref }, logger.Loc.Empty),
+                                .name = "exports",
+                                .name_loc = logger.Loc.Empty,
+                            }, logger.Loc.Empty),
+                        };
+
+                        var export_clauses = try allocator.alloc(js_ast.ClauseItem, named_exports_count);
+                        var named_export_i: usize = 0;
+                        var named_exports_iter = p.named_exports.iterator();
+                        var export_properties = try allocator.alloc(G.Property, named_exports_count);
+
+                        var export_name_string_length: usize = 0;
+                        while (named_exports_iter.next()) |named_export| {
+                            export_name_string_length += named_export.key_ptr.len + "$$hmr_".len;
+                        }
+
+                        var export_name_string_all = try allocator.alloc(u8, export_name_string_length);
+                        var export_name_string_remainder = export_name_string_all;
+                        var hmr_module_exports_dot = p.newExpr(
+                            E.Dot{
+                                .target = hmr_module_ident,
+                                .name = "exports",
+                                .name_loc = logger.Loc.Empty,
                             },
                             logger.Loc.Empty,
-                        ),
-                    },
-                    logger.Loc.Empty,
-                );
+                        );
+                        var exports_decls = decls[first_decl.len..];
+                        named_exports_iter = p.named_exports.iterator();
+                        var update_function_args = try allocator.alloc(G.Arg, 1);
+                        var exports_ident = p.newExpr(E.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty);
+                        update_function_args[0] = G.Arg{ .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty) };
 
-                toplevel_stmts[toplevel_stmts_i] = p.s(
-                    S.Local{
-                        .decls = G.Decl.List.init(first_decl),
-                    },
-                    logger.Loc.Empty,
-                );
+                        while (named_exports_iter.next()) |named_export| {
+                            const named_export_value = named_export.value_ptr.*;
 
-                toplevel_stmts_i += 1;
+                            // Do not try to HMR export {foo} from 'bar';
+                            if (named_imports.get(named_export_value.ref)) |named_import| {
+                                if (named_import.is_exported) continue;
+                            }
 
-                const is_async = !p.top_level_await_keyword.isEmpty();
+                            const named_export_symbol: Symbol = p.symbols.items[named_export_value.ref.innerIndex()];
 
-                var func = p.newExpr(
-                    E.Function{
-                        .func = .{
-                            .body = .{ .loc = logger.Loc.Empty, .stmts = part_stmts[0 .. part_stmts_i + 1] },
-                            .name = null,
-                            .open_parens_loc = logger.Loc.Empty,
-                            .flags = Flags.Function.init(.{
-                                .print_as_iife = true,
-                                .is_async = is_async,
-                            }),
-                        },
-                    },
-                    logger.Loc.Empty,
-                );
+                            var export_name_string = export_name_string_remainder[0 .. named_export.key_ptr.len + "$$hmr_".len];
+                            export_name_string_remainder = export_name_string_remainder[export_name_string.len..];
+                            bun.copy(u8, export_name_string, "$$hmr_");
+                            bun.copy(u8, export_name_string["$$hmr_".len..], named_export.key_ptr.*);
 
-                const call_load = p.newExpr(
-                    E.Call{
-                        .target = Expr.assign(
-                            p.newExpr(
-                                E.Dot{
-                                    .name = "_load",
-                                    .target = hmr_module_ident,
-                                    .name_loc = logger.Loc.Empty,
-                                },
+                            var name_ref = try p.declareSymbol(.other, logger.Loc.Empty, export_name_string);
+
+                            var body_stmts = export_all_function_body_stmts[named_export_i .. named_export_i + 1];
+                            body_stmts[0] = p.s(
+                                // was this originally a named import?
+                                // preserve the identifier
+                                S.Return{ .value = if (named_export_symbol.namespace_alias != null)
+                                    p.newExpr(E.ImportIdentifier{
+                                        .ref = named_export_value.ref,
+                                        .was_originally_identifier = true,
+                                    }, logger.Loc.Empty)
+                                else
+                                    p.newExpr(E.Identifier{
+                                        .ref = named_export_value.ref,
+                                    }, logger.Loc.Empty) },
                                 logger.Loc.Empty,
-                            ),
-                            func,
-                            allocator,
-                        ),
-                    },
-                    logger.Loc.Empty,
-                );
-                // (__hmrModule._load = function())()
-                toplevel_stmts[toplevel_stmts_i] = p.s(
-                    S.SExpr{
-                        .value = if (is_async)
-                            p.newExpr(E.Await{ .value = call_load }, logger.Loc.Empty)
-                        else
-                            call_load,
-                    },
-                    logger.Loc.Empty,
-                );
+                            );
+                            export_clauses[named_export_i] = js_ast.ClauseItem{
+                                .original_name = "",
+                                .alias = named_export.key_ptr.*,
+                                .alias_loc = named_export_value.alias_loc,
+                                .name = .{ .ref = name_ref, .loc = logger.Loc.Empty },
+                            };
 
-                toplevel_stmts_i += 1;
+                            var decl_value = p.newExpr(
+                                E.Dot{ .target = hmr_module_exports_dot, .name = named_export.key_ptr.*, .name_loc = logger.Loc.Empty },
+                                logger.Loc.Empty,
+                            );
+                            exports_decls[named_export_i] = G.Decl{
+                                .binding = p.b(B.Identifier{ .ref = name_ref }, logger.Loc.Empty),
+                                .value = decl_value,
+                            };
 
-                if (has_any_exports) {
-                    if (named_export_i > 0) {
+                            update_function_stmts[named_export_i] = Stmt.assign(
+                                p.newExpr(
+                                    E.Identifier{ .ref = name_ref },
+                                    logger.Loc.Empty,
+                                ),
+                                p.newExpr(E.Dot{
+                                    .target = exports_ident,
+                                    .name = named_export.key_ptr.*,
+                                    .name_loc = logger.Loc.Empty,
+                                }, logger.Loc.Empty),
+                                allocator,
+                            );
+
+                            export_properties[named_export_i] = G.Property{
+                                .key = p.newExpr(E.String{ .data = named_export.key_ptr.* }, logger.Loc.Empty),
+                                .value = p.newExpr(
+                                    E.Arrow{
+                                        .args = &[_]G.Arg{},
+                                        .body = .{
+                                            .stmts = body_stmts,
+                                            .loc = logger.Loc.Empty,
+                                        },
+                                        .prefer_expr = true,
+                                    },
+                                    logger.Loc.Empty,
+                                ),
+                            };
+                            named_export_i += 1;
+                        }
+                        var export_all_args = call_args[new_call_args.len..];
+                        export_all_args[0] = p.newExpr(
+                            E.Object{ .properties = Property.List.init(export_properties[0..named_export_i]) },
+                            logger.Loc.Empty,
+                        );
+
+                        part_stmts[part_stmts.len - 1] = p.s(
+                            S.SExpr{
+                                .value = p.newExpr(
+                                    E.Call{
+                                        .target = p.newExpr(
+                                            E.Dot{
+                                                .target = hmr_module_ident,
+                                                .name = "exportAll",
+                                                .name_loc = logger.Loc.Empty,
+                                            },
+                                            logger.Loc.Empty,
+                                        ),
+                                        .args = ExprNodeList.init(export_all_args),
+                                    },
+                                    logger.Loc.Empty,
+                                ),
+                            },
+                            logger.Loc.Empty,
+                        );
+
                         toplevel_stmts[toplevel_stmts_i] = p.s(
                             S.Local{
-                                .decls = G.Decl.List.init(exports_decls[0..named_export_i]),
+                                .decls = G.Decl.List.init(first_decl),
                             },
                             logger.Loc.Empty,
                         );
-                    } else {
-                        toplevel_stmts[toplevel_stmts_i] = p.s(
-                            S.Empty{},
+
+                        toplevel_stmts_i += 1;
+
+                        const is_async = !p.top_level_await_keyword.isEmpty();
+
+                        var func = p.newExpr(
+                            E.Function{
+                                .func = .{
+                                    .body = .{ .loc = logger.Loc.Empty, .stmts = part_stmts[0 .. part_stmts_i + 1] },
+                                    .name = null,
+                                    .open_parens_loc = logger.Loc.Empty,
+                                    .flags = Flags.Function.init(.{
+                                        .print_as_iife = true,
+                                        .is_async = is_async,
+                                    }),
+                                },
+                            },
                             logger.Loc.Empty,
                         );
-                    }
 
-                    toplevel_stmts_i += 1;
-                }
+                        const call_load = p.newExpr(
+                            E.Call{
+                                .target = Expr.assign(
+                                    p.newExpr(
+                                        E.Dot{
+                                            .name = "_load",
+                                            .target = hmr_module_ident,
+                                            .name_loc = logger.Loc.Empty,
+                                        },
+                                        logger.Loc.Empty,
+                                    ),
+                                    func,
+                                    allocator,
+                                ),
+                            },
+                            logger.Loc.Empty,
+                        );
+                        // (__hmrModule._load = function())()
+                        toplevel_stmts[toplevel_stmts_i] = p.s(
+                            S.SExpr{
+                                .value = if (is_async)
+                                    p.newExpr(E.Await{ .value = call_load }, logger.Loc.Empty)
+                                else
+                                    call_load,
+                            },
+                            logger.Loc.Empty,
+                        );
 
-                toplevel_stmts[toplevel_stmts_i] = p.s(
-                    S.SExpr{
-                        .value = Expr.assign(
-                            p.newExpr(
-                                E.Dot{
-                                    .name = "_update",
-                                    .target = hmr_module_ident,
-                                    .name_loc = logger.Loc.Empty,
-                                },
-                                logger.Loc.Empty,
-                            ),
-                            p.newExpr(
-                                E.Function{
-                                    .func = .{
-                                        .body = .{ .loc = logger.Loc.Empty, .stmts = if (named_export_i > 0) update_function_stmts[0..named_export_i] else &.{} },
-                                        .name = null,
-                                        .args = update_function_args,
-                                        .open_parens_loc = logger.Loc.Empty,
+                        toplevel_stmts_i += 1;
+
+                        if (has_any_exports) {
+                            if (named_export_i > 0) {
+                                toplevel_stmts[toplevel_stmts_i] = p.s(
+                                    S.Local{
+                                        .decls = G.Decl.List.init(exports_decls[0..named_export_i]),
                                     },
-                                },
-                                logger.Loc.Empty,
-                            ),
-                            allocator,
-                        ),
-                    },
-                    logger.Loc.Empty,
-                );
-                toplevel_stmts_i += 1;
-                if (has_any_exports) {
-                    if (named_export_i > 0) {
+                                    logger.Loc.Empty,
+                                );
+                            } else {
+                                toplevel_stmts[toplevel_stmts_i] = p.s(
+                                    S.Empty{},
+                                    logger.Loc.Empty,
+                                );
+                            }
+
+                            toplevel_stmts_i += 1;
+                        }
+
                         toplevel_stmts[toplevel_stmts_i] = p.s(
-                            S.ExportClause{
-                                .items = export_clauses[0..named_export_i],
+                            S.SExpr{
+                                .value = Expr.assign(
+                                    p.newExpr(
+                                        E.Dot{
+                                            .name = "_update",
+                                            .target = hmr_module_ident,
+                                            .name_loc = logger.Loc.Empty,
+                                        },
+                                        logger.Loc.Empty,
+                                    ),
+                                    p.newExpr(
+                                        E.Function{
+                                            .func = .{
+                                                .body = .{ .loc = logger.Loc.Empty, .stmts = if (named_export_i > 0) update_function_stmts[0..named_export_i] else &.{} },
+                                                .name = null,
+                                                .args = update_function_args,
+                                                .open_parens_loc = logger.Loc.Empty,
+                                            },
+                                        },
+                                        logger.Loc.Empty,
+                                    ),
+                                    allocator,
+                                ),
                             },
                             logger.Loc.Empty,
                         );
-                    } else {
-                        toplevel_stmts[toplevel_stmts_i] = p.s(
-                            S.Empty{},
-                            logger.Loc.Empty,
-                        );
-                    }
-                }
+                        toplevel_stmts_i += 1;
+                        if (has_any_exports) {
+                            if (named_export_i > 0) {
+                                toplevel_stmts[toplevel_stmts_i] = p.s(
+                                    S.ExportClause{
+                                        .items = export_clauses[0..named_export_i],
+                                    },
+                                    logger.Loc.Empty,
+                                );
+                            } else {
+                                toplevel_stmts[toplevel_stmts_i] = p.s(
+                                    S.Empty{},
+                                    logger.Loc.Empty,
+                                );
+                            }
+                        }
 
-                part.stmts = _stmts[0 .. imports_list.len + toplevel_stmts.len + exports_from.len];
-            } else if (p.options.features.hot_module_reloading) {}
+                        part.stmts = _stmts[0 .. imports_list.len + toplevel_stmts.len + exports_from.len];
+                    }
+                },
+            }
             var top_level_symbols_to_parts = js_ast.Ast.TopLevelSymbolToParts{};
             var top_level = &top_level_symbols_to_parts;
 
@@ -21406,6 +21653,7 @@ fn NewParser_(
                 // .top_Level_await_keyword = p.top_level_await_keyword,
                 .bun_plugin = p.bun_plugin,
                 .commonjs_named_exports = p.commonjs_named_exports,
+                .commonjs_export_names = p.commonjs_export_names.keys(),
 
                 .hashbang = hashbang,
 
@@ -21595,3 +21843,9 @@ pub fn newLazyExportAST(
     result.ast.has_lazy_export = true;
     return result.ast;
 }
+
+const CommonJSWrapper = union(enum) {
+    none: void,
+    bun_dev: Expr,
+    bun_js: void,
+};

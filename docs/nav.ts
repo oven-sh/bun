@@ -90,9 +90,9 @@ export default {
     page("runtime/typescript", "TypeScript", {
       description: `Bun can directly execute TypeScript files without additional configuration.`,
     }),
-    // page("runtime/jsx", "JSX", {
-    //   description: `Bun can directly execute TypeScript files without additional configuration.`,
-    // }),
+    page("runtime/jsx", "JSX", {
+      description: `Bun can directly execute TypeScript files without additional configuration.`,
+    }),
     // page("runtime/apis", "APIs", {
     //   description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
     // }),
@@ -154,7 +154,7 @@ export default {
     }),
 
     divider("Bundler"),
-    page("cli/build", "`Bun.build`", {
+    page("bundler", "`Bun.build`", {
       description: "Bundle code for comsumption in the browser with Bun's native bundler.",
     }),
     // page("bundler/intro", "How bundlers work", {
@@ -169,7 +169,7 @@ export default {
     page("bundler/executables", "Executables", {
       description: "Compile a TypeScript or JavaScript file to a standalone cross-platform executable",
     }),
-    page("bundler/migration", "Migration", {
+    page("bundler/vs-esbuild", "vs esbuild", {
       description: `Guides for migrating from other bundlers to Bun.`,
     }),
 
@@ -181,8 +181,11 @@ export default {
       description:
         "Write your tests using Jest-like expect matchers, plus setup/teardown hooks, snapshot testing, and more",
     }),
-    page("test/extending", "Extending the test runner", {
-      description: "Add lifecycle hooks to your tests that run before/after each test, or before/after all tests.",
+    page("test/lifecycle", "Lifecycle hooks", {
+      description: "Add lifecycle hooks to your tests that run before/after each test or test run",
+    }),
+    page("test/snapshots", "Snapshots", {
+      description: "Add lifecycle hooks to your tests that run before/after each test or test run",
     }),
     page("test/hot", "Watch mode", {
       description: "Reload your tests automatically on change.",
@@ -221,33 +224,45 @@ export default {
     }),
 
     divider("API"),
-    page("api/http", "HTTP", {
+    page("api/http", "HTTP server", {
       description: `Bun implements Web-standard fetch, plus a Bun-native API for building fast HTTP servers.`,
     }), // "`Bun.serve`"),
     page("api/websockets", "WebSockets", {
       description: `Bun supports server-side WebSockets with on-the-fly compression, TLS support, and a Bun-native pubsub API.`,
     }), // "`Bun.serve`"),
-    page("api/tcp", "TCP Sockets", {
-      description: `Bun's native API implements Web-standard TCP Sockets, plus a Bun-native API for building fast TCP servers.`,
-    }), // "`Bun.{listen|connect}`"),
+    page("api/binary-data", "Binary data", {
+      description: `How to represent and manipulate binary data in Bun.`,
+    }), // "`Bun.serve`"),
+    page("api/streams", "Streams", {
+      description: `Reading, writing, and manipulating streams of data in Bun.`,
+    }), // "`Bun.serve`"),
     page("api/file-io", "File I/O", {
       description: `Read and write files fast with Bun's heavily optimized file system API.`,
     }), // "`Bun.write`"),
+    page("api/import-meta", "import.meta", {
+      description: `Module-scoped metadata and utilities`,
+    }), // "`bun:sqlite`"),
     page("api/sqlite", "SQLite", {
       description: `The fastest SQLite driver for JavaScript is baked directly into Bun.`,
     }), // "`bun:sqlite`"),
     page("api/file-system-router", "FileSystemRouter", {
       description: `Resolve incoming HTTP requests against a local file system directory with Bun's fast, Next.js-compatible router.`,
     }), // "`Bun.FileSystemRouter`"),
+    page("api/tcp", "TCP sockets", {
+      description: `Bun's native API implements Web-standard TCP Sockets, plus a Bun-native API for building fast TCP servers.`,
+    }), // "`Bun.{listen|connect}`")
     page("api/globals", "Globals", {
       description: `Bun implements a range of Web APIs, Node.js APIs, and Bun-native APIs that are available in the global scope.`,
     }), // "`Bun.write`"),
-    page("api/spawn", "Spawn", {
+    page("api/spawn", "Child processes", {
       description: `Spawn sync and async child processes with easily configurable input and output streams.`,
     }), // "`Bun.spawn`"),
     page("api/transpiler", "Transpiler", {
       description: `Bun exposes its internal transpiler as a pluggable API.`,
     }), // "`Bun.Transpiler`"),
+    page("api/hashing", "Hashing", {
+      description: `Native support for a range of fast hashing algorithms.`,
+    }), // "`Bun.serve`"),
     page("api/console", "Console", {
       description: `Bun implements a Node.js-compatible \`console\` object with colorized output and deep pretty-printing.`,
     }), // "`Node-API`"),

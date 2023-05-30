@@ -800,8 +800,13 @@ pub const ModuleLoader = struct {
                 try dumpSource(specifier, &printer);
             }
 
+            var commonjs_exports = try bun.default_allocator.alloc(ZigString, parse_result.ast.commonjs_export_names.len);
+            for (parse_result.ast.commonjs_export_names, commonjs_exports) |name, *out| {
+                out.* = ZigString.fromUTF8(name);
+            }
+
             if (jsc_vm.isWatcherEnabled()) {
-                const resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, specifier, path.text, null);
+                var resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, specifier, path.text, null);
 
                 if (parse_result.input_fd) |fd_| {
                     if (jsc_vm.bun_watcher != null and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
@@ -817,6 +822,17 @@ pub const ModuleLoader = struct {
                     }
                 }
 
+                resolved_source.commonjs_exports = if (commonjs_exports.len > 0)
+                    commonjs_exports.ptr
+                else
+                    null;
+                resolved_source.commonjs_exports_len = if (commonjs_exports.len > 0)
+                    @truncate(u32, commonjs_exports.len)
+                else if (parse_result.ast.exports_kind == .cjs)
+                    std.math.maxInt(u32)
+                else
+                    0;
+
                 return resolved_source;
             }
 
@@ -825,6 +841,16 @@ pub const ModuleLoader = struct {
                 .source_code = ZigString.init(try default_allocator.dupe(u8, printer.ctx.getWritten())),
                 .specifier = ZigString.init(specifier),
                 .source_url = ZigString.init(path.text),
+                .commonjs_exports = if (commonjs_exports.len > 0)
+                    commonjs_exports.ptr
+                else
+                    null,
+                .commonjs_exports_len = if (commonjs_exports.len > 0)
+                    @truncate(u32, commonjs_exports.len)
+                else if (parse_result.ast.exports_kind == .cjs)
+                    std.math.maxInt(u32)
+                else
+                    0,
                 // // TODO: change hash to a bitfield
                 // .hash = 1,
 
@@ -943,6 +969,7 @@ pub const ModuleLoader = struct {
                     .virtual_source = virtual_source,
                     .hoist_bun_plugin = true,
                     .dont_bundle_twice = true,
+                    .allow_commonjs = true,
                     .inject_jest_globals = jsc_vm.bundler.options.rewrite_jest_for_tests and
                         jsc_vm.main.len == path.text.len and
                         jsc_vm.main_hash == hash and
@@ -1140,9 +1167,24 @@ pub const ModuleLoader = struct {
                     try dumpSource(specifier, &printer);
                 }
 
-                if (jsc_vm.isWatcherEnabled()) {
-                    const resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, display_specifier, path.text, null);
+                var commonjs_exports = try bun.default_allocator.alloc(ZigString, parse_result.ast.commonjs_export_names.len);
+                for (parse_result.ast.commonjs_export_names, commonjs_exports) |name, *out| {
+                    out.* = ZigString.fromUTF8(name);
+                }
 
+                if (jsc_vm.isWatcherEnabled()) {
+                    var resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, display_specifier, path.text, null);
+
+                    resolved_source.commonjs_exports = if (commonjs_exports.len > 0)
+                        commonjs_exports.ptr
+                    else
+                        null;
+                    resolved_source.commonjs_exports_len = if (commonjs_exports.len > 0)
+                        @truncate(u32, commonjs_exports.len)
+                    else if (parse_result.ast.exports_kind == .cjs)
+                        std.math.maxInt(u32)
+                    else
+                        0;
                     return resolved_source;
                 }
 
@@ -1151,6 +1193,16 @@ pub const ModuleLoader = struct {
                     .source_code = ZigString.init(try default_allocator.dupe(u8, printer.ctx.getWritten())),
                     .specifier = ZigString.init(display_specifier),
                     .source_url = ZigString.init(path.text),
+                    .commonjs_exports = if (commonjs_exports.len > 0)
+                        commonjs_exports.ptr
+                    else
+                        null,
+                    .commonjs_exports_len = if (commonjs_exports.len > 0)
+                        @truncate(u32, commonjs_exports.len)
+                    else if (parse_result.ast.exports_kind == .cjs)
+                        std.math.maxInt(u32)
+                    else
+                        0,
                     // // TODO: change hash to a bitfield
                     // .hash = 1,
 

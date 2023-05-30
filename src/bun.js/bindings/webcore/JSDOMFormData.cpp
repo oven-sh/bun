@@ -108,6 +108,18 @@ static JSC_DECLARE_HOST_FUNCTION(jsDOMFormDataPrototypeFunction_toJSON);
 
 static JSC_DECLARE_CUSTOM_GETTER(jsDOMFormDataConstructor);
 
+JSC_DEFINE_CUSTOM_GETTER(jsDOMFormDataPrototype_getLength, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto* thisObject = jsDynamicCast<JSDOMFormData*>(JSValue::decode(thisValue));
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    if (UNLIKELY(!thisObject))
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+
+    size_t length = thisObject->wrapped().count();
+    return JSValue::encode(jsNumber(length));
+}
+
 class JSDOMFormDataPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -196,6 +208,7 @@ static const HashTableValue JSDOMFormDataPrototypeTableValues[] = {
     { "values"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDOMFormDataPrototypeFunction_values, 0 } },
     { "forEach"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDOMFormDataPrototypeFunction_forEach, 1 } },
     { "toJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDOMFormDataPrototypeFunction_toJSON, 1 } },
+    { "length"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsDOMFormDataPrototype_getLength, 0 } }
 };
 
 const ClassInfo JSDOMFormDataPrototype::s_info = { "FormData"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDOMFormDataPrototype) };

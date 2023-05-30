@@ -1,3 +1,4 @@
+import { inspect } from "bun";
 import { describe, test, expect } from "bun:test";
 
 describe("expect()", () => {
@@ -127,4 +128,78 @@ describe("expect()", () => {
       }
     }
   });
+
+  describe("toBeEmpty()", () => {
+    const values = [
+      "",
+      [],
+      {},
+      new Set(),
+      new Map(),
+      new String(),
+      new Array(),
+      new Uint8Array(),
+      new Object(),
+      Buffer.from(""),
+      Bun.file("/tmp/empty.txt"),
+      new Headers(),
+      new URLSearchParams(),
+      new FormData(),
+      (function* () {})(),
+    ];
+    for (const value of values) {
+      test(label(value), () => {
+        if (value && typeof value === "object" && value instanceof Blob) {
+          require("fs").writeFileSync("/tmp/empty.txt", "");
+        }
+
+        expect(value).toBeEmpty();
+      });
+    }
+  });
+
+  describe("not.toBeEmpty()", () => {
+    const values = [
+      " ",
+      [""],
+      [undefined],
+      { "": "" },
+      new Set([""]),
+      new Map([["", ""]]),
+      new String(" "),
+      new Array(1),
+      new Uint8Array(1),
+      Buffer.from(" "),
+      Bun.file(import.meta.path),
+      new Headers({
+        a: "b",
+        c: "d",
+      }),
+      new URL("https://example.com?d=e&f=g").searchParams,
+      (() => {
+        var a = new FormData();
+        a.append("a", "b");
+        a.append("c", "d");
+        return a;
+      })(),
+      (function* () {
+        yield "123";
+      })(),
+    ];
+    for (const value of values) {
+      test(label(value), () => {
+        expect(value).not.toBeEmpty();
+      });
+    }
+  });
 });
+
+function label(value: unknown): string {
+  switch (typeof value) {
+    case "object":
+      const string = inspect(value).replace(/\n/g, "");
+      return string || '""';
+    default:
+      return JSON.stringify(value);
+  }
+}

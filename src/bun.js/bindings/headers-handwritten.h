@@ -2,6 +2,8 @@
 
 typedef uint16_t ZigErrorCode;
 typedef struct VirtualMachine VirtualMachine;
+// exists to make headers.h happy
+typedef struct CppWebSocket CppWebSocket;
 
 typedef struct ZigString {
     const unsigned char* ptr;
@@ -23,6 +25,8 @@ typedef struct ResolvedSource {
     ZigString specifier;
     ZigString source_code;
     ZigString source_url;
+    ZigString* commonJSExports;
+    uint32_t commonJSExportsLen;
     uint32_t hash;
     void* allocator;
     uint64_t tag;

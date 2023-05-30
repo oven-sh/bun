@@ -432,10 +432,22 @@ pub const ZigString = extern struct {
     }
 
     pub inline fn utf16Slice(this: *const ZigString) []align(1) const u16 {
+        if (comptime bun.Environment.allow_assert) {
+            if (this.len > 0 and !this.is16Bit()) {
+                @panic("ZigString.utf16Slice() called on a latin1 string.\nPlease use .toSlice() instead or carefully check that .is16Bit() is false first.");
+            }
+        }
+
         return @ptrCast([*]align(1) const u16, untagged(this.ptr))[0..this.len];
     }
 
     pub inline fn utf16SliceAligned(this: *const ZigString) []const u16 {
+        if (comptime bun.Environment.allow_assert) {
+            if (this.len > 0 and !this.is16Bit()) {
+                @panic("ZigString.utf16SliceAligned() called on a latin1 string.\nPlease use .toSlice() instead or carefully check that .is16Bit() is false first.");
+            }
+        }
+
         return @ptrCast([*]const u16, @alignCast(@alignOf(u16), untagged(this.ptr)))[0..this.len];
     }
 
@@ -596,6 +608,12 @@ pub const ZigString = extern struct {
     }
 
     pub fn slice(this: *const ZigString) []const u8 {
+        if (comptime bun.Environment.allow_assert) {
+            if (this.len > 0 and this.is16Bit()) {
+                @panic("ZigString.slice() called on a UTF-16 string.\nPlease use .toSlice() instead or carefully check that .is16Bit() is false first.");
+            }
+        }
+
         return untagged(this.ptr)[0..@min(this.len, std.math.maxInt(u32))];
     }
 
@@ -2401,7 +2419,7 @@ pub const JSGlobalObject = extern struct {
     ) JSC.JSValue {
         return JSC.toTypeErrorWithCode(
             "NOT_ENOUGH_ARGUMENTS",
-            "Not enough arguments to '" ++ name_ ++ "''. Expected {d}, got {d}.",
+            "Not enough arguments to '" ++ name_ ++ "'. Expected {d}, got {d}.",
             .{ expected, got },
             this,
         );
@@ -2778,7 +2796,7 @@ pub const JSArrayIterator = struct {
         return .{
             .array = value,
             .global = global,
-            .len = @truncate(u32, value.getLengthOfArray(global)),
+            .len = @truncate(u32, value.getLength(global)),
         };
     }
 
@@ -2980,6 +2998,10 @@ pub const JSValue = enum(JSValueReprInt) {
         Event = 0b11101111,
         DOMWrapper = 0b11101110,
         Blob = 0b11111100,
+
+        /// This means that we don't have Zig bindings for the type yet, but it
+        /// implements .toJSON()
+        JSAsJSONType = 0b11110000 | 1,
         _,
 
         pub fn canGet(this: JSType) bool {
@@ -3109,6 +3131,10 @@ pub const JSValue = enum(JSValueReprInt) {
         pub const LastMaybeFalsyCellPrimitive = JSType.HeapBigInt;
         pub const LastJSCObject = JSType.DerivedStringObject; // This is the last "JSC" Object type. After this, we have embedder's (e.g., WebCore) extended object types.
 
+        pub inline fn isString(this: JSType) bool {
+            return this == .String;
+        }
+
         pub inline fn isStringLike(this: JSType) bool {
             return switch (this) {
                 .String, .StringObject, .DerivedStringObject => true,
@@ -3119,6 +3145,42 @@ pub const JSValue = enum(JSValueReprInt) {
         pub inline fn isArray(this: JSType) bool {
             return switch (this) {
                 .Array, .DerivedArray => true,
+                else => false,
+            };
+        }
+
+        pub inline fn isArrayLike(this: JSType) bool {
+            return switch (this) {
+                .Array,
+                .DerivedArray,
+
+                .ArrayBuffer,
+                .BigInt64Array,
+                .BigUint64Array,
+                .Float32Array,
+                .Float64Array,
+                .Int16Array,
+                .Int32Array,
+                .Int8Array,
+                .Uint16Array,
+                .Uint32Array,
+                .Uint8Array,
+                .Uint8ClampedArray,
+                => true,
+                else => false,
+            };
+        }
+
+        pub inline fn isSet(this: JSType) bool {
+            return switch (this) {
+                .JSSet, .JSWeakSet => true,
+                else => false,
+            };
+        }
+
+        pub inline fn isMap(this: JSType) bool {
+            return switch (this) {
+                .JSMap, .JSWeakMap => true,
                 else => false,
             };
         }
@@ -3783,6 +3845,7 @@ pub const JSValue = enum(JSValueReprInt) {
 
         return jsType(this).isStringLike();
     }
+
     pub fn isBigInt(this: JSValue) bool {
         return cppFn("isBigInt", .{this});
     }
@@ -4142,7 +4205,7 @@ pub const JSValue = enum(JSValueReprInt) {
                 return error.JSError;
             }
 
-            if (prop.getLengthOfArray(globalThis) == 0) {
+            if (prop.getLength(globalThis) == 0) {
                 return null;
             }
 
@@ -4368,8 +4431,53 @@ pub const JSValue = enum(JSValueReprInt) {
         return @intCast(u32, @max(this.toInt32(), 0));
     }
 
-    pub fn getLengthOfArray(this: JSValue, globalThis: *JSGlobalObject) u64 {
-        return cppFn("getLengthOfArray", .{
+    /// This function supports:
+    /// - Array, DerivedArray & friends
+    /// - String, DerivedString & friends
+    /// - TypedArray
+    /// - Map (size)
+    /// - WeakMap (size)
+    /// - Set (size)
+    /// - WeakSet (size)
+    /// - ArrayBuffer (byteLength)
+    /// - anything with a .length property returning a number
+    ///
+    /// If the "length" property does not exist, this function will return 0.
+    pub fn getLength(this: JSValue, globalThis: *JSGlobalObject) u64 {
+        const len = this.getLengthIfPropertyExistsInternal(globalThis);
+        if (len == std.math.f64_max) {
+            return 0;
+        }
+
+        return @floatToInt(u64, @max(len, 0));
+    }
+
+    /// This function supports:
+    /// - Array, DerivedArray & friends
+    /// - String, DerivedString & friends
+    /// - TypedArray
+    /// - Map (size)
+    /// - WeakMap (size)
+    /// - Set (size)
+    /// - WeakSet (size)
+    /// - ArrayBuffer (byteLength)
+    /// - anything with a .length property returning a number
+    ///
+    /// If the "length" property does not exist, this function will return null.
+    pub fn tryGetLength(this: JSValue, globalThis: *JSGlobalObject) ?f64 {
+        const len = this.getLengthIfPropertyExistsInternal(globalThis);
+        if (len == std.math.f64_max) {
+            return null;
+        }
+
+        return @floatToInt(u64, @max(len, 0));
+    }
+
+    /// Do not use this directly!
+    ///
+    /// If the property does not exist, this function will return max(f64) instead of 0.
+    pub fn getLengthIfPropertyExistsInternal(this: JSValue, globalThis: *JSGlobalObject) f64 {
+        return cppFn("getLengthIfPropertyExistsInternal", .{
             this,
             globalThis,
         });
@@ -4481,7 +4589,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "getIfExists",
         "getIfPropertyExistsFromPath",
         "getIfPropertyExistsImpl",
-        "getLengthOfArray",
+        "getLengthIfPropertyExistsInternal",
         "getNameProperty",
         "getPropertyByPropertyName",
         "getPropertyNames",

@@ -1,5 +1,8 @@
 import { gc as bunGC, unsafe } from "bun";
 import { heapStats } from "bun:jsc";
+import path from "path";
+import fs from "fs";
+import os from "os";
 
 export const bunEnv: any = {
   ...process.env,
@@ -74,4 +77,62 @@ export function hideFromStackTrace(block: CallableFunction) {
     enumerable: true,
     writable: true,
   });
+}
+
+export function tempDirWithFiles(basename: string, files: Record<string, string>) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), basename + "_"));
+  for (const [name, contents] of Object.entries(files)) {
+    fs.writeFileSync(path.join(dir, name), contents);
+  }
+  return dir;
+}
+
+export function bunRun(file: string, env?: Record<string, string>) {
+  const result = Bun.spawnSync([bunExe(), file], {
+    cwd: path.dirname(file),
+    env: {
+      ...bunEnv,
+      NODE_ENV: undefined,
+      ...env,
+    },
+  });
+  if (!result.success) throw new Error(result.stderr.toString("utf8"));
+  return {
+    stdout: result.stdout.toString("utf8").trim(),
+    stderr: result.stderr.toString("utf8").trim(),
+  };
+}
+
+export function bunTest(file: string, env?: Record<string, string>) {
+  const result = Bun.spawnSync([bunExe(), "test", path.basename(file)], {
+    cwd: path.dirname(file),
+    env: {
+      ...bunEnv,
+      NODE_ENV: undefined,
+      ...env,
+    },
+  });
+  if (!result.success) throw new Error(result.stderr.toString("utf8"));
+  return {
+    stdout: result.stdout.toString("utf8").trim(),
+    stderr: result.stderr.toString("utf8").trim(),
+  };
+}
+
+export function bunRunAsScript(dir: string, script: string, env?: Record<string, string>) {
+  const result = Bun.spawnSync([bunExe(), `run`, `${script}`], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
+      NODE_ENV: undefined,
+      ...env,
+    },
+  });
+
+  if (!result.success) throw new Error(result.stderr.toString("utf8"));
+
+  return {
+    stdout: result.stdout.toString("utf8").trim(),
+    stderr: result.stderr.toString("utf8").trim(),
+  };
 }

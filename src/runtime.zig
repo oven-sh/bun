@@ -324,6 +324,8 @@ pub const Runtime = struct {
         /// So we have a list of packages which we know are safe to do this with.
         unwrap_commonjs_packages: []const string = &.{},
 
+        commonjs_at_runtime: bool = false,
+
         pub fn shouldUnwrapRequire(this: *const Features, package_name: string) bool {
             return package_name.len > 0 and strings.indexAny(this.unwrap_commonjs_packages, package_name) != null;
         }

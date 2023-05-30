@@ -385,7 +385,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 single_external[0] = std.fmt.allocPrint(allocator, "{}", .{external}) catch unreachable;
                 transpiler.transform.external = single_external;
             } else if (toplevel_type.isArray()) {
-                const count = external.getLengthOfArray(globalThis);
+                const count = external.getLength(globalThis);
                 if (count == 0) break :external;
 
                 var externals = allocator.alloc(string, count) catch unreachable;
@@ -606,7 +606,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 var length_iter = iter;
                 while (length_iter.next()) |value| {
                     if (value.isString()) {
-                        const length = @truncate(u32, value.getLengthOfArray(globalThis));
+                        const length = @truncate(u32, value.getLength(globalThis));
                         string_count += @as(u32, @boolToInt(length > 0));
                         total_name_buf_len += length;
                     }
@@ -679,7 +679,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                         continue;
                     }
 
-                    if (value.isObject() and value.getLengthOfArray(globalObject) == 2) {
+                    if (value.isObject() and value.getLength(globalObject) == 2) {
                         const replacementValue = JSC.JSObject.getIndex(value, globalThis, 1);
                         if (exportReplacementValue(replacementValue, globalThis)) |to_replace| {
                             const replacementKey = JSC.JSObject.getIndex(value, globalThis, 0);

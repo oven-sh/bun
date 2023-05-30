@@ -566,7 +566,7 @@ pub const Linker = struct {
                         // If it's a namespace import, assume it's safe.
                         // We can do this in the printer instead of creating a bunch of AST nodes here.
                         // But we need to at least tell the printer that this needs to happen.
-                        if (loader != .napi and resolved_import.shouldAssumeCommonJS(import_record.kind)) {
+                        if (loader != .napi and resolved_import.shouldAssumeCommonJS(import_record.kind) and !is_bun) {
                             import_record.do_commonjs_transform_in_printer = true;
                             import_record.module_id = @truncate(u32, std.hash.Wyhash.hash(0, path.pretty));
                         }

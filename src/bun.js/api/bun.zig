@@ -2933,7 +2933,7 @@ pub const Timer = struct {
                     args_buf[0] = arguments;
                     args = args_buf[0..1];
                 } else {
-                    const count = arguments.getLengthOfArray(globalThis);
+                    const count = arguments.getLength(globalThis);
                     if (count > 0) {
                         if (count > args_buf.len) {
                             args = bun.default_allocator.alloc(JSC.JSValue, count) catch unreachable;

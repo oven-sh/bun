@@ -882,6 +882,8 @@ pub const JSExpect = struct {
             @compileLog("Expected Expect.toBeCloseTo to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeCloseTo)));
         if (@TypeOf(Expect.toBeDefined) != CallbackType)
             @compileLog("Expected Expect.toBeDefined to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeDefined)));
+        if (@TypeOf(Expect.toBeEmpty) != CallbackType)
+            @compileLog("Expected Expect.toBeEmpty to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeEmpty)));
         if (@TypeOf(Expect.toBeEven) != CallbackType)
             @compileLog("Expected Expect.toBeEven to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeEven)));
         if (@TypeOf(Expect.toBeFalsy) != CallbackType)
@@ -1002,6 +1004,7 @@ pub const JSExpect = struct {
             @export(Expect.toBe, .{ .name = "ExpectPrototype__toBe" });
             @export(Expect.toBeCloseTo, .{ .name = "ExpectPrototype__toBeCloseTo" });
             @export(Expect.toBeDefined, .{ .name = "ExpectPrototype__toBeDefined" });
+            @export(Expect.toBeEmpty, .{ .name = "ExpectPrototype__toBeEmpty" });
             @export(Expect.toBeEven, .{ .name = "ExpectPrototype__toBeEven" });
             @export(Expect.toBeFalsy, .{ .name = "ExpectPrototype__toBeFalsy" });
             @export(Expect.toBeGreaterThan, .{ .name = "ExpectPrototype__toBeGreaterThan" });

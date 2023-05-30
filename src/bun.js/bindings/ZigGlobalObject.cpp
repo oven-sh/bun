@@ -177,6 +177,7 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 #include "CallSite.h"
 #include "CallSitePrototype.h"
 #include "DOMWrapperWorld-class.h"
+#include "CommonJSModuleRecord.h"
 
 constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 
@@ -2041,6 +2042,17 @@ JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArraysFromIterator, (JSGlobalObject 
     return flattenArrayOfBuffersIntoArrayBuffer(globalObject, iter->getDirect(vm, vm.propertyNames->value));
 }
 
+extern "C" JSC__JSValue Bun__Jest__createTestModuleObject(JSC::JSGlobalObject*);
+extern "C" JSC__JSValue Bun__Jest__createTestPreloadObject(JSC::JSGlobalObject*);
+extern "C" JSC__JSValue Bun__Jest__testPreloadObject(Zig::GlobalObject* globalObject)
+{
+    return JSValue::encode(globalObject->lazyPreloadTestModuleObject());
+}
+extern "C" JSC__JSValue Bun__Jest__testModuleObject(Zig::GlobalObject* globalObject)
+{
+    return JSValue::encode(globalObject->lazyTestModuleObject());
+}
+
 static inline JSC__JSValue ZigGlobalObject__readableStreamToArrayBufferBody(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue);
 static inline JSC__JSValue ZigGlobalObject__readableStreamToArrayBufferBody(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue)
 {
@@ -2576,6 +2588,63 @@ void GlobalObject::finishCreation(VM& vm)
             NakedPtr<JSC::Exception> returnedException = nullptr;
             auto result = JSC::call(globalObject, function, JSC::getCallData(function), globalObject, ArgList(), returnedException);
             init.set(result.toObject(globalObject));
+        });
+
+    m_lazyTestModuleObject.initLater(
+        [](const Initializer<JSObject>& init) {
+            JSC::VM& vm = init.vm;
+            JSC::JSGlobalObject* globalObject = init.owner;
+
+            JSValue result = JSValue::decode(Bun__Jest__createTestModuleObject(globalObject));
+            init.set(result.toObject(globalObject));
+        });
+
+    m_lazyPreloadTestModuleObject.initLater(
+        [](const Initializer<JSObject>& init) {
+            JSC::VM& vm = init.vm;
+            JSC::JSGlobalObject* globalObject = init.owner;
+
+            JSValue result = JSValue::decode(Bun__Jest__createTestPreloadObject(globalObject));
+            init.set(result.toObject(globalObject));
+        });
+
+    m_commonJSModuleObjectStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::createCommonJSModuleStructure(reinterpret_cast<Zig::GlobalObject*>(init.owner)));
+        });
+
+    m_commonJSFunctionArgumentsStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(init.owner);
+            JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(
+                globalObject,
+                globalObject->objectPrototype(),
+                3);
+            JSC::PropertyOffset offset;
+            auto& vm = globalObject->vm();
+
+            structure = structure->addPropertyTransition(
+                vm,
+                structure,
+                JSC::Identifier::fromString(vm, "module"_s),
+                0,
+                offset);
+
+            structure = structure->addPropertyTransition(
+                vm,
+                structure,
+                JSC::Identifier::fromString(vm, "exports"_s),
+                0,
+                offset);
+
+            structure = structure->addPropertyTransition(
+                vm,
+                structure,
+                JSC::Identifier::fromString(vm, "require"_s),
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::Builtin | 0,
+                offset);
+
+            init.set(structure);
         });
 
     // Change prototype from null to object for synthetic modules.
@@ -3767,7 +3836,10 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_lazyRequireCacheObject.visit(visitor);
     thisObject->m_vmModuleContextMap.visit(visitor);
     thisObject->m_bunSleepThenCallback.visit(visitor);
-
+    thisObject->m_lazyTestModuleObject.visit(visitor);
+    thisObject->m_lazyPreloadTestModuleObject.visit(visitor);
+    thisObject->m_commonJSModuleObjectStructure.visit(visitor);
+    thisObject->m_commonJSFunctionArgumentsStructure.visit(visitor);
     thisObject->m_cachedGlobalObjectStructure.visit(visitor);
     thisObject->m_cachedGlobalProxyStructure.visit(visitor);
 

@@ -9,9 +9,10 @@ $ bun run index.tsx  # TS and JSX supported out of the box
 ​​The `bun​` command-line tool also implements a test runner, script runner, and Node.js-compatible package manager, all significantly faster than existing tools and usable in existing Node.js projects with little to no changes necessary.
 
 ```bash
-$ bun test                      # run tests
 $ bun run start                 # run the `start` script
 $ bun install <pkg>​             # install a package
+$ bun build ./index.tsx         # bundle a project for browsers
+$ bun test                      # run tests
 $ bunx cowsay "Hello, world!"   # execute a package
 ```
 
@@ -26,7 +27,7 @@ Get started with one of the quick links below, or read on to learn more about Bu
 {% arrowbutton href="/docs/quickstart" text="Do the quickstart" /%}
 {% arrowbutton href="/docs/cli/install" text="Install a package" /%}
 {% arrowbutton href="/docs/templates" text="Use a project template" /%}
-{% arrowbutton href="/docs/cli/build" text="Bundle code for production" /%}
+{% arrowbutton href="/docs/bundler" text="Bundle code for production" /%}
 {% arrowbutton href="/docs/api/http" text="Build an HTTP server" /%}
 {% arrowbutton href="/docs/api/websockets" text="Build a Websocket server" /%}
 {% arrowbutton href="/docs/api/file-io" text="Read and write files" /%}
@@ -63,7 +64,7 @@ Bun is designed from the ground-up with the today's JavaScript ecosystem in mind
 
 - **Speed**. Bun processes start [4x faster than Node.js](https://twitter.com/jarredsumner/status/1499225725492076544) currently (try it yourself!)
 - **TypeScript & JSX support**. You can directly execute `.jsx`, `.ts`, and `.tsx` files; Bun's transpiler converts these to vanilla JavaScript before execution.
-- **ESM & CommonJS compatibility**. Internally, Bun uses ESM exclusively, but CommonJS modules can be imported as-is.
+- **ESM & CommonJS compatibility**. The world is moving towards ES modules (ESM), but millions of packages on npm still require CommonJS. Bun recommends ES modules, but supports CommonJS.
 - **Web-standard APIs**. Bun implements standard Web APIs like `fetch`, `WebSocket`, and `ReadableStream`. Bun is powered by the JavaScriptCore engine, which is developed by Apple for Safari, so some APIs like [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers) and [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) directly use [Safari's implementation](https://github.com/oven-sh/bun/blob/HEAD/src/bun.js/bindings/webcore/JSFetchHeaders.cpp).
 - **Node.js compatibility**. In addition to supporting Node-style module resolution, Bun aims for full compatibility with built-in Node.js globals (`process`, `Buffer`) and modules (`path`, `fs`, `http`, etc.) _This is an ongoing effort that is not complete._ Refer to the compatibility page for the current status.
 

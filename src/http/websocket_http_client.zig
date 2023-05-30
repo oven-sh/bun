@@ -130,16 +130,16 @@ const ErrorCode = enum(i32) {
     invalid_utf8,
 };
 
-pub const JSWebSocket = opaque {
+const CppWebSocket = opaque {
     extern fn WebSocket__didConnect(
-        websocket_context: *JSWebSocket,
+        websocket_context: *CppWebSocket,
         socket: *uws.Socket,
         buffered_data: ?[*]u8,
         buffered_len: usize,
     ) void;
-    extern fn WebSocket__didCloseWithErrorCode(websocket_context: *JSWebSocket, reason: ErrorCode) void;
-    extern fn WebSocket__didReceiveText(websocket_context: *JSWebSocket, clone: bool, text: *const JSC.ZigString) void;
-    extern fn WebSocket__didReceiveBytes(websocket_context: *JSWebSocket, bytes: [*]const u8, byte_len: usize) void;
+    extern fn WebSocket__didCloseWithErrorCode(websocket_context: *CppWebSocket, reason: ErrorCode) void;
+    extern fn WebSocket__didReceiveText(websocket_context: *CppWebSocket, clone: bool, text: *const JSC.ZigString) void;
+    extern fn WebSocket__didReceiveBytes(websocket_context: *CppWebSocket, bytes: [*]const u8, byte_len: usize) void;
 
     pub const didConnect = WebSocket__didConnect;
     pub const didCloseWithErrorCode = WebSocket__didCloseWithErrorCode;
@@ -157,7 +157,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
     return struct {
         pub const Socket = uws.NewSocketHandler(ssl);
         tcp: Socket,
-        outgoing_websocket: ?*JSWebSocket,
+        outgoing_websocket: ?*CppWebSocket,
         input_body_buf: []u8 = &[_]u8{},
         client_protocol: []const u8 = "",
         to_send: []const u8 = "",
@@ -210,7 +210,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         pub fn connect(
             global: *JSC.JSGlobalObject,
             socket_ctx: *anyopaque,
-            websocket: *JSWebSocket,
+            websocket: *CppWebSocket,
             host: *const JSC.ZigString,
             port: u16,
             pathname: *const JSC.ZigString,
@@ -844,7 +844,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
     return struct {
         pub const Socket = uws.NewSocketHandler(ssl);
         tcp: Socket,
-        outgoing_websocket: ?*JSWebSocket = null,
+        outgoing_websocket: ?*CppWebSocket = null,
 
         receive_state: ReceiveState = ReceiveState.need_header,
         receive_header: WebsocketHeader = @bitCast(WebsocketHeader, @as(u16, 0)),
@@ -935,6 +935,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             _ = ssl_error;
             JSC.markBinding(@src());
             log("WebSocket.onHandshake({d})", .{success});
+            JSC.markBinding(@src());
             if (success == 0) {
                 if (this.outgoing_websocket) |ws| {
                     this.outgoing_websocket = null;
@@ -1521,7 +1522,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn init(
-            outgoing: *JSWebSocket,
+            outgoing: *CppWebSocket,
             input_socket: *anyopaque,
             socket_ctx: *anyopaque,
             globalThis: *JSC.JSGlobalObject,

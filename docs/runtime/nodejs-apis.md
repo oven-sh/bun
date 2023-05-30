@@ -104,8 +104,8 @@ This page is updated regularly to reflect compatibility status of the latest ver
 ---
 
 - {% anchor id="node_https" %} [`node:https`](https://nodejs.org/api/https.html) {% /anchor %}
-- 🟡
-- See `node:http`.
+- 🟢
+- Fully implemented.
 
 ---
 

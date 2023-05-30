@@ -288,7 +288,7 @@ pub const ServerConfig = struct {
 
             if (obj.getTruthy(global, "key")) |js_obj| {
                 if (js_obj.jsType().isArray()) {
-                    const count = js_obj.getLengthOfArray(global);
+                    const count = js_obj.getLength(global);
                     if (count > 0) {
                         const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
 
@@ -389,7 +389,7 @@ pub const ServerConfig = struct {
 
             if (obj.getTruthy(global, "cert")) |js_obj| {
                 if (js_obj.jsType().isArray()) {
-                    const count = js_obj.getLengthOfArray(global);
+                    const count = js_obj.getLength(global);
                     if (count > 0) {
                         const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
 
@@ -504,7 +504,7 @@ pub const ServerConfig = struct {
 
             if (obj.getTruthy(global, "ca")) |js_obj| {
                 if (js_obj.jsType().isArray()) {
-                    const count = js_obj.getLengthOfArray(global);
+                    const count = js_obj.getLength(global);
                     if (count > 0) {
                         const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
 
@@ -4659,8 +4659,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             // TODO: set Host header
             // TODO: set User-Agent header
             if (first_arg.isString()) {
-                var url_zig_str = ZigString.init("");
-                JSValue.fromRef(arguments[0]).toZigString(&url_zig_str, globalThis);
+                const url_zig_str = JSValue.c(arguments[0]).toSlice(globalThis, bun.default_allocator);
+                defer url_zig_str.deinit();
                 var temp_url_str = url_zig_str.slice();
 
                 if (temp_url_str.len == 0) {
@@ -4706,12 +4706,18 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
                 existing_request = Request{
                     .url = url.href,
+                    .url_was_allocated = true,
                     .headers = headers,
                     .body = JSC.WebCore.InitRequestBodyValue(body) catch unreachable,
                     .method = method,
                 };
             } else if (first_arg.as(Request)) |request_| {
-                existing_request = request_.*;
+                request_.cloneInto(
+                    &existing_request,
+                    bun.default_allocator,
+                    globalThis,
+                    false,
+                );
             } else {
                 const fetch_error = WebCore.Fetch.fetch_type_error_strings.get(js.JSValueGetType(ctx, arguments[0]));
                 return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();

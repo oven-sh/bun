@@ -233,7 +233,7 @@ pub const FileSystemRouter = struct {
                     globalThis.allocator().destroy(arena);
                     return null;
                 }
-                if (val.getLengthOfArray(globalThis) == 0) continue;
+                if (val.getLength(globalThis) == 0) continue;
                 extensions.appendAssumeCapacity((val.toSlice(globalThis, allocator).clone(allocator) catch unreachable).slice()[1..]);
             }
         }

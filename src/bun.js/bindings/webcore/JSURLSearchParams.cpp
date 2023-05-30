@@ -56,6 +56,7 @@
 #include "wtf/URL.h"
 #include "wtf/Vector.h"
 #include <variant>
+#include "GCDefferalContext.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -69,6 +70,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_getAll);
 static JSC_DECLARE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_has);
 static JSC_DECLARE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_set);
 static JSC_DECLARE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_sort);
+static JSC_DECLARE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_toJSON);
 static JSC_DECLARE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_entries);
 static JSC_DECLARE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_keys);
 static JSC_DECLARE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_values);
@@ -152,6 +154,16 @@ template<> void JSURLSearchParamsDOMConstructor::initializeProperties(VM& vm, JS
     putDirect(vm, vm.propertyNames->prototype, JSURLSearchParams::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
 }
 
+JSC_DEFINE_CUSTOM_GETTER(jsURLSearchParamsPrototype_getLength, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* thisObject = jsDynamicCast<JSURLSearchParams*>(JSValue::decode(thisValue));
+    if (UNLIKELY(!thisObject))
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    return JSValue::encode(jsNumber(thisObject->wrapped().size()));
+}
+
 /* Hash table for prototype */
 
 static const HashTableValue JSURLSearchParamsPrototypeTableValues[] = {
@@ -168,6 +180,8 @@ static const HashTableValue JSURLSearchParamsPrototypeTableValues[] = {
     { "values"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsURLSearchParamsPrototypeFunction_values, 0 } },
     { "forEach"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsURLSearchParamsPrototypeFunction_forEach, 1 } },
     { "toString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsURLSearchParamsPrototypeFunction_toString, 0 } },
+    { "toJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsURLSearchParamsPrototypeFunction_toJSON, 0 } },
+    { "length"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsURLSearchParamsPrototype_getLength, 0 } },
 };
 
 const ClassInfo JSURLSearchParamsPrototype::s_info = { "URLSearchParams"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSURLSearchParamsPrototype) };
@@ -382,6 +396,60 @@ JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_toString, (JSGlobalO
     return IDLOperation<JSURLSearchParams>::call<jsURLSearchParamsPrototypeFunction_toStringBody>(*lexicalGlobalObject, *callFrame, "toString");
 }
 
+static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_toJSONBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSURLSearchParams>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(throwScope);
+    UNUSED_PARAM(callFrame);
+    auto& impl = castedThis->wrapped();
+    auto iter = impl.createIterator();
+
+    auto* obj = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), impl.size() + 1);
+    obj->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(lexicalGlobalObject->vm(), "URLSearchParams"_s), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | 0);
+
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    WTF::HashSet<String> seenKeys;
+    for (auto entry = iter.next(); entry.has_value(); entry = iter.next()) {
+        auto& key = entry.value().key;
+        auto& value = entry.value().value;
+        auto ident = Identifier::fromString(vm, key);
+        if (seenKeys.contains(key)) {
+            JSValue jsValue = obj->getDirect(vm, ident);
+            if (jsValue.isString()) {
+                GCDeferralContext deferralContext(lexicalGlobalObject->vm());
+                JSC::ObjectInitializationScope initializationScope(lexicalGlobalObject->vm());
+
+                JSC::JSArray* array = JSC::JSArray::tryCreateUninitializedRestricted(
+                    initializationScope, &deferralContext,
+                    lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
+                    2);
+
+                array->initializeIndex(initializationScope, 0, jsValue);
+                array->initializeIndex(initializationScope, 1, jsString(vm, value));
+                obj->putDirect(vm, ident, array, 0);
+            } else if (jsValue.isObject() && jsValue.getObject()->inherits<JSC::JSArray>()) {
+                JSC::JSArray* array = jsCast<JSC::JSArray*>(jsValue.getObject());
+                array->push(lexicalGlobalObject, jsString(vm, value));
+                RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+
+            } else {
+                RELEASE_ASSERT_NOT_REACHED();
+            }
+        } else {
+            seenKeys.add(key);
+            obj->putDirect(vm, ident, jsString(vm, value), 0);
+        }
+    }
+
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(obj));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_toJSON, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSURLSearchParams>::call<jsURLSearchParamsPrototypeFunction_toJSONBody>(*lexicalGlobalObject, *callFrame, "toJSON");
+}
+
 struct URLSearchParamsIteratorTraits {
     static constexpr JSDOMIteratorType type = JSDOMIteratorType::Map;
     using KeyType = IDLUSVString;
@@ -555,5 +623,4 @@ URLSearchParams* JSURLSearchParams::toWrapped(JSC::VM& vm, JSC::JSValue value)
         return &wrapper->wrapped();
     return nullptr;
 }
-
 }

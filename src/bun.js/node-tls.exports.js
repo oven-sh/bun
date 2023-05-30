@@ -294,19 +294,12 @@ export const CLIENT_RENEG_LIMIT = 3,
   DEFAULT_MIN_VERSION = "TLSv1.2",
   DEFAULT_MAX_VERSION = "TLSv1.3",
   createConnection = (port, host, connectListener) => {
-    if (typeof host == "function") {
-      connectListener = host;
-      host = undefined;
+    if (typeof port === "object") {
+      // port is option pass Socket options and let connect handle connection options
+      return new TLSSocket(port).connect(port, host, connectListener);
     }
-    var options =
-      typeof port == "object"
-        ? port
-        : {
-            host: host,
-            port: port,
-          };
-
-    return new TLSSocket(options).connect(options, connectListener);
+    // port is path or host, let connect handle this
+    return new TLSSocket().connect(port, host, connectListener);
   },
   connect = createConnection;
 

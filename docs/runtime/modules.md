@@ -121,7 +121,7 @@ Bun respects subpath [`"exports"`](https://nodejs.org/api/packages.html#subpath-
   "name": "foo",
   "exports": {
     ".": "./index.js",
-    "./package.json": "./package.json" # subpath
+    "./package.json": "./package.json" // subpath
   }
 }
 ```
@@ -156,3 +156,90 @@ In the spirit of treating TypeScript as a first-class citizen, the Bun runtime w
 ```
 
 If you aren't a TypeScript user, you can create a [`jsconfig.json`](https://code.visualstudio.com/docs/languages/jsconfig) in your project root to achieve the same behavior.
+
+## CommonJS
+
+Bun has native support for CommonJS modules (added in Bun v0.6.5).
+
+In Bun's JavaScript runtime, `require` can be used by both ES Modules and CommonJS modules.
+
+In Bun, you can `require()` ESM modules from CommonJS modules.
+
+| Module Type | `require()`      | `import * as`                                                           |
+| ----------- | ---------------- | ----------------------------------------------------------------------- |
+| ES Module   | Module Namespace | Module Namespace                                                        |
+| CommonJS    | module.exports   | `default` is `module.exports`, keys of module.exports are named exports |
+
+If the target module is an ES Module, `require` returns the module namespace object (equivalent to `import * as`).
+If the target module is a CommonJS module, `require` returns the `module.exports` object.
+
+### What is a CommonJS module?
+
+In 2016, ECMAScript added support for [ES Modules](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Modules). ES Modules are the standard for JavaScript modules. However, millions of npm packages still use CommonJS modules.
+
+CommonJS modules are modules that use `module.exports` to export values. Typically, `require` is used to import CommonJS modules.
+
+```ts
+// my-commonjs.cjs
+const stuff = require("./stuff");
+module.exports = { stuff };
+```
+
+The biggest difference between CommonJS and ES Modules is that CommonJS modules are synchronous, while ES Modules are asynchronous. There are other differences too, like ES Modules support top-level `await` and CommonJS modules don't. ES Modules are always in [strict mode](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Strict_mode), while CommonJS modules are not. Browsers do not have native support for CommonJS modules, but they do have native support for ES Modules (`<script type="module">`). CommonJS modules are not statically analyzable, while ES Modules only allow static imports and exports.
+
+### Importing CommonJS from ESM
+
+You can `import` or `require` CommonJS modules from ESM modules.
+
+```ts
+import { stuff } from "./my-commonjs.cjs";
+import Stuff from "./my-commonjs.cjs";
+const myStuff = require("./my-commonjs.cjs");
+```
+
+### Importing ESM from CommonJS
+
+```ts
+// this works in Bun v0.6.5+
+// It does not work in Node.js
+const { stuff } = require("./my-esm.mjs");
+```
+
+### Importing CommonJS from CommonJS
+
+You can `require()` CommonJS modules from CommonJS modules.
+
+```ts
+const { stuff } = require("./my-commonjs.cjs");
+```
+
+#### Top-level await
+
+If you are using top-level await, you must use `import()` to import ESM modules from CommonJS modules.
+
+```ts
+import("./my-esm.js").then(({ stuff }) => {
+  // ...
+});
+
+// this will throw an error if "my-esm.js" uses top-level await
+const { stuff } = require("./my-esm.js");
+```
+
+#### Low-level details of CommonJS interop in Bun
+
+Bun's JavaScript runtime has native support for CommonJS as of Bun v0.6.5.
+
+When Bun's JavaScript transpiler detects usages of `module.exports`, it treats the file as CommonJS. The module loader will then wrap the transpiled module in a function shaped like this:
+
+```js
+(function (module, exports, require) {
+  // transpiled module
+})(module, exports, require);
+```
+
+`module`, `exports`, and `require` are very much like the `module`, `exports`, and `require` in Node.js. These are assigned via a [`with scope`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/with) in C++. An internal `Map` stores the `exports` object to handle cyclical `require` calls before the module is fully loaded.
+
+Once the CommonJS module is successfully evaluated, a Synthetic Module Record is created with the `default` ES Module [export set to `module.exports`](https://github.com/oven-sh/bun/blob/9b6913e1a674ceb7f670f917fc355bb8758c6c72/src/bun.js/bindings/CommonJSModuleRecord.cpp#L212-L213) and keys of the `module.exports` object are re-exported as named exports (if the `module.exports` object is an object).
+
+When using Bun's bundler, this works differently. The bundler will wrap the CommonJS module in a `require_${moduleName}` function which returns the `module.exports` object.

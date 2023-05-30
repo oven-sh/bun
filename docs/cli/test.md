@@ -1,4 +1,10 @@
-Bun ships with a built-in test runner.
+Bun ships with a fast built-in test runner. Tests are executed with the Bun runtime, and support the following features.
+
+- TypeScript and JSX
+- Snapshot testing
+- Lifecycle hooks
+- Watch mode with `--watch`
+- Script pre-loading with `--preload`
 
 ## Run tests
 
@@ -29,25 +35,7 @@ You can filter the set of tests to run by passing additional positional argument
 $ bun test <filter> <filter> ...
 ```
 
-## Snapshot testing
-
-Snapshots are supported by `bun test`. First, write a test using the `.toMatchSnapshot()` matcher:
-
-```ts
-import { test, expect } from "bun:test";
-
-test("snap", () => {
-  expect("foo").toMatchSnapshot();
-});
-```
-
-Then generate snapshots with the following command:
-
-```bash
-bun test --update-snapshots
-```
-
-Snapshots will be stored in a `__snapshots__` directory next to the test file.
+The test runner runs all tests in a single process. It loads all `--preload` scripts (see [Lifecycle](/docs/test/lifecycle) for details), then runs all tests. If a test fails, the test runner will exit with a non-zero exit code.
 
 ## Watch mode
 
@@ -56,6 +44,29 @@ Similar to `bun run`, you can pass the `--watch` flag to `bun test` to watch for
 ```bash
 $ bun test --watch
 ```
+
+## Lifecycle hooks
+
+Bun supports the following lifecycle hooks:
+
+| Hook         | Description                 |
+| ------------ | --------------------------- |
+| `beforeAll`  | Runs once before all tests. |
+| `beforeEach` | Runs before each test.      |
+| `afterEach`  | Runs after each test.       |
+| `afterAll`   | Runs once after all tests.  |
+
+These hooks can be define inside test files, or in a separate file that is preloaded with the `--preload` flag.
+
+```ts
+$ bun test --preload ./setup.ts
+```
+
+See [Test > Lifecycle](/docs/test/lifecycle) for complete documentation.
+
+## Snapshot testing
+
+Snapshots are supported by `bun test`. See [Test > Snapshots](/docs/test/snapshots) for complete documentation.
 
 ## Performance
 

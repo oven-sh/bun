@@ -531,18 +531,12 @@ const Socket = (function (InternalSocket) {
 );
 
 function createConnection(port, host, connectListener) {
-  if (typeof host == "function") {
-    connectListener = host;
-    host = undefined;
+  if (typeof port === "object") {
+    // port is option pass Socket options and let connect handle connection options
+    return new Socket(port).connect(port, host, connectListener);
   }
-  var options =
-    typeof port == "object"
-      ? port
-      : {
-          host: host,
-          port: port,
-        };
-  return new Socket(options).connect(options, connectListener);
+  // port is path or host, let connect handle this
+  return new Socket().connect(port, host, connectListener);
 }
 
 const connect = createConnection;

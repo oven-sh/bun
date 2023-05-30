@@ -571,7 +571,7 @@ pub export fn napi_has_element(env: napi_env, object: napi_value, index: c_uint,
         return .array_expected;
     }
 
-    result.* = object.getLengthOfArray(env) > index;
+    result.* = object.getLength(env) > index;
     return .ok;
 }
 pub export fn napi_get_element(env: napi_env, object: napi_value, index: u32, result: *napi_value) napi_status {
@@ -595,7 +595,7 @@ pub export fn napi_get_array_length(env: napi_env, value: napi_value, result: [*
         return .array_expected;
     }
 
-    result.* = @truncate(u32, value.getLengthOfArray(env));
+    result.* = @truncate(u32, value.getLength(env));
     return .ok;
 }
 pub export fn napi_strict_equals(env: napi_env, lhs: napi_value, rhs: napi_value, result: *bool) napi_status {

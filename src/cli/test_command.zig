@@ -755,7 +755,7 @@ pub const TestCommand = struct {
 
                 vm.onUnhandledRejectionCtx = null;
                 vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;
-                module.runTests(JSC.JSValue.zero, vm.global);
+                module.runTests(vm.global);
                 vm.eventLoop().tick();
 
                 var prev_unhandled_count = vm.unhandled_error_counter;

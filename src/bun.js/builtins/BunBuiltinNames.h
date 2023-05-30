@@ -84,6 +84,7 @@ using namespace JSC;
     macro(errno) \
     macro(errorSteps) \
     macro(execArgv) \
+    macro(exports) \
     macro(extname) \
     macro(failureKind) \
     macro(fatal) \

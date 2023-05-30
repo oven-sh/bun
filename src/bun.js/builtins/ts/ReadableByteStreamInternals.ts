@@ -372,7 +372,7 @@ export function readableByteStreamControllerRespondWithNewView(controller, view)
 export function readableByteStreamControllerRespond(controller, bytesWritten) {
   bytesWritten = $toNumber(bytesWritten);
 
-  if (isNaN(bytesWritten) || bytesWritten === Infinity || bytesWritten < 0)
+  if (bytesWritten !== bytesWritten || bytesWritten === Infinity || bytesWritten < 0)
     throw new RangeError("bytesWritten has an incorrect value");
 
   $assert($getByIdDirectPrivate(controller, "pendingPullIntos").isNotEmpty());

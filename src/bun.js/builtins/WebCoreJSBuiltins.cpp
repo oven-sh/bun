@@ -2082,9 +2082,9 @@ const char* const s_streamInternalsPromiseInvokeOrFallbackOrNoopCode = "(functio
 const JSC::ConstructAbility s_streamInternalsValidateAndNormalizeQueuingStrategyCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsValidateAndNormalizeQueuingStrategyCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_streamInternalsValidateAndNormalizeQueuingStrategyCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsValidateAndNormalizeQueuingStrategyCodeLength = 263;
+const int s_streamInternalsValidateAndNormalizeQueuingStrategyCodeLength = 253;
 static const JSC::Intrinsic s_streamInternalsValidateAndNormalizeQueuingStrategyCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsValidateAndNormalizeQueuingStrategyCode = "(function (d,_){\"use strict\";if(d!==@undefined&&typeof d!==\"function\")@throwTypeError(\"size parameter must be a function\");const b=@toNumber(_);if(@isNaN(b)||b<0)@throwRangeError(\"highWaterMark value is negative or not a number\");return{size:d,highWaterMark:b}})\n";
+const char* const s_streamInternalsValidateAndNormalizeQueuingStrategyCode = "(function (d,n){\"use strict\";if(d!==@undefined&&typeof d!==\"function\")@throwTypeError(\"size parameter must be a function\");if(n=@toNumber(n),n!==n||n<0)@throwRangeError(\"highWaterMark value is negative or not a number\");return{size:d,highWaterMark:n}})\n";
 
 // createFIFO
 const JSC::ConstructAbility s_streamInternalsCreateFIFOCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
@@ -2146,9 +2146,9 @@ const char* const s_streamInternalsExtractSizeAlgorithmCode = "(function (d){\"u
 const JSC::ConstructAbility s_streamInternalsExtractHighWaterMarkCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsExtractHighWaterMarkCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_streamInternalsExtractHighWaterMarkCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsExtractHighWaterMarkCodeLength = 188;
+const int s_streamInternalsExtractHighWaterMarkCodeLength = 194;
 static const JSC::Intrinsic s_streamInternalsExtractHighWaterMarkCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsExtractHighWaterMarkCode = "(function (n,c){\"use strict\";const p=n.highWaterMark;if(p===@undefined)return c;if(@isNaN(p)||p<0)@throwRangeError(\"highWaterMark value is negative or not a number\");return @toNumber(p)})\n";
+const char* const s_streamInternalsExtractHighWaterMarkCode = "(function (n,o){\"use strict\";const b=n.highWaterMark;if(b===@undefined)return o;const c=@toNumber(b);if(c!==c||c<0)@throwRangeError(\"highWaterMark value is negative or not a number\");return c})\n";
 
 // extractHighWaterMarkFromQueuingStrategyInit
 const JSC::ConstructAbility s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
@@ -2198,7 +2198,7 @@ const JSC::ConstructorKind s_importMetaObjectRequireESMCodeConstructorKind = JSC
 const JSC::ImplementationVisibility s_importMetaObjectRequireESMCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_importMetaObjectRequireESMCodeLength = 419;
 static const JSC::Intrinsic s_importMetaObjectRequireESMCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_importMetaObjectRequireESMCode = "(function (a){\"use strict\";var i=@Loader.registry.@get(a);if(!i||!i.evaluated)i=@loadCJS2ESM(a);if(!i||!i.evaluated||!i.module)@throwTypeError(`require() failed to evaluate module \"${a}\". This is an internal consistentency error.`);var u=@Loader.getModuleNamespaceObject(i.module);if(u[@commonJSSymbol]===0)return;var E=u.default,_=E\?.[@commonJSSymbol];if(_===0)return E;else if(_&&@isCallable(E))return E();return u})\n";
+const char* const s_importMetaObjectRequireESMCode = "(function (i){\"use strict\";var a=@Loader.registry.@get(i);if(!a||!a.evaluated)a=@loadCJS2ESM(i);if(!a||!a.evaluated||!a.module)@throwTypeError(`require() failed to evaluate module \"${i}\". This is an internal consistentency error.`);var E=@Loader.getModuleNamespaceObject(a.module);if(E[@commonJSSymbol]===0)return;var b=E.default,f=b\?.[@commonJSSymbol];if(f===0)return b;else if(f&&@isCallable(b))return b();return E})\n";
 
 // internalRequire
 const JSC::ConstructAbility s_importMetaObjectInternalRequireCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
@@ -2768,9 +2768,9 @@ const char* const s_readableByteStreamInternalsReadableByteStreamControllerRespo
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerRespondCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerRespondCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerRespondCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableByteStreamControllerRespondCodeLength = 251;
+const int s_readableByteStreamInternalsReadableByteStreamControllerRespondCodeLength = 247;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerRespondCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableByteStreamControllerRespondCode = "(function (a,d){\"use strict\";if(d=@toNumber(d),@isNaN(d)||d===@Infinity||d<0)@throwRangeError(\"bytesWritten has an incorrect value\");@assert(@getByIdDirectPrivate(a,\"pendingPullIntos\").isNotEmpty()),@readableByteStreamControllerRespondInternal(a,d)})\n";
+const char* const s_readableByteStreamInternalsReadableByteStreamControllerRespondCode = "(function (a,g){\"use strict\";if(g=@toNumber(g),g!==g||g===@Infinity||g<0)@throwRangeError(\"bytesWritten has an incorrect value\");@assert(@getByIdDirectPrivate(a,\"pendingPullIntos\").isNotEmpty()),@readableByteStreamControllerRespondInternal(a,g)})\n";
 
 // readableByteStreamControllerRespondInternal
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerRespondInternalCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;

@@ -2237,7 +2237,7 @@ const Return = struct {
     pub const Access = void;
     pub const AppendFile = void;
     pub const Close = void;
-    pub const CopyFile = void;
+    pub const CopyFile = usize;
     pub const Exists = bool;
     pub const Fchmod = void;
     pub const Chmod = void;
@@ -2638,22 +2638,14 @@ pub const NodeFS = struct {
 
                             if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                                 switch (err.getErrno()) {
+                                    // https://github.com/oven-sh/bun/issues/1675
                                     .XDEV => {
-                                        var buffer: [4096]u8 = undefined;
+                                        const rwfresult = XDEVReadWriteFallback(src_fd, dest_fd, src);
 
-                                        var bytes_read = switch (Syscall.read(src_fd, &buffer)) {
-                                            .result => |result| result,
-                                            .err => |_err| return Maybe(Return.CopyFile){ .err = _err.withPath(src) },
-                                        };
-
-                                        if (bytes_read == 0) break;
-
-                                        var slice = buffer[0..bytes_read];
-
-                                        written = switch (Syscall.write(dest_fd, slice)) {
-                                            .result => |result| result,
-                                            .err => |_err| return Maybe(Return.CopyFile){ .err = _err.withPath(src) },
-                                        };
+                                        switch (rwfresult) {
+                                            .result => |r| written = r,
+                                            .err => |e| return Maybe(Return.CopyFile){ .err = e },
+                                        }
                                     },
                                     else => return err,
                                 }
@@ -2669,22 +2661,14 @@ pub const NodeFS = struct {
 
                             if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                                 switch (err.getErrno()) {
+                                    // https://github.com/oven-sh/bun/issues/1675
                                     .XDEV => {
-                                        var buffer: [4096]u8 = undefined;
+                                        const rwfresult = XDEVReadWriteFallback(src_fd, dest_fd, src);
 
-                                        var bytes_read = switch (Syscall.read(src_fd, &buffer)) {
-                                            .result => |result| result,
-                                            .err => |_err| return Maybe(Return.CopyFile){ .err = _err.withPath(src) },
-                                        };
-
-                                        if (bytes_read == 0) break;
-
-                                        var slice = buffer[0..bytes_read];
-
-                                        written = switch (Syscall.write(dest_fd, slice)) {
-                                            .result => |result| result,
-                                            .err => |_err| return Maybe(Return.CopyFile){ .err = _err.withPath(src) },
-                                        };
+                                        switch (rwfresult) {
+                                            .result => |r| written = r,
+                                            .err => |e| return Maybe(Return.CopyFile){ .err = e },
+                                        }
                                     },
                                     else => return err,
                                 }
@@ -2705,6 +2689,27 @@ pub const NodeFS = struct {
 
         return Maybe(Return.CopyFile).todo;
     }
+
+    // it can return Maybe(void) or usize
+    fn XDEVReadWriteFallback(src_fd: i32, dest_fd: i32, src: [:0]const u8) Maybe(usize) {
+        var buffer: [4096]u8 = undefined;
+
+        var bytes_read = switch (Syscall.read(src_fd, &buffer)) {
+            .result => |result| result,
+            .err => |_err| return Maybe(Return.CopyFile){ .err = _err.withPath(src) },
+        };
+
+        if (bytes_read == 0)
+            return Maybe(Return.CopyFile).todo;
+
+        var slice = buffer[0..bytes_read];
+
+        return switch (Syscall.write(dest_fd, slice)) {
+            .result => |result| Maybe(usize){ .result = result },
+            .err => |_err| Maybe(Return.CopyFile){ .err = _err.withPath(src) },
+        };
+    }
+
     pub fn exists(this: *NodeFS, args: Arguments.Exists, comptime flavor: Flavor) Maybe(Return.Exists) {
         const Ret = Maybe(Return.Exists);
         const path = args.path.sliceZ(&this.sync_error_buf);

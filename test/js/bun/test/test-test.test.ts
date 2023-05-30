@@ -2833,7 +2833,7 @@ it("test.todo doesnt cause exit code 1", () => {
   const path = join(tmp, "todo-test.test.js");
   copyFileSync(join(import.meta.dir, "todo-test-fixture-2.js"), path);
   const { stdout, stderr, exitCode } = spawnSync({
-    cmd: [bunExe(), "test", path, "--run-todo"],
+    cmd: [bunExe(), "test", path, "--todo"],
     stdout: "pipe",
     stderr: "pipe",
     env: bunEnv,

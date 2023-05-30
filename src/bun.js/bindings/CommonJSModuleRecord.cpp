@@ -351,6 +351,7 @@ JSC::SourceCode createCommonJSModule(
                     false, false, EvalContextType::None, nullptr, nullptr, ECMAMode::sloppy());
 
                 if (UNLIKELY(!executable && !throwScope.exception())) {
+                    // I'm not sure if this case happens, but it's better to be safe than sorry.
                     throwSyntaxError(globalObject, throwScope, "Failed to compile CommonJS module."_s);
                 }
 
@@ -380,6 +381,13 @@ JSC::SourceCode createCommonJSModule(
 
                 JSValue result = moduleObject->exportsObject();
 
+                // The developer can do something like:
+                //
+                //   Object.defineProperty(module, 'exports', {get: getter})
+                //
+                // In which case, the exports object is now a GetterSetter object.
+                //
+                // We can't return a GetterSetter object to ESM code, so we need to call it.
                 if (!result.isEmpty() && (result.isGetterSetter() || result.isCustomGetterSetter())) {
                     auto* clientData = WebCore::clientData(vm);
 

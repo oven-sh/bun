@@ -184,16 +184,9 @@ pub const ServerEntryPoint = struct {
                 break :brk try std.fmt.allocPrint(
                     allocator,
                     \\//Auto-generated file
-                    \\var cjsSymbol = Symbol.for("CommonJS");
                     \\var hmrSymbol = Symbol.for("BunServerHMR");
                     \\import * as start from '{s}{s}';
-                    \\export * from '{s}{s}';
                     \\var entryNamespace = start;
-                    \\var cjs = start?.default;
-                    \\if (cjs && typeof cjs ===  'function' && cjsSymbol in cjs) {{
-                    \\  // if you module.exports = (class {{}}), don't call it
-                    \\  entryNamespace = ("prototype" in cjs) ? cjs : cjs();
-                    \\}}
                     \\if (typeof entryNamespace?.then === 'function') {{
                     \\   entryNamespace = entryNamespace.then((entryNamespace) => {{
                     \\      if(typeof entryNamespace?.default?.fetch === 'function')  {{
@@ -220,23 +213,14 @@ pub const ServerEntryPoint = struct {
                     .{
                         dir_to_use,
                         original_path.filename,
-                        dir_to_use,
-                        original_path.filename,
                     },
                 );
             }
             break :brk try std.fmt.allocPrint(
                 allocator,
                 \\//Auto-generated file
-                \\var cjsSymbol = Symbol.for("CommonJS");
                 \\import * as start from '{s}{s}';
-                \\export * from '{s}{s}';
                 \\var entryNamespace = start;
-                \\var cjs = start?.default;
-                \\if (cjs && typeof cjs ===  'function' && cjsSymbol in cjs) {{
-                \\  // if you module.exports = (class {{}}), don't call it
-                \\  entryNamespace = ("prototype" in cjs) ? cjs : cjs();
-                \\}}
                 \\if (typeof entryNamespace?.then === 'function') {{
                 \\   entryNamespace = entryNamespace.then((entryNamespace) => {{
                 \\      if(typeof entryNamespace?.default?.fetch === 'function')  {{
@@ -249,8 +233,6 @@ pub const ServerEntryPoint = struct {
                 \\
             ,
                 .{
-                    dir_to_use,
-                    original_path.filename,
                     dir_to_use,
                     original_path.filename,
                 },

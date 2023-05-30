@@ -2222,9 +2222,10 @@ pub const ZigConsoleClient = struct {
                         writer.writeAll("expect.anything");
                         return;
                     } else if (value.as(JSC.Jest.ExpectAny) != null) {
+                        const constructor_value = JSC.Jest.ExpectAny.constructorValueGetCached(value) orelse return;
+
                         this.addForNewLine("expect.any<".len);
                         writer.writeAll("expect.any<");
-                        const constructor_value = JSC.Jest.ExpectAny.constructorValueGetCached(value) orelse return;
                         var class_name = ZigString.init(&name_buf);
 
                         constructor_value.getClassName(this.globalThis, &class_name);

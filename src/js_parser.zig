@@ -21094,18 +21094,32 @@ fn NewParser_(
                         },
                         logger.Loc.Empty,
                     );
-                    var call_args = allocator.alloc(Expr, 3) catch unreachable;
-                    call_args[0] = p.newExpr(E.Identifier{ .ref = p.module_ref }, logger.Loc.Empty);
-                    call_args[1] = p.newExpr(E.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty);
-                    call_args[2] = p.newExpr(E.Identifier{ .ref = p.require_ref }, logger.Loc.Empty);
+                    var call_args = allocator.alloc(Expr, 4) catch unreachable;
+
+                    //
+                    // (function(module, exports, require) {}).call(exports, module, exports, require)
+                    call_args[0..4].* = .{
+                        p.newExpr(E.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty),
+                        p.newExpr(E.Identifier{ .ref = p.module_ref }, logger.Loc.Empty),
+                        p.newExpr(E.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty),
+                        p.newExpr(E.Identifier{ .ref = p.require_ref }, logger.Loc.Empty),
+                    };
 
                     const call = p.newExpr(
                         E.Call{
-                            .target = wrapper,
+                            .target = p.newExpr(
+                                E.Dot{
+                                    .target = wrapper,
+                                    .name = "call",
+                                    .name_loc = logger.Loc.Empty,
+                                },
+                                logger.Loc.Empty,
+                            ),
                             .args = ExprNodeList.init(call_args),
                         },
                         logger.Loc.Empty,
                     );
+
                     var only_stmt = try p.allocator.alloc(Stmt, 1);
                     only_stmt[0] = p.s(
                         S.SExpr{

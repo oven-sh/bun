@@ -363,14 +363,27 @@ JSC::SourceCode createCommonJSModule(
 
                 auto catchScope = DECLARE_CATCH_SCOPE(vm);
 
-                JSC::JSWithScope* withScope = JSC::JSWithScope::create(vm, globalObject, globalObject->globalScope(), scopeExtensionObject);
+                // Where the magic happens.
+                //
+                // A `with` scope is created containing { module, exports, require }.
+                // We eval() the CommonJS module code
+                // with that scope.
+                //
+                // Doing it that way saves us a roundtrip through C++ <> JS.
+                //
+                //      Sidenote: another implementation could use
+                //      FunctionExecutable. It looks like there are lots of arguments
+                //      to pass to that and it isn't used directly much, so that
+                //      seems harder to do correctly.
+                {
+                    JSWithScope* withScope = JSWithScope::create(vm, globalObject, globalObject->globalScope(), scopeExtensionObject);
+                    vm.interpreter.executeEval(executable, globalObject, withScope);
 
-                vm.interpreter.executeEval(executable, globalObject, withScope);
-
-                if (UNLIKELY(catchScope.exception())) {
-                    auto returnedException = catchScope.exception();
-                    catchScope.clearException();
-                    JSC::throwException(globalObject, throwScope, returnedException);
+                    if (UNLIKELY(catchScope.exception())) {
+                        auto returnedException = catchScope.exception();
+                        catchScope.clearException();
+                        JSC::throwException(globalObject, throwScope, returnedException);
+                    }
                 }
 
                 if (throwScope.exception()) {
@@ -439,7 +452,10 @@ JSC::SourceCode createCommonJSModule(
                                 return true;
 
                             exportNames.append(Identifier::fromUid(vm, key));
-                            exportValues.append(exports->getDirect(entry.offset()));
+
+                            JSValue value = exports->getDirect(entry.offset());
+
+                            exportValues.append(value);
                             return true;
                         });
                     } else {

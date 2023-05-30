@@ -356,6 +356,7 @@ JSC::SourceCode createCommonJSModule(
 
                 if (UNLIKELY(throwScope.exception())) {
                     globalObject->requireMap()->remove(globalObject, requireMapKey);
+                    throwScope.release();
                     return;
                 }
 
@@ -373,10 +374,30 @@ JSC::SourceCode createCommonJSModule(
 
                 if (throwScope.exception()) {
                     globalObject->requireMap()->remove(globalObject, requireMapKey);
+                    throwScope.release();
                     return;
                 }
 
                 JSValue result = moduleObject->exportsObject();
+
+                if (!result.isEmpty() && (result.isGetterSetter() || result.isCustomGetterSetter())) {
+                    auto* clientData = WebCore::clientData(vm);
+
+                    // TODO: is there a faster way to call these getters? We shouldn't need to do a full property lookup.
+                    //
+                    // we use getIfPropertyExists just incase a pathological devleoper did:
+                    //
+                    //   - Object.defineProperty(module, 'exports', {get: getter})
+                    //   - delete module.exports
+                    //
+                    result = moduleObject->getIfPropertyExists(globalObject, clientData->builtinNames().exportsPublicName());
+
+                    if (UNLIKELY(throwScope.exception())) {
+                        globalObject->requireMap()->remove(globalObject, requireMapKey);
+                        throwScope.release();
+                        return;
+                    }
+                }
 
                 globalObject->requireMap()->set(globalObject, requireMapKey, result);
 
@@ -412,8 +433,10 @@ JSC::SourceCode createCommonJSModule(
                     } else {
                         JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
                         exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Exclude);
-                        if (throwScope.exception())
+                        if (throwScope.exception()) {
+                            throwScope.release();
                             return;
+                        }
 
                         for (auto property : properties) {
                             if (UNLIKELY(property.isEmpty() || property.isNull()))

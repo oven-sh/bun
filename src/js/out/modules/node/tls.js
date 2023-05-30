@@ -1,1 +1,250 @@
-var{isTypedArray:X}=import.meta.require("node:util/types");var H=function(){throwNotImplemented("Not implemented")},G=function(f){if(typeof f==="string"||X(f)||f instanceof ArrayBuffer||f instanceof Blob)return!0;if(Array.isArray(f)){for(var w=0;w<f.length;w++)if(typeof f!=="string"&&!X(f)&&!(f instanceof ArrayBuffer)&&!(f instanceof Blob))return!1;return!0}},P=function(f){return new M(f)},F=function(f){return new P(f)},D=function(f,w){return new m(f,w)},M=class f{context;constructor(w){const B={};if(w){let J=w.key;if(J){if(!G(J))throw new TypeError("key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile");this.key=J}let K=w.cert;if(K){if(!G(K))throw new TypeError("cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile");this.cert=K}let Q=w.ca;if(Q){if(!G(Q))throw new TypeError("ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile");this.ca=Q}let Y=w.passphrase;if(Y&&typeof Y!=="string")throw new TypeError("passphrase argument must be an string");this.passphrase=Y;let Z=w.servername;if(Z&&typeof Z!=="string")throw new TypeError("servername argument must be an string");this.servername=Z;let $=w.secureOptions||0;if($&&typeof $!=="number")throw new TypeError("secureOptions argument must be an number");this.secureOptions=$}this.context=B}},{[Symbol.for("::bunternal::")]:N,Server:R}=import.meta.require("net"),V=Symbol.for("::buntls::"),q,g=function(f){return q=f,Object.defineProperty(q.prototype,Symbol.toStringTag,{value:"TLSSocket",enumerable:!1}),Object.defineProperty(function w(B){return new f(B)},Symbol.hasInstance,{value(w){return w instanceof f}})}(class f extends N{#f;constructor(w){super(w);this.#f=w.secureContext||F(w),this.authorized=!1,this.secureConnecting=!0,this._secureEstablished=!1,this._securePending=!0}_secureEstablished=!1;_securePending=!0;_newSessionPending;_controlReleased;secureConnecting=!1;_SNICallback;servername;alpnProtocol;authorized=!1;authorizationError;encrypted=!0;exportKeyingMaterial(){throw Error("Not implented in Bun yet")}setMaxSendFragment(){throw Error("Not implented in Bun yet")}setServername(){throw Error("Not implented in Bun yet")}setSession(){throw Error("Not implented in Bun yet")}getPeerCertificate(){throw Error("Not implented in Bun yet")}getCertificate(){throw Error("Not implented in Bun yet")}getPeerX509Certificate(){throw Error("Not implented in Bun yet")}getX509Certificate(){throw Error("Not implented in Bun yet")}[V](w,B){var{servername:J}=this;if(J)return{serverName:typeof J==="string"?J:B,...this.#f};return!0}});class m extends R{key;cert;ca;passphrase;secureOptions;_rejectUnauthorized;_requestCert;servername;constructor(f,w){super(f,w);this.setSecureContext(f)}emit(f,w){if(super.emit(f,w),f==="connection")w.once("secureConnect",()=>{super.emit("secureConnection",w)})}setSecureContext(f){if(f instanceof M)f=f.context;if(f){let w=f.key;if(w){if(!G(w))throw new TypeError("key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile");this.key=w}let B=f.cert;if(B){if(!G(B))throw new TypeError("cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile");this.cert=B}let J=f.ca;if(J){if(!G(J))throw new TypeError("ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile");this.ca=J}let K=f.passphrase;if(K&&typeof K!=="string")throw new TypeError("passphrase argument must be an string");this.passphrase=K;let Q=f.servername;if(Q&&typeof Q!=="string")throw new TypeError("servername argument must be an string");this.servername=Q;let Y=f.secureOptions||0;if(Y&&typeof Y!=="number")throw new TypeError("secureOptions argument must be an number");this.secureOptions=Y;const Z=f.requestCert||!1;if(Z)this._requestCert=Z;else this._requestCert=void 0;const $=f.rejectUnauthorized||!1;if($)this._rejectUnauthorized=$;else this._rejectUnauthorized=void 0}}getTicketKeys(){throw Error("Not implented in Bun yet")}setTicketKeys(){throw Error("Not implented in Bun yet")}[V](f,w,B){return[{serverName:this.servername||w||"localhost",key:this.key,cert:this.cert,ca:this.ca,passphrase:this.passphrase,secureOptions:this.secureOptions,rejectUnauthorized:B?!1:this._rejectUnauthorized,requestCert:B?!1:this._requestCert},q]}}var U=3,O=600,d="auto",z="DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256",x="TLSv1.2",_="TLSv1.3",A=(f,w,B)=>{if(typeof w=="function")B=w,w=void 0;var J=typeof f=="object"?f:{host:w,port:f};return new g(J).connect(J,B)},h=A,E={createSecureContext:F,parseCertString:H,getCiphers(){return z.split(":")},getCurves(){return},convertALPNProtocols(f,w){},TLSSocket:g,SecureContext:P,CLIENT_RENEG_LIMIT:U,CLIENT_RENEG_WINDOW:O,DEFAULT_ECDH_CURVE:d,DEFAULT_CIPHERS:z,DEFAULT_MIN_VERSION:x,DEFAULT_MAX_VERSION:_,[Symbol.for("CommonJS")]:0,connect:h,createConnection:A,Server:m,createServer:D},k=E;export{H as parseCertString,k as default,F as createSecureContext,A as createConnection,h as connect,g as TLSSocket,P as SecureContext,x as DEFAULT_MIN_VERSION,_ as DEFAULT_MAX_VERSION,d as DEFAULT_ECDH_CURVE,z as DEFAULT_CIPHERS,O as CLIENT_RENEG_WINDOW,U as CLIENT_RENEG_LIMIT};
+var {isTypedArray } = import.meta.require("node:util/types");
+var parseCertString = function() {
+  throwNotImplemented("Not implemented");
+}, isValidTLSArray = function(obj) {
+  if (typeof obj === "string" || isTypedArray(obj) || obj instanceof ArrayBuffer || obj instanceof Blob)
+    return !0;
+  if (Array.isArray(obj)) {
+    for (var i = 0;i < obj.length; i++)
+      if (typeof obj !== "string" && !isTypedArray(obj) && !(obj instanceof ArrayBuffer) && !(obj instanceof Blob))
+        return !1;
+    return !0;
+  }
+}, SecureContext = function(options) {
+  return new InternalSecureContext(options);
+}, createSecureContext = function(options) {
+  return new SecureContext(options);
+}, createServer = function(options, connectionListener) {
+  return new Server(options, connectionListener);
+}, InternalSecureContext = class SecureContext2 {
+  context;
+  constructor(options) {
+    const context = {};
+    if (options) {
+      let key = options.key;
+      if (key) {
+        if (!isValidTLSArray(key))
+          throw new TypeError("key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile");
+        this.key = key;
+      }
+      let cert = options.cert;
+      if (cert) {
+        if (!isValidTLSArray(cert))
+          throw new TypeError("cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile");
+        this.cert = cert;
+      }
+      let ca = options.ca;
+      if (ca) {
+        if (!isValidTLSArray(ca))
+          throw new TypeError("ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile");
+        this.ca = ca;
+      }
+      let passphrase = options.passphrase;
+      if (passphrase && typeof passphrase !== "string")
+        throw new TypeError("passphrase argument must be an string");
+      this.passphrase = passphrase;
+      let servername = options.servername;
+      if (servername && typeof servername !== "string")
+        throw new TypeError("servername argument must be an string");
+      this.servername = servername;
+      let secureOptions = options.secureOptions || 0;
+      if (secureOptions && typeof secureOptions !== "number")
+        throw new TypeError("secureOptions argument must be an number");
+      this.secureOptions = secureOptions;
+    }
+    this.context = context;
+  }
+}, { [Symbol.for("::bunternal::")]: InternalTCPSocket, Server: NetServer } = import.meta.require("net"), buntls = Symbol.for("::buntls::"), SocketClass, TLSSocket = function(InternalTLSSocket) {
+  return SocketClass = InternalTLSSocket, Object.defineProperty(SocketClass.prototype, Symbol.toStringTag, {
+    value: "TLSSocket",
+    enumerable: !1
+  }), Object.defineProperty(function Socket(options) {
+    return new InternalTLSSocket(options);
+  }, Symbol.hasInstance, {
+    value(instance) {
+      return instance instanceof InternalTLSSocket;
+    }
+  });
+}(class TLSSocket2 extends InternalTCPSocket {
+  #secureContext;
+  constructor(options) {
+    super(options);
+    this.#secureContext = options.secureContext || createSecureContext(options), this.authorized = !1, this.secureConnecting = !0, this._secureEstablished = !1, this._securePending = !0;
+  }
+  _secureEstablished = !1;
+  _securePending = !0;
+  _newSessionPending;
+  _controlReleased;
+  secureConnecting = !1;
+  _SNICallback;
+  servername;
+  alpnProtocol;
+  authorized = !1;
+  authorizationError;
+  encrypted = !0;
+  exportKeyingMaterial() {
+    throw Error("Not implented in Bun yet");
+  }
+  setMaxSendFragment() {
+    throw Error("Not implented in Bun yet");
+  }
+  setServername() {
+    throw Error("Not implented in Bun yet");
+  }
+  setSession() {
+    throw Error("Not implented in Bun yet");
+  }
+  getPeerCertificate() {
+    throw Error("Not implented in Bun yet");
+  }
+  getCertificate() {
+    throw Error("Not implented in Bun yet");
+  }
+  getPeerX509Certificate() {
+    throw Error("Not implented in Bun yet");
+  }
+  getX509Certificate() {
+    throw Error("Not implented in Bun yet");
+  }
+  [buntls](port, host) {
+    var { servername } = this;
+    if (servername)
+      return {
+        serverName: typeof servername === "string" ? servername : host,
+        ...this.#secureContext
+      };
+    return !0;
+  }
+});
+
+class Server extends NetServer {
+  key;
+  cert;
+  ca;
+  passphrase;
+  secureOptions;
+  _rejectUnauthorized;
+  _requestCert;
+  servername;
+  constructor(options, secureConnectionListener) {
+    super(options, secureConnectionListener);
+    this.setSecureContext(options);
+  }
+  emit(event, args) {
+    if (super.emit(event, args), event === "connection")
+      args.once("secureConnect", () => {
+        super.emit("secureConnection", args);
+      });
+  }
+  setSecureContext(options) {
+    if (options instanceof InternalSecureContext)
+      options = options.context;
+    if (options) {
+      let key = options.key;
+      if (key) {
+        if (!isValidTLSArray(key))
+          throw new TypeError("key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile");
+        this.key = key;
+      }
+      let cert = options.cert;
+      if (cert) {
+        if (!isValidTLSArray(cert))
+          throw new TypeError("cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile");
+        this.cert = cert;
+      }
+      let ca = options.ca;
+      if (ca) {
+        if (!isValidTLSArray(ca))
+          throw new TypeError("ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile");
+        this.ca = ca;
+      }
+      let passphrase = options.passphrase;
+      if (passphrase && typeof passphrase !== "string")
+        throw new TypeError("passphrase argument must be an string");
+      this.passphrase = passphrase;
+      let servername = options.servername;
+      if (servername && typeof servername !== "string")
+        throw new TypeError("servername argument must be an string");
+      this.servername = servername;
+      let secureOptions = options.secureOptions || 0;
+      if (secureOptions && typeof secureOptions !== "number")
+        throw new TypeError("secureOptions argument must be an number");
+      this.secureOptions = secureOptions;
+      const requestCert = options.requestCert || !1;
+      if (requestCert)
+        this._requestCert = requestCert;
+      else
+        this._requestCert = void 0;
+      const rejectUnauthorized = options.rejectUnauthorized || !1;
+      if (rejectUnauthorized)
+        this._rejectUnauthorized = rejectUnauthorized;
+      else
+        this._rejectUnauthorized = void 0;
+    }
+  }
+  getTicketKeys() {
+    throw Error("Not implented in Bun yet");
+  }
+  setTicketKeys() {
+    throw Error("Not implented in Bun yet");
+  }
+  [buntls](port, host, isClient) {
+    return [
+      {
+        serverName: this.servername || host || "localhost",
+        key: this.key,
+        cert: this.cert,
+        ca: this.ca,
+        passphrase: this.passphrase,
+        secureOptions: this.secureOptions,
+        rejectUnauthorized: isClient ? !1 : this._rejectUnauthorized,
+        requestCert: isClient ? !1 : this._requestCert
+      },
+      SocketClass
+    ];
+  }
+}
+var CLIENT_RENEG_LIMIT = 3, CLIENT_RENEG_WINDOW = 600, DEFAULT_ECDH_CURVE = "auto", DEFAULT_CIPHERS = "DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256", DEFAULT_MIN_VERSION = "TLSv1.2", DEFAULT_MAX_VERSION = "TLSv1.3", createConnection = (port, host, connectListener) => {
+  if (typeof port === "object")
+    return new TLSSocket(port).connect(port, host, connectListener);
+  return new TLSSocket().connect(port, host, connectListener);
+}, connect = createConnection, exports = {
+  createSecureContext,
+  parseCertString,
+  getCiphers() {
+    return DEFAULT_CIPHERS.split(":");
+  },
+  getCurves() {
+    return;
+  },
+  convertALPNProtocols(protocols, out) {
+  },
+  TLSSocket,
+  SecureContext,
+  CLIENT_RENEG_LIMIT,
+  CLIENT_RENEG_WINDOW,
+  DEFAULT_ECDH_CURVE,
+  DEFAULT_CIPHERS,
+  DEFAULT_MIN_VERSION,
+  DEFAULT_MAX_VERSION,
+  [Symbol.for("CommonJS")]: 0,
+  connect,
+  createConnection,
+  Server,
+  createServer
+}, tls_default = exports;
+export {
+  parseCertString,
+  tls_default as default,
+  createSecureContext,
+  createConnection,
+  connect,
+  TLSSocket,
+  SecureContext,
+  DEFAULT_MIN_VERSION,
+  DEFAULT_MAX_VERSION,
+  DEFAULT_ECDH_CURVE,
+  DEFAULT_CIPHERS,
+  CLIENT_RENEG_WINDOW,
+  CLIENT_RENEG_LIMIT
+};

@@ -1,1 +1,60 @@
-function z(q,x){throw A(z),new y(q,x)}function A(...q){for(let x of q)Object.defineProperty(x,"name",{value:"::bunternal::"})}class y extends Error{code;constructor(q,x){super(q+" is not yet implemented in Bun."+(x?" Track the status & thumbs up the issue: https://github.com/oven-sh/bun/issues/"+x:""));this.name="NotImplementedError",this.code="ERR_NOT_IMPLEMENTED",A(y)}}var H=import.meta.require("node:events");var J=function(){z("node:inspector open",2445)},K=function(){z("node:inspector close",2445)},L=function(){z("node:inspector url",2445)},M=function(){z("node:inspector waitForDebugger",2445)};class P extends H{constructor(){super();z("node:inspector Session",2445)}}var Q={...globalThis.console,context:{console:globalThis.console}},R={console:Q,open:J,close:K,url:L,waitForDebugger:M,Session:P,[Symbol.for("CommonJS")]:0};A(J,K,L,M,P.prototype.constructor);export{M as waitForDebugger,L as url,J as open,R as default,Q as console,K as close,P as Session};
+function throwNotImplemented(feature, issue) {
+  throw hideFromStack(throwNotImplemented), new NotImplementedError(feature, issue);
+}
+function hideFromStack(...fns) {
+  for (let fn of fns)
+    Object.defineProperty(fn, "name", {
+      value: "::bunternal::"
+    });
+}
+
+class NotImplementedError extends Error {
+  code;
+  constructor(feature, issue) {
+    super(feature + " is not yet implemented in Bun." + (issue ? " Track the status & thumbs up the issue: https://github.com/oven-sh/bun/issues/" + issue : ""));
+    this.name = "NotImplementedError", this.code = "ERR_NOT_IMPLEMENTED", hideFromStack(NotImplementedError);
+  }
+}
+
+// src/js/node/inspector.ts
+var EventEmitter = import.meta.require("node:events");
+var open = function() {
+  throwNotImplemented("node:inspector open", 2445);
+}, close = function() {
+  throwNotImplemented("node:inspector close", 2445);
+}, url = function() {
+  throwNotImplemented("node:inspector url", 2445);
+}, waitForDebugger = function() {
+  throwNotImplemented("node:inspector waitForDebugger", 2445);
+};
+
+class Session extends EventEmitter {
+  constructor() {
+    super();
+    throwNotImplemented("node:inspector Session", 2445);
+  }
+}
+var console = {
+  ...globalThis.console,
+  context: {
+    console: globalThis.console
+  }
+}, defaultObject = {
+  console,
+  open,
+  close,
+  url,
+  waitForDebugger,
+  Session,
+  [Symbol.for("CommonJS")]: 0
+};
+hideFromStack(open, close, url, waitForDebugger, Session.prototype.constructor);
+export {
+  waitForDebugger,
+  url,
+  open,
+  defaultObject as default,
+  console,
+  close,
+  Session
+};

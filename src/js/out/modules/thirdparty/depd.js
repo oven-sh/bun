@@ -1,5 +1,51 @@
-var Z=function(...v){return v.length?H(...v):H};/*!
+var depd = function(...args) {
+  return args.length ? bundle_default(...args) : bundle_default;
+};
+/*!
  * depd
  * Copyright(c) 2015 Douglas Christopher Wilson
  * MIT Licensed
- */var{create:I,defineProperty:K,getOwnPropertyDescriptor:L,getOwnPropertyNames:Q,getPrototypeOf:R}=Object,T=Object.prototype.hasOwnProperty,U=(v,E)=>function z(){return E||(0,v[Q(v)[0]])((E={exports:{}}).exports,E),E.exports},V=(v,E,z,A)=>{if(E&&typeof E==="object"||typeof E==="function"){for(let B of Q(E))if(!T.call(v,B)&&B!==z)K(v,B,{get:()=>E[B],enumerable:!(A=L(E,B))||A.enumerable})}return v},W=(v,E,z)=>(z=v!=null?I(R(v)):{},V(E||!v||!v.__esModule?K(z,"default",{value:v,enumerable:!0}):z,v)),X=U({"node_modules/depd/lib/browser/index.js"(v,E){E.exports=z;function z(C){if(!C)throw new TypeError("argument namespace is required");function D(F){}return D._file=void 0,D._ignored=!0,D._namespace=C,D._traced=!1,D._warned=Object.create(null),D.function=A,D.property=B,D}function A(C,D){if(typeof C!=="function")throw new TypeError("argument fn must be a function");return C}function B(C,D,F){if(!C||typeof C!=="object"&&typeof C!=="function")throw new TypeError("argument obj must be object");var G=Object.getOwnPropertyDescriptor(C,D);if(!G)throw new TypeError("must call property on owner object");if(!G.configurable)throw new TypeError("property must be configurable")}}}),Y=W(X()),H=Y.default;Z[Symbol.for("CommonJS")]=!0;var h=Z;export{h as default};
+ */
+var { create: __create, defineProperty: __defProp, getOwnPropertyDescriptor: __getOwnPropDesc, getOwnPropertyNames: __getOwnPropNames, getPrototypeOf: __getProtoOf } = Object, __hasOwnProp = Object.prototype.hasOwnProperty, __commonJS = (cb, mod) => function __require() {
+  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+}, __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, {
+          get: () => from[key],
+          enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable
+        });
+  }
+  return to;
+}, __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: !0 }) : target, mod)), require_browser = __commonJS({
+  "node_modules/depd/lib/browser/index.js"(exports, module) {
+    module.exports = depd2;
+    function depd2(namespace) {
+      if (!namespace)
+        throw new TypeError("argument namespace is required");
+      function deprecate(message) {
+      }
+      return deprecate._file = void 0, deprecate._ignored = !0, deprecate._namespace = namespace, deprecate._traced = !1, deprecate._warned = Object.create(null), deprecate.function = wrapfunction, deprecate.property = wrapproperty, deprecate;
+    }
+    function wrapfunction(fn, message) {
+      if (typeof fn !== "function")
+        throw new TypeError("argument fn must be a function");
+      return fn;
+    }
+    function wrapproperty(obj, prop, message) {
+      if (!obj || typeof obj !== "object" && typeof obj !== "function")
+        throw new TypeError("argument obj must be object");
+      var descriptor = Object.getOwnPropertyDescriptor(obj, prop);
+      if (!descriptor)
+        throw new TypeError("must call property on owner object");
+      if (!descriptor.configurable)
+        throw new TypeError("property must be configurable");
+    }
+  }
+}), import_depd = __toESM(require_browser()), bundle_default = import_depd.default;
+depd[Symbol.for("CommonJS")] = !0;
+var depd_default = depd;
+export {
+  depd_default as default
+};

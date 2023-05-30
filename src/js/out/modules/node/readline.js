@@ -1,1 +1,1663 @@
-var t1=function($){return F6($,"str"),x1.call(r1,$,"")},$6=function($){if(A0($,"original"),$[u]){var Z=$[u];return A0(Z,"util.promisify.custom"),O0(Z,u,{__proto__:null,value:Z,enumerable:!1,writable:!1,configurable:!0})}var X=$[e1];function Z(...H){return new Promise((B,z)=>{h.call(H,(j,...Y)=>{if(j)return z(j);if(X!==void 0&&Y.length>1){var F={};for(var U=0;U<X.length;U++)F[X[U]]=Y[U];B(F)}else B(Y[0])}),ReflectApply($,this,H)})}T0(Z,ObjectGetPrototypeOf($)),O0(Z,u,{__proto__:null,value:Z,enumerable:!1,writable:!1,configurable:!0});var J=ObjectGetOwnPropertyDescriptors($),q=ObjectValues(J);for(var Q=0;Q<q.length;Q++)T0(q[Q],null);return l1(Z,J)},Z6=function($){var X=x0[$];if(X)return X;if(!k1(_0).includes($))throw new Error("Invalid NodeError type");var Z=_0[$];class J extends Z{[X6]=!0;code;constructor(q,Q){super(q,Q);this.code=Q?.code||"ERR_GENERIC"}toString(){return`${this.name} [${this.code}]: ${this.message}`}}return x0[$]=J,J},A0=function($,X){if(typeof $!=="function")throw new H6(X,"Function",$)},j6=function($,X){if($!==void 0&&($===null||typeof $!=="object"||!("aborted"in $)))throw new H6(X,"AbortSignal",$)},Y6=function($,X,Z=0){if(!M1($))throw new H6(X,"Array",$);if($.length<Z){var J=`must be longer than ${Z}`;throw new y(X,$,J)}},F6=function($,X){if(typeof $!=="string")throw new H6(X,"string",$)},U6=function($,X){if(typeof $!=="boolean")throw new H6(X,"boolean",$)};var f=function($,X,Z=N1,J=R1){if(typeof $!=="number")throw new H6(X,"number",$);if(!f1($))throw new b0(X,"an integer",$);if($<Z||$>J)throw new b0(X,`>= ${Z} && <= ${J}`,$)},G6=function($,X,Z=!1){if(typeof $!=="number")throw new H6(X,"number",$);if(!f1($))throw new b0(X,"an integer",$);var J=Z?1:0,q=4294967295;if($<J||$>q)throw new b0(X,`>= ${J} && <= ${q}`,$)},C=function($,...X){var Z=`${m}[`;for(var J=0;J<$.length;J++)if(Z+=$[J],J<X.length)Z+=X[J];return Z},l=function($,X){if(X<=0)return 0;if(X>1&&W0.call($,X-2)>=v0||W0.call($,X-1)>=v0)return 2;return 1},s=function($,X){if($.length<=X)return 1;return W0.call($,X)>=v0?2:1};function*I0($){while(!0){var X=yield,Z=X,J=!1,q=null,Q,H=!1,B=!1,z=!1;if(X===m){if(J=!0,Z+=X=yield,X===m)Z+=X=yield}if(J&&(X==="O"||X==="[")){var j=X,Y=0;if(X==="O"){if(Z+=X=yield,X>="0"&&X<="9")Y=(X>>0)-1,Z+=X=yield;j+=X}else if(X==="["){if(Z+=X=yield,X==="[")j+=X,Z+=X=yield;var F=Z.length-1;if(X>="0"&&X<="9"){if(Z+=X=yield,X>="0"&&X<="9")Z+=X=yield}if(X===";"){if(Z+=X=yield,X>="0"&&X<="9")Z+=yield}var U=V.call(Z,F),G;if(G=O.call(/^(\d\d?)(;(\d))?([~^$])$/,U))j+=G[1]+G[4],Y=(G[3]||1)-1;else if(G=O.call(/^((\d;)?(\d))?([A-Za-z])$/,U))j+=G[4],Y=(G[3]||1)-1;else j+=U}switch(H=!!(Y&4),B=!!(Y&10),z=!!(Y&1),keyCode=j,j){case"[P":Q="f1";break;case"[Q":Q="f2";break;case"[R":Q="f3";break;case"[S":Q="f4";break;case"OP":Q="f1";break;case"OQ":Q="f2";break;case"OR":Q="f3";break;case"OS":Q="f4";break;case"[11~":Q="f1";break;case"[12~":Q="f2";break;case"[13~":Q="f3";break;case"[14~":Q="f4";break;case"[[A":Q="f1";break;case"[[B":Q="f2";break;case"[[C":Q="f3";break;case"[[D":Q="f4";break;case"[[E":Q="f5";break;case"[15~":Q="f5";break;case"[17~":Q="f6";break;case"[18~":Q="f7";break;case"[19~":Q="f8";break;case"[20~":Q="f9";break;case"[21~":Q="f10";break;case"[23~":Q="f11";break;case"[24~":Q="f12";break;case"[A":Q="up";break;case"[B":Q="down";break;case"[C":Q="right";break;case"[D":Q="left";break;case"[E":Q="clear";break;case"[F":Q="end";break;case"[H":Q="home";break;case"OA":Q="up";break;case"OB":Q="down";break;case"OC":Q="right";break;case"OD":Q="left";break;case"OE":Q="clear";break;case"OF":Q="end";break;case"OH":Q="home";break;case"[1~":Q="home";break;case"[2~":Q="insert";break;case"[3~":Q="delete";break;case"[4~":Q="end";break;case"[5~":Q="pageup";break;case"[6~":Q="pagedown";break;case"[[5~":Q="pageup";break;case"[[6~":Q="pagedown";break;case"[7~":Q="home";break;case"[8~":Q="end";break;case"[a":Q="up",z=!0;break;case"[b":Q="down",z=!0;break;case"[c":Q="right",z=!0;break;case"[d":Q="left",z=!0;break;case"[e":Q="clear",z=!0;break;case"[2$":Q="insert",z=!0;break;case"[3$":Q="delete",z=!0;break;case"[5$":Q="pageup",z=!0;break;case"[6$":Q="pagedown",z=!0;break;case"[7$":Q="home",z=!0;break;case"[8$":Q="end",z=!0;break;case"Oa":Q="up",H=!0;break;case"Ob":Q="down",H=!0;break;case"Oc":Q="right",H=!0;break;case"Od":Q="left",H=!0;break;case"Oe":Q="clear",H=!0;break;case"[2^":Q="insert",H=!0;break;case"[3^":Q="delete",H=!0;break;case"[5^":Q="pageup",H=!0;break;case"[6^":Q="pagedown",H=!0;break;case"[7^":Q="home",H=!0;break;case"[8^":Q="end",H=!0;break;case"[Z":Q="tab",z=!0;break;default:Q="undefined";break}}else if(X==="\r")Q="return",B=J;else if(X==="\n")Q="enter",B=J;else if(X==="\t")Q="tab",B=J;else if(X==="\b"||X==="\x7F")Q="backspace",B=J;else if(X===m)Q="escape",B=J;else if(X===" ")Q="space",B=J;else if(!J&&X<="\x1A")Q=_1(M0.call(X)+M0.call("a")-1),H=!0;else if(O.call(/^[0-9A-Za-z]$/,X)!==null)Q=b1.call(X),z=O.call(/^[A-Z]$/,X)!==null,B=J;else if(J)Q=X.length?void 0:"escape",B=!0;if(q=Z,Z.length!==0&&(Q!==void 0||J))$.emit("keypress",J?void 0:Z,{sequence:q,name:Q,ctrl:H,meta:B,shift:z});else if(s(Z,0)===Z.length)$.emit("keypress",Z,{sequence:q,name:Q,ctrl:H,meta:B,shift:z})}}var W6=function($){if($.length===0)return"";if($.length===1)return $[0];var X=w1.call(D1.call($)),Z=X[0],J=X[X.length-1];for(var q=0;q<Z.length;q++)if(Z[q]!==J[q])return V.call(Z,0,q);return Z},z0=function($,X,Z,J){if(J!==void 0)A0(J,"callback");if(typeof Z==="function")J=Z,Z=void 0;if(w0(X))throw new y("x",X);if(w0(Z))throw new y("y",Z);if($==null||typeof X!=="number"&&typeof Z!=="number"){if(typeof J==="function")process.nextTick(J,null);return!0}if(typeof X!=="number")throw new B6;var q=typeof Z!=="number"?C`${X+1}G`:C`${Z+1};${X+1}H`;return $.write(q,J)},j0=function($,X,Z,J){if(J!==void 0)A0(J,"callback");if($==null||!(X||Z)){if(typeof J==="function")process.nextTick(J,null);return!0}var q="";if(X<0)q+=C`${-X}D`;else if(X>0)q+=C`${X}C`;if(Z<0)q+=C`${-Z}A`;else if(Z>0)q+=C`${Z}B`;return $.write(q,J)},g6=function($,X,Z){if(Z!==void 0)A0(Z,"callback");if($===null||$===void 0){if(typeof Z==="function")process.nextTick(Z,null);return!0}var J=X<0?K6:X>0?M6:V6;return $.write(J,Z)},Z1=function($,X){if(X!==void 0)A0(X,"callback");if($===null||$===void 0){if(typeof X==="function")process.nextTick(X,null);return!0}return $.write(P0,X)},u6=function($,X={}){if($[k])return;$[k]=new Y1("utf8"),$[A]=I0($),$[A].next();var Z=()=>$[A].next(""),{escapeCodeTimeout:J=w6}=X,q;function Q(B){if($.listenerCount("keypress")>0){var z=$[k].write(B);if(z){z1(q),X[u0]=s(z,0)===z.length,X.isCompletionEnabled=!1;var j=0;for(var Y of new n1(z)){if(j+=Y.length,j===z.length)X.isCompletionEnabled=!0;try{if($[A].next(Y),j===z.length&&Y===m)q=j1(Z,J)}catch(F){throw $[A]=I0($),$[A].next(),F}}}}else $.removeListener("data",Q),$.on("newListener",H)}function H(B){if(B==="keypress")$.on("data",Q),$.removeListener("newListener",H)}if($.listenerCount("keypress")>0)$.on("data",Q);else $.on("newListener",H)},b6=function(){var $=this.input,X=this.output;if(!$)throw new Error("Input not set, invalid state for readline!");if($.removeListener("keypress",this[n0]),$.removeListener("error",this[i0]),$.removeListener("end",this[r0]),X!==null&&X!==void 0)X.removeListener("resize",this[t0])},C6=function(){var $=this.input;if(!$)throw new Error("Input not set, invalid state for readline!");$.removeListener("data",this[o0]),$.removeListener("error",this[i0]),$.removeListener("end",this[a0])},A6=function($){this.emit("error",$)},P6=function($){U1("onData"),this[N0]($)},I6=function(){if(U1("onEnd"),typeof this[v]==="string"&&this[v].length>0)this.emit("line",this[v]);this.close()},E6=function(){if(U1("onTermEnd"),typeof this.line==="string"&&this.line.length>0)this.emit("line",this.line);this.close()},f6=function($,X){if(this[m0]($,X),X&&X.sequence){var Z=W0.call(X.sequence,0);if(Z>=55296&&Z<=57343)this[K]()}},R6=function(){this[K]()},e0=function($,X,Z,J){if(!(this instanceof e0))return new e0($,X,Z,J);B1.call(this),this[c0]=C6.bind(this),this[k0]=b6.bind(this),this[i0]=A6.bind(this),this[o0]=P6.bind(this),this[a0]=I6.bind(this),this[r0]=E6.bind(this),this[n0]=f6.bind(this),this[t0]=R6.bind(this),this[T]=0,this.isCompletionEnabled=!0,this[u0]=!1,this[h0]=null,this.escapeCodeTimeout=w6,this.tabSize=8;var q,Q,H=!1,B,z="> ",j;if($?.input){X=$.output,Z=$.completer,J=$.terminal,q=$.history,Q=$.historySize,j=$.signal;var Y=$.tabSize;if(Y!==void 0)G6(Y,"tabSize",!0),this.tabSize=Y;H=$.removeHistoryDuplicates;var F=$.prompt;if(F!==void 0)z=F;var U=$.escapeCodeTimeout;if(U!==void 0)if(E1(U))this.escapeCodeTimeout=U;else throw new y("input.escapeCodeTimeout",this.escapeCodeTimeout);if(j)j6(j,"options.signal");B=$.crlfDelay,$=$.input}if(Z!==void 0&&typeof Z!=="function")throw new y("completer",Z);if(q===void 0)q=[];else Y6(q,"history");if(Q===void 0)Q=O6;if(typeof Q!=="number"||w0(Q)||Q<0)throw new y("historySize",Q);if(J===void 0&&!(X===null||X===void 0))J=!!X.isTTY;if(this.line="",this[b]=null,this.output=X,this.input=$,this[E]=[],this[p]=[],this.history=q,this.historySize=Q,this[w]=[],this[x]=0,this.removeHistoryDuplicates=!!H,this.crlfDelay=B?S1(E0,B):E0,this.completer=Z,this.setPrompt(z),this.terminal=!!J,this[c]=void 0,$.on("error",this[i0]),!this.terminal)$.on("data",this[o0]),$.on("end",this[a0]),this.once("close",this[c0]),this[R0]=new Y1("utf8");else{if(u6($,this),$.on("keypress",this[n0]),$.on("end",this[r0]),this[d](!0),this.terminal=!0,this.cursor=0,this.historyIndex=-1,X!==null&&X!==void 0)X.on("resize",this[t0]);this.once("close",this[k0])}if(j){var G=(()=>this.close()).bind(this);if(j.aborted)process.nextTick(G);else j.addEventListener("abort",G,{once:!0}),this.once("close",()=>j.removeEventListener("abort",G))}this.line="",$.resume()},X1=function($,X,Z,J){if(!(this instanceof X1))return new X1($,X,Z,J);if($?.input&&typeof $.completer==="function"&&$.completer.length!==2){var{completer:Z}=$;$.completer=(H,B)=>B(null,Z(H))}else if(typeof Z==="function"&&Z.length!==2){var q=Z;Z=(Q,H)=>H(null,q(Q))}e0.call(this,$,X,Z,J)},S6=function($,X,Z,J){return new X1($,X,Z,J)};var{Array:J1,RegExp:q1,String:Q1,Bun:H1}=import.meta.primordials,B1=import.meta.require("node:events"),{clearTimeout:z1,setTimeout:j1}=import.meta.require("timers"),{StringDecoder:Y1}=import.meta.require("string_decoder"),Y0,{inspect:F1}=H1,U1=process.env.BUN_JS_DEBUG?console.log:()=>{},G1=Symbol.asyncIterator,V1=Symbol.iterator,F0=Symbol.for,K1=Symbol.replace,U0=J1.from,M1=J1.isArray,W1=J1.prototype.filter,w1=J1.prototype.sort,T1=J1.prototype.indexOf,G0=J1.prototype.join,O1=J1.prototype.map,N=J1.prototype.pop,h=J1.prototype.push,D1=J1.prototype.slice,L1=J1.prototype.splice,V0=J1.prototype.reverse,v1=J1.prototype.shift,K0=J1.prototype.unshift,O=q1.prototype.exec,x1=q1.prototype[K1],_1=Q1.fromCharCode,M0=Q1.prototype.charCodeAt,W0=Q1.prototype.codePointAt,V=Q1.prototype.slice,b1=Q1.prototype.toLowerCase,C1=Q1.prototype.endsWith,A1=Q1.prototype.repeat,g=Q1.prototype.startsWith,P1=Q1.prototype.trim,I1=Q1.prototype.normalize,w0=Number.isNaN,E1=Number.isFinite,f1=Number.isInteger,R1=Number.MAX_SAFE_INTEGER,N1=Number.MIN_SAFE_INTEGER,h1=Math.ceil,g1=Math.floor,S1=Math.max,u1=Math.max.apply,S=Date.now,p1=Function.prototype,d1=Q1.prototype,m1=d1[V1],y1=m1.call("").next,T0=Object.setPrototypeOf,O0=Object.defineProperty,l1=Object.defineProperties,D0=Object.freeze;var{create:s1,keys:k1}=Object;var c1=($,X)=>{class Z{#$;constructor(J){this.#$=$.call(J)}next(){return X.call(this.#$)}[V1](){return this}}return T0(Z.prototype,null),D0(Z.prototype),D0(Z),Z},n1=c1(m1,y1),i1=($)=>{return $>=4352&&($<=4447||$===9001||$===9002||$>=11904&&$<=12871&&$!==12351||$>=12880&&$<=19903||$>=19968&&$<=42182||$>=43360&&$<=43388||$>=44032&&$<=55203||$>=63744&&$<=64255||$>=65040&&$<=65049||$>=65072&&$<=65131||$>=65281&&$<=65376||$>=65504&&$<=65510||$>=110592&&$<=110593||$>=127488&&$<=127569||$>=127744&&$<=128591||$>=131072&&$<=262141)},o1=($)=>{return $<=31||$>=127&&$<=159||$>=768&&$<=879||$>=8203&&$<=8207||$>=8400&&$<=8447||$>=65024&&$<=65039||$>=65056&&$<=65071||$>=917760&&$<=917999},L0=function $(X,Z=!0){var J=0;if(Z)X=t1(X);X=I1.call(X,"NFC");for(var q of new n1(X)){var Q=W0.call(q,0);if(i1(Q))J+=2;else if(!o1(Q))J++}return J},a1="[\\u001B\\u009B][[\\]()#;?]*(?:(?:(?:(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]+)*|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]*)*)?\\u0007)|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-ntqry=><~]))",r1=new q1(a1,"g"),u=F0("nodejs.util.promisify.custom"),e1=Symbol("customPromisifyArgs");$6.custom=u;var v0=65536,m="\x1B",b=Symbol("kSubstringSearch"),X6=Symbol("kIsNodeError"),x0={},_0={TypeError,RangeError,Error},J6=Z6("Error"),q6=Z6("TypeError"),Q6=Z6("RangeError");class H6 extends q6{constructor($,X,Z){super(`The "${$}" argument must be of type ${X}. Received type ${typeof Z}`,{code:"ERR_INVALID_ARG_TYPE"})}}class y extends q6{constructor($,X,Z="not specified"){super(`The value "${Q1(X)}" is invalid for argument '${$}'. Reason: ${Z}`,{code:"ERR_INVALID_ARG_VALUE"})}}class B6 extends q6{constructor(){super("Cannot set cursor row without setting its column",{code:"ERR_INVALID_CURSOR_POS"})}}class b0 extends Q6{constructor($,X,Z){super(`The value of "${$}" is out of range. It must be ${X}. Received ${Z}`,{code:"ERR_OUT_OF_RANGE"})}}class z6 extends J6{constructor(){super("This socket has been ended by the other party",{code:"ERR_USE_AFTER_CLOSE"})}}class C0 extends Error{code;constructor(){super("The operation was aborted");this.code="ABORT_ERR"}}var V6,P0,K6,M6;C.kEscape=m;C.kClearLine=V6=C`2K`;C.kClearScreenDown=P0=C`0J`;C.kClearToLineBeginning=K6=C`1K`;C.kClearToLineEnd=M6=C`0K`;var k=Symbol("keypress-decoder"),A=Symbol("escape-decoder"),w6=500,T6=D0(s1(null)),O6=30,D6=2048,E0=100,D=/\r?\n|\r(?!\n)/g,L6=32,c=Symbol("line object stream"),v6=Symbol("kQuestionCancel"),x6=Symbol("kQuestion"),f0=Symbol("_addHistory"),W=Symbol("_beforeEdit"),R0=Symbol("_decoder"),n=Symbol("_deleteLeft"),i=Symbol("_deleteLineLeft"),o=Symbol("_deleteLineRight"),a=Symbol("_deleteRight"),r=Symbol("_deleteWordLeft"),t=Symbol("_deleteWordRight"),e=Symbol("_getDisplayPos"),$0=Symbol("_historyNext"),X0=Symbol("_historyPrev"),P=Symbol("_insertString"),R=Symbol("_line"),v=Symbol("_line_buffer"),w=Symbol("_killRing"),x=Symbol("_killRingCursor"),M=Symbol("_moveCursor"),N0=Symbol("_normalWrite"),Z0=Symbol("_oldPrompt"),J0=Symbol("_onLine"),h0=Symbol("_previousKey"),I=Symbol("_prompt"),q0=Symbol("_pushToKillRing"),g0=Symbol("_pushToUndoStack"),_=Symbol("_questionCallback"),S0=Symbol("_redo"),p=Symbol("_redoStack"),K=Symbol("_refreshLine"),u0=Symbol("_sawKeyPress"),T=Symbol("_sawReturnAt"),d=Symbol("_setRawMode"),p0=Symbol("_tabComplete"),d0=Symbol("_tabCompleter"),m0=Symbol("_ttyWrite"),y0=Symbol("_undo"),E=Symbol("_undoStack"),Q0=Symbol("_wordLeft"),H0=Symbol("_wordRight"),L=Symbol("_writeToOutput"),l0=Symbol("_yank"),B0=Symbol("_yanking"),s0=Symbol("_yankPop"),_6=Symbol("nodejs.kFirstEventParam"),k0=Symbol("_onSelfCloseWithTerminal"),c0=Symbol("_onSelfCloseWithoutTerminal"),n0=Symbol("_onKeyPress"),i0=Symbol("_onError"),o0=Symbol("_onData"),a0=Symbol("_onEnd"),r0=Symbol("_onTermEnd"),t0=Symbol("_onResize");T0(e0.prototype,B1.prototype);T0(e0,B1);var N6=class $ extends e0{constructor(X,Z,J,q){super(X,Z,J,q)}get columns(){var X=this.output;if(X&&X.columns)return X.columns;return Infinity}setPrompt(X){this[I]=X}getPrompt(){return this[I]}[d](X){var Z=this.input,{setRawMode:J,wasInRawMode:q}=Z;return U1("setRawMode",X,"set!"),q}prompt(X){if(this.paused)this.resume();if(this.terminal){if(!X)this.cursor=0;this[K]()}else this[L](this[I])}[x6](X,Z){if(this.closed)throw new z6("readline");if(this[_])this.prompt();else this[Z0]=this[I],this.setPrompt(X),this[_]=Z,this.prompt()}[J0](X){if(this[_]){var Z=this[_];this[_]=null,this.setPrompt(this[Z0]),Z(X)}else this.emit("line",X)}[W](X,Z){this[g0](X,Z)}[v6](){if(this[_])this[_]=null,this.setPrompt(this[Z0]),this.clearLine()}[L](X){if(F6(X,"stringToWrite"),this.output!==null&&this.output!==void 0)this.output.write(X)}[f0](){if(this.line.length===0)return"";if(this.historySize===0)return this.line;if(P1.call(this.line).length===0)return this.line;if(this.history.length===0||this.history[0]!==this.line){if(this.removeHistoryDuplicates){var X=T1.call(this.history,this.line);if(X!==-1)L1.call(this.history,X,1)}if(K0.call(this.history,this.line),this.history.length>this.historySize)N.call(this.history)}this.historyIndex=-1;var Z=this.history[0];return this.emit("history",this.history),Z}[K](){var X=this[I]+this.line,Z=this[e](X),J=Z.cols,q=Z.rows,Q=this.getCursorPos(),H=this.prevRows||0;if(H>0)j0(this.output,0,-H);if(z0(this.output,0),Z1(this.output),this[L](X),J===0)this[L](" ");z0(this.output,Q.cols);var B=q-Q.rows;if(B>0)j0(this.output,0,-B);this.prevRows=Q.rows}close(){if(this.closed)return;if(this.pause(),this.terminal)this[d](!1);this.closed=!0,this.emit("close")}pause(){if(this.paused)return;return this.input.pause(),this.paused=!0,this.emit("pause"),this}resume(){if(!this.paused)return;return this.input.resume(),this.paused=!1,this.emit("resume"),this}write(X,Z){if(this.paused)this.resume();if(this.terminal)this[m0](X,Z);else this[N0](X)}[N0](X){if(X===void 0)return;var Z=this[R0].write(X);if(this[T]&&S()-this[T]<=this.crlfDelay){if(W0.call(Z)===10)Z=V.call(Z,1);this[T]=0}var J=O.call(D,Z);if(J!==null){if(this[v])Z=this[v]+Z,this[v]=null,J=O.call(D,Z);this[T]=C1.call(Z,"\r")?S():0;var q=[0,J.index,D.lastIndex],Q;while((Q=O.call(D,Z))!==null)h.call(q,Q.index,D.lastIndex);var H=q.length-1;this[v]=V.call(Z,q[H]);for(var B=1;B<H;B+=2)this[J0](V.call(Z,q[B-1],q[B]))}else if(Z)if(this[v])this[v]+=Z;else this[v]=Z}[P](X){if(this[W](this.line,this.cursor),this.cursor<this.line.length){var Z=V.call(this.line,0,this.cursor),J=V.call(this.line,this.cursor,this.line.length);this.line=Z+X+J,this.cursor+=X.length,this[K]()}else{var q=this.getCursorPos();this.line+=X,this.cursor+=X.length;var Q=this.getCursorPos();if(q.rows<Q.rows)this[K]();else this[L](X)}}async[p0](X){this.pause();var Z=V.call(this.line,0,this.cursor),J;try{J=await this.completer(Z)}catch(q){this[L](`Tab completion error: ${F1(q)}`);return}finally{this.resume()}this[d0](X,J)}[d0](X,{0:Z,1:J}){if(!Z||Z.length===0)return;var q=W6(W1.call(Z,(G)=>G!==""));if(g.call(q,J)&&q.length>J.length){this[P](V.call(q,J.length));return}else if(!g.call(J,q)){this.line=V.call(this.line,0,this.cursor-J.length)+q+V.call(this.line,this.cursor,this.line.length),this.cursor=this.cursor-J.length+q.length,this._refreshLine();return}if(!X)return;this[W](this.line,this.cursor);var Q=O1.call(Z,(G)=>L0(G)),H=u1(Q)+2,B=g1(this.columns/H)||1;if(B===Infinity)B=1;var z="\r\n",j=0,Y=0;for(var F=0;F<Z.length;F++){var U=Z[F];if(U===""||j===B)z+="\r\n",j=0,Y=0;else z+=A1.call(" ",Y);if(U!=="")z+=U,Y=H-Q[F],j++;else z+="\r\n"}if(j!==0)z+="\r\n\r\n";this[L](z),this[K]()}[Q0](){if(this.cursor>0){var X=V.call(this.line,0,this.cursor),Z=G0.call(V0.call(U0(X)),""),J=O.call(/^\s*(?:[^\w\s]+|\w+)?/,Z);this[M](-J[0].length)}}[H0](){if(this.cursor<this.line.length){var X=V.call(this.line,this.cursor),Z=O.call(/^(?:\s+|[^\w\s]+|\w+)\s*/,X);this[M](Z[0].length)}}[n](){if(this.cursor>0&&this.line.length>0){this[W](this.line,this.cursor);var X=l(this.line,this.cursor);this.line=V.call(this.line,0,this.cursor-X)+V.call(this.line,this.cursor,this.line.length),this.cursor-=X,this[K]()}}[a](){if(this.cursor<this.line.length){this[W](this.line,this.cursor);var X=s(this.line,this.cursor);this.line=V.call(this.line,0,this.cursor)+V.call(this.line,this.cursor+X,this.line.length),this[K]()}}[r](){if(this.cursor>0){this[W](this.line,this.cursor);var X=V.call(this.line,0,this.cursor),Z=G0.call(V0.call(U0(X)),""),J=O.call(/^\s*(?:[^\w\s]+|\w+)?/,Z);X=V.call(X,0,X.length-J[0].length),this.line=X+V.call(this.line,this.cursor,this.line.length),this.cursor=X.length,this[K]()}}[t](){if(this.cursor<this.line.length){this[W](this.line,this.cursor);var X=V.call(this.line,this.cursor),Z=O.call(/^(?:\s+|\W+|\w+)\s*/,X);this.line=V.call(this.line,0,this.cursor)+V.call(X,Z[0].length),this[K]()}}[i](){this[W](this.line,this.cursor);var X=V.call(this.line,0,this.cursor);this.line=V.call(this.line,this.cursor),this.cursor=0,this[q0](X),this[K]()}[o](){this[W](this.line,this.cursor);var X=V.call(this.line,this.cursor);this.line=V.call(this.line,0,this.cursor),this[q0](X),this[K]()}[q0](X){if(!X||X===this[w][0])return;K0.call(this[w],X),this[x]=0;while(this[w].length>L6)N.call(this[w])}[l0](){if(this[w].length>0)this[B0]=!0,this[P](this[w][this[x]])}[s0](){if(!this[B0])return;if(this[w].length>1){var X=this[w][this[x]];if(this[x]++,this[x]>=this[w].length)this[x]=0;var Z=this[w][this[x]],J=V.call(this.line,0,this.cursor-X.length),q=V.call(this.line,this.cursor);this.line=J+Z+q,this.cursor=J.length+Z.length,this[K]()}}clearLine(){this[M](Infinity),this[L]("\r\n"),this.line="",this.cursor=0,this.prevRows=0}[R](){var X=this[f0]();this[E]=[],this[p]=[],this.clearLine(),this[J0](X)}[g0](X,Z){if(h.call(this[E],{text:X,cursor:Z})>D6)v1.call(this[E])}[y0](){if(this[E].length<=0)return;h.call(this[p],{text:this.line,cursor:this.cursor});var X=N.call(this[E]);this.line=X.text,this.cursor=X.cursor,this[K]()}[S0](){if(this[p].length<=0)return;h.call(this[E],{text:this.line,cursor:this.cursor});var X=N.call(this[p]);this.line=X.text,this.cursor=X.cursor,this[K]()}[$0](){if(this.historyIndex>=0){this[W](this.line,this.cursor);var X=this[b]||"",Z=this.historyIndex-1;while(Z>=0&&(!g.call(this.history[Z],X)||this.line===this.history[Z]))Z--;if(Z===-1)this.line=X;else this.line=this.history[Z];this.historyIndex=Z,this.cursor=this.line.length,this[K]()}}[X0](){if(this.historyIndex<this.history.length&&this.history.length){this[W](this.line,this.cursor);var X=this[b]||"",Z=this.historyIndex+1;while(Z<this.history.length&&(!g.call(this.history[Z],X)||this.line===this.history[Z]))Z++;if(Z===this.history.length)this.line=X;else this.line=this.history[Z];this.historyIndex=Z,this.cursor=this.line.length,this[K]()}}[e](X){var Z=0,J=this.columns,q=0;X=t1(X);for(var Q of new n1(X)){if(Q==="\n"){q+=h1(Z/J)||1,Z=0;continue}if(Q==="\t"){Z+=this.tabSize-Z%this.tabSize;continue}var H=L0(Q,!1);if(H===0||H===1)Z+=H;else{if((Z+1)%J===0)Z++;Z+=2}}var B=Z%J;return q+=(Z-B)/J,{cols:B,rows:q}}getCursorPos(){var X=this[I]+V.call(this.line,0,this.cursor);return this[e](X)}[M](X){if(X===0)return;var Z=this.getCursorPos();if(this.cursor+=X,this.cursor<0)this.cursor=0;else if(this.cursor>this.line.length)this.cursor=this.line.length;var J=this.getCursorPos();if(Z.rows===J.rows){var q=J.cols-Z.cols;j0(this.output,q,0)}else this[K]()}[m0](X,Z){var J=this[h0];Z=Z||T6,this[h0]=Z;var{name:q,meta:Q,ctrl:H,shift:B,sequence:z}=Z;if(!Q||q!=="y")this[B0]=!1;if((q==="up"||q==="down")&&!H&&!Q&&!B){if(this[b]===null)this[b]=V.call(this.line,0,this.cursor)}else if(this[b]!==null){if(this[b]=null,this.history.length===this.historyIndex)this.historyIndex=-1}if(typeof z==="string")switch(W0.call(z,0)){case 31:this[y0]();return;case 30:this[S0]();return;default:break}if(q==="escape")return;if(H&&B)switch(q){case"backspace":this[i]();break;case"delete":this[o]();break}else if(H)switch(q){case"c":if(this.listenerCount("SIGINT")>0)this.emit("SIGINT");else this.close();break;case"h":this[n]();break;case"d":if(this.cursor===0&&this.line.length===0)this.close();else if(this.cursor<this.line.length)this[a]();break;case"u":this[i]();break;case"k":this[o]();break;case"a":this[M]((-Infinity));break;case"e":this[M](Infinity);break;case"b":this[M](-l(this.line,this.cursor));break;case"f":this[M](+s(this.line,this.cursor));break;case"l":z0(this.output,0,0),Z1(this.output),this[K]();break;case"n":this[$0]();break;case"p":this[X0]();break;case"y":this[l0]();break;case"z":if(this.listenerCount("SIGTSTP")>0)this.emit("SIGTSTP");else process.once("SIGCONT",()=>{if(!this.paused)this.pause(),this.emit("SIGCONT");this[d](!0),this[K]()}),this[d](!1),process.kill(process.pid,"SIGTSTP");break;case"w":case"backspace":this[r]();break;case"delete":this[t]();break;case"left":this[Q0]();break;case"right":this[H0]();break}else if(Q)switch(q){case"b":this[Q0]();break;case"f":this[H0]();break;case"d":case"delete":this[t]();break;case"backspace":this[r]();break;case"y":this[s0]();break}else{if(this[T]&&q!=="enter")this[T]=0;switch(q){case"return":this[T]=S(),this[R]();break;case"enter":if(this[T]===0||S()-this[T]>this.crlfDelay)this[R]();this[T]=0;break;case"backspace":this[n]();break;case"delete":this[a]();break;case"left":this[M](-l(this.line,this.cursor));break;case"right":this[M](+s(this.line,this.cursor));break;case"home":this[M]((-Infinity));break;case"end":this[M](Infinity);break;case"up":this[X0]();break;case"down":this[$0]();break;case"tab":if(typeof this.completer==="function"&&this.isCompletionEnabled){var j=J&&J.name==="tab";this[p0](j);break}default:if(typeof X==="string"&&X){var Y=O.call(D,X);if(Y!==null){this[P](V.call(X,0,Y.index));var{lastIndex:F}=D;while((Y=O.call(D,X))!==null)this[R](),this[P](V.call(X,F,Y.index)),{lastIndex:F}=D;if(F===X.length)this[R]()}else this[P](X)}}}}[G1](){if(this[c]===void 0)this[c]=B1.on(this,"line",{close:["close"],highWatermark:1024,[_6]:!0});return this[c]}};T0(X1.prototype,N6.prototype);T0(X1,N6);X1.prototype.question=function $(X,Z,J){if(J=typeof Z==="function"?Z:J,Z===null||typeof Z!=="object")Z=T6;var q=Z?.signal;if(q){if(j6(q,"options.signal"),q.aborted)return;var Q=()=>{this[v6]()};q.addEventListener("abort",Q,{once:!0});var H=()=>{q.removeEventListener("abort",Q)},B=J;J=typeof J==="function"?(z)=>{return H(),B(z)}:H}if(typeof J==="function")this[x6](X,J)};X1.prototype.question[$6.custom]=function $(X,Z){if(Z===null||typeof Z!=="object")Z=T6;var J=Z?.signal;if(J&&J.aborted)return PromiseReject(new C0(void 0,{cause:J.reason}));return new Promise((q,Q)=>{var H=q;if(J){var B=()=>{Q(new C0(void 0,{cause:J.reason}))};J.addEventListener("abort",B,{once:!0}),H=(z)=>{J.removeEventListener("abort",B),q(z)}}this.question(X,Z,H)})};l1(X1.prototype,{[d]:{__proto__:null,get(){return this._setRawMode}},[J0]:{__proto__:null,get(){return this._onLine}},[L]:{__proto__:null,get(){return this._writeToOutput}},[f0]:{__proto__:null,get(){return this._addHistory}},[K]:{__proto__:null,get(){return this._refreshLine}},[N0]:{__proto__:null,get(){return this._normalWrite}},[P]:{__proto__:null,get(){return this._insertString}},[p0]:{__proto__:null,get(){return this._tabComplete}},[Q0]:{__proto__:null,get(){return this._wordLeft}},[H0]:{__proto__:null,get(){return this._wordRight}},[n]:{__proto__:null,get(){return this._deleteLeft}},[a]:{__proto__:null,get(){return this._deleteRight}},[r]:{__proto__:null,get(){return this._deleteWordLeft}},[t]:{__proto__:null,get(){return this._deleteWordRight}},[i]:{__proto__:null,get(){return this._deleteLineLeft}},[o]:{__proto__:null,get(){return this._deleteLineRight}},[R]:{__proto__:null,get(){return this._line}},[$0]:{__proto__:null,get(){return this._historyNext}},[X0]:{__proto__:null,get(){return this._historyPrev}},[e]:{__proto__:null,get(){return this._getDisplayPos}},[M]:{__proto__:null,get(){return this._moveCursor}},[m0]:{__proto__:null,get(){return this._ttyWrite}},_decoder:{__proto__:null,get(){return this[R0]},set($){this[R0]=$}},_line_buffer:{__proto__:null,get(){return this[v]},set($){this[v]=$}},_oldPrompt:{__proto__:null,get(){return this[Z0]},set($){this[Z0]=$}},_previousKey:{__proto__:null,get(){return this[h0]},set($){this[h0]=$}},_prompt:{__proto__:null,get(){return this[I]},set($){this[I]=$}},_questionCallback:{__proto__:null,get(){return this[_]},set($){this[_]=$}},_sawKeyPress:{__proto__:null,get(){return this[u0]},set($){this[u0]=$}},_sawReturnAt:{__proto__:null,get(){return this[T]},set($){this[T]=$}}});X1.prototype._setRawMode=N6.prototype[d];X1.prototype._onLine=N6.prototype[J0];X1.prototype._writeToOutput=N6.prototype[L];X1.prototype._addHistory=N6.prototype[f0];X1.prototype._refreshLine=N6.prototype[K];X1.prototype._normalWrite=N6.prototype[N0];X1.prototype._insertString=N6.prototype[P];X1.prototype._tabComplete=function($){this.pause();var X=V.call(this.line,0,this.cursor);this.completer(X,(Z,J)=>{if(this.resume(),Z){this._writeToOutput(`Tab completion error: ${F1(Z)}`);return}this[d0]($,J)})};X1.prototype._wordLeft=N6.prototype[Q0];X1.prototype._wordRight=N6.prototype[H0];X1.prototype._deleteLeft=N6.prototype[n];X1.prototype._deleteRight=N6.prototype[a];X1.prototype._deleteWordLeft=N6.prototype[r];X1.prototype._deleteWordRight=N6.prototype[t];X1.prototype._deleteLineLeft=N6.prototype[i];X1.prototype._deleteLineRight=N6.prototype[o];X1.prototype._line=N6.prototype[R];X1.prototype._historyNext=N6.prototype[$0];X1.prototype._historyPrev=N6.prototype[X0];X1.prototype._getDisplayPos=N6.prototype[e];X1.prototype._getCursorPos=N6.prototype.getCursorPos;X1.prototype._moveCursor=N6.prototype[M];X1.prototype._ttyWrite=N6.prototype[m0];class h6{#$=!1;#X;#Z=[];constructor($,X=void 0){if(Y0??=import.meta.require("node:stream").isWritable,!Y0($))throw new H6("stream","Writable",$);if(this.#X=$,X?.autoCommit!=null)U6(X.autoCommit,"options.autoCommit"),this.#$=X.autoCommit}cursorTo($,X=void 0){if(f($,"x"),X!=null)f(X,"y");var Z=X==null?C`${$+1}G`:C`${X+1};${$+1}H`;if(this.#$)process.nextTick(()=>this.#X.write(Z));else h.call(this.#Z,Z);return this}moveCursor($,X){if($||X){f($,"dx"),f(X,"dy");var Z="";if($<0)Z+=C`${-$}D`;else if($>0)Z+=C`${$}C`;if(X<0)Z+=C`${-X}A`;else if(X>0)Z+=C`${X}B`;if(this.#$)process.nextTick(()=>this.#X.write(Z));else h.call(this.#Z,Z)}return this}clearLine($){f($,"dir",-1,1);var X=$<0?K6:$>0?M6:V6;if(this.#$)process.nextTick(()=>this.#X.write(X));else h.call(this.#Z,X);return this}clearScreenDown(){if(this.#$)process.nextTick(()=>this.#X.write(P0));else h.call(this.#Z,P0);return this}commit(){return new Promise(($)=>{this.#X.write(G0.call(this.#Z,""),$),this.#Z=[]})}rollback(){return this.#Z=[],this}}var $1=class $ extends N6{constructor(X,Z,J,q){super(X,Z,J,q)}question(X,Z=T6){var J=Z?.signal;if(J){if(j6(J,"options.signal"),J.aborted)return PromiseReject(new C0(void 0,{cause:J.reason}))}return new Promise((q,Q)=>{var H=q;if(Z?.signal){var B=()=>{this[v6](),Q(new C0(void 0,{cause:J.reason}))};J.addEventListener("abort",B,{once:!0}),H=(z)=>{J.removeEventListener("abort",B),q(z)}}this[x6](X,H)})}},X1=X1,g6=g6,Z1=Z1,S6=S6,z0=z0,u6=u6,j0=j0,p6={Readline:h6,Interface:$1,createInterface($,X,Z,J){return new $1($,X,Z,J)}},d6={Interface:X1,clearLine:g6,clearScreenDown:Z1,createInterface:S6,cursorTo:z0,emitKeypressEvents:u6,moveCursor:j0,promises:p6,[F0("__BUN_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__")]:{CSI:C,utils:{getStringWidth:L0,stripVTControlCharacters:t1}},[F0("CommonJS")]:0};export{p6 as promises,j0 as moveCursor,u6 as emitKeypressEvents,d6 as default,z0 as cursorTo,S6 as createInterface,Z1 as clearScreenDown,g6 as clearLine,X1 as Interface};
+var stripVTControlCharacters = function(str) {
+  return validateString(str, "str"), RegExpPrototypeSymbolReplace.call(ansi, str, "");
+}, promisify = function(original) {
+  if (validateFunction(original, "original"), original[kCustomPromisifiedSymbol]) {
+    var fn = original[kCustomPromisifiedSymbol];
+    return validateFunction(fn, "util.promisify.custom"), ObjectDefineProperty(fn, kCustomPromisifiedSymbol, {
+      __proto__: null,
+      value: fn,
+      enumerable: !1,
+      writable: !1,
+      configurable: !0
+    });
+  }
+  var argumentNames = original[kCustomPromisifyArgsSymbol];
+  function fn(...args) {
+    return new Promise((resolve, reject) => {
+      ArrayPrototypePush.call(args, (err, ...values) => {
+        if (err)
+          return reject(err);
+        if (argumentNames !== void 0 && values.length > 1) {
+          var obj = {};
+          for (var i2 = 0;i2 < argumentNames.length; i2++)
+            obj[argumentNames[i2]] = values[i2];
+          resolve(obj);
+        } else
+          resolve(values[0]);
+      }), ReflectApply(original, this, args);
+    });
+  }
+  ObjectSetPrototypeOf(fn, ObjectGetPrototypeOf(original)), ObjectDefineProperty(fn, kCustomPromisifiedSymbol, {
+    __proto__: null,
+    value: fn,
+    enumerable: !1,
+    writable: !1,
+    configurable: !0
+  });
+  var descriptors = ObjectGetOwnPropertyDescriptors(original), propertiesValues = ObjectValues(descriptors);
+  for (var i = 0;i < propertiesValues.length; i++)
+    ObjectSetPrototypeOf(propertiesValues[i], null);
+  return ObjectDefineProperties(fn, descriptors);
+}, getNodeErrorByName = function(typeName) {
+  var base = errorBases[typeName];
+  if (base)
+    return base;
+  if (!ObjectKeys(VALID_NODE_ERROR_BASES).includes(typeName))
+    throw new Error("Invalid NodeError type");
+  var Base = VALID_NODE_ERROR_BASES[typeName];
+
+  class NodeError extends Base {
+    [kIsNodeError] = !0;
+    code;
+    constructor(msg, opts) {
+      super(msg, opts);
+      this.code = opts?.code || "ERR_GENERIC";
+    }
+    toString() {
+      return `${this.name} [${this.code}]: ${this.message}`;
+    }
+  }
+  return errorBases[typeName] = NodeError, NodeError;
+}, validateFunction = function(value, name) {
+  if (typeof value !== "function")
+    throw new ERR_INVALID_ARG_TYPE(name, "Function", value);
+}, validateAbortSignal = function(signal, name) {
+  if (signal !== void 0 && (signal === null || typeof signal !== "object" || !("aborted" in signal)))
+    throw new ERR_INVALID_ARG_TYPE(name, "AbortSignal", signal);
+}, validateArray = function(value, name, minLength = 0) {
+  if (!ArrayIsArray(value))
+    throw new ERR_INVALID_ARG_TYPE(name, "Array", value);
+  if (value.length < minLength) {
+    var reason = `must be longer than ${minLength}`;
+    throw new ERR_INVALID_ARG_VALUE(name, value, reason);
+  }
+}, validateString = function(value, name) {
+  if (typeof value !== "string")
+    throw new ERR_INVALID_ARG_TYPE(name, "string", value);
+}, validateBoolean = function(value, name) {
+  if (typeof value !== "boolean")
+    throw new ERR_INVALID_ARG_TYPE(name, "boolean", value);
+};
+var validateInteger = function(value, name, min = NumberMIN_SAFE_INTEGER, max = NumberMAX_SAFE_INTEGER) {
+  if (typeof value !== "number")
+    throw new ERR_INVALID_ARG_TYPE(name, "number", value);
+  if (!NumberIsInteger(value))
+    throw new ERR_OUT_OF_RANGE(name, "an integer", value);
+  if (value < min || value > max)
+    throw new ERR_OUT_OF_RANGE(name, `>= ${min} && <= ${max}`, value);
+}, validateUint32 = function(value, name, positive = !1) {
+  if (typeof value !== "number")
+    throw new ERR_INVALID_ARG_TYPE(name, "number", value);
+  if (!NumberIsInteger(value))
+    throw new ERR_OUT_OF_RANGE(name, "an integer", value);
+  var min = positive ? 1 : 0, max = 4294967295;
+  if (value < min || value > max)
+    throw new ERR_OUT_OF_RANGE(name, `>= ${min} && <= ${max}`, value);
+}, CSI = function(strings, ...args) {
+  var ret = `${kEscape}[`;
+  for (var n = 0;n < strings.length; n++)
+    if (ret += strings[n], n < args.length)
+      ret += args[n];
+  return ret;
+}, charLengthLeft = function(str, i) {
+  if (i <= 0)
+    return 0;
+  if (i > 1 && StringPrototypeCodePointAt.call(str, i - 2) >= kUTF16SurrogateThreshold || StringPrototypeCodePointAt.call(str, i - 1) >= kUTF16SurrogateThreshold)
+    return 2;
+  return 1;
+}, charLengthAt = function(str, i) {
+  if (str.length <= i)
+    return 1;
+  return StringPrototypeCodePointAt.call(str, i) >= kUTF16SurrogateThreshold ? 2 : 1;
+};
+function* emitKeys(stream) {
+  while (!0) {
+    var ch = yield, s = ch, escaped = !1, keySeq = null, keyName, keyCtrl2 = !1, keyMeta = !1, keyShift = !1;
+    if (ch === kEscape) {
+      if (escaped = !0, s += ch = yield, ch === kEscape)
+        s += ch = yield;
+    }
+    if (escaped && (ch === "O" || ch === "[")) {
+      var code = ch, modifier = 0;
+      if (ch === "O") {
+        if (s += ch = yield, ch >= "0" && ch <= "9")
+          modifier = (ch >> 0) - 1, s += ch = yield;
+        code += ch;
+      } else if (ch === "[") {
+        if (s += ch = yield, ch === "[")
+          code += ch, s += ch = yield;
+        var cmdStart = s.length - 1;
+        if (ch >= "0" && ch <= "9") {
+          if (s += ch = yield, ch >= "0" && ch <= "9")
+            s += ch = yield;
+        }
+        if (ch === ";") {
+          if (s += ch = yield, ch >= "0" && ch <= "9")
+            s += yield;
+        }
+        var cmd = StringPrototypeSlice.call(s, cmdStart), match;
+        if (match = RegExpPrototypeExec.call(/^(\d\d?)(;(\d))?([~^$])$/, cmd))
+          code += match[1] + match[4], modifier = (match[3] || 1) - 1;
+        else if (match = RegExpPrototypeExec.call(/^((\d;)?(\d))?([A-Za-z])$/, cmd))
+          code += match[4], modifier = (match[3] || 1) - 1;
+        else
+          code += cmd;
+      }
+      switch (keyCtrl2 = !!(modifier & 4), keyMeta = !!(modifier & 10), keyShift = !!(modifier & 1), keyCode = code, code) {
+        case "[P":
+          keyName = "f1";
+          break;
+        case "[Q":
+          keyName = "f2";
+          break;
+        case "[R":
+          keyName = "f3";
+          break;
+        case "[S":
+          keyName = "f4";
+          break;
+        case "OP":
+          keyName = "f1";
+          break;
+        case "OQ":
+          keyName = "f2";
+          break;
+        case "OR":
+          keyName = "f3";
+          break;
+        case "OS":
+          keyName = "f4";
+          break;
+        case "[11~":
+          keyName = "f1";
+          break;
+        case "[12~":
+          keyName = "f2";
+          break;
+        case "[13~":
+          keyName = "f3";
+          break;
+        case "[14~":
+          keyName = "f4";
+          break;
+        case "[[A":
+          keyName = "f1";
+          break;
+        case "[[B":
+          keyName = "f2";
+          break;
+        case "[[C":
+          keyName = "f3";
+          break;
+        case "[[D":
+          keyName = "f4";
+          break;
+        case "[[E":
+          keyName = "f5";
+          break;
+        case "[15~":
+          keyName = "f5";
+          break;
+        case "[17~":
+          keyName = "f6";
+          break;
+        case "[18~":
+          keyName = "f7";
+          break;
+        case "[19~":
+          keyName = "f8";
+          break;
+        case "[20~":
+          keyName = "f9";
+          break;
+        case "[21~":
+          keyName = "f10";
+          break;
+        case "[23~":
+          keyName = "f11";
+          break;
+        case "[24~":
+          keyName = "f12";
+          break;
+        case "[A":
+          keyName = "up";
+          break;
+        case "[B":
+          keyName = "down";
+          break;
+        case "[C":
+          keyName = "right";
+          break;
+        case "[D":
+          keyName = "left";
+          break;
+        case "[E":
+          keyName = "clear";
+          break;
+        case "[F":
+          keyName = "end";
+          break;
+        case "[H":
+          keyName = "home";
+          break;
+        case "OA":
+          keyName = "up";
+          break;
+        case "OB":
+          keyName = "down";
+          break;
+        case "OC":
+          keyName = "right";
+          break;
+        case "OD":
+          keyName = "left";
+          break;
+        case "OE":
+          keyName = "clear";
+          break;
+        case "OF":
+          keyName = "end";
+          break;
+        case "OH":
+          keyName = "home";
+          break;
+        case "[1~":
+          keyName = "home";
+          break;
+        case "[2~":
+          keyName = "insert";
+          break;
+        case "[3~":
+          keyName = "delete";
+          break;
+        case "[4~":
+          keyName = "end";
+          break;
+        case "[5~":
+          keyName = "pageup";
+          break;
+        case "[6~":
+          keyName = "pagedown";
+          break;
+        case "[[5~":
+          keyName = "pageup";
+          break;
+        case "[[6~":
+          keyName = "pagedown";
+          break;
+        case "[7~":
+          keyName = "home";
+          break;
+        case "[8~":
+          keyName = "end";
+          break;
+        case "[a":
+          keyName = "up", keyShift = !0;
+          break;
+        case "[b":
+          keyName = "down", keyShift = !0;
+          break;
+        case "[c":
+          keyName = "right", keyShift = !0;
+          break;
+        case "[d":
+          keyName = "left", keyShift = !0;
+          break;
+        case "[e":
+          keyName = "clear", keyShift = !0;
+          break;
+        case "[2$":
+          keyName = "insert", keyShift = !0;
+          break;
+        case "[3$":
+          keyName = "delete", keyShift = !0;
+          break;
+        case "[5$":
+          keyName = "pageup", keyShift = !0;
+          break;
+        case "[6$":
+          keyName = "pagedown", keyShift = !0;
+          break;
+        case "[7$":
+          keyName = "home", keyShift = !0;
+          break;
+        case "[8$":
+          keyName = "end", keyShift = !0;
+          break;
+        case "Oa":
+          keyName = "up", keyCtrl2 = !0;
+          break;
+        case "Ob":
+          keyName = "down", keyCtrl2 = !0;
+          break;
+        case "Oc":
+          keyName = "right", keyCtrl2 = !0;
+          break;
+        case "Od":
+          keyName = "left", keyCtrl2 = !0;
+          break;
+        case "Oe":
+          keyName = "clear", keyCtrl2 = !0;
+          break;
+        case "[2^":
+          keyName = "insert", keyCtrl2 = !0;
+          break;
+        case "[3^":
+          keyName = "delete", keyCtrl2 = !0;
+          break;
+        case "[5^":
+          keyName = "pageup", keyCtrl2 = !0;
+          break;
+        case "[6^":
+          keyName = "pagedown", keyCtrl2 = !0;
+          break;
+        case "[7^":
+          keyName = "home", keyCtrl2 = !0;
+          break;
+        case "[8^":
+          keyName = "end", keyCtrl2 = !0;
+          break;
+        case "[Z":
+          keyName = "tab", keyShift = !0;
+          break;
+        default:
+          keyName = "undefined";
+          break;
+      }
+    } else if (ch === "\r")
+      keyName = "return", keyMeta = escaped;
+    else if (ch === "\n")
+      keyName = "enter", keyMeta = escaped;
+    else if (ch === "\t")
+      keyName = "tab", keyMeta = escaped;
+    else if (ch === "\b" || ch === "\x7F")
+      keyName = "backspace", keyMeta = escaped;
+    else if (ch === kEscape)
+      keyName = "escape", keyMeta = escaped;
+    else if (ch === " ")
+      keyName = "space", keyMeta = escaped;
+    else if (!escaped && ch <= "\x1A")
+      keyName = StringFromCharCode(StringPrototypeCharCodeAt.call(ch) + StringPrototypeCharCodeAt.call("a") - 1), keyCtrl2 = !0;
+    else if (RegExpPrototypeExec.call(/^[0-9A-Za-z]$/, ch) !== null)
+      keyName = StringPrototypeToLowerCase.call(ch), keyShift = RegExpPrototypeExec.call(/^[A-Z]$/, ch) !== null, keyMeta = escaped;
+    else if (escaped)
+      keyName = ch.length ? void 0 : "escape", keyMeta = !0;
+    if (keySeq = s, s.length !== 0 && (keyName !== void 0 || escaped))
+      stream.emit("keypress", escaped ? void 0 : s, {
+        sequence: keySeq,
+        name: keyName,
+        ctrl: keyCtrl2,
+        meta: keyMeta,
+        shift: keyShift
+      });
+    else if (charLengthAt(s, 0) === s.length)
+      stream.emit("keypress", s, {
+        sequence: keySeq,
+        name: keyName,
+        ctrl: keyCtrl2,
+        meta: keyMeta,
+        shift: keyShift
+      });
+  }
+}
+var commonPrefix = function(strings) {
+  if (strings.length === 0)
+    return "";
+  if (strings.length === 1)
+    return strings[0];
+  var sorted = ArrayPrototypeSort.call(ArrayPrototypeSlice.call(strings)), min = sorted[0], max = sorted[sorted.length - 1];
+  for (var i = 0;i < min.length; i++)
+    if (min[i] !== max[i])
+      return StringPrototypeSlice.call(min, 0, i);
+  return min;
+}, cursorTo = function(stream, x, y, callback) {
+  if (callback !== void 0)
+    validateFunction(callback, "callback");
+  if (typeof y === "function")
+    callback = y, y = void 0;
+  if (NumberIsNaN(x))
+    throw new ERR_INVALID_ARG_VALUE("x", x);
+  if (NumberIsNaN(y))
+    throw new ERR_INVALID_ARG_VALUE("y", y);
+  if (stream == null || typeof x !== "number" && typeof y !== "number") {
+    if (typeof callback === "function")
+      process.nextTick(callback, null);
+    return !0;
+  }
+  if (typeof x !== "number")
+    throw new ERR_INVALID_CURSOR_POS;
+  var data = typeof y !== "number" ? CSI`${x + 1}G` : CSI`${y + 1};${x + 1}H`;
+  return stream.write(data, callback);
+}, moveCursor = function(stream, dx, dy, callback) {
+  if (callback !== void 0)
+    validateFunction(callback, "callback");
+  if (stream == null || !(dx || dy)) {
+    if (typeof callback === "function")
+      process.nextTick(callback, null);
+    return !0;
+  }
+  var data = "";
+  if (dx < 0)
+    data += CSI`${-dx}D`;
+  else if (dx > 0)
+    data += CSI`${dx}C`;
+  if (dy < 0)
+    data += CSI`${-dy}A`;
+  else if (dy > 0)
+    data += CSI`${dy}B`;
+  return stream.write(data, callback);
+}, clearLine = function(stream, dir, callback) {
+  if (callback !== void 0)
+    validateFunction(callback, "callback");
+  if (stream === null || stream === void 0) {
+    if (typeof callback === "function")
+      process.nextTick(callback, null);
+    return !0;
+  }
+  var type = dir < 0 ? kClearToLineBeginning : dir > 0 ? kClearToLineEnd : kClearLine;
+  return stream.write(type, callback);
+}, clearScreenDown = function(stream, callback) {
+  if (callback !== void 0)
+    validateFunction(callback, "callback");
+  if (stream === null || stream === void 0) {
+    if (typeof callback === "function")
+      process.nextTick(callback, null);
+    return !0;
+  }
+  return stream.write(kClearScreenDown, callback);
+}, emitKeypressEvents = function(stream, iface = {}) {
+  if (stream[KEYPRESS_DECODER])
+    return;
+  stream[KEYPRESS_DECODER] = new StringDecoder("utf8"), stream[ESCAPE_DECODER] = emitKeys(stream), stream[ESCAPE_DECODER].next();
+  var triggerEscape = () => stream[ESCAPE_DECODER].next(""), { escapeCodeTimeout = ESCAPE_CODE_TIMEOUT } = iface, timeoutId;
+  function onData(input) {
+    if (stream.listenerCount("keypress") > 0) {
+      var string = stream[KEYPRESS_DECODER].write(input);
+      if (string) {
+        clearTimeout(timeoutId), iface[kSawKeyPress] = charLengthAt(string, 0) === string.length, iface.isCompletionEnabled = !1;
+        var length = 0;
+        for (var character of new SafeStringIterator(string)) {
+          if (length += character.length, length === string.length)
+            iface.isCompletionEnabled = !0;
+          try {
+            if (stream[ESCAPE_DECODER].next(character), length === string.length && character === kEscape)
+              timeoutId = setTimeout(triggerEscape, escapeCodeTimeout);
+          } catch (err) {
+            throw stream[ESCAPE_DECODER] = emitKeys(stream), stream[ESCAPE_DECODER].next(), err;
+          }
+        }
+      }
+    } else
+      stream.removeListener("data", onData), stream.on("newListener", onNewListener);
+  }
+  function onNewListener(event) {
+    if (event === "keypress")
+      stream.on("data", onData), stream.removeListener("newListener", onNewListener);
+  }
+  if (stream.listenerCount("keypress") > 0)
+    stream.on("data", onData);
+  else
+    stream.on("newListener", onNewListener);
+}, onSelfCloseWithTerminal = function() {
+  var input = this.input, output = this.output;
+  if (!input)
+    throw new Error("Input not set, invalid state for readline!");
+  if (input.removeListener("keypress", this[kOnKeyPress]), input.removeListener("error", this[kOnError]), input.removeListener("end", this[kOnTermEnd]), output !== null && output !== void 0)
+    output.removeListener("resize", this[kOnResize]);
+}, onSelfCloseWithoutTerminal = function() {
+  var input = this.input;
+  if (!input)
+    throw new Error("Input not set, invalid state for readline!");
+  input.removeListener("data", this[kOnData]), input.removeListener("error", this[kOnError]), input.removeListener("end", this[kOnEnd]);
+}, onError = function(err) {
+  this.emit("error", err);
+}, onData = function(data) {
+  debug("onData"), this[kNormalWrite](data);
+}, onEnd = function() {
+  if (debug("onEnd"), typeof this[kLine_buffer] === "string" && this[kLine_buffer].length > 0)
+    this.emit("line", this[kLine_buffer]);
+  this.close();
+}, onTermEnd = function() {
+  if (debug("onTermEnd"), typeof this.line === "string" && this.line.length > 0)
+    this.emit("line", this.line);
+  this.close();
+}, onKeyPress = function(s, key) {
+  if (this[kTtyWrite](s, key), key && key.sequence) {
+    var ch = StringPrototypeCodePointAt.call(key.sequence, 0);
+    if (ch >= 55296 && ch <= 57343)
+      this[kRefreshLine]();
+  }
+}, onResize = function() {
+  this[kRefreshLine]();
+}, InterfaceConstructor = function(input, output, completer, terminal) {
+  if (!(this instanceof InterfaceConstructor))
+    return new InterfaceConstructor(input, output, completer, terminal);
+  EventEmitter.call(this), this[kOnSelfCloseWithoutTerminal] = onSelfCloseWithoutTerminal.bind(this), this[kOnSelfCloseWithTerminal] = onSelfCloseWithTerminal.bind(this), this[kOnError] = onError.bind(this), this[kOnData] = onData.bind(this), this[kOnEnd] = onEnd.bind(this), this[kOnTermEnd] = onTermEnd.bind(this), this[kOnKeyPress] = onKeyPress.bind(this), this[kOnResize] = onResize.bind(this), this[kSawReturnAt] = 0, this.isCompletionEnabled = !0, this[kSawKeyPress] = !1, this[kPreviousKey] = null, this.escapeCodeTimeout = ESCAPE_CODE_TIMEOUT, this.tabSize = 8;
+  var history, historySize, removeHistoryDuplicates = !1, crlfDelay, prompt = "> ", signal;
+  if (input?.input) {
+    output = input.output, completer = input.completer, terminal = input.terminal, history = input.history, historySize = input.historySize, signal = input.signal;
+    var tabSize = input.tabSize;
+    if (tabSize !== void 0)
+      validateUint32(tabSize, "tabSize", !0), this.tabSize = tabSize;
+    removeHistoryDuplicates = input.removeHistoryDuplicates;
+    var inputPrompt = input.prompt;
+    if (inputPrompt !== void 0)
+      prompt = inputPrompt;
+    var inputEscapeCodeTimeout = input.escapeCodeTimeout;
+    if (inputEscapeCodeTimeout !== void 0)
+      if (NumberIsFinite(inputEscapeCodeTimeout))
+        this.escapeCodeTimeout = inputEscapeCodeTimeout;
+      else
+        throw new ERR_INVALID_ARG_VALUE("input.escapeCodeTimeout", this.escapeCodeTimeout);
+    if (signal)
+      validateAbortSignal(signal, "options.signal");
+    crlfDelay = input.crlfDelay, input = input.input;
+  }
+  if (completer !== void 0 && typeof completer !== "function")
+    throw new ERR_INVALID_ARG_VALUE("completer", completer);
+  if (history === void 0)
+    history = [];
+  else
+    validateArray(history, "history");
+  if (historySize === void 0)
+    historySize = kHistorySize;
+  if (typeof historySize !== "number" || NumberIsNaN(historySize) || historySize < 0)
+    throw new ERR_INVALID_ARG_VALUE("historySize", historySize);
+  if (terminal === void 0 && !(output === null || output === void 0))
+    terminal = !!output.isTTY;
+  if (this.line = "", this[kSubstringSearch] = null, this.output = output, this.input = input, this[kUndoStack] = [], this[kRedoStack] = [], this.history = history, this.historySize = historySize, this[kKillRing] = [], this[kKillRingCursor] = 0, this.removeHistoryDuplicates = !!removeHistoryDuplicates, this.crlfDelay = crlfDelay ? MathMax(kMincrlfDelay, crlfDelay) : kMincrlfDelay, this.completer = completer, this.setPrompt(prompt), this.terminal = !!terminal, this[kLineObjectStream] = void 0, input.on("error", this[kOnError]), !this.terminal)
+    input.on("data", this[kOnData]), input.on("end", this[kOnEnd]), this.once("close", this[kOnSelfCloseWithoutTerminal]), this[kDecoder] = new StringDecoder("utf8");
+  else {
+    if (emitKeypressEvents(input, this), input.on("keypress", this[kOnKeyPress]), input.on("end", this[kOnTermEnd]), this[kSetRawMode](!0), this.terminal = !0, this.cursor = 0, this.historyIndex = -1, output !== null && output !== void 0)
+      output.on("resize", this[kOnResize]);
+    this.once("close", this[kOnSelfCloseWithTerminal]);
+  }
+  if (signal) {
+    var onAborted = (() => this.close()).bind(this);
+    if (signal.aborted)
+      process.nextTick(onAborted);
+    else
+      signal.addEventListener("abort", onAborted, { once: !0 }), this.once("close", () => signal.removeEventListener("abort", onAborted));
+  }
+  this.line = "", input.resume();
+}, Interface = function(input, output, completer, terminal) {
+  if (!(this instanceof Interface))
+    return new Interface(input, output, completer, terminal);
+  if (input?.input && typeof input.completer === "function" && input.completer.length !== 2) {
+    var { completer } = input;
+    input.completer = (v, cb) => cb(null, completer(v));
+  } else if (typeof completer === "function" && completer.length !== 2) {
+    var realCompleter = completer;
+    completer = (v, cb) => cb(null, realCompleter(v));
+  }
+  InterfaceConstructor.call(this, input, output, completer, terminal);
+}, createInterface = function(input, output, completer, terminal) {
+  return new Interface(input, output, completer, terminal);
+};
+var { Array, RegExp, String, Bun } = import.meta.primordials, EventEmitter = import.meta.require("node:events"), { clearTimeout, setTimeout } = import.meta.require("timers"), { StringDecoder } = import.meta.require("string_decoder"), isWritable, { inspect } = Bun, debug = process.env.BUN_JS_DEBUG ? console.log : () => {
+}, SymbolAsyncIterator = Symbol.asyncIterator, SymbolIterator = Symbol.iterator, SymbolFor = Symbol.for, SymbolReplace = Symbol.replace, ArrayFrom = Array.from, ArrayIsArray = Array.isArray, ArrayPrototypeFilter = Array.prototype.filter, ArrayPrototypeSort = Array.prototype.sort, ArrayPrototypeIndexOf = Array.prototype.indexOf, ArrayPrototypeJoin = Array.prototype.join, ArrayPrototypeMap = Array.prototype.map, ArrayPrototypePop = Array.prototype.pop, ArrayPrototypePush = Array.prototype.push, ArrayPrototypeSlice = Array.prototype.slice, ArrayPrototypeSplice = Array.prototype.splice, ArrayPrototypeReverse = Array.prototype.reverse, ArrayPrototypeShift = Array.prototype.shift, ArrayPrototypeUnshift = Array.prototype.unshift, RegExpPrototypeExec = RegExp.prototype.exec, RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace], StringFromCharCode = String.fromCharCode, StringPrototypeCharCodeAt = String.prototype.charCodeAt, StringPrototypeCodePointAt = String.prototype.codePointAt, StringPrototypeSlice = String.prototype.slice, StringPrototypeToLowerCase = String.prototype.toLowerCase, StringPrototypeEndsWith = String.prototype.endsWith, StringPrototypeRepeat = String.prototype.repeat, StringPrototypeStartsWith = String.prototype.startsWith, StringPrototypeTrim = String.prototype.trim, StringPrototypeNormalize = String.prototype.normalize, NumberIsNaN = Number.isNaN, NumberIsFinite = Number.isFinite, NumberIsInteger = Number.isInteger, NumberMAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER, NumberMIN_SAFE_INTEGER = Number.MIN_SAFE_INTEGER, MathCeil = Math.ceil, MathFloor = Math.floor, MathMax = Math.max, MathMaxApply = Math.max.apply, DateNow = Date.now, FunctionPrototype = Function.prototype, StringPrototype = String.prototype, StringPrototypeSymbolIterator = StringPrototype[SymbolIterator], StringIteratorPrototypeNext = StringPrototypeSymbolIterator.call("").next, ObjectSetPrototypeOf = Object.setPrototypeOf, ObjectDefineProperty = Object.defineProperty, ObjectDefineProperties = Object.defineProperties, ObjectFreeze = Object.freeze;
+var { create: ObjectCreate, keys: ObjectKeys } = Object;
+var createSafeIterator = (factory, next) => {
+  class SafeIterator {
+    #iterator;
+    constructor(iterable) {
+      this.#iterator = factory.call(iterable);
+    }
+    next() {
+      return next.call(this.#iterator);
+    }
+    [SymbolIterator]() {
+      return this;
+    }
+  }
+  return ObjectSetPrototypeOf(SafeIterator.prototype, null), ObjectFreeze(SafeIterator.prototype), ObjectFreeze(SafeIterator), SafeIterator;
+}, SafeStringIterator = createSafeIterator(StringPrototypeSymbolIterator, StringIteratorPrototypeNext), isFullWidthCodePoint = (code) => {
+  return code >= 4352 && (code <= 4447 || code === 9001 || code === 9002 || code >= 11904 && code <= 12871 && code !== 12351 || code >= 12880 && code <= 19903 || code >= 19968 && code <= 42182 || code >= 43360 && code <= 43388 || code >= 44032 && code <= 55203 || code >= 63744 && code <= 64255 || code >= 65040 && code <= 65049 || code >= 65072 && code <= 65131 || code >= 65281 && code <= 65376 || code >= 65504 && code <= 65510 || code >= 110592 && code <= 110593 || code >= 127488 && code <= 127569 || code >= 127744 && code <= 128591 || code >= 131072 && code <= 262141);
+}, isZeroWidthCodePoint = (code) => {
+  return code <= 31 || code >= 127 && code <= 159 || code >= 768 && code <= 879 || code >= 8203 && code <= 8207 || code >= 8400 && code <= 8447 || code >= 65024 && code <= 65039 || code >= 65056 && code <= 65071 || code >= 917760 && code <= 917999;
+}, getStringWidth = function getStringWidth2(str, removeControlChars = !0) {
+  var width = 0;
+  if (removeControlChars)
+    str = stripVTControlCharacters(str);
+  str = StringPrototypeNormalize.call(str, "NFC");
+  for (var char of new SafeStringIterator(str)) {
+    var code = StringPrototypeCodePointAt.call(char, 0);
+    if (isFullWidthCodePoint(code))
+      width += 2;
+    else if (!isZeroWidthCodePoint(code))
+      width++;
+  }
+  return width;
+}, ansiPattern = "[\\u001B\\u009B][[\\]()#;?]*(?:(?:(?:(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]+)*|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]*)*)?\\u0007)|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-ntqry=><~]))", ansi = new RegExp(ansiPattern, "g"), kCustomPromisifiedSymbol = SymbolFor("nodejs.util.promisify.custom"), kCustomPromisifyArgsSymbol = Symbol("customPromisifyArgs");
+promisify.custom = kCustomPromisifiedSymbol;
+var kUTF16SurrogateThreshold = 65536, kEscape = "\x1B", kSubstringSearch = Symbol("kSubstringSearch"), kIsNodeError = Symbol("kIsNodeError"), errorBases = {}, VALID_NODE_ERROR_BASES = {
+  TypeError,
+  RangeError,
+  Error
+}, NodeError = getNodeErrorByName("Error"), NodeTypeError = getNodeErrorByName("TypeError"), NodeRangeError = getNodeErrorByName("RangeError");
+
+class ERR_INVALID_ARG_TYPE extends NodeTypeError {
+  constructor(name, type, value) {
+    super(`The "${name}" argument must be of type ${type}. Received type ${typeof value}`, {
+      code: "ERR_INVALID_ARG_TYPE"
+    });
+  }
+}
+
+class ERR_INVALID_ARG_VALUE extends NodeTypeError {
+  constructor(name, value, reason = "not specified") {
+    super(`The value "${String(value)}" is invalid for argument '${name}'. Reason: ${reason}`, {
+      code: "ERR_INVALID_ARG_VALUE"
+    });
+  }
+}
+
+class ERR_INVALID_CURSOR_POS extends NodeTypeError {
+  constructor() {
+    super("Cannot set cursor row without setting its column", {
+      code: "ERR_INVALID_CURSOR_POS"
+    });
+  }
+}
+
+class ERR_OUT_OF_RANGE extends NodeRangeError {
+  constructor(name, range, received) {
+    super(`The value of "${name}" is out of range. It must be ${range}. Received ${received}`, {
+      code: "ERR_OUT_OF_RANGE"
+    });
+  }
+}
+
+class ERR_USE_AFTER_CLOSE extends NodeError {
+  constructor() {
+    super("This socket has been ended by the other party", {
+      code: "ERR_USE_AFTER_CLOSE"
+    });
+  }
+}
+
+class AbortError extends Error {
+  code;
+  constructor() {
+    super("The operation was aborted");
+    this.code = "ABORT_ERR";
+  }
+}
+var kClearLine, kClearScreenDown, kClearToLineBeginning, kClearToLineEnd;
+CSI.kEscape = kEscape;
+CSI.kClearLine = kClearLine = CSI`2K`;
+CSI.kClearScreenDown = kClearScreenDown = CSI`0J`;
+CSI.kClearToLineBeginning = kClearToLineBeginning = CSI`1K`;
+CSI.kClearToLineEnd = kClearToLineEnd = CSI`0K`;
+var KEYPRESS_DECODER = Symbol("keypress-decoder"), ESCAPE_DECODER = Symbol("escape-decoder"), ESCAPE_CODE_TIMEOUT = 500, kEmptyObject = ObjectFreeze(ObjectCreate(null)), kHistorySize = 30, kMaxUndoRedoStackSize = 2048, kMincrlfDelay = 100, lineEnding = /\r?\n|\r(?!\n)/g, kMaxLengthOfKillRing = 32, kLineObjectStream = Symbol("line object stream"), kQuestionCancel = Symbol("kQuestionCancel"), kQuestion = Symbol("kQuestion"), kAddHistory = Symbol("_addHistory"), kBeforeEdit = Symbol("_beforeEdit"), kDecoder = Symbol("_decoder"), kDeleteLeft = Symbol("_deleteLeft"), kDeleteLineLeft = Symbol("_deleteLineLeft"), kDeleteLineRight = Symbol("_deleteLineRight"), kDeleteRight = Symbol("_deleteRight"), kDeleteWordLeft = Symbol("_deleteWordLeft"), kDeleteWordRight = Symbol("_deleteWordRight"), kGetDisplayPos = Symbol("_getDisplayPos"), kHistoryNext = Symbol("_historyNext"), kHistoryPrev = Symbol("_historyPrev"), kInsertString = Symbol("_insertString"), kLine = Symbol("_line"), kLine_buffer = Symbol("_line_buffer"), kKillRing = Symbol("_killRing"), kKillRingCursor = Symbol("_killRingCursor"), kMoveCursor = Symbol("_moveCursor"), kNormalWrite = Symbol("_normalWrite"), kOldPrompt = Symbol("_oldPrompt"), kOnLine = Symbol("_onLine"), kPreviousKey = Symbol("_previousKey"), kPrompt = Symbol("_prompt"), kPushToKillRing = Symbol("_pushToKillRing"), kPushToUndoStack = Symbol("_pushToUndoStack"), kQuestionCallback = Symbol("_questionCallback"), kRedo = Symbol("_redo"), kRedoStack = Symbol("_redoStack"), kRefreshLine = Symbol("_refreshLine"), kSawKeyPress = Symbol("_sawKeyPress"), kSawReturnAt = Symbol("_sawReturnAt"), kSetRawMode = Symbol("_setRawMode"), kTabComplete = Symbol("_tabComplete"), kTabCompleter = Symbol("_tabCompleter"), kTtyWrite = Symbol("_ttyWrite"), kUndo = Symbol("_undo"), kUndoStack = Symbol("_undoStack"), kWordLeft = Symbol("_wordLeft"), kWordRight = Symbol("_wordRight"), kWriteToOutput = Symbol("_writeToOutput"), kYank = Symbol("_yank"), kYanking = Symbol("_yanking"), kYankPop = Symbol("_yankPop"), kFirstEventParam = Symbol("nodejs.kFirstEventParam"), kOnSelfCloseWithTerminal = Symbol("_onSelfCloseWithTerminal"), kOnSelfCloseWithoutTerminal = Symbol("_onSelfCloseWithoutTerminal"), kOnKeyPress = Symbol("_onKeyPress"), kOnError = Symbol("_onError"), kOnData = Symbol("_onData"), kOnEnd = Symbol("_onEnd"), kOnTermEnd = Symbol("_onTermEnd"), kOnResize = Symbol("_onResize");
+ObjectSetPrototypeOf(InterfaceConstructor.prototype, EventEmitter.prototype);
+ObjectSetPrototypeOf(InterfaceConstructor, EventEmitter);
+var _Interface = class Interface2 extends InterfaceConstructor {
+  constructor(input, output, completer, terminal) {
+    super(input, output, completer, terminal);
+  }
+  get columns() {
+    var output = this.output;
+    if (output && output.columns)
+      return output.columns;
+    return Infinity;
+  }
+  setPrompt(prompt) {
+    this[kPrompt] = prompt;
+  }
+  getPrompt() {
+    return this[kPrompt];
+  }
+  [kSetRawMode](mode) {
+    var input = this.input, { setRawMode, wasInRawMode } = input;
+    return debug("setRawMode", mode, "set!"), wasInRawMode;
+  }
+  prompt(preserveCursor) {
+    if (this.paused)
+      this.resume();
+    if (this.terminal) {
+      if (!preserveCursor)
+        this.cursor = 0;
+      this[kRefreshLine]();
+    } else
+      this[kWriteToOutput](this[kPrompt]);
+  }
+  [kQuestion](query, cb) {
+    if (this.closed)
+      throw new ERR_USE_AFTER_CLOSE("readline");
+    if (this[kQuestionCallback])
+      this.prompt();
+    else
+      this[kOldPrompt] = this[kPrompt], this.setPrompt(query), this[kQuestionCallback] = cb, this.prompt();
+  }
+  [kOnLine](line) {
+    if (this[kQuestionCallback]) {
+      var cb = this[kQuestionCallback];
+      this[kQuestionCallback] = null, this.setPrompt(this[kOldPrompt]), cb(line);
+    } else
+      this.emit("line", line);
+  }
+  [kBeforeEdit](oldText, oldCursor) {
+    this[kPushToUndoStack](oldText, oldCursor);
+  }
+  [kQuestionCancel]() {
+    if (this[kQuestionCallback])
+      this[kQuestionCallback] = null, this.setPrompt(this[kOldPrompt]), this.clearLine();
+  }
+  [kWriteToOutput](stringToWrite) {
+    if (validateString(stringToWrite, "stringToWrite"), this.output !== null && this.output !== void 0)
+      this.output.write(stringToWrite);
+  }
+  [kAddHistory]() {
+    if (this.line.length === 0)
+      return "";
+    if (this.historySize === 0)
+      return this.line;
+    if (StringPrototypeTrim.call(this.line).length === 0)
+      return this.line;
+    if (this.history.length === 0 || this.history[0] !== this.line) {
+      if (this.removeHistoryDuplicates) {
+        var dupIndex = ArrayPrototypeIndexOf.call(this.history, this.line);
+        if (dupIndex !== -1)
+          ArrayPrototypeSplice.call(this.history, dupIndex, 1);
+      }
+      if (ArrayPrototypeUnshift.call(this.history, this.line), this.history.length > this.historySize)
+        ArrayPrototypePop.call(this.history);
+    }
+    this.historyIndex = -1;
+    var line = this.history[0];
+    return this.emit("history", this.history), line;
+  }
+  [kRefreshLine]() {
+    var line = this[kPrompt] + this.line, dispPos = this[kGetDisplayPos](line), lineCols = dispPos.cols, lineRows = dispPos.rows, cursorPos = this.getCursorPos(), prevRows = this.prevRows || 0;
+    if (prevRows > 0)
+      moveCursor(this.output, 0, -prevRows);
+    if (cursorTo(this.output, 0), clearScreenDown(this.output), this[kWriteToOutput](line), lineCols === 0)
+      this[kWriteToOutput](" ");
+    cursorTo(this.output, cursorPos.cols);
+    var diff = lineRows - cursorPos.rows;
+    if (diff > 0)
+      moveCursor(this.output, 0, -diff);
+    this.prevRows = cursorPos.rows;
+  }
+  close() {
+    if (this.closed)
+      return;
+    if (this.pause(), this.terminal)
+      this[kSetRawMode](!1);
+    this.closed = !0, this.emit("close");
+  }
+  pause() {
+    if (this.paused)
+      return;
+    return this.input.pause(), this.paused = !0, this.emit("pause"), this;
+  }
+  resume() {
+    if (!this.paused)
+      return;
+    return this.input.resume(), this.paused = !1, this.emit("resume"), this;
+  }
+  write(d, key) {
+    if (this.paused)
+      this.resume();
+    if (this.terminal)
+      this[kTtyWrite](d, key);
+    else
+      this[kNormalWrite](d);
+  }
+  [kNormalWrite](b) {
+    if (b === void 0)
+      return;
+    var string = this[kDecoder].write(b);
+    if (this[kSawReturnAt] && DateNow() - this[kSawReturnAt] <= this.crlfDelay) {
+      if (StringPrototypeCodePointAt.call(string) === 10)
+        string = StringPrototypeSlice.call(string, 1);
+      this[kSawReturnAt] = 0;
+    }
+    var newPartContainsEnding = RegExpPrototypeExec.call(lineEnding, string);
+    if (newPartContainsEnding !== null) {
+      if (this[kLine_buffer])
+        string = this[kLine_buffer] + string, this[kLine_buffer] = null, newPartContainsEnding = RegExpPrototypeExec.call(lineEnding, string);
+      this[kSawReturnAt] = StringPrototypeEndsWith.call(string, "\r") ? DateNow() : 0;
+      var indexes = [0, newPartContainsEnding.index, lineEnding.lastIndex], nextMatch;
+      while ((nextMatch = RegExpPrototypeExec.call(lineEnding, string)) !== null)
+        ArrayPrototypePush.call(indexes, nextMatch.index, lineEnding.lastIndex);
+      var lastIndex = indexes.length - 1;
+      this[kLine_buffer] = StringPrototypeSlice.call(string, indexes[lastIndex]);
+      for (var i = 1;i < lastIndex; i += 2)
+        this[kOnLine](StringPrototypeSlice.call(string, indexes[i - 1], indexes[i]));
+    } else if (string)
+      if (this[kLine_buffer])
+        this[kLine_buffer] += string;
+      else
+        this[kLine_buffer] = string;
+  }
+  [kInsertString](c) {
+    if (this[kBeforeEdit](this.line, this.cursor), this.cursor < this.line.length) {
+      var beg = StringPrototypeSlice.call(this.line, 0, this.cursor), end = StringPrototypeSlice.call(this.line, this.cursor, this.line.length);
+      this.line = beg + c + end, this.cursor += c.length, this[kRefreshLine]();
+    } else {
+      var oldPos = this.getCursorPos();
+      this.line += c, this.cursor += c.length;
+      var newPos = this.getCursorPos();
+      if (oldPos.rows < newPos.rows)
+        this[kRefreshLine]();
+      else
+        this[kWriteToOutput](c);
+    }
+  }
+  async[kTabComplete](lastKeypressWasTab) {
+    this.pause();
+    var string = StringPrototypeSlice.call(this.line, 0, this.cursor), value;
+    try {
+      value = await this.completer(string);
+    } catch (err) {
+      this[kWriteToOutput](`Tab completion error: ${inspect(err)}`);
+      return;
+    } finally {
+      this.resume();
+    }
+    this[kTabCompleter](lastKeypressWasTab, value);
+  }
+  [kTabCompleter](lastKeypressWasTab, { 0: completions, 1: completeOn }) {
+    if (!completions || completions.length === 0)
+      return;
+    var prefix = commonPrefix(ArrayPrototypeFilter.call(completions, (e) => e !== ""));
+    if (StringPrototypeStartsWith.call(prefix, completeOn) && prefix.length > completeOn.length) {
+      this[kInsertString](StringPrototypeSlice.call(prefix, completeOn.length));
+      return;
+    } else if (!StringPrototypeStartsWith.call(completeOn, prefix)) {
+      this.line = StringPrototypeSlice.call(this.line, 0, this.cursor - completeOn.length) + prefix + StringPrototypeSlice.call(this.line, this.cursor, this.line.length), this.cursor = this.cursor - completeOn.length + prefix.length, this._refreshLine();
+      return;
+    }
+    if (!lastKeypressWasTab)
+      return;
+    this[kBeforeEdit](this.line, this.cursor);
+    var completionsWidth = ArrayPrototypeMap.call(completions, (e) => getStringWidth(e)), width = MathMaxApply(completionsWidth) + 2, maxColumns = MathFloor(this.columns / width) || 1;
+    if (maxColumns === Infinity)
+      maxColumns = 1;
+    var output = "\r\n", lineIndex = 0, whitespace = 0;
+    for (var i = 0;i < completions.length; i++) {
+      var completion = completions[i];
+      if (completion === "" || lineIndex === maxColumns)
+        output += "\r\n", lineIndex = 0, whitespace = 0;
+      else
+        output += StringPrototypeRepeat.call(" ", whitespace);
+      if (completion !== "")
+        output += completion, whitespace = width - completionsWidth[i], lineIndex++;
+      else
+        output += "\r\n";
+    }
+    if (lineIndex !== 0)
+      output += "\r\n\r\n";
+    this[kWriteToOutput](output), this[kRefreshLine]();
+  }
+  [kWordLeft]() {
+    if (this.cursor > 0) {
+      var leading = StringPrototypeSlice.call(this.line, 0, this.cursor), reversed = ArrayPrototypeJoin.call(ArrayPrototypeReverse.call(ArrayFrom(leading)), ""), match = RegExpPrototypeExec.call(/^\s*(?:[^\w\s]+|\w+)?/, reversed);
+      this[kMoveCursor](-match[0].length);
+    }
+  }
+  [kWordRight]() {
+    if (this.cursor < this.line.length) {
+      var trailing = StringPrototypeSlice.call(this.line, this.cursor), match = RegExpPrototypeExec.call(/^(?:\s+|[^\w\s]+|\w+)\s*/, trailing);
+      this[kMoveCursor](match[0].length);
+    }
+  }
+  [kDeleteLeft]() {
+    if (this.cursor > 0 && this.line.length > 0) {
+      this[kBeforeEdit](this.line, this.cursor);
+      var charSize = charLengthLeft(this.line, this.cursor);
+      this.line = StringPrototypeSlice.call(this.line, 0, this.cursor - charSize) + StringPrototypeSlice.call(this.line, this.cursor, this.line.length), this.cursor -= charSize, this[kRefreshLine]();
+    }
+  }
+  [kDeleteRight]() {
+    if (this.cursor < this.line.length) {
+      this[kBeforeEdit](this.line, this.cursor);
+      var charSize = charLengthAt(this.line, this.cursor);
+      this.line = StringPrototypeSlice.call(this.line, 0, this.cursor) + StringPrototypeSlice.call(this.line, this.cursor + charSize, this.line.length), this[kRefreshLine]();
+    }
+  }
+  [kDeleteWordLeft]() {
+    if (this.cursor > 0) {
+      this[kBeforeEdit](this.line, this.cursor);
+      var leading = StringPrototypeSlice.call(this.line, 0, this.cursor), reversed = ArrayPrototypeJoin.call(ArrayPrototypeReverse.call(ArrayFrom(leading)), ""), match = RegExpPrototypeExec.call(/^\s*(?:[^\w\s]+|\w+)?/, reversed);
+      leading = StringPrototypeSlice.call(leading, 0, leading.length - match[0].length), this.line = leading + StringPrototypeSlice.call(this.line, this.cursor, this.line.length), this.cursor = leading.length, this[kRefreshLine]();
+    }
+  }
+  [kDeleteWordRight]() {
+    if (this.cursor < this.line.length) {
+      this[kBeforeEdit](this.line, this.cursor);
+      var trailing = StringPrototypeSlice.call(this.line, this.cursor), match = RegExpPrototypeExec.call(/^(?:\s+|\W+|\w+)\s*/, trailing);
+      this.line = StringPrototypeSlice.call(this.line, 0, this.cursor) + StringPrototypeSlice.call(trailing, match[0].length), this[kRefreshLine]();
+    }
+  }
+  [kDeleteLineLeft]() {
+    this[kBeforeEdit](this.line, this.cursor);
+    var del = StringPrototypeSlice.call(this.line, 0, this.cursor);
+    this.line = StringPrototypeSlice.call(this.line, this.cursor), this.cursor = 0, this[kPushToKillRing](del), this[kRefreshLine]();
+  }
+  [kDeleteLineRight]() {
+    this[kBeforeEdit](this.line, this.cursor);
+    var del = StringPrototypeSlice.call(this.line, this.cursor);
+    this.line = StringPrototypeSlice.call(this.line, 0, this.cursor), this[kPushToKillRing](del), this[kRefreshLine]();
+  }
+  [kPushToKillRing](del) {
+    if (!del || del === this[kKillRing][0])
+      return;
+    ArrayPrototypeUnshift.call(this[kKillRing], del), this[kKillRingCursor] = 0;
+    while (this[kKillRing].length > kMaxLengthOfKillRing)
+      ArrayPrototypePop.call(this[kKillRing]);
+  }
+  [kYank]() {
+    if (this[kKillRing].length > 0)
+      this[kYanking] = !0, this[kInsertString](this[kKillRing][this[kKillRingCursor]]);
+  }
+  [kYankPop]() {
+    if (!this[kYanking])
+      return;
+    if (this[kKillRing].length > 1) {
+      var lastYank = this[kKillRing][this[kKillRingCursor]];
+      if (this[kKillRingCursor]++, this[kKillRingCursor] >= this[kKillRing].length)
+        this[kKillRingCursor] = 0;
+      var currentYank = this[kKillRing][this[kKillRingCursor]], head = StringPrototypeSlice.call(this.line, 0, this.cursor - lastYank.length), tail = StringPrototypeSlice.call(this.line, this.cursor);
+      this.line = head + currentYank + tail, this.cursor = head.length + currentYank.length, this[kRefreshLine]();
+    }
+  }
+  clearLine() {
+    this[kMoveCursor](Infinity), this[kWriteToOutput]("\r\n"), this.line = "", this.cursor = 0, this.prevRows = 0;
+  }
+  [kLine]() {
+    var line = this[kAddHistory]();
+    this[kUndoStack] = [], this[kRedoStack] = [], this.clearLine(), this[kOnLine](line);
+  }
+  [kPushToUndoStack](text, cursor) {
+    if (ArrayPrototypePush.call(this[kUndoStack], { text, cursor }) > kMaxUndoRedoStackSize)
+      ArrayPrototypeShift.call(this[kUndoStack]);
+  }
+  [kUndo]() {
+    if (this[kUndoStack].length <= 0)
+      return;
+    ArrayPrototypePush.call(this[kRedoStack], {
+      text: this.line,
+      cursor: this.cursor
+    });
+    var entry = ArrayPrototypePop.call(this[kUndoStack]);
+    this.line = entry.text, this.cursor = entry.cursor, this[kRefreshLine]();
+  }
+  [kRedo]() {
+    if (this[kRedoStack].length <= 0)
+      return;
+    ArrayPrototypePush.call(this[kUndoStack], {
+      text: this.line,
+      cursor: this.cursor
+    });
+    var entry = ArrayPrototypePop.call(this[kRedoStack]);
+    this.line = entry.text, this.cursor = entry.cursor, this[kRefreshLine]();
+  }
+  [kHistoryNext]() {
+    if (this.historyIndex >= 0) {
+      this[kBeforeEdit](this.line, this.cursor);
+      var search = this[kSubstringSearch] || "", index = this.historyIndex - 1;
+      while (index >= 0 && (!StringPrototypeStartsWith.call(this.history[index], search) || this.line === this.history[index]))
+        index--;
+      if (index === -1)
+        this.line = search;
+      else
+        this.line = this.history[index];
+      this.historyIndex = index, this.cursor = this.line.length, this[kRefreshLine]();
+    }
+  }
+  [kHistoryPrev]() {
+    if (this.historyIndex < this.history.length && this.history.length) {
+      this[kBeforeEdit](this.line, this.cursor);
+      var search = this[kSubstringSearch] || "", index = this.historyIndex + 1;
+      while (index < this.history.length && (!StringPrototypeStartsWith.call(this.history[index], search) || this.line === this.history[index]))
+        index++;
+      if (index === this.history.length)
+        this.line = search;
+      else
+        this.line = this.history[index];
+      this.historyIndex = index, this.cursor = this.line.length, this[kRefreshLine]();
+    }
+  }
+  [kGetDisplayPos](str) {
+    var offset = 0, col = this.columns, rows = 0;
+    str = stripVTControlCharacters(str);
+    for (var char of new SafeStringIterator(str)) {
+      if (char === "\n") {
+        rows += MathCeil(offset / col) || 1, offset = 0;
+        continue;
+      }
+      if (char === "\t") {
+        offset += this.tabSize - offset % this.tabSize;
+        continue;
+      }
+      var width = getStringWidth(char, !1);
+      if (width === 0 || width === 1)
+        offset += width;
+      else {
+        if ((offset + 1) % col === 0)
+          offset++;
+        offset += 2;
+      }
+    }
+    var cols = offset % col;
+    return rows += (offset - cols) / col, { cols, rows };
+  }
+  getCursorPos() {
+    var strBeforeCursor = this[kPrompt] + StringPrototypeSlice.call(this.line, 0, this.cursor);
+    return this[kGetDisplayPos](strBeforeCursor);
+  }
+  [kMoveCursor](dx) {
+    if (dx === 0)
+      return;
+    var oldPos = this.getCursorPos();
+    if (this.cursor += dx, this.cursor < 0)
+      this.cursor = 0;
+    else if (this.cursor > this.line.length)
+      this.cursor = this.line.length;
+    var newPos = this.getCursorPos();
+    if (oldPos.rows === newPos.rows) {
+      var diffWidth = newPos.cols - oldPos.cols;
+      moveCursor(this.output, diffWidth, 0);
+    } else
+      this[kRefreshLine]();
+  }
+  [kTtyWrite](s, key) {
+    var previousKey = this[kPreviousKey];
+    key = key || kEmptyObject, this[kPreviousKey] = key;
+    var { name: keyName, meta: keyMeta, ctrl: keyCtrl2, shift: keyShift, sequence: keySeq } = key;
+    if (!keyMeta || keyName !== "y")
+      this[kYanking] = !1;
+    if ((keyName === "up" || keyName === "down") && !keyCtrl2 && !keyMeta && !keyShift) {
+      if (this[kSubstringSearch] === null)
+        this[kSubstringSearch] = StringPrototypeSlice.call(this.line, 0, this.cursor);
+    } else if (this[kSubstringSearch] !== null) {
+      if (this[kSubstringSearch] = null, this.history.length === this.historyIndex)
+        this.historyIndex = -1;
+    }
+    if (typeof keySeq === "string")
+      switch (StringPrototypeCodePointAt.call(keySeq, 0)) {
+        case 31:
+          this[kUndo]();
+          return;
+        case 30:
+          this[kRedo]();
+          return;
+        default:
+          break;
+      }
+    if (keyName === "escape")
+      return;
+    if (keyCtrl2 && keyShift)
+      switch (keyName) {
+        case "backspace":
+          this[kDeleteLineLeft]();
+          break;
+        case "delete":
+          this[kDeleteLineRight]();
+          break;
+      }
+    else if (keyCtrl2)
+      switch (keyName) {
+        case "c":
+          if (this.listenerCount("SIGINT") > 0)
+            this.emit("SIGINT");
+          else
+            this.close();
+          break;
+        case "h":
+          this[kDeleteLeft]();
+          break;
+        case "d":
+          if (this.cursor === 0 && this.line.length === 0)
+            this.close();
+          else if (this.cursor < this.line.length)
+            this[kDeleteRight]();
+          break;
+        case "u":
+          this[kDeleteLineLeft]();
+          break;
+        case "k":
+          this[kDeleteLineRight]();
+          break;
+        case "a":
+          this[kMoveCursor]((-Infinity));
+          break;
+        case "e":
+          this[kMoveCursor](Infinity);
+          break;
+        case "b":
+          this[kMoveCursor](-charLengthLeft(this.line, this.cursor));
+          break;
+        case "f":
+          this[kMoveCursor](+charLengthAt(this.line, this.cursor));
+          break;
+        case "l":
+          cursorTo(this.output, 0, 0), clearScreenDown(this.output), this[kRefreshLine]();
+          break;
+        case "n":
+          this[kHistoryNext]();
+          break;
+        case "p":
+          this[kHistoryPrev]();
+          break;
+        case "y":
+          this[kYank]();
+          break;
+        case "z":
+          if (this.listenerCount("SIGTSTP") > 0)
+            this.emit("SIGTSTP");
+          else
+            process.once("SIGCONT", () => {
+              if (!this.paused)
+                this.pause(), this.emit("SIGCONT");
+              this[kSetRawMode](!0), this[kRefreshLine]();
+            }), this[kSetRawMode](!1), process.kill(process.pid, "SIGTSTP");
+          break;
+        case "w":
+        case "backspace":
+          this[kDeleteWordLeft]();
+          break;
+        case "delete":
+          this[kDeleteWordRight]();
+          break;
+        case "left":
+          this[kWordLeft]();
+          break;
+        case "right":
+          this[kWordRight]();
+          break;
+      }
+    else if (keyMeta)
+      switch (keyName) {
+        case "b":
+          this[kWordLeft]();
+          break;
+        case "f":
+          this[kWordRight]();
+          break;
+        case "d":
+        case "delete":
+          this[kDeleteWordRight]();
+          break;
+        case "backspace":
+          this[kDeleteWordLeft]();
+          break;
+        case "y":
+          this[kYankPop]();
+          break;
+      }
+    else {
+      if (this[kSawReturnAt] && keyName !== "enter")
+        this[kSawReturnAt] = 0;
+      switch (keyName) {
+        case "return":
+          this[kSawReturnAt] = DateNow(), this[kLine]();
+          break;
+        case "enter":
+          if (this[kSawReturnAt] === 0 || DateNow() - this[kSawReturnAt] > this.crlfDelay)
+            this[kLine]();
+          this[kSawReturnAt] = 0;
+          break;
+        case "backspace":
+          this[kDeleteLeft]();
+          break;
+        case "delete":
+          this[kDeleteRight]();
+          break;
+        case "left":
+          this[kMoveCursor](-charLengthLeft(this.line, this.cursor));
+          break;
+        case "right":
+          this[kMoveCursor](+charLengthAt(this.line, this.cursor));
+          break;
+        case "home":
+          this[kMoveCursor]((-Infinity));
+          break;
+        case "end":
+          this[kMoveCursor](Infinity);
+          break;
+        case "up":
+          this[kHistoryPrev]();
+          break;
+        case "down":
+          this[kHistoryNext]();
+          break;
+        case "tab":
+          if (typeof this.completer === "function" && this.isCompletionEnabled) {
+            var lastKeypressWasTab = previousKey && previousKey.name === "tab";
+            this[kTabComplete](lastKeypressWasTab);
+            break;
+          }
+        default:
+          if (typeof s === "string" && s) {
+            var nextMatch = RegExpPrototypeExec.call(lineEnding, s);
+            if (nextMatch !== null) {
+              this[kInsertString](StringPrototypeSlice.call(s, 0, nextMatch.index));
+              var { lastIndex } = lineEnding;
+              while ((nextMatch = RegExpPrototypeExec.call(lineEnding, s)) !== null)
+                this[kLine](), this[kInsertString](StringPrototypeSlice.call(s, lastIndex, nextMatch.index)), { lastIndex } = lineEnding;
+              if (lastIndex === s.length)
+                this[kLine]();
+            } else
+              this[kInsertString](s);
+          }
+      }
+    }
+  }
+  [SymbolAsyncIterator]() {
+    if (this[kLineObjectStream] === void 0)
+      this[kLineObjectStream] = EventEmitter.on(this, "line", {
+        close: ["close"],
+        highWatermark: 1024,
+        [kFirstEventParam]: !0
+      });
+    return this[kLineObjectStream];
+  }
+};
+ObjectSetPrototypeOf(Interface.prototype, _Interface.prototype);
+ObjectSetPrototypeOf(Interface, _Interface);
+Interface.prototype.question = function question(query, options, cb) {
+  if (cb = typeof options === "function" ? options : cb, options === null || typeof options !== "object")
+    options = kEmptyObject;
+  var signal = options?.signal;
+  if (signal) {
+    if (validateAbortSignal(signal, "options.signal"), signal.aborted)
+      return;
+    var onAbort = () => {
+      this[kQuestionCancel]();
+    };
+    signal.addEventListener("abort", onAbort, { once: !0 });
+    var cleanup = () => {
+      signal.removeEventListener("abort", onAbort);
+    }, originalCb = cb;
+    cb = typeof cb === "function" ? (answer) => {
+      return cleanup(), originalCb(answer);
+    } : cleanup;
+  }
+  if (typeof cb === "function")
+    this[kQuestion](query, cb);
+};
+Interface.prototype.question[promisify.custom] = function question2(query, options) {
+  if (options === null || typeof options !== "object")
+    options = kEmptyObject;
+  var signal = options?.signal;
+  if (signal && signal.aborted)
+    return PromiseReject(new AbortError(void 0, { cause: signal.reason }));
+  return new Promise((resolve, reject) => {
+    var cb = resolve;
+    if (signal) {
+      var onAbort = () => {
+        reject(new AbortError(void 0, { cause: signal.reason }));
+      };
+      signal.addEventListener("abort", onAbort, { once: !0 }), cb = (answer) => {
+        signal.removeEventListener("abort", onAbort), resolve(answer);
+      };
+    }
+    this.question(query, options, cb);
+  });
+};
+ObjectDefineProperties(Interface.prototype, {
+  [kSetRawMode]: {
+    __proto__: null,
+    get() {
+      return this._setRawMode;
+    }
+  },
+  [kOnLine]: {
+    __proto__: null,
+    get() {
+      return this._onLine;
+    }
+  },
+  [kWriteToOutput]: {
+    __proto__: null,
+    get() {
+      return this._writeToOutput;
+    }
+  },
+  [kAddHistory]: {
+    __proto__: null,
+    get() {
+      return this._addHistory;
+    }
+  },
+  [kRefreshLine]: {
+    __proto__: null,
+    get() {
+      return this._refreshLine;
+    }
+  },
+  [kNormalWrite]: {
+    __proto__: null,
+    get() {
+      return this._normalWrite;
+    }
+  },
+  [kInsertString]: {
+    __proto__: null,
+    get() {
+      return this._insertString;
+    }
+  },
+  [kTabComplete]: {
+    __proto__: null,
+    get() {
+      return this._tabComplete;
+    }
+  },
+  [kWordLeft]: {
+    __proto__: null,
+    get() {
+      return this._wordLeft;
+    }
+  },
+  [kWordRight]: {
+    __proto__: null,
+    get() {
+      return this._wordRight;
+    }
+  },
+  [kDeleteLeft]: {
+    __proto__: null,
+    get() {
+      return this._deleteLeft;
+    }
+  },
+  [kDeleteRight]: {
+    __proto__: null,
+    get() {
+      return this._deleteRight;
+    }
+  },
+  [kDeleteWordLeft]: {
+    __proto__: null,
+    get() {
+      return this._deleteWordLeft;
+    }
+  },
+  [kDeleteWordRight]: {
+    __proto__: null,
+    get() {
+      return this._deleteWordRight;
+    }
+  },
+  [kDeleteLineLeft]: {
+    __proto__: null,
+    get() {
+      return this._deleteLineLeft;
+    }
+  },
+  [kDeleteLineRight]: {
+    __proto__: null,
+    get() {
+      return this._deleteLineRight;
+    }
+  },
+  [kLine]: {
+    __proto__: null,
+    get() {
+      return this._line;
+    }
+  },
+  [kHistoryNext]: {
+    __proto__: null,
+    get() {
+      return this._historyNext;
+    }
+  },
+  [kHistoryPrev]: {
+    __proto__: null,
+    get() {
+      return this._historyPrev;
+    }
+  },
+  [kGetDisplayPos]: {
+    __proto__: null,
+    get() {
+      return this._getDisplayPos;
+    }
+  },
+  [kMoveCursor]: {
+    __proto__: null,
+    get() {
+      return this._moveCursor;
+    }
+  },
+  [kTtyWrite]: {
+    __proto__: null,
+    get() {
+      return this._ttyWrite;
+    }
+  },
+  _decoder: {
+    __proto__: null,
+    get() {
+      return this[kDecoder];
+    },
+    set(value) {
+      this[kDecoder] = value;
+    }
+  },
+  _line_buffer: {
+    __proto__: null,
+    get() {
+      return this[kLine_buffer];
+    },
+    set(value) {
+      this[kLine_buffer] = value;
+    }
+  },
+  _oldPrompt: {
+    __proto__: null,
+    get() {
+      return this[kOldPrompt];
+    },
+    set(value) {
+      this[kOldPrompt] = value;
+    }
+  },
+  _previousKey: {
+    __proto__: null,
+    get() {
+      return this[kPreviousKey];
+    },
+    set(value) {
+      this[kPreviousKey] = value;
+    }
+  },
+  _prompt: {
+    __proto__: null,
+    get() {
+      return this[kPrompt];
+    },
+    set(value) {
+      this[kPrompt] = value;
+    }
+  },
+  _questionCallback: {
+    __proto__: null,
+    get() {
+      return this[kQuestionCallback];
+    },
+    set(value) {
+      this[kQuestionCallback] = value;
+    }
+  },
+  _sawKeyPress: {
+    __proto__: null,
+    get() {
+      return this[kSawKeyPress];
+    },
+    set(value) {
+      this[kSawKeyPress] = value;
+    }
+  },
+  _sawReturnAt: {
+    __proto__: null,
+    get() {
+      return this[kSawReturnAt];
+    },
+    set(value) {
+      this[kSawReturnAt] = value;
+    }
+  }
+});
+Interface.prototype._setRawMode = _Interface.prototype[kSetRawMode];
+Interface.prototype._onLine = _Interface.prototype[kOnLine];
+Interface.prototype._writeToOutput = _Interface.prototype[kWriteToOutput];
+Interface.prototype._addHistory = _Interface.prototype[kAddHistory];
+Interface.prototype._refreshLine = _Interface.prototype[kRefreshLine];
+Interface.prototype._normalWrite = _Interface.prototype[kNormalWrite];
+Interface.prototype._insertString = _Interface.prototype[kInsertString];
+Interface.prototype._tabComplete = function(lastKeypressWasTab) {
+  this.pause();
+  var string = StringPrototypeSlice.call(this.line, 0, this.cursor);
+  this.completer(string, (err, value) => {
+    if (this.resume(), err) {
+      this._writeToOutput(`Tab completion error: ${inspect(err)}`);
+      return;
+    }
+    this[kTabCompleter](lastKeypressWasTab, value);
+  });
+};
+Interface.prototype._wordLeft = _Interface.prototype[kWordLeft];
+Interface.prototype._wordRight = _Interface.prototype[kWordRight];
+Interface.prototype._deleteLeft = _Interface.prototype[kDeleteLeft];
+Interface.prototype._deleteRight = _Interface.prototype[kDeleteRight];
+Interface.prototype._deleteWordLeft = _Interface.prototype[kDeleteWordLeft];
+Interface.prototype._deleteWordRight = _Interface.prototype[kDeleteWordRight];
+Interface.prototype._deleteLineLeft = _Interface.prototype[kDeleteLineLeft];
+Interface.prototype._deleteLineRight = _Interface.prototype[kDeleteLineRight];
+Interface.prototype._line = _Interface.prototype[kLine];
+Interface.prototype._historyNext = _Interface.prototype[kHistoryNext];
+Interface.prototype._historyPrev = _Interface.prototype[kHistoryPrev];
+Interface.prototype._getDisplayPos = _Interface.prototype[kGetDisplayPos];
+Interface.prototype._getCursorPos = _Interface.prototype.getCursorPos;
+Interface.prototype._moveCursor = _Interface.prototype[kMoveCursor];
+Interface.prototype._ttyWrite = _Interface.prototype[kTtyWrite];
+
+class Readline {
+  #autoCommit = !1;
+  #stream;
+  #todo = [];
+  constructor(stream, options = void 0) {
+    if (isWritable ??= import.meta.require("node:stream").isWritable, !isWritable(stream))
+      throw new ERR_INVALID_ARG_TYPE("stream", "Writable", stream);
+    if (this.#stream = stream, options?.autoCommit != null)
+      validateBoolean(options.autoCommit, "options.autoCommit"), this.#autoCommit = options.autoCommit;
+  }
+  cursorTo(x, y = void 0) {
+    if (validateInteger(x, "x"), y != null)
+      validateInteger(y, "y");
+    var data = y == null ? CSI`${x + 1}G` : CSI`${y + 1};${x + 1}H`;
+    if (this.#autoCommit)
+      process.nextTick(() => this.#stream.write(data));
+    else
+      ArrayPrototypePush.call(this.#todo, data);
+    return this;
+  }
+  moveCursor(dx, dy) {
+    if (dx || dy) {
+      validateInteger(dx, "dx"), validateInteger(dy, "dy");
+      var data = "";
+      if (dx < 0)
+        data += CSI`${-dx}D`;
+      else if (dx > 0)
+        data += CSI`${dx}C`;
+      if (dy < 0)
+        data += CSI`${-dy}A`;
+      else if (dy > 0)
+        data += CSI`${dy}B`;
+      if (this.#autoCommit)
+        process.nextTick(() => this.#stream.write(data));
+      else
+        ArrayPrototypePush.call(this.#todo, data);
+    }
+    return this;
+  }
+  clearLine(dir) {
+    validateInteger(dir, "dir", -1, 1);
+    var data = dir < 0 ? kClearToLineBeginning : dir > 0 ? kClearToLineEnd : kClearLine;
+    if (this.#autoCommit)
+      process.nextTick(() => this.#stream.write(data));
+    else
+      ArrayPrototypePush.call(this.#todo, data);
+    return this;
+  }
+  clearScreenDown() {
+    if (this.#autoCommit)
+      process.nextTick(() => this.#stream.write(kClearScreenDown));
+    else
+      ArrayPrototypePush.call(this.#todo, kClearScreenDown);
+    return this;
+  }
+  commit() {
+    return new Promise((resolve) => {
+      this.#stream.write(ArrayPrototypeJoin.call(this.#todo, ""), resolve), this.#todo = [];
+    });
+  }
+  rollback() {
+    return this.#todo = [], this;
+  }
+}
+var PromisesInterface = class Interface3 extends _Interface {
+  constructor(input, output, completer, terminal) {
+    super(input, output, completer, terminal);
+  }
+  question(query, options = kEmptyObject) {
+    var signal = options?.signal;
+    if (signal) {
+      if (validateAbortSignal(signal, "options.signal"), signal.aborted)
+        return PromiseReject(new AbortError(void 0, { cause: signal.reason }));
+    }
+    return new Promise((resolve, reject) => {
+      var cb = resolve;
+      if (options?.signal) {
+        var onAbort = () => {
+          this[kQuestionCancel](), reject(new AbortError(void 0, { cause: signal.reason }));
+        };
+        signal.addEventListener("abort", onAbort, { once: !0 }), cb = (answer) => {
+          signal.removeEventListener("abort", onAbort), resolve(answer);
+        };
+      }
+      this[kQuestion](query, cb);
+    });
+  }
+}, Interface = Interface, clearLine = clearLine, clearScreenDown = clearScreenDown, createInterface = createInterface, cursorTo = cursorTo, emitKeypressEvents = emitKeypressEvents, moveCursor = moveCursor, promises = {
+  Readline,
+  Interface: PromisesInterface,
+  createInterface(input, output, completer, terminal) {
+    return new PromisesInterface(input, output, completer, terminal);
+  }
+}, readline_default = {
+  Interface,
+  clearLine,
+  clearScreenDown,
+  createInterface,
+  cursorTo,
+  emitKeypressEvents,
+  moveCursor,
+  promises,
+  [SymbolFor("__BUN_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__")]: {
+    CSI,
+    utils: {
+      getStringWidth,
+      stripVTControlCharacters
+    }
+  },
+  [SymbolFor("CommonJS")]: 0
+};
+export {
+  promises,
+  moveCursor,
+  emitKeypressEvents,
+  readline_default as default,
+  cursorTo,
+  createInterface,
+  clearScreenDown,
+  clearLine,
+  Interface
+};

@@ -1,1 +1,535 @@
-var q=function(w,E,D){if(typeof E=="function")D=E;if(typeof D!="function")throw new TypeError("callback must be a function");if(typeof E=="number")E={family:E};N.lookup(w,E).then((j)=>{if(j.sort((B,F)=>B.family-F.family),E?.all)D(null,j.map(x));else{const[{address:B,family:F}]=j;D(null,B,F)}},(j)=>{D(j)})},C=function(w,E){if(typeof E!="function")throw new TypeError("callback must be a function");N.resolveSrv(w,E).then((D)=>{E(null,D)},(D)=>{E(D)})},I=function(w,E){if(typeof E!="function")throw new TypeError("callback must be a function");N.resolveTxt(w,E).then((D)=>{E(null,D)},(D)=>{E(D)})},$=function(w,E){if(typeof E!="function")throw new TypeError("callback must be a function");N.resolveSoa(w,E).then((D)=>{E(null,D)},(D)=>{E(D)})},W=function(w,E){if(typeof E!="function")throw new TypeError("callback must be a function");N.resolveNaptr(w,E).then((D)=>{E(null,D)},(D)=>{E(D)})},V=function(w,E){if(typeof E!="function")throw new TypeError("callback must be a function");N.resolveMx(w,E).then((D)=>{E(null,D)},(D)=>{E(D)})},U=function(w,E){if(typeof E!="function")throw new TypeError("callback must be a function");N.resolveCaa(w,E).then((D)=>{E(null,D)},(D)=>{E(D)})},Y=function(w,E){if(typeof E!="function")throw new TypeError("callback must be a function");N.resolveNs(w,E).then((D)=>{E(null,D)},(D)=>{E(D)})},Z=function(w,E){if(typeof E!="function")throw new TypeError("callback must be a function");N.resolvePtr(w,E).then((D)=>{E(null,D)},(D)=>{E(D)})},T=function(w,E){if(typeof E!="function")throw new TypeError("callback must be a function");N.resolveCname(w,E).then((D)=>{E(null,D)},(D)=>{E(D)})},z=function(w,E,D){if(typeof D!="function")throw new TypeError("callback must be a function");D(null,w,E)},J=function(w,E,D){if(typeof E=="function")D=E;if(typeof D!="function")throw new TypeError("callback must be a function");N.resolve(w).then((j)=>{switch(E?.toLowerCase()){case"a":case"aaaa":D(null,w,j.map(({address:B})=>B));break;default:D(null,j);break}},(j)=>{D(j)})},H=function(w){return new G(w)},f=function(){},A=function(){},{dns:N}=globalThis.Bun,G=class w{constructor(E){}cancel(){}getServers(){return[]}resolve(E,D,j){if(typeof D=="function")j=D,D=null;if(typeof j!="function")throw new TypeError("callback must be a function");N.resolve(E).then((B)=>{switch(D?.toLowerCase()){case"a":case"aaaa":j(null,E,B.map(g));break;default:j(null,B);break}},(B)=>{j(B)})}resolve4(E,D,j){if(typeof D=="function")j=D,D=null;if(typeof j!="function")throw new TypeError("callback must be a function");N.lookup(E,{family:4}).then((B)=>{j(null,D?.ttl?B:B.map(g))},(B)=>{j(B)})}resolve6(E,D,j){if(typeof D=="function")j=D,D=null;if(typeof j!="function")throw new TypeError("callback must be a function");N.lookup(E,{family:6}).then((B)=>{j(null,D?.ttl?B:B.map(({address:F})=>F))},(B)=>{j(B)})}resolveAny(E,D){D(null,[])}resolveCname(E,D){if(typeof D!="function")throw new TypeError("callback must be a function");N.resolveCname(E,D).then((j)=>{D(null,j)},(j)=>{D(j)})}resolveMx(E,D){if(typeof D!="function")throw new TypeError("callback must be a function");N.resolveMx(E,D).then((j)=>{D(null,j)},(j)=>{D(j)})}resolveNaptr(E,D){if(typeof D!="function")throw new TypeError("callback must be a function");N.resolveNaptr(E,D).then((j)=>{D(null,j)},(j)=>{D(j)})}resolveNs(E,D){if(typeof D!="function")throw new TypeError("callback must be a function");N.resolveNs(E,D).then((j)=>{D(null,j)},(j)=>{D(j)})}resolvePtr(E,D){if(typeof D!="function")throw new TypeError("callback must be a function");N.resolvePtr(E,D).then((j)=>{D(null,j)},(j)=>{D(j)})}resolveSrv(E,D){if(typeof D!="function")throw new TypeError("callback must be a function");N.resolveSrv(E,D).then((j)=>{D(null,j)},(j)=>{D(j)})}resolveCaa(E,D){if(typeof D!="function")throw new TypeError("callback must be a function");N.resolveCaa(E,D).then((j)=>{D(null,j)},(j)=>{D(j)})}resolveTxt(E,D){if(typeof D!="function")throw new TypeError("callback must be a function");N.resolveTxt(E,D).then((j)=>{D(null,j)},(j)=>{D(j)})}resolveSoa(E,D){if(typeof D!="function")throw new TypeError("callback must be a function");N.resolveSoa(E,D).then((j)=>{D(null,j)},(j)=>{D(j)})}reverse(E,D){D(null,[])}setServers(E){}};Object.setPrototypeOf(H.prototype,G.prototype);Object.setPrototypeOf(H,G);var{resolve:J,resolve4:K,resolve6:O,resolveAny:Q,resolveCname:T,resolveCaa:U,resolveMx:V,resolveNaptr:W,resolveNs:Y,resolvePtr:Z,resolveSoa:$,resolveSrv:C,reverse:M,resolveTxt:I}=G.prototype,_=(w)=>{w.sort((j,B)=>j.family-B.family);const[{address:E,family:D}]=w;return{address:E,family:D}},x=(w)=>{const{address:E,family:D}=w;return{address:E,family:D}},L=(w)=>{return w.sort((E,D)=>E.family-D.family),w.map(x)},g=(w)=>w.address,P=(w)=>{return w?.map(g)},S={lookup(w,E){if(E?.all)return N.lookup(w,E).then(L);return N.lookup(w,E).then(_)},lookupService(w,E){return Promise.resolve([])},resolve(w,E){if(typeof E!=="string")E=null;switch(E?.toLowerCase()){case"a":case"aaaa":return N.resolve(w,E).then(_);default:return N.resolve(w,E)}},resolve4(w,E){if(E?.ttl)return N.lookup(w,{family:4});return N.lookup(w,{family:4}).then(P)},resolve6(w,E){if(E?.ttl)return N.lookup(w,{family:6});return N.lookup(w,{family:6}).then(P)},resolveSrv(w){return N.resolveSrv(w)},resolveTxt(w){return N.resolveTxt(w)},resolveSoa(w){return N.resolveSoa(w)},resolveNaptr(w){return N.resolveNaptr(w)},resolveMx(w){return N.resolveMx(w)},resolveCaa(w){return N.resolveCaa(w)},resolveNs(w){return N.resolveNs(w)},resolvePtr(w){return N.resolvePtr(w)},resolveCname(w){return N.resolveCname(w)},Resolver:class w{constructor(E){}cancel(){}getServers(){return[]}resolve(E,D){if(typeof D!=="string")D=null;switch(D?.toLowerCase()){case"a":case"aaaa":return N.resolve(E,D).then(_);default:return N.resolve(E,D)}}resolve4(E,D){if(D?.ttl)return N.lookup(E,{family:4});return N.lookup(E,{family:4}).then(P)}resolve6(E,D){if(D?.ttl)return N.lookup(E,{family:6});return N.lookup(E,{family:6}).then(P)}resolveAny(E){return Promise.resolve([])}resolveCname(E){return N.resolveCname(E)}resolveMx(E){return N.resolveMx(E)}resolveNaptr(E){return N.resolveNaptr(E)}resolveNs(E){return N.resolveNs(E)}resolvePtr(E){return N.resolvePtr(E)}resolveSoa(E){return N.resolveSoa(E)}resolveSrv(E){return N.resolveSrv(E)}resolveCaa(E){return N.resolveCaa(E)}resolveTxt(E){return N.resolveTxt(E)}reverse(E){return Promise.resolve([])}setServers(E){}}};for(let w of["resolveAny","reverse"])S[w]=()=>Promise.resolve(void 0);var X={ADDRCONFIG:0,ALL:1,V4MAPPED:2,NODATA:"DNS_ENODATA",FORMERR:"DNS_EFORMERR",SERVFAIL:"DNS_ESERVFAIL",NOTFOUND:"DNS_ENOTFOUND",NOTIMP:"DNS_ENOTIMP",REFUSED:"DNS_EREFUSED",BADQUERY:"DNS_EBADQUERY",BADNAME:"DNS_EBADNAME",BADFAMILY:"DNS_EBADFAMILY",BADRESP:"DNS_EBADRESP",CONNREFUSED:"DNS_ECONNREFUSED",TIMEOUT:"DNS_ETIMEOUT",EOF:"DNS_EEOF",FILE:"DNS_EFILE",NOMEM:"DNS_ENOMEM",DESTRUCTION:"DNS_EDESTRUCTION",BADSTR:"DNS_EBADSTR",BADFLAGS:"DNS_EBADFLAGS",NONAME:"DNS_ENONAME",BADHINTS:"DNS_EBADHINTS",NOTINITIALIZED:"DNS_ENOTINITIALIZED",LOADIPHLPAPI:"DNS_ELOADIPHLPAPI",ADDRGETNETWORKPARAMS:"DNS_EADDRGETNETWORKPARAMS",CANCELLED:"DNS_ECANCELLED",lookup:q,lookupService:z,Resolver:H,setServers:A,setDefaultResultOrder:f,resolve:J,reverse:M,resolve4:K,resolve6:O,resolveAny:Q,resolveCname:T,resolveCaa:U,resolveMx:V,resolveNs:Y,resolvePtr:Z,resolveSoa:$,resolveSrv:C,resolveTxt:I,resolveNaptr:W,promises:S,[Symbol.for("CommonJS")]:0},_w=X,{ADDRCONFIG:R,ALL:v,V4MAPPED:y,NODATA:u,FORMERR:i,SERVFAIL:d,NOTFOUND:p,NOTIMP:h,REFUSED:m,BADQUERY:b,BADNAME:n,BADFAMILY:k,BADRESP:t,CONNREFUSED:o,TIMEOUT:r,EOF:e,FILE:c,NOMEM:s,DESTRUCTION:l,BADSTR:a,BADFLAGS:ww,NONAME:Ew,BADHINTS:Dw,NOTINITIALIZED:jw,LOADIPHLPAPI:Bw,ADDRGETNETWORKPARAMS:Fw,CANCELLED:Nw}=X;export{A as setServers,f as setDefaultResultOrder,M as reverse,I as resolveTxt,C as resolveSrv,$ as resolveSoa,Z as resolvePtr,Y as resolveNs,W as resolveNaptr,V as resolveMx,T as resolveCname,U as resolveCaa,Q as resolveAny,O as resolve6,K as resolve4,J as resolve,S as promises,z as lookupService,q as lookup,_w as default,y as V4MAPPED,r as TIMEOUT,d as SERVFAIL,H as Resolver,m as REFUSED,jw as NOTINITIALIZED,h as NOTIMP,p as NOTFOUND,Ew as NONAME,s as NOMEM,u as NODATA,Bw as LOADIPHLPAPI,i as FORMERR,c as FILE,e as EOF,l as DESTRUCTION,o as CONNREFUSED,Nw as CANCELLED,a as BADSTR,t as BADRESP,b as BADQUERY,n as BADNAME,Dw as BADHINTS,ww as BADFLAGS,k as BADFAMILY,v as ALL,Fw as ADDRGETNETWORKPARAMS,R as ADDRCONFIG};
+var lookup = function(domain, options, callback) {
+  if (typeof options == "function")
+    callback = options;
+  if (typeof callback != "function")
+    throw new TypeError("callback must be a function");
+  if (typeof options == "number")
+    options = { family: options };
+  dns.lookup(domain, options).then((res) => {
+    if (res.sort((a, b) => a.family - b.family), options?.all)
+      callback(null, res.map(mapLookupAll));
+    else {
+      const [{ address, family }] = res;
+      callback(null, address, family);
+    }
+  }, (error) => {
+    callback(error);
+  });
+}, resolveSrv = function(hostname, callback) {
+  if (typeof callback != "function")
+    throw new TypeError("callback must be a function");
+  dns.resolveSrv(hostname, callback).then((results) => {
+    callback(null, results);
+  }, (error) => {
+    callback(error);
+  });
+}, resolveTxt = function(hostname, callback) {
+  if (typeof callback != "function")
+    throw new TypeError("callback must be a function");
+  dns.resolveTxt(hostname, callback).then((results) => {
+    callback(null, results);
+  }, (error) => {
+    callback(error);
+  });
+}, resolveSoa = function(hostname, callback) {
+  if (typeof callback != "function")
+    throw new TypeError("callback must be a function");
+  dns.resolveSoa(hostname, callback).then((results) => {
+    callback(null, results);
+  }, (error) => {
+    callback(error);
+  });
+}, resolveNaptr = function(hostname, callback) {
+  if (typeof callback != "function")
+    throw new TypeError("callback must be a function");
+  dns.resolveNaptr(hostname, callback).then((results) => {
+    callback(null, results);
+  }, (error) => {
+    callback(error);
+  });
+}, resolveMx = function(hostname, callback) {
+  if (typeof callback != "function")
+    throw new TypeError("callback must be a function");
+  dns.resolveMx(hostname, callback).then((results) => {
+    callback(null, results);
+  }, (error) => {
+    callback(error);
+  });
+}, resolveCaa = function(hostname, callback) {
+  if (typeof callback != "function")
+    throw new TypeError("callback must be a function");
+  dns.resolveCaa(hostname, callback).then((results) => {
+    callback(null, results);
+  }, (error) => {
+    callback(error);
+  });
+}, resolveNs = function(hostname, callback) {
+  if (typeof callback != "function")
+    throw new TypeError("callback must be a function");
+  dns.resolveNs(hostname, callback).then((results) => {
+    callback(null, results);
+  }, (error) => {
+    callback(error);
+  });
+}, resolvePtr = function(hostname, callback) {
+  if (typeof callback != "function")
+    throw new TypeError("callback must be a function");
+  dns.resolvePtr(hostname, callback).then((results) => {
+    callback(null, results);
+  }, (error) => {
+    callback(error);
+  });
+}, resolveCname = function(hostname, callback) {
+  if (typeof callback != "function")
+    throw new TypeError("callback must be a function");
+  dns.resolveCname(hostname, callback).then((results) => {
+    callback(null, results);
+  }, (error) => {
+    callback(error);
+  });
+}, lookupService = function(address, port, callback) {
+  if (typeof callback != "function")
+    throw new TypeError("callback must be a function");
+  callback(null, address, port);
+}, resolve = function(hostname, rrtype, callback) {
+  if (typeof rrtype == "function")
+    callback = rrtype;
+  if (typeof callback != "function")
+    throw new TypeError("callback must be a function");
+  dns.resolve(hostname).then((results) => {
+    switch (rrtype?.toLowerCase()) {
+      case "a":
+      case "aaaa":
+        callback(null, hostname, results.map(({ address }) => address));
+        break;
+      default:
+        callback(null, results);
+        break;
+    }
+  }, (error) => {
+    callback(error);
+  });
+}, Resolver = function(options) {
+  return new InternalResolver(options);
+}, setDefaultResultOrder = function() {
+}, setServers = function() {
+}, { dns } = globalThis.Bun, InternalResolver = class Resolver2 {
+  constructor(options) {
+  }
+  cancel() {
+  }
+  getServers() {
+    return [];
+  }
+  resolve(hostname, rrtype, callback) {
+    if (typeof rrtype == "function")
+      callback = rrtype, rrtype = null;
+    if (typeof callback != "function")
+      throw new TypeError("callback must be a function");
+    dns.resolve(hostname).then((results) => {
+      switch (rrtype?.toLowerCase()) {
+        case "a":
+        case "aaaa":
+          callback(null, hostname, results.map(mapResolveX));
+          break;
+        default:
+          callback(null, results);
+          break;
+      }
+    }, (error) => {
+      callback(error);
+    });
+  }
+  resolve4(hostname, options, callback) {
+    if (typeof options == "function")
+      callback = options, options = null;
+    if (typeof callback != "function")
+      throw new TypeError("callback must be a function");
+    dns.lookup(hostname, { family: 4 }).then((addresses) => {
+      callback(null, options?.ttl ? addresses : addresses.map(mapResolveX));
+    }, (error) => {
+      callback(error);
+    });
+  }
+  resolve6(hostname, options, callback) {
+    if (typeof options == "function")
+      callback = options, options = null;
+    if (typeof callback != "function")
+      throw new TypeError("callback must be a function");
+    dns.lookup(hostname, { family: 6 }).then((addresses) => {
+      callback(null, options?.ttl ? addresses : addresses.map(({ address }) => address));
+    }, (error) => {
+      callback(error);
+    });
+  }
+  resolveAny(hostname, callback) {
+    callback(null, []);
+  }
+  resolveCname(hostname, callback) {
+    if (typeof callback != "function")
+      throw new TypeError("callback must be a function");
+    dns.resolveCname(hostname, callback).then((results) => {
+      callback(null, results);
+    }, (error) => {
+      callback(error);
+    });
+  }
+  resolveMx(hostname, callback) {
+    if (typeof callback != "function")
+      throw new TypeError("callback must be a function");
+    dns.resolveMx(hostname, callback).then((results) => {
+      callback(null, results);
+    }, (error) => {
+      callback(error);
+    });
+  }
+  resolveNaptr(hostname, callback) {
+    if (typeof callback != "function")
+      throw new TypeError("callback must be a function");
+    dns.resolveNaptr(hostname, callback).then((results) => {
+      callback(null, results);
+    }, (error) => {
+      callback(error);
+    });
+  }
+  resolveNs(hostname, callback) {
+    if (typeof callback != "function")
+      throw new TypeError("callback must be a function");
+    dns.resolveNs(hostname, callback).then((results) => {
+      callback(null, results);
+    }, (error) => {
+      callback(error);
+    });
+  }
+  resolvePtr(hostname, callback) {
+    if (typeof callback != "function")
+      throw new TypeError("callback must be a function");
+    dns.resolvePtr(hostname, callback).then((results) => {
+      callback(null, results);
+    }, (error) => {
+      callback(error);
+    });
+  }
+  resolveSrv(hostname, callback) {
+    if (typeof callback != "function")
+      throw new TypeError("callback must be a function");
+    dns.resolveSrv(hostname, callback).then((results) => {
+      callback(null, results);
+    }, (error) => {
+      callback(error);
+    });
+  }
+  resolveCaa(hostname, callback) {
+    if (typeof callback != "function")
+      throw new TypeError("callback must be a function");
+    dns.resolveCaa(hostname, callback).then((results) => {
+      callback(null, results);
+    }, (error) => {
+      callback(error);
+    });
+  }
+  resolveTxt(hostname, callback) {
+    if (typeof callback != "function")
+      throw new TypeError("callback must be a function");
+    dns.resolveTxt(hostname, callback).then((results) => {
+      callback(null, results);
+    }, (error) => {
+      callback(error);
+    });
+  }
+  resolveSoa(hostname, callback) {
+    if (typeof callback != "function")
+      throw new TypeError("callback must be a function");
+    dns.resolveSoa(hostname, callback).then((results) => {
+      callback(null, results);
+    }, (error) => {
+      callback(error);
+    });
+  }
+  reverse(ip, callback) {
+    callback(null, []);
+  }
+  setServers(servers) {
+  }
+};
+Object.setPrototypeOf(Resolver.prototype, InternalResolver.prototype);
+Object.setPrototypeOf(Resolver, InternalResolver);
+var {
+  resolve,
+  resolve4,
+  resolve6,
+  resolveAny,
+  resolveCname,
+  resolveCaa,
+  resolveMx,
+  resolveNaptr,
+  resolveNs,
+  resolvePtr,
+  resolveSoa,
+  resolveSrv,
+  reverse,
+  resolveTxt
+} = InternalResolver.prototype, promisifyLookup = (res) => {
+  res.sort((a, b) => a.family - b.family);
+  const [{ address, family }] = res;
+  return { address, family };
+}, mapLookupAll = (res) => {
+  const { address, family } = res;
+  return { address, family };
+}, promisifyLookupAll = (res) => {
+  return res.sort((a, b) => a.family - b.family), res.map(mapLookupAll);
+}, mapResolveX = (a) => a.address, promisifyResolveX = (res) => {
+  return res?.map(mapResolveX);
+}, promises = {
+  lookup(domain, options) {
+    if (options?.all)
+      return dns.lookup(domain, options).then(promisifyLookupAll);
+    return dns.lookup(domain, options).then(promisifyLookup);
+  },
+  lookupService(address, port) {
+    return Promise.resolve([]);
+  },
+  resolve(hostname, rrtype) {
+    if (typeof rrtype !== "string")
+      rrtype = null;
+    switch (rrtype?.toLowerCase()) {
+      case "a":
+      case "aaaa":
+        return dns.resolve(hostname, rrtype).then(promisifyLookup);
+      default:
+        return dns.resolve(hostname, rrtype);
+    }
+  },
+  resolve4(hostname, options) {
+    if (options?.ttl)
+      return dns.lookup(hostname, { family: 4 });
+    return dns.lookup(hostname, { family: 4 }).then(promisifyResolveX);
+  },
+  resolve6(hostname, options) {
+    if (options?.ttl)
+      return dns.lookup(hostname, { family: 6 });
+    return dns.lookup(hostname, { family: 6 }).then(promisifyResolveX);
+  },
+  resolveSrv(hostname) {
+    return dns.resolveSrv(hostname);
+  },
+  resolveTxt(hostname) {
+    return dns.resolveTxt(hostname);
+  },
+  resolveSoa(hostname) {
+    return dns.resolveSoa(hostname);
+  },
+  resolveNaptr(hostname) {
+    return dns.resolveNaptr(hostname);
+  },
+  resolveMx(hostname) {
+    return dns.resolveMx(hostname);
+  },
+  resolveCaa(hostname) {
+    return dns.resolveCaa(hostname);
+  },
+  resolveNs(hostname) {
+    return dns.resolveNs(hostname);
+  },
+  resolvePtr(hostname) {
+    return dns.resolvePtr(hostname);
+  },
+  resolveCname(hostname) {
+    return dns.resolveCname(hostname);
+  },
+  Resolver: class Resolver3 {
+    constructor(options) {
+    }
+    cancel() {
+    }
+    getServers() {
+      return [];
+    }
+    resolve(hostname, rrtype) {
+      if (typeof rrtype !== "string")
+        rrtype = null;
+      switch (rrtype?.toLowerCase()) {
+        case "a":
+        case "aaaa":
+          return dns.resolve(hostname, rrtype).then(promisifyLookup);
+        default:
+          return dns.resolve(hostname, rrtype);
+      }
+    }
+    resolve4(hostname, options) {
+      if (options?.ttl)
+        return dns.lookup(hostname, { family: 4 });
+      return dns.lookup(hostname, { family: 4 }).then(promisifyResolveX);
+    }
+    resolve6(hostname, options) {
+      if (options?.ttl)
+        return dns.lookup(hostname, { family: 6 });
+      return dns.lookup(hostname, { family: 6 }).then(promisifyResolveX);
+    }
+    resolveAny(hostname) {
+      return Promise.resolve([]);
+    }
+    resolveCname(hostname) {
+      return dns.resolveCname(hostname);
+    }
+    resolveMx(hostname) {
+      return dns.resolveMx(hostname);
+    }
+    resolveNaptr(hostname) {
+      return dns.resolveNaptr(hostname);
+    }
+    resolveNs(hostname) {
+      return dns.resolveNs(hostname);
+    }
+    resolvePtr(hostname) {
+      return dns.resolvePtr(hostname);
+    }
+    resolveSoa(hostname) {
+      return dns.resolveSoa(hostname);
+    }
+    resolveSrv(hostname) {
+      return dns.resolveSrv(hostname);
+    }
+    resolveCaa(hostname) {
+      return dns.resolveCaa(hostname);
+    }
+    resolveTxt(hostname) {
+      return dns.resolveTxt(hostname);
+    }
+    reverse(ip) {
+      return Promise.resolve([]);
+    }
+    setServers(servers) {
+    }
+  }
+};
+for (let key of ["resolveAny", "reverse"])
+  promises[key] = () => Promise.resolve(void 0);
+var exports = {
+  ADDRCONFIG: 0,
+  ALL: 1,
+  V4MAPPED: 2,
+  NODATA: "DNS_ENODATA",
+  FORMERR: "DNS_EFORMERR",
+  SERVFAIL: "DNS_ESERVFAIL",
+  NOTFOUND: "DNS_ENOTFOUND",
+  NOTIMP: "DNS_ENOTIMP",
+  REFUSED: "DNS_EREFUSED",
+  BADQUERY: "DNS_EBADQUERY",
+  BADNAME: "DNS_EBADNAME",
+  BADFAMILY: "DNS_EBADFAMILY",
+  BADRESP: "DNS_EBADRESP",
+  CONNREFUSED: "DNS_ECONNREFUSED",
+  TIMEOUT: "DNS_ETIMEOUT",
+  EOF: "DNS_EEOF",
+  FILE: "DNS_EFILE",
+  NOMEM: "DNS_ENOMEM",
+  DESTRUCTION: "DNS_EDESTRUCTION",
+  BADSTR: "DNS_EBADSTR",
+  BADFLAGS: "DNS_EBADFLAGS",
+  NONAME: "DNS_ENONAME",
+  BADHINTS: "DNS_EBADHINTS",
+  NOTINITIALIZED: "DNS_ENOTINITIALIZED",
+  LOADIPHLPAPI: "DNS_ELOADIPHLPAPI",
+  ADDRGETNETWORKPARAMS: "DNS_EADDRGETNETWORKPARAMS",
+  CANCELLED: "DNS_ECANCELLED",
+  lookup,
+  lookupService,
+  Resolver,
+  setServers,
+  setDefaultResultOrder,
+  resolve,
+  reverse,
+  resolve4,
+  resolve6,
+  resolveAny,
+  resolveCname,
+  resolveCaa,
+  resolveMx,
+  resolveNs,
+  resolvePtr,
+  resolveSoa,
+  resolveSrv,
+  resolveTxt,
+  resolveNaptr,
+  promises,
+  [Symbol.for("CommonJS")]: 0
+}, dns_default = exports, {
+  ADDRCONFIG,
+  ALL,
+  V4MAPPED,
+  NODATA,
+  FORMERR,
+  SERVFAIL,
+  NOTFOUND,
+  NOTIMP,
+  REFUSED,
+  BADQUERY,
+  BADNAME,
+  BADFAMILY,
+  BADRESP,
+  CONNREFUSED,
+  TIMEOUT,
+  EOF,
+  FILE,
+  NOMEM,
+  DESTRUCTION,
+  BADSTR,
+  BADFLAGS,
+  NONAME,
+  BADHINTS,
+  NOTINITIALIZED,
+  LOADIPHLPAPI,
+  ADDRGETNETWORKPARAMS,
+  CANCELLED
+} = exports;
+export {
+  setServers,
+  setDefaultResultOrder,
+  reverse,
+  resolveTxt,
+  resolveSrv,
+  resolveSoa,
+  resolvePtr,
+  resolveNs,
+  resolveNaptr,
+  resolveMx,
+  resolveCname,
+  resolveCaa,
+  resolveAny,
+  resolve6,
+  resolve4,
+  resolve,
+  promises,
+  lookupService,
+  lookup,
+  dns_default as default,
+  V4MAPPED,
+  TIMEOUT,
+  SERVFAIL,
+  Resolver,
+  REFUSED,
+  NOTINITIALIZED,
+  NOTIMP,
+  NOTFOUND,
+  NONAME,
+  NOMEM,
+  NODATA,
+  LOADIPHLPAPI,
+  FORMERR,
+  FILE,
+  EOF,
+  DESTRUCTION,
+  CONNREFUSED,
+  CANCELLED,
+  BADSTR,
+  BADRESP,
+  BADQUERY,
+  BADNAME,
+  BADHINTS,
+  BADFLAGS,
+  BADFAMILY,
+  ALL,
+  ADDRGETNETWORKPARAMS,
+  ADDRCONFIG
+};

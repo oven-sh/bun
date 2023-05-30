@@ -1,1 +1,38 @@
-function x(g,q){throw y(x),new v(g,q)}function y(...g){for(let q of g)Object.defineProperty(q,"name",{value:"::bunternal::"})}class v extends Error{code;constructor(g,q){super(g+" is not yet implemented in Bun."+(q?" Track the status & thumbs up the issue: https://github.com/oven-sh/bun/issues/"+q:""));this.name="NotImplementedError",this.code="ERR_NOT_IMPLEMENTED",y(v)}}var B=function(){x("node:dgram createSocket",1630)},C=function(){x("node:dgram Socket",1630)},D=function(){x("node:dgram _createSocketHandle",1630)},G={createSocket:B,Socket:C,_createSocketHandle:D,[Symbol.for("CommonJS")]:0};y(B,C,D);export{G as default,B as createSocket,D as _createSocketHandle,C as Socket};
+function throwNotImplemented(feature, issue) {
+  throw hideFromStack(throwNotImplemented), new NotImplementedError(feature, issue);
+}
+function hideFromStack(...fns) {
+  for (let fn of fns)
+    Object.defineProperty(fn, "name", {
+      value: "::bunternal::"
+    });
+}
+
+class NotImplementedError extends Error {
+  code;
+  constructor(feature, issue) {
+    super(feature + " is not yet implemented in Bun." + (issue ? " Track the status & thumbs up the issue: https://github.com/oven-sh/bun/issues/" + issue : ""));
+    this.name = "NotImplementedError", this.code = "ERR_NOT_IMPLEMENTED", hideFromStack(NotImplementedError);
+  }
+}
+
+// src/js/node/dgram.ts
+var createSocket = function() {
+  throwNotImplemented("node:dgram createSocket", 1630);
+}, Socket = function() {
+  throwNotImplemented("node:dgram Socket", 1630);
+}, _createSocketHandle = function() {
+  throwNotImplemented("node:dgram _createSocketHandle", 1630);
+}, defaultObject = {
+  createSocket,
+  Socket,
+  _createSocketHandle,
+  [Symbol.for("CommonJS")]: 0
+};
+hideFromStack(createSocket, Socket, _createSocketHandle);
+export {
+  defaultObject as default,
+  createSocket,
+  _createSocketHandle,
+  Socket
+};

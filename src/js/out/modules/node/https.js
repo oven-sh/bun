@@ -1,1 +1,5 @@
-export*from"node:http";var a=import.meta.require("node:http"),d=a;export{d as default};
+export * from "node:http";
+var HTTP = import.meta.require("node:http"), https_default = HTTP;
+export {
+  https_default as default
+};

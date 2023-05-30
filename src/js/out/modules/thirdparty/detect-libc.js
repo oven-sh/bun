@@ -1,1 +1,29 @@
-function e(){return Promise.resolve(p())}function p(){return null}function g(){return Promise.resolve(h())}function h(){return null}function j(){return!1}function k(){return Promise.resolve(j())}var d="glibc",f="musl";export{g as versionAsync,h as version,j as isNonGlibcLinuxSync,k as isNonGlibcLinux,p as familySync,e as family,f as MUSL,d as GLIBC};
+function family() {
+  return Promise.resolve(familySync());
+}
+function familySync() {
+  return null;
+}
+function versionAsync() {
+  return Promise.resolve(version());
+}
+function version() {
+  return null;
+}
+function isNonGlibcLinuxSync() {
+  return !1;
+}
+function isNonGlibcLinux() {
+  return Promise.resolve(isNonGlibcLinuxSync());
+}
+var GLIBC = "glibc", MUSL = "musl";
+export {
+  versionAsync,
+  version,
+  isNonGlibcLinuxSync,
+  isNonGlibcLinux,
+  familySync,
+  family,
+  MUSL,
+  GLIBC
+};

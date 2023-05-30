@@ -1,1 +1,21 @@
-var q=process.argv.at(1);if(!q)throw d=new Error("To run a wasm file with Bun, the first argument must be a path to a .wasm file"),d.name="WasmFileNotFound",d;var d,{WASM_CWD:x=process.cwd(),WASM_ROOT_DIR:y="/",WASM_ENV_STR:g=void 0,WASM_USE_ASYNC_INIT:z=""}=process.env,B=process.env;if(g?.length)B=JSON.parse(g);var j=new WASI({args:process.argv.slice(1),env:B,preopens:{".":x||process.cwd(),"/":y||"/"}}),k=globalThis.wasmSourceBytes;if(!k){const p=Bun.fs(),t=import.meta.path;k=p.readFileSync(t)}var b=new WebAssembly.Module(k),F=!z?new WebAssembly.Instance(b,j.getImports(b)):await WebAssembly.instantiate(b,j.getImports(b));j.start(F);process.exit(0);
+var filePath = process.argv.at(1);
+if (!filePath)
+  throw err = new Error("To run a wasm file with Bun, the first argument must be a path to a .wasm file"), err.name = "WasmFileNotFound", err;
+var err, { WASM_CWD = process.cwd(), WASM_ROOT_DIR = "/", WASM_ENV_STR = void 0, WASM_USE_ASYNC_INIT = "" } = process.env, env = process.env;
+if (WASM_ENV_STR?.length)
+  env = JSON.parse(WASM_ENV_STR);
+var wasi = new WASI({
+  args: process.argv.slice(1),
+  env,
+  preopens: {
+    ".": WASM_CWD || process.cwd(),
+    "/": WASM_ROOT_DIR || "/"
+  }
+}), source = globalThis.wasmSourceBytes;
+if (!source) {
+  const fs = Bun.fs(), file = import.meta.path;
+  source = fs.readFileSync(file);
+}
+var wasm = new WebAssembly.Module(source), instance = !WASM_USE_ASYNC_INIT ? new WebAssembly.Instance(wasm, wasi.getImports(wasm)) : await WebAssembly.instantiate(wasm, wasi.getImports(wasm));
+wasi.start(instance);
+process.exit(0);

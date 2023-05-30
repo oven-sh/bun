@@ -1,1 +1,269 @@
-var h=function(M){return new __GlobalBunCString(M)},T=function(M,E,$,j){const q=typeof FFIType[E]==="number"&&FFIType[E]!==FFIType.void;var z=new Array(M.length),G=new Array(M.length);for(let P=0;P<M.length;P++){z[P]=`p${P}`;const Q=A[FFIType[M[P]]];if(Q)G[P]=`(${Q.toString()})(p${P})`;else throw new TypeError(`Unsupported type ${M[P]}. Must be one of: ${Object.keys(FFIType).sort().join(", ")}`)}var H=`functionToCall(${G.join(", ")})`;if(q)if(FFIType[E]===FFIType.cstring)H=`return (${h.toString()})(${H})`;else H=`return ${H}`;var J=new Function("functionToCall",...z,H);Object.defineProperty(J,"name",{value:j});var K;switch(z.length){case 0:K=()=>J($);break;case 1:K=(P)=>J($,P);break;case 2:K=(P,Q)=>J($,P,Q);break;case 3:K=(P,Q,U)=>J($,P,Q,U);break;case 4:K=(P,Q,U,V)=>J($,P,Q,U,V);break;case 5:K=(P,Q,U,V,X)=>J($,P,Q,U,V,X);break;case 6:K=(P,Q,U,V,X,Y)=>J($,P,Q,U,V,X,Y);break;case 7:K=(P,Q,U,V,X,Y,Z)=>J($,P,Q,U,V,X,Y,Z);break;case 8:K=(P,Q,U,V,X,Y,Z,D)=>J($,P,Q,U,V,X,Y,Z,D);break;case 9:K=(P,Q,U,V,X,Y,Z,D,_)=>J($,P,Q,U,V,X,Y,Z,D,_);break;default:{K=(...P)=>J($,...P);break}}return K.native=$,K.ptr=$.ptr,K};function y(M,E){const $=w(M,E);for(let q in $.symbols){var j=$.symbols[q];if(E[q]?.args?.length||FFIType[E[q]?.returns]===FFIType.cstring)$.symbols[q]=T(E[q].args??[],E[q].returns??FFIType.void,j,M.includes("/")?`${q} (${M.split("/").pop()})`:`${q} (${M})`);else $.symbols[q].native=$.symbols[q]}return $}function c(M){const E=L(M);for(let j in E.symbols){var $=E.symbols[j];if(M[j]?.args?.length||FFIType[M[j]?.returns]===FFIType.cstring)E.symbols[j]=T(M[j].args??[],M[j].returns??FFIType.void,$,j);else E.symbols[j].native=E.symbols[j]}return E}var s=function(M){M()};function i(M){const E=`CFunction${u++}`;var $=c({[E]:M}),j=!1,q=$.close;return $.symbols[E].close=()=>{if(j||!q)return;j=!0,q(),q=void 0},F||=new FinalizationRegistry(s),F.register($.symbols[E],$.symbols[E].close),$.symbols[E]}var R="dylib",I=globalThis.Bun.FFI,x=(M,E)=>typeof E==="undefined"?I.ptr(M):I.ptr(M,E),S=I.toBuffer,B=I.toArrayBuffer,O=I.viewSource,N=I.CString,L=I.linkSymbols,w=I.dlopen,d=I.callback,W=I.closeCallback;delete I.callback;delete I.closeCallback;class m{constructor(M,E){const{ctx:$,ptr:j}=d(E,M);this.#M=$,this.ptr=j,this.#E=!!E?.threadsafe}ptr;#M;#E;get threadsafe(){return this.#E}[Symbol.toPrimitive](){const{ptr:M}=this;return typeof M==="number"?M:0}close(){const M=this.#M;if(this.ptr=null,this.#M=null,M)W(M)}}class k extends String{constructor(M,E,$){super(M?typeof $==="number"&&Number.isSafeInteger($)?new N(M,E||0,$):new N(M):"");if(this.ptr=typeof M==="number"?M:0,typeof E!=="undefined")this.byteOffset=E;if(typeof $!=="undefined")this.byteLength=$}ptr;byteOffset;byteLength;#M;get arrayBuffer(){if(this.#M)return this.#M;if(!this.ptr)return this.#M=new ArrayBuffer(0);return this.#M=B(this.ptr,this.byteOffset,this.byteLength)}}Object.defineProperty(globalThis,"__GlobalBunCString",{value:k,enumerable:!1,configurable:!1});var A=new Array(18),b=(M)=>M|0;A.fill(b);A[FFIType.uint8_t]=function M(E){return E<0?0:E>=255?255:E|0};A[FFIType.int16_t]=function M(E){return E<=-32768?-32768:E>=32768?32768:E|0};A[FFIType.uint16_t]=function M(E){return E<=0?0:E>=65536?65536:E|0};A[FFIType.int32_t]=function M(E){return E|0};A[FFIType.uint32_t]=function M(E){return E<=0?0:E>=4294967295?4294967295:+E||0};A[FFIType.i64_fast]=function M(E){if(typeof E==="bigint"){if(E<=BigInt(Number.MAX_SAFE_INTEGER)&&E>=BigInt(-Number.MAX_SAFE_INTEGER))return Number(E).valueOf()||0;return E}return!E?0:+E||0};A[FFIType.u64_fast]=function M(E){if(typeof E==="bigint"){if(E<=BigInt(Number.MAX_SAFE_INTEGER)&&E>=0)return Number(E).valueOf()||0;return E}return!E?0:+E||0};A[FFIType.int64_t]=function M(E){if(typeof E==="bigint")return E;if(typeof E==="number")return BigInt(E||0);return BigInt(+E||0)};A[FFIType.uint64_t]=function M(E){if(typeof E==="bigint")return E;if(typeof E==="number")return E<=0?BigInt(0):BigInt(E||0);return BigInt(+E||0)};A[FFIType.u64_fast]=function M(E){if(typeof E==="bigint"){if(E<=BigInt(Number.MAX_SAFE_INTEGER)&&E>=BigInt(0))return Number(E);return E}return typeof E==="number"?E<=0?0:+E||0:+E||0};A[FFIType.uint16_t]=function M(E){const $=(typeof E==="bigint"?Number(E):E)|0;return $<=0?0:$>65535?65535:$};A[FFIType.double]=function M(E){if(typeof E==="bigint"){if(E.valueOf()<BigInt(Number.MAX_VALUE))return Math.abs(Number(E).valueOf())+0.00000000000001-0.00000000000001}if(!E)return 0;return E+0.00000000000001-0.00000000000001};A[FFIType.float]=A[10]=function M(E){return Math.fround(E)};A[FFIType.bool]=function M(E){return!!E};Object.defineProperty(globalThis,"__GlobalBunFFIPtrFunctionForWrapper",{value:x,enumerable:!1,configurable:!0});A[FFIType.cstring]=A[FFIType.pointer]=function M(E){if(typeof E==="number")return E;if(!E)return null;if(ArrayBuffer.isView(E)||E instanceof ArrayBuffer)return __GlobalBunFFIPtrFunctionForWrapper(E);if(typeof E==="string")throw new TypeError("To convert a string to a pointer, encode it as a buffer");throw new TypeError(`Unable to convert ${E} to a pointer`)};A[FFIType.function]=function M(E){if(typeof E==="number")return E;if(typeof E==="bigint")return Number(E);var $=E&&E.ptr;if(!$)throw new TypeError("Expected function to be a JSCallback or a number");return $};var C={dlopen:w,callback:()=>{throw new Error("Deprecated. Use new JSCallback(options, fn) instead")}},u=0,F,f=I.read;export{O as viewSource,S as toBuffer,B as toArrayBuffer,R as suffix,f as read,x as ptr,C as native,c as linkSymbols,y as dlopen,m as JSCallback,k as CString,i as CFunction};
+var cstringReturnType = function(val) {
+  return new __GlobalBunCString(val);
+}, FFIBuilder = function(params, returnType, functionToCall, name) {
+  const hasReturnType = typeof FFIType[returnType] === "number" && FFIType[returnType] !== FFIType.void;
+  var paramNames = new Array(params.length), args = new Array(params.length);
+  for (let i = 0;i < params.length; i++) {
+    paramNames[i] = `p${i}`;
+    const wrapper = ffiWrappers[FFIType[params[i]]];
+    if (wrapper)
+      args[i] = `(${wrapper.toString()})(p${i})`;
+    else
+      throw new TypeError(`Unsupported type ${params[i]}. Must be one of: ${Object.keys(FFIType).sort().join(", ")}`);
+  }
+  var code = `functionToCall(${args.join(", ")})`;
+  if (hasReturnType)
+    if (FFIType[returnType] === FFIType.cstring)
+      code = `return (${cstringReturnType.toString()})(${code})`;
+    else
+      code = `return ${code}`;
+  var func = new Function("functionToCall", ...paramNames, code);
+  Object.defineProperty(func, "name", {
+    value: name
+  });
+  var wrap;
+  switch (paramNames.length) {
+    case 0:
+      wrap = () => func(functionToCall);
+      break;
+    case 1:
+      wrap = (arg1) => func(functionToCall, arg1);
+      break;
+    case 2:
+      wrap = (arg1, arg2) => func(functionToCall, arg1, arg2);
+      break;
+    case 3:
+      wrap = (arg1, arg2, arg3) => func(functionToCall, arg1, arg2, arg3);
+      break;
+    case 4:
+      wrap = (arg1, arg2, arg3, arg4) => func(functionToCall, arg1, arg2, arg3, arg4);
+      break;
+    case 5:
+      wrap = (arg1, arg2, arg3, arg4, arg5) => func(functionToCall, arg1, arg2, arg3, arg4, arg5);
+      break;
+    case 6:
+      wrap = (arg1, arg2, arg3, arg4, arg5, arg6) => func(functionToCall, arg1, arg2, arg3, arg4, arg5, arg6);
+      break;
+    case 7:
+      wrap = (arg1, arg2, arg3, arg4, arg5, arg6, arg7) => func(functionToCall, arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+      break;
+    case 8:
+      wrap = (arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) => func(functionToCall, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
+      break;
+    case 9:
+      wrap = (arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) => func(functionToCall, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
+      break;
+    default: {
+      wrap = (...args2) => func(functionToCall, ...args2);
+      break;
+    }
+  }
+  return wrap.native = functionToCall, wrap.ptr = functionToCall.ptr, wrap;
+};
+function dlopen(path, options) {
+  const result = nativeDLOpen(path, options);
+  for (let key in result.symbols) {
+    var symbol = result.symbols[key];
+    if (options[key]?.args?.length || FFIType[options[key]?.returns] === FFIType.cstring)
+      result.symbols[key] = FFIBuilder(options[key].args ?? [], options[key].returns ?? FFIType.void, symbol, path.includes("/") ? `${key} (${path.split("/").pop()})` : `${key} (${path})`);
+    else
+      result.symbols[key].native = result.symbols[key];
+  }
+  return result;
+}
+function linkSymbols(options) {
+  const result = nativeLinkSymbols(options);
+  for (let key in result.symbols) {
+    var symbol = result.symbols[key];
+    if (options[key]?.args?.length || FFIType[options[key]?.returns] === FFIType.cstring)
+      result.symbols[key] = FFIBuilder(options[key].args ?? [], options[key].returns ?? FFIType.void, symbol, key);
+    else
+      result.symbols[key].native = result.symbols[key];
+  }
+  return result;
+}
+var onCloseCFunction = function(close) {
+  close();
+};
+function CFunction(options) {
+  const identifier = `CFunction${cFunctionI++}`;
+  var result = linkSymbols({
+    [identifier]: options
+  }), hasClosed = !1, close = result.close;
+  return result.symbols[identifier].close = () => {
+    if (hasClosed || !close)
+      return;
+    hasClosed = !0, close(), close = void 0;
+  }, cFunctionRegistry ||= new FinalizationRegistry(onCloseCFunction), cFunctionRegistry.register(result.symbols[identifier], result.symbols[identifier].close), result.symbols[identifier];
+}
+var suffix = "dylib", ffi = globalThis.Bun.FFI, ptr = (arg1, arg2) => typeof arg2 === "undefined" ? ffi.ptr(arg1) : ffi.ptr(arg1, arg2), toBuffer = ffi.toBuffer, toArrayBuffer = ffi.toArrayBuffer, viewSource = ffi.viewSource, BunCString = ffi.CString, nativeLinkSymbols = ffi.linkSymbols, nativeDLOpen = ffi.dlopen, nativeCallback = ffi.callback, closeCallback = ffi.closeCallback;
+delete ffi.callback;
+delete ffi.closeCallback;
+
+class JSCallback {
+  constructor(cb, options) {
+    const { ctx, ptr: ptr2 } = nativeCallback(options, cb);
+    this.#ctx = ctx, this.ptr = ptr2, this.#threadsafe = !!options?.threadsafe;
+  }
+  ptr;
+  #ctx;
+  #threadsafe;
+  get threadsafe() {
+    return this.#threadsafe;
+  }
+  [Symbol.toPrimitive]() {
+    const { ptr: ptr2 } = this;
+    return typeof ptr2 === "number" ? ptr2 : 0;
+  }
+  close() {
+    const ctx = this.#ctx;
+    if (this.ptr = null, this.#ctx = null, ctx)
+      closeCallback(ctx);
+  }
+}
+
+class CString extends String {
+  constructor(ptr2, byteOffset, byteLength) {
+    super(ptr2 ? typeof byteLength === "number" && Number.isSafeInteger(byteLength) ? new BunCString(ptr2, byteOffset || 0, byteLength) : new BunCString(ptr2) : "");
+    if (this.ptr = typeof ptr2 === "number" ? ptr2 : 0, typeof byteOffset !== "undefined")
+      this.byteOffset = byteOffset;
+    if (typeof byteLength !== "undefined")
+      this.byteLength = byteLength;
+  }
+  ptr;
+  byteOffset;
+  byteLength;
+  #cachedArrayBuffer;
+  get arrayBuffer() {
+    if (this.#cachedArrayBuffer)
+      return this.#cachedArrayBuffer;
+    if (!this.ptr)
+      return this.#cachedArrayBuffer = new ArrayBuffer(0);
+    return this.#cachedArrayBuffer = toArrayBuffer(this.ptr, this.byteOffset, this.byteLength);
+  }
+}
+Object.defineProperty(globalThis, "__GlobalBunCString", {
+  value: CString,
+  enumerable: !1,
+  configurable: !1
+});
+var ffiWrappers = new Array(18), char = (val) => val | 0;
+ffiWrappers.fill(char);
+ffiWrappers[FFIType.uint8_t] = function uint8(val) {
+  return val < 0 ? 0 : val >= 255 ? 255 : val | 0;
+};
+ffiWrappers[FFIType.int16_t] = function int16(val) {
+  return val <= -32768 ? -32768 : val >= 32768 ? 32768 : val | 0;
+};
+ffiWrappers[FFIType.uint16_t] = function uint16(val) {
+  return val <= 0 ? 0 : val >= 65536 ? 65536 : val | 0;
+};
+ffiWrappers[FFIType.int32_t] = function int32(val) {
+  return val | 0;
+};
+ffiWrappers[FFIType.uint32_t] = function uint32(val) {
+  return val <= 0 ? 0 : val >= 4294967295 ? 4294967295 : +val || 0;
+};
+ffiWrappers[FFIType.i64_fast] = function int64(val) {
+  if (typeof val === "bigint") {
+    if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= BigInt(-Number.MAX_SAFE_INTEGER))
+      return Number(val).valueOf() || 0;
+    return val;
+  }
+  return !val ? 0 : +val || 0;
+};
+ffiWrappers[FFIType.u64_fast] = function u64_fast(val) {
+  if (typeof val === "bigint") {
+    if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= 0)
+      return Number(val).valueOf() || 0;
+    return val;
+  }
+  return !val ? 0 : +val || 0;
+};
+ffiWrappers[FFIType.int64_t] = function int642(val) {
+  if (typeof val === "bigint")
+    return val;
+  if (typeof val === "number")
+    return BigInt(val || 0);
+  return BigInt(+val || 0);
+};
+ffiWrappers[FFIType.uint64_t] = function uint64(val) {
+  if (typeof val === "bigint")
+    return val;
+  if (typeof val === "number")
+    return val <= 0 ? BigInt(0) : BigInt(val || 0);
+  return BigInt(+val || 0);
+};
+ffiWrappers[FFIType.u64_fast] = function u64_fast2(val) {
+  if (typeof val === "bigint") {
+    if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= BigInt(0))
+      return Number(val);
+    return val;
+  }
+  return typeof val === "number" ? val <= 0 ? 0 : +val || 0 : +val || 0;
+};
+ffiWrappers[FFIType.uint16_t] = function uint162(val) {
+  const ret = (typeof val === "bigint" ? Number(val) : val) | 0;
+  return ret <= 0 ? 0 : ret > 65535 ? 65535 : ret;
+};
+ffiWrappers[FFIType.double] = function double(val) {
+  if (typeof val === "bigint") {
+    if (val.valueOf() < BigInt(Number.MAX_VALUE))
+      return Math.abs(Number(val).valueOf()) + 0.00000000000001 - 0.00000000000001;
+  }
+  if (!val)
+    return 0;
+  return val + 0.00000000000001 - 0.00000000000001;
+};
+ffiWrappers[FFIType.float] = ffiWrappers[10] = function float(val) {
+  return Math.fround(val);
+};
+ffiWrappers[FFIType.bool] = function bool(val) {
+  return !!val;
+};
+Object.defineProperty(globalThis, "__GlobalBunFFIPtrFunctionForWrapper", {
+  value: ptr,
+  enumerable: !1,
+  configurable: !0
+});
+ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = function pointer(val) {
+  if (typeof val === "number")
+    return val;
+  if (!val)
+    return null;
+  if (ArrayBuffer.isView(val) || val instanceof ArrayBuffer)
+    return __GlobalBunFFIPtrFunctionForWrapper(val);
+  if (typeof val === "string")
+    throw new TypeError("To convert a string to a pointer, encode it as a buffer");
+  throw new TypeError(`Unable to convert ${val} to a pointer`);
+};
+ffiWrappers[FFIType.function] = function functionType(val) {
+  if (typeof val === "number")
+    return val;
+  if (typeof val === "bigint")
+    return Number(val);
+  var ptr2 = val && val.ptr;
+  if (!ptr2)
+    throw new TypeError("Expected function to be a JSCallback or a number");
+  return ptr2;
+};
+var native = {
+  dlopen: nativeDLOpen,
+  callback: () => {
+    throw new Error("Deprecated. Use new JSCallback(options, fn) instead");
+  }
+}, cFunctionI = 0, cFunctionRegistry, read = ffi.read;
+export {
+  viewSource,
+  toBuffer,
+  toArrayBuffer,
+  suffix,
+  read,
+  ptr,
+  native,
+  linkSymbols,
+  dlopen,
+  JSCallback,
+  CString,
+  CFunction
+};

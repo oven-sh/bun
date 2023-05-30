@@ -1,1 +1,17 @@
-var{setTimeout:o,clearTimeout:b,setInterval:f,setImmediate:k,clearInterval:y,clearImmediate:C}=globalThis,J={setInterval:f,setImmediate:k,setTimeout:o,clearInterval:y,clearTimeout:b,[Symbol.for("CommonJS")]:0};export{o as setTimeout,f as setInterval,k as setImmediate,J as default,b as clearTimeout,y as clearInterval,C as clearImmediate};
+var { setTimeout, clearTimeout, setInterval, setImmediate, clearInterval, clearImmediate } = globalThis, timers_default = {
+  setInterval,
+  setImmediate,
+  setTimeout,
+  clearInterval,
+  clearTimeout,
+  [Symbol.for("CommonJS")]: 0
+};
+export {
+  setTimeout,
+  setInterval,
+  setImmediate,
+  timers_default as default,
+  clearTimeout,
+  clearInterval,
+  clearImmediate
+};

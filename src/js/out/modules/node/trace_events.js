@@ -1,1 +1,25 @@
-var z=function(h,k,q){const w=new TypeError(`The "${h}" argument must be of type ${k}. Received ${q}`);return w.code="ERR_INVALID_ARG_TYPE",w},B=function(h){if(typeof h!=="object"||h==null)throw new z("options","Object",h);return new x(h)},F=function(){return""};class x{enabled=!1;categories=""}var H={createTracing:B,getEnabledCategories:F,[Symbol.for("CommonJS")]:0};export{F as getEnabledCategories,H as default,B as createTracing};
+var ERR_INVALID_ARG_TYPE = function(name, type, value) {
+  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value}`);
+  return err.code = "ERR_INVALID_ARG_TYPE", err;
+}, createTracing = function(opts) {
+  if (typeof opts !== "object" || opts == null)
+    throw new ERR_INVALID_ARG_TYPE("options", "Object", opts);
+  return new Tracing(opts);
+}, getEnabledCategories = function() {
+  return "";
+};
+
+class Tracing {
+  enabled = !1;
+  categories = "";
+}
+var defaultObject = {
+  createTracing,
+  getEnabledCategories,
+  [Symbol.for("CommonJS")]: 0
+};
+export {
+  getEnabledCategories,
+  defaultObject as default,
+  createTracing
+};

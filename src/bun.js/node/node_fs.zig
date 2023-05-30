@@ -2633,14 +2633,30 @@ pub const NodeFS = struct {
                     if (size == 0) {
                         // copy until EOF
                         while (true) {
-
                             // Linux Kernel 5.3 or later
-                            const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, std.mem.page_size, 0);
+                            var written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, std.mem.page_size, 0);
+
                             if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
-                                // TODO: handle EXDEV
-                                // seems like zfs does not support copy_file_range across devices
-                                // see https://discord.com/channels/876711213126520882/876711213126520885/1006465112707698770
-                                return err;
+                                switch (err.getErrno()) {
+                                    .XDEV => {
+                                        var buffer: [4096]u8 = undefined;
+
+                                        var bytes_read = switch (Syscall.read(src_fd, &buffer)) {
+                                            .result => |result| result,
+                                            .err => |_err| return Maybe(Return.CopyFile){ .err = _err.withPath(src) },
+                                        };
+
+                                        if (bytes_read == 0) break;
+
+                                        var slice = buffer[0..bytes_read];
+
+                                        written = switch (Syscall.write(dest_fd, slice)) {
+                                            .result => |result| result,
+                                            .err => |_err| return Maybe(Return.CopyFile){ .err = _err.withPath(src) },
+                                        };
+                                    },
+                                    else => return err,
+                                }
                             }
                             // wrote zero bytes means EOF
                             if (written == 0) break;
@@ -2649,13 +2665,31 @@ pub const NodeFS = struct {
                     } else {
                         while (size > 0) {
                             // Linux Kernel 5.3 or later
-                            const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, size, 0);
+                            var written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, size, 0);
+
                             if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
-                                // TODO: handle EXDEV
-                                // seems like zfs does not support copy_file_range across devices
-                                // see https://discord.com/channels/876711213126520882/876711213126520885/1006465112707698770
-                                return err;
+                                switch (err.getErrno()) {
+                                    .XDEV => {
+                                        var buffer: [4096]u8 = undefined;
+
+                                        var bytes_read = switch (Syscall.read(src_fd, &buffer)) {
+                                            .result => |result| result,
+                                            .err => |_err| return Maybe(Return.CopyFile){ .err = _err.withPath(src) },
+                                        };
+
+                                        if (bytes_read == 0) break;
+
+                                        var slice = buffer[0..bytes_read];
+
+                                        written = switch (Syscall.write(dest_fd, slice)) {
+                                            .result => |result| result,
+                                            .err => |_err| return Maybe(Return.CopyFile){ .err = _err.withPath(src) },
+                                        };
+                                    },
+                                    else => return err,
+                                }
                             }
+
                             // wrote zero bytes means EOF
                             if (written == 0) break;
                             wrote +|= written;

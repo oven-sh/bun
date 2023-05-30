@@ -441,12 +441,24 @@ pub const VirtualMachine = struct {
     onUnhandledRejectionCtx: ?*anyopaque = null,
     unhandled_error_counter: usize = 0,
 
+    on_exception: ?*const OnException = null,
+
     modules: ModuleLoader.AsyncModule.Queue = .{},
     aggressive_garbage_collection: GCLevel = GCLevel.none,
 
     gc_controller: JSC.GarbageCollectionController = .{},
 
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    pub const OnException = fn (*ZigException) void;
+
+    pub fn setOnException(this: *VirtualMachine, callback: *const OnException) void {
+        this.on_exception = callback;
+    }
+
+    pub fn clearOnException(this: *VirtualMachine) void {
+        this.on_exception = null;
+    }
 
     const VMHolder = struct {
         pub threadlocal var vm: ?*VirtualMachine = null;
@@ -2067,6 +2079,9 @@ pub const VirtualMachine = struct {
         var exception = exception_holder.zigException();
         this.remapZigException(exception, error_instance, exception_list);
         this.had_errors = true;
+        if (this.on_exception) |cb| {
+            defer cb(exception);
+        }
 
         var line_numbers = exception.stack.source_lines_numbers[0..exception.stack.source_lines_len];
         var max_line: i32 = -1;
@@ -2243,53 +2258,6 @@ pub const VirtualMachine = struct {
         if (add_extra_line) try writer.writeAll("\n");
 
         try printStackTrace(@TypeOf(writer), writer, exception.stack, allow_ansi_color);
-
-        // In Github Actions, emit an annotation that renders the error and location.
-        // https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-an-error-message
-        if (Output.is_github_action) {
-            var has_location = false;
-
-            if (top_frame) |frame| {
-                if (!frame.position.isInvalid()) {
-                    const file = bun.path.relative(bun.fs.FileSystem.instance.top_level_dir, frame.source_url.slice());
-                    try writer.print(comptime Output.prettyFmt("\n::error file={s},line={d},col={d}::", false), .{
-                        file,
-                        frame.position.line_start + 1,
-                        frame.position.column_start,
-                    });
-                    has_location = true;
-                }
-            }
-
-            if (!has_location) {
-                try writer.print(comptime Output.prettyFmt("\n::error::", false), .{});
-            }
-
-            try this.printErrorNameAndMessageAnnotation(name, message, Writer, writer);
-
-            try writer.print(comptime Output.prettyFmt("\n", false), .{});
-        }
-    }
-
-    fn printErrorNameAndMessageAnnotation(_: *VirtualMachine, name: ZigString, message: ZigString, comptime Writer: type, writer: Writer) !void {
-        if (name.len > 0 and message.len > 0) {
-            const display_name: ZigString = if (!name.is16Bit() and strings.eqlComptime(name.slice(), "Error")) ZigString.init("error") else name;
-
-            try writer.print(comptime Output.prettyFmt("{s}: {s}", false), .{
-                strings.githubAction(display_name.slice()),
-                strings.githubAction(message.slice()),
-            });
-        } else if (name.len > 0) {
-            if (name.is16Bit() or !strings.hasPrefixComptime(name.slice(), "error")) {
-                try writer.print(comptime Output.prettyFmt("error: {s}", false), .{strings.githubAction(name.slice())});
-            } else {
-                try writer.print(comptime Output.prettyFmt("{s}", false), .{strings.githubAction(name.slice())});
-            }
-        } else if (message.len > 0) {
-            try writer.print(comptime Output.prettyFmt("error: {s}", false), .{strings.githubAction(message.slice())});
-        } else {
-            try writer.print(comptime Output.prettyFmt("error", false), .{});
-        }
     }
 
     fn printErrorNameAndMessage(_: *VirtualMachine, name: ZigString, message: ZigString, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool) !void {

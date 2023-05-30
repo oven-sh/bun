@@ -68,7 +68,7 @@ describe("bun test", () => {
     });
     expect(stderr).toContain(path);
   });
-  test("can provide a relative path to a directory", () => {
+  test("can provide a relative directory", () => {
     const path = join("path", "to", "relative.test.ts");
     const dir = dirname(path);
     const cwd = createTest(
@@ -86,7 +86,7 @@ describe("bun test", () => {
     });
     expect(stderr).toContain(dir);
   });
-  test.todo("can provide an absolute path to a directory", () => {
+  test.todo("can provide an absolute directory", () => {
     const path = join("path", "to", "absolute.test.ts");
     const cwd = createTest(
       `
@@ -104,7 +104,7 @@ describe("bun test", () => {
     });
     expect(stderr).toContain(path);
   });
-  test.todo("can provide a mixture of paths");
+  test.todo("can provide a mix of files and directories");
   describe("--rerun-each", () => {
     test.todo("can rerun with a default value");
     test.todo("can rerun with a provided value");
@@ -272,6 +272,22 @@ describe("bun test", () => {
       });
       expect(stderr).not.toContain("::error");
     });
+    test("should not annotate errors when using inspect()", () => {
+      const stderr = runTest({
+        input: `
+          import { test } from "bun:test";
+          import { inspect } from "bun";
+          test("inspect", () => {
+            inspect(new TypeError());
+            console.error(inspect(new TypeError()));
+          });
+        `,
+        env: {
+          GITHUB_ACTIONS: undefined,
+        },
+      });
+      expect(stderr).not.toContain("::error");
+    });
     test("should annotate errors when enabled", () => {
       const stderr = runTest({
         input: `
@@ -330,7 +346,7 @@ function runTest({
   input?: string | string[];
   cwd?: string;
   args?: string[];
-  env?: Record<string, string>;
+  env?: Record<string, string | undefined>;
 } = {}): string {
   cwd ??= createTest(input);
   try {

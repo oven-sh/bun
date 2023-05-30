@@ -3976,6 +3976,9 @@ pub const TestRunnerTask = struct {
         }
 
         jsc_vm.onUnhandledRejectionCtx = this;
+        if (Output.is_github_action) {
+            jsc_vm.setOnException(printGithubAnnotation);
+        }
 
         if (this.needs_before_each) {
             this.needs_before_each = false;
@@ -4123,6 +4126,7 @@ pub const TestRunnerTask = struct {
                 vm.onUnhandledRejectionCtx = null;
             }
         }
+        vm.clearOnException();
 
         this.ref.unref(vm);
 
@@ -4156,3 +4160,50 @@ pub const Result = union(TestRunner.Test.Status) {
         return this;
     }
 };
+
+// In Github Actions, emit an annotation that renders the error and location.
+// https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-an-error-message
+pub fn printGithubAnnotation(exception: *JSC.ZigException) void {
+    const name = exception.name;
+    const message = exception.message;
+    const top_frame = if (exception.stack.frames_len > 0) exception.stack.frames()[0] else null;
+
+    var has_location = false;
+
+    if (top_frame) |frame| {
+        if (!frame.position.isInvalid()) {
+            const file = bun.path.relative(bun.fs.FileSystem.instance.top_level_dir, frame.source_url.slice());
+            Output.printError("\n::error file={s},line={d},col={d}::", .{
+                file,
+                frame.position.line_start + 1,
+                frame.position.column_start,
+            });
+            has_location = true;
+        }
+    }
+
+    if (!has_location) {
+        Output.printError("\n::error::", .{});
+    }
+
+    if (name.len > 0 and message.len > 0) {
+        const display_name: ZigString = if (!name.is16Bit() and strings.eqlComptime(name.slice(), "Error")) ZigString.init("error") else name;
+
+        Output.printErrorln("{s}: {s}", .{
+            strings.githubAction(display_name.slice()),
+            strings.githubAction(message.slice()),
+        });
+    } else if (name.len > 0) {
+        if (name.is16Bit() or !strings.hasPrefixComptime(name.slice(), "error")) {
+            Output.printErrorln("error: {s}", .{strings.githubAction(name.slice())});
+        } else {
+            Output.printErrorln("{s}", .{strings.githubAction(name.slice())});
+        }
+    } else if (message.len > 0) {
+        Output.printErrorln("error: {s}", .{strings.githubAction(message.slice())});
+    } else {
+        Output.printErrorln("error", .{});
+    }
+
+    Output.flush();
+}

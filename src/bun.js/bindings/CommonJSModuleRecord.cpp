@@ -393,6 +393,10 @@ JSC::SourceCode createCommonJSModule(
                     result = moduleObject->getIfPropertyExists(globalObject, clientData->builtinNames().exportsPublicName());
 
                     if (UNLIKELY(throwScope.exception())) {
+                        // Unlike getters on properties of the exports object
+                        // When the exports object itself is a getter and it throws
+                        // There's not a lot we can do
+                        // so we surface that error
                         globalObject->requireMap()->remove(globalObject, requireMapKey);
                         throwScope.release();
                         return;

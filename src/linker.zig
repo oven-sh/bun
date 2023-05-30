@@ -1016,10 +1016,8 @@ pub const Linker = struct {
             .napi => {
                 import_record.print_mode = .napi_module;
             },
-            .wasm => {
-                import_record.print_mode = .import_path;
-            },
-            .file => {
+
+            .wasm, .file => {
 
                 // if we're building for web/node, always print as import path
                 // if we're building for bun

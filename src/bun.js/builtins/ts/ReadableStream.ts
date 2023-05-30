@@ -132,7 +132,7 @@ export function readableStreamToArrayBuffer(stream) {
     return $readableStreamToArrayBufferDirect(stream, underlyingSource);
   }
 
-  return (Bun.readableStreamToArray(stream) as Promise<any>).$then(Bun.concatArrayBuffers);
+  return Promise.resolve(Bun.readableStreamToArray(stream)).$then(Bun.concatArrayBuffers);
 }
 
 $linkTimeConstant;

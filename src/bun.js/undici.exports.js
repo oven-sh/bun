@@ -224,7 +224,13 @@ export async function request(
   }
 
   const body = resp.body ? new BodyReadable(resp) : null;
-  return { statusCode, headers, body, trailers, opaque: kEmptyObject, context: kEmptyObject };
+
+  const headersObject = {};
+  for (const [key, value] of headers.entries()) {
+    headersObject[key] = value;
+  }
+
+  return { statusCode, headers: headersObject, body, trailers, opaque: kEmptyObject, context: kEmptyObject };
 }
 
 export function stream() {

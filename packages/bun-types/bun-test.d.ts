@@ -197,11 +197,10 @@ declare module "bun:test" {
     ): void;
     /**
      * Skips all other tests, except this test.
-     * @deprecated Not yet implemented.
      *
      * @param label the label for the test
      * @param fn the test function
-     * @param timeoutMs the timeout for the test
+     * @param options the test timeout or options
      */
     only(
       label: string,
@@ -215,6 +214,7 @@ declare module "bun:test" {
      *
      * @param label the label for the test
      * @param fn the test function
+     * @param options the test timeout or options
      */
     skip(
       label: string,
@@ -263,6 +263,7 @@ declare module "bun:test" {
      *
      * @param label the label for the test
      * @param fn the test function
+     * @param options the test timeout or options
      */
     todo(
       label: string,

@@ -147,10 +147,6 @@ pub const TestRunner = struct {
     }
 
     pub fn setOnly(this: *TestRunner) void {
-        if (this.only) {
-            return;
-        }
-
         this.only = true;
 
         var list = this.queue.readableSlice(0);

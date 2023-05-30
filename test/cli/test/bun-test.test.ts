@@ -109,7 +109,7 @@ describe("bun test", () => {
     test.todo("can rerun with a default value");
     test.todo("can rerun with a provided value");
   });
-  describe("--run-todo", () => {
+  describe("--todo", () => {
     test("should not run todo by default", () => {
       const stderr = runTest({
         input: `
@@ -123,7 +123,7 @@ describe("bun test", () => {
     });
     test("should run todo when enabled", () => {
       const stderr = runTest({
-        args: ["--run-todo"],
+        args: ["--todo"],
         input: `
           import { test, expect } from "bun:test";
           test.todo("todo", async () => {
@@ -132,6 +132,40 @@ describe("bun test", () => {
         `,
       });
       expect(stderr).toContain("should run");
+    });
+  });
+  describe("--only", () => {
+    test.only("should skip non-only tests when enabled", () => {
+      const stderr = runTest({
+        args: ["--only"],
+        input: `
+          import { test, describe } from "bun:test";
+          test("test #1", () => {
+            console.error("unreachable");
+          });
+          test.only("test #2", () => {
+            console.error("reachable");
+          });
+          test("test #3", () => {
+            console.error("unreachable");
+          });
+          test.skip("test #4", () => {
+            console.error("unreachable");
+          });
+          test.todo("test #5");
+          describe("describe #1", () => {
+            test("test #6", () => {
+              console.error("unreachable");
+            });
+            test.only("test #7", () => {
+              console.error("reachable");
+            });
+          });
+        `,
+      });
+      expect(stderr).toContain("reachable");
+      expect(stderr).not.toContain("unreachable");
+      expect(stderr.match(/reachable/g)).toHaveLength(2);
     });
   });
   describe("--timeout", () => {

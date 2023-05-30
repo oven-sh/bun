@@ -103,13 +103,9 @@ pub const CommandLineReporter = struct {
         break :brk map;
     };
 
-    pub fn handleUpdateCount(cb: *TestRunner.Callback, _: u32, _: u32) void {
-        _ = cb;
-    }
+    pub fn handleUpdateCount(_: *TestRunner.Callback, _: u32, _: u32) void {}
 
-    pub fn handleTestStart(_: *TestRunner.Callback, _: Test.ID) void {
-        // var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
-    }
+    pub fn handleTestStart(_: *TestRunner.Callback, _: Test.ID) void {}
 
     fn printTestLine(label: string, elapsed_ns: u64, parent: ?*jest.DescribeScope, comptime skip: bool, writer: anytype) void {
         var scopes_stack = std.BoundedArray(*jest.DescribeScope, 64).init(0) catch unreachable;
@@ -441,6 +437,7 @@ pub const TestCommand = struct {
                 .callback = undefined,
                 .default_timeout_ms = ctx.test_options.default_timeout_ms,
                 .run_todo = ctx.test_options.run_todo,
+                .only = ctx.test_options.only,
                 .snapshots = Snapshots{
                     .allocator = ctx.allocator,
                     .update_snapshots = ctx.test_options.update_snapshots,

@@ -2690,7 +2690,7 @@ pub const NodeFS = struct {
         return Maybe(Return.CopyFile).todo;
     }
 
-    // it can return Maybe(void) or usize
+    // Fallback for EXDEV, just a classic read/write loop, https://github.com/oven-sh/bun/issues/1675
     fn XDEVReadWriteFallback(src_fd: i32, dest_fd: i32, src: [:0]const u8) Maybe(usize) {
         var buffer: [4096]u8 = undefined;
 

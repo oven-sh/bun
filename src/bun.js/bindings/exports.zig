@@ -2222,25 +2222,37 @@ pub const ZigConsoleClient = struct {
                         writer.writeAll("expect.anything");
                         return;
                     } else if (value.as(JSC.Jest.ExpectAny) != null) {
+                        this.addForNewLine("expect.any<".len);
                         writer.writeAll("expect.any<");
-                        const constructor_value = JSC.Jest.ExpectAny.constructorValueGetCached(value) orelse .zero;
+                        const constructor_value = JSC.Jest.ExpectAny.constructorValueGetCached(value) orelse return;
                         var class_name = ZigString.init(&name_buf);
+
                         constructor_value.getClassName(this.globalThis, &class_name);
                         this.addForNewLine(class_name.len);
                         writer.print(comptime Output.prettyFmt("<cyan>{}<r>", enable_ansi_colors), .{class_name});
+                        this.addForNewLine(1);
                         writer.writeAll(">");
+
                         return;
                     } else if (value.as(JSC.Jest.ExpectStringContaining) != null) {
-                        const substring_value = JSC.Jest.ExpectStringContaining.stringValueGetCached(value) orelse .zero;
+                        const substring_value = JSC.Jest.ExpectStringContaining.stringValueGetCached(value) orelse return;
+
+                        this.addForNewLine("expect.stringContaining(".len);
                         writer.writeAll("expect.stringContaining(");
                         this.printAs(.String, Writer, writer_, substring_value, .String, enable_ansi_colors);
+                        this.addForNewLine(1);
                         writer.writeAll(")");
+
                         return;
                     } else if (value.as(JSC.Jest.ExpectStringMatching) != null) {
-                        const test_value = JSC.Jest.ExpectStringMatching.testValueGetCached(value) orelse .zero;
+                        const test_value = JSC.Jest.ExpectStringMatching.testValueGetCached(value) orelse return;
+
+                        this.addForNewLine("expect.stringMatching(".len);
                         writer.writeAll("expect.stringMatching(");
                         this.printAs(.String, Writer, writer_, test_value, .String, enable_ansi_colors);
+                        this.addForNewLine(1);
                         writer.writeAll(")");
+
                         return;
                     } else if (jsType != .DOMWrapper) {
                         if (value.isCallable(this.globalThis.vm())) {

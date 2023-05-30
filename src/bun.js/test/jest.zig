@@ -36,6 +36,7 @@ const ZigString = JSC.ZigString;
 const JSInternalPromise = JSC.JSInternalPromise;
 const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
+const JSType = JSValue.JSType;
 const JSError = JSC.JSError;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSObject = JSC.JSObject;
@@ -3539,12 +3540,7 @@ pub const Expect = struct {
     pub const toThrowErrorMatchingSnapshot = notImplementedJSCFn;
     pub const toThrowErrorMatchingInlineSnapshot = notImplementedJSCFn;
 
-    pub fn getStaticNot(globalObject: *JSGlobalObject, expectValue: JSValue, _: JSValue) callconv(.C) JSValue {
-        _ = globalObject;
-        return expectValue;
-    }
-
-    // pub const getStaticNot = notImplementedStaticProp;
+    pub const getStaticNot = notImplementedStaticProp;
     pub const getStaticResolves = notImplementedStaticProp;
     pub const getStaticRejects = notImplementedStaticProp;
 

@@ -2079,9 +2079,9 @@ pub const VirtualMachine = struct {
         var exception = exception_holder.zigException();
         this.remapZigException(exception, error_instance, exception_list);
         this.had_errors = true;
-        if (this.on_exception) |cb| {
-            defer cb(exception);
-        }
+        defer if (this.on_exception) |cb| {
+            cb(exception);
+        };
 
         var line_numbers = exception.stack.source_lines_numbers[0..exception.stack.source_lines_len];
         var max_line: i32 = -1;

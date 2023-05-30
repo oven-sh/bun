@@ -50,18 +50,18 @@ describe.skipIf(null)("describe #5", () => {
   });
 });
 
-test.runIf(false)("test #11", () => {
+test.if(false)("test #11", () => {
   console.log("unreachable");
 });
 
-test.runIf(null)("test #12", () => {
+test.if(null)("test #12", () => {
   console.log("unreachable");
 });
 
-test.runIf(true)("test #13", () => {
+test.if(true)("test #13", () => {
   console.log("reachable");
 });
 
-test.runIf(1)("test #14", () => {
+test.if(1)("test #14", () => {
   console.log("reachable");
 });

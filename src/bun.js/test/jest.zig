@@ -39,6 +39,7 @@ const JSValue = JSC.JSValue;
 const JSError = JSC.JSError;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSObject = JSC.JSObject;
+const CallFrame = JSC.CallFrame;
 
 const VirtualMachine = JSC.VirtualMachine;
 const Task = @import("../javascript.zig").Task;
@@ -48,6 +49,14 @@ const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 
 const ArrayIdentityContext = @import("../../identity_context.zig").ArrayIdentityContext;
 pub var test_elapsed_timer: ?*std.time.Timer = null;
+
+pub const Tag = enum(u3) {
+    pass,
+    fail,
+    only,
+    skip,
+    todo,
+};
 
 pub const TestRunner = struct {
     tests: TestRunner.Test.List = .{},
@@ -597,8 +606,8 @@ pub const Jest = struct {
         );
         test_fn.put(
             globalObject,
-            ZigString.static("todo"),
-            JSC.NewFunction(globalObject, ZigString.static("todo"), 2, TestScope.todo, false),
+            ZigString.static("only"),
+            JSC.NewFunction(globalObject, ZigString.static("only"), 2, TestScope.only, false),
         );
         test_fn.put(
             globalObject,
@@ -607,18 +616,18 @@ pub const Jest = struct {
         );
         test_fn.put(
             globalObject,
+            ZigString.static("todo"),
+            JSC.NewFunction(globalObject, ZigString.static("todo"), 2, TestScope.todo, false),
+        );
+        test_fn.put(
+            globalObject,
+            ZigString.static("if"),
+            JSC.NewFunction(globalObject, ZigString.static("if"), 2, TestScope.callIf, false),
+        );
+        test_fn.put(
+            globalObject,
             ZigString.static("skipIf"),
             JSC.NewFunction(globalObject, ZigString.static("skipIf"), 2, TestScope.skipIf, false),
-        );
-        test_fn.put(
-            globalObject,
-            ZigString.static("runIf"),
-            JSC.NewFunction(globalObject, ZigString.static("runIf"), 2, TestScope.runIf, false),
-        );
-        test_fn.put(
-            globalObject,
-            ZigString.static("only"),
-            JSC.NewFunction(globalObject, ZigString.static("only"), 2, TestScope.only, false),
         );
 
         module.put(
@@ -626,11 +635,26 @@ pub const Jest = struct {
             ZigString.static("it"),
             test_fn,
         );
-        const describe = JSC.NewFunction(globalObject, ZigString.static("describe"), 2, DescribeScope.describe, false);
+        const describe = JSC.NewFunction(globalObject, ZigString.static("describe"), 2, DescribeScope.call, false);
+        describe.put(
+            globalObject,
+            ZigString.static("only"),
+            JSC.NewFunction(globalObject, ZigString.static("only"), 2, DescribeScope.only, false),
+        );
         describe.put(
             globalObject,
             ZigString.static("skip"),
             JSC.NewFunction(globalObject, ZigString.static("skip"), 2, DescribeScope.skip, false),
+        );
+        describe.put(
+            globalObject,
+            ZigString.static("todo"),
+            JSC.NewFunction(globalObject, ZigString.static("todo"), 2, DescribeScope.todo, false),
+        );
+        describe.put(
+            globalObject,
+            ZigString.static("if"),
+            JSC.NewFunction(globalObject, ZigString.static("if"), 2, DescribeScope.callIf, false),
         );
         describe.put(
             globalObject,
@@ -3120,8 +3144,7 @@ pub const TestScope = struct {
     promise: ?*JSInternalPromise = null,
     ran: bool = false,
     task: ?*TestRunnerTask = null,
-    skipped: bool = false,
-    is_todo: bool = false,
+    tag: Tag = .pass,
     snapshot_count: usize = 0,
     timeout_millis: u32 = 0,
     retry_count: u32 = 0, // retry, on fail
@@ -3132,182 +3155,28 @@ pub const TestScope = struct {
         actual: u32 = 0,
     };
 
-    pub fn call(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        const thisValue = callframe.this();
-        const args = callframe.arguments(3);
-        prepare(globalThis, args.ptr[0..args.len], "test()", .call);
-        return thisValue;
+    pub fn call(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createScope(globalThis, callframe, "test()", true, .pass);
     }
 
-    pub fn only(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        const thisValue = callframe.this();
-        const args = callframe.arguments(3);
-        prepare(globalThis, args.ptr[0..args.len], "test.only()", .only);
-        return thisValue;
+    pub fn only(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createScope(globalThis, callframe, "test.only()", true, .only);
     }
 
-    pub fn skip(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        const thisValue = callframe.this();
-        const args = callframe.arguments(3);
-        prepare(globalThis, args.ptr[0..args.len], "test.skip()", .skip);
-        return thisValue;
+    pub fn skip(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createScope(globalThis, callframe, "test.skip()", true, .skip);
     }
 
-    pub fn skipIf(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        const arguments = callframe.arguments(1);
-        const args: []const JSValue = arguments.ptr[0..arguments.len];
-
-        if (args.len == 0) {
-            globalThis.throwPretty("test.skipIf() expects a condition", .{});
-            return .zero;
-        }
-
-        // TODO: should pass comptime signature to TestScope.{skip,call}
-        if (args[0].toBooleanSlow(globalThis)) {
-            return JSC.NewFunction(globalThis, ZigString.static("skipIf"), 2, TestScope.skip, false);
-        }
-
-        return JSC.NewFunction(globalThis, ZigString.static("skipIf"), 2, TestScope.call, false);
+    pub fn todo(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createScope(globalThis, callframe, "test.todo()", true, .todo);
     }
 
-    pub fn runIf(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        const arguments = callframe.arguments(1);
-        const args: []const JSValue = arguments.ptr[0..arguments.len];
-
-        if (args.len == 0) {
-            globalThis.throwPretty("test.runIf() expects a condition", .{});
-            return .zero;
-        }
-
-        // TODO: should pass comptime signature to TestScope.{skip,call}
-        if (args[0].toBooleanSlow(globalThis)) {
-            return JSC.NewFunction(globalThis, ZigString.static("runIf"), 2, TestScope.call, false);
-        }
-
-        return JSC.NewFunction(globalThis, ZigString.static("runIf"), 2, TestScope.skip, false);
+    pub fn callIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createIfScope(globalThis, callframe, "test.if()", "if", TestScope, false);
     }
 
-    pub fn todo(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        const thisValue = callframe.this();
-        const args = callframe.arguments(3);
-        prepare(globalThis, args.ptr[0..args.len], "test.todo()", .todo);
-        return thisValue;
-    }
-
-    inline fn prepare(
-        globalThis: *JSC.JSGlobalObject,
-        args: []const JSC.JSValue,
-        comptime signature: string,
-        comptime tag: @Type(.EnumLiteral),
-    ) void {
-        if (args.len == 0) {
-            globalThis.throwPretty("{s} expects a description or function", .{signature});
-            return;
-        }
-
-        var label = args[0];
-        var function = if (args.len > 1) args[1] else .zero;
-        var options = if (args.len > 2) args[2] else .zero;
-
-        if (label.isEmptyOrUndefinedOrNull() or !label.isString()) {
-            function = label;
-            label = .zero;
-        }
-
-        if (function.isEmptyOrUndefinedOrNull() or !function.isCell() or !function.isCallable(globalThis.vm())) {
-            if (tag != .todo) {
-                globalThis.throwPretty("{s} expects a function", .{signature});
-                return;
-            }
-        }
-
-        var timeout_ms: u32 = Jest.runner.?.default_timeout_ms;
-        var retry_count: u32 = 0;
-        var repeat_count: u32 = 0;
-        if (options.isNumber()) {
-            timeout_ms = @intCast(u32, @max(args[2].coerce(i32, globalThis), 0));
-        } else if (options.isObject()) {
-            if (options.get(globalThis, "timeout")) |timeout| {
-                if (!timeout.isNumber()) {
-                    globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
-                    return;
-                }
-                timeout_ms = @intCast(u32, @max(timeout.coerce(i32, globalThis), 0));
-            }
-            if (options.get(globalThis, "retry")) |retries| {
-                if (!retries.isNumber()) {
-                    globalThis.throwPretty("{s} expects retry to be a number", .{signature});
-                    return;
-                }
-                retry_count = @intCast(u32, @max(retries.coerce(i32, globalThis), 0));
-            }
-            if (options.get(globalThis, "repeats")) |repeats| {
-                if (!repeats.isNumber()) {
-                    globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
-                    return;
-                }
-                repeat_count = @intCast(u32, @max(repeats.coerce(i32, globalThis), 0));
-            }
-        } else if (!options.isEmptyOrUndefinedOrNull()) {
-            globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
-            return;
-        }
-
-        if (tag == .only) {
-            Jest.runner.?.setOnly();
-        } else if (Jest.runner.?.only) {
-            return; // Don't report non-only tests to reduce output.
-        } else if (tag == .todo) {
-            if (!Jest.runner.?.run_todo) {
-                function = .zero;
-            }
-        } else if (tag == .skip) {
-            function = .zero;
-            DescribeScope.active.skipped_counter += 1;
-        }
-
-        if (function != .zero) {
-            function.protect();
-        }
-
-        var title: string = "";
-        if (label != .zero) {
-            const allocator = getAllocator(globalThis);
-            title = (label.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
-        }
-
-        DescribeScope.active.tests.append(getAllocator(globalThis), TestScope{
-            .label = title,
-            .parent = DescribeScope.active,
-            .is_todo = tag == .todo,
-            .skipped = function == .zero,
-            .callback = function,
-            .timeout_millis = timeout_ms,
-        }) catch unreachable;
-
-        if (test_elapsed_timer == null) create_tiemr: {
-            var timer = bun.default_allocator.create(std.time.Timer) catch unreachable;
-            timer.* = std.time.Timer.start() catch break :create_tiemr;
-            test_elapsed_timer = timer;
-        }
+    pub fn skipIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createIfScope(globalThis, callframe, "test.skipIf()", "skipIf", TestScope, true);
     }
 
     pub fn onReject(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
@@ -3401,11 +3270,11 @@ pub const TestScope = struct {
         if (initial_value.isAnyError()) {
             if (!Jest.runner.?.did_pending_test_fail) {
                 // test failed unless it's a todo
-                Jest.runner.?.did_pending_test_fail = !this.is_todo;
+                Jest.runner.?.did_pending_test_fail = this.tag != .todo;
                 vm.runErrorHandler(initial_value, null);
             }
 
-            if (this.is_todo) {
+            if (this.tag == .todo) {
                 return .{ .todo = {} };
             }
 
@@ -3428,11 +3297,11 @@ pub const TestScope = struct {
                 .Rejected => {
                     if (!Jest.runner.?.did_pending_test_fail) {
                         // test failed unless it's a todo
-                        Jest.runner.?.did_pending_test_fail = !this.is_todo;
+                        Jest.runner.?.did_pending_test_fail = this.tag != .todo;
                         vm.runErrorHandler(promise.result(vm.global.vm()), null);
                     }
 
-                    if (this.is_todo) {
+                    if (this.tag == .todo) {
                         return .{ .todo = {} };
                     }
 
@@ -3502,11 +3371,12 @@ pub const DescribeScope = struct {
     current_test_id: TestRunner.Test.ID = 0,
     value: JSValue = .zero,
     done: bool = false,
-    skipped: bool = false,
-    skipped_counter: u32 = 0,
+    is_skip: bool = false,
+    skip_count: u32 = 0,
+    tag: Tag = .pass,
 
     pub fn isAllSkipped(this: *const DescribeScope) bool {
-        return this.skipped or @as(usize, this.skipped_counter) >= this.tests.items.len;
+        return this.is_skip or @as(usize, this.skip_count) >= this.tests.items.len;
     }
 
     pub fn push(new: *DescribeScope) void {
@@ -3692,80 +3562,28 @@ pub const DescribeScope = struct {
         return this.execCallback(globalObject, hook);
     }
 
-    pub fn skip(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        const arguments = callframe.arguments(3);
-        var this: *DescribeScope = DescribeScope.module;
-        return runDescribe(this, globalThis, arguments.ptr[0..arguments.len], true);
+    pub fn call(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createScope(globalThis, callframe, "describe()", false, .pass);
     }
 
-    pub fn skipIf(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        const arguments = callframe.arguments(1);
-        const args: []const JSValue = arguments.ptr[0..arguments.len];
-
-        if (args.len == 0) {
-            globalThis.throwPretty("describe.skipIf() expects a condition", .{});
-            return .zero;
-        }
-
-        // TODO: should pass comptime signature to DescribeScope.{skip,call}
-        if (args[0].toBooleanSlow(globalThis)) {
-            return JSC.NewFunction(globalThis, ZigString.static("skipIf"), 2, DescribeScope.skip, false);
-        }
-
-        return JSC.NewFunction(globalThis, ZigString.static("skipIf"), 2, DescribeScope.describe, false);
+    pub fn only(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createScope(globalThis, callframe, "describe.only()", false, .only);
     }
 
-    pub fn describe(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        const arguments = callframe.arguments(3);
-        var this: *DescribeScope = DescribeScope.module;
-        return runDescribe(this, globalThis, arguments.ptr[0..arguments.len], false);
+    pub fn skip(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createScope(globalThis, callframe, "describe.skip()", false, .skip);
     }
 
-    fn runDescribe(
-        this: *DescribeScope,
-        globalThis: *JSC.JSGlobalObject,
-        arguments: []const JSC.JSValue,
-        skipped: bool,
-    ) JSC.JSValue {
-        if (arguments.len == 0 or arguments.len > 2) {
-            globalThis.throwNotEnoughArguments("describe", 2, arguments.len);
-            return .zero;
-        }
+    pub fn todo(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createScope(globalThis, callframe, "describe.todo()", false, .todo);
+    }
 
-        var label = ZigString.init("");
-        var args = arguments;
-        const allocator = getAllocator(globalThis);
+    pub fn callIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createIfScope(globalThis, callframe, "describe.if()", "if", DescribeScope, false);
+    }
 
-        if (arguments[0].isString()) {
-            arguments[0].toZigString(&label, globalThis);
-            args = args[1..];
-        }
-
-        if (args.len == 0 or !args[0].isCallable(globalThis.vm())) {
-            globalThis.throwInvalidArgumentType("describe", "callback", "function");
-            return .zero;
-        }
-
-        var callback = args[0];
-
-        var scope = allocator.create(DescribeScope) catch unreachable;
-        scope.* = .{
-            .label = (label.toSlice(allocator).cloneIfNeeded(allocator) catch unreachable).slice(),
-            .parent = active,
-            .file_id = this.file_id,
-            .skipped = skipped or active.skipped,
-        };
-
-        return scope.run(globalThis, callback);
+    pub fn skipIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createIfScope(globalThis, callframe, "describe.skipIf()", "skipIf", DescribeScope, true);
     }
 
     pub fn run(this: *DescribeScope, globalObject: *JSC.JSGlobalObject, callback: JSC.JSValue) JSC.JSValue {
@@ -3777,6 +3595,11 @@ pub const DescribeScope = struct {
         if (this != module)
             this.parent = this.parent orelse active;
         active = this;
+
+        if (callback == .zero) {
+            this.runTests(globalObject);
+            return .undefined;
+        }
 
         {
             JSC.markBinding(@src());
@@ -3812,7 +3635,10 @@ pub const DescribeScope = struct {
         const end = @truncate(TestRunner.Test.ID, tests.len);
         this.pending_tests = std.DynamicBitSetUnmanaged.initFull(allocator, end) catch unreachable;
 
-        if (end == 0) return;
+        if (end == 0) {
+            // TODO: print the describe label when there are no tests
+            return;
+        }
 
         // Step 2. Update the runner with the count of how many tests we have for this block
         this.test_id_start = Jest.runner.?.addTestCount(end);
@@ -3959,14 +3785,17 @@ pub const TestRunnerTask = struct {
         var test_: TestScope = this.describe.tests.items[test_id];
         describe.current_test_id = test_id;
 
-        if (!describe.skipped and test_.is_todo and test_.callback.isEmpty()) {
-            this.processTestResult(globalThis, .{ .todo = {} }, test_, test_id, describe);
-            this.deinit();
-            return false;
-        }
-
-        if (test_.skipped or describe.skipped) {
-            this.processTestResult(globalThis, .{ .skip = {} }, test_, test_id, describe);
+        if (describe.is_skip or test_.callback == .zero) {
+            var tag = if (describe.is_skip) describe.tag else test_.tag;
+            switch (tag) {
+                .todo => {
+                    this.processTestResult(globalThis, .{ .todo = {} }, test_, test_id, describe);
+                },
+                .skip => {
+                    this.processTestResult(globalThis, .{ .skip = {} }, test_, test_id, describe);
+                },
+                else => {},
+            }
             this.deinit();
             return false;
         }
@@ -4070,7 +3899,7 @@ pub const TestRunnerTask = struct {
     }
 
     fn processTestResult(this: *TestRunnerTask, globalThis: *JSC.JSGlobalObject, result: Result, test_: TestScope, test_id: u32, describe: *DescribeScope) void {
-        switch (result.forceTODO(test_.is_todo)) {
+        switch (result.forceTODO(test_.tag == .todo)) {
             .pass => |count| Jest.runner.?.reportPass(
                 test_id,
                 this.source_file_path,
@@ -4156,6 +3985,150 @@ pub const Result = union(TestRunner.Test.Status) {
         return this;
     }
 };
+
+inline fn createScope(
+    globalThis: *JSGlobalObject,
+    callframe: *CallFrame,
+    comptime signature: string,
+    comptime is_test: bool,
+    comptime tag: Tag,
+) JSValue {
+    const this = callframe.this();
+    const arguments = callframe.arguments(3);
+    const args = arguments.ptr[0..arguments.len];
+
+    if (args.len == 0) {
+        globalThis.throwPretty("{s} expects a description or function", .{signature});
+        return .zero;
+    }
+
+    var description = args[0];
+    var function = if (args.len > 1) args[1] else .zero;
+    var options = if (args.len > 2) args[2] else .zero;
+
+    if (description.isEmptyOrUndefinedOrNull() or !description.isString()) {
+        function = description;
+        description = .zero;
+    }
+
+    if (function.isEmptyOrUndefinedOrNull() or !function.isCell() or !function.isCallable(globalThis.vm())) {
+        if (tag != .todo) {
+            globalThis.throwPretty("{s} expects a function", .{signature});
+            return .zero;
+        }
+    }
+
+    var timeout_ms: u32 = Jest.runner.?.default_timeout_ms;
+    if (options.isNumber()) {
+        timeout_ms = @intCast(u32, @max(args[2].coerce(i32, globalThis), 0));
+    } else if (options.isObject()) {
+        if (options.get(globalThis, "timeout")) |timeout| {
+            if (!timeout.isNumber()) {
+                globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
+                return .zero;
+            }
+            timeout_ms = @intCast(u32, @max(timeout.coerce(i32, globalThis), 0));
+        }
+        if (options.get(globalThis, "retry")) |retries| {
+            if (!retries.isNumber()) {
+                globalThis.throwPretty("{s} expects retry to be a number", .{signature});
+                return .zero;
+            }
+            // TODO: retry_count = @intCast(u32, @max(retries.coerce(i32, globalThis), 0));
+        }
+        if (options.get(globalThis, "repeats")) |repeats| {
+            if (!repeats.isNumber()) {
+                globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
+                return .zero;
+            }
+            // TODO: repeat_count = @intCast(u32, @max(repeats.coerce(i32, globalThis), 0));
+        }
+    } else if (!options.isEmptyOrUndefinedOrNull()) {
+        globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
+        return .zero;
+    }
+
+    const parent = DescribeScope.active;
+    const allocator = getAllocator(globalThis);
+    const label = if (description == .zero)
+        ""
+    else
+        (description.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
+
+    if (tag == .only) {
+        Jest.runner.?.setOnly();
+    } else if (is_test and Jest.runner.?.only and parent.tag != .only) {
+        return .zero;
+    }
+
+    const is_skip = tag == .skip or
+        (tag == .todo and (function == .zero or !Jest.runner.?.run_todo)) or
+        (tag != .only and Jest.runner.?.only and parent.tag != .only);
+
+    if (is_test) {
+        if (is_skip) {
+            parent.skip_count += 1;
+            function.unprotect();
+        } else {
+            function.protect();
+        }
+
+        parent.tests.append(allocator, TestScope{
+            .label = label,
+            .parent = parent,
+            .tag = tag,
+            .callback = if (is_skip) .zero else function,
+            .timeout_millis = timeout_ms,
+        }) catch unreachable;
+
+        if (test_elapsed_timer == null) create_timer: {
+            var timer = allocator.create(std.time.Timer) catch unreachable;
+            timer.* = std.time.Timer.start() catch break :create_timer;
+            test_elapsed_timer = timer;
+        }
+    } else {
+        var scope = allocator.create(DescribeScope) catch unreachable;
+        scope.* = .{
+            .label = label,
+            .parent = parent,
+            .file_id = parent.file_id,
+            .tag = if (parent.is_skip) parent.tag else tag,
+            .is_skip = is_skip or parent.is_skip,
+        };
+
+        return scope.run(globalThis, function);
+    }
+
+    return this;
+}
+
+inline fn createIfScope(
+    globalThis: *JSGlobalObject,
+    callframe: *CallFrame,
+    comptime property: string,
+    comptime signature: string,
+    comptime Scope: type,
+    comptime is_skip: bool,
+) JSValue {
+    const arguments = callframe.arguments(1);
+    const args = arguments.ptr[0..arguments.len];
+
+    if (args.len == 0) {
+        globalThis.throwPretty("{s} expects a condition", .{signature});
+        return .zero;
+    }
+
+    const name = ZigString.static(property);
+    const value = args[0].toBooleanSlow(globalThis);
+    const skip = if (is_skip) Scope.skip else Scope.call;
+    const call = if (is_skip) Scope.call else Scope.skip;
+
+    if (value) {
+        return JSC.NewFunction(globalThis, name, 2, skip, false);
+    }
+
+    return JSC.NewFunction(globalThis, name, 2, call, false);
+}
 
 // In Github Actions, emit an annotation that renders the error and location.
 // https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-an-error-message

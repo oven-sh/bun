@@ -1,0 +1,7 @@
+// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`new snapshot 1`] = `
+{
+  "b": 2,
+}
+`;

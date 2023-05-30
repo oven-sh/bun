@@ -34,18 +34,40 @@ declare module "bun:test" {
   export type Describe = {
     (label: string, fn: () => void): void;
     /**
+     * Skips all other tests, except this group of tests.
+     *
+     * @param label the label for the tests
+     * @param fn the function that defines the tests
+     */
+    only(label: string, fn: () => void): void;
+    /**
      * Skips this group of tests.
      *
      * @param label the label for the tests
      * @param fn the function that defines the tests
      */
-    skip: (label: string, fn: () => void) => void;
+    skip(label: string, fn: () => void): void;
+    /**
+     * Marks this group of tests as to be written or to be fixed.
+     *
+     * @param label the label for the tests
+     * @param fn the function that defines the tests
+     */
+    todo(label: string, fn?: () => void): void;
+    /**
+     * Runs this group of tests, only if `condition` is true.
+     *
+     * This is the opposite of `describe.skipIf()`.
+     *
+     * @param condition if these tests should run
+     */
+    if(condition: boolean): (label: string, fn: () => void) => void;
     /**
      * Skips this group of tests, if `condition` is true.
      *
      * @param condition if these tests should be skipped
      */
-    skipIf: (condition: boolean) => (label: string, fn: () => void) => void;
+    skipIf(condition: boolean): (label: string, fn: () => void) => void;
   };
   /**
    * Describes a group of related tests.
@@ -224,37 +246,7 @@ declare module "bun:test" {
       options?: number | TestOptions,
     ): void;
     /**
-     * Skips this test, if `condition` is true.
-     *
-     * @param condition if the test should be skipped
-     */
-    skipIf(
-      condition: boolean,
-    ): (
-      label: string,
-      fn:
-        | (() => void | Promise<unknown>)
-        | ((done: (err?: unknown) => void) => void),
-      options?: number | TestOptions,
-    ) => void;
-    /**
-     * Runs this test, if `condition` is true.
-     *
-     * This is the opposite of `test.skipIf()`.
-     *
-     * @param condition if the test should be skipped
-     */
-    runIf(
-      condition: boolean,
-    ): (
-      label: string,
-      fn:
-        | (() => void | Promise<unknown>)
-        | ((done: (err?: unknown) => void) => void),
-      options?: number | TestOptions,
-    ) => void;
-    /**
-     * Indicate a test is yet to be written or implemented correctly.
+     * Marks this test as to be written or to be fixed.
      *
      * When a test function is passed, it will be marked as `todo` in the test results
      * as long the test does not pass. When the test passes, the test will be marked as
@@ -272,6 +264,36 @@ declare module "bun:test" {
         | ((done: (err?: unknown) => void) => void),
       options?: number | TestOptions,
     ): void;
+    /**
+     * Runs this test, if `condition` is true.
+     *
+     * This is the opposite of `test.skipIf()`.
+     *
+     * @param condition if the test should run
+     */
+    if(
+      condition: boolean,
+    ): (
+      label: string,
+      fn:
+        | (() => void | Promise<unknown>)
+        | ((done: (err?: unknown) => void) => void),
+      options?: number | TestOptions,
+    ) => void;
+    /**
+     * Skips this test, if `condition` is true.
+     *
+     * @param condition if the test should be skipped
+     */
+    skipIf(
+      condition: boolean,
+    ): (
+      label: string,
+      fn:
+        | (() => void | Promise<unknown>)
+        | ((done: (err?: unknown) => void) => void),
+      options?: number | TestOptions,
+    ) => void;
   };
   /**
    * Runs a test.

@@ -135,7 +135,7 @@ describe("bun test", () => {
     });
   });
   describe("--only", () => {
-    test.only("should skip non-only tests when enabled", () => {
+    test("should skip non-only tests when enabled", () => {
       const stderr = runTest({
         args: ["--only"],
         input: `
@@ -165,7 +165,7 @@ describe("bun test", () => {
       });
       expect(stderr).toContain("reachable");
       expect(stderr).not.toContain("unreachable");
-      expect(stderr.match(/reachable/g)).toHaveLength(2);
+      expect(stderr.match(/reachable/g)).toHaveLength(3);
     });
   });
   describe("--timeout", () => {
@@ -352,6 +352,21 @@ describe("bun test", () => {
       expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+::error/);
       expect(stderr).toMatch(/error: expect\(received\)\.toBe\(expected\)/); // stripped ansi
       expect(stderr).toMatch(/0AExpected: false%0AReceived: true%0A/); // escaped newlines
+    });
+    test("should annotate errors without a stack", () => {
+      const stderr = runTest({
+        input: `
+          import { test, expect } from "bun:test";
+          test("fail", () => {
+            throw "Oops!";
+          });
+        `,
+        env: {
+          FORCE_COLOR: "1",
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      expect(stderr).toMatch(/::error::error: Oops!/);
     });
   });
 });

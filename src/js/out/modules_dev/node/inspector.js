@@ -17,7 +17,7 @@ class NotImplementedError extends Error {
 }
 
 // src/js/node/inspector.ts
-var EventEmitter = import.meta.require("node:events");
+var EventEmitter = require("node:events");
 var open = function() {
   throwNotImplemented("node:inspector open", 2445);
 }, close = function() {
@@ -59,4 +59,4 @@ export {
   Session
 };
 
-//# debugId=8C16F1991E7D03BA64756e2164756e21
+//# debugId=1460E866D5DCE59364756e2164756e21

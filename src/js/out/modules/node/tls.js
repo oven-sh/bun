@@ -1,4 +1,4 @@
-var {isTypedArray } = import.meta.require("node:util/types");
+var {isTypedArray } = require("node:util/types");
 var parseCertString = function() {
   throwNotImplemented("Not implemented");
 }, isValidTLSArray = function(obj) {

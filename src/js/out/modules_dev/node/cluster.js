@@ -1,4 +1,4 @@
-var EventEmitter = import.meta.require("node:events");
+var EventEmitter = require("node:events");
 
 // src/js/shared.ts
 function throwNotImplemented(feature, issue) {
@@ -62,4 +62,4 @@ export {
   SCHED_NONE
 };
 
-//# debugId=58641C31B94079F464756e2164756e21
+//# debugId=737065ADCE807CA764756e2164756e21

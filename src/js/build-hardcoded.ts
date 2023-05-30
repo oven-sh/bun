@@ -103,7 +103,6 @@ for (const [build, outdir] of [
         process.exit(1);
       }
 
-      console.log(`Writing ${output.path}`);
       Bun.write(path.join(outdir, output.path), transformedOutput);
     } else {
       Bun.write(path.join(outdir, output.path), output);

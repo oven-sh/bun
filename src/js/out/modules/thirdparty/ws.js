@@ -1,5 +1,5 @@
-var EventEmitter = import.meta.require("node:events");
-var http = import.meta.require("node:http");
+var EventEmitter = require("node:events");
+var http = require("node:http");
 var subprotocolParse = function(header) {
   const protocols = new Set;
   let start = -1, end = -1, i = 0;

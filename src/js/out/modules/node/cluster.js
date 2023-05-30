@@ -1,4 +1,4 @@
-var EventEmitter = import.meta.require("node:events");
+var EventEmitter = require("node:events");
 
 // src/js/shared.ts
 function throwNotImplemented(feature, issue) {

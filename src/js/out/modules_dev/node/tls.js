@@ -1,4 +1,4 @@
-var {isTypedArray } = import.meta.require("node:util/types");
+var {isTypedArray } = require("node:util/types");
 var parseCertString = function() {
   throwNotImplemented("Not implemented");
 }, isValidTLSArray = function(obj) {
@@ -249,4 +249,4 @@ export {
   CLIENT_RENEG_LIMIT
 };
 
-//# debugId=EAD291BBB527196864756e2164756e21
+//# debugId=79E8EFC6EC55A55C64756e2164756e21

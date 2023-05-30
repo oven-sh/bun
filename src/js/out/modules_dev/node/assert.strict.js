@@ -1,4 +1,4 @@
-var {strict: strictBase } = import.meta.require("node:assert");
+var {strict: strictBase } = require("node:assert");
 var {
   fail,
   AssertionError,
@@ -65,4 +65,4 @@ export {
   AssertionError
 };
 
-//# debugId=24589A249F6A4E4D64756e2164756e21
+//# debugId=50080EE4A6CFAE1E64756e2164756e21

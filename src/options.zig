@@ -1436,6 +1436,7 @@ pub const BundleOptions = struct {
     rewrite_jest_for_tests: bool = false,
 
     macro_remap: MacroRemap = MacroRemap{},
+    no_macros: bool = false,
 
     conditions: ESMConditions = undefined,
     tree_shaking: bool = false,

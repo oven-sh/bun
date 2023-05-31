@@ -1599,6 +1599,7 @@ pub const BundleV2 = struct {
             completion.env,
         );
         bundler.options.jsx = config.jsx;
+        bundler.options.no_macros = config.no_macros;
         bundler.options.react_server_components = config.server_components.client.items.len > 0 or config.server_components.server.items.len > 0;
         bundler.options.loaders = try options.loadersFromTransformOptions(allocator, config.loaders, config.target);
         bundler.options.entry_naming = config.names.entry_point.data;

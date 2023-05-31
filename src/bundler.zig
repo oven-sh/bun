@@ -1388,6 +1388,7 @@ pub const Bundler = struct {
                 opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
                 opts.features.should_fold_typescript_constant_expressions = loader.isTypeScript() or target.isBun() or bundler.options.minify_syntax;
                 opts.features.dynamic_require = target.isBun();
+                opts.features.no_macros = bundler.options.no_macros;
                 opts.transform_only = bundler.options.transform_only;
 
                 // @bun annotation

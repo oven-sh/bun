@@ -1505,7 +1505,6 @@ pub const Path = struct {
     const PathHandler = @import("../../resolver/resolve_path.zig");
     const StringBuilder = @import("../../string_builder.zig");
     pub const code = @embedFile("../path.exports.js");
-    const log = bun.Output.scoped(.Path, false);
 
     pub fn create(globalObject: *JSC.JSGlobalObject, isWindows: bool) callconv(.C) JSC.JSValue {
         return shim.cppFn("create", .{ globalObject, isWindows });

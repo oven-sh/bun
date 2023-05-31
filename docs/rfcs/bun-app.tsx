@@ -1,12 +1,26 @@
 import { FileSystemRouter, MatchedRoute, ServeOptions, Server } from "bun";
 
-import { BuildManifest, BuildConfig, BundlerConfig } from "./bun-build-config";
+import { BuildManifest, BuildConfig } from "./bun-build-config";
 import { BuildResult } from "./bun-build";
 
 interface AppConfig {
-  configs: Array<BuildConfig & { name: string }>;
+  configs: Array<Omit<BuildConfig, "entrypoints"> & { name: string }>;
   routers: Array<AppServeRouter>;
 }
+
+/**
+ * 
+ * Bun.App
+ * 
+ * On build/serve:
+ * - iterate over all routers
+ * - each router specifies either an `entrypoint`/`dir` & build config
+ * - if dir, all files in entrypoint are considered entrypoints
+ * - everything is built
+ * - the built results are served over HTTP
+ * - each router has a route `prefix` from which its build assets are served
+ * - for "mode: handler", the handler is loaded and called instead of served as a static asset
+ */
 
 type AppServeRouter =
   | {

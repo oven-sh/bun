@@ -238,6 +238,18 @@ export default [
         fn: "toBeNil",
         length: 0,
       },
+      toBeBoolean: {
+        fn: "toBeBoolean",
+        length: 0,
+      },
+      toBeTrue: {
+        fn: "toBeTrue",
+        length: 0,
+      },
+      toBeFalse: {
+        fn: "toBeFalse",
+        length: 0,
+      },
     },
   }),
 ];

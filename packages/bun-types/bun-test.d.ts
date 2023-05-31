@@ -636,6 +636,34 @@ declare module "bun:test" {
      * expect(undefined).toBeNil();
      */
     toBeNil(): void;
+    /**
+     * Asserts that a value is a `boolean`.
+     *
+     * @example
+     * expect(true).toBeBoolean();
+     * expect(false).toBeBoolean();
+     * expect(null).not.toBeBoolean();
+     * expect(0).not.toBeBoolean();
+     */
+    toBeBoolean(): void;
+    /**
+     * Asserts that a value is `true`.
+     *
+     * @example
+     * expect(true).toBeTrue();
+     * expect(false).not.toBeTrue();
+     * expect(1).not.toBeTrue();
+     */
+    toBeTrue(): void;
+    /**
+     * Asserts that a value is `false`.
+     *
+     * @example
+     * expect(false).toBeFalse();
+     * expect(true).not.toBeFalse();
+     * expect(0).not.toBeFalse();
+     */
+    toBeFalse(): void;
   };
 }
 

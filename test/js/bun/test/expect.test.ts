@@ -203,6 +203,33 @@ describe("expect()", () => {
     expect(true).not.toBeNil();
     expect({}).not.toBeNil();
   });
+
+  test("toBeBoolean()", () => {
+    expect(true).toBeBoolean();
+    expect(false).toBeBoolean();
+    expect(0).not.toBeBoolean();
+    expect(1).not.toBeBoolean();
+    expect("").not.toBeBoolean();
+    expect({}).not.toBeBoolean();
+  });
+
+  test("toBeTrue()", () => {
+    expect(true).toBeTrue();
+    expect(false).not.toBeTrue();
+    expect(0).not.toBeTrue();
+    expect(1).not.toBeTrue();
+    expect("").not.toBeTrue();
+    expect({}).not.toBeTrue();
+  });
+
+  test("toBeFalse()", () => {
+    expect(false).toBeFalse();
+    expect(true).not.toBeFalse();
+    expect(0).not.toBeFalse();
+    expect(1).not.toBeFalse();
+    expect("").not.toBeFalse();
+    expect({}).not.toBeFalse();
+  });
 });
 
 function label(value: unknown): string {

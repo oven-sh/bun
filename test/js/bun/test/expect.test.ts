@@ -193,7 +193,7 @@ describe("expect()", () => {
     }
   });
 
-  test.only("toBeNil()", () => {
+  test("toBeNil()", () => {
     expect(null).toBeNil();
     expect(undefined).toBeNil();
     expect(false).not.toBeNil();

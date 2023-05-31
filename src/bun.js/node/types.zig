@@ -1788,9 +1788,9 @@ pub const Path = struct {
                 dir = root;
             }
         }
-
-        var base = JSC.ZigString.init(path_name.base);
-        var name_ = JSC.ZigString.init(path_name.filename);
+        // we use filename as base, and base as name because node.js/internals compatibilty
+        var base = JSC.ZigString.init(path_name.filename);
+        var name_ = JSC.ZigString.init(path_name.base);
         var ext = JSC.ZigString.init(path_name.ext);
         dir.setOutputEncoding();
         root.setOutputEncoding();

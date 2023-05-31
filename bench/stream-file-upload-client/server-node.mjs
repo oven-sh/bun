@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 const server = createServer((req, res) => {
   var chunkSize = 0;
-  req.on("data", (chunk) => {
+  req.on("data", chunk => {
     chunkSize += chunk.byteLength;
   });
 
@@ -10,7 +10,6 @@ const server = createServer((req, res) => {
     res.end(`${chunkSize}`);
   });
 });
-server.listen(0, (err, port) => {
+server.listen(parseInt(process.env.PORT ?? "3000"), (err, port) => {
   console.log(`http://localhost:${server.address().port}`);
 });
-

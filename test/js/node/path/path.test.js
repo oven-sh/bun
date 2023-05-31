@@ -450,3 +450,73 @@ it("path.resolve", () => {
   });
   strictEqual(failures.length, 0, failures.join("\n"));
 });
+
+it("path.parse", () => {
+  expect(path.parse("/tmp")).toStrictEqual({ root: "/", dir: "/", base: "tmp", ext: "", name: "tmp" });
+
+  expect(path.parse("/tmp/test.txt")).toStrictEqual({
+    root: "/",
+    dir: "/tmp",
+    base: "test.txt",
+    ext: ".txt",
+    name: "test",
+  });
+
+  expect(path.parse("/tmp/test/file.txt")).toStrictEqual({
+    root: "/",
+    dir: "/tmp/test",
+    base: "file.txt",
+    ext: ".txt",
+    name: "file",
+  });
+
+  expect(path.parse("/tmp/test/dir")).toStrictEqual({ root: "/", dir: "/tmp/test", base: "dir", ext: "", name: "dir" });
+  expect(path.parse("/tmp/test/dir/")).toStrictEqual({
+    root: "/",
+    dir: "/tmp/test",
+    base: "dir",
+    ext: "",
+    name: "dir",
+  });
+
+  expect(path.parse(".")).toStrictEqual({ root: "", dir: "", base: ".", ext: "", name: "." });
+  expect(path.parse("./")).toStrictEqual({ root: "", dir: "", base: ".", ext: "", name: "." });
+  expect(path.parse("/.")).toStrictEqual({ root: "/", dir: "/", base: ".", ext: "", name: "." });
+  expect(path.parse("/../")).toStrictEqual({ root: "/", dir: "/", base: "..", ext: ".", name: "." });
+
+  expect(path.parse("./file.txt")).toStrictEqual({ root: "", dir: ".", base: "file.txt", ext: ".txt", name: "file" });
+  expect(path.parse("../file.txt")).toStrictEqual({ root: "", dir: "..", base: "file.txt", ext: ".txt", name: "file" });
+  expect(path.parse("../test/file.txt")).toStrictEqual({
+    root: "",
+    dir: "../test",
+    base: "file.txt",
+    ext: ".txt",
+    name: "file",
+  });
+  expect(path.parse("test/file.txt")).toStrictEqual({
+    root: "",
+    dir: "test",
+    base: "file.txt",
+    ext: ".txt",
+    name: "file",
+  });
+
+  expect(path.parse("test/dir")).toStrictEqual({ root: "", dir: "test", base: "dir", ext: "", name: "dir" });
+  expect(path.parse("test/dir/another_dir")).toStrictEqual({
+    root: "",
+    dir: "test/dir",
+    base: "another_dir",
+    ext: "",
+    name: "another_dir",
+  });
+
+  expect(path.parse("./dir")).toStrictEqual({ root: "", dir: ".", base: "dir", ext: "", name: "dir" });
+  expect(path.parse("../dir")).toStrictEqual({ root: "", dir: "..", base: "dir", ext: "", name: "dir" });
+  expect(path.parse("../dir/another_dir")).toStrictEqual({
+    root: "",
+    dir: "../dir",
+    base: "another_dir",
+    ext: "",
+    name: "another_dir",
+  });
+});

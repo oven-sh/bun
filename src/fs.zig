@@ -1196,7 +1196,6 @@ pub const PathName = struct {
     /// includes the leading .
     ext: string,
     filename: string,
-
     pub fn nonUniqueNameStringBase(self: *const PathName) string {
         // /bar/foo/index.js -> foo
         if (self.dir.len > 0 and strings.eqlComptime(self.base, "index")) {
@@ -1255,12 +1254,14 @@ pub const PathName = struct {
     pub fn init(_path: string) PathName {
         var path = _path;
         var base = path;
-        var ext = path;
+        // ext must be empty if not detected
+        var ext: string = "";
         var dir = path;
         var is_absolute = true;
-
         var _i = strings.lastIndexOfChar(path, '/');
+        var first = true;
         while (_i) |i| {
+
             // Stop if we found a non-trailing slash
             if (i + 1 != path.len) {
                 base = path[i + 1 ..];
@@ -1269,32 +1270,48 @@ pub const PathName = struct {
                 break;
             }
 
+            // If the path starts with a slash and it's the only slash, it's absolute
+            if (i == 0 and first) {
+                base = path[1..];
+                dir = &([_]u8{});
+                break;
+            }
+
+            first = false;
             // Ignore trailing slashes
+
             path = path[0..i];
 
             _i = strings.lastIndexOfChar(path, '/');
         }
 
-        // Strip off the extension
-        var _dot = strings.lastIndexOfChar(base, '.');
-        if (_dot) |dot| {
-            ext = base[dot..];
-            base = base[0..dot];
+        // clean trailing slashs
+        if (base.len > 1 and base[base.len - 1] == '/') {
+            base = base[0 .. base.len - 1];
+        }
+
+        // filename is base without extension
+        var filename = base;
+
+        // if only one character ext = "" even if filename it's "."
+        if (filename.len > 1) {
+            // Strip off the extension
+            var _dot = strings.lastIndexOfChar(filename, '.');
+            if (_dot) |dot| {
+                ext = filename[dot..];
+                filename = filename[0..dot];
+            }
         }
 
         if (is_absolute) {
             dir = &([_]u8{});
         }
 
-        if (base.len > 1 and base[base.len - 1] == '/') {
-            base = base[0 .. base.len - 1];
-        }
-
         return PathName{
             .dir = dir,
             .base = base,
             .ext = ext,
-            .filename = if (dir.len > 0) _path[dir.len + 1 ..] else _path,
+            .filename = filename,
         };
     }
 };

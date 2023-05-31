@@ -29,7 +29,7 @@ $ bun build ./cli.tsx
 console.log(`Your random number is ${0.6805550949689833}`);
 ```
 
-As you can see, the source code of the `random` function occurs nowhere in the bundle. Instead, it is executed _during bundling_ and function call (`random()`) is replaced with the result of the function.
+As you can see, the source code of the `random` function occurs nowhere in the bundle. Instead, it is executed _during bundling_ and function call (`random()`) is replaced with the result of the function. Since the source code will never be included in the bundle, macros can safely perform privileged operations like reading from a database.
 
 ## When to use macros
 
@@ -71,12 +71,6 @@ if (returnFalse()) {
   console.log("This code is eliminated");
 }
 ```
-
-## Security
-
-Macros are only executed on your source files, not on files imported from packages in `node_modules`.
-
-The source code of a macro will never be included in the bundled; as such, macros can safely perform privileged operations like reading from a database.
 
 ## Serializablility
 

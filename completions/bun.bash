@@ -82,7 +82,7 @@ _bun_completions() {
     declare -A PACKAGE_OPTIONS;
     declare -A PM_OPTIONS;
 
-    local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help init pm x";
+    local SUBCOMMANDS="dev bun create run install add remove upgrade completions help init pm x";
 
     GLOBAL_OPTIONS[LONG_OPTIONS]="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --extension-order --jsx-factory --jsx-fragment --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port --dump-environment-variables --dump-limits --disable-bun-js";
     GLOBAL_OPTIONS[SHORT_OPTIONS]="-c -v -d -e -h -i -l -u -p";

@@ -112,6 +112,10 @@ pub const Blob = struct {
         return bun.FormData.AsyncFormData.init(this.allocator orelse bun.default_allocator, encoding) catch unreachable;
     }
 
+    pub fn hasContentTypeFromUser(this: *const Blob) bool {
+        return this.content_type_was_set;
+    }
+
     const FormDataContext = struct {
         allocator: std.mem.Allocator,
         joiner: StringJoiner,
@@ -3509,9 +3513,9 @@ pub const AnyBlob = union(enum) {
     // InlineBlob: InlineBlob,
     InternalBlob: InternalBlob,
 
-    pub fn hasContentType(this: AnyBlob) bool {
+    pub fn hasContentTypeFromUser(this: AnyBlob) bool {
         return switch (this) {
-            .Blob => this.Blob.content_type_was_set,
+            .Blob => this.Blob.hasContentTypeFromUser(),
             .InternalBlob => false,
         };
     }

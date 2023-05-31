@@ -161,11 +161,22 @@ describe("bun test", () => {
               console.error("reachable");
             });
           });
+          describe.only("describe #2", () => {
+            test("test #8", () => {
+              console.error("reachable");
+            });
+            test.skip("test #9", () => {
+              console.error("unreachable");
+            });
+            test.only("test #10", () => {
+              console.error("reachable");
+            });
+          });
         `,
       });
       expect(stderr).toContain("reachable");
       expect(stderr).not.toContain("unreachable");
-      expect(stderr.match(/reachable/g)).toHaveLength(3);
+      expect(stderr.match(/reachable/g)).toHaveLength(4);
     });
   });
   describe("--timeout", () => {

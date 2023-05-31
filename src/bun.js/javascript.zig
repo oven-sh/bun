@@ -2107,12 +2107,12 @@ pub const VirtualMachine = struct {
         var name = exception.name;
 
         const message = exception.message;
-        const top_frame = if (exception.stack.frames_len > 0) exception.stack.frames()[0] else null;
 
         var did_print_name = false;
         if (source_lines.next()) |source| brk: {
             if (source.text.len == 0) break :brk;
 
+            const top_frame = if (exception.stack.frames_len > 0) exception.stack.frames()[0] else null;
             if (top_frame == null or top_frame.?.position.isInvalid()) {
                 defer did_print_name = true;
                 var text = std.mem.trim(u8, source.text, "\n");

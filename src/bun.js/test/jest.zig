@@ -156,6 +156,9 @@ pub const TestRunner = struct {
     }
 
     pub fn setOnly(this: *TestRunner) void {
+        if (this.only) {
+            return;
+        }
         this.only = true;
 
         var list = this.queue.readableSlice(0);
@@ -3785,7 +3788,7 @@ pub const TestRunnerTask = struct {
         var test_: TestScope = this.describe.tests.items[test_id];
         describe.current_test_id = test_id;
 
-        if (describe.is_skip or test_.callback == .zero) {
+        if (test_.callback == .zero or (describe.is_skip and test_.tag != .only)) {
             var tag = if (describe.is_skip) describe.tag else test_.tag;
             switch (tag) {
                 .todo => {

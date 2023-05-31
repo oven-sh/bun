@@ -1883,8 +1883,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             }
             const amount = socket.write(
                 to_send,
-                // more if we're sending the body
-                this.state.original_request_body == .bytes,
+                false,
             );
             if (comptime is_first_call) {
                 if (amount == 0) {

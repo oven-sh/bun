@@ -1621,9 +1621,13 @@ pub const Expect = struct {
         var path_string = ZigString.Empty;
         expected_property_path.toZigString(&path_string, globalObject);
 
-        const received_property = value.getIfPropertyExistsFromPath(globalObject, expected_property_path);
+        var pass = !value.isUndefinedOrNull();
+        var received_property: JSValue = .zero;
 
-        var pass = !received_property.isEmpty();
+        if (pass) {
+            received_property = value.getIfPropertyExistsFromPath(globalObject, expected_property_path);
+            pass = !received_property.isEmpty();
+        }
 
         if (pass and expected_property != null) {
             pass = received_property.deepEquals(expected_property.?, globalObject);

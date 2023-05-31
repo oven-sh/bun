@@ -1725,6 +1725,11 @@ test("toHaveProperty() - all", () => {
   expect({ a: new String("a") }).not.toHaveProperty("a", "a");
 });
 
+test("toHaveProperty() - null or undefined", () => {
+  expect(null).not.toHaveProperty("length");
+  expect(undefined).not.toHaveProperty("length");
+});
+
 test("toBe()", () => {
   const a = 1;
   const b = 1;

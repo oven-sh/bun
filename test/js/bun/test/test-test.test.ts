@@ -2535,14 +2535,7 @@ describe("throw in describe scope doesn't enqueue tests after thrown", () => {
     throw new Error("This test failed");
   });
 
-  class TestPass extends Error {
-    constructor(message) {
-      super(message);
-      this.name = "TestPass";
-    }
-  }
-
-  throw new TestPass("This test passed. Ignore the error message");
+  throw "This test passed. Ignore the error message";
 
   it("test enqueued after a describe scope throws is never run", () => {
     throw new Error("This test failed");

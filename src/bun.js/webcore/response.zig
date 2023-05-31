@@ -1354,13 +1354,15 @@ pub const Fetch = struct {
 
             switch (res) {
                 .err => |err| {
-                    bun.default_allocator.free(url.href);
-                    if (proxy) |prox| {
-                        bun.default_allocator.free(prox.href);
-                    }
+                    bun.default_allocator.free(url_proxy_buffer);
 
                     const rejected_value = JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
                     body.detach();
+                    if (headers) |*headers_| {
+                        headers_.buf.deinit(bun.default_allocator);
+                        headers_.entries.deinit(bun.default_allocator);
+                    }
+
                     return rejected_value;
                 },
                 .result => |result| {

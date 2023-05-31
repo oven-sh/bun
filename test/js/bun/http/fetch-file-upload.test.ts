@@ -1,4 +1,5 @@
 import { expect, test, describe } from "bun:test";
+import { withoutAggressiveGC } from "harness";
 
 test("uploads roundtrip", async () => {
   const body = Bun.file(import.meta.dir + "/fetch.js.txt");
@@ -32,13 +33,19 @@ test("uploads roundtrip", async () => {
 });
 
 test("missing file throws the expected error", async () => {
-  const body = Bun.file(import.meta.dir + "/fetch123123231123.js.txt");
-
-  const reqBody = new Request(`http://example.com`, {
-    body,
-    method: "POST",
+  Bun.gc(true);
+  // Run this 1000 times to check for GC bugs
+  withoutAggressiveGC(() => {
+    const body = Bun.file(import.meta.dir + "/fetch123123231123.js.txt");
+    for (let i = 0; i < 1000; i++) {
+      const resp = fetch(`http://example.com`, {
+        body,
+        method: "POST",
+        proxy: "http://localhost:3000",
+      });
+      expect(Bun.peek.status(resp)).toBe("rejected");
+      expect(async () => await resp).toThrow("No such file or directory");
+    }
   });
-  const resp = fetch(reqBody);
-  expect(Bun.peek.status(resp)).toBe("rejected");
-  expect(async () => await resp).toThrow("No such file or directory");
+  Bun.gc(true);
 });

@@ -31,5 +31,5 @@ node stream-file-node.mjs
 Run the benchmark in deno:
 
 ```bash
-deno stream-file-deno.js
+deno run -A stream-file-deno.js
 ```

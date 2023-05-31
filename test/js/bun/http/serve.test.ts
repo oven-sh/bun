@@ -1007,11 +1007,7 @@ it("request body and signal life cycle", async () => {
   }
 });
 
-// The behavior here is
-// it does on Bun.serve()
-// it does not on fetch()
-// it uploads the file
-it("doesn't infer content-type from a Bun.file()'s file path in fetch()", async () => {
+it("propagates content-type from a Bun.file()'s file path in fetch()", async () => {
   const body = Bun.file(import.meta.dir + "/fetch.js.txt");
   const bodyText = await body.text();
 
@@ -1019,7 +1015,7 @@ it("doesn't infer content-type from a Bun.file()'s file path in fetch()", async 
     port: 0,
     development: false,
     async fetch(req) {
-      expect(req.headers.get("Content-Type")).toBeNull();
+      expect(req.headers.get("Content-Type")).toBe("text/plain;charset=utf-8");
       const text = await req.text();
       expect(text).toBe(bodyText);
 

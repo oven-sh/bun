@@ -113,7 +113,7 @@ pub const Blob = struct {
     }
 
     pub fn hasContentTypeFromUser(this: *const Blob) bool {
-        return this.content_type_was_set;
+        return this.content_type_was_set or (this.store != null and this.store.?.data == .file);
     }
 
     const FormDataContext = struct {

@@ -70,8 +70,6 @@ import {returnFalse} from './returnFalse.ts' with { type: 'macro' };
 if (returnFalse()) {
   console.log("This code is eliminated");
 }
-
-console.log(obj.foo);
 ```
 
 ## Security

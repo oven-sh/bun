@@ -157,6 +157,7 @@ pub const Arguments = struct {
         clap.parseParam("--minify-syntax                   Minify syntax and inline data (experimental)") catch unreachable,
         clap.parseParam("--minify-whitespace               Minify whitespace (experimental)") catch unreachable,
         clap.parseParam("--minify-identifiers              Minify identifiers") catch unreachable,
+        clap.parseParam("--no-macros                       Disable macros from being executed in the bundler, transpiler and runtime") catch unreachable,
         clap.parseParam("--target <STR>                    The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
         clap.parseParam("<POS>...                          ") catch unreachable,
     };
@@ -744,6 +745,10 @@ pub const Arguments = struct {
             ctx.log.level = logger.Log.default_log_level;
         }
 
+        if (args.flag("--no-macros")) {
+            ctx.debug.macros = .{ .disable = {} };
+        }
+
         opts.output_dir = output_dir;
         if (output_file != null)
             ctx.debug.output_file = output_file.?;
@@ -898,13 +903,15 @@ pub const Command = struct {
         loaded_bunfig: bool = false,
 
         // technical debt
-        macros: ?MacroMap = null,
+        macros: MacroOptions = MacroOptions.unspecified,
         editor: string = "",
         package_bundle_map: bun.StringArrayHashMapUnmanaged(options.BundlePackage) = bun.StringArrayHashMapUnmanaged(options.BundlePackage){},
 
         test_directory: []const u8 = "",
         output_file: []const u8 = "",
     };
+
+    pub const MacroOptions = union(enum) { unspecified: void, disable: void, map: MacroMap };
 
     pub const HotReload = enum {
         none,

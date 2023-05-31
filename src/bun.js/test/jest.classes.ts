@@ -250,6 +250,58 @@ export default [
         fn: "toBeFalse",
         length: 0,
       },
+      toBeNumber: {
+        fn: "toBeNumber",
+        length: 0,
+      },
+      toBeInteger: {
+        fn: "toBeInteger",
+        length: 0,
+      },
+      toBeFinite: {
+        fn: "toBeFinite",
+        length: 0,
+      },
+      toBePositive: {
+        fn: "toBePositive",
+        length: 0,
+      },
+      toBeNegative: {
+        fn: "toBeNegative",
+        length: 0,
+      },
+      toBeWithin: {
+        fn: "toBeWithin",
+        length: 2,
+      },
+      toBeSymbol: {
+        fn: "toBeSymbol",
+        length: 0,
+      },
+      toBeFunction: {
+        fn: "toBeFunction",
+        length: 0,
+      },
+      toBeDate: {
+        fn: "toBeDate",
+        length: 0,
+      },
+      toBeString: {
+        fn: "toBeString",
+        length: 0,
+      },
+      toInclude: {
+        fn: "toInclude",
+        length: 1,
+      },
+      toStartWith: {
+        fn: "toStartWith",
+        length: 1,
+      },
+      toEndWith: {
+        fn: "toEndWith",
+        length: 1,
+      },
     },
   }),
 ];

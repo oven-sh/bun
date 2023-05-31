@@ -664,6 +664,124 @@ declare module "bun:test" {
      * expect(0).not.toBeFalse();
      */
     toBeFalse(): void;
+    /**
+     * Asserts that a value is a `number`.
+     *
+     * @example
+     * expect(1).toBeNumber();
+     * expect(3.14).toBeNumber();
+     * expect(NaN).toBeNumber();
+     * expect(BigInt(1)).not.toBeNumber();
+     */
+    toBeNumber(): void;
+    /**
+     * Asserts that a value is a `number`, and is an integer.
+     *
+     * @example
+     * expect(1).toBeInteger();
+     * expect(3.14).not.toBeInteger();
+     * expect(NaN).not.toBeInteger();
+     */
+    toBeInteger(): void;
+    /**
+     * Asserts that a value is a `number`, and is not `NaN` or `Infinity`.
+     *
+     * @example
+     * expect(1).toBeFinite();
+     * expect(3.14).toBeFinite();
+     * expect(NaN).not.toBeFinite();
+     * expect(Infinity).not.toBeFinite();
+     */
+    toBeFinite(): void;
+    /**
+     * Asserts that a value is a positive `number`.
+     *
+     * @example
+     * expect(1).toBePositive();
+     * expect(-3.14).not.toBePositive();
+     * expect(NaN).not.toBePositive();
+     */
+    toBePositive(): void;
+    /**
+     * Asserts that a value is a negative `number`.
+     *
+     * @example
+     * expect(-3.14).toBeNegative();
+     * expect(1).not.toBeNegative();
+     * expect(NaN).not.toBeNegative();
+     */
+    toBeNegative(): void;
+    /**
+     * Asserts that a value is a number between a start and end value.
+     *
+     * @param start the start number (inclusive)
+     * @param end the end number (exclusive)
+     */
+    toBeWithin(start: number, end: number): void;
+    /**
+     * Asserts that a value is a `symbol`.
+     *
+     * @example
+     * expect(Symbol("foo")).toBeSymbol();
+     * expect("foo").not.toBeSymbol();
+     */
+    toBeSymbol(): void;
+    /**
+     * Asserts that a value is a `function`.
+     *
+     * @example
+     * expect(() => {}).toBeFunction();
+     */
+    toBeFunction(): void;
+    /**
+     * Asserts that a value is a `Date` object.
+     *
+     * To check if a date is valid, use `toBeValidDate()` instead.
+     *
+     * @example
+     * expect(new Date()).toBeDate();
+     * expect(new Date(null)).toBeDate();
+     * expect("2020-03-01").not.toBeDate();
+     */
+    toBeDate(): void;
+    /**
+     * Asserts that a value is a valid `Date` object.
+     *
+     * @example
+     * expect(new Date()).toBeValidDate();
+     * expect(new Date(null)).not.toBeValidDate();
+     * expect("2020-03-01").not.toBeValidDate();
+     */
+    toBeValidDate(): void;
+    /**
+     * Asserts that a value is a `string`.
+     *
+     * @example
+     * expect("foo").toBeString();
+     * expect(new String("bar")).toBeString();
+     * expect(123).not.toBeString();
+     */
+    toBeString(): void;
+    /**
+     * Asserts that a value includes a `string`.
+     *
+     * For non-string values, use `toContain()` instead.
+     *
+     * @param expected the expected substring
+     */
+    toInclude(expected: string): void;
+    /**
+     * Asserts that a value starts with a `string`.
+     *
+     * @param expected the string to start with
+     */
+    toStartWith(expected: string): void;
+    /**
+     * Asserts that a value ends with a `string`.
+     *
+     * @param expected the string to end with
+     */
+    toEndWith(expected: string): void;
   };
 }
 

@@ -230,6 +230,147 @@ describe("expect()", () => {
     expect("").not.toBeFalse();
     expect({}).not.toBeFalse();
   });
+
+  test("toBeNumber()", () => {
+    expect(0).toBeNumber();
+    expect(1).toBeNumber();
+    expect(1.23).toBeNumber();
+    expect(Infinity).toBeNumber();
+    expect(-Infinity).toBeNumber();
+    expect(NaN).toBeNumber();
+    expect("").not.toBeNumber();
+    expect({}).not.toBeNumber();
+  });
+
+  test("toBeInteger()", () => {
+    expect(0).toBeInteger();
+    expect(1).toBeInteger();
+    expect(1.23).not.toBeInteger();
+    expect(Infinity).not.toBeInteger();
+    expect(-Infinity).not.toBeInteger();
+    expect(NaN).not.toBeInteger();
+    expect("").not.toBeInteger();
+    expect({}).not.toBeInteger();
+  });
+
+  test("toBeFinite()", () => {
+    expect(0).toBeFinite();
+    expect(1).toBeFinite();
+    expect(1.23).toBeFinite();
+    expect(Infinity).not.toBeFinite();
+    expect(-Infinity).not.toBeFinite();
+    expect(NaN).not.toBeFinite();
+    expect("").not.toBeFinite();
+    expect({}).not.toBeFinite();
+  });
+
+  test("toBePositive()", () => {
+    expect(1).toBePositive();
+    expect(1.23).toBePositive();
+    expect(Infinity).not.toBePositive();
+    expect(0).not.toBePositive();
+    expect(-Infinity).not.toBePositive();
+    expect(NaN).not.toBePositive();
+    expect("").not.toBePositive();
+    expect({}).not.toBePositive();
+  });
+
+  test("toBeNegative()", () => {
+    expect(-1).toBeNegative();
+    expect(-1.23).toBeNegative();
+    expect(-Infinity).not.toBeNegative();
+    expect(0).not.toBeNegative();
+    expect(Infinity).not.toBeNegative();
+    expect(NaN).not.toBeNegative();
+    expect("").not.toBeNegative();
+    expect({}).not.toBeNegative();
+  });
+
+  test("toBeWithin()", () => {
+    expect(0).toBeWithin(0, 1);
+    expect(3.14).toBeWithin(3, 3.141);
+    expect(-25).toBeWithin(-100, 0);
+    expect(0).not.toBeWithin(1, 2);
+    expect(3.14).not.toBeWithin(3.1, 3.14);
+    expect(99).not.toBeWithin(99, 99);
+    expect(100).not.toBeWithin(99, 100);
+    expect(NaN).not.toBeWithin(0, 1);
+    expect("").not.toBeWithin(0, 1);
+    expect({}).not.toBeWithin(0, 1);
+    expect(Infinity).not.toBeWithin(-Infinity, Infinity);
+  });
+
+  test("toBeSymbol()", () => {
+    expect(Symbol()).toBeSymbol();
+    expect(Symbol("")).toBeSymbol();
+    expect(Symbol.iterator).toBeSymbol();
+    expect("").not.toBeSymbol();
+    expect({}).not.toBeSymbol();
+  });
+
+  test("toBeFunction()", () => {
+    expect(() => {}).toBeFunction();
+    expect(function () {}).toBeFunction();
+    expect(async function () {}).toBeFunction();
+    expect(async () => {}).toBeFunction();
+    expect(function* () {}).toBeFunction();
+    expect(async function* () {}).toBeFunction();
+    expect("").not.toBeFunction();
+    expect({}).not.toBeFunction();
+    expect(null).not.toBeFunction();
+  });
+
+  test("toBeDate()", () => {
+    expect(new Date()).toBeDate();
+    expect(new Date(0)).toBeDate();
+    expect(new Date("2021-01-01")).toBeDate();
+    expect("2021-01-01").not.toBeDate();
+    expect({}).not.toBeDate();
+    expect(null).not.toBeDate();
+  });
+
+  test.todo("toBeValidDate()", () => {
+    expect(new Date()).toBeValidDate();
+    expect(new Date(-1)).not.toBeValidDate();
+    expect("2021-01-01").not.toBeValidDate();
+    expect({}).not.toBeValidDate();
+    expect(null).not.toBeValidDate();
+  });
+
+  test("toBeString()", () => {
+    expect("").toBeString();
+    expect("123").toBeString();
+    expect(new String()).toBeString();
+    expect(new String("123")).toBeString();
+    expect(123).not.toBeString();
+    expect({}).not.toBeString();
+  });
+
+  test("toInclude()", () => {
+    expect("123").toInclude("1");
+    expect("abc").toInclude("abc");
+    expect(" 123 ").toInclude(" ");
+    expect("").toInclude("");
+    expect("bob").not.toInclude("alice");
+  });
+
+  test("toStartWith()", () => {
+    expect("123").toStartWith("1");
+    expect("abc").toStartWith("abc");
+    expect(" 123 ").toStartWith(" ");
+    expect(" ").toStartWith("");
+    expect("").toStartWith("");
+    expect("bob").not.toStartWith("alice");
+  });
+
+  test("toEndWith()", () => {
+    expect("123").toEndWith("3");
+    expect("abc").toEndWith("abc");
+    expect(" 123 ").toEndWith(" ");
+    expect(" ").toEndWith("");
+    expect("").toEndWith("");
+    expect("bob").not.toEndWith("alice");
+  });
 });
 
 function label(value: unknown): string {

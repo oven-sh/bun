@@ -3420,6 +3420,10 @@ pub const JSValue = enum(JSValueReprInt) {
         return this.jsType() == .RegExpObject;
     }
 
+    pub fn isDate(this: JSValue) bool {
+        return this.jsType() == .JSDate;
+    }
+
     pub fn asCheckLoaded(value: JSValue, comptime ZigType: type) ?*ZigType {
         if (!ZigType.Class.isLoaded() or value.isUndefinedOrNull())
             return null;

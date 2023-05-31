@@ -2863,6 +2863,11 @@ pub const Expect = struct {
         };
         value.ensureStillAlive();
 
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeNil() must be called in a test", .{});
+            return .zero;
+        }
+
         active_test_expectation_counter.actual += 1;
 
         const not = this.op.contains(.not);
@@ -2893,6 +2898,11 @@ pub const Expect = struct {
             return .zero;
         };
         value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeBoolean() must be called in a test", .{});
+            return .zero;
+        }
 
         active_test_expectation_counter.actual += 1;
 
@@ -2925,6 +2935,11 @@ pub const Expect = struct {
         };
         value.ensureStillAlive();
 
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeTrue() must be called in a test", .{});
+            return .zero;
+        }
+
         active_test_expectation_counter.actual += 1;
 
         const not = this.op.contains(.not);
@@ -2956,6 +2971,11 @@ pub const Expect = struct {
         };
         value.ensureStillAlive();
 
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeFalse() must be called in a test", .{});
+            return .zero;
+        }
+
         active_test_expectation_counter.actual += 1;
 
         const not = this.op.contains(.not);
@@ -2974,6 +2994,612 @@ pub const Expect = struct {
 
         const fmt = comptime getSignature("toBeFalse", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
         globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
+    pub fn toBeNumber(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeNumber() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+        const pass = value.isNumber() != not;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeNumber", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeNumber", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
+    pub fn toBeInteger(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeInteger() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+        const pass = value.isAnyInt() != not;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeInteger", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeInteger", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
+    pub fn toBeFinite(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeFinite() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        var pass = value.isNumber();
+        if (pass) {
+            const num: f64 = value.asNumber();
+            pass = std.math.isFinite(num) and !std.math.isNan(num);
+        }
+
+        const not = this.op.contains(.not);
+        if (not) pass = !pass;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeFinite", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeFinite", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
+    pub fn toBePositive(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBePositive() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        var pass = value.isNumber();
+        if (pass) {
+            const num: f64 = value.asNumber();
+            pass = @round(num) > 0 and !std.math.isInf(num) and !std.math.isNan(num);
+        }
+
+        const not = this.op.contains(.not);
+        if (not) pass = !pass;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBePositive", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBePositive", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
+    pub fn toBeNegative(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeNegative() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        var pass = value.isNumber();
+        if (pass) {
+            const num: f64 = value.asNumber();
+            pass = @round(num) < 0 and !std.math.isInf(num) and !std.math.isNan(num);
+        }
+
+        const not = this.op.contains(.not);
+        if (not) pass = !pass;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeNegative", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeNegative", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
+    pub fn toBeWithin(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const _arguments = callFrame.arguments(2);
+        const arguments = _arguments.ptr[0.._arguments.len];
+
+        if (arguments.len < 1) {
+            globalThis.throwInvalidArguments("toBeWithin() requires 2 arguments", .{});
+            return .zero;
+        }
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeWithin() must be called in a test", .{});
+            return .zero;
+        }
+
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        const startValue = arguments[0];
+        startValue.ensureStillAlive();
+
+        if (!startValue.isNumber()) {
+            globalThis.throw("toBeWithin() requires the first argument to be a number", .{});
+            return .zero;
+        }
+
+        const endValue = arguments[1];
+        endValue.ensureStillAlive();
+
+        if (!endValue.isNumber()) {
+            globalThis.throw("toBeWithin() requires the second argument to be a number", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        var pass = value.isNumber();
+        if (pass) {
+            const num = value.asNumber();
+            pass = num >= startValue.asNumber() and num < endValue.asNumber();
+        }
+
+        const not = this.op.contains(.not);
+        if (not) pass = !pass;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const start_fmt = startValue.toFmt(globalThis, &formatter);
+        const end_fmt = endValue.toFmt(globalThis, &formatter);
+        const received_fmt = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const expected_line = "Expected: not between <green>{any}<r> <d>(inclusive)<r> and <green>{any}<r> <d>(exclusive)<r>\n";
+            const received_line = "Received: <red>{any}<r>\n";
+            const fmt = comptime getSignature("toBeWithin", "<green>start<r><d>, <r><green>end<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
+            globalThis.throwPretty(fmt, .{ start_fmt, end_fmt, received_fmt });
+            return .zero;
+        }
+
+        const expected_line = "Expected: between <green>{any}<r> <d>(inclusive)<r> and <green>{any}<r> <d>(exclusive)<r>\n";
+        const received_line = "Received: <red>{any}<r>\n";
+        const fmt = comptime getSignature("toBeWithin", "<green>start<r><d>, <r><green>end<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
+        globalThis.throwPretty(fmt, .{ start_fmt, end_fmt, received_fmt });
+        return .zero;
+    }
+
+    pub fn toBeSymbol(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeSymbol() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+        const pass = value.isSymbol() != not;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeSymbol", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeSymbol", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
+    pub fn toBeFunction(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeFunction() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+        const pass = value.isCallable(globalThis.vm()) != not;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeFunction", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeFunction", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
+    pub fn toBeDate(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeDate() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+        const pass = value.isDate() != not;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeDate", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeDate", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
+    pub fn toBeString(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeString() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+        const pass = value.isString() != not;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeString", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeString", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
+    pub fn toInclude(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        if (arguments.len < 1) {
+            globalThis.throwInvalidArguments("toInclude() requires 1 argument", .{});
+            return .zero;
+        }
+
+        const expected = arguments[0];
+        expected.ensureStillAlive();
+
+        if (!expected.isString()) {
+            globalThis.throw("toInclude() requires the first argument to be a string", .{});
+            return .zero;
+        }
+
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toInclude() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        var pass = value.isString();
+        if (pass) {
+            const value_string = value.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+            const expected_string = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+            pass = strings.contains(value_string, expected_string) or expected_string.len == 0;
+        }
+
+        const not = this.op.contains(.not);
+        if (not) pass = !pass;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const value_fmt = value.toFmt(globalThis, &formatter);
+        const expected_fmt = expected.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const expected_line = "Expected to not include: <green>{any}<r>\n";
+            const received_line = "Received: <red>{any}<r>\n";
+            const fmt = comptime getSignature("toInclude", "<green>expected<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
+            globalThis.throwPretty(fmt, .{ expected_fmt, value_fmt });
+            return .zero;
+        }
+
+        const expected_line = "Expected to include: <green>{any}<r>\n";
+        const received_line = "Received: <red>{any}<r>\n";
+        const fmt = comptime getSignature("toInclude", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
+        globalThis.throwPretty(fmt, .{ expected_fmt, value_fmt });
+        return .zero;
+    }
+
+    pub fn toStartWith(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        if (arguments.len < 1) {
+            globalThis.throwInvalidArguments("toStartWith() requires 1 argument", .{});
+            return .zero;
+        }
+
+        const expected = arguments[0];
+        expected.ensureStillAlive();
+
+        if (!expected.isString()) {
+            globalThis.throw("toStartWith() requires the first argument to be a string", .{});
+            return .zero;
+        }
+
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toStartWith() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        var pass = value.isString();
+        if (pass) {
+            const value_string = value.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+            const expected_string = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+            pass = strings.startsWith(value_string, expected_string) or expected_string.len == 0;
+        }
+
+        const not = this.op.contains(.not);
+        if (not) pass = !pass;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const value_fmt = value.toFmt(globalThis, &formatter);
+        const expected_fmt = expected.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const expected_line = "Expected to not start with: <green>{any}<r>\n";
+            const received_line = "Received: <red>{any}<r>\n";
+            const fmt = comptime getSignature("toStartWith", "<green>expected<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
+            globalThis.throwPretty(fmt, .{ expected_fmt, value_fmt });
+            return .zero;
+        }
+
+        const expected_line = "Expected to start with: <green>{any}<r>\n";
+        const received_line = "Received: <red>{any}<r>\n";
+        const fmt = comptime getSignature("toStartWith", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
+        globalThis.throwPretty(fmt, .{ expected_fmt, value_fmt });
+        return .zero;
+    }
+
+    pub fn toEndWith(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        if (arguments.len < 1) {
+            globalThis.throwInvalidArguments("toEndWith() requires 1 argument", .{});
+            return .zero;
+        }
+
+        const expected = arguments[0];
+        expected.ensureStillAlive();
+
+        if (!expected.isString()) {
+            globalThis.throw("toEndWith() requires the first argument to be a string", .{});
+            return .zero;
+        }
+
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toEndWith() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        var pass = value.isString();
+        if (pass) {
+            const value_string = value.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+            const expected_string = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+            pass = strings.endsWith(value_string, expected_string) or expected_string.len == 0;
+        }
+
+        const not = this.op.contains(.not);
+        if (not) pass = !pass;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const value_fmt = value.toFmt(globalThis, &formatter);
+        const expected_fmt = expected.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const expected_line = "Expected to not end with: <green>{any}<r>\n";
+            const received_line = "Received: <red>{any}<r>\n";
+            const fmt = comptime getSignature("toEndWith", "<green>expected<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
+            globalThis.throwPretty(fmt, .{ expected_fmt, value_fmt });
+            return .zero;
+        }
+
+        const expected_line = "Expected to end with: <green>{any}<r>\n";
+        const received_line = "Received: <red>{any}<r>\n";
+        const fmt = comptime getSignature("toEndWith", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
+        globalThis.throwPretty(fmt, .{ expected_fmt, value_fmt });
         return .zero;
     }
 

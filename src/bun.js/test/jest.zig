@@ -4138,16 +4138,19 @@ inline fn createIfScope(
 pub fn printGithubAnnotation(exception: *JSC.ZigException) void {
     const name = exception.name;
     const message = exception.message;
-    const top_frame = if (exception.stack.frames_len > 0) exception.stack.frames()[0] else null;
+    const frames = exception.stack.frames();
+    const top_frame = if (frames.len > 0) frames[0] else null;
+    const dir = bun.getenvZ("GITHUB_WORKSPACE") orelse bun.fs.FileSystem.instance.top_level_dir;
+    const allocator = bun.default_allocator;
 
     var has_location = false;
 
     if (top_frame) |frame| {
         if (!frame.position.isInvalid()) {
-            const source_url = frame.source_url.toSlice(bun.default_allocator);
+            const source_url = frame.source_url.toSlice(allocator);
             defer source_url.deinit();
-            const file = bun.path.relative(bun.fs.FileSystem.instance.top_level_dir, source_url.slice());
-            Output.printError("\n::error file={s},line={d},col={d}::", .{
+            const file = bun.path.relative(dir, source_url.slice());
+            Output.printError("\n::error file={s},line={d},col={d},title=", .{
                 file,
                 frame.position.line_start + 1,
                 frame.position.column_start,
@@ -4157,27 +4160,96 @@ pub fn printGithubAnnotation(exception: *JSC.ZigException) void {
     }
 
     if (!has_location) {
-        Output.printError("\n::error::", .{});
+        Output.printError("\n::error title=", .{});
     }
 
-    if (name.len > 0 and message.len > 0) {
-        const display_name: ZigString = if (name.eqlComptime("Error")) ZigString.init("error") else name;
-
-        Output.printErrorln("{}: {}", .{
-            display_name.githubAction(),
-            message.githubAction(),
-        });
-    } else if (name.len > 0) {
-        if (name.eqlComptime("Error")) {
-            Output.printErrorln("error: {}", .{name.githubAction()});
-        } else {
-            Output.printErrorln("{}", .{name.githubAction()});
-        }
-    } else if (message.len > 0) {
-        Output.printErrorln("error: {s}", .{message.githubAction()});
+    if (name.len == 0 or name.eqlComptime("Error")) {
+        Output.printError("error", .{});
     } else {
-        Output.printErrorln("error", .{});
+        Output.printError("{s}", .{name.githubAction()});
     }
 
+    if (message.len > 0) {
+        const message_slice = message.toSlice(allocator);
+        defer message_slice.deinit();
+        const msg = message_slice.slice();
+
+        var cursor: u32 = 0;
+        while (strings.indexOfNewlineOrNonASCIIOrANSI(msg, cursor)) |i| {
+            cursor = i + 1;
+            if (msg[i] == '\n') {
+                const first_line = ZigString.init(msg[0..i]);
+                Output.printError(": {s}::", .{first_line.githubAction()});
+                break;
+            }
+        } else {
+            Output.printError(": {s}::", .{message.githubAction()});
+        }
+
+        while (strings.indexOfNewlineOrNonASCIIOrANSI(msg, cursor)) |i| {
+            cursor = i + 1;
+            if (msg[i] == '\n') {
+                break;
+            }
+        }
+
+        if (cursor > 0) {
+            const body = ZigString.init(msg[cursor..]);
+            Output.printError("{s}", .{body.githubAction()});
+        }
+    } else {
+        Output.printError("::", .{});
+    }
+
+    // TODO: cleanup and refactor to use printStackTrace()
+    if (top_frame) |_| {
+        const vm = VirtualMachine.get();
+        const origin = if (vm.is_from_devserver) &vm.origin else null;
+
+        var i: i16 = 0;
+        while (i < frames.len) : (i += 1) {
+            const frame = frames[@intCast(usize, i)];
+            const source_url = frame.source_url.toSlice(allocator);
+            defer source_url.deinit();
+            const file = bun.path.relative(dir, source_url.slice());
+            const func = frame.function_name.toSlice(allocator);
+
+            if (file.len == 0 and func.len == 0) continue;
+
+            const has_name = std.fmt.count("{any}", .{frame.nameFormatter(
+                false,
+            )}) > 0;
+
+            // %0A = escaped newline
+            if (has_name) {
+                Output.printError(
+                    "%0A      at {any} ({any})",
+                    .{
+                        frame.nameFormatter(false),
+                        frame.sourceURLFormatter(
+                            file,
+                            origin,
+                            false,
+                            false,
+                        ),
+                    },
+                );
+            } else {
+                Output.printError(
+                    "%0A      at {any}",
+                    .{
+                        frame.sourceURLFormatter(
+                            file,
+                            origin,
+                            false,
+                            false,
+                        ),
+                    },
+                );
+            }
+        }
+    }
+
+    Output.printError("\n", .{});
     Output.flush();
 }

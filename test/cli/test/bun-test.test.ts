@@ -345,7 +345,7 @@ describe("bun test", () => {
           GITHUB_ACTIONS: "true",
         },
       });
-      expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+::error/);
+      expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error::/);
     });
     test("should annotate errors with escaped strings", () => {
       const stderr = runTest({
@@ -360,9 +360,9 @@ describe("bun test", () => {
           GITHUB_ACTIONS: "true",
         },
       });
-      expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+::error/);
+      expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=.*::/);
       expect(stderr).toMatch(/error: expect\(received\)\.toBe\(expected\)/); // stripped ansi
-      expect(stderr).toMatch(/0AExpected: false%0AReceived: true%0A/); // escaped newlines
+      expect(stderr).toMatch(/Expected: false%0AReceived: true%0A/); // escaped newlines
     });
     test("should annotate errors without a stack", () => {
       const stderr = runTest({
@@ -377,7 +377,7 @@ describe("bun test", () => {
           GITHUB_ACTIONS: "true",
         },
       });
-      expect(stderr).toMatch(/::error::error: Oops!/);
+      expect(stderr).toMatch(/::error title=error: Oops!::/);
     });
   });
 });

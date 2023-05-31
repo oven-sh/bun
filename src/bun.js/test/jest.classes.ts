@@ -234,6 +234,10 @@ export default [
         fn: "toBeOdd",
         length: 0,
       },
+      toBeNil: {
+        fn: "toBeNil",
+        length: 0,
+      },
     },
   }),
 ];

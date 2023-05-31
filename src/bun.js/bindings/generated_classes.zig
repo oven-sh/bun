@@ -900,6 +900,8 @@ pub const JSExpect = struct {
             @compileLog("Expected Expect.toBeLessThanOrEqual to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeLessThanOrEqual)));
         if (@TypeOf(Expect.toBeNaN) != CallbackType)
             @compileLog("Expected Expect.toBeNaN to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeNaN)));
+        if (@TypeOf(Expect.toBeNil) != CallbackType)
+            @compileLog("Expected Expect.toBeNil to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeNil)));
         if (@TypeOf(Expect.toBeNull) != CallbackType)
             @compileLog("Expected Expect.toBeNull to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeNull)));
         if (@TypeOf(Expect.toBeOdd) != CallbackType)
@@ -1013,6 +1015,7 @@ pub const JSExpect = struct {
             @export(Expect.toBeLessThan, .{ .name = "ExpectPrototype__toBeLessThan" });
             @export(Expect.toBeLessThanOrEqual, .{ .name = "ExpectPrototype__toBeLessThanOrEqual" });
             @export(Expect.toBeNaN, .{ .name = "ExpectPrototype__toBeNaN" });
+            @export(Expect.toBeNil, .{ .name = "ExpectPrototype__toBeNil" });
             @export(Expect.toBeNull, .{ .name = "ExpectPrototype__toBeNull" });
             @export(Expect.toBeOdd, .{ .name = "ExpectPrototype__toBeOdd" });
             @export(Expect.toBeTruthy, .{ .name = "ExpectPrototype__toBeTruthy" });

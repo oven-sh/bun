@@ -628,6 +628,14 @@ declare module "bun:test" {
      * expect(new Set()).toBeEmpty();
      */
     toBeEmpty(): void;
+    /**
+     * Asserts that a value is `null` or `undefined`.
+     *
+     * @example
+     * expect(null).toBeNil();
+     * expect(undefined).toBeNil();
+     */
+    toBeNil(): void;
   };
 }
 

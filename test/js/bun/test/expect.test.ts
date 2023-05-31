@@ -192,6 +192,17 @@ describe("expect()", () => {
       });
     }
   });
+
+  test.only("toBeNil()", () => {
+    expect(null).toBeNil();
+    expect(undefined).toBeNil();
+    expect(false).not.toBeNil();
+    expect(0).not.toBeNil();
+    expect("").not.toBeNil();
+    expect([]).not.toBeNil();
+    expect(true).not.toBeNil();
+    expect({}).not.toBeNil();
+  });
 });
 
 function label(value: unknown): string {

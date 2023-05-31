@@ -1505,6 +1505,7 @@ pub const Path = struct {
     const PathHandler = @import("../../resolver/resolve_path.zig");
     const StringBuilder = @import("../../string_builder.zig");
     pub const code = @embedFile("../path.exports.js");
+    const log = bun.Output.scoped(.Path, false);
 
     pub fn create(globalObject: *JSC.JSGlobalObject, isWindows: bool) callconv(.C) JSC.JSValue {
         return shim.cppFn("create", .{ globalObject, isWindows });
@@ -1776,14 +1777,17 @@ pub const Path = struct {
         defer path_slice.deinit();
         var path = path_slice.slice();
         var path_name = Fs.PathName.init(path);
-        var root = JSC.ZigString.init(path_name.dir);
-        const is_absolute = (isWindows and isZigStringAbsoluteWindows(root)) or (!isWindows and path_name.dir.len > 0 and path_name.dir[0] == '/');
-
         var dir = JSC.ZigString.init(path_name.dir);
+        const is_absolute = (isWindows and isZigStringAbsoluteWindows(dir)) or (!isWindows and path.len > 0 and path[0] == '/');
+
+        // if its not absolute root must be empty
+        var root = JSC.ZigString.Empty;
         if (is_absolute) {
-            root = JSC.ZigString.Empty;
-            if (path_name.dir.len == 0)
-                dir = JSC.ZigString.init(if (isWindows) std.fs.path.sep_str_windows else std.fs.path.sep_str_posix);
+            root = JSC.ZigString.init(if (isWindows) std.fs.path.sep_str_windows else std.fs.path.sep_str_posix);
+            // if is absolute and dir is empty, then dir = root
+            if (path_name.dir.len == 0) {
+                dir = root;
+            }
         }
 
         var base = JSC.ZigString.init(path_name.base);

@@ -302,6 +302,125 @@ describe("FormData", () => {
     server.stop(true);
   });
 
+  for (let useRequestConstructor of [true, false]) {
+    describe(useRequestConstructor ? "Request constructor" : "fetch()", () => {
+      function send(args: Parameters<typeof fetch>) {
+        if (useRequestConstructor) {
+          return fetch(new Request(...args));
+        } else {
+          return fetch(...args);
+        }
+      }
+      for (let headers of [{}, undefined, { headers: { X: "Y" } }]) {
+        describe("headers: " + Bun.inspect(headers).replaceAll(/([\n ])/gim, ""), () => {
+          it("send on HTTP server with FormData & Blob (roundtrip)", async () => {
+            let contentType = "";
+            const server = Bun.serve({
+              port: 0,
+              development: false,
+              async fetch(req) {
+                const formData = await req.formData();
+                contentType = req.headers.get("Content-Type")!;
+                return new Response(formData);
+              },
+            });
+
+            const form = new FormData();
+            form.append("foo", new Blob(["baz"], { type: "text/plain" }), "bar");
+            form.append("bar", "baz");
+
+            // @ts-ignore
+            const reqBody = [
+              `http://${server.hostname}:${server.port}`,
+              {
+                body: form,
+
+                headers,
+                method: "POST",
+              },
+            ];
+            const res = await send(reqBody);
+            const body = await res.formData();
+            expect(await (body.get("foo") as Blob).text()).toBe("baz");
+            expect(body.get("bar")).toBe("baz");
+            server.stop(true);
+          });
+
+          it("send on HTTP server with FormData & Bun.file (roundtrip)", async () => {
+            let contentType = "";
+            const server = Bun.serve({
+              port: 0,
+              development: false,
+              async fetch(req) {
+                const formData = await req.formData();
+                contentType = req.headers.get("Content-Type")!;
+                return new Response(formData);
+              },
+            });
+
+            const form = new FormData();
+            const file = Bun.file(import.meta.dir + "/form-data-fixture.txt");
+            const text = await file.text();
+            form.append("foo", file);
+            form.append("bar", "baz");
+
+            // @ts-ignore
+            const reqBody = [
+              `http://${server.hostname}:${server.port}`,
+              {
+                body: form,
+
+                headers,
+                method: "POST",
+              },
+            ];
+            const res = await send(reqBody);
+            const body = await res.formData();
+            expect(await (body.get("foo") as Blob).text()).toBe(text);
+            expect(contentType).toContain("multipart/form-data");
+            expect(body.get("bar")).toBe("baz");
+            expect(contentType).toContain("multipart/form-data");
+
+            server.stop(true);
+          });
+
+          it("send on HTTP server with FormData (roundtrip)", async () => {
+            let contentType = "";
+            const server = Bun.serve({
+              port: 0,
+              development: false,
+              async fetch(req) {
+                const formData = await req.formData();
+                contentType = req.headers.get("Content-Type")!;
+                return new Response(formData);
+              },
+            });
+
+            const form = new FormData();
+            form.append("foo", "boop");
+            form.append("bar", "baz");
+
+            // @ts-ignore
+            const reqBody = [
+              `http://${server.hostname}:${server.port}`,
+              {
+                body: form,
+
+                headers,
+                method: "POST",
+              },
+            ];
+            const res = await send(reqBody);
+            const body = await res.formData();
+            expect(contentType).toContain("multipart/form-data");
+            expect(body.get("foo")).toBe("boop");
+            expect(body.get("bar")).toBe("baz");
+            server.stop(true);
+          });
+        });
+      }
+    });
+  }
   describe("Bun.file support", () => {
     describe("roundtrip", () => {
       const path = import.meta.dir + "/form-data-fixture.txt";

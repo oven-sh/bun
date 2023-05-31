@@ -997,6 +997,9 @@ pub const FormData = struct {
                     defer blob.detach();
                     var filename = bun.JSC.ZigString.initUTF8(filename_str);
                     const content_type: []const u8 = brk: {
+                        if (!field.content_type.isEmpty()) {
+                            break :brk field.content_type.slice(buf);
+                        }
                         if (filename_str.len > 0) {
                             if (bun.HTTP.MimeType.byExtensionNoDefault(std.fs.path.extension(filename_str))) |mime| {
                                 break :brk mime.value;
@@ -1011,8 +1014,15 @@ pub const FormData = struct {
                     };
 
                     if (content_type.len > 0) {
-                        blob.content_type = content_type;
-                        blob.content_type_allocated = false;
+                        if (!field.content_type.isEmpty()) {
+                            blob.content_type_allocated = true;
+                            blob.content_type = bun.default_allocator.dupe(u8, content_type) catch @panic("failed to allocate memory for blob content type");
+                            blob.content_type_was_set = true;
+                        } else {
+                            blob.content_type = content_type;
+                            blob.content_type_was_set = false;
+                            blob.content_type_allocated = false;
+                        }
                     }
 
                     wrap.form.appendBlob(wrap.globalThis, &key, &blob, &filename);

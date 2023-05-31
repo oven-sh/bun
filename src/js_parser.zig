@@ -12750,7 +12750,7 @@ fn NewParser_(
 
                         // Only continue if we have started
                         if ((optional_start orelse .ccontinue) == .start) {
-                            optional_start = .ccontinue;
+                            optional_chain = .ccontinue;
                         }
                     },
                     .t_no_substitution_template_literal => {

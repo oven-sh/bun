@@ -1739,25 +1739,11 @@ pub const Arguments = struct {
         }
     };
     pub const Exists = struct {
-        path: PathLike,
+        path: ?PathLike,
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Exists {
-            const path = PathLike.fromJS(ctx, arguments, exception) orelse {
-                if (exception.* == null) {
-                    JSC.throwInvalidArguments(
-                        "path must be a string or buffer",
-                        .{},
-                        ctx,
-                        exception,
-                    );
-                }
-                return null;
-            };
-
-            if (exception.* != null) return null;
-
             return Exists{
-                .path = path,
+                .path = PathLike.fromJS(ctx, arguments, exception),
             };
         }
     };
@@ -2673,14 +2659,15 @@ pub const NodeFS = struct {
     }
     pub fn exists(this: *NodeFS, args: Arguments.Exists, comptime flavor: Flavor) Maybe(Return.Exists) {
         const Ret = Maybe(Return.Exists);
-        const path = args.path.sliceZ(&this.sync_error_buf);
         switch (comptime flavor) {
             .sync => {
+                const path = args.path orelse return Ret{ .result = false };
+                const slice = path.sliceZ(&this.sync_error_buf);
                 // access() may not work correctly on NFS file systems with UID
                 // mapping enabled, because UID mapping is done on the server and
                 // hidden from the client, which checks permissions. Similar
                 // problems can occur to FUSE mounts.
-                const rc = (system.access(path, std.os.F_OK));
+                const rc = (system.access(slice, std.os.F_OK));
                 return Ret{ .result = rc == 0 };
             },
             else => {},

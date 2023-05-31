@@ -1672,7 +1672,7 @@ pub const Path = struct {
         }
     }
     fn isAbsoluteString(path: JSC.ZigString, windows: bool) bool {
-        if (!windows) return path.len > 0 and path.slice()[0] == '/';
+        if (!windows) return path.len > 0 and path.ptr[0] == '/';
 
         return isZigStringAbsoluteWindows(path);
     }

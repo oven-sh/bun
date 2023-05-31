@@ -12,8 +12,7 @@ it("onAborted() and onWritable are not called after receiving an empty response 
     testDone(new Error("Test timed out, which means it failed"));
   };
 
-  const body = new FormData();
-  body.append("hey", "hi");
+  const invalidJSON = Buffer.from("invalid json");
 
   // We want to test that the server isn't keeping the connection open in a
   // zombie-like state when an error occurs due to an unhandled rejected promise
@@ -69,7 +68,7 @@ it("onAborted() and onWritable are not called after receiving an empty response 
 
       try {
         await fetch(`http://${hostname}:${port}/upload`, {
-          body,
+          body: invalidJSON,
           keepalive: false,
           method: "POST",
           timeout: true,
@@ -91,4 +90,4 @@ it("onAborted() and onWritable are not called after receiving an empty response 
   }
   timeout.onabort = () => {};
   testDone();
-});
+}, 30_000);

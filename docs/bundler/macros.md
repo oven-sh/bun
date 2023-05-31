@@ -19,7 +19,7 @@ console.log(`Your random number is ${random()}`);
 ```
 
 {% callout %}
-Macros are indicated using [_import attribute_](https://github.com/tc39/proposal-import-attributes) syntax. If you haven't seen this syntax before, it's a Stage 3 TC39 proposal that lets you attach additional metadata to `import` statements.
+**Note** — Macros are indicated using [_import attribute_](https://github.com/tc39/proposal-import-attributes) syntax. If you haven't seen this syntax before, it's a Stage 3 TC39 proposal that lets you attach additional metadata to `import` statements.
 {% /callout %}
 
 Now we'll bundle this file with `bun build`. The bundled file will be printed to stdout.

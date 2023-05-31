@@ -2548,13 +2548,13 @@ pub const Blob = struct {
     ) callconv(.C) JSValue {
         if (this.content_type.len > 0) {
             if (this.content_type_allocated) {
-                return ZigString.init(this.content_type).toValue(globalThis);
+                return ZigString.init(this.content_type).toValueGC(globalThis);
             }
             return ZigString.init(this.content_type).toValueGC(globalThis);
         }
 
         if (this.store) |store| {
-            return ZigString.init(store.mime_type.value).toValue(globalThis);
+            return ZigString.init(store.mime_type.value).toValueGC(globalThis);
         }
 
         return ZigString.Empty.toValue(globalThis);

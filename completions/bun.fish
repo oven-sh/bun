@@ -53,14 +53,14 @@ end
 set -l bun_install_boolean_flags yarn production optional development no-save dry-run force no-cache silent verbose global
 set -l bun_install_boolean_flags_descriptions "Write a yarn.lock file (yarn v1)" "Don't install devDependencies" "Add dependency to optionalDependencies" "Add dependency to devDependencies" "Don't install devDependencies" "Don't install anything" "Always request the latest versions from the registry & reinstall all dependenices" "Ignore manifest cache entirely" "Don't output anything" "Excessively verbose logging" "Use global folder"
 
-set -l bun_builtin_cmds dev create help bun upgrade discord run install remove add init link unlink pm x
-set -l bun_builtin_cmds_without_run dev create help bun upgrade discord install remove add init pm x
-set -l bun_builtin_cmds_without_bun dev create help upgrade run discord install remove add init pm x
-set -l bun_builtin_cmds_without_create dev help bun upgrade discord run install remove add init pm x
-set -l bun_builtin_cmds_without_install create dev help bun upgrade discord run remove add init pm x
-set -l bun_builtin_cmds_without_remove create dev help bun upgrade discord run install add init pm x
-set -l bun_builtin_cmds_without_add create dev help bun upgrade discord run remove install init pm x
-set -l bun_builtin_cmds_without_pm create dev help bun upgrade discord run init pm x
+set -l bun_builtin_cmds dev create help bun upgrade run install remove add init link unlink pm x
+set -l bun_builtin_cmds_without_run dev create help bun upgrade install remove add init pm x
+set -l bun_builtin_cmds_without_bun dev create help upgrade run install remove add init pm x
+set -l bun_builtin_cmds_without_create dev help bun upgrade run install remove add init pm x
+set -l bun_builtin_cmds_without_install create dev help bun upgrade run remove add init pm x
+set -l bun_builtin_cmds_without_remove create dev help bun upgrade run install add init pm x
+set -l bun_builtin_cmds_without_add create dev help bun upgrade run remove install init pm x
+set -l bun_builtin_cmds_without_pm create dev help bun upgrade run init pm x
 
 # clear
 complete -e -c bun
@@ -106,9 +106,6 @@ complete -c bun \
 
 complete -c bun \
 	-n "not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_use_subcommand" -l "version" -s "v"  -a '--version' -d 'Bun\'s version' -x
-complete -c bun \
-	-n "not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_use_subcommand" -a 'discord' -d 'Open bun\'s Discord server' -x 
-
 
 complete -c bun \
 	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_bun; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); __fish_use_subcommand" -a 'bun' -d 'Generate a new bundle'

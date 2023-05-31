@@ -94,19 +94,7 @@ export function getObject() {
 }
 ```
 
-The transpiler implements specicial logic for serializing common data formats like `Response`, `Blob`, `TypedArray`.
-
-- `TypedArray`: Resolves to a base64-encoded string.
-- `Response`: Where relevant, Bun will read the `Content-Type` and serialize accordingly; for instance, a `Response` with type `application/json` will be automatically parsed into an object. Otherwise, it will be resolved with `resp.text()`.
-- `Blob`: As with `Response`, the serialization depends on the `type` property.
-
-```ts#macro.ts
-export function getObject() {
-  return fetch("https://bun.sh")
-}
-```
-
-Macros can be async, or return `Promise` instances. The bundler will wait for the `Promise` to resolve before inlining.
+Macros can be async, or return `Promise` instances. Bun's transpiler will automatically `await` the `Promise` and inline the result.
 
 ```ts#macro.ts
 export async function getText() {
@@ -114,28 +102,26 @@ export async function getText() {
 }
 ```
 
-Functions and most classes are not serializable.
+The transpiler implements specicial logic for serializing common data formats like `Response`, `Blob`, `TypedArray`.
+
+- `TypedArray`: Resolves to a base64-encoded string.
+- `Response`: Where relevant, Bun will read the `Content-Type` and serialize accordingly; for instance, a `Response` with type `application/json` will be automatically parsed into an object. Otherwise, it will be resolved with `resp.text()`.
+- `Blob`: As with `Response`, the serialization depends on the `type` property.
+
+The result of `fetch` is `Promise<Response>`, so it can be directly returned.
+
+```ts#macro.ts
+export function getObject() {
+  return fetch("https://bun.sh")
+}
+```
+
+Functions and instances of most classes (except those mentioned above) are not serializable.
 
 ```ts
 export function getText(url: string) {
   // this doesn't work!
-  return () => {
-    // do something
-  };
-}
-```
-
-Bun's transpiler will automatically `await` the `Promise` and inline the result.
-
-You can return objects and arrays as long as they only contain serializable values.
-
-```ts#getObject.ts
-export function getObject() {
-  return {
-    foo: "bar",
-    baz: 123,
-    array: [ 1, 2, { nested: "value" }],
-  };
+  return () => {};
 }
 ```
 

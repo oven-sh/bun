@@ -283,6 +283,8 @@ pub const Runtime = struct {
 
         inject_jest_globals: bool = false,
 
+        no_macros: bool = false,
+
         commonjs_named_exports: bool = true,
 
         minify_syntax: bool = false,

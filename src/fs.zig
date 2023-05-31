@@ -1290,16 +1290,16 @@ pub const PathName = struct {
             base = base[0 .. base.len - 1];
         }
 
-        // filename is base without extension
+        // filename is base with extension
         var filename = base;
 
-        // if only one character ext = "" even if filename it's "."
-        if (filename.len > 1) {
+        // if only one character ext = "" even if base it's "."
+        if (base.len > 1) {
             // Strip off the extension
-            var _dot = strings.lastIndexOfChar(filename, '.');
+            var _dot = strings.lastIndexOfChar(base, '.');
             if (_dot) |dot| {
-                ext = filename[dot..];
-                filename = filename[0..dot];
+                ext = base[dot..];
+                base = base[0..dot];
             }
         }
 

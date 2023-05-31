@@ -12750,7 +12750,7 @@ fn NewParser_(
 
                         // Only continue if we have started
                         if ((optional_start orelse .ccontinue) == .start) {
-                            optional_start = .ccontinue;
+                            optional_chain = .ccontinue;
                         }
                     },
                     .t_no_substitution_template_literal => {
@@ -15361,6 +15361,18 @@ fn NewParser_(
                                     if (p.is_control_flow_dead) {
                                         return p.newExpr(E.Undefined{}, e_.tag.?.loc);
                                     }
+
+                                    // this ordering incase someone wants ot use a macro in a node_module conditionally
+                                    if (p.options.features.no_macros) {
+                                        p.log.addError(p.source, tag.loc, "Macros are disabled") catch unreachable;
+                                        return p.newExpr(E.Undefined{}, e_.tag.?.loc);
+                                    }
+
+                                    if (p.source.path.isNodeModule()) {
+                                        p.log.addError(p.source, expr.loc, "For security reasons, macros cannot be run from node_modules.") catch unreachable;
+                                        return p.newExpr(E.Undefined{}, expr.loc);
+                                    }
+
                                     p.macro_call_count += 1;
                                     const record = &p.import_records.items[import_record_id];
                                     // We must visit it to convert inline_identifiers and record usage
@@ -16510,6 +16522,17 @@ fn NewParser_(
                             if (p.is_control_flow_dead) {
                                 return p.newExpr(E.Undefined{}, e_.target.loc);
                             }
+
+                            if (p.options.features.no_macros) {
+                                p.log.addError(p.source, expr.loc, "Macros are disabled") catch unreachable;
+                                return p.newExpr(E.Undefined{}, expr.loc);
+                            }
+
+                            if (p.source.path.isNodeModule()) {
+                                p.log.addError(p.source, expr.loc, "For security reasons, macros cannot be run from node_modules.") catch unreachable;
+                                return p.newExpr(E.Undefined{}, expr.loc);
+                            }
+
                             const name = p.symbols.items[ref.innerIndex()].original_name;
                             const record = &p.import_records.items[import_record_id];
                             const copied = Expr{ .loc = expr.loc, .data = .{ .e_call = e_ } };

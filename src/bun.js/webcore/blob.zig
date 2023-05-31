@@ -85,6 +85,7 @@ pub const Blob = struct {
     store: ?*Store = null,
     content_type: string = "",
     content_type_allocated: bool = false,
+    content_type_was_set: bool = false,
 
     /// JavaScriptCore strings are either latin1 or UTF-16
     /// When UTF-16, they're nearly always due to non-ascii characters
@@ -228,6 +229,7 @@ pub const Blob = struct {
 
         var blob = Blob.initWithStore(store, globalThis);
         blob.content_type = store.mime_type.value;
+        blob.content_type_was_set = true;
         return blob;
     }
 
@@ -268,6 +270,7 @@ pub const Blob = struct {
         var blob = Blob.initWithStore(store, globalThis);
         blob.content_type = std.fmt.allocPrint(allocator, "multipart/form-data; boundary=\"{s}\"", .{boundary}) catch unreachable;
         blob.content_type_allocated = true;
+        blob.content_type_was_set = true;
 
         return blob;
     }
@@ -288,7 +291,7 @@ pub const Blob = struct {
     export fn Blob__dupe(ptr: *anyopaque) *Blob {
         var this = bun.cast(*Blob, ptr);
         var new = bun.default_allocator.create(Blob) catch unreachable;
-        new.* = this.dupe();
+        new.* = this.dupeWithContentType(true);
         new.allocator = bun.default_allocator;
         return new;
     }
@@ -2527,6 +2530,7 @@ pub const Blob = struct {
 
         blob.content_type = content_type;
         blob.content_type_allocated = content_type_was_allocated;
+        blob.content_type_was_set = this.content_type_was_set or content_type_was_allocated;
 
         var blob_ = allocator.create(Blob) catch unreachable;
         blob_.* = blob;
@@ -2754,6 +2758,8 @@ pub const Blob = struct {
                                     if (!strings.isAllASCII(slice)) {
                                         break :inner;
                                     }
+                                    blob.content_type_was_set = true;
+
                                     if (globalThis.bunVM().mimeType(slice)) |mime| {
                                         blob.content_type = mime.value;
                                         break :inner;
@@ -2769,6 +2775,7 @@ pub const Blob = struct {
 
                 if (blob.content_type.len == 0) {
                     blob.content_type = "";
+                    blob.content_type_was_set = false;
                 }
             },
         }
@@ -2870,8 +2877,33 @@ pub const Blob = struct {
     /// This creates a new view
     /// and increment the reference count
     pub fn dupe(this: *const Blob) Blob {
+        return this.dupeWithContentType(false);
+    }
+
+    pub fn dupeWithContentType(this: *const Blob, include_content_type: bool) Blob {
         if (this.store != null) this.store.?.ref();
         var duped = this.*;
+        if (duped.content_type_allocated and duped.allocator != null and !include_content_type) {
+
+            // for now, we just want to avoid a use-after-free here
+            if (JSC.VirtualMachine.get().mimeType(duped.content_type)) |mime| {
+                duped.content_type = mime.value;
+            } else {
+                // TODO: fix this
+                // this is a bug.
+                // it means whenever
+                duped.content_type = "";
+            }
+
+            duped.content_type_allocated = false;
+            duped.content_type_was_set = false;
+            if (this.content_type_was_set) {
+                duped.content_type_was_set = duped.content_type.len > 0;
+            }
+        } else if (duped.content_type_allocated and duped.allocator != null and include_content_type) {
+            duped.content_type = bun.default_allocator.dupe(u8, this.content_type) catch @panic("Out of memory");
+        }
+
         duped.allocator = null;
         return duped;
     }
@@ -3476,6 +3508,13 @@ pub const AnyBlob = union(enum) {
     Blob: Blob,
     // InlineBlob: InlineBlob,
     InternalBlob: InternalBlob,
+
+    pub fn hasContentType(this: AnyBlob) bool {
+        return switch (this) {
+            .Blob => this.Blob.content_type_was_set,
+            .InternalBlob => false,
+        };
+    }
 
     pub fn toJSON(this: *AnyBlob, global: *JSGlobalObject, comptime lifetime: JSC.WebCore.Lifetime) JSValue {
         switch (this.*) {

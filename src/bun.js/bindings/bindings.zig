@@ -504,6 +504,20 @@ pub const ZigString = extern struct {
         return &Holder.value;
     }
 
+    pub const GithubActionFormatter = struct {
+        text: ZigString,
+
+        pub fn format(this: GithubActionFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            var bytes = this.text.toSlice(bun.default_allocator);
+            defer bytes.deinit();
+            try strings.githubActionWriter(writer, bytes.slice());
+        }
+    };
+
+    pub fn githubAction(this: ZigString) GithubActionFormatter {
+        return GithubActionFormatter{ .text = this };
+    }
+
     pub fn toAtomicValue(this: *const ZigString, globalThis: *JSC.JSGlobalObject) JSValue {
         return shim.cppFn("toAtomicValue", .{ this, globalThis });
     }

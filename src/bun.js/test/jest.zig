@@ -4141,7 +4141,9 @@ pub fn printGithubAnnotation(exception: *JSC.ZigException) void {
 
     if (top_frame) |frame| {
         if (!frame.position.isInvalid()) {
-            const file = bun.path.relative(bun.fs.FileSystem.instance.top_level_dir, frame.source_url.slice());
+            const source_url = frame.source_url.toSlice(bun.default_allocator);
+            defer source_url.deinit();
+            const file = bun.path.relative(bun.fs.FileSystem.instance.top_level_dir, source_url.slice());
             Output.printError("\n::error file={s},line={d},col={d}::", .{
                 file,
                 frame.position.line_start + 1,
@@ -4156,20 +4158,20 @@ pub fn printGithubAnnotation(exception: *JSC.ZigException) void {
     }
 
     if (name.len > 0 and message.len > 0) {
-        const display_name: ZigString = if (!name.is16Bit() and strings.eqlComptime(name.slice(), "Error")) ZigString.init("error") else name;
+        const display_name: ZigString = if (name.eqlComptime("Error")) ZigString.init("error") else name;
 
-        Output.printErrorln("{s}: {s}", .{
-            strings.githubAction(display_name.slice()),
-            strings.githubAction(message.slice()),
+        Output.printErrorln("{}: {}", .{
+            display_name.githubAction(),
+            message.githubAction(),
         });
     } else if (name.len > 0) {
-        if (name.is16Bit() or !strings.hasPrefixComptime(name.slice(), "error")) {
-            Output.printErrorln("error: {s}", .{strings.githubAction(name.slice())});
+        if (name.eqlComptime("Error")) {
+            Output.printErrorln("error: {}", .{name.githubAction()});
         } else {
-            Output.printErrorln("{s}", .{strings.githubAction(name.slice())});
+            Output.printErrorln("{}", .{name.githubAction()});
         }
     } else if (message.len > 0) {
-        Output.printErrorln("error: {s}", .{strings.githubAction(message.slice())});
+        Output.printErrorln("error: {s}", .{message.githubAction()});
     } else {
         Output.printErrorln("error", .{});
     }

@@ -442,6 +442,10 @@ pub const EventLoop = struct {
                     var transform_task: *JSC.napi.napi_async_work = task.get(JSC.napi.napi_async_work).?;
                     transform_task.*.runFromJS();
                 },
+                .ThreadSafeFunction => {
+                    var transform_task: *ThreadSafeFunction = task.as(ThreadSafeFunction);
+                    transform_task.call();
+                },
                 @field(Task.Tag, @typeName(ReadFileTask)) => {
                     var transform_task: *ReadFileTask = task.get(ReadFileTask).?;
                     transform_task.*.runFromJS();

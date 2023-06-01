@@ -1149,15 +1149,13 @@ pub const Resolver = struct {
                 };
             }
 
-            // TODO: this should only load the file itself
-            if (r.loadAsFileOrDirectory(path, kind)) |entry| {
+            if (r.loadAsFile(path, r.extension_order)) |file| {
                 return .{
                     .success = Result{
-                        .dirname_fd = entry.dirname_fd,
-                        .path_pair = entry.path_pair,
-                        .diff_case = entry.diff_case,
-                        .package_json = entry.package_json,
-                        .file_fd = entry.file_fd,
+                        .dirname_fd = file.dirname_fd,
+                        .path_pair = .{ .primary = Path.init(file.path) },
+                        .diff_case = file.diff_case,
+                        .file_fd = file.file_fd,
                         .jsx = r.opts.jsx,
                     },
                 };

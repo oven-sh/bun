@@ -441,10 +441,6 @@ declare class OutOfMemoryError {
   constructor();
 }
 
-declare class ReadableStream {
-  constructor(stream: unknown, view?: unknown);
-  values(options?: unknown): AsyncIterableIterator<unknown>;
-}
 declare class ReadableStreamDefaultController {
   constructor(
     stream: unknown,

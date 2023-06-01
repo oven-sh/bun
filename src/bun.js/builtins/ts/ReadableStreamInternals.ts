@@ -1750,8 +1750,6 @@ export async function readableStreamToArrayDirect(stream, underlyingSource) {
     stream = undefined;
     reader = undefined;
   }
-
-  return capability.$promise;
 }
 
 export function readableStreamDefineLazyIterators(prototype) {

@@ -1425,9 +1425,9 @@ pub const VirtualMachine = struct {
             };
 
             if (vm.has_loaded) {
-                blobs.temporary.put(specifier_blob, .{ .ptr = result.source_code.ptr, .len = result.source_code.len }) catch {};
+                blobs.temporary.put(specifier_blob, .{ .ptr = result.source_code._unsafe_ptr_do_not_use, .len = result.source_code.len }) catch {};
             } else {
-                blobs.persistent.put(specifier_blob, .{ .ptr = result.source_code.ptr, .len = result.source_code.len }) catch {};
+                blobs.persistent.put(specifier_blob, .{ .ptr = result.source_code._unsafe_ptr_do_not_use, .len = result.source_code.len }) catch {};
             }
         }
 

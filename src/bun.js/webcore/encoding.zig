@@ -502,7 +502,7 @@ pub const TextDecoder = struct {
                 return ZigString.init16(slice).toValueGC(ctx);
             } else {
                 var str = ZigString.init("");
-                str.ptr = @ptrCast([*]const u8, slice.ptr);
+                str._unsafe_ptr_do_not_use = @ptrCast([*]const u8, slice.ptr);
                 str.len = slice.len;
                 str.markUTF16();
                 return str.toValueGC(ctx.ptr());
@@ -575,7 +575,7 @@ pub const TextDecoder = struct {
         var full = buffer.toOwnedSlice(allocator) catch @panic("TODO");
 
         var out = ZigString.init("");
-        out.ptr = @ptrCast([*]u8, full.ptr);
+        out._unsafe_ptr_do_not_use = @ptrCast([*]u8, full.ptr);
         out.len = full.len;
         out.markUTF16();
         return out.toValueGC(ctx.ptr());

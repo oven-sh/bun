@@ -1130,7 +1130,8 @@ pub const Fetch = struct {
                             } else {
                                 var proxy_str = proxy_arg.toStringOrNull(globalThis) orelse return .zero;
                                 // proxy + url 1 allocation
-                                var proxy_url_zig = proxy_str.getZigString(globalThis);
+                                var proxy_url_zig = proxy_str.toSlice(globalThis, bun.default_allocator);
+                                defer proxy_url_zig.deinit();
 
                                 // ignore proxy if it is len = 0
                                 if (proxy_url_zig.len == 0) {
@@ -1175,6 +1176,26 @@ pub const Fetch = struct {
                 }
             }
         } else if (first_arg.toStringOrNull(globalThis)) |jsstring| {
+
+            // Check the URL
+            var url_slice = jsstring.toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {
+                // clean hostname if any
+                if (hostname) |host| {
+                    bun.default_allocator.free(host);
+                }
+                JSC.JSError(bun.default_allocator, "Out of memory", .{}, ctx, exception);
+                return .zero;
+            };
+
+            if (url_slice.len == 0) {
+                const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
+                // clean hostname if any
+                if (hostname) |host| {
+                    bun.default_allocator.free(host);
+                }
+                return JSPromise.rejectedPromiseValue(globalThis, err);
+            }
+
             if (args.nextEat()) |options| {
                 if (options.isObject() or options.jsType() == .DOMWrapper) {
                     if (options.fastGet(ctx.ptr(), .method)) |method_| {
@@ -1250,114 +1271,29 @@ pub const Fetch = struct {
                             signal = signal_;
                         }
                     }
-                    if (options.get(globalThis, "proxy")) |proxy_arg| {
-                        if (!proxy_arg.isUndefined()) {
-                            // proxy + url 1 allocation
-                            var url_zig = jsstring.getZigString(globalThis);
 
-                            if (url_zig.len == 0) {
-                                const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
-                                // clean hostname if any
-                                if (hostname) |host| {
-                                    bun.default_allocator.free(host);
-                                }
-                                return JSPromise.rejectedPromiseValue(globalThis, err);
-                            }
+                    if (options.getTruthy(globalThis, "proxy")) |proxy_arg| {
+                        if (proxy_arg.isString() and proxy_arg.getLength(globalThis) > 0) {
+                            defer url_slice.deinit();
 
-                            if (proxy_arg.isNull()) {
-                                //if null we add an empty proxy to be ignore all proxy
-                                //only allocate url
-                                const url_slice = url_zig.toSlice(bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {
-                                    // clean hostname if any
-                                    if (hostname) |host| {
-                                        bun.default_allocator.free(host);
-                                    }
-                                    JSC.JSError(bun.default_allocator, "Out of memory", .{}, ctx, exception);
-                                    return .zero;
-                                };
-                                url = ZigURL.parse(url_slice.slice());
-                                url_proxy_buffer = url.href;
-                                proxy = ZigURL{}; //empty proxy
+                            var proxy_str = proxy_arg.toStringOrNull(globalThis) orelse return .zero;
+                            var proxy_url_zig = proxy_str.toSlice(globalThis, bun.default_allocator);
+                            defer proxy_url_zig.deinit();
 
-                            } else {
-                                var proxy_str = proxy_arg.toStringOrNull(globalThis) orelse return .zero;
-                                var proxy_url_zig = proxy_str.getZigString(globalThis);
-
-                                // proxy is actual 0 len so ignores it
-                                if (proxy_url_zig.len == 0) {
-                                    const url_slice = url_zig.toSlice(bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {
-                                        JSC.JSError(bun.default_allocator, "Out of memory", .{}, ctx, exception);
-                                        return .zero;
-                                    };
-                                    url = ZigURL.parse(url_slice.slice());
-                                    url_proxy_buffer = url.href;
-                                } else {
-                                    var buffer = getAllocator(ctx).alloc(u8, url_zig.len + proxy_url_zig.len) catch {
-                                        JSC.JSError(bun.default_allocator, "Out of memory", .{}, ctx, exception);
-                                        return .zero;
-                                    };
-                                    @memcpy(buffer.ptr, url_zig.ptr, url_zig.len);
-                                    var proxy_url_slice = buffer[url_zig.len..];
-                                    @memcpy(proxy_url_slice.ptr, proxy_url_zig.ptr, proxy_url_zig.len);
-
-                                    url = ZigURL.parse(buffer[0..url_zig.len]);
-                                    proxy = ZigURL.parse(proxy_url_slice);
-                                    url_proxy_buffer = buffer;
-                                }
-                            }
-                        } else {
-                            //no proxy only url
-                            var url_slice = jsstring.toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {
+                            var buffer = getAllocator(ctx).alloc(u8, url_slice.len + proxy_url_zig.len) catch {
                                 JSC.JSError(bun.default_allocator, "Out of memory", .{}, ctx, exception);
                                 return .zero;
                             };
+                            @memcpy(buffer.ptr, url_slice.ptr, url_slice.len);
+                            var proxy_url_slice = buffer[url_slice.len..];
+                            @memcpy(proxy_url_slice.ptr, proxy_url_zig.ptr, proxy_url_zig.len);
 
-                            if (url_slice.len == 0) {
-                                const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
-                                return JSPromise.rejectedPromiseValue(globalThis, err);
-                            }
-
-                            url = ZigURL.parse(url_slice.slice());
-                            url_proxy_buffer = url.href;
+                            url = ZigURL.parse(buffer[0..url_slice.len]);
+                            proxy = ZigURL.parse(proxy_url_slice);
+                            url_proxy_buffer = buffer;
                         }
-                    } else {
-                        //no proxy only url
-                        var url_slice = jsstring.toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {
-                            // clean hostname if any
-                            if (hostname) |host| {
-                                bun.default_allocator.free(host);
-                            }
-                            JSC.JSError(bun.default_allocator, "Out of memory", .{}, ctx, exception);
-                            return .zero;
-                        };
-
-                        if (url_slice.len == 0) {
-                            const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
-                            // clean hostname if any
-                            if (hostname) |host| {
-                                bun.default_allocator.free(host);
-                            }
-                            return JSPromise.rejectedPromiseValue(globalThis, err);
-                        }
-
-                        url = ZigURL.parse(url_slice.slice());
-                        url_proxy_buffer = url.href;
                     }
                 }
-            } else {
-                //no proxy only url
-                var url_slice = jsstring.toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {
-                    JSC.JSError(bun.default_allocator, "Out of memory", .{}, ctx, exception);
-                    return .zero;
-                };
-
-                if (url_slice.len == 0) {
-                    const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
-                    return JSPromise.rejectedPromiseValue(globalThis, err);
-                }
-
-                url = ZigURL.parse(url_slice.slice());
-                url_proxy_buffer = url.href;
             }
         } else {
             const fetch_error = fetch_type_error_strings.get(js.JSValueGetType(ctx, first_arg.asRef()));

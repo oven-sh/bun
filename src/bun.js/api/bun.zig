@@ -486,18 +486,17 @@ pub fn getFilePath(ctx: js.JSContextRef, arguments: []const js.JSValueRef, buf: 
     }
 
     const value = arguments[0];
-    if (js.JSValueIsString(ctx, value)) {
-        var out = ZigString.Empty;
-        JSValue.toZigString(JSValue.fromRef(value), &out, ctx.ptr());
-        var out_slice = out.slice();
+    if (JSC.JSValue.c(value).isString()) {
+        const out = JSC.JSValue.c(value).toSlice(ctx, bun.default_allocator);
+        defer out.deinit();
 
         // The dots are kind of unnecessary. They'll be normalized.
-        if (out.len == 0 or @ptrToInt(out.ptr) == 0 or std.mem.eql(u8, out_slice, ".") or std.mem.eql(u8, out_slice, "..") or std.mem.eql(u8, out_slice, "../")) {
+        if (out.len == 0 or std.mem.eql(u8, out.slice(), "..") or std.mem.eql(u8, out.slice(), "../")) {
             JSError(getAllocator(ctx), "Expected a file path as a string or an array of strings to be part of a file path.", .{}, ctx, exception);
             return null;
         }
 
-        var parts = [_]string{out_slice};
+        var parts = [_]string{out.slice()};
         // This does the equivalent of Node's path.normalize(path.join(cwd, out_slice))
         var res = VirtualMachine.get().bundler.fs.absBuf(&parts, buf);
 
@@ -522,8 +521,15 @@ pub fn getFilePath(ctx: js.JSContextRef, arguments: []const js.JSValueRef, buf: 
                 return null;
             }
 
-            var out = ZigString.Empty;
-            JSValue.toZigString(item, &out, ctx.ptr());
+            const out = JSC.JSValue.c(value).toSlice(ctx, bun.default_allocator);
+            defer out.deinit();
+
+            // The dots are kind of unnecessary. They'll be normalized.
+            if (out.len == 0 or std.mem.eql(u8, out.slice(), "..") or std.mem.eql(u8, out.slice(), "../")) {
+                JSError(getAllocator(ctx), "Expected a file path as a string or an array of strings to be part of a file path.", .{}, ctx, exception);
+                return null;
+            }
+
             const out_slice = out.slice();
 
             temp_strings_list[temp_strings_list_len] = out_slice;
@@ -2632,7 +2638,7 @@ pub const Unsafe = struct {
         switch (array_buffer.typed_array_type) {
             .Uint16Array, .Int16Array => {
                 var zig_str = ZigString.init("");
-                zig_str.ptr = @ptrCast([*]const u8, @alignCast(@alignOf([*]align(1) const u16), array_buffer.ptr));
+                zig_str._unsafe_ptr_do_not_use = @ptrCast([*]const u8, @alignCast(@alignOf([*]align(1) const u16), array_buffer.ptr));
                 zig_str.len = array_buffer.len;
                 zig_str.markUTF16();
                 // the deinitializer for string causes segfaults

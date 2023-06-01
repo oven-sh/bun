@@ -616,6 +616,7 @@ pub const Target = enum {
         array.set(
             Target.bun_macro,
             &[_]string{
+                "macro",
                 "bun",
                 "worker",
                 "module",
@@ -624,13 +625,6 @@ pub const Target = enum {
                 "browser",
             },
         );
-        // array.set(Target.bun_macro, [_]string{ "bun_macro", "browser", "default", },);
-
-        // Original comment:
-        // The neutral target is for people that don't want esbuild to try to
-        // pick good defaults for their platform. In that case, the list of main
-        // fields is empty by default. You must explicitly configure it yourself.
-        // array.set(Target.neutral, &listc);
 
         break :brk array;
     };

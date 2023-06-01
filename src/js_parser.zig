@@ -17656,7 +17656,7 @@ fn NewParser_(
                                     },
                                     name_loc,
                                 );
-                            } else if (p.options.features.commonjs_at_runtime) {
+                            } else if (p.options.features.commonjs_at_runtime and identifier_opts.assign_target != .none) {
                                 // Record this CommonJS export name for use later.
                                 _ = p.commonjs_export_names.getOrPut(p.allocator, name) catch unreachable;
                             }

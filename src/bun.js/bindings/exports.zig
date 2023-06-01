@@ -1932,7 +1932,7 @@ pub const ZigConsoleClient = struct {
 
                     if (str.is16Bit()) {
                         // streaming print
-                        writer.print("{s}", .{str});
+                        writer.print("{}", .{str});
                     } else if (strings.isAllASCII(str.slice())) {
                         // fast path
                         writer.writeAll(str.slice());

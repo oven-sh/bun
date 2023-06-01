@@ -38,7 +38,7 @@ pub fn toUTF16Literal(comptime str: []const u8) []const u16 {
     };
 }
 
-const OptionalUsize = std.meta.Int(.unsigned, @bitSizeOf(usize) - 1);
+pub const OptionalUsize = std.meta.Int(.unsigned, @bitSizeOf(usize) - 1);
 pub fn indexOfAny(self: string, comptime str: anytype) ?OptionalUsize {
     inline for (str) |a| {
         if (indexOfChar(self, a)) |i| {

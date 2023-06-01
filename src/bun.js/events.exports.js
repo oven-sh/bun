@@ -22,9 +22,7 @@ function EventEmitter(opts) {
   }
 
   this._maxListeners ??= undefined;
-  if (
-    (this[kCapture] = opts?.captureRejections ? Boolean(opts?.captureRejections) : EventEmitterPrototype[kCapture])
-  ) {
+  if ((this[kCapture] = opts?.captureRejections ? Boolean(opts?.captureRejections) : EventEmitterPrototype[kCapture])) {
     this.emit = emitWithRejectionCapture;
   }
 }

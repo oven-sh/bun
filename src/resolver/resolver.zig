@@ -1129,7 +1129,7 @@ pub const Resolver = struct {
             return .{ .not_found = {} };
         }
 
-        if (strings.startsWith(import_path, "file:///")) {
+        if (strings.hasPrefixComptime(import_path, "file:///")) {
             const path = import_path[7..];
 
             if (r.opts.external.abs_paths.count() > 0 and r.opts.external.abs_paths.contains(path)) {

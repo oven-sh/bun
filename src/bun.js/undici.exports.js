@@ -225,12 +225,7 @@ export async function request(
 
   const body = resp.body ? new BodyReadable(resp) : null;
 
-  const headersObject = {};
-  for (const [key, value] of headers.entries()) {
-    headersObject[key] = value;
-  }
-
-  return { statusCode, headers: headersObject, body, trailers, opaque: kEmptyObject, context: kEmptyObject };
+  return { statusCode, headers: headers.toJSON(), body, trailers, opaque: kEmptyObject, context: kEmptyObject };
 }
 
 export function stream() {

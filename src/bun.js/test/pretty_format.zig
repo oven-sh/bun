@@ -983,38 +983,35 @@ pub const JestPrettyFormat = struct {
                         defer if (comptime enable_ansi_colors)
                             writer.writeAll(Output.prettyFmt("<r>", true));
 
-                        if (str.is16Bit()) {
-                            this.printAs(.JSON, Writer, writer_, value, .StringObject, enable_ansi_colors);
-                            return;
-                        }
-
                         var has_newline = false;
-                        if (strings.indexOfAny(str.slice(), "\n\r")) |_| {
+
+                        if (str.indexOfAny("\n\r")) |_| {
                             has_newline = true;
                             writer.writeAll("\n");
                         }
 
                         writer.writeAll("\"");
-                        var remaining = str.slice();
-                        while (strings.indexOfAny(remaining, "\\\r")) |i| {
-                            switch (remaining[i]) {
+                        var remaining = str;
+                        while (remaining.indexOfAny("\\\r")) |i| {
+                            switch (remaining.charAt(i)) {
                                 '\\' => {
-                                    writer.print("{s}\\", .{remaining[0 .. i + 1]});
-                                    remaining = remaining[i + 1 ..];
+                                    writer.print("{}\\", .{remaining.substringWithLen(0, i)});
+                                    remaining = remaining.substring(i + 1, 0);
                                 },
                                 '\r' => {
-                                    if (i + 1 < remaining.len and remaining[i + 1] == '\n') {
-                                        writer.print("{s}", .{remaining[0..i]});
+                                    if (i + 1 < remaining.len and remaining.charAt(i + 1) == '\n') {
+                                        writer.print("{}", .{remaining.substringWithLen(0, i)});
                                     } else {
-                                        writer.print("{s}\n", .{remaining[0..i]});
+                                        writer.print("{}\n", .{remaining.substringWithLen(0, i)});
                                     }
-                                    remaining = remaining[i + 1 ..];
+
+                                    remaining = remaining.substring(i + 1, 0);
                                 },
                                 else => unreachable,
                             }
                         }
 
-                        writer.writeAll(remaining);
+                        writer.writeString(remaining);
                         writer.writeAll("\"");
                         if (has_newline) writer.writeAll("\n");
                         return;
@@ -1026,7 +1023,7 @@ pub const JestPrettyFormat = struct {
 
                     if (str.is16Bit()) {
                         // streaming print
-                        writer.print("{s}", .{str});
+                        writer.print("{}", .{str});
                     } else if (strings.isAllASCII(str.slice())) {
                         // fast path
                         writer.writeAll(str.slice());

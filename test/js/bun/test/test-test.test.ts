@@ -1725,6 +1725,11 @@ test("toHaveProperty() - all", () => {
   expect({ a: new String("a") }).not.toHaveProperty("a", "a");
 });
 
+test("toHaveProperty() - null or undefined", () => {
+  expect(null).not.toHaveProperty("length");
+  expect(undefined).not.toHaveProperty("length");
+});
+
 test("toBe()", () => {
   const a = 1;
   const b = 1;
@@ -2530,14 +2535,7 @@ describe("throw in describe scope doesn't enqueue tests after thrown", () => {
     throw new Error("This test failed");
   });
 
-  class TestPass extends Error {
-    constructor(message) {
-      super(message);
-      this.name = "TestPass";
-    }
-  }
-
-  throw new TestPass("This test passed. Ignore the error message");
+  throw "This test passed. Ignore the error message";
 
   it("test enqueued after a describe scope throws is never run", () => {
     throw new Error("This test failed");
@@ -2812,7 +2810,7 @@ it("test.todo", () => {
   const path = join(tmp, "todo-test.test.js");
   copyFileSync(join(import.meta.dir, "todo-test-fixture.js"), path);
   const { stdout, stderr, exitCode } = spawnSync({
-    cmd: [bunExe(), "test", path],
+    cmd: [bunExe(), "test", path, "--todo"],
     stdout: "pipe",
     stderr: "pipe",
     env: bunEnv,
@@ -2833,7 +2831,7 @@ it("test.todo doesnt cause exit code 1", () => {
   const path = join(tmp, "todo-test.test.js");
   copyFileSync(join(import.meta.dir, "todo-test-fixture-2.js"), path);
   const { stdout, stderr, exitCode } = spawnSync({
-    cmd: [bunExe(), "test", path],
+    cmd: [bunExe(), "test", path, "--todo"],
     stdout: "pipe",
     stderr: "pipe",
     env: bunEnv,
@@ -2918,4 +2916,20 @@ afterAll: #1
 afterAll: #2
 `.trim(),
   );
+});
+
+it("skip() and skipIf()", () => {
+  const path = join(tmp, "skip-test-fixture.test.js");
+  copyFileSync(join(import.meta.dir, "skip-test-fixture.js"), path);
+  const { stdout } = spawnSync({
+    cmd: [bunExe(), "test", path],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+    cwd: realpathSync(dirname(path)),
+  });
+  const result = stdout!.toString();
+  expect(result).not.toContain("unreachable");
+  expect(result).toMatch(/reachable/);
+  expect(result.match(/reachable/g)).toHaveLength(6);
 });

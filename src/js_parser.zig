@@ -17442,7 +17442,7 @@ fn NewParser_(
                             //      delete module.exports
                             //      module.exports();
 
-                            if (identifier_opts.is_call_target or identifier_opts.is_delete_target or identifier_opts.assign_target == .update) {
+                            if (identifier_opts.is_call_target or identifier_opts.is_delete_target or identifier_opts.assign_target != .none) {
                                 p.deoptimizeCommonJSNamedExports();
                                 return null;
                             }

@@ -1716,6 +1716,7 @@ pub const ModuleLoader = struct {
                         .hash = 0,
                     };
                 },
+                .@"bun:events_native" => return jsSyntheticModule(.@"bun:events_native"),
                 .@"node:child_process" => {
                     return ResolvedSource{
                         .allocator = null,
@@ -1764,7 +1765,15 @@ pub const ModuleLoader = struct {
                 .@"node:buffer" => return jsSyntheticModule(.@"node:buffer"),
                 .@"node:string_decoder" => return jsSyntheticModule(.@"node:string_decoder"),
                 .@"node:module" => return jsSyntheticModule(.@"node:module"),
-                .@"node:events" => return jsSyntheticModule(.@"node:events"),
+                .@"node:events" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(jsModuleFromFile(jsc_vm.load_builtins_from_path, "events.exports.js")),
+                        .specifier = ZigString.init("node:events"),
+                        .source_url = ZigString.init("node:events"),
+                        .hash = 0,
+                    };
+                },
                 .@"node:process" => return jsSyntheticModule(.@"node:process"),
                 .@"node:tty" => return jsSyntheticModule(.@"node:tty"),
                 .@"node:util/types" => return jsSyntheticModule(.@"node:util/types"),
@@ -2232,6 +2241,7 @@ pub const HardcodedModule = enum {
     @"bun:jsc",
     @"bun:main",
     @"bun:sqlite",
+    @"bun:events_native",
     @"detect-libc",
     @"node:assert",
     @"node:assert/strict",
@@ -2296,6 +2306,7 @@ pub const HardcodedModule = enum {
             .{ "bun:jsc", HardcodedModule.@"bun:jsc" },
             .{ "bun:main", HardcodedModule.@"bun:main" },
             .{ "bun:sqlite", HardcodedModule.@"bun:sqlite" },
+            .{ "bun:events_native", HardcodedModule.@"bun:events_native" },
             .{ "depd", HardcodedModule.depd },
             .{ "detect-libc", HardcodedModule.@"detect-libc" },
             .{ "node:assert", HardcodedModule.@"node:assert" },
@@ -2364,6 +2375,7 @@ pub const HardcodedModule = enum {
             .{ "bun:jsc", .{ .path = "bun:jsc" } },
             .{ "bun:sqlite", .{ .path = "bun:sqlite" } },
             .{ "bun:wrap", .{ .path = "bun:wrap" } },
+            .{ "bun:events_native", .{ .path = "bun:events_native" } },
             .{ "child_process", .{ .path = "node:child_process" } },
             .{ "crypto", .{ .path = "node:crypto" } },
             .{ "depd", .{ .path = "depd" } },

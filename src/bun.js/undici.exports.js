@@ -224,7 +224,8 @@ export async function request(
   }
 
   const body = resp.body ? new BodyReadable(resp) : null;
-  return { statusCode, headers, body, trailers, opaque: kEmptyObject, context: kEmptyObject };
+
+  return { statusCode, headers: headers.toJSON(), body, trailers, opaque: kEmptyObject, context: kEmptyObject };
 }
 
 export function stream() {

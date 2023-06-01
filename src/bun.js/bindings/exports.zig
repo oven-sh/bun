@@ -222,7 +222,7 @@ pub const ResolvedSource = extern struct {
 
         @"node:buffer" = 1024,
         @"node:process" = 1025,
-        @"node:events" = 1026,
+        @"bun:events_native" = 1026,
         @"node:string_decoder" = 1027,
         @"node:module" = 1028,
         @"node:tty" = 1029,

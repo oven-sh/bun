@@ -1,4 +1,9 @@
 {
+  // The usage of BUN_GARBAGE_COLLECTOR_LEVEL=2 is important for debugging
+  // It will force the garbage collector to run after every test and every call to expect()
+  // it makes our tests very slow
+  // But it helps catch memory bugs
+
   // SIGHUP must be ignored or the debugger will pause when a spawned subprocess exits:
   // { "initCommands": ["process handle -p false -s false -n false SIGHUP"] }
   "version": "0.2.0",
@@ -12,7 +17,8 @@
       "cwd": "${fileDirname}",
       "env": {
         "FORCE_COLOR": "1",
-        "BUN_DEBUG_QUIET_LOGS": "1"
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
       "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"
@@ -20,18 +26,18 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "bun test [file] (gc)",
+      "name": "bun test [file] (fast)",
       "program": "bun-debug",
       "args": ["test", "${file}"],
       "cwd": "${fileDirname}",
       "env": {
         "FORCE_COLOR": "1",
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "3"
+        "BUN_DEBUG_QUIET_LOGS": "1"
       },
       "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"
     },
+
     {
       "type": "lldb",
       "request": "launch",
@@ -82,7 +88,8 @@
       "cwd": "${workspaceFolder}/test",
       "env": {
         "FORCE_COLOR": "1",
-        "BUN_DEBUG_QUIET_LOGS": "1"
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
       "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"
@@ -90,14 +97,13 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "bun test [*] (gc)",
+      "name": "bun test [*] (fast)",
       "program": "bun-debug",
       "args": ["test"],
       "cwd": "${workspaceFolder}/test",
       "env": {
         "FORCE_COLOR": "1",
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "3"
+        "BUN_DEBUG_QUIET_LOGS": "1"
       },
       "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"
@@ -140,7 +146,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "3"
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
       "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"

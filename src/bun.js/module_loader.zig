@@ -105,7 +105,6 @@ fn jsModuleFromFile(from_path: string, comptime input: string) string {
     var file: std.fs.File = undefined;
     if ((comptime Environment.allow_assert) and from_path.len == 0) {
         const absolute_path = comptime (Environment.base_path ++ (std.fs.path.dirname(std.fs.path.dirname(@src().file).?).?) ++ "/js/out/" ++ moduleFolder ++ "/" ++ input);
-        Output.prettyln("loading: {s}", .{absolute_path});
         file = std.fs.openFileAbsoluteZ(absolute_path, .{ .mode = .read_only }) catch {
             const WarnOnce = struct {
                 pub var warned = false;
@@ -1707,68 +1706,13 @@ pub const ModuleLoader = struct {
                         .hash = 0,
                     };
                 },
-                .@"bun:jsc" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(jsModuleFromFile(jsc_vm.load_builtins_from_path, "bun-jsc.exports.js")),
-                        .specifier = ZigString.init("bun:jsc"),
-                        .source_url = ZigString.init("bun:jsc"),
-                        .hash = 0,
-                    };
-                },
-                .@"bun:events_native" => return jsSyntheticModule(.@"bun:events_native"),
-                .@"node:child_process" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(jsModuleFromFile(jsc_vm.load_builtins_from_path, "child_process.exports.js")),
-                        .specifier = ZigString.init("node:child_process"),
-                        .source_url = ZigString.init("node:child_process"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:net" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(jsModuleFromFile(jsc_vm.load_builtins_from_path, "net.exports.js")),
-                        .specifier = ZigString.init("node:net"),
-                        .source_url = ZigString.init("node:net"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:fs" => {
-                    if (comptime Environment.isDebug) {
-                        return ResolvedSource{
-                            .allocator = null,
-                            .source_code = ZigString.init(jsModuleFromFile(jsc_vm.load_builtins_from_path, "fs.exports.js")),
-                            .specifier = ZigString.init("node:fs"),
-                            .source_url = ZigString.init("node:fs"),
-                            .hash = 0,
-                        };
-                    } else if (jsc_vm.load_builtins_from_path.len != 0) {
-                        return ResolvedSource{
-                            .allocator = null,
-                            .source_code = ZigString.init(jsModuleFromFile(jsc_vm.load_builtins_from_path, "fs.exports.js")),
-                            .specifier = ZigString.init("node:fs"),
-                            .source_url = ZigString.init("node:fs"),
-                            .hash = 0,
-                        };
-                    }
-
                 .@"node:buffer" => return jsSyntheticModule(.@"node:buffer"),
                 .@"node:string_decoder" => return jsSyntheticModule(.@"node:string_decoder"),
                 .@"node:module" => return jsSyntheticModule(.@"node:module"),
-                .@"node:events" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(jsModuleFromFile(jsc_vm.load_builtins_from_path, "events.exports.js")),
-                        .specifier = ZigString.init("node:events"),
-                        .source_url = ZigString.init("node:events"),
-                        .hash = 0,
-                    };
-                },
                 .@"node:process" => return jsSyntheticModule(.@"node:process"),
                 .@"node:tty" => return jsSyntheticModule(.@"node:tty"),
                 .@"node:util/types" => return jsSyntheticModule(.@"node:util/types"),
+                .@"bun:events_native" => return jsSyntheticModule(.@"bun:events_native"),
 
                 .@"node:fs/promises" => {
                     return ResolvedSource{
@@ -1804,6 +1748,7 @@ pub const ModuleLoader = struct {
                 .@"node:crypto" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:crypto", "node/crypto.js"),
                 .@"node:dns" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:dns", "node/dns.js"),
                 .@"node:dns/promises" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:dns/promises", "node/dns.promises.js"),
+                .@"node:events" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:child_process", "node/events.js"),
                 .@"node:fs" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:fs", "node/fs.js"),
                 .@"node:http" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:http", "node/http.js"),
                 .@"node:https" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:https", "node/https.js"),

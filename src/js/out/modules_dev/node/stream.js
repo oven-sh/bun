@@ -168,7 +168,7 @@ var __TRACK_EE__ = !!process.env.DEBUG_TRACK_EE, __DEBUG__ = !!(process.env.DEBU
     return;
   console.log(`ID: ${lastItem}`, ...args.slice(0, -1));
 } : (...args) => console.log(...args.slice(0, -1)) : () => {
-}, __create = Object.create, __defProp = Object.defineProperty, __getOwnPropDesc = Object.getOwnPropertyDescriptor, __getOwnPropNames = Object.getOwnPropertyNames, __getProtoOf = Object.getPrototypeOf, __hasOwnProp = Object.prototype.hasOwnProperty, __ObjectSetPrototypeOf = Object.setPrototypeOf, __require = (x) => import.meta.require(x), _EE = __require("events");
+}, __create = Object.create, __defProp = Object.defineProperty, __getOwnPropDesc = Object.getOwnPropertyDescriptor, __getOwnPropNames = Object.getOwnPropertyNames, __getProtoOf = Object.getPrototypeOf, __hasOwnProp = Object.prototype.hasOwnProperty, __ObjectSetPrototypeOf = Object.setPrototypeOf, __require = (x) => import.meta.require(x), _EE = __require("bun:events_native");
 __ObjectSetPrototypeOf(DebugEventEmitter.prototype, _EE.prototype);
 __ObjectSetPrototypeOf(DebugEventEmitter, _EE);
 DebugEventEmitter.prototype.emit = function(event, ...args) {
@@ -1541,7 +1541,7 @@ var ArrayIsArray = Array.isArray, require_primordials = __commonJS({
   }
 }), require_legacy = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/legacy.js"(exports, module) {
-    var { ArrayIsArray: ArrayIsArray2, ObjectSetPrototypeOf } = require_primordials(), { EventEmitter: _EE2 } = __require("events"), EE;
+    var { ArrayIsArray: ArrayIsArray2, ObjectSetPrototypeOf } = require_primordials(), { EventEmitter: _EE2 } = __require("bun:events_native"), EE;
     if (__TRACK_EE__)
       EE = DebugEventEmitter;
     else
@@ -1737,7 +1737,7 @@ var ArrayIsArray = Array.isArray, require_primordials = __commonJS({
       SafeSet,
       SymbolAsyncIterator,
       Symbol: Symbol2
-    } = require_primordials(), ReadableState = globalThis[Symbol.for("Bun.lazy")]("bun:stream").ReadableState, { EventEmitter: EE } = __require("events"), { Stream, prependListener } = require_legacy();
+    } = require_primordials(), ReadableState = globalThis[Symbol.for("Bun.lazy")]("bun:stream").ReadableState, { EventEmitter: EE } = __require("bun:events_native"), { Stream, prependListener } = require_legacy();
     function Readable(options) {
       if (!(this instanceof Readable))
         return new Readable(options);
@@ -2467,7 +2467,7 @@ var ArrayIsArray = Array.isArray, require_primordials = __commonJS({
       StringPrototypeToLowerCase,
       Symbol: Symbol2,
       SymbolHasInstance
-    } = require_primordials(), { EventEmitter: EE } = __require("events"), Stream = require_legacy().Stream, destroyImpl = require_destroy(), { addAbortSignal } = require_add_abort_signal(), { getHighWaterMark, getDefaultHighWaterMark } = require_state(), {
+    } = require_primordials(), { EventEmitter: EE } = __require("bun:events_native"), Stream = require_legacy().Stream, destroyImpl = require_destroy(), { addAbortSignal } = require_add_abort_signal(), { getHighWaterMark, getDefaultHighWaterMark } = require_state(), {
       ERR_INVALID_ARG_TYPE: ERR_INVALID_ARG_TYPE2,
       ERR_METHOD_NOT_IMPLEMENTED,
       ERR_MULTIPLE_CALLBACK,
@@ -3795,4 +3795,4 @@ export {
   Duplex
 };
 
-//# debugId=7734C3A39170EC3064756e2164756e21
+//# debugId=C95EBBF8A541902864756e2164756e21

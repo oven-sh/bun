@@ -64,7 +64,7 @@ async function request(url, options = {
   if (throwOnError && statusCode >= 400 && statusCode < 600)
     throw new Error(`Request failed with status code ${statusCode}`);
   const body = resp.body ? new BodyReadable(resp) : null;
-  return { statusCode, headers, body, trailers, opaque: kEmptyObject, context: kEmptyObject };
+  return { statusCode, headers: headers.toJSON(), body, trailers, opaque: kEmptyObject, context: kEmptyObject };
 }
 function stream() {
   throw new Error("Not implemented in bun");

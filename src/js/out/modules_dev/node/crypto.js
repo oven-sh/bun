@@ -1048,46 +1048,128 @@ Use Chrome, Firefox or Internet Explorer 11`);
   }
 }), require_browser2 = __commonJS({
   "node_modules/create-hash/browser.js"(exports, module) {
-    const { Transform } = stream_exports;
-
-    class Hash extends Transform {
-      #hasher;
-      #algorithm;
-      #finalized = !1;
-      constructor(algorithm, options) {
-        super(options);
-        this.#algorithm = algorithm, this.#hasher = new CryptoHasher(algorithm);
+    const { Transform } = stream_exports, LazyHash = function Hash(algorithm, options) {
+      this._options = options, this._hasher = new CryptoHasher(algorithm, options), this._finalized = !1;
+    };
+    LazyHash.prototype = Object.create(Transform.prototype), LazyHash.prototype.update = function update(data, encoding) {
+      return this._checkFinalized(), this._hasher.update(data, encoding), this;
+    }, LazyHash.prototype.digest = function update(data, encoding) {
+      return this._checkFinalized(), this._finalized = !0, this._hasher.digest(data, encoding);
+    }, LazyHash.prototype._checkFinalized = function _checkFinalized() {
+      if (this._finalized) {
+        var err = new Error("Digest already called");
+        throw err.code = "ERR_CRYPTO_HASH_FINALIZED", err;
       }
-      #checkFinalized() {
-        if (this.#finalized) {
-          var err = new Error("Digest already called");
-          throw err.code = "ERR_CRYPTO_HASH_FINALIZED", err;
-        }
-      }
-      update(data, encoding) {
-        if (this.#checkFinalized(), arguments.length > 1)
-          this.#hasher.update(data, encoding);
-        else
-          this.#hasher.update(data);
-        return this;
-      }
+    }, LazyHash.prototype.copy = function copy() {
+      const copy = Object.create(LazyHash.prototype);
+      return copy._options = this._options, copy._hasher = this._hasher.copy(), copy._finalized = this._finalized, copy;
+    };
+    const lazyHashFullInitProto = {
+      __proto__: Transform.prototype,
+      ...LazyHash.prototype,
       _transform(data, encoding, callback) {
         this.update(data, encoding), callback && callback();
-      }
+      },
       _flush(callback) {
         this.push(this.digest()), callback();
       }
-      digest(encoding) {
-        return this.#checkFinalized(), this.#finalized = !0, this.#hasher.digest(encoding);
-      }
-      copy() {
-        const copy = new Hash(this.#algorithm);
-        return copy.#hasher = this.#hasher.copy(), copy;
-      }
-    }
+    }, triggerMethods = [
+      "_events",
+      "_eventsCount",
+      "_final",
+      "_maxListeners",
+      "_maxListeners",
+      "_read",
+      "_undestroy",
+      "_writableState",
+      "_write",
+      "_writev",
+      "addListener",
+      "asIndexedPairs",
+      "closed",
+      "compose",
+      "constructor",
+      "cork",
+      "destroy",
+      "destroyed",
+      "drop",
+      "emit",
+      "end",
+      "errored",
+      "eventNames",
+      "every",
+      "filter",
+      "find",
+      "flatMap",
+      "forEach",
+      "getMaxListeners",
+      "hasOwnProperty",
+      "isPaused",
+      "isPrototypeOf",
+      "iterator",
+      "listenerCount",
+      "listeners",
+      "map",
+      "off",
+      "on",
+      "once",
+      "pause",
+      "pipe",
+      "prependListener",
+      "prependOnceListener",
+      "propertyIsEnumerable",
+      "push",
+      "rawListeners",
+      "read",
+      "readable",
+      "readableAborted",
+      "readableBuffer",
+      "readableDidRead",
+      "readableEncoding",
+      "readableEnded",
+      "readableFlowing",
+      "readableHighWaterMark",
+      "readableLength",
+      "readableObjectMode",
+      "reduce",
+      "removeAllListeners",
+      "removeListener",
+      "resume",
+      "setDefaultEncoding",
+      "setEncoding",
+      "setMaxListeners",
+      "some",
+      "take",
+      "toArray",
+      "toLocaleString",
+      "toString",
+      "uncork",
+      "unpipe",
+      "unshift",
+      "valueOf",
+      "wrap",
+      "writable",
+      "writableBuffer",
+      "writableCorked",
+      "writableEnded",
+      "writableFinished",
+      "writableHighWaterMark",
+      "writableLength",
+      "writableNeedDrain",
+      "writableObjectMode",
+      "write"
+    ];
+    for (let method of triggerMethods)
+      Object.defineProperty(LazyHash.prototype, method, {
+        get() {
+          return Object.setPrototypeOf(this, lazyHashFullInitProto), Transform.call(this, this._options), this[method];
+        },
+        enumerable: !1,
+        configurable: !0
+      });
     module.exports = function createHash(algorithm) {
-      return new Hash(algorithm);
-    }, module.exports.createHash = module.exports, module.exports.Hash = Hash;
+      return new LazyHash(algorithm);
+    }, module.exports.createHash = module.exports, module.exports.Hash = LazyHash;
   }
 }), require_legacy = __commonJS({
   "node_modules/create-hmac/legacy.js"(exports, module) {
@@ -16257,4 +16339,4 @@ export {
   Cipher
 };
 
-//# debugId=116C120EB391866A64756e2164756e21
+//# debugId=207772A6A1EDC1C564756e2164756e21

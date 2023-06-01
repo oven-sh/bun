@@ -1,6 +1,10 @@
-var EventEmitter = require("node:events");
-var http = require("node:http");
-var subprotocolParse = function(header) {
+var EventEmitter = import.meta.require("node:events");
+var http = import.meta.require("node:http");
+var emitWarning = function(type, message) {
+  if (emittedWarnings.has(type))
+    return;
+  emittedWarnings.add(type), console.warn("[bun] Warning:", message);
+}, subprotocolParse = function(header) {
   const protocols = new Set;
   let start = -1, end = -1, i = 0;
   for (i;i < header.length; i++) {
@@ -44,68 +48,136 @@ var subprotocolParse = function(header) {
     Error.captureStackTrace(err, abortHandshakeOrEmitwsClientError), server.emit("wsClientError", err, socket, req);
   } else
     abortHandshake(response, code, message);
-}, kBunInternals = Symbol.for("::bunternal::"), readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"], encoder = new TextEncoder;
+}, kBunInternals = Symbol.for("::bunternal::"), readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"], encoder = new TextEncoder, emittedWarnings = new Set;
 
-class BunWebSocket extends globalThis.WebSocket {
-  constructor(url, ...args) {
-    super(url, ...args);
-    this.#wrappedHandlers = new WeakMap;
+class BunWebSocket extends EventEmitter {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSING = 2;
+  static CLOSED = 3;
+  #ws;
+  #paused = !1;
+  #fragments = !1;
+  #binaryType = "nodebuffer";
+  readyState = BunWebSocket.CONNECTING;
+  constructor(url, protocols, options) {
+    super();
+    let ws = this.#ws = new WebSocket(url, protocols);
+    ws.binaryType = "nodebuffer", ws.addEventListener("open", () => {
+      this.readyState = BunWebSocket.OPEN, this.emit("open");
+    }), ws.addEventListener("error", (err) => {
+      this.readyState = BunWebSocket.CLOSED, this.emit("error", err);
+    }), ws.addEventListener("close", (ev) => {
+      this.readyState = BunWebSocket.CLOSED, this.emit("close", ev.code, ev.reason);
+    }), ws.addEventListener("message", (ev) => {
+      const isBinary = typeof ev.data !== "string";
+      if (isBinary)
+        this.emit("message", this.#fragments ? [ev.data] : ev.data, isBinary);
+      else {
+        var encoded = encoder.encode(ev.data);
+        if (this.#binaryType !== "arraybuffer")
+          encoded = Buffer.from(encoded.buffer, encoded.byteOffset, encoded.byteLength);
+        this.emit("message", this.#fragments ? [encoded] : encoded, isBinary);
+      }
+    });
   }
-  #binaryType;
-  #wrappedHandlers = new WeakMap;
+  on(event, listener) {
+    if (event === "unexpected-response" || event === "upgrade" || event === "ping" || event === "pong" || event === "redirect")
+      emitWarning(event, "ws.WebSocket '" + event + "' event is not implemented in bun");
+    return super.on(event, listener);
+  }
+  send(data, opts, cb) {
+    this.#ws.send(data, opts?.compress), typeof cb === "function" && cb();
+  }
+  close(code, reason) {
+    this.#ws.close(code, reason);
+  }
   get binaryType() {
     return this.#binaryType;
   }
-  set binaryType(type) {
-    if (type !== "nodebuffer" && type !== "blob" && type !== "arraybuffer")
-      throw new TypeError("binaryType must be either 'blob', 'arraybuffer' or 'nodebuffer'");
-    if (type !== "blob")
-      super.binaryType = type;
-    this.#binaryType = type;
+  set binaryType(value) {
+    if (value)
+      this.#ws.binaryType = value;
   }
-  send(data, opts, cb) {
-    super.send(data, opts?.compress), typeof cb === "function" && cb();
+  set binaryType(value) {
+    if (value === "nodebuffer" || value === "arraybuffer")
+      this.#ws.binaryType = this.#binaryType = value, this.#fragments = !1;
+    else if (value === "fragments")
+      this.#ws.binaryType = "nodebuffer", this.#binaryType = "fragments", this.#fragments = !0;
   }
-  on(event, callback) {
-    if (event === "message") {
-      var handler = ({ data }) => {
-        try {
-          if (this.#binaryType == "blob")
-            data = new Blob([data]);
-          callback(data);
-        } catch (e) {
-          globalThis.reportError(e);
-        }
-      };
-      this.#wrappedHandlers.set(callback, handler), this.addEventListener(event, handler);
-    } else
-      this.addEventListener(event, callback);
+  get protocol() {
+    return this.#ws.protocol;
   }
-  once(event, callback) {
-    if (event === "message") {
-      var handler = ({ data }) => {
-        try {
-          callback(data);
-        } catch (e) {
-          globalThis.reportError(e);
-        }
-      };
-      this.#wrappedHandlers.set(callback, handler), this.addEventListener(event, handler, { once: !0 });
-    } else
-      this.addEventListener(event, callback, { once: !0 });
+  get extensions() {
+    return this.#ws.extensions;
   }
-  emit(event, data) {
-    if (event === "message")
-      this.dispatchEvent(new MessageEvent("message", { data }));
-    else
-      this.dispatchEvent(new CustomEvent(event, { detail: data }));
+  addEventListener(type, listener, options) {
+    this.#ws.addEventListener(type, listener, options);
   }
-  off(event, callback) {
-    var wrapped = this.#wrappedHandlers.get(callback);
-    if (wrapped)
-      this.removeEventListener(event, wrapped), this.#wrappedHandlers.delete(callback);
-    else
-      this.removeEventListener(event, callback);
+  removeEventListener(type, listener) {
+    this.#ws.removeEventListener(type, listener);
+  }
+  get onopen() {
+    return this.#ws.onopen;
+  }
+  set onopen(value) {
+    this.#ws.onopen = value;
+  }
+  get onerror() {
+    return this.#ws.onerror;
+  }
+  set onerror(value) {
+    this.#ws.onerror = value;
+  }
+  get onclose() {
+    return this.#ws.onclose;
+  }
+  set onclose(value) {
+    this.#ws.onclose = value;
+  }
+  get onmessage() {
+    return this.#ws.onmessage;
+  }
+  set onmessage(value) {
+    this.#ws.onmessage = value;
+  }
+  get bufferedAmount() {
+    return this.#ws.bufferedAmount;
+  }
+  get isPaused() {
+    return this.#paused;
+  }
+  ping(data, mask, cb) {
+    if (this.readyState === BunWebSocket.CONNECTING)
+      throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
+    if (typeof data === "function")
+      cb = data, data = mask = void 0;
+    else if (typeof mask === "function")
+      cb = mask, mask = void 0;
+    if (typeof data === "number")
+      data = data.toString();
+    emitWarning("ping()", "ws.WebSocket.ping() is not implemented in bun"), typeof cb === "function" && cb();
+  }
+  pong(data, mask, cb) {
+    if (this.readyState === BunWebSocket.CONNECTING)
+      throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
+    if (typeof data === "function")
+      cb = data, data = mask = void 0;
+    else if (typeof mask === "function")
+      cb = mask, mask = void 0;
+    if (typeof data === "number")
+      data = data.toString();
+    emitWarning("pong()", "ws.WebSocket.pong() is not implemented in bun"), typeof cb === "function" && cb();
+  }
+  pause() {
+    if (this.readyState === WebSocket.CONNECTING || this.readyState === WebSocket.CLOSED)
+      return;
+    this.#paused = !0, emitWarning("pause()", "ws.WebSocket.pause() is not implemented in bun");
+  }
+  resume() {
+    if (this.readyState === WebSocket.CONNECTING || this.readyState === WebSocket.CLOSED)
+      return;
+    this.#paused = !1, emitWarning("resume()", "ws.WebSocket.resume() is not implemented in bun");
   }
 }
 BunWebSocket.WebSocket = BunWebSocket;
@@ -608,4 +680,4 @@ export {
   Receiver
 };
 
-//# debugId=53066861FDA47E7A64756e2164756e21
+//# debugId=05AF3B22BBEA2DE864756e2164756e21

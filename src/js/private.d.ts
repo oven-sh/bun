@@ -52,3 +52,7 @@ interface LoaderModule {
 declare interface Error {
   code?: string;
 }
+
+declare interface ImportMeta {
+  primordials: {};
+}

@@ -90,8 +90,14 @@ pub const Run = struct {
 
         // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
 
-        if (ctx.debug.macros) |macros| {
-            b.options.macro_remap = macros;
+        switch (ctx.debug.macros) {
+            .disable => {
+                b.options.no_macros = true;
+            },
+            .map => |macros| {
+                b.options.macro_remap = macros;
+            },
+            .unspecified => {},
         }
 
         b.configureRouter(false) catch {
@@ -175,8 +181,14 @@ pub const Run = struct {
 
         // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
 
-        if (ctx.debug.macros) |macros| {
-            b.options.macro_remap = macros;
+        switch (ctx.debug.macros) {
+            .disable => {
+                b.options.no_macros = true;
+            },
+            .map => |macros| {
+                b.options.macro_remap = macros;
+            },
+            .unspecified => {},
         }
 
         b.configureRouter(false) catch {

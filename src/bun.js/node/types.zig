@@ -1775,17 +1775,19 @@ pub const Path = struct {
         var path_slice: JSC.ZigString.Slice = args_ptr[0].toSlice(globalThis, heap_allocator);
         defer path_slice.deinit();
         var path = path_slice.slice();
-        var path_name = Fs.PathName.init(path);
-        var root = JSC.ZigString.init(path_name.dir);
-        const is_absolute = (isWindows and isZigStringAbsoluteWindows(root)) or (!isWindows and path_name.dir.len > 0 and path_name.dir[0] == '/');
-
+        var path_name = Fs.NodeJSPathName.init(path);
         var dir = JSC.ZigString.init(path_name.dir);
-        if (is_absolute) {
-            root = JSC.ZigString.Empty;
-            if (path_name.dir.len == 0)
-                dir = JSC.ZigString.init(if (isWindows) std.fs.path.sep_str_windows else std.fs.path.sep_str_posix);
-        }
+        const is_absolute = (isWindows and isZigStringAbsoluteWindows(dir)) or (!isWindows and path.len > 0 and path[0] == '/');
 
+        // if its not absolute root must be empty
+        var root = JSC.ZigString.Empty;
+        if (is_absolute) {
+            root = JSC.ZigString.init(if (isWindows) std.fs.path.sep_str_windows else std.fs.path.sep_str_posix);
+            // if is absolute and dir is empty, then dir = root
+            if (path_name.dir.len == 0) {
+                dir = root;
+            }
+        }
         var base = JSC.ZigString.init(path_name.base);
         var name_ = JSC.ZigString.init(path_name.filename);
         var ext = JSC.ZigString.init(path_name.ext);

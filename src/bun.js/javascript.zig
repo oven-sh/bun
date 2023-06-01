@@ -392,6 +392,7 @@ pub const VirtualMachine = struct {
     macros: MacroMap,
     macro_entry_points: std.AutoArrayHashMap(i32, *MacroEntryPoint),
     macro_mode: bool = false,
+    no_macros: bool = false,
 
     has_any_macro_remappings: bool = false,
     is_from_devserver: bool = false,

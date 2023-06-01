@@ -1484,6 +1484,7 @@ pub const RequestContext = struct {
             std.debug.assert(JavaScript.VirtualMachine.isLoaded());
             javascript_vm = vm;
             vm.bundler.options.origin = handler.origin;
+            vm.bundler.options.no_macros = handler.client_bundler.options.no_macros;
             const boot = vm.bundler.options.framework.?.server.path;
             std.debug.assert(boot.len > 0);
             errdefer vm.deinit();
@@ -3972,7 +3973,15 @@ pub const Server = struct {
 
         http_editor_context.name = debug.editor;
 
-        server.bundler.options.macro_remap = debug.macros orelse .{};
+        switch (debug.macros) {
+            .disable => {
+                server.bundler.options.no_macros = true;
+            },
+            .map => |macros| {
+                server.bundler.options.macro_remap = macros;
+            },
+            .unspecified => {},
+        }
 
         if (debug.fallback_only or server.bundler.env.map.get("BUN_DISABLE_BUN_JS") != null) {
             RequestContext.fallback_only = true;

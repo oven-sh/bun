@@ -61,6 +61,7 @@ pub const JSBundler = struct {
         code_splitting: bool = false,
         minify: Minify = .{},
         server_components: ServerComponents = ServerComponents{},
+        no_macros: bool = false,
 
         names: Names = .{},
         external: bun.StringSet = bun.StringSet.init(bun.default_allocator),
@@ -185,6 +186,12 @@ pub const JSBundler = struct {
                         globalThis.throwValue(err);
                         return error.JSError;
                     }
+                }
+            }
+
+            if (config.getTruthy(globalThis, "macros")) |macros_flag| {
+                if (!macros_flag.coerce(bool, globalThis)) {
+                    this.no_macros = true;
                 }
             }
 

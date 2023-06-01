@@ -159,7 +159,7 @@ If you aren't a TypeScript user, you can create a [`jsconfig.json`](https://code
 
 ## CommonJS
 
-Bun has native support for CommonJS modules (added in Bun v0.6.5).
+Bun has native support for CommonJS modules (added in Bun v0.6.5). ES Modules are the recommended module format, but CommonJS modules are still widely used in the Node.js ecosystem. Bun supports both module formats, so that existing CommonJS packages can be used.
 
 In Bun's JavaScript runtime, `require` can be used by both ES Modules and CommonJS modules.
 

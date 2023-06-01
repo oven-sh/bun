@@ -75,6 +75,7 @@ const TranspilerOptions = struct {
     minify_whitespace: bool = false,
     minify_identifiers: bool = false,
     minify_syntax: bool = false,
+    no_macros: bool = false,
 };
 
 // Mimalloc gets unstable if we try to move this to a different thread
@@ -479,6 +480,10 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
     if (object.getIfPropertyExists(globalThis, "macro")) |macros| {
         macros: {
             if (macros.isUndefinedOrNull()) break :macros;
+            if (macros.isBoolean()) {
+                transpiler.no_macros = !macros.asBoolean();
+                break :macros;
+            }
             const kind = macros.jsType();
             const is_object = kind.isObject();
             if (!(kind.isStringLike() or is_object)) {
@@ -775,7 +780,7 @@ pub fn constructor(
         globalThis.throwError(err, "Error creating transpiler");
         return null;
     };
-
+    bundler.options.no_macros = transpiler_options.no_macros;
     bundler.configureLinkerWithAutoJSX(false);
     bundler.options.env.behavior = .disable;
     bundler.configureDefines() catch |err| {

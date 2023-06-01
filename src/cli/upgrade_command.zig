@@ -191,7 +191,7 @@ pub const UpgradeCommand = struct {
         var api_url = URL.parse(
             try std.fmt.bufPrint(
                 &github_repository_url_buf,
-                "https://{s}/repos/Jarred-Sumner/bun-releases-for-updater/releases/latest",
+                "https://{s}/repos/oven-sh/bun/releases/latest",
                 .{
                     github_api_domain,
                 },

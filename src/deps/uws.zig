@@ -43,6 +43,23 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
         pub fn getNativeHandle(this: ThisSocket) *NativeSocketHandleType(ssl) {
             return @ptrCast(*NativeSocketHandleType(ssl), us_socket_get_native_handle(comptime ssl_int, this.socket).?);
         }
+
+        pub fn fd(this: ThisSocket) i32 {
+            if (comptime ssl) {
+                @compileError("SSL sockets do not have a file descriptor accessible this way");
+            }
+
+            return @intCast(i32, @ptrToInt(us_socket_get_native_handle(0, this.socket)));
+        }
+
+        pub fn markNeedsMoreForSendfile(this: ThisSocket) void {
+            if (comptime ssl) {
+                @compileError("SSL sockets do not support sendfile yet");
+            }
+
+            us_socket_sendfile_needs_more(this.socket);
+        }
+
         pub fn ext(this: ThisSocket, comptime ContextType: type) ?*ContextType {
             const alignment = if (ContextType == *anyopaque)
                 @sizeOf(usize)
@@ -1882,3 +1899,5 @@ pub const State = enum(i32) {
         return @enumToInt(this) & @enumToInt(State.HTTP_CONNECTION_CLOSE) != 0;
     }
 };
+
+extern fn us_socket_sendfile_needs_more(socket: *Socket) void;

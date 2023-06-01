@@ -407,6 +407,7 @@ pub const EventLoop = struct {
     forever_timer: ?*uws.Timer = null,
 
     pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
+    const log = bun.Output.scoped(.EventLoop, false);
 
     pub fn tickWithCount(this: *EventLoop) u32 {
         var global = this.global;
@@ -481,7 +482,10 @@ pub const EventLoop = struct {
                 },
                 else => if (Environment.allow_assert) {
                     bun.Output.prettyln("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
-                } else unreachable,
+                } else {
+                    log("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
+                    unreachable;
+                },
             }
 
             global_vm.releaseWeakRefs();

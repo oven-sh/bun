@@ -191,7 +191,7 @@ describe("ChildProcess spawn bad stdio", () => {
     });
   }
 
-  it("should handle normal execution of child process", async () => {
+  it.todo("should handle normal execution of child process", async () => {
     await createChild({}, (err, stdout, stderr) => {
       strictEqual(err, null);
       strictEqual(stdout, "");

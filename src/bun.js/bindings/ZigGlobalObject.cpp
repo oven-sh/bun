@@ -2619,7 +2619,7 @@ void GlobalObject::finishCreation(VM& vm)
             JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(
                 globalObject,
                 globalObject->objectPrototype(),
-                3);
+                5);
             JSC::PropertyOffset offset;
             auto& vm = globalObject->vm();
 
@@ -2634,6 +2634,20 @@ void GlobalObject::finishCreation(VM& vm)
                 vm,
                 structure,
                 JSC::Identifier::fromString(vm, "exports"_s),
+                0,
+                offset);
+
+            structure = structure->addPropertyTransition(
+                vm,
+                structure,
+                JSC::Identifier::fromString(vm, "__dirname"_s),
+                0,
+                offset);
+
+            structure = structure->addPropertyTransition(
+                vm,
+                structure,
+                JSC::Identifier::fromString(vm, "__filename"_s),
                 0,
                 offset);
 

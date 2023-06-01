@@ -2124,26 +2124,6 @@ fn NewPrinter(
 
                     const is_unbound_eval = !e.is_direct_eval and p.isUnboundEvalIdentifier(e.target);
 
-                    if (is_unbound_eval) {
-                        if (e.args.len == 1 and e.args.ptr[0].data == .e_string and is_bun_platform) {
-                            // prisma:
-                            //
-                            //   eval("__dirname")
-                            //
-                            // We don't have a __dirname variable defined in our ESM <> CJS compat mode
-                            // (Perhaps we should change that for cases like this?)
-                            //
-                            //
-                            if (e.args.ptr[0].data.e_string.eqlComptime("__dirname")) {
-                                p.print("import.meta.dir");
-                                return;
-                            } else if (e.args.ptr[0].data.e_string.eqlComptime("__filename")) {
-                                p.print("import.meta.file");
-                                return;
-                            }
-                        }
-                    }
-
                     if (wrap) {
                         p.print("(");
                     }
@@ -2155,9 +2135,10 @@ fn NewPrinter(
                             p.stmt_start = p.writer.written;
                         }
                     }
-                    // We don't ever want to accidentally generate a direct eval expression here
+                    // We only want to generate an unbound eval() in CommonJS
                     p.call_target = e.target.data;
-                    if (is_unbound_eval) {
+
+                    if (is_unbound_eval and p.options.module_type != .cjs) {
                         p.print("(0, ");
                         p.printExpr(e.target, .postfix, ExprFlag.None());
                         p.print(")");
@@ -2194,6 +2175,15 @@ fn NewPrinter(
                         p.print("require");
                     } else {
                         p.print("import.meta.require");
+                    }
+                },
+                .e_require_resolve_call_target => {
+                    p.addSourceMapping(expr.loc);
+
+                    if (p.options.module_type == .cjs or !is_bun_platform) {
+                        p.print("require.resolve");
+                    } else {
+                        p.print("import.meta.resolveSync");
                     }
                 },
                 .e_require_string => |e| {

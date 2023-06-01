@@ -1,7 +1,7 @@
 import { it, expect } from "bun:test";
 import { mkdirSync, writeFileSync, existsSync, rmSync, copyFileSync } from "fs";
 import { join } from "path";
-import { bunExe, bunEnv } from "harness";
+import { bunExe, bunEnv, tempDirWithFiles } from "harness";
 
 it("spawn test file", () => {
   writePackageJSONImportsFixture();
@@ -85,3 +85,51 @@ function writePackageJSONImportsFixture() {
     ),
   );
 }
+
+it("file url in import resolves", async () => {
+  const dir = tempDirWithFiles("fileurl", {
+    "index.js": "export const foo = 1;",
+  });
+  writeFileSync(`${dir}/test.js`, `import {foo} from 'file://${dir}/index.js';\nconsole.log(foo);`);
+
+  console.log("dir", dir);
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), `${dir}/test.js`],
+    env: bunEnv,
+    cwd: import.meta.dir,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString("utf8")).toBe("1\n");
+});
+
+it("file url in await import resolves", async () => {
+  const dir = tempDirWithFiles("fileurl", {
+    "index.js": "export const foo = 1;",
+  });
+  writeFileSync(`${dir}/test.js`, `const {foo} = await import('file://${dir}/index.js');\nconsole.log(foo);`);
+
+  console.log("dir", dir);
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), `${dir}/test.js`],
+    env: bunEnv,
+    cwd: import.meta.dir,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString("utf8")).toBe("1\n");
+});
+
+it("file url in require resolves", async () => {
+  const dir = tempDirWithFiles("fileurl", {
+    "index.js": "export const foo = 1;",
+  });
+  writeFileSync(`${dir}/test.js`, `const {foo} = require('file://${dir}/index.js');\nconsole.log(foo);`);
+
+  console.log("dir", dir);
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), `${dir}/test.js`],
+    env: bunEnv,
+    cwd: import.meta.dir,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString("utf8")).toBe("1\n");
+});

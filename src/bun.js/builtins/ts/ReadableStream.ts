@@ -102,7 +102,7 @@ export function initializeReadableStream(this: any, underlyingSource: Underlying
 }
 
 $linkTimeConstant;
-export function readableStreamToArray(stream) {
+export function readableStreamToArray(stream: ReadableStream): Promise<unknown[]> {
   // this is a direct stream
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
   if (underlyingSource !== undefined) {
@@ -113,7 +113,7 @@ export function readableStreamToArray(stream) {
 }
 
 $linkTimeConstant;
-export function readableStreamToText(stream) {
+export function readableStreamToText(stream: ReadableStream): Promise<string> {
   // this is a direct stream
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
   if (underlyingSource !== undefined) {
@@ -124,7 +124,7 @@ export function readableStreamToText(stream) {
 }
 
 $linkTimeConstant;
-export function readableStreamToArrayBuffer(stream) {
+export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>): Promise<ArrayBuffer> | ArrayBuffer {
   // this is a direct stream
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
 
@@ -132,16 +132,21 @@ export function readableStreamToArrayBuffer(stream) {
     return $readableStreamToArrayBufferDirect(stream, underlyingSource);
   }
 
-  return Promise.resolve(Bun.readableStreamToArray(stream)).$then(Bun.concatArrayBuffers);
+  var array = Bun.readableStreamToArray(stream);
+  if ($isPromise(array)) {
+    return array.$then(Bun.concatArrayBuffers);
+  }
+
+  return Bun.concatArrayBuffers(array);
 }
 
 $linkTimeConstant;
-export function readableStreamToJSON(stream) {
+export function readableStreamToJSON(stream: ReadableStream): unknown {
   return Bun.readableStreamToText(stream).$then(globalThis.JSON.parse);
 }
 
 $linkTimeConstant;
-export function readableStreamToBlob(stream) {
+export function readableStreamToBlob(stream: ReadableStream): Promise<Blob> {
   return Promise.resolve(Bun.readableStreamToArray(stream)).$then(array => new Blob(array));
 }
 

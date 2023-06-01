@@ -2420,9 +2420,9 @@ const char* const s_readableStreamReadableStreamToTextCode = "(function (_){\"us
 const JSC::ConstructAbility s_readableStreamReadableStreamToArrayBufferCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamReadableStreamToArrayBufferCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamReadableStreamToArrayBufferCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
-const int s_readableStreamReadableStreamToArrayBufferCodeLength = 212;
+const int s_readableStreamReadableStreamToArrayBufferCodeLength = 271;
 static const JSC::Intrinsic s_readableStreamReadableStreamToArrayBufferCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamReadableStreamToArrayBufferCode = "(function (_){\"use strict\";var p=@getByIdDirectPrivate(_,\"underlyingSource\");if(p!==@undefined)return @readableStreamToArrayBufferDirect(_,p);return @Bun.readableStreamToArray(_).@then(@Bun.concatArrayBuffers)})\n";
+const char* const s_readableStreamReadableStreamToArrayBufferCode = "(function (_){\"use strict\";var f=@getByIdDirectPrivate(_,\"underlyingSource\");if(f!==@undefined)return @readableStreamToArrayBufferDirect(_,f);var A=@Bun.readableStreamToArray(_);if(@isPromise(A))return A.@then(@Bun.concatArrayBuffers);return @Bun.concatArrayBuffers(A)})\n";
 
 // readableStreamToJSON
 const JSC::ConstructAbility s_readableStreamReadableStreamToJSONCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;

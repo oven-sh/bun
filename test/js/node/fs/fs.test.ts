@@ -1159,3 +1159,10 @@ it("repro 1516: can use undefined/null to specify default flag", () => {
   expect(readFileSync(path, { encoding: "utf8", flag: null })).toBe("b");
   rmSync(path);
 });
+
+it("existsSync with invalid path doesn't throw", () => {
+  expect(existsSync(null as any)).toBe(false);
+  expect(existsSync(123 as any)).toBe(false);
+  expect(existsSync(undefined as any)).toBe(false);
+  expect(existsSync({ invalid: 1 } as any)).toBe(false);
+});

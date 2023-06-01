@@ -218,7 +218,7 @@ static Structure* internalCreateCommonJSModuleStructure(
     structure = structure->addPropertyTransition(
         vm,
         structure,
-        JSC::Identifier::fromString(vm, "fileName"_s),
+        JSC::Identifier::fromString(vm, "filename"_s),
         0,
         offset);
 
@@ -315,7 +315,6 @@ JSC::SourceCode createCommonJSModule(
                 JSString* filename = requireMapKey;
                 if (index != WTF::notFound) {
                     dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
-                    filename = JSC::jsSubstring(globalObject, requireMapKey, index + 1, sourceURL.length() - index - 1);
                 }
 
                 globalObject->requireMap()->set(globalObject, requireMapKey, exportsObject);

@@ -1,5 +1,17 @@
-// So it could be run in Node.js
+// This fixture is intended to be able to run in both Node.js and Bun
 const Bun = (globalThis.Bun ??= { gc() {} });
+
+const { resolve } = require("path");
+
+if (__filename !== resolve(module.filename)) {
+  console.error(__filename, module.id);
+  throw new Error("__filename !== module.id");
+}
+
+if (__dirname !== resolve(module.filename, "../")) {
+  console.error(__filename, module.id);
+  throw new Error("__dirname !== module.filename");
+}
 
 const foo = require("./require-cache-fixture-b.cjs");
 

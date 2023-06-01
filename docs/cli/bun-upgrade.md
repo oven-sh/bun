@@ -2,7 +2,7 @@ To upgrade Bun, run `bun upgrade`.
 
 It automatically downloads the latest version of Bun and overwrites the currently-running version.
 
-This works by checking the latest version of Bun in [bun-releases-for-updater](https://github.com/oven-sh/bun/releases) and unzipping it using the system-provided `unzip` library (so that Gatekeeper works on macOS)
+This works by checking the latest release of Bun from GitHub [releases](https://github.com/oven-sh/bun/releases) and unzipping it using the system-provided `unzip` library (so that Gatekeeper works on macOS)
 
 If for any reason you run into issues, you can also use the curl install script:
 

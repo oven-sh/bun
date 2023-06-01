@@ -1572,4 +1572,9 @@ extern "C"
       return uwsRes->getNativeHandle();
     }
   }
+
+  void us_socket_sendfile_needs_more(us_socket_t *s) {
+    s->context->loop->data.last_write_failed = 1;
+    us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+  }
 }

@@ -93,6 +93,23 @@ const Handlers = struct {
         this.active_connections += 1;
     }
 
+    pub const Scope = struct {
+        handlers: *Handlers,
+        socket_context: *uws.SocketContext,
+
+        pub fn exit(this: *Scope, ssl: bool) void {
+            this.handlers.markInactive(ssl, this.socket_context);
+        }
+    };
+
+    pub fn enter(this: *Handlers, context: *uws.SocketContext) Scope {
+        this.markActive();
+        return .{
+            .handlers = this,
+            .socket_context = context,
+        };
+    }
+
     // corker: Corker = .{},
 
     pub fn resolvePromise(this: *Handlers, value: JSValue) void {
@@ -1143,17 +1160,23 @@ fn NewSocket(comptime ssl: bool) type {
             return this.this_value;
         }
 
-        pub fn onEnd(this: *This, _: Socket) void {
+        pub fn onEnd(this: *This, socket: Socket) void {
             JSC.markBinding(@src());
             log("onEnd", .{});
             this.detached = true;
             defer this.markInactive();
 
             const handlers = this.handlers;
+
             this.poll_ref.unref(handlers.vm);
 
             const callback = handlers.onEnd;
             if (callback == .zero) return;
+
+            // the handlers must be kept alive for the duration of the function call
+            // that way if we need to call the error handler, we can
+            var scope = handlers.enter(socket.context());
+            defer scope.exit(ssl);
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
@@ -1166,7 +1189,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
         }
 
-        pub fn onHandshake(this: *This, _: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
+        pub fn onHandshake(this: *This, socket: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
             log("onHandshake({d})", .{success});
             JSC.markBinding(@src());
 
@@ -1186,6 +1209,11 @@ fn NewSocket(comptime ssl: bool) type {
                 }
                 is_open = true;
             }
+
+            // the handlers must be kept alive for the duration of the function call
+            // that way if we need to call the error handler, we can
+            var scope = handlers.enter(socket.context());
+            defer scope.exit(ssl);
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
@@ -1224,7 +1252,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
         }
 
-        pub fn onClose(this: *This, _: Socket, err: c_int, _: ?*anyopaque) void {
+        pub fn onClose(this: *This, socket: Socket, err: c_int, _: ?*anyopaque) void {
             JSC.markBinding(@src());
             log("onClose", .{});
             this.detached = true;
@@ -1235,6 +1263,11 @@ fn NewSocket(comptime ssl: bool) type {
 
             const callback = handlers.onClose;
             if (callback == .zero) return;
+
+            // the handlers must be kept alive for the duration of the function call
+            // that way if we need to call the error handler, we can
+            var scope = handlers.enter(socket.context());
+            defer scope.exit(ssl);
 
             var globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
@@ -1248,7 +1281,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
         }
 
-        pub fn onData(this: *This, _: Socket, data: []const u8) void {
+        pub fn onData(this: *This, socket: Socket, data: []const u8) void {
             JSC.markBinding(@src());
             log("onData({d})", .{data.len});
             if (this.detached) return;
@@ -1260,6 +1293,12 @@ fn NewSocket(comptime ssl: bool) type {
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
             const output_value = handlers.binary_type.toJS(data, globalObject);
+
+            // the handlers must be kept alive for the duration of the function call
+            // that way if we need to call the error handler, we can
+            var scope = handlers.enter(socket.context());
+            defer scope.exit(ssl);
+
             // const encoding = handlers.encoding;
             const result = callback.callWithThis(globalObject, this_value, &[_]JSValue{
                 this_value,

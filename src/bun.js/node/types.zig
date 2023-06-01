@@ -1775,7 +1775,7 @@ pub const Path = struct {
         var path_slice: JSC.ZigString.Slice = args_ptr[0].toSlice(globalThis, heap_allocator);
         defer path_slice.deinit();
         var path = path_slice.slice();
-        var path_name = Fs.PathName.init(path);
+        var path_name = Fs.NodeJSPathName.init(path);
         var dir = JSC.ZigString.init(path_name.dir);
         const is_absolute = (isWindows and isZigStringAbsoluteWindows(dir)) or (!isWindows and path.len > 0 and path[0] == '/');
 
@@ -1788,7 +1788,6 @@ pub const Path = struct {
                 dir = root;
             }
         }
-
         var base = JSC.ZigString.init(path_name.base);
         var name_ = JSC.ZigString.init(path_name.filename);
         var ext = JSC.ZigString.init(path_name.ext);

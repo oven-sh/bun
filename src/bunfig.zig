@@ -579,8 +579,13 @@ pub const Bunfig = struct {
             }
 
             if (json.get("macros")) |expr| {
-                // technical debt
-                this.ctx.debug.macros = PackageJSON.parseMacrosJSON(allocator, expr, this.log, this.source);
+                if (expr.data == .e_boolean) {
+                    if (expr.data.e_boolean.value == false) {
+                        this.ctx.debug.macros = .{ .disable = {} };
+                    }
+                } else {
+                    this.ctx.debug.macros = .{ .map = PackageJSON.parseMacrosJSON(allocator, expr, this.log, this.source) };
+                }
                 Analytics.Features.macros = true;
             }
 

@@ -160,6 +160,22 @@ pub const ZigString = extern struct {
         };
     }
 
+    pub fn indexOfAny(this: ZigString, comptime chars: []const u8) ?strings.OptionalUsize {
+        if (this.is16Bit()) {
+            return strings.indexOfAny16(this.utf16SliceAligned(), chars);
+        } else {
+            return strings.indexOfAny(this.slice(), chars);
+        }
+    }
+
+    pub fn charAt(this: ZigString, offset: usize) u8 {
+        if (this.is16Bit()) {
+            return @truncate(u8, this.utf16SliceAligned()[offset]);
+        } else {
+            return @truncate(u8, this.slice()[offset]);
+        }
+    }
+
     pub fn eql(this: ZigString, other: ZigString) bool {
         if (this.len == 0 or other.len == 0)
             return this.len == other.len;
@@ -225,14 +241,7 @@ pub const ZigString = extern struct {
         return this.slice()[0] == char;
     }
 
-    pub fn substring(this: ZigString, offset: usize, maxlen: usize) ZigString {
-        var len: usize = undefined;
-        if (maxlen == 0) {
-            len = this.len;
-        } else {
-            len = @max(this.len, maxlen);
-        }
-
+    pub fn substringWithLen(this: ZigString, offset: usize, len: usize) ZigString {
         if (this.is16Bit()) {
             return ZigString.from16Slice(this.utf16SliceAligned()[@min(this.len, offset)..len]);
         }
@@ -247,6 +256,17 @@ pub const ZigString = extern struct {
         }
 
         return out;
+    }
+
+    pub fn substring(this: ZigString, offset: usize, maxlen: usize) ZigString {
+        var len: usize = undefined;
+        if (maxlen == 0) {
+            len = this.len;
+        } else {
+            len = @max(this.len, maxlen);
+        }
+
+        return this.substringWithLen(offset, len);
     }
 
     pub fn maxUTF8ByteLength(this: ZigString) usize {
@@ -502,6 +522,20 @@ pub const ZigString = extern struct {
         };
 
         return &Holder.value;
+    }
+
+    pub const GithubActionFormatter = struct {
+        text: ZigString,
+
+        pub fn format(this: GithubActionFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            var bytes = this.text.toSlice(bun.default_allocator);
+            defer bytes.deinit();
+            try strings.githubActionWriter(writer, bytes.slice());
+        }
+    };
+
+    pub fn githubAction(this: ZigString) GithubActionFormatter {
+        return GithubActionFormatter{ .text = this };
     }
 
     pub fn toAtomicValue(this: *const ZigString, globalThis: *JSC.JSGlobalObject) JSValue {
@@ -3404,6 +3438,10 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn isRegExp(this: JSValue) bool {
         return this.jsType() == .RegExpObject;
+    }
+
+    pub fn isDate(this: JSValue) bool {
+        return this.jsType() == .JSDate;
     }
 
     pub fn asCheckLoaded(value: JSValue, comptime ZigType: type) ?*ZigType {

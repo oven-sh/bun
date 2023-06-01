@@ -318,7 +318,7 @@ export function parseTest(stderr: string, options: ParseTestOptions = {}): Parse
     };
   };
   const parseTestLine = (line: string): Test | undefined => {
-    const match = /^(✓|‚úì|✗|‚úó|-|✎) (.*)$/.exec(line);
+    const match = /^(✓|‚úì|✗|‚úó|»|-|✎) (.*)$/.exec(line);
     if (!match) {
       return undefined;
     }
@@ -333,6 +333,7 @@ export function parseTest(stderr: string, options: ParseTestOptions = {}): Parse
       case "‚úó":
         status = "fail";
         break;
+      case "»":
       case "-":
         status = "skip";
         break;

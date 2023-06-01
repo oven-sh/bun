@@ -12750,7 +12750,7 @@ fn NewParser_(
 
                         // Only continue if we have started
                         if ((optional_start orelse .ccontinue) == .start) {
-                            optional_start = .ccontinue;
+                            optional_chain = .ccontinue;
                         }
                     },
                     .t_no_substitution_template_literal => {
@@ -15361,6 +15361,18 @@ fn NewParser_(
                                     if (p.is_control_flow_dead) {
                                         return p.newExpr(E.Undefined{}, e_.tag.?.loc);
                                     }
+
+                                    // this ordering incase someone wants ot use a macro in a node_module conditionally
+                                    if (p.options.features.no_macros) {
+                                        p.log.addError(p.source, tag.loc, "Macros are disabled") catch unreachable;
+                                        return p.newExpr(E.Undefined{}, e_.tag.?.loc);
+                                    }
+
+                                    if (p.source.path.isNodeModule()) {
+                                        p.log.addError(p.source, expr.loc, "For security reasons, macros cannot be run from node_modules.") catch unreachable;
+                                        return p.newExpr(E.Undefined{}, expr.loc);
+                                    }
+
                                     p.macro_call_count += 1;
                                     const record = &p.import_records.items[import_record_id];
                                     // We must visit it to convert inline_identifiers and record usage
@@ -16144,6 +16156,7 @@ fn NewParser_(
                             .{
                                 .is_call_target = is_call_target,
                                 .assign_target = in.assign_target,
+                                .is_delete_target = is_delete_target,
                                 // .is_template_tag = p.template_tag != null,
                             },
                         )) |_expr| {
@@ -16510,6 +16523,17 @@ fn NewParser_(
                             if (p.is_control_flow_dead) {
                                 return p.newExpr(E.Undefined{}, e_.target.loc);
                             }
+
+                            if (p.options.features.no_macros) {
+                                p.log.addError(p.source, expr.loc, "Macros are disabled") catch unreachable;
+                                return p.newExpr(E.Undefined{}, expr.loc);
+                            }
+
+                            if (p.source.path.isNodeModule()) {
+                                p.log.addError(p.source, expr.loc, "For security reasons, macros cannot be run from node_modules.") catch unreachable;
+                                return p.newExpr(E.Undefined{}, expr.loc);
+                            }
+
                             const name = p.symbols.items[ref.innerIndex()].original_name;
                             const record = &p.import_records.items[import_record_id];
                             const copied = Expr{ .loc = expr.loc, .data = .{ .e_call = e_ } };
@@ -17415,14 +17439,6 @@ fn NewParser_(
                             p.recordUsage(p.require_ref);
                             return p.newExpr(E.Identifier{ .ref = p.require_ref }, name_loc);
                         } else if (!p.commonjs_named_exports_deoptimized and strings.eqlComptime(name, "exports")) {
-                            // Deoptimizations:
-                            //      delete module.exports
-                            //      module.exports();
-
-                            if (identifier_opts.is_call_target or identifier_opts.is_delete_target or identifier_opts.assign_target == .update) {
-                                p.deoptimizeCommonJSNamedExports();
-                                return null;
-                            }
 
                             // Detect if we are doing
                             //
@@ -17430,7 +17446,13 @@ fn NewParser_(
                             //    foo: "bar"
                             //  }
                             //
-                            if (identifier_opts.assign_target == .replace and
+                            //  Note that it cannot be any of these:
+                            //
+                            //  module.exports += { };
+                            //  delete module.exports = {};
+                            //  module.exports()
+                            if (!(identifier_opts.is_call_target or identifier_opts.is_delete_target) and
+                                identifier_opts.assign_target == .replace and
                                 p.stmt_expr_value == .e_binary and
                                 p.stmt_expr_value.e_binary.op == .bin_assign)
                             {
@@ -17571,6 +17593,14 @@ fn NewParser_(
                                 p.ignoreUsage(p.module_ref);
                                 p.commonjs_replacement_stmts = stmts.items;
                                 return p.newExpr(E.Missing{}, name_loc);
+                            }
+
+                            // Deoptimizations:
+                            //      delete module.exports
+                            //      module.exports();
+                            if (identifier_opts.is_call_target or identifier_opts.is_delete_target or identifier_opts.assign_target != .none) {
+                                p.deoptimizeCommonJSNamedExports();
+                                return null;
                             }
 
                             // rewrite `module.exports` to `exports`

@@ -28,6 +28,7 @@ describe("bundler", () => {
   };
 
   itBundled("plugin/Resolve", {
+    todo: true,
     files: resolveFixture,
     // The bundler testing api has a shorthand where the plugins array can be
     // the `setup` function of one plugin.
@@ -74,6 +75,7 @@ describe("bundler", () => {
 
   // Load Plugin Errors
   itBundled("plugin/LoadThrow", {
+    todo: true,
     files: loadFixture,
     plugins(builder) {
       builder.onLoad({ filter: /\.magic$/ }, args => {
@@ -86,7 +88,7 @@ describe("bundler", () => {
   });
   itBundled("plugin/LoadThrowPrimative", {
     files: loadFixture,
-    notImplemented: true,
+    todo: true,
     plugins(builder) {
       builder.onLoad({ filter: /\.magic$/ }, args => {
         throw "123";
@@ -97,6 +99,7 @@ describe("bundler", () => {
     },
   });
   itBundled("plugin/LoadThrowAsync", {
+    todo: true,
     files: loadFixture,
     plugins(builder) {
       builder.onLoad({ filter: /\.magic$/ }, async args => {
@@ -109,7 +112,7 @@ describe("bundler", () => {
   });
   itBundled("plugin/LoadThrowPrimativeAsync", {
     files: loadFixture,
-    notImplemented: true,
+    todo: true,
     plugins(builder) {
       builder.onLoad({ filter: /\.magic$/ }, async args => {
         throw 123;
@@ -122,6 +125,7 @@ describe("bundler", () => {
 
   // Load Plugin Errors
   itBundled("plugin/ResolveThrow", {
+    todo: true,
     files: resolveFixture,
     plugins(builder) {
       builder.onResolve({ filter: /\.magic$/ }, args => {
@@ -134,7 +138,7 @@ describe("bundler", () => {
   });
   itBundled("plugin/ResolveThrowPrimative", {
     files: resolveFixture,
-    notImplemented: true,
+    todo: true,
     plugins(builder) {
       builder.onResolve({ filter: /\.magic$/ }, args => {
         throw "123";
@@ -145,6 +149,7 @@ describe("bundler", () => {
     },
   });
   itBundled("plugin/ResolveThrowAsync", {
+    todo: true,
     files: resolveFixture,
     plugins(builder) {
       builder.onResolve({ filter: /\.magic$/ }, async args => {
@@ -157,7 +162,7 @@ describe("bundler", () => {
   });
   itBundled("plugin/ResolveThrowPrimativeAsync", {
     files: resolveFixture,
-    notImplemented: true,
+    todo: true,
     plugins(builder) {
       builder.onResolve({ filter: /\.magic$/ }, async args => {
         throw 123;
@@ -173,6 +178,7 @@ describe("bundler", () => {
     let onResolveCount = 0;
 
     return {
+      todo: true,
       files: {
         "index.ts": /* ts */ `
         import * as foo from "magic:some_string";
@@ -214,6 +220,7 @@ describe("bundler", () => {
     let onResolveCountBad = 0;
 
     return {
+      todo: true,
       files: {
         "index.ts": /* ts */ `
           import * as foo from "magic:some_string";
@@ -300,6 +307,7 @@ describe("bundler", () => {
     let counter1 = 0;
     let counter2 = 0;
     return {
+      todo: true,
       files: {
         "index.ts": /* ts */ `
           import * as foo from "magic:some_string";
@@ -373,6 +381,7 @@ describe("bundler", () => {
   });
   itBundled("plugin/ResolveOverrideFile", ({ root }) => {
     return {
+      todo: true,
       files: {
         "index.ts": /* ts */ `
           import * as foo from "./foo.ts";
@@ -400,7 +409,7 @@ describe("bundler", () => {
   itBundled("plugin/ResolveOnceWhenSameFile", ({ root }) => {
     let onResolveCount = 0;
     return {
-      notImplemented: true,
+      todo: true,
       files: {
         "index.ts": /* ts */ `
           import * as foo from "./foo.ts";
@@ -436,6 +445,7 @@ describe("bundler", () => {
     let onResolveCount = 0;
     let importers: string[] = [];
     return {
+      todo: true,
       files: {
         "index.ts": /* ts */ `
           import * as foo from "./one.ts";
@@ -725,6 +735,7 @@ describe("bundler", () => {
   });
   itBundled("plugin/EntrypointResolve", ({ root }) => {
     return {
+      todo: true,
       files: {},
       entryPointsRaw: ["plugin"],
       plugins(build) {

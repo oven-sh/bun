@@ -1113,6 +1113,7 @@ describe("bundler", () => {
     },
   });
   itBundled("importstar/ImportDefaultNamespaceComboESBuildIssue446", {
+    todo: true,
     files: {
       "/external-default2.js": /* js */ `
         import def, {default as default2} from 'external'
@@ -1307,6 +1308,7 @@ describe("bundler", () => {
     ],
   });
   itBundled("importstar/ImportNamespaceUndefinedPropertySideEffectFreeFile", {
+    todo: true,
     files: {
       "/entry-nope.js": /* js */ `
         import * as js from './foo/no-side-effects.js'

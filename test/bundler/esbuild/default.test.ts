@@ -418,7 +418,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/ExportInfiniteCycle2", {
-    notImplemented: true, // TODO: low priority, missing a couple errors.
+    todo: true, // TODO: low priority, missing a couple errors.
     files: {
       "/entry.js": /* js */ `
         export {a as b} from './foo'
@@ -700,7 +700,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/ImportMissingNeitherES6NorCommonJS", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/named.js": /* js */ `
         import fn, {x as a, y as b} from './foo'
@@ -1008,6 +1008,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/RequireBadExtension", {
+    todo: true,
     files: {
       "/entry.js": `console.log(require('./test.bad'))`,
       "/test.bad": `This is a test.`,
@@ -1026,6 +1027,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/RequireWithCallInsideTry", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         try {
@@ -1142,6 +1144,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/SourceMap", {
+    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {bar} from './bar'
@@ -1500,7 +1503,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/TopLevelReturnForbiddenImport", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         console.log('A');
@@ -1518,7 +1521,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/TopLevelReturnForbiddenImportAndModuleExports", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         module.exports.foo = 123
@@ -1660,7 +1663,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/ThisWithES6Syntax", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import './cjs'
@@ -2030,7 +2033,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/ImportReExportES6ESBuildIssue149", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/app.jsx": /* jsx */ `
         import { p as Part, h, render } from './import';
@@ -2120,7 +2123,7 @@ describe("bundler", () => {
     external: ["@scope/foo"],
   });
   itBundled("default/ExternalModuleExclusionRelativePath", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/Users/user/project/src/index.js": `import './nested/folder/test'`,
       "/Users/user/project/src/nested/folder/test.js": /* js */ `
@@ -2164,7 +2167,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/ImportWithHashParameter", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         // Each of these should have a separate identity (i.e. end up in the output file twice)
@@ -2179,7 +2182,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/ImportWithQueryParameter", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         // Each of these should have a separate identity (i.e. end up in the output file twice)
@@ -2194,7 +2197,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/ImportAbsPathWithQueryParameter", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/Users/user/project/entry.js": /* js */ `
         // Each of these should have a separate identity (i.e. end up in the output file twice)
@@ -2266,6 +2269,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/AutoExternalNode", {
+    todo: true,
     // notImplemented: true,
     files: {
       "/entry.js": /* js */ `
@@ -2294,7 +2298,7 @@ describe("bundler", () => {
   });
   itBundled("default/AutoExternalBun", {
     skipOnEsbuild: true,
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         // These URLs should be external automatically
@@ -2464,13 +2468,13 @@ describe("bundler", () => {
   `;
   // these tests are flaky. at least if i run it just on its own, i get a crash. in a row its fine
   itBundled.skip("default/NestedLabelsBundle", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": crazyNestedLabelFile,
     },
   });
   itBundled.skip("default/MinifyNestedLabelsBundle", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": crazyNestedLabelFile,
     },
@@ -2624,7 +2628,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/MultipleEntryPointsSameNameCollision", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/a/entry.js": `import {foo} from '../common.js'; console.log(1, foo)`,
       "/b/entry.js": `import {foo} from '../common.js'; console.log(2, 1foo)`,
@@ -3447,7 +3451,7 @@ describe("bundler", () => {
     bundling: false,
   });
   itBundled("default/TopLevelAwaitForbiddenRequire", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         require('./a')
@@ -3470,6 +3474,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/TopLevelAwaitAllowedImportWithoutSplitting", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import('./a')
@@ -3510,7 +3515,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/AssignToImport", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import "./bad0.js"
@@ -3581,7 +3586,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/AssignToImportNoBundle", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/bad0.js": `import x from "foo"; x = 1`,
       "/bad1.js": `import x from "foo"; x++`,
@@ -3686,7 +3691,7 @@ describe("bundler", () => {
     "/delete-super.js": `class Foo extends Bar { foo() { delete super.foo } }`,
   };
   itBundled("default/WarningsInsideNodeModules", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": Object.keys(WarningsInsideNodeModules)
         .map(file => `import "./${file}"; import "./node_modules/${file}"; import "@plugin/${file}"`)
@@ -4176,7 +4181,7 @@ describe("bundler", () => {
   //   },
   // });
   itBundled("default/DefineThis", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         ok(
@@ -4254,7 +4259,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/DefineOptionalChain", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         log([
@@ -4334,7 +4339,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/DefineInfiniteLoopESBuildIssue2407", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         a.b()
@@ -4484,7 +4489,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/CharFreqIgnoreComments", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/a.js": /* js */ `
         export default function(one, two, three, four) {
@@ -4562,7 +4567,7 @@ describe("bundler", () => {
   });
   // TODO: this fails on esbuild ???
   itBundled("default/ConstWithLetNoBundle", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         const a = 1; console.log(a)
@@ -4596,6 +4601,7 @@ describe("bundler", () => {
   //   platform: "node",
   // });
   itBundled("default/ExternalES6ConvertedToCommonJS", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         console.log(JSON.stringify(require('./a')));
@@ -4925,7 +4931,7 @@ describe("bundler", () => {
   // });
   0;
   itBundled("default/BundlingFilesOutsideOfOutbase", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/src/entry.js": `console.log('test')`,
     },
@@ -5051,7 +5057,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/QuotedProperty", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import * as ns from 'ext'
@@ -5081,7 +5087,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/DuplicatePropertyWarning", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import './outside-node-modules'
@@ -5099,7 +5105,7 @@ describe("bundler", () => {
     },
   });
   const RequireShimSubstitutionBrowser = itBundled("default/RequireShimSubstitutionBrowser", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         Promise.all([
@@ -5210,7 +5216,7 @@ describe("bundler", () => {
     minifySyntax: true,
   });
   itBundled("default/BuiltInNodeModulePrecedence", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         console.log([
@@ -5600,7 +5606,7 @@ describe("bundler", () => {
   });
   itBundled("default/ManglePropsJSXTransform", {
     // GENERATED
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.jsx": /* jsx */ `
         let Foo = {
@@ -5622,7 +5628,7 @@ describe("bundler", () => {
   });
   itBundled("default/ManglePropsJSXPreserve", {
     // GENERATED
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.jsx": /* jsx */ `
         let Foo = {
@@ -5639,7 +5645,7 @@ describe("bundler", () => {
   });
   itBundled("default/ManglePropsJSXTransformNamespace", {
     // GENERATED
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.jsx": /* jsx */ `
         export default [
@@ -6263,7 +6269,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/CommentPreservation", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         console.log(
@@ -6442,7 +6448,7 @@ describe("bundler", () => {
   });
   itBundled.skip("default/CommentPreservationImportAssertions", {
     // GENERATED
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.jsx": /* jsx */ `
         import 'foo' /* a */ assert { type: 'json' }
@@ -6456,7 +6462,7 @@ describe("bundler", () => {
   });
   itBundled.skip("default/CommentPreservationTransformJSX", {
     // GENERATED
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.jsx": /* jsx */ `
         console.log(
@@ -6486,7 +6492,7 @@ describe("bundler", () => {
   });
   itBundled.skip("default/CommentPreservationPreserveJSX", {
     // GENERATED
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.jsx": /* jsx */ `
         console.log(

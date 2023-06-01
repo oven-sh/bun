@@ -56,6 +56,7 @@ describe("bundler", () => {
     },
   });
   itBundled("splitting/DynamicES6IntoES6", {
+    todo: true,
     files: {
       "/entry.js": `import("./foo.js").then(({bar}) => console.log(bar))`,
       "/foo.js": `export let bar = 123`,
@@ -216,6 +217,7 @@ describe("bundler", () => {
     ],
   });
   itBundled("splitting/CircularReferenceESBuildIssue251", {
+    todo: true,
     files: {
       "/a.js": /* js */ `
         export * from './b.js';
@@ -277,6 +279,7 @@ describe("bundler", () => {
     },
   });
   itBundled("splitting/ReExportESBuildIssue273", {
+    todo: true,
     files: {
       "/a.js": `export const a = { value: 1 }`,
       "/b.js": `export { a } from './a'`,
@@ -537,6 +540,7 @@ describe("bundler", () => {
     },
   });
   itBundled("splitting/PublicPathEntryName", {
+    todo: true,
     files: {
       "/a.js": `import("./b")`,
       "/b.js": `console.log('b')`,

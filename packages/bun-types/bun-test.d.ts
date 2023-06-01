@@ -33,7 +33,41 @@ declare module "bun:test" {
    */
   export type Describe = {
     (label: string, fn: () => void): void;
-    skip: (label: string, fn: () => void) => void;
+    /**
+     * Skips all other tests, except this group of tests.
+     *
+     * @param label the label for the tests
+     * @param fn the function that defines the tests
+     */
+    only(label: string, fn: () => void): void;
+    /**
+     * Skips this group of tests.
+     *
+     * @param label the label for the tests
+     * @param fn the function that defines the tests
+     */
+    skip(label: string, fn: () => void): void;
+    /**
+     * Marks this group of tests as to be written or to be fixed.
+     *
+     * @param label the label for the tests
+     * @param fn the function that defines the tests
+     */
+    todo(label: string, fn?: () => void): void;
+    /**
+     * Runs this group of tests, only if `condition` is true.
+     *
+     * This is the opposite of `describe.skipIf()`.
+     *
+     * @param condition if these tests should run
+     */
+    if(condition: boolean): (label: string, fn: () => void) => void;
+    /**
+     * Skips this group of tests, if `condition` is true.
+     *
+     * @param condition if these tests should be skipped
+     */
+    skipIf(condition: boolean): (label: string, fn: () => void) => void;
   };
   /**
    * Describes a group of related tests.
@@ -122,6 +156,31 @@ declare module "bun:test" {
       | (() => void | Promise<unknown>)
       | ((done: (err?: unknown) => void) => void),
   ): void;
+  export type TestOptions = {
+    /**
+     * Sets the timeout for the test in milliseconds.
+     *
+     * If the test does not complete within this time, the test will fail with:
+     * ```ts
+     * 'Timeout: test {name} timed out after 5000ms'
+     * ```
+     *
+     * @default 5000 // 5 seconds
+     */
+    timeout?: number;
+    /**
+     * Sets the number of times to retry the test if it fails.
+     *
+     * @default 0
+     */
+    retry?: number;
+    /**
+     * Sets the number of times to repeat the test, regardless of whether it passed or failed.
+     *
+     * @default 0
+     */
+    repeats?: number;
+  };
   /**
    * Runs a test.
    *
@@ -135,8 +194,13 @@ declare module "bun:test" {
    *   expect(response.ok).toBe(true);
    * });
    *
+   * test("can set a timeout", async () => {
+   *   await Bun.sleep(100);
+   * }, 50); // or { timeout: 50 }
+   *
    * @param label the label for the test
    * @param fn the test function
+   * @param options the test timeout or options
    */
   export type Test = {
     (
@@ -145,45 +209,44 @@ declare module "bun:test" {
         | (() => void | Promise<unknown>)
         | ((done: (err?: unknown) => void) => void),
       /**
-       * @default 300_000 milliseconds (5 minutes)
-       *
-       * After this many milliseconds, the test will fail with an error message like:
-       * ```ts
-       * 'Timeout: test "name" timed out after 300_000ms'
-       * ```
+       * - If a `number`, sets the timeout for the test in milliseconds.
+       * - If an `object`, sets the options for the test.
+       *   - `timeout` sets the timeout for the test in milliseconds.
+       *   - `retry` sets the number of times to retry the test if it fails.
+       *   - `repeats` sets the number of times to repeat the test, regardless of whether it passed or failed.
        */
-      timeoutMs?: number,
+      options?: number | TestOptions,
     ): void;
     /**
      * Skips all other tests, except this test.
-     * @deprecated Not yet implemented.
      *
      * @param label the label for the test
      * @param fn the test function
-     * @param timeoutMs the timeout for the test
+     * @param options the test timeout or options
      */
     only(
       label: string,
       fn:
         | (() => void | Promise<unknown>)
         | ((done: (err?: unknown) => void) => void),
-      timeoutMs?: number,
+      options?: number | TestOptions,
     ): void;
     /**
      * Skips this test.
      *
      * @param label the label for the test
      * @param fn the test function
+     * @param options the test timeout or options
      */
     skip(
       label: string,
       fn:
         | (() => void | Promise<unknown>)
         | ((done: (err?: unknown) => void) => void),
-      timeoutMs?: number,
+      options?: number | TestOptions,
     ): void;
     /**
-     * Indicate a test is yet to be written or implemented correctly.
+     * Marks this test as to be written or to be fixed.
      *
      * When a test function is passed, it will be marked as `todo` in the test results
      * as long the test does not pass. When the test passes, the test will be marked as
@@ -192,13 +255,45 @@ declare module "bun:test" {
      *
      * @param label the label for the test
      * @param fn the test function
+     * @param options the test timeout or options
      */
     todo(
       label: string,
       fn?:
         | (() => void | Promise<unknown>)
         | ((done: (err?: unknown) => void) => void),
+      options?: number | TestOptions,
     ): void;
+    /**
+     * Runs this test, if `condition` is true.
+     *
+     * This is the opposite of `test.skipIf()`.
+     *
+     * @param condition if the test should run
+     */
+    if(
+      condition: boolean,
+    ): (
+      label: string,
+      fn:
+        | (() => void | Promise<unknown>)
+        | ((done: (err?: unknown) => void) => void),
+      options?: number | TestOptions,
+    ) => void;
+    /**
+     * Skips this test, if `condition` is true.
+     *
+     * @param condition if the test should be skipped
+     */
+    skipIf(
+      condition: boolean,
+    ): (
+      label: string,
+      fn:
+        | (() => void | Promise<unknown>)
+        | ((done: (err?: unknown) => void) => void),
+      options?: number | TestOptions,
+    ) => void;
   };
   /**
    * Runs a test.
@@ -533,6 +628,160 @@ declare module "bun:test" {
      * expect(new Set()).toBeEmpty();
      */
     toBeEmpty(): void;
+    /**
+     * Asserts that a value is `null` or `undefined`.
+     *
+     * @example
+     * expect(null).toBeNil();
+     * expect(undefined).toBeNil();
+     */
+    toBeNil(): void;
+    /**
+     * Asserts that a value is a `boolean`.
+     *
+     * @example
+     * expect(true).toBeBoolean();
+     * expect(false).toBeBoolean();
+     * expect(null).not.toBeBoolean();
+     * expect(0).not.toBeBoolean();
+     */
+    toBeBoolean(): void;
+    /**
+     * Asserts that a value is `true`.
+     *
+     * @example
+     * expect(true).toBeTrue();
+     * expect(false).not.toBeTrue();
+     * expect(1).not.toBeTrue();
+     */
+    toBeTrue(): void;
+    /**
+     * Asserts that a value is `false`.
+     *
+     * @example
+     * expect(false).toBeFalse();
+     * expect(true).not.toBeFalse();
+     * expect(0).not.toBeFalse();
+     */
+    toBeFalse(): void;
+    /**
+     * Asserts that a value is a `number`.
+     *
+     * @example
+     * expect(1).toBeNumber();
+     * expect(3.14).toBeNumber();
+     * expect(NaN).toBeNumber();
+     * expect(BigInt(1)).not.toBeNumber();
+     */
+    toBeNumber(): void;
+    /**
+     * Asserts that a value is a `number`, and is an integer.
+     *
+     * @example
+     * expect(1).toBeInteger();
+     * expect(3.14).not.toBeInteger();
+     * expect(NaN).not.toBeInteger();
+     */
+    toBeInteger(): void;
+    /**
+     * Asserts that a value is a `number`, and is not `NaN` or `Infinity`.
+     *
+     * @example
+     * expect(1).toBeFinite();
+     * expect(3.14).toBeFinite();
+     * expect(NaN).not.toBeFinite();
+     * expect(Infinity).not.toBeFinite();
+     */
+    toBeFinite(): void;
+    /**
+     * Asserts that a value is a positive `number`.
+     *
+     * @example
+     * expect(1).toBePositive();
+     * expect(-3.14).not.toBePositive();
+     * expect(NaN).not.toBePositive();
+     */
+    toBePositive(): void;
+    /**
+     * Asserts that a value is a negative `number`.
+     *
+     * @example
+     * expect(-3.14).toBeNegative();
+     * expect(1).not.toBeNegative();
+     * expect(NaN).not.toBeNegative();
+     */
+    toBeNegative(): void;
+    /**
+     * Asserts that a value is a number between a start and end value.
+     *
+     * @param start the start number (inclusive)
+     * @param end the end number (exclusive)
+     */
+    toBeWithin(start: number, end: number): void;
+    /**
+     * Asserts that a value is a `symbol`.
+     *
+     * @example
+     * expect(Symbol("foo")).toBeSymbol();
+     * expect("foo").not.toBeSymbol();
+     */
+    toBeSymbol(): void;
+    /**
+     * Asserts that a value is a `function`.
+     *
+     * @example
+     * expect(() => {}).toBeFunction();
+     */
+    toBeFunction(): void;
+    /**
+     * Asserts that a value is a `Date` object.
+     *
+     * To check if a date is valid, use `toBeValidDate()` instead.
+     *
+     * @example
+     * expect(new Date()).toBeDate();
+     * expect(new Date(null)).toBeDate();
+     * expect("2020-03-01").not.toBeDate();
+     */
+    toBeDate(): void;
+    /**
+     * Asserts that a value is a valid `Date` object.
+     *
+     * @example
+     * expect(new Date()).toBeValidDate();
+     * expect(new Date(null)).not.toBeValidDate();
+     * expect("2020-03-01").not.toBeValidDate();
+     */
+    toBeValidDate(): void;
+    /**
+     * Asserts that a value is a `string`.
+     *
+     * @example
+     * expect("foo").toBeString();
+     * expect(new String("bar")).toBeString();
+     * expect(123).not.toBeString();
+     */
+    toBeString(): void;
+    /**
+     * Asserts that a value includes a `string`.
+     *
+     * For non-string values, use `toContain()` instead.
+     *
+     * @param expected the expected substring
+     */
+    toInclude(expected: string): void;
+    /**
+     * Asserts that a value starts with a `string`.
+     *
+     * @param expected the string to start with
+     */
+    toStartWith(expected: string): void;
+    /**
+     * Asserts that a value ends with a `string`.
+     *
+     * @param expected the string to end with
+     */
+    toEndWith(expected: string): void;
   };
 }
 

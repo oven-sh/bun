@@ -2198,7 +2198,7 @@ const JSC::ConstructorKind s_importMetaObjectRequireESMCodeConstructorKind = JSC
 const JSC::ImplementationVisibility s_importMetaObjectRequireESMCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_importMetaObjectRequireESMCodeLength = 419;
 static const JSC::Intrinsic s_importMetaObjectRequireESMCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_importMetaObjectRequireESMCode = "(function (a){\"use strict\";var i=@Loader.registry.@get(a);if(!i||!i.evaluated)i=@loadCJS2ESM(a);if(!i||!i.evaluated||!i.module)@throwTypeError(`require() failed to evaluate module \"${a}\". This is an internal consistentency error.`);var u=@Loader.getModuleNamespaceObject(i.module);if(u[@commonJSSymbol]===0)return;var E=u.default,_=E\?.[@commonJSSymbol];if(_===0)return E;else if(_&&@isCallable(E))return E();return u})\n";
+const char* const s_importMetaObjectRequireESMCode = "(function (i){\"use strict\";var a=@Loader.registry.@get(i);if(!a||!a.evaluated)a=@loadCJS2ESM(i);if(!a||!a.evaluated||!a.module)@throwTypeError(`require() failed to evaluate module \"${i}\". This is an internal consistentency error.`);var E=@Loader.getModuleNamespaceObject(a.module);if(E[@commonJSSymbol]===0)return;var b=E.default,f=b\?.[@commonJSSymbol];if(f===0)return b;else if(f&&@isCallable(b))return b();return E})\n";
 
 // internalRequire
 const JSC::ConstructAbility s_importMetaObjectInternalRequireCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;

@@ -165,61 +165,59 @@ describe("ChildProcess spawn bad stdio", () => {
   // Monkey patch spawn() to create a child process normally, but destroy the
   // stdout and stderr streams. This replicates the conditions where the streams
   // cannot be properly created.
-  function createChild(options, callback, done, target) {
-    var __originalSpawn = ChildProcess.prototype.spawn;
-    ChildProcess.prototype.spawn = function () {
-      const err = __originalSpawn.apply(this, arguments);
+  function createChild(options, callback, target) {
+    return new Promise((resolve, reject) => {
+      var __originalSpawn = ChildProcess.prototype.spawn;
+      ChildProcess.prototype.spawn = function () {
+        const err = __originalSpawn.apply(this, arguments);
 
-      this.stdout.destroy();
-      this.stderr.destroy();
+        this.stdout.destroy();
+        this.stderr.destroy();
 
-      return err;
-    };
+        return err;
+      };
 
-    const { mustCall } = createCallCheckCtx(done);
-    let cmd = `${bunExe()} ${import.meta.dir}/spawned-child.js`;
-    if (target) cmd += " " + target;
-    const child = exec(cmd, options, mustCall(callback));
-    ChildProcess.prototype.spawn = __originalSpawn;
-    return child;
+      let cmd = `${bunExe()} ${import.meta.dir}/spawned-child.js`;
+      if (target) cmd += " " + target;
+      const child = exec(cmd, options, async (err, stdout, stderr) => {
+        try {
+          await callback(err, stdout, stderr);
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
+      });
+      ChildProcess.prototype.spawn = __originalSpawn;
+    });
   }
 
-  it("should handle normal execution of child process", done => {
-    createChild(
-      {},
-      (err, stdout, stderr) => {
-        strictEqual(err, null);
-        strictEqual(stdout, "");
-        strictEqual(stderr, "");
-      },
-      done,
-    );
+  it("should handle normal execution of child process", async () => {
+    await createChild({}, (err, stdout, stderr) => {
+      strictEqual(err, null);
+      strictEqual(stdout, "");
+      strictEqual(stderr, "");
+    });
   });
 
-  it.skip("should handle error event of child process", done => {
+  it.todo("should handle error event of child process", async () => {
     const error = new Error(`Command failed: bun ${import.meta.dir}/spawned-child.js ERROR`);
-    createChild(
+    await createChild(
       {},
       (err, stdout, stderr) => {
         strictEqual(stdout, "");
         strictEqual(stderr, "");
         strictEqual(err?.message, error.message);
       },
-      done,
       "ERROR",
     );
   });
 
-  it.skip("should handle killed process", done => {
-    createChild(
-      { timeout: 1 },
-      (err, stdout, stderr) => {
-        strictEqual(err.killed, true);
-        strictEqual(stdout, "");
-        strictEqual(stderr, "");
-      },
-      done,
-    );
+  it("should handle killed process", async () => {
+    await createChild({ timeout: 1 }, (err, stdout, stderr) => {
+      strictEqual(err.killed, true);
+      strictEqual(stdout, "");
+      strictEqual(stderr, "");
+    });
   });
 });
 

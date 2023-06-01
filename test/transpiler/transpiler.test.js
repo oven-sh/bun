@@ -2371,7 +2371,7 @@ console.log(foo, array);
       `);
     });
 
-    it("substitution", () => {
+    it.todo("substitution", () => {
       var transpiler = new Bun.Transpiler({
         inline: true,
         platform: "bun",

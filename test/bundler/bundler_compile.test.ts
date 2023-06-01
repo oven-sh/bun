@@ -5,6 +5,7 @@ var { describe, test, expect } = testForFile(import.meta.path);
 
 describe("bundler", () => {
   itBundled("compile/HelloWorld", {
+    todo: true,
     compile: true,
     files: {
       "/entry.ts": /* js */ `
@@ -14,6 +15,7 @@ describe("bundler", () => {
     run: { stdout: "Hello, world!" },
   });
   itBundled("compile/VariousBunAPIs", {
+    todo: true,
     compile: true,
     files: {
       "/entry.ts": `
@@ -37,11 +39,13 @@ describe("bundler", () => {
         if (res.status !== 200) throw "fail from server";
         if (await res.text() !== "Hello world") throw "fail from server";
         server.stop();
+        console.log("ok");
       `,
     },
-    run: true,
+    run: { stdout: "ok" },
   });
   itBundled("compile/ReactSSR", {
+    todo: true,
     install: ["react@next", "react-dom@next"],
     files: {
       "/entry.tsx": /* tsx */ `

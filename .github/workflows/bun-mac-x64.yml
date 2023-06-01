@@ -28,6 +28,7 @@ jobs:
   macos-object-files:
     name: macOS Object
     runs-on: med-ubuntu
+    if: github.repository_owner == 'oven-sh'
     strategy:
       matrix:
         include:
@@ -100,6 +101,7 @@ jobs:
   macOS-cpp:
     name: macOS C++
     runs-on: ${{ matrix.runner }}
+    if: github.repository_owner == 'oven-sh'
     timeout-minutes: 90
     strategy:
       matrix:
@@ -240,6 +242,7 @@ jobs:
   macOS:
     name: macOS Link
     runs-on: ${{ matrix.runner }}
+    if: github.repository_owner == 'oven-sh'
     needs: [macOS-cpp, macos-object-files]
     timeout-minutes: 90
     strategy:
@@ -394,7 +397,7 @@ jobs:
     name: Tests ${{matrix.tag}}
     runs-on: ${{ matrix.runner }}
     needs: [macOS]
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.repository_owner == 'oven-sh'
     timeout-minutes: 30
     outputs:
       failing_tests: ${{ steps.test.outputs.failing_tests }}

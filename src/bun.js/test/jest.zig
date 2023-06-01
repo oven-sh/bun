@@ -10,7 +10,7 @@ const HTTPClient = @import("root").bun.HTTP;
 const NetworkThread = HTTPClient.NetworkThread;
 const Environment = @import("../../env.zig");
 
-const DiffMatchPatch = @import("../../deps/diffz/DiffMatchPatch.zig");
+const DiffFormatter = @import("./diff_format.zig").DiffFormatter;
 
 const JSC = @import("root").bun.JSC;
 const js = JSC.C;
@@ -39,6 +39,7 @@ const JSValue = JSC.JSValue;
 const JSError = JSC.JSError;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSObject = JSC.JSObject;
+const CallFrame = JSC.CallFrame;
 
 const VirtualMachine = JSC.VirtualMachine;
 const Task = @import("../javascript.zig").Task;
@@ -46,290 +47,16 @@ const Task = @import("../javascript.zig").Task;
 const Fs = @import("../../fs.zig");
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 
-pub const DiffFormatter = struct {
-    received_string: ?string = null,
-    expected_string: ?string = null,
-    received: ?JSValue = null,
-    expected: ?JSValue = null,
-    globalObject: *JSC.JSGlobalObject,
-    not: bool = false,
-
-    pub fn format(this: DiffFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        if (this.expected_string != null and this.received_string != null) {
-            const received = this.received_string.?;
-            const expected = this.expected_string.?;
-
-            var dmp = DiffMatchPatch.default;
-            dmp.diff_timeout = 200;
-            var diffs = try dmp.diff(default_allocator, received, expected, false);
-            defer diffs.deinit(default_allocator);
-
-            const equal_fmt = "<d>{s}<r>";
-            const delete_fmt = "<red>{s}<r>";
-            const insert_fmt = "<green>{s}<r>";
-
-            try writer.writeAll("Expected: ");
-            for (diffs.items) |df| {
-                switch (df.operation) {
-                    .delete => continue,
-                    .insert => {
-                        if (Output.enable_ansi_colors) {
-                            try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text});
-                        } else {
-                            try writer.print(Output.prettyFmt(insert_fmt, false), .{df.text});
-                        }
-                    },
-                    .equal => {
-                        if (Output.enable_ansi_colors) {
-                            try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
-                        } else {
-                            try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text});
-                        }
-                    },
-                }
-            }
-
-            try writer.writeAll("\nReceived: ");
-            for (diffs.items) |df| {
-                switch (df.operation) {
-                    .insert => continue,
-                    .delete => {
-                        if (Output.enable_ansi_colors) {
-                            try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text});
-                        } else {
-                            try writer.print(Output.prettyFmt(delete_fmt, false), .{df.text});
-                        }
-                    },
-                    .equal => {
-                        if (Output.enable_ansi_colors) {
-                            try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
-                        } else {
-                            try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text});
-                        }
-                    },
-                }
-            }
-            return;
-        }
-
-        if (this.received == null or this.expected == null) return;
-
-        const received = this.received.?;
-        const expected = this.expected.?;
-        var received_buf = MutableString.init(default_allocator, 0) catch unreachable;
-        var expected_buf = MutableString.init(default_allocator, 0) catch unreachable;
-        defer {
-            received_buf.deinit();
-            expected_buf.deinit();
-        }
-
-        {
-            var buffered_writer_ = bun.MutableString.BufferedWriter{ .context = &received_buf };
-            var buffered_writer = &buffered_writer_;
-
-            var buf_writer = buffered_writer.writer();
-            const Writer = @TypeOf(buf_writer);
-
-            const fmt_options = JSC.ZigConsoleClient.FormatOptions{
-                .enable_colors = false,
-                .add_newline = false,
-                .flush = false,
-                .ordered_properties = true,
-                .quote_strings = true,
-            };
-            JSC.ZigConsoleClient.format(
-                .Debug,
-                this.globalObject,
-                @ptrCast([*]const JSValue, &received),
-                1,
-                Writer,
-                Writer,
-                buf_writer,
-                fmt_options,
-            );
-            buffered_writer.flush() catch unreachable;
-
-            buffered_writer_.context = &expected_buf;
-
-            JSC.ZigConsoleClient.format(
-                .Debug,
-                this.globalObject,
-                @ptrCast([*]const JSValue, &this.expected),
-                1,
-                Writer,
-                Writer,
-                buf_writer,
-                fmt_options,
-            );
-            buffered_writer.flush() catch unreachable;
-        }
-
-        const received_slice = received_buf.toOwnedSliceLeaky();
-        const expected_slice = expected_buf.toOwnedSliceLeaky();
-
-        if (this.not) {
-            const not_fmt = "Expected: not <green>{s}<r>";
-            if (Output.enable_ansi_colors) {
-                try writer.print(Output.prettyFmt(not_fmt, true), .{expected_slice});
-            } else {
-                try writer.print(Output.prettyFmt(not_fmt, false), .{expected_slice});
-            }
-            return;
-        }
-
-        switch (received.determineDiffMethod(expected, this.globalObject)) {
-            .none => {
-                const fmt = "Expected: <green>{any}<r>\nReceived: <red>{any}<r>";
-                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = this.globalObject, .quote_strings = true };
-                if (Output.enable_ansi_colors) {
-                    try writer.print(Output.prettyFmt(fmt, true), .{
-                        expected.toFmt(this.globalObject, &formatter),
-                        received.toFmt(this.globalObject, &formatter),
-                    });
-                    return;
-                }
-
-                try writer.print(Output.prettyFmt(fmt, true), .{
-                    expected.toFmt(this.globalObject, &formatter),
-                    received.toFmt(this.globalObject, &formatter),
-                });
-                return;
-            },
-            .character => {
-                var dmp = DiffMatchPatch.default;
-                dmp.diff_timeout = 200;
-                var diffs = try dmp.diff(default_allocator, received_slice, expected_slice, false);
-                defer diffs.deinit(default_allocator);
-
-                const equal_fmt = "<d>{s}<r>";
-                const delete_fmt = "<red>{s}<r>";
-                const insert_fmt = "<green>{s}<r>";
-
-                try writer.writeAll("Expected: ");
-                for (diffs.items) |df| {
-                    switch (df.operation) {
-                        .delete => continue,
-                        .insert => {
-                            if (Output.enable_ansi_colors) {
-                                try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text});
-                            } else {
-                                try writer.print(Output.prettyFmt(insert_fmt, false), .{df.text});
-                            }
-                        },
-                        .equal => {
-                            if (Output.enable_ansi_colors) {
-                                try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
-                            } else {
-                                try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text});
-                            }
-                        },
-                    }
-                }
-
-                try writer.writeAll("\nReceived: ");
-                for (diffs.items) |df| {
-                    switch (df.operation) {
-                        .insert => continue,
-                        .delete => {
-                            if (Output.enable_ansi_colors) {
-                                try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text});
-                            } else {
-                                try writer.print(Output.prettyFmt(delete_fmt, false), .{df.text});
-                            }
-                        },
-                        .equal => {
-                            if (Output.enable_ansi_colors) {
-                                try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
-                            } else {
-                                try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text});
-                            }
-                        },
-                    }
-                }
-                return;
-            },
-            .line => {
-                var dmp = DiffMatchPatch.default;
-                dmp.diff_timeout = 200;
-                var diffs = try dmp.diffLines(default_allocator, received_slice, expected_slice);
-                defer diffs.deinit(default_allocator);
-
-                const equal_fmt = "<d>  {s}<r>";
-                const delete_fmt = "<red>+ {s}<r>";
-                const insert_fmt = "<green>- {s}<r>";
-
-                var insert_count: usize = 0;
-                var delete_count: usize = 0;
-
-                for (diffs.items) |df| {
-                    var prev: usize = 0;
-                    var curr: usize = 0;
-                    switch (df.operation) {
-                        .equal => {
-                            while (curr < df.text.len) {
-                                if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
-                                    if (Output.enable_ansi_colors) {
-                                        try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text[prev .. curr + 1]});
-                                    } else {
-                                        try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text[prev .. curr + 1]});
-                                    }
-                                    prev = curr + 1;
-                                }
-                                curr += 1;
-                            }
-                        },
-                        .insert => {
-                            while (curr < df.text.len) {
-                                if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
-                                    insert_count += 1;
-                                    if (Output.enable_ansi_colors) {
-                                        try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text[prev .. curr + 1]});
-                                    } else {
-                                        try writer.print(Output.prettyFmt(insert_fmt, false), .{df.text[prev .. curr + 1]});
-                                    }
-                                    prev = curr + 1;
-                                }
-                                curr += 1;
-                            }
-                        },
-                        .delete => {
-                            while (curr < df.text.len) {
-                                if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
-                                    delete_count += 1;
-                                    if (Output.enable_ansi_colors) {
-                                        try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text[prev .. curr + 1]});
-                                    } else {
-                                        try writer.print(Output.prettyFmt(delete_fmt, false), .{df.text[prev .. curr + 1]});
-                                    }
-                                    prev = curr + 1;
-                                }
-                                curr += 1;
-                            }
-                        },
-                    }
-                    if (df.text[df.text.len - 1] != '\n') try writer.writeAll("\n");
-                }
-
-                if (Output.enable_ansi_colors) {
-                    try writer.print(Output.prettyFmt("\n<green>- Expected  - {d}<r>\n", true), .{insert_count});
-                    try writer.print(Output.prettyFmt("<red>+ Received  + {d}<r>", true), .{delete_count});
-                    return;
-                }
-                try writer.print("\n- Expected  - {d}\n", .{insert_count});
-                try writer.print("+ Received  + {d}", .{delete_count});
-                return;
-            },
-            .word => {
-                // not implemented
-                // https://github.com/google/diff-match-patch/wiki/Line-or-Word-Diffs#word-mode
-            },
-        }
-        return;
-    }
-};
-
 const ArrayIdentityContext = @import("../../identity_context.zig").ArrayIdentityContext;
 pub var test_elapsed_timer: ?*std.time.Timer = null;
+
+pub const Tag = enum(u3) {
+    pass,
+    fail,
+    only,
+    skip,
+    todo,
+};
 
 pub const TestRunner = struct {
     tests: TestRunner.Test.List = .{},
@@ -337,6 +64,7 @@ pub const TestRunner = struct {
     files: File.List = .{},
     index: File.Map = File.Map{},
     only: bool = false,
+    run_todo: bool = false,
     last_file: u64 = 0,
 
     allocator: std.mem.Allocator,
@@ -431,7 +159,6 @@ pub const TestRunner = struct {
         if (this.only) {
             return;
         }
-
         this.only = true;
 
         var list = this.queue.readableSlice(0);
@@ -461,6 +188,7 @@ pub const TestRunner = struct {
         this.tests.items(.status)[test_id] = .pass;
         this.callback.onTestPass(this.callback, test_id, file, label, expectations, elapsed_ns, parent);
     }
+
     pub fn reportFailure(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*DescribeScope) void {
         this.tests.items(.status)[test_id] = .fail;
         this.callback.onTestFail(this.callback, test_id, file, label, expectations, elapsed_ns, parent);
@@ -881,8 +609,8 @@ pub const Jest = struct {
         );
         test_fn.put(
             globalObject,
-            ZigString.static("todo"),
-            JSC.NewFunction(globalObject, ZigString.static("todo"), 2, TestScope.todo, false),
+            ZigString.static("only"),
+            JSC.NewFunction(globalObject, ZigString.static("only"), 2, TestScope.only, false),
         );
         test_fn.put(
             globalObject,
@@ -891,8 +619,18 @@ pub const Jest = struct {
         );
         test_fn.put(
             globalObject,
-            ZigString.static("only"),
-            JSC.NewFunction(globalObject, ZigString.static("only"), 2, TestScope.only, false),
+            ZigString.static("todo"),
+            JSC.NewFunction(globalObject, ZigString.static("todo"), 2, TestScope.todo, false),
+        );
+        test_fn.put(
+            globalObject,
+            ZigString.static("if"),
+            JSC.NewFunction(globalObject, ZigString.static("if"), 2, TestScope.callIf, false),
+        );
+        test_fn.put(
+            globalObject,
+            ZigString.static("skipIf"),
+            JSC.NewFunction(globalObject, ZigString.static("skipIf"), 2, TestScope.skipIf, false),
         );
 
         module.put(
@@ -900,11 +638,31 @@ pub const Jest = struct {
             ZigString.static("it"),
             test_fn,
         );
-        const describe = JSC.NewFunction(globalObject, ZigString.static("describe"), 2, DescribeScope.describe, false);
+        const describe = JSC.NewFunction(globalObject, ZigString.static("describe"), 2, DescribeScope.call, false);
+        describe.put(
+            globalObject,
+            ZigString.static("only"),
+            JSC.NewFunction(globalObject, ZigString.static("only"), 2, DescribeScope.only, false),
+        );
         describe.put(
             globalObject,
             ZigString.static("skip"),
             JSC.NewFunction(globalObject, ZigString.static("skip"), 2, DescribeScope.skip, false),
+        );
+        describe.put(
+            globalObject,
+            ZigString.static("todo"),
+            JSC.NewFunction(globalObject, ZigString.static("todo"), 2, DescribeScope.todo, false),
+        );
+        describe.put(
+            globalObject,
+            ZigString.static("if"),
+            JSC.NewFunction(globalObject, ZigString.static("if"), 2, DescribeScope.callIf, false),
+        );
+        describe.put(
+            globalObject,
+            ZigString.static("skipIf"),
+            JSC.NewFunction(globalObject, ZigString.static("skipIf"), 2, DescribeScope.skipIf, false),
         );
 
         module.put(
@@ -1863,9 +1621,13 @@ pub const Expect = struct {
         var path_string = ZigString.Empty;
         expected_property_path.toZigString(&path_string, globalObject);
 
-        const received_property = value.getIfPropertyExistsFromPath(globalObject, expected_property_path);
+        var pass = !value.isUndefinedOrNull();
+        var received_property: JSValue = .zero;
 
-        var pass = !received_property.isEmpty();
+        if (pass) {
+            received_property = value.getIfPropertyExistsFromPath(globalObject, expected_property_path);
+            pass = !received_property.isEmpty();
+        }
 
         if (pass and expected_property != null) {
             pass = received_property.deepEquals(expected_property.?, globalObject);
@@ -3095,6 +2857,756 @@ pub const Expect = struct {
         return .zero;
     }
 
+    pub fn toBeNil(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeNil() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+        const pass = value.isUndefinedOrNull() != not;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeNil", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeNil", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
+    pub fn toBeBoolean(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeBoolean() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+        const pass = value.isBoolean() != not;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeBoolean", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeBoolean", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
+    pub fn toBeTrue(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeTrue() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+        const pass = (value.isBoolean() and value.toBoolean()) != not;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeTrue", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeTrue", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
+    pub fn toBeFalse(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeFalse() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+        const pass = (value.isBoolean() and !value.toBoolean()) != not;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeFalse", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeFalse", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
+    pub fn toBeNumber(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeNumber() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+        const pass = value.isNumber() != not;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeNumber", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeNumber", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
+    pub fn toBeInteger(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeInteger() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+        const pass = value.isAnyInt() != not;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeInteger", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeInteger", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
+    pub fn toBeFinite(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeFinite() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        var pass = value.isNumber();
+        if (pass) {
+            const num: f64 = value.asNumber();
+            pass = std.math.isFinite(num) and !std.math.isNan(num);
+        }
+
+        const not = this.op.contains(.not);
+        if (not) pass = !pass;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeFinite", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeFinite", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
+    pub fn toBePositive(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBePositive() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        var pass = value.isNumber();
+        if (pass) {
+            const num: f64 = value.asNumber();
+            pass = @round(num) > 0 and !std.math.isInf(num) and !std.math.isNan(num);
+        }
+
+        const not = this.op.contains(.not);
+        if (not) pass = !pass;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBePositive", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBePositive", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
+    pub fn toBeNegative(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeNegative() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        var pass = value.isNumber();
+        if (pass) {
+            const num: f64 = value.asNumber();
+            pass = @round(num) < 0 and !std.math.isInf(num) and !std.math.isNan(num);
+        }
+
+        const not = this.op.contains(.not);
+        if (not) pass = !pass;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeNegative", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeNegative", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
+    pub fn toBeWithin(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const _arguments = callFrame.arguments(2);
+        const arguments = _arguments.ptr[0.._arguments.len];
+
+        if (arguments.len < 1) {
+            globalThis.throwInvalidArguments("toBeWithin() requires 2 arguments", .{});
+            return .zero;
+        }
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeWithin() must be called in a test", .{});
+            return .zero;
+        }
+
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        const startValue = arguments[0];
+        startValue.ensureStillAlive();
+
+        if (!startValue.isNumber()) {
+            globalThis.throw("toBeWithin() requires the first argument to be a number", .{});
+            return .zero;
+        }
+
+        const endValue = arguments[1];
+        endValue.ensureStillAlive();
+
+        if (!endValue.isNumber()) {
+            globalThis.throw("toBeWithin() requires the second argument to be a number", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        var pass = value.isNumber();
+        if (pass) {
+            const num = value.asNumber();
+            pass = num >= startValue.asNumber() and num < endValue.asNumber();
+        }
+
+        const not = this.op.contains(.not);
+        if (not) pass = !pass;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const start_fmt = startValue.toFmt(globalThis, &formatter);
+        const end_fmt = endValue.toFmt(globalThis, &formatter);
+        const received_fmt = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const expected_line = "Expected: not between <green>{any}<r> <d>(inclusive)<r> and <green>{any}<r> <d>(exclusive)<r>\n";
+            const received_line = "Received: <red>{any}<r>\n";
+            const fmt = comptime getSignature("toBeWithin", "<green>start<r><d>, <r><green>end<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
+            globalThis.throwPretty(fmt, .{ start_fmt, end_fmt, received_fmt });
+            return .zero;
+        }
+
+        const expected_line = "Expected: between <green>{any}<r> <d>(inclusive)<r> and <green>{any}<r> <d>(exclusive)<r>\n";
+        const received_line = "Received: <red>{any}<r>\n";
+        const fmt = comptime getSignature("toBeWithin", "<green>start<r><d>, <r><green>end<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
+        globalThis.throwPretty(fmt, .{ start_fmt, end_fmt, received_fmt });
+        return .zero;
+    }
+
+    pub fn toBeSymbol(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeSymbol() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+        const pass = value.isSymbol() != not;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeSymbol", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeSymbol", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
+    pub fn toBeFunction(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeFunction() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+        const pass = value.isCallable(globalThis.vm()) != not;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeFunction", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeFunction", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
+    pub fn toBeDate(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeDate() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+        const pass = value.isDate() != not;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeDate", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeDate", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
+    pub fn toBeString(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeString() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+        const pass = value.isString() != not;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeString", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeString", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
+    pub fn toInclude(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        if (arguments.len < 1) {
+            globalThis.throwInvalidArguments("toInclude() requires 1 argument", .{});
+            return .zero;
+        }
+
+        const expected = arguments[0];
+        expected.ensureStillAlive();
+
+        if (!expected.isString()) {
+            globalThis.throw("toInclude() requires the first argument to be a string", .{});
+            return .zero;
+        }
+
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toInclude() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        var pass = value.isString();
+        if (pass) {
+            const value_string = value.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+            const expected_string = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+            pass = strings.contains(value_string, expected_string) or expected_string.len == 0;
+        }
+
+        const not = this.op.contains(.not);
+        if (not) pass = !pass;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const value_fmt = value.toFmt(globalThis, &formatter);
+        const expected_fmt = expected.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const expected_line = "Expected to not include: <green>{any}<r>\n";
+            const received_line = "Received: <red>{any}<r>\n";
+            const fmt = comptime getSignature("toInclude", "<green>expected<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
+            globalThis.throwPretty(fmt, .{ expected_fmt, value_fmt });
+            return .zero;
+        }
+
+        const expected_line = "Expected to include: <green>{any}<r>\n";
+        const received_line = "Received: <red>{any}<r>\n";
+        const fmt = comptime getSignature("toInclude", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
+        globalThis.throwPretty(fmt, .{ expected_fmt, value_fmt });
+        return .zero;
+    }
+
+    pub fn toStartWith(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        if (arguments.len < 1) {
+            globalThis.throwInvalidArguments("toStartWith() requires 1 argument", .{});
+            return .zero;
+        }
+
+        const expected = arguments[0];
+        expected.ensureStillAlive();
+
+        if (!expected.isString()) {
+            globalThis.throw("toStartWith() requires the first argument to be a string", .{});
+            return .zero;
+        }
+
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toStartWith() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        var pass = value.isString();
+        if (pass) {
+            const value_string = value.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+            const expected_string = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+            pass = strings.startsWith(value_string, expected_string) or expected_string.len == 0;
+        }
+
+        const not = this.op.contains(.not);
+        if (not) pass = !pass;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const value_fmt = value.toFmt(globalThis, &formatter);
+        const expected_fmt = expected.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const expected_line = "Expected to not start with: <green>{any}<r>\n";
+            const received_line = "Received: <red>{any}<r>\n";
+            const fmt = comptime getSignature("toStartWith", "<green>expected<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
+            globalThis.throwPretty(fmt, .{ expected_fmt, value_fmt });
+            return .zero;
+        }
+
+        const expected_line = "Expected to start with: <green>{any}<r>\n";
+        const received_line = "Received: <red>{any}<r>\n";
+        const fmt = comptime getSignature("toStartWith", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
+        globalThis.throwPretty(fmt, .{ expected_fmt, value_fmt });
+        return .zero;
+    }
+
+    pub fn toEndWith(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        if (arguments.len < 1) {
+            globalThis.throwInvalidArguments("toEndWith() requires 1 argument", .{});
+            return .zero;
+        }
+
+        const expected = arguments[0];
+        expected.ensureStillAlive();
+
+        if (!expected.isString()) {
+            globalThis.throw("toEndWith() requires the first argument to be a string", .{});
+            return .zero;
+        }
+
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toEndWith() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        var pass = value.isString();
+        if (pass) {
+            const value_string = value.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+            const expected_string = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+            pass = strings.endsWith(value_string, expected_string) or expected_string.len == 0;
+        }
+
+        const not = this.op.contains(.not);
+        if (not) pass = !pass;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const value_fmt = value.toFmt(globalThis, &formatter);
+        const expected_fmt = expected.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const expected_line = "Expected to not end with: <green>{any}<r>\n";
+            const received_line = "Received: <red>{any}<r>\n";
+            const fmt = comptime getSignature("toEndWith", "<green>expected<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
+            globalThis.throwPretty(fmt, .{ expected_fmt, value_fmt });
+            return .zero;
+        }
+
+        const expected_line = "Expected to end with: <green>{any}<r>\n";
+        const received_line = "Received: <red>{any}<r>\n";
+        const fmt = comptime getSignature("toEndWith", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
+        globalThis.throwPretty(fmt, .{ expected_fmt, value_fmt });
+        return .zero;
+    }
+
     pub const PropertyMatcherIterator = struct {
         received_object: JSValue,
         failed: bool,
@@ -3389,136 +3901,39 @@ pub const TestScope = struct {
     promise: ?*JSInternalPromise = null,
     ran: bool = false,
     task: ?*TestRunnerTask = null,
-    skipped: bool = false,
-    is_todo: bool = false,
+    tag: Tag = .pass,
     snapshot_count: usize = 0,
     timeout_millis: u32 = 0,
+    retry_count: u32 = 0, // retry, on fail
+    repeat_count: u32 = 0, // retry, on pass or fail
 
     pub const Counter = struct {
         expected: u32 = 0,
         actual: u32 = 0,
     };
 
-    pub fn only(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        const thisValue = callframe.this();
-        const args = callframe.arguments(3);
-        prepare(globalThis, args.ptr[0..args.len], .only);
-        return thisValue;
+    pub fn call(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createScope(globalThis, callframe, "test()", true, .pass);
     }
 
-    pub fn skip(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        const thisValue = callframe.this();
-        const args = callframe.arguments(3);
-        prepare(globalThis, args.ptr[0..args.len], .skip);
-        return thisValue;
+    pub fn only(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createScope(globalThis, callframe, "test.only()", true, .only);
     }
 
-    pub fn call(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        const thisValue = callframe.this();
-        const args = callframe.arguments(3);
-        prepare(globalThis, args.ptr[0..args.len], .call);
-        return thisValue;
+    pub fn skip(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createScope(globalThis, callframe, "test.skip()", true, .skip);
     }
 
-    pub fn todo(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        const thisValue = callframe.this();
-        const args = callframe.arguments(3);
-        prepare(globalThis, args.ptr[0..args.len], .todo);
-        return thisValue;
+    pub fn todo(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createScope(globalThis, callframe, "test.todo()", true, .todo);
     }
 
-    inline fn prepare(
-        globalThis: *JSC.JSGlobalObject,
-        args: []const JSC.JSValue,
-        comptime tag: @Type(.EnumLiteral),
-    ) void {
-        var label: string = "";
-        if (args.len == 0) {
-            return;
-        }
+    pub fn callIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createIfScope(globalThis, callframe, "test.if()", "if", TestScope, false);
+    }
 
-        var label_value = args[0];
-        var function_value = if (args.len > 1) args[1] else JSC.JSValue.zero;
-
-        if (label_value.isEmptyOrUndefinedOrNull() or !label_value.isString()) {
-            function_value = label_value;
-            label_value = .zero;
-        }
-
-        if (label_value != .zero) {
-            const allocator = getAllocator(globalThis);
-            label = (label_value.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
-        }
-
-        if (tag == .todo and label_value == .zero) {
-            globalThis.throw("test.todo() requires a description", .{});
-            return;
-        }
-
-        const function = function_value;
-        if (function.isEmptyOrUndefinedOrNull() or !function.isCell() or !function.isCallable(globalThis.vm())) {
-            // a callback is not required for .todo
-            if (tag != .todo) {
-                globalThis.throw("test() expects a function", .{});
-                return;
-            }
-        }
-
-        if (tag == .only) {
-            Jest.runner.?.setOnly();
-        }
-
-        if (tag == .todo) {
-            if (function != .zero)
-                function.protect();
-            DescribeScope.active.todo_counter += 1;
-            DescribeScope.active.tests.append(getAllocator(globalThis), TestScope{
-                .label = label,
-                .parent = DescribeScope.active,
-                .is_todo = true,
-                .callback = function,
-            }) catch unreachable;
-
-            return;
-        }
-
-        if (tag == .skip or (tag != .only and Jest.runner.?.only)) {
-            DescribeScope.active.skipped_counter += 1;
-            DescribeScope.active.tests.append(getAllocator(globalThis), TestScope{
-                .label = label,
-                .parent = DescribeScope.active,
-                .skipped = true,
-                .callback = .zero,
-            }) catch unreachable;
-            return;
-        }
-
-        function.protect();
-
-        DescribeScope.active.tests.append(getAllocator(globalThis), TestScope{
-            .label = label,
-            .callback = function,
-            .parent = DescribeScope.active,
-            .timeout_millis = if (args.len > 2) @intCast(u32, @max(args[2].coerce(i32, globalThis), 0)) else Jest.runner.?.default_timeout_ms,
-        }) catch unreachable;
-
-        if (test_elapsed_timer == null) create_tiemr: {
-            var timer = bun.default_allocator.create(std.time.Timer) catch unreachable;
-            timer.* = std.time.Timer.start() catch break :create_tiemr;
-            test_elapsed_timer = timer;
-        }
+    pub fn skipIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createIfScope(globalThis, callframe, "test.skipIf()", "skipIf", TestScope, true);
     }
 
     pub fn onReject(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
@@ -3612,11 +4027,11 @@ pub const TestScope = struct {
         if (initial_value.isAnyError()) {
             if (!Jest.runner.?.did_pending_test_fail) {
                 // test failed unless it's a todo
-                Jest.runner.?.did_pending_test_fail = !this.is_todo;
+                Jest.runner.?.did_pending_test_fail = this.tag != .todo;
                 vm.runErrorHandler(initial_value, null);
             }
 
-            if (this.is_todo) {
+            if (this.tag == .todo) {
                 return .{ .todo = {} };
             }
 
@@ -3639,11 +4054,11 @@ pub const TestScope = struct {
                 .Rejected => {
                     if (!Jest.runner.?.did_pending_test_fail) {
                         // test failed unless it's a todo
-                        Jest.runner.?.did_pending_test_fail = !this.is_todo;
+                        Jest.runner.?.did_pending_test_fail = this.tag != .todo;
                         vm.runErrorHandler(promise.result(vm.global.vm()), null);
                     }
 
-                    if (this.is_todo) {
+                    if (this.tag == .todo) {
                         return .{ .todo = {} };
                     }
 
@@ -3713,12 +4128,12 @@ pub const DescribeScope = struct {
     current_test_id: TestRunner.Test.ID = 0,
     value: JSValue = .zero,
     done: bool = false,
-    skipped: bool = false,
-    skipped_counter: u32 = 0,
-    todo_counter: u32 = 0,
+    is_skip: bool = false,
+    skip_count: u32 = 0,
+    tag: Tag = .pass,
 
     pub fn isAllSkipped(this: *const DescribeScope) bool {
-        return this.skipped or @as(usize, this.skipped_counter) >= this.tests.items.len;
+        return this.is_skip or @as(usize, this.skip_count) >= this.tests.items.len;
     }
 
     pub fn push(new: *DescribeScope) void {
@@ -3904,60 +4319,28 @@ pub const DescribeScope = struct {
         return this.execCallback(globalObject, hook);
     }
 
-    pub fn skip(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        const arguments = callframe.arguments(3);
-        var this: *DescribeScope = DescribeScope.module;
-        return runDescribe(this, globalThis, arguments.ptr[0..arguments.len], true);
+    pub fn call(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createScope(globalThis, callframe, "describe()", false, .pass);
     }
 
-    pub fn describe(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        const arguments = callframe.arguments(3);
-        var this: *DescribeScope = DescribeScope.module;
-        return runDescribe(this, globalThis, arguments.ptr[0..arguments.len], false);
+    pub fn only(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createScope(globalThis, callframe, "describe.only()", false, .only);
     }
 
-    fn runDescribe(
-        this: *DescribeScope,
-        globalThis: *JSC.JSGlobalObject,
-        arguments: []const JSC.JSValue,
-        skipped: bool,
-    ) JSC.JSValue {
-        if (arguments.len == 0 or arguments.len > 2) {
-            globalThis.throwNotEnoughArguments("describe", 2, arguments.len);
-            return .zero;
-        }
+    pub fn skip(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createScope(globalThis, callframe, "describe.skip()", false, .skip);
+    }
 
-        var label = ZigString.init("");
-        var args = arguments;
-        const allocator = getAllocator(globalThis);
+    pub fn todo(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createScope(globalThis, callframe, "describe.todo()", false, .todo);
+    }
 
-        if (arguments[0].isString()) {
-            arguments[0].toZigString(&label, globalThis);
-            args = args[1..];
-        }
+    pub fn callIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createIfScope(globalThis, callframe, "describe.if()", "if", DescribeScope, false);
+    }
 
-        if (args.len == 0 or !args[0].isCallable(globalThis.vm())) {
-            globalThis.throwInvalidArgumentType("describe", "callback", "function");
-            return .zero;
-        }
-
-        var callback = args[0];
-
-        var scope = allocator.create(DescribeScope) catch unreachable;
-        scope.* = .{
-            .label = (label.toSlice(allocator).cloneIfNeeded(allocator) catch unreachable).slice(),
-            .parent = active,
-            .file_id = this.file_id,
-            .skipped = skipped or active.skipped,
-        };
-
-        return scope.run(globalThis, callback);
+    pub fn skipIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createIfScope(globalThis, callframe, "describe.skipIf()", "skipIf", DescribeScope, true);
     }
 
     pub fn run(this: *DescribeScope, globalObject: *JSC.JSGlobalObject, callback: JSC.JSValue) JSC.JSValue {
@@ -3969,6 +4352,11 @@ pub const DescribeScope = struct {
         if (this != module)
             this.parent = this.parent orelse active;
         active = this;
+
+        if (callback == .zero) {
+            this.runTests(globalObject);
+            return .undefined;
+        }
 
         {
             JSC.markBinding(@src());
@@ -4004,7 +4392,10 @@ pub const DescribeScope = struct {
         const end = @truncate(TestRunner.Test.ID, tests.len);
         this.pending_tests = std.DynamicBitSetUnmanaged.initFull(allocator, end) catch unreachable;
 
-        if (end == 0) return;
+        if (end == 0) {
+            // TODO: print the describe label when there are no tests
+            return;
+        }
 
         // Step 2. Update the runner with the count of how many tests we have for this block
         this.test_id_start = Jest.runner.?.addTestCount(end);
@@ -4151,19 +4542,25 @@ pub const TestRunnerTask = struct {
         var test_: TestScope = this.describe.tests.items[test_id];
         describe.current_test_id = test_id;
 
-        if (!describe.skipped and test_.is_todo and test_.callback.isEmpty()) {
-            this.processTestResult(globalThis, .{ .todo = {} }, test_, test_id, describe);
-            this.deinit();
-            return false;
-        }
-
-        if (test_.skipped or describe.skipped) {
-            this.processTestResult(globalThis, .{ .skip = {} }, test_, test_id, describe);
+        if (test_.callback == .zero or (describe.is_skip and test_.tag != .only)) {
+            var tag = if (describe.is_skip) describe.tag else test_.tag;
+            switch (tag) {
+                .todo => {
+                    this.processTestResult(globalThis, .{ .todo = {} }, test_, test_id, describe);
+                },
+                .skip => {
+                    this.processTestResult(globalThis, .{ .skip = {} }, test_, test_id, describe);
+                },
+                else => {},
+            }
             this.deinit();
             return false;
         }
 
         jsc_vm.onUnhandledRejectionCtx = this;
+        if (Output.is_github_action) {
+            jsc_vm.setOnException(printGithubAnnotation);
+        }
 
         if (this.needs_before_each) {
             this.needs_before_each = false;
@@ -4259,7 +4656,7 @@ pub const TestRunnerTask = struct {
     }
 
     fn processTestResult(this: *TestRunnerTask, globalThis: *JSC.JSGlobalObject, result: Result, test_: TestScope, test_id: u32, describe: *DescribeScope) void {
-        switch (result.forceTODO(test_.is_todo)) {
+        switch (result.forceTODO(test_.tag == .todo)) {
             .pass => |count| Jest.runner.?.reportPass(
                 test_id,
                 this.source_file_path,
@@ -4311,6 +4708,7 @@ pub const TestRunnerTask = struct {
                 vm.onUnhandledRejectionCtx = null;
             }
         }
+        vm.clearOnException();
 
         this.ref.unref(vm);
 
@@ -4344,3 +4742,268 @@ pub const Result = union(TestRunner.Test.Status) {
         return this;
     }
 };
+
+inline fn createScope(
+    globalThis: *JSGlobalObject,
+    callframe: *CallFrame,
+    comptime signature: string,
+    comptime is_test: bool,
+    comptime tag: Tag,
+) JSValue {
+    const this = callframe.this();
+    const arguments = callframe.arguments(3);
+    const args = arguments.ptr[0..arguments.len];
+
+    if (args.len == 0) {
+        globalThis.throwPretty("{s} expects a description or function", .{signature});
+        return .zero;
+    }
+
+    var description = args[0];
+    var function = if (args.len > 1) args[1] else .zero;
+    var options = if (args.len > 2) args[2] else .zero;
+
+    if (description.isEmptyOrUndefinedOrNull() or !description.isString()) {
+        function = description;
+        description = .zero;
+    }
+
+    if (function.isEmptyOrUndefinedOrNull() or !function.isCell() or !function.isCallable(globalThis.vm())) {
+        if (tag != .todo) {
+            globalThis.throwPretty("{s} expects a function", .{signature});
+            return .zero;
+        }
+    }
+
+    var timeout_ms: u32 = Jest.runner.?.default_timeout_ms;
+    if (options.isNumber()) {
+        timeout_ms = @intCast(u32, @max(args[2].coerce(i32, globalThis), 0));
+    } else if (options.isObject()) {
+        if (options.get(globalThis, "timeout")) |timeout| {
+            if (!timeout.isNumber()) {
+                globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
+                return .zero;
+            }
+            timeout_ms = @intCast(u32, @max(timeout.coerce(i32, globalThis), 0));
+        }
+        if (options.get(globalThis, "retry")) |retries| {
+            if (!retries.isNumber()) {
+                globalThis.throwPretty("{s} expects retry to be a number", .{signature});
+                return .zero;
+            }
+            // TODO: retry_count = @intCast(u32, @max(retries.coerce(i32, globalThis), 0));
+        }
+        if (options.get(globalThis, "repeats")) |repeats| {
+            if (!repeats.isNumber()) {
+                globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
+                return .zero;
+            }
+            // TODO: repeat_count = @intCast(u32, @max(repeats.coerce(i32, globalThis), 0));
+        }
+    } else if (!options.isEmptyOrUndefinedOrNull()) {
+        globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
+        return .zero;
+    }
+
+    const parent = DescribeScope.active;
+    const allocator = getAllocator(globalThis);
+    const label = if (description == .zero)
+        ""
+    else
+        (description.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
+
+    if (tag == .only) {
+        Jest.runner.?.setOnly();
+    } else if (is_test and Jest.runner.?.only and parent.tag != .only) {
+        return .zero;
+    }
+
+    const is_skip = tag == .skip or
+        (tag == .todo and (function == .zero or !Jest.runner.?.run_todo)) or
+        (tag != .only and Jest.runner.?.only and parent.tag != .only);
+
+    if (is_test) {
+        if (is_skip) {
+            parent.skip_count += 1;
+            function.unprotect();
+        } else {
+            function.protect();
+        }
+
+        parent.tests.append(allocator, TestScope{
+            .label = label,
+            .parent = parent,
+            .tag = tag,
+            .callback = if (is_skip) .zero else function,
+            .timeout_millis = timeout_ms,
+        }) catch unreachable;
+
+        if (test_elapsed_timer == null) create_timer: {
+            var timer = allocator.create(std.time.Timer) catch unreachable;
+            timer.* = std.time.Timer.start() catch break :create_timer;
+            test_elapsed_timer = timer;
+        }
+    } else {
+        var scope = allocator.create(DescribeScope) catch unreachable;
+        scope.* = .{
+            .label = label,
+            .parent = parent,
+            .file_id = parent.file_id,
+            .tag = if (parent.is_skip) parent.tag else tag,
+            .is_skip = is_skip or parent.is_skip,
+        };
+
+        return scope.run(globalThis, function);
+    }
+
+    return this;
+}
+
+inline fn createIfScope(
+    globalThis: *JSGlobalObject,
+    callframe: *CallFrame,
+    comptime property: string,
+    comptime signature: string,
+    comptime Scope: type,
+    comptime is_skip: bool,
+) JSValue {
+    const arguments = callframe.arguments(1);
+    const args = arguments.ptr[0..arguments.len];
+
+    if (args.len == 0) {
+        globalThis.throwPretty("{s} expects a condition", .{signature});
+        return .zero;
+    }
+
+    const name = ZigString.static(property);
+    const value = args[0].toBooleanSlow(globalThis);
+    const skip = if (is_skip) Scope.skip else Scope.call;
+    const call = if (is_skip) Scope.call else Scope.skip;
+
+    if (value) {
+        return JSC.NewFunction(globalThis, name, 2, skip, false);
+    }
+
+    return JSC.NewFunction(globalThis, name, 2, call, false);
+}
+
+// In Github Actions, emit an annotation that renders the error and location.
+// https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-an-error-message
+pub fn printGithubAnnotation(exception: *JSC.ZigException) void {
+    const name = exception.name;
+    const message = exception.message;
+    const frames = exception.stack.frames();
+    const top_frame = if (frames.len > 0) frames[0] else null;
+    const dir = bun.getenvZ("GITHUB_WORKSPACE") orelse bun.fs.FileSystem.instance.top_level_dir;
+    const allocator = bun.default_allocator;
+
+    var has_location = false;
+
+    if (top_frame) |frame| {
+        if (!frame.position.isInvalid()) {
+            const source_url = frame.source_url.toSlice(allocator);
+            defer source_url.deinit();
+            const file = bun.path.relative(dir, source_url.slice());
+            Output.printError("\n::error file={s},line={d},col={d},title=", .{
+                file,
+                frame.position.line_start + 1,
+                frame.position.column_start,
+            });
+            has_location = true;
+        }
+    }
+
+    if (!has_location) {
+        Output.printError("\n::error title=", .{});
+    }
+
+    if (name.len == 0 or name.eqlComptime("Error")) {
+        Output.printError("error", .{});
+    } else {
+        Output.printError("{s}", .{name.githubAction()});
+    }
+
+    if (message.len > 0) {
+        const message_slice = message.toSlice(allocator);
+        defer message_slice.deinit();
+        const msg = message_slice.slice();
+
+        var cursor: u32 = 0;
+        while (strings.indexOfNewlineOrNonASCIIOrANSI(msg, cursor)) |i| {
+            cursor = i + 1;
+            if (msg[i] == '\n') {
+                const first_line = ZigString.init(msg[0..i]);
+                Output.printError(": {s}::", .{first_line.githubAction()});
+                break;
+            }
+        } else {
+            Output.printError(": {s}::", .{message.githubAction()});
+        }
+
+        while (strings.indexOfNewlineOrNonASCIIOrANSI(msg, cursor)) |i| {
+            cursor = i + 1;
+            if (msg[i] == '\n') {
+                break;
+            }
+        }
+
+        if (cursor > 0) {
+            const body = ZigString.init(msg[cursor..]);
+            Output.printError("{s}", .{body.githubAction()});
+        }
+    } else {
+        Output.printError("::", .{});
+    }
+
+    // TODO: cleanup and refactor to use printStackTrace()
+    if (top_frame) |_| {
+        const vm = VirtualMachine.get();
+        const origin = if (vm.is_from_devserver) &vm.origin else null;
+
+        var i: i16 = 0;
+        while (i < frames.len) : (i += 1) {
+            const frame = frames[@intCast(usize, i)];
+            const source_url = frame.source_url.toSlice(allocator);
+            defer source_url.deinit();
+            const file = bun.path.relative(dir, source_url.slice());
+            const func = frame.function_name.toSlice(allocator);
+
+            if (file.len == 0 and func.len == 0) continue;
+
+            const has_name = std.fmt.count("{any}", .{frame.nameFormatter(
+                false,
+            )}) > 0;
+
+            // %0A = escaped newline
+            if (has_name) {
+                Output.printError(
+                    "%0A      at {any} ({any})",
+                    .{
+                        frame.nameFormatter(false),
+                        frame.sourceURLFormatter(
+                            file,
+                            origin,
+                            false,
+                            false,
+                        ),
+                    },
+                );
+            } else {
+                Output.printError(
+                    "%0A      at {any}",
+                    .{
+                        frame.sourceURLFormatter(
+                            file,
+                            origin,
+                            false,
+                            false,
+                        ),
+                    },
+                );
+            }
+        }
+    }
+
+    Output.printError("\n", .{});
+    Output.flush();
+}

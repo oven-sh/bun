@@ -168,12 +168,20 @@ pub var enable_ansi_colors = Environment.isNative;
 pub var enable_ansi_colors_stderr = Environment.isNative;
 pub var enable_ansi_colors_stdout = Environment.isNative;
 pub var enable_buffering = Environment.isNative;
+pub var is_github_action = false;
 
 pub var stderr_descriptor_type = OutputStreamDescriptor.unknown;
 pub var stdout_descriptor_type = OutputStreamDescriptor.unknown;
 
 pub inline fn isEmojiEnabled() bool {
     return enable_ansi_colors and !Environment.isWindows;
+}
+
+pub fn isGithubAction() bool {
+    if (bun.getenvZ("GITHUB_ACTIONS")) |value| {
+        return strings.eqlComptime(value, "true");
+    }
+    return false;
 }
 
 var _source_for_test: if (Environment.isTest) Output.Source else void = undefined;

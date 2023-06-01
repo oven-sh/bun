@@ -442,12 +442,24 @@ pub const VirtualMachine = struct {
     onUnhandledRejectionCtx: ?*anyopaque = null,
     unhandled_error_counter: usize = 0,
 
+    on_exception: ?*const OnException = null,
+
     modules: ModuleLoader.AsyncModule.Queue = .{},
     aggressive_garbage_collection: GCLevel = GCLevel.none,
 
     gc_controller: JSC.GarbageCollectionController = .{},
 
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    pub const OnException = fn (*ZigException) void;
+
+    pub fn setOnException(this: *VirtualMachine, callback: *const OnException) void {
+        this.on_exception = callback;
+    }
+
+    pub fn clearOnException(this: *VirtualMachine) void {
+        this.on_exception = null;
+    }
 
     const VMHolder = struct {
         pub threadlocal var vm: ?*VirtualMachine = null;
@@ -2068,6 +2080,9 @@ pub const VirtualMachine = struct {
         var exception = exception_holder.zigException();
         this.remapZigException(exception, error_instance, exception_list);
         this.had_errors = true;
+        defer if (this.on_exception) |cb| {
+            cb(exception);
+        };
 
         var line_numbers = exception.stack.source_lines_numbers[0..exception.stack.source_lines_len];
         var max_line: i32 = -1;
@@ -2093,6 +2108,7 @@ pub const VirtualMachine = struct {
         var name = exception.name;
 
         const message = exception.message;
+
         var did_print_name = false;
         if (source_lines.next()) |source| brk: {
             if (source.text.len == 0) break :brk;
@@ -2228,7 +2244,7 @@ pub const VirtualMachine = struct {
         }
 
         if (show.syscall) {
-            try writer.print(comptime Output.prettyFmt("syscall<d>: <r><cyan>\"{s}\"<r>\n", allow_ansi_color), .{exception.syscall});
+            try writer.print(comptime Output.prettyFmt(" syscall<d>: <r><cyan>\"{s}\"<r>\n", allow_ansi_color), .{exception.syscall});
             add_extra_line = true;
         }
 
@@ -2236,7 +2252,7 @@ pub const VirtualMachine = struct {
             if (show.syscall) {
                 try writer.writeAll("  ");
             }
-            try writer.print(comptime Output.prettyFmt("errno<d>: <r><yellow>{d}<r>\n", allow_ansi_color), .{exception.errno});
+            try writer.print(comptime Output.prettyFmt(" errno<d>: <r><yellow>{d}<r>\n", allow_ansi_color), .{exception.errno});
             add_extra_line = true;
         }
 

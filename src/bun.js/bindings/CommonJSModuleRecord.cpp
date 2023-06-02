@@ -391,8 +391,12 @@ JSC::SourceCode createCommonJSModule(
                 //      to pass to that and it isn't used directly much, so that
                 //      seems harder to do correctly.
                 {
+                    globalObject->clearGlobalScopeExtension();
+
                     JSWithScope* withScope = JSWithScope::create(vm, globalObject, globalObject->globalScope(), scopeExtensionObject);
-                    vm.interpreter.executeEval(executable, globalObject, withScope);
+                    globalObject->setGlobalScopeExtension(withScope);
+                    vm.interpreter.executeEval(executable, globalObject, globalObject->globalScope());
+                    globalObject->clearGlobalScopeExtension();
 
                     if (UNLIKELY(catchScope.exception())) {
                         auto returnedException = catchScope.exception();

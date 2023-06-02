@@ -554,6 +554,8 @@ extern "C" napi_status napi_wrap(napi_env env,
 
     auto* globalObject = toJS(env);
     auto& vm = globalObject->vm();
+    
+
     auto* val = jsDynamicCast<NapiPrototype*>(value);
 
     if (!val) {
@@ -570,7 +572,8 @@ extern "C" napi_status napi_wrap(napi_env env,
     auto clientData = WebCore::clientData(vm);
 
     auto* ref = new NapiRef(globalObject, 0);
-    ref->weakValueRef.setObject(val, weakValueHandleOwner(), ref);
+    // ref->strongRef.set(globalObject->vm(), value.getObject());    
+    ref->weakValueRef.setObject(value.getObject(), weakValueHandleOwner(), ref);
 
     if (finalize_cb) {
         ref->finalizer.finalize_cb = finalize_cb;
@@ -795,10 +798,13 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = globalObject->vm();
 
-    auto* ref = new NapiRef(toJS(env), initial_refcount);
-
+    NapiPrototype* object = jsDynamicCast<NapiPrototype*>(val);
+    if (object && object->napiRef) {
+        *result = toNapi(object->napiRef);
+        return napi_ok;
+    }
     auto clientData = WebCore::clientData(vm);
-
+    auto* ref = new NapiRef(globalObject, initial_refcount);
     if (initial_refcount > 0) {
         ref->strongRef.set(globalObject->vm(), val);
     } else {
@@ -811,7 +817,7 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
         }
     }
 
-    if (NapiPrototype* object = jsDynamicCast<NapiPrototype*>(val)) {
+    if(object) {
         object->napiRef = ref;
     }
 

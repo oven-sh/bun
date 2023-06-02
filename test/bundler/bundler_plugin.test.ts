@@ -122,6 +122,34 @@ describe("bundler", () => {
       "/foo.magic": [`123`],
     },
   });
+  itBundled("plugin/ResolveAndLoadDefaultExport", {
+    todo: true,
+    files: {
+      "index.ts": /* ts */ `
+      import foo from "./foo.magic";
+      console.log(foo);
+    `,
+      "foo.magic": `
+      hello world
+    `,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /\.magic$/ }, async args => {
+        return {
+          path: path.resolve(args.importer, args.path),
+        };
+      });
+      builder.onLoad({ filter: /\.magic$/ }, async args => {
+        return {
+          contents: `export default "foo";`,
+          loader: "js",
+        };
+      });
+    },
+    run: {
+      stdout: "foo",
+    },
+  });
 
   // Load Plugin Errors
   itBundled("plugin/ResolveThrow", {

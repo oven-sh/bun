@@ -688,9 +688,9 @@ pub const ZigStackFrame = extern struct {
     };
 
     pub const Zero: ZigStackFrame = ZigStackFrame{
-        .function_name = ZigString{ .ptr = "", .len = 0 },
+        .function_name = ZigString{ ._unsafe_ptr_do_not_use = "", .len = 0 },
         .code_type = ZigStackFrameCode.None,
-        .source_url = ZigString{ .ptr = "", .len = 0 },
+        .source_url = ZigString{ ._unsafe_ptr_do_not_use = "", .len = 0 },
         .position = ZigStackFramePosition.Invalid,
     };
 

@@ -1672,16 +1672,19 @@ pub const Path = struct {
         }
     }
     fn isAbsoluteString(path: JSC.ZigString, windows: bool) bool {
-        if (!windows) return path.len > 0 and path.slice()[0] == '/';
+        if (!windows) return path.hasPrefixChar('/');
 
         return isZigStringAbsoluteWindows(path);
     }
     pub fn isAbsolute(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
-        if (args_len == 0) return JSC.JSValue.jsBoolean(false);
-        var zig_str: JSC.ZigString = args_ptr[0].getZigString(globalThis);
-        if (zig_str.isEmpty()) return JSC.JSValue.jsBoolean(false);
-        return JSC.JSValue.jsBoolean(isAbsoluteString(zig_str, isWindows));
+        const arg = if (args_len > 0) args_ptr[0] else JSC.JSValue.undefined;
+        if (!arg.isString()) {
+            globalThis.throwInvalidArgumentType("isAbsolute", "path", "string");
+            return JSC.JSValue.undefined;
+        }
+        const zig_str = arg.getZigString(globalThis);
+        return JSC.JSValue.jsBoolean(zig_str.len > 0 and isAbsoluteString(zig_str, isWindows));
     }
     fn isZigStringAbsoluteWindows(zig_str: JSC.ZigString) bool {
         if (zig_str.is16Bit()) {

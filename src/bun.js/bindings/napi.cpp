@@ -560,7 +560,7 @@ extern "C" napi_status napi_wrap(napi_env env,
         return napi_object_expected;
     }
 
-    if (6val->napiRef) {
+    if (val->napiRef) {
         // Calling napi_wrap() a second time on an object will return an error.
         // To associate another native instance with the object, use
         // napi_remove_wrap() first.

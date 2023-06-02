@@ -1506,10 +1506,10 @@ pub export fn napi_create_threadsafe_function(
         .callback = if (call_js_cb) |c| .{
             .c = .{
                 .napi_threadsafe_function_call_js = c,
-                .js = if (func == .zero) JSC.JSValue.jsNull() else func,
+                .js = if (func == .zero) JSC.JSValue.jsUndefined() else func,
             },
         } else .{
-            .js = if (func == .zero) JSC.JSValue.jsNull() else func,
+            .js = if (func == .zero) JSC.JSValue.jsUndefined() else func,
         },
         .ctx = context,
         .channel = ThreadSafeFunction.Queue.init(max_queue_size, bun.default_allocator),

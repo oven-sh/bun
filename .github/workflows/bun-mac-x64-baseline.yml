@@ -1,4 +1,9 @@
 name: bun-macOS-x64-baseline
+
+concurrency:
+  group: bun-macOS-x64-baseline-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}

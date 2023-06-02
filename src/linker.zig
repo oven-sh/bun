@@ -478,8 +478,9 @@ pub const Linker = struct {
                     };
 
                     if (resolved_import_) |*resolved_import| {
-                        if (resolved_import.is_external) {
-                            externals.append(record_index) catch unreachable;
+                        if (resolved_import.is_external or resolved_import.is_standalone_module) {
+                            if (resolved_import.is_external)
+                                externals.append(record_index) catch unreachable;
                             continue;
                         }
 

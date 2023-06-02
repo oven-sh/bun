@@ -2,19 +2,23 @@ import { expectType } from "tsd";
 
 declare module "bun" {
   export interface Env {
-    WHATEVER: "WHATEVER";
+    FOO: "FOO";
   }
 }
 
-expectType<"WHATEVER">(process.env.WHATEVER);
+declare global {
+  namespace NodeJS {
+    interface ProcessEnv {
+      BAR: "BAR";
+    }
+  }
+}
 
-export {};
-new Bun.Transpiler({
-  macro: {
-    "react-relay": {
-      graphql: "bun-macro-relay/bun-macro-relay.tsx",
-    },
-  },
-});
+expectType<"FOO">(process.env.FOO);
+expectType<"BAR">(process.env.BAR);
 
-Event;
+process.env.FOO;
+process.env.BAR;
+process.env.OTHER;
+Bun.env.FOO;
+Bun.env.BAR;

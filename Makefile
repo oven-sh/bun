@@ -2,7 +2,7 @@ SHELL := $(shell which bash) # Use bash syntax to be consistent
 
 OS_NAME := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 ARCH_NAME_RAW := $(shell uname -m)
-# TODO: remove this in upcomming next versions
+# For backwards compatibility, look into https://github.com/oven-sh/bun/pull/3155 for more informations
 BUN_AUTO_UPDATER_REPO = Jarred-Sumner/bun-releases-for-updater
 
 CMAKE_CXX_COMPILER_LAUNCHER_FLAG :=
@@ -943,13 +943,13 @@ bump:
 identifier-cache:
 	$(ZIG) run src/js_lexer/identifier_data.zig
 
-# TODO: remove this in upcomming next versions
+# For backwards compatibility, look into https://github.com/oven-sh/bun/pull/3155 for more informations
 tag:
 	git tag $(BUN_BUILD_TAG)
 	git push --tags
 	cd ../bun-releases-for-updater && echo $(BUN_BUILD_TAG) > bumper && git add bumper && git commit -m "Update latest release" && git tag $(BUN_BUILD_TAG) && git push
 
-# TODO: remove this in upcomming next versions
+# For backwards compatibility, look into https://github.com/oven-sh/bun/pull/3155 for more informations
 .PHONY: prepare-release
 prepare-release: tag release-create
 
@@ -958,7 +958,7 @@ release-create-auto-updater:
 .PHONY: release-create
 release-create:
 	gh release create --title "bun v$(PACKAGE_JSON_VERSION)" "$(BUN_BUILD_TAG)"
-	# TODO: remove this in upcomming next versions
+	# For backwards compatibility, look into https://github.com/oven-sh/bun/pull/3155 for more informations
 	gh release create --repo=$(BUN_AUTO_UPDATER_REPO) --title "bun v$(PACKAGE_JSON_VERSION)" "$(BUN_BUILD_TAG)" -n "See https://github.com/oven-sh/bun/releases/tag/$(BUN_BUILD_TAG) for release notes. Using the install script or bun upgrade is the recommended way to install bun. Join bun's Discord to get access https://bun.sh/discord"
 
 release-bin-entitlements:

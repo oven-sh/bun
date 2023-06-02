@@ -104,13 +104,13 @@ VSCode is the recommended IDE for working on Bun, as it has been configured. Onc
 
 ## JavaScript builtins
 
-When you change anything in `src/bun.js/builtins/js/*` or switch branches, run this:
+When you change anything in `src/js/builtins/*` or switch branches, run this:
 
 ```bash
 $ make regenerate-bindings
 ```
 
-That inlines the JavaScript code into C++ headers using the same builtins generator script that Safari uses.
+That inlines the TypeScript code into C++ headers.
 
 {% callout %}
 Make sure you have `ccache` installed, otherwise regeneration will take much longer than it should.

@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "sources": ["src/js/node/trace_events.ts"],
+  "sourcesContent": [
+    "// Hardcoded module \"node:trace_events\"\n// This is a stub! This is not actually implemented yet.\nclass Tracing {\n  enabled = false;\n  categories = \"\";\n}\n\nfunction ERR_INVALID_ARG_TYPE(name, type, value) {\n  const err = new TypeError(`The \"${name}\" argument must be of type ${type}. Received ${value}`);\n  err.code = \"ERR_INVALID_ARG_TYPE\";\n  return err;\n}\n\nfunction createTracing(opts) {\n  if (typeof opts !== \"object\" || opts == null) {\n    throw new ERR_INVALID_ARG_TYPE(\"options\", \"Object\", opts);\n  }\n\n  // TODO: validate categories\n  return new Tracing(opts);\n}\n\nfunction getEnabledCategories() {\n  return \"\";\n}\n\nvar defaultObject = {\n  createTracing,\n  getEnabledCategories,\n  [Symbol.for(\"CommonJS\")]: 0,\n};\n\nexport { defaultObject as default, createTracing, getEnabledCategories };\n"
+  ],
+  "mappings": ";;A//////DAOA,IAAS,+BAAoB,CAAC,MAAM,MAAM,OAAO;AAC/C,QAAM,MAAM,IAAI,UAAU,QAAQ,kCAAkC,kBAAkB,OAAO;AAE7F,SADA,IAAI,OAAO,wBACJ;AAAA,GAGA,wBAAa,CAAC,MAAM;AAC3B,aAAW,SAAS,YAAY,QAAQ;AACtC,UAAM,IAAI,qBAAqB,WAAW,UAAU,IAAI;AAI1D,SAAO,IAAI,QAAQ,IAAI;AAAA,GAGhB,+BAAoB,GAAG;AAC9B,SAAO;AAAA;AArBT;AAAA,MAAM,QAAQ;AAAA,EACZ,UAAU;AAAA,EACV,aAAa;AACf;AAqBA,IAAI,gBAAgB;AAAA,EAClB;AAAA,EACA;AAAA,GACC,OAAO,IAAI,UAAU,IAAI;AAC5B;",
+  "debugId": "894AC2C0DB36871B64756e2164756e21",
+  "names": []
+}

@@ -1,0 +1,1 @@
+var{Bun:T}=import.meta.primordials,c=T.readableStreamToArrayBuffer,g=T.readableStreamToText,h=(o)=>T.readableStreamToText(o).then(JSON.parse),i=async(o)=>{return new Buffer(await c(o))},k=T.readableStreamToBlob,p={[Symbol.for("CommonJS")]:0,arrayBuffer:c,text:g,json:h,buffer:i,blob:k};export{g as text,h as json,p as default,i as buffer,k as blob,c as arrayBuffer};

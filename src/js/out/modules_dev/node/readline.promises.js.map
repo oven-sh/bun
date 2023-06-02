@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "sources": ["src/js/node/readline.promises.js"],
+  "sourcesContent": [
+    "// Hardcoded module \"node:readline/promises\"\nvar {\n  promises: { Readline, Interface, createInterface },\n} = import.meta.require(\"node:readline\");\n\nexport default {\n  Readline,\n  Interface,\n  createInterface,\n  [Symbol.for(\"CommonJS\")]: 0,\n};\n"
+  ],
+  "mappings": ";;A//////DACA;AAAA,EACE,YAAY,UAAU,WAAW;AAAA,IAC/B,YAAY,QAAQ,eAAe,GAHJ;AAAA,EAMjC;AAAA,EACA;AAAA,EACA;AAAA,GACC,OAAO,IAAI,UAAU,IAAI;AAC5B;",
+  "debugId": "C8B5A2D92201C11264756e2164756e21",
+  "names": []
+}

@@ -33,8 +33,15 @@ export function loadCJS2ESM(this: ImportMetaObject, resolvedSpecifier: string) {
       if (state === $promiseStatePending || (reactionsOrResult && $isPromise(reactionsOrResult))) {
         throw new TypeError(`require() async module "${key}" is unsupported`);
       } else if (state === $promiseStateRejected) {
-        // TODO: use SyntaxError but preserve the specifier
-        throw new TypeError(`${reactionsOrResult?.message ?? "An error occurred"} while parsing module \"${key}\"`);
+        if (!reactionsOrResult?.message) {
+          throw new TypeError(
+            `${
+              reactionsOrResult + "" ? reactionsOrResult : "An error occurred"
+            } occurred while parsing module \"${key}\"`,
+          );
+        }
+
+        throw reactionsOrResult;
       }
       entry.module = module = reactionsOrResult;
     } else if (moduleRecordPromise && !module) {

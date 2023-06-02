@@ -3058,20 +3058,6 @@ fn NewPrinter(
             while (i < len) {
                 switch (utf8[i]) {
                     '\\' => i += 2,
-                    // We must escape here for JSX string literals that contain unescaped newlines
-                    // Those will get transformed into a template string
-                    // which can potentially have unescaped $
-                    '$' => {
-                        if (comptime c == '`') {
-                            p.print(utf8[0..i]);
-                            p.print("\\$");
-
-                            utf8 = utf8[i + 1 ..];
-                            len = utf8.len;
-                            i = 0;
-                        }
-                        i += 1;
-                    },
                     c => {
                         p.print(utf8[0..i]);
                         p.print("\\" ++ &[_]u8{c});

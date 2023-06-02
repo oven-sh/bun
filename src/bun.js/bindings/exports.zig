@@ -2041,6 +2041,7 @@ pub const ZigConsoleClient = struct {
                         Writer,
                         writer_,
                         enable_ansi_colors,
+                        false,
                     );
                 },
                 .Class => {

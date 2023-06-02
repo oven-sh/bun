@@ -317,7 +317,7 @@ describe("bun test", () => {
       });
       expect(stderr).not.toContain("::error");
     });
-    test("should not annotate errors when using inspect()", () => {
+    test("should not annotate errors with inspect() by default", () => {
       const stderr = runTest({
         input: `
           import { test } from "bun:test";
@@ -329,6 +329,22 @@ describe("bun test", () => {
         `,
         env: {
           GITHUB_ACTIONS: undefined,
+        },
+      });
+      expect(stderr).not.toContain("::error");
+    });
+    test("should not annotate errors with inspect() when enabled", () => {
+      const stderr = runTest({
+        input: `
+          import { test } from "bun:test";
+          import { inspect } from "bun";
+          test("inspect", () => {
+            inspect(new TypeError());
+            console.error(inspect(new TypeError()));
+          });
+        `,
+        env: {
+          GITHUB_ACTIONS: "true",
         },
       });
       expect(stderr).not.toContain("::error");

@@ -1516,11 +1516,12 @@ pub const VirtualMachine = struct {
         exception_list: ?*ExceptionList,
         comptime Writer: type,
         writer: Writer,
+        comptime allow_side_effects: bool,
     ) void {
         if (Output.enable_ansi_colors) {
-            this.printErrorlikeObject(exception.value(), exception, exception_list, Writer, writer, true);
+            this.printErrorlikeObject(exception.value(), exception, exception_list, Writer, writer, true, allow_side_effects);
         } else {
-            this.printErrorlikeObject(exception.value(), exception, exception_list, Writer, writer, false);
+            this.printErrorlikeObject(exception.value(), exception, exception_list, Writer, writer, false, allow_side_effects);
         }
     }
 
@@ -1543,11 +1544,12 @@ pub const VirtualMachine = struct {
                 exception_list,
                 @TypeOf(Output.errorWriter()),
                 Output.errorWriter(),
+                true,
             );
         } else if (Output.enable_ansi_colors) {
-            this.printErrorlikeObject(result, null, exception_list, @TypeOf(Output.errorWriter()), Output.errorWriter(), true);
+            this.printErrorlikeObject(result, null, exception_list, @TypeOf(Output.errorWriter()), Output.errorWriter(), true, true);
         } else {
-            this.printErrorlikeObject(result, null, exception_list, @TypeOf(Output.errorWriter()), Output.errorWriter(), false);
+            this.printErrorlikeObject(result, null, exception_list, @TypeOf(Output.errorWriter()), Output.errorWriter(), false, true);
         }
     }
 
@@ -1764,6 +1766,7 @@ pub const VirtualMachine = struct {
         comptime Writer: type,
         writer: Writer,
         comptime allow_ansi_color: bool,
+        comptime allow_side_effects: bool,
     ) void {
         if (comptime JSC.is_bindgen) {
             return;
@@ -1805,7 +1808,7 @@ pub const VirtualMachine = struct {
                 }
                 inline fn iterator(_: [*c]VM, _: [*c]JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
                     var this_ = @intToPtr(*@This(), @ptrToInt(ctx));
-                    VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, Writer, this_.writer, color);
+                    VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, Writer, this_.writer, color, allow_side_effects);
                 }
             };
             var iter = AggregateErrorIterator{ .writer = writer, .current_exception_list = exception_list };
@@ -1823,6 +1826,7 @@ pub const VirtualMachine = struct {
             Writer,
             writer,
             allow_ansi_color,
+            allow_side_effects,
         );
     }
 
@@ -1833,6 +1837,7 @@ pub const VirtualMachine = struct {
         comptime Writer: type,
         writer: Writer,
         comptime allow_ansi_color: bool,
+        comptime allow_side_effects: bool,
     ) bool {
         if (value.jsType() == .DOMWrapper) {
             if (value.as(JSC.BuildMessage)) |build_error| {
@@ -1873,6 +1878,7 @@ pub const VirtualMachine = struct {
             Writer,
             writer,
             allow_ansi_color,
+            allow_side_effects,
         ) catch |err| {
             if (comptime Environment.isDebug) {
                 // yo dawg
@@ -2075,14 +2081,17 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn printErrorInstance(this: *VirtualMachine, error_instance: JSValue, exception_list: ?*ExceptionList, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool) !void {
+    pub fn printErrorInstance(this: *VirtualMachine, error_instance: JSValue, exception_list: ?*ExceptionList, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool, comptime allow_side_effects: bool) !void {
         var exception_holder = ZigException.Holder.init();
         var exception = exception_holder.zigException();
         this.remapZigException(exception, error_instance, exception_list);
         this.had_errors = true;
-        defer if (this.on_exception) |cb| {
-            cb(exception);
-        };
+
+        if (allow_side_effects) {
+            defer if (this.on_exception) |cb| {
+                cb(exception);
+            };
+        }
 
         var line_numbers = exception.stack.source_lines_numbers[0..exception.stack.source_lines_len];
         var max_line: i32 = -1;

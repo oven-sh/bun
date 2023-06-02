@@ -4,7 +4,7 @@
 
 namespace Zig {
 
-inline void
+inline JSValue
 generateStringDecoderSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
                                 JSC::Identifier moduleKey,
                                 Vector<JSC::Identifier, 4> &exportNames,
@@ -28,6 +28,7 @@ generateStringDecoderSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
 
   exportNames.append(vm.propertyNames->defaultKeyword);
   exportValues.append(defaultObject);
+  return {};
 }
 
 } // namespace Zig

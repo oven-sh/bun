@@ -18,10 +18,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNotImplemented,
   return JSValue::encode(jsUndefined());
 }
 
-inline void generateBufferSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
-                                     JSC::Identifier moduleKey,
-                                     Vector<JSC::Identifier, 4> &exportNames,
-                                     JSC::MarkedArgumentBuffer &exportValues) {
+inline JSValue
+generateBufferSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
+                         JSC::Identifier moduleKey,
+                         Vector<JSC::Identifier, 4> &exportNames,
+                         JSC::MarkedArgumentBuffer &exportValues) {
   JSC::VM &vm = lexicalGlobalObject->vm();
   GlobalObject *globalObject =
       reinterpret_cast<GlobalObject *>(lexicalGlobalObject);
@@ -105,6 +106,7 @@ inline void generateBufferSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
 
   exportNames.append(vm.propertyNames->defaultKeyword);
   exportValues.append(defaultObject);
+  return {};
 }
 
 } // namespace Zig

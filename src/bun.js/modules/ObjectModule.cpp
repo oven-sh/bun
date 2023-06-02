@@ -9,7 +9,7 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject *globalObject,
   return [object](JSC::JSGlobalObject *lexicalGlobalObject,
                   JSC::Identifier moduleKey,
                   Vector<JSC::Identifier, 4> &exportNames,
-                  JSC::MarkedArgumentBuffer &exportValues) -> void {
+                  JSC::MarkedArgumentBuffer &exportValues) -> JSValue {
     JSC::VM &vm = lexicalGlobalObject->vm();
     GlobalObject *globalObject =
         reinterpret_cast<GlobalObject *>(lexicalGlobalObject);
@@ -24,6 +24,8 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject *globalObject,
       exportNames.append(entry);
       exportValues.append(object->get(globalObject, entry));
     }
+
+    return {};
   };
 }
 } // namespace Zig

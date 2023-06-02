@@ -116,10 +116,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
 }
 
 namespace Zig {
-void generateNodeModuleModule(JSC::JSGlobalObject *globalObject,
-                              JSC::Identifier moduleKey,
-                              Vector<JSC::Identifier, 4> &exportNames,
-                              JSC::MarkedArgumentBuffer &exportValues) {
+JSValue generateNodeModuleModule(JSC::JSGlobalObject *globalObject,
+                                 JSC::Identifier moduleKey,
+                                 Vector<JSC::Identifier, 4> &exportNames,
+                                 JSC::MarkedArgumentBuffer &exportValues) {
   JSC::VM &vm = globalObject->vm();
 
   exportValues.append(JSFunction::create(
@@ -185,5 +185,7 @@ void generateNodeModuleModule(JSC::JSGlobalObject *globalObject,
   builtinModules->putDirectIndex(globalObject, 6,
                                  JSC::jsString(vm, String("bun:sqlite"_s)));
   exportValues.append(builtinModules);
+
+  return {};
 }
 } // namespace Zig

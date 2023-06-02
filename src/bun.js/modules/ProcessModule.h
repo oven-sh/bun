@@ -35,10 +35,11 @@ JSC_DEFINE_CUSTOM_SETTER(jsFunctionProcessModuleCommonJSSetter,
       ->putDirect(vm, propertyName, JSValue::decode(encodedValue), 0);
 }
 
-inline void generateProcessSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
-                                      JSC::Identifier moduleKey,
-                                      Vector<JSC::Identifier, 4> &exportNames,
-                                      JSC::MarkedArgumentBuffer &exportValues) {
+inline JSValue
+generateProcessSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
+                          JSC::Identifier moduleKey,
+                          Vector<JSC::Identifier, 4> &exportNames,
+                          JSC::MarkedArgumentBuffer &exportValues) {
   JSC::VM &vm = lexicalGlobalObject->vm();
   GlobalObject *globalObject =
       reinterpret_cast<GlobalObject *>(lexicalGlobalObject);
@@ -71,6 +72,8 @@ inline void generateProcessSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
                                         jsFunctionProcessModuleCommonJSSetter),
         0);
   }
+
+  return {};
 }
 
 } // namespace Zig

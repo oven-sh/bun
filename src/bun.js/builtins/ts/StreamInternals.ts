@@ -79,12 +79,12 @@ export function promiseInvokeOrFallbackOrNoop(object, key1, args1, key2, args2) 
 export function validateAndNormalizeQueuingStrategy(size, highWaterMark) {
   if (size !== undefined && typeof size !== "function") throw new TypeError("size parameter must be a function");
 
-  const newHighWaterMark = $toNumber(highWaterMark);
+  highWaterMark = $toNumber(highWaterMark);
 
-  if (isNaN(newHighWaterMark) || newHighWaterMark < 0)
+  if (highWaterMark !== highWaterMark || highWaterMark < 0)
     throw new RangeError("highWaterMark value is negative or not a number");
 
-  return { size: size, highWaterMark: newHighWaterMark };
+  return { size, highWaterMark };
 }
 
 $linkTimeConstant;
@@ -241,10 +241,10 @@ export function extractHighWaterMark(strategy, defaultHWM) {
 
   if (highWaterMark === undefined) return defaultHWM;
 
-  if (isNaN(highWaterMark) || highWaterMark < 0)
-    throw new RangeError("highWaterMark value is negative or not a number");
+  const result = $toNumber(highWaterMark);
+  if (result !== result || result < 0) throw new RangeError("highWaterMark value is negative or not a number");
 
-  return $toNumber(highWaterMark);
+  return result;
 }
 
 export function extractHighWaterMarkFromQueuingStrategyInit(init: { highWaterMark?: number }) {

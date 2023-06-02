@@ -22,8 +22,8 @@ interface VoidFunction {
 declare module "bun" {
   type ArrayBufferView = TypedArray | DataView;
   import { Encoding as CryptoEncoding } from "crypto";
-  
-  export interface Env extends Dict<string> {
+
+  export interface Env extends Dict<string>, NodeJS.ProcessEnv {
     NODE_ENV: string;
 
     /**
@@ -41,7 +41,7 @@ declare module "bun" {
      */
     TZ?: string;
   }
-  
+
   /**
    * The environment variables of the process
    *

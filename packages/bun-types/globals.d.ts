@@ -187,6 +187,8 @@ declare namespace NodeJS {
     (id: string): any;
     resolve: RequireResolve;
   }
+
+  interface ProcessEnv {}
   type Signals =
     | "SIGABRT"
     | "SIGALRM"

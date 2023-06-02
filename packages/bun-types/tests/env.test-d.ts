@@ -1,10 +1,8 @@
 import { expectType } from "tsd";
 
-declare global {
-  namespace Bun {
-    interface Env {
-      WHATEVER: "WHATEVER";
-    }
+declare module "bun" {
+  export interface Env {
+    WHATEVER: "WHATEVER";
   }
 }
 

@@ -313,7 +313,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsCryptoKey, (JSC::JSGlobalObject * globalObj
 }
 
 namespace Bun {
-void generateNodeUtilTypesSourceCode(JSC::JSGlobalObject* lexicalGlobalObject,
+JSC::JSValue generateNodeUtilTypesSourceCode(JSC::JSGlobalObject* lexicalGlobalObject,
     JSC::Identifier moduleKey,
     Vector<JSC::Identifier, 4>& exportNames,
     JSC::MarkedArgumentBuffer& exportValues)
@@ -379,5 +379,7 @@ void generateNodeUtilTypesSourceCode(JSC::JSGlobalObject* lexicalGlobalObject,
 
     exportNames.append(JSC::Identifier::fromString(vm, "default"_s));
     exportValues.append(defaultObject);
+    return {};
 }
+
 }

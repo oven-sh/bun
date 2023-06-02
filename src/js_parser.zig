@@ -17603,6 +17603,41 @@ fn NewParser_(
 
                             // rewrite `module.exports` to `exports`
                             return p.newExpr(E.Identifier{ .ref = p.exports_ref }, name_loc);
+                        } else if (p.options.features.commonjs_at_runtime and strings.eqlComptime(name, "exports")) {
+
+                            // Detect if we are doing
+                            //
+                            //  module.exports = {
+                            //    foo: "bar"
+                            //  }
+                            //
+                            //  Note that it cannot be any of these:
+                            //
+                            //  module.exports += { };
+                            //  delete module.exports = {};
+                            //  module.exports()
+                            if (!(identifier_opts.is_call_target or identifier_opts.is_delete_target) and
+                                identifier_opts.assign_target == .replace and
+                                p.stmt_expr_value == .e_binary and
+                                p.stmt_expr_value.e_binary.op == .bin_assign and
+                                !(p.stmt_expr_value.e_binary.right.data != .e_object or
+                                p.stmt_expr_value.e_binary.left.data != .e_dot or
+                                !strings.eqlComptime(p.stmt_expr_value.e_binary.left.data.e_dot.name, "exports") or
+                                p.stmt_expr_value.e_binary.left.data.e_dot.target.data != .e_identifier or
+                                !p.stmt_expr_value.e_binary.left.data.e_dot.target.data.e_identifier.ref.eql(p.module_ref)))
+                            {
+                                const props: []const G.Property = p.stmt_expr_value.e_binary.right.data.e_object.properties.slice();
+                                for (props) |prop| {
+                                    // only worry about string literals
+                                    if (prop.key == null or
+                                        prop.key.?.data != .e_string or prop.key.?.data.e_string.len() == 0)
+                                    {
+                                        continue;
+                                    }
+
+                                    _ = p.commonjs_export_names.getOrPut(p.allocator, prop.key.?.data.e_string.slice(p.allocator)) catch unreachable;
+                                }
+                            }
                         } else if (p.options.bundle and strings.eqlComptime(name, "id") and identifier_opts.assign_target == .none) {
                             // inline module.id
                             p.ignoreUsage(p.module_ref);

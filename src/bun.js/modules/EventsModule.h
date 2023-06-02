@@ -4,10 +4,11 @@
 namespace Zig {
 using namespace WebCore;
 
-inline void generateEventsSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
-                                     JSC::Identifier moduleKey,
-                                     Vector<JSC::Identifier, 4> &exportNames,
-                                     JSC::MarkedArgumentBuffer &exportValues) {
+inline JSValue
+generateEventsSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
+                         JSC::Identifier moduleKey,
+                         Vector<JSC::Identifier, 4> &exportNames,
+                         JSC::MarkedArgumentBuffer &exportValues) {
   JSC::VM &vm = lexicalGlobalObject->vm();
   GlobalObject *globalObject =
       reinterpret_cast<GlobalObject *>(lexicalGlobalObject);
@@ -53,6 +54,8 @@ inline void generateEventsSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
 
   exportNames.append(JSC::Identifier::fromString(vm, "default"_s));
   exportValues.append(eventEmitterModuleCJS);
+
+  return {};
 }
 
 } // namespace Zig

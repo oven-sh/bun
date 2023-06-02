@@ -178,6 +178,7 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 #include "CallSitePrototype.h"
 #include "DOMWrapperWorld-class.h"
 #include "CommonJSModuleRecord.h"
+#include "JavaScriptCore/SyntheticModuleRecord.h"
 
 constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 
@@ -4111,6 +4112,16 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* globalObject,
 
     if (UNLIKELY(scriptFetcher && scriptFetcher.isObject())) {
         return scriptFetcher;
+    }
+
+    if (JSC::SyntheticModuleRecord* record = jsDynamicCast<JSC::SyntheticModuleRecord*>(moduleRecordValue)) {
+        if (JSValue userValue = record->userValue()) {
+            auto* evalExecutable = jsDynamicCast<JSC::EvalExecutable*>(userValue);
+            return Bun::evaluateCommonJSModule(
+                reinterpret_cast<Zig::GlobalObject*>(globalObject),
+                record,
+                evalExecutable);
+        }
     }
 
     JSC::JSValue result = moduleLoader->evaluateNonVirtual(globalObject, key, moduleRecordValue,

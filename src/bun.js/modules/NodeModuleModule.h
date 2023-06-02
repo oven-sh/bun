@@ -4,9 +4,9 @@
 namespace Zig {
 
 // node:module
-void generateNodeModuleModule(JSC::JSGlobalObject *globalObject,
-                              JSC::Identifier moduleKey,
-                              Vector<JSC::Identifier, 4> &exportNames,
-                              JSC::MarkedArgumentBuffer &exportValues);
+JSValue generateNodeModuleModule(JSC::JSGlobalObject *globalObject,
+                                 JSC::Identifier moduleKey,
+                                 Vector<JSC::Identifier, 4> &exportNames,
+                                 JSC::MarkedArgumentBuffer &exportValues);
 
 } // namespace Zig

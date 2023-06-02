@@ -31,10 +31,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNotImplementedYet,
   return JSValue::encode(jsUndefined());
 }
 
-inline void generateTTYSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
-                                  JSC::Identifier moduleKey,
-                                  Vector<JSC::Identifier, 4> &exportNames,
-                                  JSC::MarkedArgumentBuffer &exportValues) {
+inline JSValue generateTTYSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
+                                     JSC::Identifier moduleKey,
+                                     Vector<JSC::Identifier, 4> &exportNames,
+                                     JSC::MarkedArgumentBuffer &exportValues) {
   JSC::VM &vm = lexicalGlobalObject->vm();
   GlobalObject *globalObject =
       reinterpret_cast<GlobalObject *>(lexicalGlobalObject);
@@ -73,6 +73,8 @@ inline void generateTTYSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
 
   exportNames.append(vm.propertyNames->defaultKeyword);
   exportValues.append(tty);
+
+  return {};
 }
 
 } // namespace Zig

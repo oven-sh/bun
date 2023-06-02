@@ -391,6 +391,8 @@ JSC::SourceCode createCommonJSModule(
                 //      to pass to that and it isn't used directly much, so that
                 //      seems harder to do correctly.
                 {
+                    // We must use a global scope extension or else the JSWithScope will be collected unexpectedly.
+                    // https://github.com/oven-sh/issues/3161
                     globalObject->clearGlobalScopeExtension();
 
                     JSWithScope* withScope = JSWithScope::create(vm, globalObject, globalObject->globalScope(), scopeExtensionObject);

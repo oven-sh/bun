@@ -218,7 +218,7 @@ static Structure* internalCreateCommonJSModuleStructure(
     structure = structure->addPropertyTransition(
         vm,
         structure,
-        JSC::Identifier::fromString(vm, "fileName"_s),
+        JSC::Identifier::fromString(vm, "filename"_s),
         0,
         offset);
 
@@ -310,9 +310,14 @@ JSC::SourceCode createCommonJSModule(
                     ? JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), source.commonJSExportsLen)
                     : JSC::constructEmptyObject(globalObject, globalObject->objectPrototype());
 
-                if (!globalObject->requireMap()->has(globalObject, requireMapKey)) {
-                    globalObject->requireMap()->set(globalObject, requireMapKey, exportsObject);
+                auto index = sourceURL.reverseFind('/', sourceURL.length());
+                JSString* dirname = jsEmptyString(vm);
+                JSString* filename = requireMapKey;
+                if (index != WTF::notFound) {
+                    dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
                 }
+
+                globalObject->requireMap()->set(globalObject, requireMapKey, exportsObject);
 
                 JSC::SourceCode inputSource(
                     JSC::StringSourceProvider::create(sourceCodeString,
@@ -344,6 +349,16 @@ JSC::SourceCode createCommonJSModule(
                 scopeExtensionObject->putDirectOffset(
                     vm,
                     2,
+                    dirname);
+
+                scopeExtensionObject->putDirectOffset(
+                    vm,
+                    3,
+                    filename);
+
+                scopeExtensionObject->putDirectOffset(
+                    vm,
+                    4,
                     requireFunction);
 
                 auto* executable = JSC::DirectEvalExecutable::create(

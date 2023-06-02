@@ -16483,14 +16483,12 @@ fn NewParser_(
                             // require.resolve(FOO) => import.meta.resolveSync(FOO, pathsObject)
                             return p.newExpr(
                                 E.Call{
-                                    .target = p.newExpr(
-                                        E.Dot{
-                                            .target = p.newExpr(E.ImportMeta{}, e_.target.loc),
-                                            .name = "resolveSync",
-                                            .name_loc = e_.target.data.e_dot.name_loc,
+                                    .target = Expr{
+                                        .data = .{
+                                            .e_require_resolve_call_target = {},
                                         },
-                                        e_.target.loc,
-                                    ),
+                                        .loc = e_.target.loc,
+                                    },
                                     .args = e_.args,
                                     .close_paren_loc = e_.close_paren_loc,
                                 },
@@ -21088,15 +21086,23 @@ fn NewParser_(
                 //
                 //   })(module, exports, require);
                 .bun_js => {
-                    var args = allocator.alloc(Arg, 3) catch unreachable;
-                    args[0] = Arg{
-                        .binding = p.b(B.Identifier{ .ref = p.module_ref }, logger.Loc.Empty),
-                    };
-                    args[1] = Arg{
-                        .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty),
-                    };
-                    args[2] = Arg{
-                        .binding = p.b(B.Identifier{ .ref = p.require_ref }, logger.Loc.Empty),
+                    var args = allocator.alloc(Arg, 5) catch unreachable;
+                    args[0..5].* = .{
+                        Arg{
+                            .binding = p.b(B.Identifier{ .ref = p.module_ref }, logger.Loc.Empty),
+                        },
+                        Arg{
+                            .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty),
+                        },
+                        Arg{
+                            .binding = p.b(B.Identifier{ .ref = p.require_ref }, logger.Loc.Empty),
+                        },
+                        Arg{
+                            .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
+                        },
+                        Arg{
+                            .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
+                        },
                     };
                     var total_stmts_count: usize = 0;
                     for (parts) |part| {
@@ -21124,15 +21130,17 @@ fn NewParser_(
                         },
                         logger.Loc.Empty,
                     );
-                    var call_args = allocator.alloc(Expr, 4) catch unreachable;
+                    var call_args = allocator.alloc(Expr, 6) catch unreachable;
 
                     //
-                    // (function(module, exports, require) {}).call(exports, module, exports, require)
-                    call_args[0..4].* = .{
+                    // (function(module, exports, require, __dirname, __filename) {}).call(exports, module, exports, require, __dirname, __filename)
+                    call_args[0..6].* = .{
                         p.newExpr(E.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty),
                         p.newExpr(E.Identifier{ .ref = p.module_ref }, logger.Loc.Empty),
                         p.newExpr(E.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty),
                         p.newExpr(E.Identifier{ .ref = p.require_ref }, logger.Loc.Empty),
+                        p.newExpr(E.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
+                        p.newExpr(E.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
                     };
 
                     const call = p.newExpr(

@@ -4141,6 +4141,7 @@ pub const Expr = struct {
         e_class,
         e_require_string,
         e_require_call_target,
+        e_require_resolve_call_target,
 
         e_commonjs_export_identifier,
 
@@ -4796,6 +4797,7 @@ pub const Expr = struct {
         e_require_string: E.RequireString,
         e_require_resolve_string: E.RequireResolveString,
         e_require_call_target: void,
+        e_require_resolve_call_target: void,
 
         e_missing: E.Missing,
         e_this: E.This,
@@ -7612,6 +7614,7 @@ pub const Macro = struct {
             e_require_resolve_string: E.RequireResolveString,
             e_require_string: E.RequireString,
             e_require_call_target: void,
+            e_require_resolve_call_target: void,
 
             g_property: *G.Property,
 
@@ -7660,6 +7663,7 @@ pub const Macro = struct {
             e_if,
             e_require_resolve_string,
             e_require_call_target,
+            e_require_resolve_call_target,
             e_import,
             e_this,
             e_class,

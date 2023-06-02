@@ -569,10 +569,8 @@ extern "C" napi_status napi_wrap(napi_env env,
 
     auto clientData = WebCore::clientData(vm);
 
-    auto* ref = new NapiRef(globalObject, 1);
-    ref->strongRef.set(globalObject->vm(), val);
-
-    // ref->weakValueRef.setObject(val, weakValueHandleOwner(), ref);
+    auto* ref = new NapiRef(globalObject, 0);
+    ref->weakValueRef.setObject(val, weakValueHandleOwner(), ref);
 
     if (finalize_cb) {
         ref->finalizer.finalize_cb = finalize_cb;
@@ -581,8 +579,6 @@ extern "C" napi_status napi_wrap(napi_env env,
 
     if (native_object) {
         ref->data = native_object;
-    } else {
-        printf("napi_wrap: native_object is null\n");
     }
 
     val->napiRef = ref;

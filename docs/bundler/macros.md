@@ -33,7 +33,7 @@ As you can see, the source code of the `random` function occurs nowhere in the b
 
 ## When to use macros
 
-If you have several build scripts for For small things where you would otherwise have a one-off build script, bundle-time code execution can be easier to maintain. It lives with the rest of your code, it runs with the rest of the build, it is automatically paralellized, and if it fails, the build fails too.
+If you have several build scripts for small things where you would otherwise have a one-off build script, bundle-time code execution can be easier to maintain. It lives with the rest of your code, it runs with the rest of the build, it is automatically paralellized, and if it fails, the build fails too.
 
 If you find yourself running a lot of code at bundle-time though, consider running a server instead.
 

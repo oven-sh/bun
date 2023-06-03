@@ -20,8 +20,8 @@
     "socket.io": "^4.6.1",
     "socket.io-client": "^4.6.1",
     "supertest": "^6.1.6",
-    "@prisma/client": "^4.15.0",
-    "prisma": "^4.15.0"
+    "@prisma/client": "4.15.0",
+    "prisma": "4.15.0"
   },
   "private": true,
   "scripts": {

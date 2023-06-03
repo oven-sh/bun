@@ -2,6 +2,34 @@ Configuring a development environment for Bun can take 10-30 minutes depending o
 
 If you are using Windows, you must use a WSL environment as Bun does not yet compile on Windows natively.
 
+Before starting, you will need to already have a release build of Bun installed, as we use our bundler to transpile and minify our code.
+
+{% codetabs %}
+
+```bash#Native
+$ curl -fsSL https://bun.sh/install | bash # for macOS, Linux, and WSL
+```
+
+```bash#npm
+$ npm install -g bun # the last `npm` command you'll ever need
+```
+
+```bash#Homebrew
+$ brew tap oven-sh/bun # for macOS and Linux
+$ brew install bun
+```
+
+```bash#Docker
+$ docker pull oven/bun
+$ docker run --rm --init --ulimit memlock=-1:-1 oven/bun
+```
+
+```bash#proto
+$ proto install bun
+```
+
+{% /codetabs %}
+
 ## Install LLVM
 
 Bun requires LLVM 15 and Clang 15 (`clang` is part of LLVM). This version requirement is to match WebKit (precompiled), as mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
@@ -148,14 +176,14 @@ $ make generate-sink
 
 You probably won't need to run that one much.
 
-## Modifying ESM hardcoded modules
+## Modifying ESM modules
 
 Certain modules like `node:fs`, `node:stream`, `bun:sqlite`, and `ws` are implemented in JavaScript. These live in `src/js/{node,bun,thirdparty}` files and are pre-bundled using Bun. The bundled code is committed so CI builds can run without needing a copy of Bun.
 
 When these are changed, run:
 
 ```
-$ make hardcoded
+$ make esm
 ```
 
 In debug builds, Bun automatically loads these from the filesystem, wherever it was compiled, so no need to re-run `make dev`. In release builds, this same behavior can be done via the environment variable `BUN_OVERRIDE_MODULE_PATH`. When set to the repository root, Bun will read from the bundled modules in the repository instead of the ones baked into the binary.

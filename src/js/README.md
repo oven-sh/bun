@@ -7,7 +7,7 @@
 When you change any of those folders, run this to bundle and minify them:
 
 ```bash
-$ make hardcoded
+$ make esm
 ```
 
 These modules are bundled into the binary, but in debug mode they are loaded from the filesystem, so you do not need to rerun `make dev`. If you want to override the modules in a release build, you can set `BUN_OVERRIDE_MODULE_PATH` to the path to the repo:

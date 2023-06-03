@@ -145,7 +145,6 @@ export async function request(
     // dispatcher,
   },
 ) {
-  console.log("request", { url, options });
   let {
     method = "GET",
     headers: inputHeaders,
@@ -225,8 +224,6 @@ export async function request(
   }
 
   const body = resp.body ? new BodyReadable(resp) : null;
-
-  console.log("response", { statusCode, headers, body, trailers });
 
   return { statusCode, headers: headers.toJSON(), body, trailers, opaque: kEmptyObject, context: kEmptyObject };
 }

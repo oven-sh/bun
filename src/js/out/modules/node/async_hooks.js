@@ -117,8 +117,10 @@ var asyncWrapProviders = {
 
 class AsyncResource {
   constructor(type, triggerAsyncId2) {
-    this.type = type, this.triggerAsyncId = triggerAsyncId2;
+    if (this.type = type, this.triggerAsyncId = triggerAsyncId2, AsyncResource.allowedRunInAsyncScope.has(type))
+      this.runInAsyncScope = this.#runInAsyncScope;
   }
+  static allowedRunInAsyncScope = new Set(["prisma-client-request"]);
   type;
   triggerAsyncId;
   emitBefore() {
@@ -129,17 +131,9 @@ class AsyncResource {
   }
   emitDestroy() {
   }
-  runInAsyncScope(fn, ...args) {
-    var result, err;
-    if (process.nextTick((fn2) => {
-      try {
-        result = fn2(...args);
-      } catch (err2) {
-        err = err2;
-      }
-    }, fn), drainMicrotasks(), err)
-      throw err;
-    return result;
+  runInAsyncScope;
+  #runInAsyncScope(fn, ...args) {
+    return fn(...args);
   }
   asyncId() {
     return 0;

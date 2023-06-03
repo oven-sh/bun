@@ -130,3 +130,30 @@ test("CRUD with relations", async () => {
     expect(deletedUser?.count).toBe(1);
   });
 });
+
+test("Should execute multiple commands at the same time", async () => {
+  await getPrisma(async (prisma: PrismaClient, testId: number) => {
+    const users = await Promise.all(
+      new Array(10).fill(0).map((_, i) =>
+        prisma.user.create({
+          data: {
+            testId,
+            name: `Test${i}`,
+            email: `test${i}@oven.sh`,
+          },
+        }),
+      ),
+    );
+
+    expect(users.length).toBe(10);
+
+    users.forEach((user, i) => {
+      expect(user?.name).toBe(`Test${i}`);
+      expect(user?.email).toBe(`test${i}@oven.sh`);
+    });
+
+    const deletedUser = await prisma.user.deleteMany({ where: { testId } });
+
+    expect(deletedUser?.count).toBe(10);
+  });
+});

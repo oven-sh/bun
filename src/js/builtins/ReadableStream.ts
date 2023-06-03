@@ -132,12 +132,14 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
     return $readableStreamToArrayBufferDirect(stream, underlyingSource);
   }
 
-  var array = Bun.readableStreamToArray(stream);
-  if ($isPromise(array)) {
-    return array.$then(Bun.concatArrayBuffers);
+  var result = Bun.readableStreamToArray(stream);
+  if ($isPromise(result)) {
+    // `result` is an InternalPromise, which doesn't have a `.$then` method
+    // but `.then` isn't user-overridable, so we can use it safely.
+    return result.then(Bun.concatArrayBuffers);
   }
 
-  return Bun.concatArrayBuffers(array);
+  return Bun.concatArrayBuffers(result);
 }
 
 $linkTimeConstant;

@@ -148,11 +148,17 @@ $ make generate-sink
 
 You probably won't need to run that one much.
 
-## Modifying ESM core modules
+## Modifying ESM hardcoded modules
 
-Certain modules like `node:fs`, `node:path`, `node:stream`, and `bun:sqlite` are implemented in JavaScript. These live in `src/bun.js/*.exports.js` files.
+Certain modules like `node:fs`, `node:stream`, `bun:sqlite`, and `ws` are implemented in JavaScript. These live in `src/js/{node,bun,thirdparty}` files and are pre-bundled using Bun. The bundled code is committed so CI builds can run without needing a copy of Bun.
 
-While Bun is in beta, you can modify them at runtime in release builds via the environment variable `BUN_OVERRIDE_MODULE_PATH`. When set, Bun will look in the override directory for `<name>.exports.js` before checking the files from `src/bun.js` (which are now baked in to the binary). This lets you test changes to the ESM modules without needing to re-compile Bun.
+When these are changed, run:
+
+```
+$ make hardcoded
+```
+
+In debug builds, Bun automatically loads these from the filesystem, wherever it was compiled, so no need to re-run `make dev`. In release builds, this same behavior can be done via the environment variable `BUN_OVERRIDE_MODULE_PATH`. When set to the repository root, Bun will read from the bundled modules in the repository instead of the ones baked into the binary.
 
 ## Release build
 

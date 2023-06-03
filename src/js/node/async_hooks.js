@@ -5,7 +5,9 @@ var drainMicrotasks = () => {
 };
 
 var notImplemented = () => {
-  console.warn("[bun]: async_hooks has not been implemented yet. See https://github.com/oven-sh/bun/issues/1832");
+  console.warn(
+    "[bun] Warning: async_hooks has not been implemented yet. See https://github.com/oven-sh/bun/issues/1832",
+  );
   notImplemented = () => {};
 };
 
@@ -146,18 +148,10 @@ class AsyncResource {
   constructor(type, triggerAsyncId) {
     this.type = type;
     this.triggerAsyncId = triggerAsyncId;
-
-    if (AsyncResource.allowedRunInAsyncScope.has(type)) {
-      this.runInAsyncScope = this.#runInAsyncScope;
-    }
   }
 
   type;
   triggerAsyncId;
-
-  // We probably will not fully support AsyncResource
-  // But some packages in the wild do depend on it
-  static allowedRunInAsyncScope = new Set(["prisma-client-request"]);
 
   emitBefore() {
     return true;
@@ -169,10 +163,7 @@ class AsyncResource {
 
   emitDestroy() {}
 
-  runInAsyncScope;
-
-  #runInAsyncScope(fn, ...args) {
-    notImplemented();
+  runInAsyncScope(fn, ...args) {
     var result, err;
     process.nextTick(fn => {
       try {

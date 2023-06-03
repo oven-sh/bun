@@ -97,10 +97,14 @@ function CFunction(options) {
   }, cFunctionRegistry ||= new FinalizationRegistry(onCloseCFunction), cFunctionRegistry.register(result.symbols[identifier], result.symbols[identifier].close), result.symbols[identifier];
 }
 <<<<<<< HEAD
+<<<<<<< HEAD
 var ffi = globalThis.Bun.FFI, ptr = (arg1, arg2) => typeof arg2 === "undefined" ? ffi.ptr(arg1) : ffi.ptr(arg1, arg2), toBuffer = ffi.toBuffer, toArrayBuffer = ffi.toArrayBuffer, viewSource = ffi.viewSource, BunCString = ffi.CString, nativeLinkSymbols = ffi.linkSymbols, nativeDLOpen = ffi.dlopen, nativeCallback = ffi.callback, closeCallback = ffi.closeCallback;
 =======
 var suffix = "so", ffi = globalThis.Bun.FFI, ptr = (arg1, arg2) => typeof arg2 === "undefined" ? ffi.ptr(arg1) : ffi.ptr(arg1, arg2), toBuffer = ffi.toBuffer, toArrayBuffer = ffi.toArrayBuffer, viewSource = ffi.viewSource, BunCString = ffi.CString, nativeLinkSymbols = ffi.linkSymbols, nativeDLOpen = ffi.dlopen, nativeCallback = ffi.callback, closeCallback = ffi.closeCallback;
 >>>>>>> 5e7ff00ef (hardcoded)
+=======
+var ffi = globalThis.Bun.FFI, ptr = (arg1, arg2) => typeof arg2 === "undefined" ? ffi.ptr(arg1) : ffi.ptr(arg1, arg2), toBuffer = ffi.toBuffer, toArrayBuffer = ffi.toArrayBuffer, viewSource = ffi.viewSource, BunCString = ffi.CString, nativeLinkSymbols = ffi.linkSymbols, nativeDLOpen = ffi.dlopen, nativeCallback = ffi.callback, closeCallback = ffi.closeCallback;
+>>>>>>> e13fdbe50 (revert /src/out)
 delete ffi.callback;
 delete ffi.closeCallback;
 

@@ -2,13 +2,13 @@ function family() {
   return Promise.resolve(familySync());
 }
 function familySync() {
-  return GLIBC;
+  return null;
 }
 function versionAsync() {
   return Promise.resolve(version());
 }
 function version() {
-  return "2.29";
+  return null;
 }
 function isNonGlibcLinuxSync() {
   return !1;

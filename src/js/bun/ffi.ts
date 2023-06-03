@@ -1,14 +1,6 @@
-// FFIType is injected in this file
+// FFIType and suffix are injected in this file
 declare const FFIType: typeof import("bun:ffi").FFIType;
-
-export const suffix =
-  process.platform === "darwin"
-    ? "dylib"
-    : process.platform === "linux"
-    ? "so"
-    : process.platform === "win32"
-    ? "dll"
-    : $bundleError("Unsupported platform");
+declare const suffix: typeof import("bun:ffi").suffix;
 
 var ffi = globalThis.Bun.FFI;
 export const ptr = (arg1, arg2) => (typeof arg2 === "undefined" ? ffi.ptr(arg1) : ffi.ptr(arg1, arg2));

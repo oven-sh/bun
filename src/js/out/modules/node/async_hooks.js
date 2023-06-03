@@ -16,7 +16,7 @@ var createHook = function() {
 }, drainMicrotasks = () => {
   ({ drainMicrotasks } = import.meta.require("bun:jsc")), drainMicrotasks();
 }, notImplemented = () => {
-  console.warn("[bun]: async_hooks has not been implemented yet. See https://github.com/oven-sh/bun/issues/1832"), notImplemented = () => {
+  console.warn("[bun] Warning: async_hooks has not been implemented yet. See https://github.com/oven-sh/bun/issues/1832"), notImplemented = () => {
   };
 };
 
@@ -117,12 +117,10 @@ var asyncWrapProviders = {
 
 class AsyncResource {
   constructor(type, triggerAsyncId2) {
-    if (this.type = type, this.triggerAsyncId = triggerAsyncId2, AsyncResource.allowedRunInAsyncScope.has(type))
-      this.runInAsyncScope = this.#runInAsyncScope;
+    this.type = type, this.triggerAsyncId = triggerAsyncId2;
   }
   type;
   triggerAsyncId;
-  static allowedRunInAsyncScope = new Set(["prisma-client-request"]);
   emitBefore() {
     return !0;
   }
@@ -131,9 +129,7 @@ class AsyncResource {
   }
   emitDestroy() {
   }
-  runInAsyncScope;
-  #runInAsyncScope(fn, ...args) {
-    notImplemented();
+  runInAsyncScope(fn, ...args) {
     var result, err;
     if (process.nextTick((fn2) => {
       try {

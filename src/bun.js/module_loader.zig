@@ -1724,12 +1724,13 @@ pub const ModuleLoader = struct {
                     };
                 },
                 .@"bun:ffi" => {
+                    const shared_library_suffix = if (Environment.isMac) "dylib" else if (Environment.isLinux) "so" else if (Environment.isWindows) "dll" else "";
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = ZigString.init(
                             "export const FFIType=" ++
                                 JSC.FFI.ABIType.map_to_js_object ++
-                                ";" ++
+                                ";export const suffix='" ++ shared_library_suffix ++ "';" ++
                                 @embedFile("../js/out/modules/bun/ffi.js"),
                         ),
                         .specifier = ZigString.init("bun:ffi"),
@@ -1773,7 +1774,7 @@ pub const ModuleLoader = struct {
                 .@"node:wasi" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:wasi", "node/wasi.js"),
                 .@"node:zlib" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:zlib", "node/zlib.js"),
 
-                .@"detect-libc" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"detect-libc", "thirdparty/detect-libc.js"),
+                .@"detect-libc" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .depd, if (Environment.isLinux) "thirdparty/detect-libc.linux.js" else "thirdparty/detect-libc.js"),
                 .depd => return jsResolvedSource(jsc_vm.load_builtins_from_path, .depd, "thirdparty/depd.js"),
                 .undici => return jsResolvedSource(jsc_vm.load_builtins_from_path, .undici, "thirdparty/undici.js"),
                 .ws => return jsResolvedSource(jsc_vm.load_builtins_from_path, .ws, "thirdparty/ws.js"),

@@ -10,6 +10,7 @@ async function request(url, options = {
   throwOnError: !1,
   body: null
 }) {
+  console.log("request", { url, options });
   let {
     method = "GET",
     headers: inputHeaders,
@@ -64,7 +65,7 @@ async function request(url, options = {
   if (throwOnError && statusCode >= 400 && statusCode < 600)
     throw new Error(`Request failed with status code ${statusCode}`);
   const body = resp.body ? new BodyReadable(resp) : null;
-  return { statusCode, headers: headers.toJSON(), body, trailers, opaque: kEmptyObject, context: kEmptyObject };
+  return console.log("response", { statusCode, headers, body, trailers }), { statusCode, headers: headers.toJSON(), body, trailers, opaque: kEmptyObject, context: kEmptyObject };
 }
 function stream() {
   throw new Error("Not implemented in bun");

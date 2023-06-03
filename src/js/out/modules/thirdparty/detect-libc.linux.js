@@ -2,13 +2,13 @@ function family() {
   return Promise.resolve(familySync());
 }
 function familySync() {
-  return null;
+  return GLIBC;
 }
 function versionAsync() {
   return Promise.resolve(version());
 }
 function version() {
-  return null;
+  return "2.29";
 }
 function isNonGlibcLinuxSync() {
   return !1;
@@ -27,3 +27,8 @@ export {
   MUSL,
   GLIBC
 };
+<<<<<<< HEAD:src/js/out/modules/thirdparty/detect-libc.linux.js
+=======
+
+//# debugId=5524F79B22A4C88A64756e2164756e21
+>>>>>>> 5e7ff00ef (hardcoded):src/js/out/modules_dev/thirdparty/detect-libc.js

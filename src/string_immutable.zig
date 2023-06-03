@@ -127,6 +127,11 @@ pub inline fn indexAnyComptime(target: string, comptime chars: string) ?usize {
     return null;
 }
 
+pub inline fn indexEqualAny(in: anytype, target: string) ?usize {
+    for (in, 0..) |str, i| if (eqlLong(str, target, true)) return i;
+    return null;
+}
+
 pub fn repeatingAlloc(allocator: std.mem.Allocator, count: usize, char: u8) ![]u8 {
     var buf = try allocator.alloc(u8, count);
     repeatingBuf(buf, char);

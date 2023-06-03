@@ -219,11 +219,6 @@ pub export fn napi_get_boolean(_: napi_env, value: bool, result: *napi_value) na
     result.* = JSValue.jsBoolean(value);
     return .ok;
 }
-pub export fn napi_create_object(env: napi_env, result: *napi_value) napi_status {
-    log("napi_create_object", .{});
-    result.* = JSValue.createEmptyObject(env, 0);
-    return .ok;
-}
 pub export fn napi_create_array(env: napi_env, result: *napi_value) napi_status {
     log("napi_create_array", .{});
     result.* = JSValue.c(JSC.C.JSObjectMakeArray(env.ref(), 0, null, null));
@@ -408,6 +403,7 @@ pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf
 /// The result argument is optional unless buf is NULL.
 pub export fn napi_get_value_string_utf8(env: napi_env, value: napi_value, buf_ptr: [*c]u8, bufsize: usize, result_ptr: ?*usize) napi_status {
     defer value.ensureStillAlive();
+
     if (!value.isString()) {
         return .string_expected;
     }
@@ -653,6 +649,7 @@ pub extern fn napi_define_class(
 pub extern fn napi_wrap(env: napi_env, js_object: napi_value, native_object: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: [*]*Ref) napi_status;
 pub extern fn napi_unwrap(env: napi_env, js_object: napi_value, result: [*]*anyopaque) napi_status;
 pub extern fn napi_remove_wrap(env: napi_env, js_object: napi_value, result: [*]*anyopaque) napi_status;
+pub extern fn napi_create_object(env: napi_env, result: *napi_value) napi_status;
 pub extern fn napi_create_external(env: napi_env, data: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status;
 pub extern fn napi_get_value_external(env: napi_env, value: napi_value, result: [*]*anyopaque) napi_status;
 pub extern fn napi_create_reference(env: napi_env, value: napi_value, initial_refcount: u32, result: **Ref) napi_status;
@@ -1403,6 +1400,9 @@ pub const ThreadSafeFunction = struct {
         var task = this.channel.tryReadItem() catch null orelse return;
         switch (this.callback) {
             .js => |js_function| {
+                if (js_function.isEmptyOrUndefinedOrNull()) {
+                    return;
+                }
                 const err = js_function.call(this.env, &.{});
                 if (err.isAnyError()) {
                     this.env.bunVM().onUnhandledError(this.env, err);
@@ -1433,9 +1433,13 @@ pub const ThreadSafeFunction = struct {
         }
 
         if (this.callback == .js) {
-            this.callback.js.unprotect();
+            if (!this.callback.js.isEmptyOrUndefinedOrNull()) {
+                this.callback.js.unprotect();
+            }
         } else if (this.callback == .c) {
-            this.callback.c.js.unprotect();
+            if (!this.callback.c.js.isEmptyOrUndefinedOrNull()) {
+                this.callback.c.js.unprotect();
+            }
         }
         bun.default_allocator.destroy(this);
     }
@@ -1506,7 +1510,7 @@ pub export fn napi_create_threadsafe_function(
                 .js = if (func == .zero) JSC.JSValue.jsUndefined() else func,
             },
         } else .{
-            .js = func,
+            .js = if (func == .zero) JSC.JSValue.jsUndefined() else func,
         },
         .ctx = context,
         .channel = ThreadSafeFunction.Queue.init(max_queue_size, bun.default_allocator),

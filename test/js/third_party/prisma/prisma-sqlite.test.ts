@@ -22,13 +22,26 @@ async function getPrisma(callback: Function) {
 beforeAll(async () => {
   //spawn command bunx prisma migrate dev --name init
   const cwd = import.meta.dir;
-  const result = Bun.spawnSync([bunExe(), "x", "prisma", "migrate", "dev", "--name", "init", "--schema", path.join(cwd, "prisma", "schema.prisma")], {
-    cwd,
-    env: {
-      ...bunEnv,
-      NODE_ENV: undefined,
+  const result = Bun.spawnSync(
+    [
+      bunExe(),
+      "x",
+      "prisma",
+      "migrate",
+      "dev",
+      "--name",
+      "init",
+      "--schema",
+      path.join(cwd, "prisma", "schema.prisma"),
+    ],
+    {
+      cwd,
+      env: {
+        ...bunEnv,
+        NODE_ENV: undefined,
+      },
     },
-  });
+  );
   if (!result.success) throw new Error(result.stderr.toString("utf8"));
   return {
     stdout: result.stdout.toString("utf8").trim(),
@@ -106,14 +119,14 @@ test("CRUD with relations", async () => {
     expect(usersWithPosts[0]?.posts?.length).toBe(1);
     expect(usersWithPosts[0]?.posts[0]?.title).toBe("Hello World");
 
-    expect(async ()=>  await prisma.user.deleteMany({ where: { testId } })).toThrow();
-    
+    expect(async () => await prisma.user.deleteMany({ where: { testId } })).toThrow();
+
     const deletedPosts = await prisma.post.deleteMany({ where: { testId } });
 
     expect(deletedPosts?.count).toBe(1);
 
     const deletedUser = await prisma.user.deleteMany({ where: { testId } });
-    
+
     expect(deletedUser?.count).toBe(1);
   });
 });

@@ -41,7 +41,6 @@ describe("bundler", () => {
     ],
   });
   itBundled("naming/ImplicitOutbase2", {
-    todo: true,
     files: {
       "/a/hello/entry.js": /* js */ `
         import data from '../dependency'
@@ -74,7 +73,6 @@ describe("bundler", () => {
     ],
   });
   itBundled("naming/EntryNamingTemplate1", {
-    todo: true,
     files: {
       "/a/hello/entry.js": /* js */ `
         import data from '../dependency'

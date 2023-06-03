@@ -8119,13 +8119,14 @@ const LinkerContext = struct {
 
         stmts.reset();
 
-        const part_index_for_lazy_default_export: u32 = if (ast.flags.has_lazy_export) brk: {
-            if (c.graph.meta.items(.resolved_exports)[part_range.source_index.get()].get("default")) |default| {
-                break :brk c.graph.topLevelSymbolToParts(part_range.source_index.get(), default.data.import_ref)[0];
+        const part_index_for_lazy_default_export: u32 = brk: {
+            if (ast.flags.has_lazy_export) {
+                if (c.graph.meta.items(.resolved_exports)[part_range.source_index.get()].get("default")) |default| {
+                    break :brk c.graph.topLevelSymbolToParts(part_range.source_index.get(), default.data.import_ref)[0];
+                }
             }
-
             break :brk std.math.maxInt(u32);
-        } else std.math.maxInt(u32);
+        };
 
         // TODO: handle directive
         if (namespace_export_part_index >= part_range.part_index_begin and
@@ -8218,12 +8219,13 @@ const LinkerContext = struct {
 
                 // Be careful: the top-level value in a JSON file is not necessarily an object
                 if (default_expr.data == .e_object) {
-                    var new_properties = std.ArrayList(js_ast.G.Property).initCapacity(temp_allocator, default_expr.data.e_object.properties.len) catch unreachable;
+                    var new_properties = default_expr.data.e_object.properties.clone(temp_allocator) catch unreachable;
+
                     var resolved_exports = c.graph.meta.items(.resolved_exports)[part_range.source_index.get()];
 
                     // If any top-level properties ended up being imported directly, change
                     // the property to just reference the corresponding variable instead
-                    for (default_expr.data.e_object.properties.slice()) |prop| {
+                    for (new_properties.slice()) |*prop| {
                         if (prop.key == null or prop.key.?.data != .e_string or prop.value == null) continue;
                         const name = prop.key.?.data.e_string.slice(temp_allocator);
                         if (strings.eqlComptime(name, "default") or
@@ -8234,12 +8236,10 @@ const LinkerContext = struct {
                             const export_ref = export_data.data.import_ref;
                             const export_part = ast.parts.slice()[c.graph.topLevelSymbolToParts(part_range.source_index.get(), export_ref)[0]];
                             if (export_part.is_live) {
-                                new_properties.appendAssumeCapacity(
-                                    .{
-                                        .key = prop.key,
-                                        .value = Expr.initIdentifier(export_ref, prop.value.?.loc),
-                                    },
-                                );
+                                prop.* = .{
+                                    .key = prop.key,
+                                    .value = Expr.initIdentifier(export_ref, prop.value.?.loc),
+                                };
                             }
                         }
                     }
@@ -8248,7 +8248,7 @@ const LinkerContext = struct {
                         temp_allocator,
                         E.Object,
                         E.Object{
-                            .properties = BabyList(G.Property).init(new_properties.items),
+                            .properties = new_properties,
                         },
                         default_expr.loc,
                     );

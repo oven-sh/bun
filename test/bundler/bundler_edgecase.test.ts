@@ -296,7 +296,6 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/JSONDefaultImport", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         import def from './test.json'
@@ -309,7 +308,6 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/JSONDefaultKeyImport", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         import def from './test.json'
@@ -322,6 +320,8 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/JSONDefaultAndNamedImport", {
+    // We don't support rewriting default import to property acceses yet
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import def from './test.json'
@@ -336,7 +336,6 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/JSONWithDefaultKey", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         import def from './test.json'
@@ -373,7 +372,6 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/PackageJSONDefaultConditionRequire", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         const boop = require('boop')
@@ -385,7 +383,7 @@ describe("bundler", () => {
           "exports": {
             ".": {
               "boop-server": "./ignore.js",
-              "default": "./boop.js",
+              "default": "./boop.js"
             }
           }
         }
@@ -411,7 +409,7 @@ describe("bundler", () => {
           "exports": {
             ".": {
               "react-server": "./ignore.js",
-              "default": "./react.js",
+              "default": "./react.js"
             }
           }
         }
@@ -787,7 +785,6 @@ describe("bundler", () => {
     run: {},
   });
   itBundled("edgecase/ImportDefaultInDirectory", {
-    todo: true,
     files: {
       "/a/file.js": `
         import def from './def'

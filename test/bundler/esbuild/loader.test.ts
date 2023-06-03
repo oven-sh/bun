@@ -9,7 +9,6 @@ var { describe, test, expect } = testForFile(import.meta.path);
 
 describe("bundler", () => {
   itBundled("loader/JSONCommonJSAndES6", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         const x_json = require('./x.json')

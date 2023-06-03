@@ -5,7 +5,6 @@ var { describe, test, expect } = testForFile(import.meta.path);
 
 describe("bundler", () => {
   itBundled("compile/HelloWorld", {
-    todo: true,
     compile: true,
     files: {
       "/entry.ts": /* js */ `
@@ -15,7 +14,6 @@ describe("bundler", () => {
     run: { stdout: "Hello, world!" },
   });
   itBundled("compile/VariousBunAPIs", {
-    todo: true,
     compile: true,
     files: {
       "/entry.ts": `
@@ -45,7 +43,6 @@ describe("bundler", () => {
     run: { stdout: "ok" },
   });
   itBundled("compile/ReactSSR", {
-    todo: true,
     install: ["react@next", "react-dom@next"],
     files: {
       "/entry.tsx": /* tsx */ `

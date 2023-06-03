@@ -411,13 +411,15 @@ describe("bundler", () => {
       "/Users/user/project/tsconfig.json": /* json */ `
         {
           "compilerOptions": {
-            "jsx": "react-jsx",
             "jsxImportSource": "notreact"
           }
         }
       `,
     },
     outfile: "/Users/user/project/out.js",
+    env: {
+      NODE_ENV: "production",
+    },
     external: ["notreact"],
     onAfterBundle(api) {
       api.expectFile("/Users/user/project/out.js").toContain(`from "notreact/jsx-runtime`);
@@ -438,7 +440,6 @@ describe("bundler", () => {
       "/Users/user/project/tsconfig.json": /* json */ `
         {
           "compilerOptions": {
-            "jsx": "react-jsx",
             "jsxImportSource": "@notreact/jsx"
           }
         }
@@ -446,6 +447,9 @@ describe("bundler", () => {
     },
     outfile: "/Users/user/project/out.js",
     external: ["@notreact/jsx"],
+    env: {
+      NODE_ENV: "production",
+    },
     onAfterBundle(api) {
       api.expectFile("/Users/user/project/out.js").toContain(`from "@notreact/jsx/jsx-runtime`);
     },
@@ -503,11 +507,11 @@ describe("bundler", () => {
       api.expectFile("/Users/user/project/out.js").toContain(`from "react/jsx-dev-runtime`);
     },
   });
-  itBundled("tsconfig/ReactJSX", {
+  itBundled("tsconfig/ReactJSXDevTSConfigProduction", {
     // GENERATED
     files: {
       "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
-      "/Users/user/project/node_modules/react/jsx-runtime.ts": `
+      "/Users/user/project/node_modules/react/jsx-dev-runtime.ts": `
         export const Fragment = (props: { key?: string; children?: Child[] }): JSXNode => {
           return new JSXFragmentNode('', {}, props.children || [])
         }
@@ -524,9 +528,123 @@ describe("bundler", () => {
       `,
     },
     external: ["react"],
+    env: {
+      NODE_ENV: "development",
+    },
+    outfile: "/Users/user/project/out.js",
+    onAfterBundle(api) {
+      api.expectFile("/Users/user/project/out.js").toContain(`from "react/jsx-dev-runtime`);
+    },
+  });
+  itBundled("tsconfig/ReactJSX", {
+    // GENERATED
+    files: {
+      "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
+      "/Users/user/project/node_modules/react/jsx-runtime.ts": `
+        export const Fragment = (props: { key?: string; children?: Child[] }): JSXNode => {
+          return new JSXFragmentNode('', {}, props.children || [])
+        }
+        export const jsx = (tag: string | JSXComponent, props: { key?: string; children?: Child[] }, ...children: Child[]): JSXNode => {
+          return new JSXNode(tag, props, children)
+        }
+      `,
+    },
+    external: ["react"],
+    env: {
+      NODE_ENV: "production",
+    },
     outfile: "/Users/user/project/out.js",
     onAfterBundle(api) {
       api.expectFile("/Users/user/project/out.js").toContain(`from "react/jsx-runtime`);
+    },
+  });
+
+  itBundled("tsconfig/ReactJSXClassic", {
+    // GENERATED
+    files: {
+      "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
+      "/Users/user/project/node_modules/react/jsx-dev-runtime.ts": `
+        export const Fragment = (props: { key?: string; children?: Child[] }): JSXNode => {
+          return new JSXFragmentNode('', {}, props.children || [])
+        }
+        export const jsx = (tag: string | JSXComponent, props: { key?: string; children?: Child[] }, ...children: Child[]): JSXNode => {
+          return new JSXNode(tag, props, children)
+        }
+      `,
+      "/Users/user/project/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "jsx": "react"
+          }
+        }
+      `,
+    },
+    external: ["react"],
+    outfile: "/Users/user/project/out.js",
+    onAfterBundle(api) {
+      api.expectFile("/Users/user/project/out.js").toContain(`React.Fragment`);
+      api.expectFile("/Users/user/project/out.js").toContain(`React.createElement`);
+    },
+  });
+  itBundled("tsconfig/ReactJSXClassicWithNODE_ENV=Production", {
+    // GENERATED
+    files: {
+      "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
+      "/Users/user/project/node_modules/react/jsx-dev-runtime.ts": `
+        export const Fragment = (props: { key?: string; children?: Child[] }): JSXNode => {
+          return new JSXFragmentNode('', {}, props.children || [])
+        }
+        export const jsx = (tag: string | JSXComponent, props: { key?: string; children?: Child[] }, ...children: Child[]): JSXNode => {
+          return new JSXNode(tag, props, children)
+        }
+      `,
+      "/Users/user/project/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "jsx": "react"
+          }
+        }
+      `,
+    },
+    external: ["react"],
+    outfile: "/Users/user/project/out.js",
+    env: {
+      NODE_ENV: "production",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/Users/user/project/out.js").toContain(`React.Fragment`);
+      api.expectFile("/Users/user/project/out.js").toContain(`React.createElement`);
+    },
+  });
+
+  itBundled("tsconfig/ReactJSXClassicWithNODE_ENV=Development", {
+    // GENERATED
+    files: {
+      "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
+      "/Users/user/project/node_modules/react/jsx-dev-runtime.ts": `
+        export const Fragment = (props: { key?: string; children?: Child[] }): JSXNode => {
+          return new JSXFragmentNode('', {}, props.children || [])
+        }
+        export const jsx = (tag: string | JSXComponent, props: { key?: string; children?: Child[] }, ...children: Child[]): JSXNode => {
+          return new JSXNode(tag, props, children)
+        }
+      `,
+      "/Users/user/project/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "jsx": "react"
+          }
+        }
+      `,
+    },
+    external: ["react"],
+    outfile: "/Users/user/project/out.js",
+    env: {
+      NODE_ENV: "development",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/Users/user/project/out.js").toContain(`React.Fragment`);
+      api.expectFile("/Users/user/project/out.js").toContain(`React.createElement`);
     },
   });
   return;

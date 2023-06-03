@@ -464,7 +464,6 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 &transpiler.log,
                 logger.Source.initPathString("tsconfig.json", transpiler.tsconfig_buf),
                 &VirtualMachine.get().bundler.resolver.caches.json,
-                true,
             ) catch null) |parsed_tsconfig| {
                 transpiler.tsconfig = parsed_tsconfig;
             }

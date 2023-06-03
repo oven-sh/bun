@@ -1197,19 +1197,19 @@ pub const NodeJSPathName = struct {
     ext: string,
     filename: string,
 
-    pub fn init(_path: string) NodeJSPathName {
+    pub fn init(_path: string, sep: u8) NodeJSPathName {
         var path = _path;
         var base = path;
         // ext must be empty if not detected
         var ext: string = "";
         var dir = path;
         var is_absolute = true;
-        var _i = strings.lastIndexOfChar(path, '/');
+        var _i = strings.lastIndexOfChar(path, sep);
         var first = true;
         while (_i) |i| {
 
             // Stop if we found a non-trailing slash
-            if (i + 1 != path.len) {
+            if (i + 1 != path.len and path.len >= i + 1) {
                 base = path[i + 1 ..];
                 dir = path[0..i];
                 is_absolute = false;
@@ -1228,11 +1228,11 @@ pub const NodeJSPathName = struct {
 
             path = path[0..i];
 
-            _i = strings.lastIndexOfChar(path, '/');
+            _i = strings.lastIndexOfChar(path, sep);
         }
 
         // clean trailing slashs
-        if (base.len > 1 and base[base.len - 1] == '/') {
+        if (base.len > 1 and base[base.len - 1] == sep) {
             base = base[0 .. base.len - 1];
         }
 
@@ -1245,7 +1245,8 @@ pub const NodeJSPathName = struct {
             var _dot = strings.lastIndexOfChar(filename, '.');
             if (_dot) |dot| {
                 ext = filename[dot..];
-                filename = filename[0..dot];
+                if (dot > 0)
+                    filename = filename[0..dot];
             }
         }
 
@@ -1333,7 +1334,7 @@ pub const PathName = struct {
         var _i = strings.lastIndexOfChar(path, '/');
         while (_i) |i| {
             // Stop if we found a non-trailing slash
-            if (i + 1 != path.len) {
+            if (i + 1 != path.len and path.len > i + 1) {
                 base = path[i + 1 ..];
                 dir = path[0..i];
                 is_absolute = false;

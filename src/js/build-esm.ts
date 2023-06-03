@@ -110,4 +110,4 @@ for (const [build, outdir] of [
   }
 }
 
-console.log(`Bundled hardcoded modules in ${performance.now().toFixed(2)}ms`);
+console.log(`Bundled esm modules in ${performance.now().toFixed(2)}ms`);

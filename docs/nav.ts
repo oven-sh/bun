@@ -225,6 +225,11 @@ export default {
       href: "https://github.com/apvarun/awesome-bun",
       description: ``,
     }),
+    
+    page("ecosystem/bun-can-run", "Bun-can-run", {
+      href: "https://github.com/emastho/bun-can-run",
+      description: ``,
+    }),
 
     divider("API"),
     page("api/http", "HTTP server", {

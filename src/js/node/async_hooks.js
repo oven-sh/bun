@@ -148,7 +148,15 @@ class AsyncResource {
   constructor(type, triggerAsyncId) {
     this.type = type;
     this.triggerAsyncId = triggerAsyncId;
+
+    if (AsyncResource.allowedRunInAsyncScope.has(type)) {
+      this.runInAsyncScope = this.#runInAsyncScope;
+    }
   }
+
+  // We probably will not fully support AsyncResource
+  // But some packages in the wild do depend on it
+  static allowedRunInAsyncScope = new Set(["prisma-client-request"]);
 
   type;
   triggerAsyncId;
@@ -163,7 +171,9 @@ class AsyncResource {
 
   emitDestroy() {}
 
-  runInAsyncScope(fn, ...args) {
+  runInAsyncScope;
+
+  #runInAsyncScope(fn, ...args) {
     var result, err;
     process.nextTick(fn => {
       try {

@@ -1085,7 +1085,7 @@ dev-obj-linux:
 	$(ZIG) build obj -Dtarget=x86_64-linux-gnu -Dcpu="$(CPU_TARGET)"
 
 .PHONY: dev
-dev: mkdir-dev dev-obj bun-link-lld-debug
+dev: mkdir-dev hardcoded dev-obj bun-link-lld-debug
 
 mkdir-dev:
 	mkdir -p $(DEBUG_PACKAGE_DIR)

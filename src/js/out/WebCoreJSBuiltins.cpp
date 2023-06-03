@@ -2420,9 +2420,9 @@ const char* const s_readableStreamReadableStreamToTextCode = "(function (p){\"us
 const JSC::ConstructAbility s_readableStreamReadableStreamToArrayBufferCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamReadableStreamToArrayBufferCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamReadableStreamToArrayBufferCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
-const int s_readableStreamReadableStreamToArrayBufferCodeLength = 271;
+const int s_readableStreamReadableStreamToArrayBufferCodeLength = 270;
 static const JSC::Intrinsic s_readableStreamReadableStreamToArrayBufferCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamReadableStreamToArrayBufferCode = "(function (_){\"use strict\";var b=@getByIdDirectPrivate(_,\"underlyingSource\");if(b!==@undefined)return @readableStreamToArrayBufferDirect(_,b);var p=@Bun.readableStreamToArray(_);if(@isPromise(p))return p.@then(@Bun.concatArrayBuffers);return @Bun.concatArrayBuffers(p)})\n";
+const char* const s_readableStreamReadableStreamToArrayBufferCode = "(function (_){\"use strict\";var b=@getByIdDirectPrivate(_,\"underlyingSource\");if(b!==@undefined)return @readableStreamToArrayBufferDirect(_,b);var p=@Bun.readableStreamToArray(_);if(@isPromise(p))return p.then(@Bun.concatArrayBuffers);return @Bun.concatArrayBuffers(p)})\n";
 
 // readableStreamToJSON
 const JSC::ConstructAbility s_readableStreamReadableStreamToJSONCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;

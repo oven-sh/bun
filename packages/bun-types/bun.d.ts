@@ -281,7 +281,7 @@ declare module "bun" {
    * @returns A promise that resolves with the concatenated chunks or the concatenated chunks as an `ArrayBuffer`.
    */
   export function readableStreamToArrayBuffer(
-    stream: ReadableStream<ArrayBuffer>,
+    stream: ReadableStream<ArrayBufferView | ArrayBufferLike>,
   ): Promise<ArrayBuffer> | ArrayBuffer;
 
   /**

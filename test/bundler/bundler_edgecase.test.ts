@@ -870,4 +870,31 @@ describe("bundler", () => {
       "<bun>": ['Refusing to overwrite input file "/entry.js"'],
     },
   });
+  itBundled("edgecase/ModuleExportsFunctionIssue2911", {
+    files: {
+      "/entry.js": /* js */ `
+         const fn = require('fresh');
+         console.log(fn());
+         const fn2 = require('./not_in_node_modules');
+         console.log(fn2());
+         import fn3 from 'fresh';
+         console.log(fn());
+         import fn4 from './not_in_node_modules';
+         console.log(fn2());
+       `,
+      "/node_modules/fresh/index.js": /* js */ `
+         module.exports = function() {
+           return 'it worked';
+         }
+       `,
+      "/not_in_node_modules.js": /* js */ `
+         module.exports = function() {
+           return 'it worked';
+         }
+       `,
+    },
+    run: {
+      stdout: "it worked\nit worked\nit worked\nit worked",
+    },
+  });
 });

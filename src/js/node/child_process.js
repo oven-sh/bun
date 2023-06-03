@@ -28,6 +28,8 @@ var ArrayPrototypeMap = Array.prototype.map;
 var ArrayPrototypeIncludes = Array.prototype.includes;
 var ArrayPrototypeSlice = Array.prototype.slice;
 var ArrayPrototypeUnshift = Array.prototype.unshift;
+var ArrayPrototypeLastIndexOf = Array.prototype.lastIndexOf;
+var ArrayPrototypeSplice = Array.prototype.splice;
 var ArrayIsArray = Array.isArray;
 
 // var ArrayBuffer = ArrayBuffer;
@@ -683,8 +685,79 @@ export function execSync(command, options) {
   return ret.stdout;
 }
 
-export function fork() {
-  throw new Error("Not implemented");
+
+/**
+ * Spawns a new Node.js process + fork.
+ * @param {string|URL} modulePath
+ * @param {string[]} [args]
+ * @param {{
+ *   cwd?: string;
+ *   detached?: boolean;
+ *   env?: Record<string, string>;
+ *   execPath?: string;
+ *   execArgv?: string[];
+ *   gid?: number;
+ *   serialization?: string;
+ *   signal?: AbortSignal;
+ *   killSignal?: string | number;
+ *   silent?: boolean;
+ *   stdio?: Array | string;
+ *   uid?: number;
+ *   windowsVerbatimArguments?: boolean;
+ *   timeout?: number;
+ *   }} [options]
+ * @returns {ChildProcess}
+ */
+export function fork(modulePath, args = [], options) {
+  modulePath = getValidatedPath(modulePath, 'modulePath');
+
+  // Get options and args arguments.
+  let execArgv;
+
+  if (args == null) {
+    args = [];
+  } else if (typeof args === 'object' && !ArrayIsArray(args)) {
+    options = args;
+    args = [];
+  } else {
+    validateArray(args, 'args');
+  }
+
+  if (options != null) {
+    validateObject(options, 'options');
+  }
+  options = { ...options, shell: false };
+  options.execPath = options.execPath || process.execPath;
+  validateArgumentNullCheck(options.execPath, 'options.execPath');
+
+  // Prepare arguments for fork:
+  execArgv = options.execArgv || process.execArgv;
+  validateArgumentsNullCheck(execArgv, 'options.execArgv');
+
+  if (execArgv === process.execArgv && process._eval != null) {
+    const index = ArrayPrototypeLastIndexOf(execArgv, process._eval);
+    if (index > 0) {
+      // Remove the -e switch to avoid fork bombing ourselves.
+      execArgv = ArrayPrototypeSlice(execArgv);
+      ArrayPrototypeSplice(execArgv, index - 1, 2);
+    }
+  }
+
+  args = [...execArgv, modulePath, ...args];
+
+  if (typeof options.stdio === 'string') {
+    options.stdio = stdioStringToArray(options.stdio, 'ipc');
+  } else if (!ArrayIsArray(options.stdio)) {
+    // Use a separate fd=3 for the IPC channel. Inherit stdin, stdout,
+    // and stderr from the parent if silent isn't set.
+    options.stdio = stdioStringToArray(
+      options.silent ? 'pipe' : 'inherit',
+      'ipc');
+  } else if (!ArrayPrototypeIncludes(options.stdio, 'ipc')) {
+    throw new ERR_CHILD_PROCESS_IPC_REQUIRED('options.stdio');
+  }
+
+  return spawn(options.execPath, args, options);
 }
 
 //------------------------------------------------------------------------------
@@ -883,6 +956,24 @@ function checkExecSyncError(ret, args, cmd) {
   }
   return err;
 }
+
+function stdioStringToArray(stdio, channel) {
+  const options = [];
+
+  switch (stdio) {
+    case 'ignore':
+    case 'overlapped':
+    case 'pipe': ArrayPrototypePush(options, stdio, stdio, stdio); break;
+    case 'inherit': ArrayPrototypePush(options, 0, 1, 2); break;
+    default:
+      throw new ERR_INVALID_ARG_VALUE('stdio', stdio);
+  }
+
+  if (channel) ArrayPrototypePush(options, channel);
+
+  return options;
+}
+
 
 //------------------------------------------------------------------------------
 // Section 3. ChildProcess class
@@ -1694,6 +1785,10 @@ function ERR_OUT_OF_RANGE(str, range, input, replaceDefaultBoolean = false) {
 
 function ERR_CHILD_PROCESS_STDIO_MAXBUFFER(stdio) {
   return Error(`${stdio} maxBuffer length exceeded`);
+}
+
+function ERR_CHILD_PROCESS_IPC_REQUIRED(stdio) {
+  return Error(`Forked processes must have an IPC channel, missing value 'ipc' in ${stdio}`);
 }
 
 function ERR_UNKNOWN_SIGNAL(name) {

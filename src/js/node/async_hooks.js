@@ -174,7 +174,17 @@ class AsyncResource {
   runInAsyncScope;
 
   #runInAsyncScope(fn, ...args) {
-    return fn(...args);
+    var result, err;
+    process.nextTick(fn => {
+      try {
+        result = fn(...args);
+      } catch (err2) {
+        err = err2;
+      }
+    }, fn);
+    drainMicrotasks();
+    if (err) throw err;
+    return result;
   }
 
   asyncId() {

@@ -26,6 +26,6 @@
   "private": true,
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "postinstall": "prisma generate --schema=./js/third_party/prisma/prisma/schema.prisma && cd node_modules/bktree-fast && npx node-gyp configure build"
+    "postinstall": "cd node_modules/bktree-fast && npx node-gyp configure build"
   }
 }

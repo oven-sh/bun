@@ -104,9 +104,7 @@ pub const TSConfigJSON = struct {
         log: *logger.Log,
         source: logger.Source,
         json_cache: *cache.Json,
-        is_jsx_development_: bool,
     ) anyerror!?*TSConfigJSON {
-        var is_jsx_development = is_jsx_development_;
         // Unfortunately "tsconfig.json" isn't actually JSON. It's some other
         // format that appears to be defined by the implementation details of the
         // TypeScript compiler.
@@ -155,20 +153,18 @@ pub const TSConfigJSON = struct {
                 }
             }
 
+            // https://www.typescriptlang.org/docs/handbook/jsx.html#basic-usages
             if (compiler_opts.expr.asProperty("jsx")) |jsx_prop| {
                 if (jsx_prop.expr.asString(allocator)) |str| {
                     var str_lower = allocator.alloc(u8, str.len) catch unreachable;
                     defer allocator.free(str_lower);
                     _ = strings.copyLowercase(str, str_lower);
-                    // we don't support "preserve" yet
+                    // - We don't support "preserve" yet
+                    // - We rely on NODE_ENV for "jsx" or "jsxDEV"
+                    // - We treat "react-jsx" and "react-jsxDEV" identically
+                    //   because it is too easy to auto-import the wrong one.
                     if (options.JSX.RuntimeMap.get(str_lower)) |runtime| {
                         result.jsx.runtime = runtime;
-                        if (runtime == .automatic) {
-                            result.jsx.setProduction(!strings.contains(str_lower, "jsxdev"));
-                            is_jsx_development = result.jsx.development;
-                            result.jsx_flags.insert(.development);
-                        }
-
                         result.jsx_flags.insert(.runtime);
                     }
                 }

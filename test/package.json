@@ -19,11 +19,13 @@
     "undici": "^5.20.0",
     "socket.io": "^4.6.1",
     "socket.io-client": "^4.6.1",
-    "supertest": "^6.1.6"
+    "supertest": "^6.1.6",
+    "@prisma/client": "^4.15.0",
+    "prisma": "^4.15.0"
   },
   "private": true,
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "postinstall": "cd node_modules/bktree-fast && npx node-gyp configure build"
+    "postinstall": "prisma generate --schema=./js/third_party/prisma/prisma/schema.prisma && cd node_modules/bktree-fast && npx node-gyp configure build"
   }
 }

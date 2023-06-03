@@ -405,18 +405,6 @@ pub export fn napi_get_value_string_utf8(env: napi_env, value: napi_value, buf_p
     defer value.ensureStillAlive();
 
     if (!value.isString()) {
-        // prisma workaround, being investigated
-        if (value.isEmptyOrUndefinedOrNull()) {
-            if (buf_ptr) |buf| {
-                if (bufsize > 0) {
-                    buf[0] = 0;
-                }
-            }
-            if (result_ptr) |result| {
-                result.* = 0;
-            }
-            return .ok;
-        }
         return .string_expected;
     }
 

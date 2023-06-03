@@ -329,7 +329,8 @@ pub const Runtime = struct {
         commonjs_at_runtime: bool = false,
 
         pub fn shouldUnwrapRequire(this: *const Features, package_name: string) bool {
-            return package_name.len > 0 and strings.indexAny(this.unwrap_commonjs_packages, package_name) != null;
+            const match_index = strings.indexAny(this.unwrap_commonjs_packages, package_name) orelse return false;
+            return package_name.len > 0 and this.unwrap_commonjs_packages[match_index].len == package_name.len;
         }
 
         pub const ReplaceableExport = union(enum) {

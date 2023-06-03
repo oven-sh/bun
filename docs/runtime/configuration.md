@@ -39,13 +39,6 @@ logLevel = "debug"
 # publicDir = "public"
 # external = ["jquery"]
 
-[macros]
-# Remap any import like this:
-#     import {graphql} from 'react-relay';
-# To:
-#     import {graphql} from 'macro:bun-macro-relay';
-react-relay = { "graphql" = "bun-macro-relay" }
-
 [define]
 # Replace any usage of "process.env.bagel" with the string `lox`.
 # The values are parsed as JSON, except single-quoted strings are supported and `'undefined'` becomes `undefined` in JS.

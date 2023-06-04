@@ -1632,6 +1632,676 @@ pub const Crypto = struct {
 
         return ZigString.fromUTF8(error_message).toErrorInstance(globalThis);
     }
+
+    pub const PasswordObject = struct {
+        pub const pwhash = std.crypto.pwhash;
+        pub const Algorithm = enum {
+            argon2i,
+            argon2d,
+            argon2id,
+            bcrypt,
+
+            pub const argon2 = Algorithm.argon2id;
+
+            pub const label = bun.ComptimeStringMap(
+                Algorithm,
+                .{
+                    .{ "argon2i", .argon2i },
+                    .{ "argon2d", .argon2d },
+                    .{ "argon2", .argon2id },
+                    .{ "argon2id", .argon2id },
+                    .{ "bcrypt", .bcrypt },
+                },
+            );
+
+            pub const default = Algorithm.argon2;
+
+            pub fn get(pw: []const u8) ?Algorithm {
+                if (pw[0] != '$') {
+                    return null;
+                }
+
+                // PHC format looks like $<algorithm>$<params>$<salt>$<hash><optional stuff>
+                if (strings.hasPrefixComptime(pw[1..], "argon2d$")) {
+                    return .argon2d;
+                }
+                if (strings.hasPrefixComptime(pw[1..], "argon2i$")) {
+                    return .argon2i;
+                }
+                if (strings.hasPrefixComptime(pw[1..], "argon2id$")) {
+                    return .argon2id;
+                }
+
+                if (strings.hasPrefixComptime(pw[1..], "bcrypt")) {
+                    return .bcrypt;
+                }
+
+                // https://en.wikipedia.org/wiki/Crypt_(C)
+                if (strings.hasPrefixComptime(pw[1..], "2")) {
+                    return .bcrypt;
+                }
+
+                return null;
+            }
+        };
+
+        pub const HashError = pwhash.Error || error{UnsupportedAlgorithm};
+
+        // This is purposely simple because nobody asked to make it more complicated
+        pub fn hash(
+            allocator: std.mem.Allocator,
+            password: []const u8,
+            algorithm: Algorithm,
+        ) HashError![]const u8 {
+            switch (algorithm) {
+                .argon2i, .argon2d, .argon2id => {
+                    var outbuf: [4096]u8 = undefined;
+                    const hash_options = pwhash.argon2.HashOptions{
+                        .params = pwhash.argon2.Params.interactive_2id,
+                        .allocator = allocator,
+                        .mode = switch (algorithm) {
+                            .argon2i => .argon2i,
+                            .argon2d => .argon2d,
+                            .argon2id => .argon2id,
+                            else => unreachable,
+                        },
+                        .encoding = .phc,
+                    };
+                    // warning: argon2's code may spin up threads if paralellism is set to > 0
+                    // we don't expose this option
+                    // but since it parses from phc format, it's possible that it will be set
+                    // eventually we should do something that about that.
+                    const out_bytes = try pwhash.argon2.strHash(password, hash_options, &outbuf);
+                    return try allocator.dupe(u8, out_bytes);
+                },
+                .bcrypt => {
+                    var outbuf: [4096]u8 = undefined;
+                    var outbuf_slice: []u8 = outbuf[0..];
+                    var password_to_use = password;
+                    // bcrypt silently truncates passwords longer than 72 bytes
+                    // we use SHA256 to hash the password if it's longer than 72 bytes
+                    if (password.len > 72) {
+                        var sha_256 = bun.sha.SHA256.init();
+                        sha_256.update(password);
+                        sha_256.final(outbuf[0..bun.sha.SHA256.digest]);
+                        password_to_use = outbuf[0..bun.sha.SHA256.digest];
+                        outbuf_slice = outbuf[bun.sha.SHA256.digest..];
+                    }
+
+                    const hash_options = pwhash.bcrypt.HashOptions{
+                        .params = pwhash.bcrypt.Params{ .rounds_log = 10 },
+                        .allocator = allocator,
+                        .encoding = .crypt,
+                    };
+                    const out_bytes = try pwhash.bcrypt.strHash(password_to_use, hash_options, outbuf_slice);
+                    return try allocator.dupe(u8, out_bytes);
+                },
+            }
+        }
+
+        pub fn verify(
+            allocator: std.mem.Allocator,
+            password: []const u8,
+            previous_hash: []const u8,
+            algorithm: ?Algorithm,
+        ) HashError!bool {
+            if (previous_hash.len == 0) {
+                return false;
+            }
+
+            return verifyWithAlgorithm(
+                allocator,
+                password,
+                previous_hash,
+                algorithm orelse Algorithm.get(previous_hash) orelse return error.UnsupportedAlgorithm,
+            );
+        }
+
+        pub fn verifyWithAlgorithm(
+            allocator: std.mem.Allocator,
+            password: []const u8,
+            previous_hash: []const u8,
+            algorithm: Algorithm,
+        ) HashError!bool {
+            switch (algorithm) {
+                .argon2id, .argon2d, .argon2i => {
+                    pwhash.argon2.strVerify(previous_hash, password, .{ .allocator = allocator }) catch |err| {
+                        if (err == error.PasswordVerificationFailed) {
+                            return false;
+                        }
+
+                        return err;
+                    };
+                    return true;
+                },
+                .bcrypt => {
+                    pwhash.bcrypt.strVerify(previous_hash, password, .{ .allocator = allocator }) catch |err| {
+                        if (err == error.PasswordVerificationFailed) {
+                            return false;
+                        }
+
+                        return err;
+                    };
+                    return true;
+                },
+            }
+        }
+    };
+
+    pub const JSPasswordObject = struct {
+        const PascalToUpperUnderscoreCaseFormatter = struct {
+            input: []const u8,
+            pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                for (self.input) |c| {
+                    if (std.ascii.isUpper(c)) {
+                        try writer.writeByte('_');
+                        try writer.writeByte(c);
+                    } else if (std.ascii.isLower(c)) {
+                        try writer.writeByte(std.ascii.toUpper(c));
+                    } else {
+                        try writer.writeByte(c);
+                    }
+                }
+            }
+        };
+
+        pub export fn JSPasswordObject__create(globalObject: *JSC.JSGlobalObject, sync: bool) JSC.JSValue {
+            var object = JSValue.createEmptyObject(globalObject, 2);
+            object.put(
+                globalObject,
+                ZigString.static("hash"),
+                if (sync)
+                    JSC.NewFunction(globalObject, ZigString.static("hash"), 2, JSPasswordObject__hash, false)
+                else
+                    JSC.NewFunction(globalObject, ZigString.static("hash"), 2, JSPasswordObject__hashSync, false),
+            );
+            object.put(
+                globalObject,
+                ZigString.static("verify"),
+                if (sync)
+                    JSC.NewFunction(globalObject, ZigString.static("verify"), 2, JSPasswordObject__verify, false)
+                else
+                    JSC.NewFunction(globalObject, ZigString.static("verify"), 2, JSPasswordObject__verifySync, false),
+            );
+            return object;
+        }
+
+        const HashJob = struct {
+            algorithm: PasswordObject.Algorithm,
+            password: []const u8,
+            promise: JSC.JSPromise.Strong,
+            event_loop: *JSC.EventLoop,
+            global: *JSC.JSGlobalObject,
+            ref: JSC.PollRef = .{},
+            task: JSC.WorkPoolTask = .{ .callback = &run },
+
+            pub const Result = struct {
+                value: Value,
+                ref: JSC.PollRef = .{},
+
+                task: JSC.AnyTask = undefined,
+                promise: JSC.JSPromise.Strong,
+                global: *JSC.JSGlobalObject,
+
+                pub const Value = union(enum) {
+                    err: PasswordObject.HashError,
+                    hash: []const u8,
+
+                    pub fn toErrorInstance(this: Value, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+                        var error_code = std.fmt.allocPrint(bun.default_allocator, "PASSWORD_{}", .{PascalToUpperUnderscoreCaseFormatter{ .input = @errorName(this.err) }}) catch @panic("out of memory");
+                        defer bun.default_allocator.free(error_code);
+                        const instance = globalObject.createErrorInstance("Password hashing failed with error \"{s}\"", .{@errorName(this.err)});
+                        instance.put(globalObject, ZigString.static("code"), JSC.ZigString.init(error_code).toValueGC(globalObject));
+                        return instance;
+                    }
+                };
+
+                pub fn runFromJS(this: *Result) void {
+                    var promise = this.promise;
+                    this.promise = .{};
+                    this.ref.unref(this.global.bunVM());
+                    var global = this.global;
+                    switch (this.value) {
+                        .err => {
+                            const error_instance = this.value.toErrorInstance(global);
+                            bun.default_allocator.destroy(this);
+                            promise.reject(global, error_instance);
+                        },
+                        .hash => |value| {
+                            const js_string = JSC.ZigString.init(value).toValueGC(global);
+                            bun.default_allocator.destroy(this);
+                            promise.resolve(global, js_string);
+                        },
+                    }
+                }
+            };
+
+            pub fn deinit(this: *HashJob) void {
+                this.ref = .{};
+                this.promise.strong.deinit();
+                bun.default_allocator.free(this.password);
+                bun.default_allocator.destroy(this);
+            }
+
+            pub fn getValue(password: []const u8, algorithm: PasswordObject.Algorithm) Result.Value {
+                const value = PasswordObject.hash(bun.default_allocator, password, algorithm) catch |err| {
+                    return Result.Value{ .err = err };
+                };
+                return Result.Value{ .hash = value };
+            }
+
+            pub fn run(task: *bun.ThreadPool.Task) void {
+                var this = @fieldParentPtr(HashJob, "task", task);
+
+                var result = bun.default_allocator.create(Result) catch @panic("out of memory");
+                result.* = Result{
+                    .value = getValue(this.password, this.algorithm),
+                    .task = JSC.AnyTask.New(Result, Result.runFromJS).init(result),
+                    .promise = this.promise,
+                    .global = this.global,
+                    .ref = this.ref,
+                };
+                this.ref = .{};
+                this.promise.strong = .{};
+
+                var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch @panic("out of memory");
+                concurrent_task.* = JSC.ConcurrentTask{
+                    .task = JSC.Task.init(&result.task),
+                    .auto_delete = true,
+                };
+                this.event_loop.enqueueTaskConcurrent(concurrent_task);
+                this.deinit();
+            }
+        };
+        pub fn hash(
+            globalObject: *JSC.JSGlobalObject,
+            password: []const u8,
+            algorithm: PasswordObject.Algorithm,
+            comptime sync: bool,
+        ) JSC.JSValue {
+            std.debug.assert(password.len > 0); // caller must check
+
+            if (comptime sync) {
+                const value = HashJob.getValue(password, algorithm);
+                switch (value) {
+                    .err => {
+                        const error_instance = value.toErrorInstance(globalObject);
+                        globalObject.throwValue(error_instance);
+                    },
+                    .hash => |h| {
+                        return JSC.ZigString.init(h).toValueGC(globalObject);
+                    },
+                }
+
+                unreachable;
+            }
+
+            var job = bun.default_allocator.create(HashJob) catch @panic("out of memory");
+            var promise = JSC.JSPromise.Strong.init(globalObject);
+
+            job.* = HashJob{
+                .algorithm = algorithm,
+                .password = password,
+                .promise = promise,
+                .event_loop = globalObject.bunVM().eventLoop(),
+                .global = globalObject,
+            };
+
+            job.ref.ref(globalObject.bunVM());
+            JSC.WorkPool.schedule(&job.task);
+
+            return promise.value();
+        }
+
+        pub fn verify(
+            globalObject: *JSC.JSGlobalObject,
+            password: []const u8,
+            prev_hash: []const u8,
+            algorithm: ?PasswordObject.Algorithm,
+            comptime sync: bool,
+        ) JSC.JSValue {
+            std.debug.assert(password.len > 0); // caller must check
+
+            if (comptime sync) {
+                const value = VerifyJob.getValue(password, prev_hash, algorithm);
+                switch (value) {
+                    .err => {
+                        const error_instance = value.toErrorInstance(globalObject);
+                        globalObject.throwValue(error_instance);
+                        return JSC.JSValue.undefined;
+                    },
+                    .pass => |pass| {
+                        return JSC.JSValue.jsBoolean(pass);
+                    },
+                }
+
+                unreachable;
+            }
+
+            var job = bun.default_allocator.create(VerifyJob) catch @panic("out of memory");
+            var promise = JSC.JSPromise.Strong.init(globalObject);
+
+            job.* = VerifyJob{
+                .algorithm = algorithm,
+                .password = password,
+                .prev_hash = prev_hash,
+                .promise = promise,
+                .event_loop = globalObject.bunVM().eventLoop(),
+                .global = globalObject,
+            };
+
+            job.ref.ref(globalObject.bunVM());
+            JSC.WorkPool.schedule(&job.task);
+
+            return promise.value();
+        }
+
+        // Once we have bindings generator, this should be replaced with a generated function
+        pub export fn JSPasswordObject__hash(
+            globalObject: *JSC.JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) callconv(.C) JSC.JSValue {
+            const arguments_ = callframe.arguments(2);
+            const arguments = arguments_.ptr[0..arguments_.len];
+
+            if (arguments.len < 1) {
+                globalObject.throwNotEnoughArguments("hash", 1, 0);
+                return JSC.JSValue.undefined;
+            }
+
+            var algorithm = PasswordObject.Algorithm.default;
+
+            if (arguments.len > 1 and !arguments[1].isEmptyOrUndefinedOrNull()) {
+                if (!arguments[1].isString()) {
+                    globalObject.throwInvalidArgumentType("hash", "algorithm", "string");
+                    return JSC.JSValue.undefined;
+                }
+
+                const algorithm_string = arguments[1].getZigString(globalObject);
+
+                algorithm = PasswordObject.Algorithm.label.getWithEql(algorithm_string, JSC.ZigString.eqlComptime) orelse {
+                    globalObject.throwInvalidArgumentType("hash", "algorithm", "unknown algorithm, expected one of: \"bcrypt\" or \"argon2\" (default is \"argon2\")");
+                    return JSC.JSValue.undefined;
+                };
+            }
+
+            var string_or_buffer = JSC.Node.SliceOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[0]) orelse {
+                globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
+                return JSC.JSValue.undefined;
+            };
+
+            if (string_or_buffer.slice().len == 0) {
+                globalObject.throwInvalidArguments("password must not be empty", .{});
+                string_or_buffer.deinit();
+                return JSC.JSValue.undefined;
+            }
+
+            string_or_buffer.ensureCloned(bun.default_allocator) catch {
+                globalObject.throwOutOfMemory();
+                return JSC.JSValue.undefined;
+            };
+
+            return hash(globalObject, string_or_buffer.slice(), algorithm, false);
+        }
+
+        // Once we have bindings generator, this should be replaced with a generated function
+        pub export fn JSPasswordObject__hashSync(
+            globalObject: *JSC.JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) callconv(.C) JSC.JSValue {
+            const arguments_ = callframe.arguments(2);
+            const arguments = arguments_.ptr[0..arguments_.len];
+
+            if (arguments.len < 1) {
+                globalObject.throwNotEnoughArguments("hash", 1, 0);
+                return JSC.JSValue.undefined;
+            }
+
+            var algorithm = PasswordObject.Algorithm.default;
+
+            if (arguments.len > 1 and !arguments[1].isEmptyOrUndefinedOrNull()) {
+                if (!arguments[1].isString()) {
+                    globalObject.throwInvalidArgumentType("hash", "algorithm", "string");
+                    return JSC.JSValue.undefined;
+                }
+
+                const algorithm_string = arguments[1].getZigString(globalObject);
+
+                algorithm = PasswordObject.Algorithm.label.getWithEql(algorithm_string, JSC.ZigString.eqlComptime) orelse {
+                    globalObject.throwInvalidArgumentType("hash", "algorithm", "unknown algorithm, expected one of: \"bcrypt\" or \"argon2\" (default is \"argon2\")");
+                    return JSC.JSValue.undefined;
+                };
+            }
+
+            var string_or_buffer = JSC.Node.SliceOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[0]) orelse {
+                globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
+                return JSC.JSValue.undefined;
+            };
+
+            if (string_or_buffer.slice().len == 0) {
+                globalObject.throwInvalidArguments("password must not be empty", .{});
+                string_or_buffer.deinit();
+                return JSC.JSValue.undefined;
+            }
+
+            string_or_buffer.ensureCloned(bun.default_allocator) catch {
+                globalObject.throwOutOfMemory();
+                return JSC.JSValue.undefined;
+            };
+            defer string_or_buffer.deinit();
+
+            return hash(globalObject, string_or_buffer.slice(), algorithm, true);
+        }
+
+        const VerifyJob = struct {
+            algorithm: ?PasswordObject.Algorithm = null,
+            password: []const u8,
+            prev_hash: []const u8,
+            promise: JSC.JSPromise.Strong,
+            event_loop: *JSC.EventLoop,
+            global: *JSC.JSGlobalObject,
+            ref: JSC.PollRef = .{},
+            task: JSC.WorkPoolTask = .{ .callback = &run },
+
+            pub const Result = struct {
+                value: Value,
+                ref: JSC.PollRef = .{},
+
+                task: JSC.AnyTask = undefined,
+                promise: JSC.JSPromise.Strong,
+                global: *JSC.JSGlobalObject,
+
+                pub const Value = union(enum) {
+                    err: PasswordObject.HashError,
+                    pass: bool,
+
+                    pub fn toErrorInstance(this: Value, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+                        var error_code = std.fmt.allocPrint(bun.default_allocator, "PASSWORD{}", .{PascalToUpperUnderscoreCaseFormatter{ .input = @errorName(this.err) }}) catch @panic("out of memory");
+                        defer bun.default_allocator.free(error_code);
+                        const instance = globalObject.createErrorInstance("Password verification failed with error \"{s}\"", .{@errorName(this.err)});
+                        instance.put(globalObject, ZigString.static("code"), JSC.ZigString.init(error_code).toValueGC(globalObject));
+                        return instance;
+                    }
+                };
+
+                pub fn runFromJS(this: *Result) void {
+                    var promise = this.promise;
+                    this.promise = .{};
+                    this.ref.unref(this.global.bunVM());
+                    var global = this.global;
+                    switch (this.value) {
+                        .err => {
+                            const error_instance = this.value.toErrorInstance(global);
+                            bun.default_allocator.destroy(this);
+                            promise.reject(global, error_instance);
+                        },
+                        .pass => |pass| {
+                            bun.default_allocator.destroy(this);
+                            promise.resolve(global, JSC.JSValue.jsBoolean(pass));
+                        },
+                    }
+                }
+            };
+
+            pub fn deinit(this: *VerifyJob) void {
+                this.ref = .{};
+                this.promise.strong.deinit();
+                bun.default_allocator.free(this.password);
+                bun.default_allocator.free(this.prev_hash);
+                bun.default_allocator.destroy(this);
+            }
+
+            pub fn getValue(password: []const u8, prev_hash: []const u8, algorithm: ?PasswordObject.Algorithm) Result.Value {
+                const pass = PasswordObject.verify(bun.default_allocator, password, prev_hash, algorithm) catch |err| {
+                    return Result.Value{ .err = err };
+                };
+                return Result.Value{ .pass = pass };
+            }
+
+            pub fn run(task: *bun.ThreadPool.Task) void {
+                var this = @fieldParentPtr(VerifyJob, "task", task);
+
+                var result = bun.default_allocator.create(Result) catch @panic("out of memory");
+                result.* = Result{
+                    .value = getValue(this.password, this.prev_hash, this.algorithm),
+                    .task = JSC.AnyTask.New(Result, Result.runFromJS).init(result),
+                    .promise = this.promise,
+                    .global = this.global,
+                    .ref = this.ref,
+                };
+                this.ref = .{};
+                this.promise.strong = .{};
+
+                var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch @panic("out of memory");
+                concurrent_task.* = JSC.ConcurrentTask{
+                    .task = JSC.Task.init(&result.task),
+                    .auto_delete = true,
+                };
+                this.event_loop.enqueueTaskConcurrent(concurrent_task);
+                this.deinit();
+            }
+        };
+
+        // Once we have bindings generator, this should be replaced with a generated function
+        pub export fn JSPasswordObject__verify(
+            globalObject: *JSC.JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) callconv(.C) JSC.JSValue {
+            const arguments_ = callframe.arguments(3);
+            const arguments = arguments_.ptr[0..arguments_.len];
+
+            if (arguments.len < 2) {
+                globalObject.throwNotEnoughArguments("verify", 2, 0);
+                return JSC.JSValue.undefined;
+            }
+
+            var algorithm: ?PasswordObject.Algorithm = null;
+
+            if (arguments.len > 2 and !arguments[2].isEmptyOrUndefinedOrNull()) {
+                if (!arguments[2].isString()) {
+                    globalObject.throwInvalidArgumentType("verify", "algorithm", "string");
+                    return JSC.JSValue.undefined;
+                }
+
+                const algorithm_string = arguments[2].getZigString(globalObject);
+
+                algorithm = PasswordObject.Algorithm.label.getWithEql(algorithm_string, JSC.ZigString.eqlComptime) orelse {
+                    globalObject.throwInvalidArgumentType("verify", "algorithm", "unknown algorithm, expected one of: \"bcrypt\" or \"argon2\" (default is \"argon2\")");
+                    return JSC.JSValue.undefined;
+                };
+            }
+
+            var password = JSC.Node.SliceOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[0]) orelse {
+                globalObject.throwInvalidArgumentType("verify", "password", "string or TypedArray");
+                return JSC.JSValue.undefined;
+            };
+
+            var hash_ = JSC.Node.SliceOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[1]) orelse {
+                password.deinit();
+                globalObject.throwInvalidArgumentType("verify", "hash", "string or TypedArray");
+                return JSC.JSValue.undefined;
+            };
+
+            if (hash_.slice().len == 0) {
+                password.deinit();
+                return JSC.JSPromise.resolvedPromiseValue(globalObject, JSC.JSValue.jsBoolean(false));
+            }
+
+            if (password.slice().len == 0) {
+                hash_.deinit();
+                return JSC.JSPromise.resolvedPromiseValue(globalObject, JSC.JSValue.jsBoolean(false));
+            }
+
+            password.ensureCloned(bun.default_allocator) catch {
+                hash_.deinit();
+                globalObject.throwOutOfMemory();
+                return JSC.JSValue.undefined;
+            };
+
+            hash_.ensureCloned(bun.default_allocator) catch {
+                password.deinit();
+                globalObject.throwOutOfMemory();
+                return JSC.JSValue.undefined;
+            };
+
+            return verify(globalObject, password.slice(), hash_.slice(), algorithm, false);
+        }
+
+        // Once we have bindings generator, this should be replaced with a generated function
+        pub export fn JSPasswordObject__verifySync(
+            globalObject: *JSC.JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) callconv(.C) JSC.JSValue {
+            const arguments_ = callframe.arguments(3);
+            const arguments = arguments_.ptr[0..arguments_.len];
+
+            if (arguments.len < 2) {
+                globalObject.throwNotEnoughArguments("verify", 2, 0);
+                return JSC.JSValue.undefined;
+            }
+
+            var algorithm: ?PasswordObject.Algorithm = null;
+
+            if (arguments.len > 2 and !arguments[2].isEmptyOrUndefinedOrNull()) {
+                if (!arguments[2].isString()) {
+                    globalObject.throwInvalidArgumentType("verify", "algorithm", "string");
+                    return JSC.JSValue.undefined;
+                }
+
+                const algorithm_string = arguments[2].getZigString(globalObject);
+
+                algorithm = PasswordObject.Algorithm.label.getWithEql(algorithm_string, JSC.ZigString.eqlComptime) orelse {
+                    globalObject.throwInvalidArgumentType("verify", "algorithm", "unknown algorithm, expected one of: \"bcrypt\" or \"argon2\" (default is \"argon2\")");
+                    return JSC.JSValue.undefined;
+                };
+            }
+
+            var password = JSC.Node.SliceOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[0]) orelse {
+                globalObject.throwInvalidArgumentType("verify", "password", "string or TypedArray");
+                return JSC.JSValue.undefined;
+            };
+
+            var hash_ = JSC.Node.SliceOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[1]) orelse {
+                password.deinit();
+                globalObject.throwInvalidArgumentType("verify", "hash", "string or TypedArray");
+                return JSC.JSValue.undefined;
+            };
+
+            defer password.deinit();
+            defer hash_.deinit();
+
+            if (hash_.slice().len == 0) {
+                return JSC.JSValue.jsBoolean(false);
+            }
+
+            if (password.slice().len == 0) {
+                return JSC.JSValue.jsBoolean(false);
+            }
+
+            return verify(globalObject, password.slice(), hash_.slice(), algorithm, true);
+        }
+    };
+
     pub const CryptoHasher = struct {
         evp: EVP = undefined,
 
@@ -4306,3 +4976,9 @@ pub const JSZlib = struct {
 };
 
 pub usingnamespace @import("./bun/subprocess.zig");
+
+comptime {
+    if (!JSC.is_bindgen) {
+        _ = Crypto.JSPasswordObject.JSPasswordObject__create;
+    }
+}

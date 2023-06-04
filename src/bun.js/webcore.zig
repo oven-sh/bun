@@ -364,6 +364,28 @@ pub const Prompt = struct {
     }
 };
 
+pub const BCrypt = struct {
+    const bcrypt = std.crypto.pwhash.bcrypt;
+
+    // https://github.com/kelektiv/node.bcrypt.js/blob/11d2ddd185c163314bd91754c5803002d929b4ff/src/bcrypt.cc#LL274C1-L285C2
+    pub fn getRounds(encrypted: [bcrypt.hash_length]u8) u32 {
+        if (encrypted[0] != '$') {
+            // invalid
+            return 0;
+        }
+
+        if (encrypted[1] > '9' or encrypted[1] < '0') {
+            // invalid version
+            return 0;
+        }
+
+        if (encrypted[2] != '$') {
+            // invalid
+            return 0;
+        }
+    }
+};
+
 pub const Crypto = struct {
     const UUID = @import("./uuid.zig");
     const BoringSSL = @import("root").bun.BoringSSL;

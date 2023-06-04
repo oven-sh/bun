@@ -59,14 +59,21 @@ function sseServer(
   try {
     evtSource = new EventSource(`http://localhost:${server.port}${pathname}`);
     callback(evtSource, err => {
-      evtSource?.close();
-      done(err);
-      server.stop(true);
+      try {
+        evtSource?.close();
+        done();
+      } catch (err) {
+        done(err);
+      } finally {
+        server.stop(true);
+      }
     });
   } catch (err) {
     evtSource?.close();
     server.stop(true);
     done(err);
+  } finally {
+    server.stop(true);
   }
 }
 

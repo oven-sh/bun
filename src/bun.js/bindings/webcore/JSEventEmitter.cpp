@@ -362,12 +362,11 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_removeAllListe
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(throwScope);
-    UNUSED_PARAM(callFrame);
+    JSValue actualThis = callFrame->thisValue();
     auto& impl = castedThis->wrapped();
     if (callFrame->argumentCount() == 0) {
         impl.removeAllListeners();
-        return JSValue::encode(jsUndefined());
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(actualThis));
     }
 
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
@@ -375,7 +374,8 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_removeAllListe
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     auto result = JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.removeAllListenersForBindings(WTFMove(eventType)); }));
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    return result;
+    impl.setThisObject(actualThis);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(actualThis));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_removeAllListeners, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

@@ -557,9 +557,9 @@ PYTHON=$(shell which python 2>/dev/null || which python3 2>/dev/null || which py
 builtins:
 	NODE_ENV=production bun src/js/builtins/codegen/index.ts --minify
 
-.PHONY: hardcoded
-hardcoded:
-	NODE_ENV=production bun src/js/build-hardcoded.ts
+.PHONY: esm
+esm:
+	NODE_ENV=production bun src/js/build-esm.ts
 
 .PHONY: generate-builtins
 generate-builtins: builtins
@@ -1085,7 +1085,7 @@ dev-obj-linux:
 	$(ZIG) build obj -Dtarget=x86_64-linux-gnu -Dcpu="$(CPU_TARGET)"
 
 .PHONY: dev
-dev: mkdir-dev hardcoded dev-obj bun-link-lld-debug
+dev: mkdir-dev esm dev-obj bun-link-lld-debug
 
 mkdir-dev:
 	mkdir -p $(DEBUG_PACKAGE_DIR)

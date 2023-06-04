@@ -2616,7 +2616,7 @@ void GlobalObject::finishCreation(VM& vm)
             JSC::VM& vm = init.vm;
             JSC::JSGlobalObject* globalObject = init.owner;
 
-            JSValue result = JSValue::decode(JSPasswordObject__create(globalObject, true));
+            JSValue result = JSValue::decode(JSPasswordObject__create(globalObject, false));
             init.set(result.toObject(globalObject));
         });
 
@@ -2625,7 +2625,7 @@ void GlobalObject::finishCreation(VM& vm)
             JSC::VM& vm = init.vm;
             JSC::JSGlobalObject* globalObject = init.owner;
 
-            JSValue result = JSValue::decode(JSPasswordObject__create(globalObject, false));
+            JSValue result = JSValue::decode(JSPasswordObject__create(globalObject, true));
             init.set(result.toObject(globalObject));
         });
 
@@ -3900,7 +3900,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_lazyPreloadTestModuleObject.visit(visitor);
     thisObject->m_commonJSModuleObjectStructure.visit(visitor);
     thisObject->m_lazyPasswordObject.visit(visitor);
-    thisObject->m_lazyPasswordObject.visit(visitor);
+    thisObject->m_lazyPasswordSyncObject.visit(visitor);
     thisObject->m_commonJSFunctionArgumentsStructure.visit(visitor);
     thisObject->m_cachedGlobalObjectStructure.visit(visitor);
     thisObject->m_cachedGlobalProxyStructure.visit(visitor);

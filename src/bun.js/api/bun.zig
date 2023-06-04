@@ -1810,7 +1810,7 @@ pub const Crypto = struct {
             object.put(
                 globalObject,
                 ZigString.static("hash"),
-                if (sync)
+                if (!sync)
                     JSC.NewFunction(globalObject, ZigString.static("hash"), 2, JSPasswordObject__hash, false)
                 else
                     JSC.NewFunction(globalObject, ZigString.static("hash"), 2, JSPasswordObject__hashSync, false),
@@ -1818,7 +1818,7 @@ pub const Crypto = struct {
             object.put(
                 globalObject,
                 ZigString.static("verify"),
-                if (sync)
+                if (!sync)
                     JSC.NewFunction(globalObject, ZigString.static("verify"), 2, JSPasswordObject__verify, false)
                 else
                     JSC.NewFunction(globalObject, ZigString.static("verify"), 2, JSPasswordObject__verifySync, false),

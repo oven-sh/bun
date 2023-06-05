@@ -2662,7 +2662,7 @@ fn NewLexer_(
                 end += 1;
             }
 
-            return bytes.toOwnedSliceLength(end + 1);
+            return bytes.toOwnedSliceLength(end);
         }
 
         fn parseNumericLiteralOrDot(lexer: *LexerType) !void {

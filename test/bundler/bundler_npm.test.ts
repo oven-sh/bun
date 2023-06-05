@@ -43,4 +43,21 @@ describe("bundler", () => {
       stdout: "<!DOCTYPE html><html><head></head><body><h1>Hello World</h1><p>This is an example.</p></body></html>",
     },
   });
+  itBundled("npm/LodashES", {
+    install: ["lodash-es"],
+    files: {
+      "/entry.ts": /* tsx */ `
+        import { isEqual } from "lodash-es";
+
+        // https://github.com/oven-sh/bun/issues/3206
+        if(!isEqual({a: 1}, {a: 1})) throw "error 1";
+        if(isEqual({a: 1}, {a: 2})) throw "error 2";
+
+        console.log('pass')
+      `,
+    },
+    run: {
+      stdout: "pass",
+    },
+  });
 });

@@ -2640,7 +2640,7 @@ fn NewLexer_(
             // them. <CR><LF> and <CR> LineTerminatorSequences are normalized to
             // <LF> for both TV and TRV. An explicit EscapeSequence is needed to
             // include a <CR> or <CR><LF> sequence.
-            var bytes = MutableString.init(lexer.allocator, text.len) catch unreachable;
+            var bytes = MutableString.initCopy(lexer.allocator, text) catch @panic("Out of memory");
             var end: usize = 0;
             var i: usize = 0;
             var c: u8 = '0';

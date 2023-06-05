@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test";
 
-import { password, passwordSync } from "bun";
+import { Password, password, passwordSync } from "bun";
 
 const placeholder = "hey";
 
@@ -23,11 +23,46 @@ describe("hash", () => {
         expect(() => hash(placeholder, 123)).toThrow();
 
         expect(() =>
-          // @ts-expect-error
           hash(placeholder, {
+            // @ts-expect-error
             toString() {
               return "scrypt";
             },
+          }),
+        ).toThrow();
+
+        expect(() =>
+          hash(placeholder, {
+            // @ts-expect-error
+            algorithm: "poop",
+          }),
+        ).toThrow();
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "bcrypt",
+            cost: Infinity,
+          }),
+        ).toThrow();
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
+            memoryCost: -1,
+          }),
+        ).toThrow();
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
+            timeCost: -1,
+          }),
+        ).toThrow();
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "bcrypt",
+            cost: -999,
           }),
         ).toThrow();
       });
@@ -139,21 +174,21 @@ describe("verify", () => {
   });
 });
 
-test("bcrypt longer than 72 characters is the SHA-256", async () => {
+test("bcrypt longer than 72 characters is the SHA-512", async () => {
   const boop = Buffer.from("hey".repeat(100));
   const hashed = await password.hash(boop, "bcrypt");
-  expect(await password.verify(Bun.SHA256.hash(boop), hashed, "bcrypt")).toBeTrue();
+  expect(await password.verify(Bun.SHA512.hash(boop), hashed, "bcrypt")).toBeTrue();
 });
 
-test("bcrypt shorter than 72 characters is NOT the SHA-256", async () => {
+test("bcrypt shorter than 72 characters is NOT the SHA-512", async () => {
   const boop = Buffer.from("hey".repeat(3));
   const hashed = await password.hash(boop, "bcrypt");
-  expect(await password.verify(Bun.SHA256.hash(boop), hashed, "bcrypt")).toBeFalse();
+  expect(await password.verify(Bun.SHA512.hash(boop), hashed, "bcrypt")).toBeFalse();
 });
 
-const defaultAlgorithm = "argon2";
-const algorithms = [undefined, "argon2", "bcrypt"];
-const argons = ["argon2", "argon2i", "argon2id", "argon2d"];
+const defaultAlgorithm = "argon2id";
+const algorithms = [undefined, "argon2id", "bcrypt"];
+const argons = ["argon2i", "argon2id", "argon2d"];
 
 for (let algorithmValue of algorithms) {
   const prefix = algorithmValue === "bcrypt" ? "$2" : "$" + (algorithmValue || defaultAlgorithm);
@@ -188,25 +223,55 @@ for (let algorithmValue of algorithms) {
         test("password", async () => {
           async function runSlowTest(algorithm = algorithmValue as any) {
             const hashed = await password.hash(input, algorithm);
-
+            const prefix = "$" + algorithm;
             expect(hashed).toStartWith(prefix);
             expect(await password.verify(input, hashed, algorithm)).toBeTrue();
             expect(() => password.verify(hashed, input, algorithm)).toThrow();
             expect(await password.verify(input + "\0", hashed, algorithm)).toBeFalse();
           }
 
-          if (algorithmValue === "argon2") {
+          async function runSlowTestWithOptions(algorithmLabel: any) {
+            const algorithm = { algorithm: algorithmLabel, timeCost: 5, memoryCost: 4 };
+            const hashed = await password.hash(input, algorithm);
+            const prefix = "$" + algorithmLabel;
+            expect(hashed).toStartWith(prefix);
+            expect(hashed).toContain("t=5");
+            expect(hashed).toContain("m=4");
+            expect(await password.verify(input, hashed, algorithmLabel)).toBeTrue();
+            expect(() => password.verify(hashed, input, algorithmLabel)).toThrow();
+            expect(await password.verify(input + "\0", hashed, algorithmLabel)).toBeFalse();
+          }
+
+          async function runSlowBCryptTest() {
+            const algorithm = { algorithm: "bcrypt", cost: 4 } as const;
+            const hashed = await password.hash(input, algorithm);
+            const prefix = "$" + "2b";
+            expect(hashed).toStartWith(prefix);
+            expect(await password.verify(input, hashed, "bcrypt")).toBeTrue();
+            expect(() => password.verify(hashed, input, "bcrypt")).toThrow();
+            expect(await password.verify(input + "\0", hashed, "bcrypt")).toBeFalse();
+          }
+
+          if (algorithmValue === defaultAlgorithm) {
             // these tests are very slow
             // run the hashing tests in parallel
-            await Promise.all(argons.map(runSlowTest));
+            await Promise.all([...argons.map(runSlowTest), ...argons.map(runSlowTestWithOptions)]);
             return;
           }
 
-          const hashed = await hash(input);
-          expect(hashed).toStartWith(prefix);
-          expect(await verify(input, hashed)).toBeTrue();
-          expect(() => verify(hashed, input)).toThrow();
-          expect(await verify(input + "\0", hashed)).toBeFalse();
+          async function defaultTest() {
+            const hashed = await hash(input);
+            expect(hashed).toStartWith(prefix);
+            expect(await verify(input, hashed)).toBeTrue();
+            expect(() => verify(hashed, input)).toThrow();
+            expect(await verify(input + "\0", hashed)).toBeFalse();
+          }
+
+          if (algorithmValue === "bcrypt") {
+            await Promise.all([defaultTest(), runSlowBCryptTest()]);
+          } else {
+            await defaultTest();
+          }
         });
       });
     }

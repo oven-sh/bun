@@ -1012,13 +1012,30 @@ declare module "bun" {
     //       importSource?: string; // default: "react"
     //     };
   }
+  namespace Password {
+    export type AlgorithmLabel = "bcrypt" | "argon2id" | "argon2d" | "argon2i";
 
-  type PasswordAlgorithm =
-    | "bcrypt"
-    | "argon2"
-    | "argon2id"
-    | "argon2d"
-    | "argon2i";
+    export interface Argon2Algorithm {
+      algorithm: "argon2id" | "argon2d" | "argon2i";
+      /**
+       * Memory cost, which defines the memory usage, given in kibibytes.
+       */
+      memoryCost?: number;
+      /**
+       * Defines the amount of computation realized and therefore the execution
+       * time, given in number of iterations.
+       */
+      timeCost?: number;
+    }
+
+    export interface BCryptAlgorithm {
+      algorithm: "bcrypt";
+      /**
+       * A number between 4 and 31. The default is 10.
+       */
+      cost?: number;
+    }
+  }
 
   /**
    * Hash and verify passwords using argon2 or bcrypt. The default is argon2.
@@ -1086,7 +1103,7 @@ declare module "bun" {
        * If specified and the algorithm does not match the hash, this function
        * throws an error.
        */
-      algorithm?: PasswordAlgorithm,
+      algorithm?: Password.AlgorithmLabel,
     ): Promise<boolean>;
     /**
      * Asynchronously hash a password using argon2 or bcrypt. The default is argon2.
@@ -1117,11 +1134,14 @@ declare module "bun" {
        */
       password: StringOrBuffer,
       /**
-       * @default "argon2"
+       * @default "argon2id"
        *
-       * When using bcrypt, passwords exceeding 72 characters will be SHA256'd before
+       * When using bcrypt, passwords exceeding 72 characters will be SHA512'd before
        */
-      algorithm?: PasswordAlgorithm,
+      algorithm?:
+        | Password.AlgorithmLabel
+        | Password.Argon2Algorithm
+        | Password.BCryptAlgorithm,
     ): Promise<string>;
   };
 
@@ -1162,7 +1182,7 @@ declare module "bun" {
       /**
        * If not specified, the algorithm will be inferred from the hash.
        */
-      algorithm?: PasswordAlgorithm,
+      algorithm?: Password.AlgorithmLabel,
     ): boolean;
     hash(
       /**
@@ -1173,11 +1193,14 @@ declare module "bun" {
        */
       password: StringOrBuffer,
       /**
-       * @default "argon2"
+       * @default "argon2id"
        *
        * When using bcrypt, passwords exceeding 72 characters will be SHA256'd before
        */
-      algorithm?: PasswordAlgorithm,
+      algorithm?:
+        | Password.AlgorithmLabel
+        | Password.Argon2Algorithm
+        | Password.BCryptAlgorithm,
     ): string;
   };
 

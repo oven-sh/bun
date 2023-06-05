@@ -403,6 +403,8 @@ public:
     void* napiInstanceDataFinalizer = nullptr;
     void* napiInstanceDataFinalizerHint = nullptr;
 
+    void* bunInspectorPtr = nullptr;
+
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
 private:

@@ -245,14 +245,14 @@ extern "C" bool JSGlobalObject__startRemoteInspector(Zig::GlobalObject* globalOb
 #if !ENABLE(REMOTE_INSPECTOR)
     return false;
 #else
-    globalObject->setInspectable(true);
     bool didSucceed = false;
 
     // This function calls immediately.
     auto inspector = BunInspector::startWebSocketServer(
+        globalObject,
         *globalObject->scriptExecutionContext(),
         WTF::String::fromUTF8(host),
-        port, [port, &didSucceed](RefPtr<BunInspector> inspector, bool success) {
+        port, [port, &didSucceed](BunInspector* inspector, bool success) {
             didSucceed = success;
 
             if (success) {
@@ -283,6 +283,10 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObje
     globalObject->isThreadLocalDefaultGlobalObject = true;
     if (count > 0) {
         globalObject->installAPIGlobals(globalObjectClass, count, vm);
+    }
+    if (inspector != 0) {
+        globalObject->setInspectable(true);
+        globalObject->inspectorController().debugger();
     }
     JSC::gcProtect(globalObject);
     vm.ref();
@@ -549,6 +553,9 @@ WebCore::ScriptExecutionContext* GlobalObject::scriptExecutionContext() const
 void GlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject* globalObject,
     JSC::Exception* exception)
 {
+    if (globalObject->hasDebugger()) {
+        globalObject->debugger()->exception(globalObject, nullptr, exception, false);
+    }
     Bun__reportUnhandledError(globalObject, JSValue::encode(JSValue(exception)));
 }
 
@@ -560,10 +567,16 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
 
     // Do this in C++ for now
     auto* globalObj = reinterpret_cast<GlobalObject*>(obj);
+
     switch (operation) {
-    case JSPromiseRejectionOperation::Reject:
+    case JSPromiseRejectionOperation::Reject: {
+        if (obj->hasDebugger()) {
+            obj->debugger()->exception(obj, nullptr, promise->result(), false);
+        }
+
         globalObj->m_aboutToBeNotifiedRejectedPromises.append(JSC::Strong<JSPromise>(obj->vm(), promise));
         break;
+    }
     case JSPromiseRejectionOperation::Handle:
         globalObj->m_aboutToBeNotifiedRejectedPromises.removeFirstMatching([&](Strong<JSPromise>& unhandledPromise) {
             return unhandledPromise.get() == promise;

@@ -1,12 +1,20 @@
 #include "BunInspector.h"
 #include <JavaScriptCore/Heap.h>
 #include <JavaScriptCore/JSGlobalObject.h>
-#include "JSGlobalObjectInspectorController.h"
 #include <JavaScriptCore/JSGlobalObjectDebugger.h>
 
 namespace Zig {
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(BunInspector);
+
+extern "C" void Bun__waitForDebuggerToStart();
+extern "C" void Bun__debuggerIsReady();
+
+static BunInspector* inspectorFromGlobal(Zig::GlobalObject* globalObject)
+{
+    RELEASE_ASSERT(globalObject->bunInspectorPtr);
+    return reinterpret_cast<BunInspector*>(globalObject->bunInspectorPtr);
+}
 
 class BunInspectorConnection {
 
@@ -85,25 +93,53 @@ void BunInspector::sendMessageToFrontend(const String& message)
         }
     }
 
-    auto utf8Message = out.utf8();
-    if (this->m_pendingMessages.size() > 0) {
-        this->m_pendingMessages.append(WTFMove(utf8Message));
-        return;
-    }
+    {
+        LockHolder locker(this->m_pendingMessagesLock);
+        if (!this->hasSentWelcomeMessage) {
+            this->hasSentWelcomeMessage = true;
+            auto welcomeMessage = makeString(
+                "{ \"method\": \"Runtime.executionContextCreated\", \"params\":{\"context\":{\"id\":"_s,
+                this->scriptExecutionContext()->identifier(),
+                ",\"origin\":\"\",\"name\":\""_s,
+                this->identifier(),
+                "\",\"uniqueId\":\"1234\",\"auxData\":{\"isDefault\":true}}}}"_s);
+            this->m_pendingMessages.append(WTFMove(welcomeMessage.isolatedCopy()));
+        }
 
-    std::string_view view { utf8Message.data(), utf8Message.length() };
-    if (!this->server->publish("BunInspectorConnection", view, uWS::OpCode::TEXT, false)) {
-        this->m_pendingMessages.append(WTFMove(utf8Message));
+        this->m_pendingMessages.append(WTFMove(out.isolatedCopy()));
     }
+    us_wakeup_loop((us_loop_t*)this->loop);
+}
+
+void BunInspector::drainIncomingMessages()
+{
+    LockHolder locker(this->m_incomingMessagesLock);
+    size_t size = this->m_incomingMessages.size();
+    while (size > 0) {
+        auto& message = this->m_incomingMessages.first();
+        this->sendMessageToTargetBackend(message);
+        this->m_incomingMessages.removeFirst();
+        size = this->m_incomingMessages.size();
+    }
+}
+
+void BunInspector::didParseSource(SourceID id, const Debugger::Script& script)
+{
 }
 
 void BunInspector::drainOutgoingMessages()
 {
 
+    if (this->server->numSubscribers("BunInspectorConnection") == 0) {
+        return;
+    }
+
+    LockHolder locker(this->m_pendingMessagesLock);
     size_t size = this->m_pendingMessages.size();
     while (size > 0) {
         auto& message = this->m_pendingMessages.first();
-        std::string_view view { message.data(), message.length() };
+        auto utf8 = message.utf8();
+        std::string_view view { utf8.data(), utf8.length() };
         if (!this->server->publish("BunInspectorConnection", view, uWS::OpCode::TEXT, false)) {
             return;
         }
@@ -114,28 +150,16 @@ void BunInspector::drainOutgoingMessages()
 
 extern "C" void Bun__tickWhileWaitingForDebugger(JSC::JSGlobalObject* globalObject);
 
-RefPtr<BunInspector> BunInspector::startWebSocketServer(
-    WebCore::ScriptExecutionContext& context,
-    WTF::String hostname,
-    uint16_t port,
-    WTF::Function<void(RefPtr<BunInspector>, bool success)>&& callback)
+void BunInspector::startServer(WTF::String hostname, uint16_t port, WTF::URL url, WTF::String title)
 {
-    context.ensureURL();
-    auto url = context.url();
-    auto identifier = url.fileSystemPath();
-
-    auto title = makeString(
-        url.fileSystemPath(),
-        " (Bun "_s, Bun__version, ")"_s);
-
-    auto* globalObject = context.jsGlobalObject();
-
     uWS::App* app = new uWS::App();
-    RefPtr<BunInspector> inspector = adoptRef(*new BunInspector(&context, app, WTFMove(identifier)));
+    this->server = app;
+    this->loop = uWS::Loop::get();
+
     auto host = hostname.utf8();
 
     // https://chromedevtools.github.io/devtools-protocol/  GET /json or /json/list
-    app->get("/json", [hostname, port, url, title = title, inspector](auto* res, auto* /*req*/) {
+    app->get("/json", [hostname, port, url, title = title, inspector = this](auto* res, auto* /*req*/) {
            auto identifier = inspector->identifier();
            auto jsonString = makeString(
                "[ {\"faviconUrl\": \"https://bun.sh/favicon.svg\", \"description\": \"\", \"devtoolsFrontendUrl\": \"devtools://devtools/bundled/js_app.html?experiments=true&v8only=true&ws="_s,
@@ -182,20 +206,16 @@ RefPtr<BunInspector> BunInspector::startWebSocketServer(
                                                .sendPingsAutomatically = true,
                                                /* Handlers */
                                                .upgrade = nullptr,
-                                               .open = [inspector](auto* ws) {
-                BunInspectorConnection** connectionPtr = ws->getUserData();
-                *connectionPtr = new BunInspectorConnection(inspector);
-                ws->subscribe("BunInspectorConnection");
-                BunInspectorConnection* connection = *connectionPtr;
-                inspector->connect(Inspector::FrontendChannel::ConnectionType::Local);
-                 auto* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(inspector->globalObject()->inspectorController().debugger());
-    debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& globalObject, bool& isPaused) {
-        while (isPaused) {
-            Bun__tickWhileWaitingForDebugger(&globalObject);
-        }
-    }; },
+                                               .open = [inspector = this](auto* ws) {
+                                                   BunInspectorConnection** connectionPtr = ws->getUserData();
+                                                   *connectionPtr = new BunInspectorConnection(inspector);
 
-                                               .message = [inspector](auto* ws, std::string_view message, uWS::OpCode opCode) {
+      
+                                                   ws->subscribe("BunInspectorConnection");
+                                                   BunInspectorConnection* connection = *connectionPtr; 
+                                                   Bun__debuggerIsReady(); },
+
+                                               .message = [inspector = this](auto* ws, std::string_view message, uWS::OpCode opCode) {
         if (opCode == uWS::OpCode::TEXT) {
             if (!inspector) {
                 ws->close();
@@ -204,27 +224,14 @@ RefPtr<BunInspector> BunInspector::startWebSocketServer(
 
             BunInspectorConnection** connectionPtr = ws->getUserData();
             BunInspectorConnection* connection = *connectionPtr;
-        //       if (!connection->hasSentWelcomeMessage) {
-        //     connection->hasSentWelcomeMessage = true;
-        //     auto welcomeMessage = makeString(
-        //                                                                 "{ \"method\": \"Runtime.executionContextCreated\", \"params\":{\"context\":{\"id\":"_s,  
-        //                                                                 connection->inspector->scriptExecutionContext()->identifier(), 
-        //                                                                 ",\"origin\":\"\",\"name\":\""_s, 
-        //                                                                 connection->inspector->identifier(), 
-        //                                                                 "\",\"uniqueId\":\"1234\",\"auxData\":{\"isDefault\":true}}}}"_s
-        //                                                             ).utf8();
-        //                                                             std::string_view view { welcomeMessage.data(), welcomeMessage.length() };
-        //                                                           if (! ws->send(
-        //                                                             view,
-        //                                                             uWS::OpCode::TEXT,
-        //                                                             false,
-        //                                                             false
-        //                                                            )) {
-        //                                                             connection->m_messages.append(WTFMove(welcomeMessage));
-        //                                                            }
-        // }
 
-            inspector->dispatchToBackend(message);
+            
+            
+
+            connection->inspector->dispatchToBackend(message);
+             connection->inspector->drainOutgoingMessages();
+             
+            
         } },
                                                .drain = [](auto* ws) {
 
@@ -246,7 +253,6 @@ RefPtr<BunInspector> BunInspector::startWebSocketServer(
             }
             connection->m_messages.removeFirst();
         }
-
         connection->inspector->drainOutgoingMessages(); },
                                                .ping = [](auto* /*ws*/, std::string_view) {
     /* Not implemented yet */ },
@@ -271,14 +277,54 @@ RefPtr<BunInspector> BunInspector::startWebSocketServer(
             res->write(req->getUrl());
             res->end(" was not found");
         })
-        .listen(std::string(host.data(), host.length()), port, [inspector, callback = WTFMove(callback)](auto* listen_socket) {
-            if (listen_socket) {
-                callback(inspector, true);
-            } else {
-                callback(inspector, false);
-            }
+        .listen(std::string(host.data(), host.length()), port, [inspector = this](auto* listen_socket) {
+            inspector->loop->addPostHandler(inspector, [inspector = inspector](uWS::Loop* loop) {
+                inspector->drainOutgoingMessages();
+            });
+            WebCore::ScriptExecutionContext::postTaskTo(
+                inspector->scriptExecutionContext()->identifier(),
+                [inspector = inspector](WebCore::ScriptExecutionContext& ctx) mutable {
+                    inspector->readyToStartDebugger();
+                });
+
+            inspector->loop->run();
         });
-    ;
+}
+
+void BunInspector::readyToStartDebugger()
+{
+    this->ensureDebugger();
+
+    auto& inspectorController = globalObject()->inspectorController();
+    auto* debugger = inspectorController.debugger();
+    debugger->addObserver(*this);
+    debugger->schedulePauseAtNextOpportunity();
+}
+
+BunInspector* BunInspector::startWebSocketServer(
+    Zig::GlobalObject* globalObject,
+    WebCore::ScriptExecutionContext& context,
+    WTF::String hostname,
+    uint16_t port,
+    WTF::Function<void(BunInspector*, bool success)>&& callback)
+{
+    context.ensureURL();
+    auto url = context.url();
+    auto identifier = url.fileSystemPath();
+
+    auto title = makeString(
+        url.fileSystemPath(),
+        " (Bun "_s, Bun__version, ")"_s);
+
+    auto* inspector = new BunInspector(&context, nullptr, WTFMove(identifier));
+    reinterpret_cast<Zig::GlobalObject*>(globalObject)->bunInspectorPtr = inspector;
+    auto backgroundThreadFunction = [inspector = inspector, hostname = hostname.isolatedCopy(), port = port, url = WTFMove(url), title = WTFMove(title)]() -> void {
+        inspector->startServer(hostname, port, url, WTFMove(title));
+    };
+    WTF::Thread::create("BunInspector", WTFMove(backgroundThreadFunction))->detach();
+
+    callback(inspector, true);
+    Bun__waitForDebuggerToStart();
 
     return inspector;
 }
@@ -287,55 +333,17 @@ void BunInspector::dispatchToBackend(std::string_view message)
 {
     WTF::CString data { message.data(), message.length() };
     WTF::String msg = WTF::String::fromUTF8(data.data(), data.length());
-    auto jsonObject = WTF::JSONImpl::Value::parseJSON(msg);
-    // if (auto object = jsonObject->asObject()) {
-    //     auto method = object->getString("method"_s);
-
-    //     if (method == "Profiler.enable"_s || method == "Runtime.runIfWaitingForDebugger"_s || method == "Debugger.setAsyncCallStackDepth"_s || method == "Debugger.setBlackboxPatterns"_s) {
-
-    //         if (auto id = object.get()->getInteger("id"_s)) {
-    //             auto response = makeString(
-    //                 "{\"id\":"_s,
-    //                 id.value(),
-    //                 "\"result\":{}}"_s);
-
-    //             sendMessageToFrontend(response);
-    //             return;
-    //         }
-    //     } else if (method == "Runtime.getHeapUsage"_s) {
-
-    //         if (auto id = object.get()->getInteger("id"_s)) {
-    //             auto& heap = globalObject()->vm().heap;
-    //             int usedSize = heap.size();
-    //             int totalSize = heap.capacity();
-
-    //             auto response = makeString(
-    //                 "{\"id\":"_s,
-    //                 id.value(),
-    //                 "\"result\":{ "_s,
-    //                 "\"usedSize\": "_s, usedSize, "\"totalSize\":"_s, totalSize, "}}"_s);
-
-    //             sendMessageToFrontend(response);
-    //             return;
-    //         }
-    //     } else if (method == "Runtime.getIsolateId"_s) {
-
-    //         if (auto id = object.get()->getInteger("id"_s)) {
-    //             auto& heap = globalObject()->vm().heap;
-    //             int usedSize = heap.size();
-    //             int totalSize = heap.capacity();
-
-    //             auto response = makeString(
-    //                 "{\"id\":"_s,
-    //                 id.value(),
-    //                 "\"result\": \"123\"}"_s);
-
-    //             sendMessageToFrontend(response);
-    //             return;
-    //         }
-    //     }
-    // }
-    globalObject()->inspectorController().backendDispatcher().dispatch(msg);
+    bool needsTask = true;
+    {
+        LockHolder incomingMessagesLock(this->m_incomingMessagesLock);
+        needsTask = this->m_incomingMessages.isEmpty();
+        this->m_incomingMessages.append(WTFMove(msg.isolatedCopy()));
+    }
+    WebCore::ScriptExecutionContext::postTaskTo(
+        scriptExecutionContext()->identifier(),
+        [inspector = this](WebCore::ScriptExecutionContext& ctx) mutable {
+            inspector->drainIncomingMessages();
+        });
 }
 
 void BunInspector::sendMessageToTargetBackend(const WTF::String& message)
@@ -351,6 +359,33 @@ void BunInspector::connect(Inspector::FrontendChannel::ConnectionType connection
 void BunInspector::disconnect()
 {
     globalObject()->inspectorController().disconnectFrontend(*this);
+}
+
+void BunInspector::didPause(JSGlobalObject* jsGlobalObject, DebuggerCallFrame& callframe, JSValue exceptionOrCaughtValue)
+{
+    printf("didPause\n");
+}
+void BunInspector::didContinue()
+{
+    printf("didContinue\n");
+}
+
+void BunInspector::waitForMessages()
+{
+    this->m_incomingMessagesLock.lock();
+}
+
+void BunInspector::ensureDebugger()
+{
+    this->connect(Inspector::FrontendChannel::ConnectionType::Local);
+
+    auto* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(this->globalObject()->inspectorController().debugger());
+    debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& globalObject, bool& isResumed) {
+        auto* inspector = inspectorFromGlobal(reinterpret_cast<Zig::GlobalObject*>(&globalObject));
+        while (!isResumed) {
+            inspector->drainIncomingMessages();
+        }
+    };
 }
 
 } // namespace Zig

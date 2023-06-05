@@ -256,6 +256,28 @@ pub export fn Bun__drainMicrotasks() void {
     JSC.VirtualMachine.get().eventLoop().tick();
 }
 
+const WaitForDebugger = struct {
+    var is_debugger_ready = std.atomic.Atomic(u32).init(0);
+    pub fn ready() void {
+        is_debugger_ready.store(1, .Monotonic);
+        std.Thread.Futex.wake(&is_debugger_ready, 1);
+    }
+
+    pub fn wait() void {
+        while (is_debugger_ready.load(.Monotonic) == 0) {
+            std.Thread.Futex.wait(&is_debugger_ready, 1);
+        }
+    }
+};
+
+pub export fn Bun__waitForDebuggerToStart() void {
+    WaitForDebugger.wait();
+}
+
+pub export fn Bun__debuggerIsReady() void {
+    WaitForDebugger.ready();
+}
+
 export fn Bun__readOriginTimer(vm: *JSC.VirtualMachine) u64 {
     return vm.origin_timer.read();
 }
@@ -2793,6 +2815,9 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 }
 
 comptime {
-    if (!JSC.is_bindgen)
+    if (!JSC.is_bindgen) {
         _ = Bun__getMainPath;
+        _ = Bun__waitForDebuggerToStart;
+        _ = Bun__debuggerIsReady;
+    }
 }

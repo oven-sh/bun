@@ -25,7 +25,7 @@ pub const huge_allocator_threshold: comptime_int = @import("./memory_allocator.z
 pub const fs_allocator = default_allocator;
 
 pub const C = @import("c.zig");
-
+pub const sha = @import("./sha.zig");
 pub const FeatureFlags = @import("feature_flags.zig");
 pub const meta = @import("./meta.zig");
 pub const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;

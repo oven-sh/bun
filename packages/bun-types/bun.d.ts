@@ -1012,6 +1012,197 @@ declare module "bun" {
     //       importSource?: string; // default: "react"
     //     };
   }
+  namespace Password {
+    export type AlgorithmLabel = "bcrypt" | "argon2id" | "argon2d" | "argon2i";
+
+    export interface Argon2Algorithm {
+      algorithm: "argon2id" | "argon2d" | "argon2i";
+      /**
+       * Memory cost, which defines the memory usage, given in kibibytes.
+       */
+      memoryCost?: number;
+      /**
+       * Defines the amount of computation realized and therefore the execution
+       * time, given in number of iterations.
+       */
+      timeCost?: number;
+    }
+
+    export interface BCryptAlgorithm {
+      algorithm: "bcrypt";
+      /**
+       * A number between 4 and 31. The default is 10.
+       */
+      cost?: number;
+    }
+  }
+
+  /**
+   * Hash and verify passwords using argon2 or bcrypt. The default is argon2.
+   * Password hashing functions are necessarily slow, and this object will
+   * automatically run in a worker thread.
+   *
+   * The underlying implementation of these functions are provided by the Zig
+   * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+   * work on this.
+   *
+   * ### Example with argon2
+   *
+   * ```ts
+   * import {password} from "bun";
+   *
+   * const hash = await password.hash("hello world");
+   * const verify = await password.verify("hello world", hash);
+   * console.log(verify); // true
+   * ```
+   *
+   * ### Example with bcrypt
+   * ```ts
+   * import {password} from "bun";
+   *
+   * const hash = await password.hash("hello world", "bcrypt");
+   * // algorithm is optional, will be inferred from the hash if not specified
+   * const verify = await password.verify("hello world", hash, "bcrypt");
+   *
+   * console.log(verify); // true
+   * ```
+   */
+  export const password: {
+    /**
+     * Verify a password against a previously hashed password.
+     *
+     * @returns true if the password matches, false otherwise
+     *
+     * @example
+     * ```ts
+     * import {password} from "bun";
+     * await password.verify("hey", "$argon2id$v=19$m=65536,t=2,p=1$ddbcyBcbAcagei7wSkZFiouX6TqnUQHmTyS5mxGCzeM$+3OIaFatZ3n6LtMhUlfWbgJyNp7h8/oIsLK+LzZO+WI");
+     * // true
+     * ```
+     *
+     * @throws If the algorithm is specified and does not match the hash
+     * @throws If the algorithm is invalid
+     * @throws if the hash is invalid
+     *
+     */
+    verify(
+      /**
+       * The password to verify.
+       *
+       * If empty, always returns false
+       */
+      password: StringOrBuffer,
+      /**
+       * Previously hashed password.
+       * If empty, always returns false
+       */
+      hash: StringOrBuffer,
+      /**
+       * If not specified, the algorithm will be inferred from the hash.
+       *
+       * If specified and the algorithm does not match the hash, this function
+       * throws an error.
+       */
+      algorithm?: Password.AlgorithmLabel,
+    ): Promise<boolean>;
+    /**
+     * Asynchronously hash a password using argon2 or bcrypt. The default is argon2.
+     *
+     * @returns A promise that resolves to the hashed password
+     *
+     * ## Example with argon2
+     * ```ts
+     * import {password} from "bun";
+     * const hash = await password.hash("hello world");
+     * console.log(hash); // $argon2id$v=1...
+     * const verify = await password.verify("hello world", hash);
+     * ```
+     * ## Example with bcrypt
+     * ```ts
+     * import {password} from "bun";
+     * const hash = await password.hash("hello world", "bcrypt");
+     * console.log(hash); // $2b$10$...
+     * const verify = await password.verify("hello world", hash);
+     * ```
+     */
+    hash(
+      /**
+       * The password to hash
+       *
+       * If empty, this function throws an error. It is usually a programming
+       * mistake to hash an empty password.
+       */
+      password: StringOrBuffer,
+      /**
+       * @default "argon2id"
+       *
+       * When using bcrypt, passwords exceeding 72 characters will be SHA512'd before
+       */
+      algorithm?:
+        | Password.AlgorithmLabel
+        | Password.Argon2Algorithm
+        | Password.BCryptAlgorithm,
+    ): Promise<string>;
+  };
+
+  /**
+   * Synchronously hash and verify passwords using argon2 or bcrypt. The default is argon2.
+   * Warning: password hashing is slow, consider using {@link Bun.password}
+   * instead which runs in a worker thread.
+   *
+   * The underlying implementation of these functions are provided by the Zig
+   * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+   * work on this.
+   *
+   * ### Example with argon2
+   *
+   * ```ts
+   * import {password} from "bun";
+   *
+   * const hash = await password.hash("hello world");
+   * const verify = await password.verify("hello world", hash);
+   * console.log(verify); // true
+   * ```
+   *
+   * ### Example with bcrypt
+   * ```ts
+   * import {password} from "bun";
+   *
+   * const hash = await password.hash("hello world", "bcrypt");
+   * // algorithm is optional, will be inferred from the hash if not specified
+   * const verify = await password.verify("hello world", hash, "bcrypt");
+   *
+   * console.log(verify); // true
+   * ```
+   */
+  export const passwordSync: {
+    verify(
+      password: StringOrBuffer,
+      hash: StringOrBuffer,
+      /**
+       * If not specified, the algorithm will be inferred from the hash.
+       */
+      algorithm?: Password.AlgorithmLabel,
+    ): boolean;
+    hash(
+      /**
+       * The password to hash
+       *
+       * If empty, this function throws an error. It is usually a programming
+       * mistake to hash an empty password.
+       */
+      password: StringOrBuffer,
+      /**
+       * @default "argon2id"
+       *
+       * When using bcrypt, passwords exceeding 72 characters will be SHA256'd before
+       */
+      algorithm?:
+        | Password.AlgorithmLabel
+        | Password.Argon2Algorithm
+        | Password.BCryptAlgorithm,
+    ): string;
+  };
 
   interface BuildArtifact extends Blob {
     path: string;

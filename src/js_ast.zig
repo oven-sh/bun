@@ -9600,7 +9600,7 @@ pub const Macro = struct {
                 .existing_bundle = null,
                 .store_fd = false,
                 .inspector = .none,
-                .env = env,
+                .env_loader = env,
             });
 
             _vm.enableMacroMode();

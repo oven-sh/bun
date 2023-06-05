@@ -820,6 +820,7 @@ pub const VirtualMachine = struct {
             &global_classes,
             @intCast(i32, global_classes.len),
             vm.console,
+            .none,
         );
         vm.regular_event_loop.global = vm.global;
         vm.regular_event_loop.virtual_machine = vm;

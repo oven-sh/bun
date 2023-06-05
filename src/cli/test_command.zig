@@ -476,7 +476,7 @@ pub const TestCommand = struct {
                 // in the future we should investigate if refactoring this to not
                 // rely on the dir fd yields a performance improvement
                 true,
-                .inspector = if (ctx.debug.inspect_break) .breakpoint else .none,
+                .inspector = ctx.debug.inspector,
             },
         );
         vm.argv = ctx.passthrough;

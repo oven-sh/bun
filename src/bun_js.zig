@@ -150,7 +150,7 @@ pub const Run = struct {
                 .{
                     .log = ctx.log,
                     .store_fd = ctx.debug.hot_reload != .none,
-                    .inspector = ctx.debug.inspect_break != .none,
+                    .inspector = ctx.debug.inspector,
                     .env_loader = null,
                 },
             ),

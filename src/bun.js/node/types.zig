@@ -312,6 +312,18 @@ pub const SliceOrBuffer = union(Tag) {
     string: JSC.ZigString.Slice,
     buffer: Buffer,
 
+    pub fn ensureCloned(this: *SliceOrBuffer, allocator: std.mem.Allocator) !void {
+        if (this.* == .string) {
+            this.string = try this.string.cloneIfNeeded(allocator);
+            return;
+        }
+
+        const bytes = this.buffer.buffer.byteSlice();
+        this.* = .{
+            .string = JSC.ZigString.Slice.from(try allocator.dupe(u8, bytes), allocator),
+        };
+    }
+
     pub fn deinit(this: SliceOrBuffer) void {
         switch (this) {
             .string => {

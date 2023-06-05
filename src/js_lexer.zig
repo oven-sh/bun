@@ -2070,7 +2070,7 @@ fn NewLexer_(
                         lexer.step();
 
                         var has_set_flags_start = false;
-                        const flag_characters = "dgimsuyv";
+                        const flag_characters = "dgimsuvy";
                         const min_flag = comptime std.mem.min(u8, flag_characters);
                         const max_flag = comptime std.mem.max(u8, flag_characters);
                         const RegexpFlags = std.bit_set.IntegerBitSet((max_flag - min_flag) + 1);

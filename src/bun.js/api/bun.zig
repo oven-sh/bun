@@ -1794,7 +1794,6 @@ pub const Crypto = struct {
                 .{
                     .{ "argon2i", .argon2i },
                     .{ "argon2d", .argon2d },
-                    .{ "argon2", .argon2id },
                     .{ "argon2id", .argon2id },
                     .{ "bcrypt", .bcrypt },
                 },

@@ -224,8 +224,6 @@ static inline JSC::EncodedJSValue addListener(JSC::JSGlobalObject* lexicalGlobal
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     JSC::JSValue actualThis = callFrame->thisValue();
-    UNUSED_PARAM(throwScope);
-    UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
     if (UNLIKELY(callFrame->argumentCount() < 2))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
@@ -330,8 +328,6 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_removeListener
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     JSC::JSValue actualThis = callFrame->thisValue();
-    UNUSED_PARAM(throwScope);
-    UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
     if (UNLIKELY(callFrame->argumentCount() < 1))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
@@ -362,12 +358,11 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_removeAllListe
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(throwScope);
-    UNUSED_PARAM(callFrame);
+    JSValue actualThis = callFrame->thisValue();
     auto& impl = castedThis->wrapped();
     if (callFrame->argumentCount() == 0) {
         impl.removeAllListeners();
-        return JSValue::encode(jsUndefined());
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(actualThis));
     }
 
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
@@ -375,7 +370,8 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_removeAllListe
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     auto result = JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.removeAllListenersForBindings(WTFMove(eventType)); }));
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    return result;
+    impl.setThisObject(actualThis);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(actualThis));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_removeAllListeners, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -387,8 +383,6 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_emitBody(JSC::
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(throwScope);
-    UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
     size_t argumentCount = callFrame->argumentCount();
     if (UNLIKELY(argumentCount < 1))
@@ -411,7 +405,6 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_eventNamesBody
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
     JSC::MarkedArgumentBuffer args;
@@ -430,8 +423,6 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_listenerCountB
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(throwScope);
-    UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
     if (UNLIKELY(callFrame->argumentCount() < 1))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
@@ -449,8 +440,6 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_listenersBody(
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(throwScope);
-    UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
     if (UNLIKELY(callFrame->argumentCount() < 1))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
@@ -534,8 +523,6 @@ JSC_DEFINE_HOST_FUNCTION(Events_functionGetEventListeners,
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(throwScope);
-    UNUSED_PARAM(callFrame);
     if (UNLIKELY(callFrame->argumentCount() < 2))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     auto argument0 = jsEventEmitterCast(vm, lexicalGlobalObject, callFrame->uncheckedArgument(0));
@@ -558,8 +545,6 @@ JSC_DEFINE_HOST_FUNCTION(Events_functionListenerCount,
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(throwScope);
-    UNUSED_PARAM(callFrame);
     if (UNLIKELY(callFrame->argumentCount() < 2))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     auto argument0 = jsEventEmitterCast(vm, lexicalGlobalObject, callFrame->uncheckedArgument(0));
@@ -578,8 +563,6 @@ JSC_DEFINE_HOST_FUNCTION(Events_functionOnce,
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(throwScope);
-    UNUSED_PARAM(callFrame);
 
     if (UNLIKELY(callFrame->argumentCount() < 3))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
@@ -604,8 +587,6 @@ JSC_DEFINE_HOST_FUNCTION(Events_functionOn,
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(throwScope);
-    UNUSED_PARAM(callFrame);
 
     if (UNLIKELY(callFrame->argumentCount() < 3))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));

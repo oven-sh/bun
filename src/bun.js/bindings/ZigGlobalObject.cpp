@@ -240,6 +240,29 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
     }
 }
 
+extern "C" bool JSGlobalObject__startRemoteInspector(Zig::GlobalObject* globalObject, const char* host, uint16_t port)
+{
+#if !ENABLE(REMOTE_INSPECTOR)
+    return false;
+#else
+    globalObject->setInspectable(true);
+    bool didSucceed = false;
+
+    // This function calls immediately.
+    auto inspector = BunInspector::startWebSocketServer(
+        *globalObject->scriptExecutionContext(),
+        WTF::String::fromUTF8(host),
+        port, [port, &didSucceed](RefPtr<BunInspector> inspector, bool success) {
+            didSucceed = success;
+
+            if (success) {
+                inspector->ref();
+            }
+        });
+    return didSucceed;
+#endif
+}
+
 extern "C" void* Bun__getVM();
 
 extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObjectClass, int count,
@@ -261,7 +284,6 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObje
     if (count > 0) {
         globalObject->installAPIGlobals(globalObjectClass, count, vm);
     }
-
     JSC::gcProtect(globalObject);
     vm.ref();
     return globalObject;
@@ -3758,29 +3780,6 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
     //     JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     extraStaticGlobals.releaseBuffer();
-}
-
-extern "C" bool JSGlobalObject__startRemoteInspector(Zig::GlobalObject* globalObject, unsigned char* host, uint16_t port)
-{
-#if !ENABLE(REMOTE_INSPECTOR)
-    return false;
-#else
-    globalObject->setInspectable(true);
-    bool didSucceed = false;
-
-    // This function calls immediately.
-    auto inspector = BunInspector::startWebSocketServer(
-        *globalObject->scriptExecutionContext(),
-        WTF::String::fromUTF8(host),
-        port, [port, &didSucceed](RefPtr<BunInspector> inspector, bool success) {
-            didSucceed = success;
-
-            if (success) {
-                inspector->ref();
-            }
-        });
-    return didSucceed;
-#endif
 }
 
 template<typename Visitor>

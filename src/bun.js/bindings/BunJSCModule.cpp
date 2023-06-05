@@ -34,6 +34,8 @@
 using namespace JSC;
 using namespace WTF;
 
+extern "C" bool JSGlobalObject__startRemoteInspector(JSC::JSGlobalObject* globalObject, const char* host, uint16_t port);
+
 JSC_DECLARE_HOST_FUNCTION(functionStartRemoteDebugger);
 JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -45,38 +47,13 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger, (JSGlobalObject * globalOb
 
     JSC::JSValue hostValue = callFrame->argument(0);
     JSC::JSValue portValue = callFrame->argument(1);
-    const char* host = defaultHost;
-    if (hostValue.isString()) {
 
-        auto str = hostValue.toWTFString(globalObject);
-        if (!str.isEmpty())
-            host = toCString(str).data();
-    } else if (!hostValue.isUndefined()) {
-        throwVMError(globalObject, scope, createTypeError(globalObject, "host must be a string"_s));
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
+    bool res = JSGlobalObject__startRemoteInspector(
+        globalObject,
+        hostValue.isUndefinedOrNull() ? defaultHost : hostValue.toWTFString(globalObject).utf8().data(),
+        portValue.isUndefinedOrNull() ? defaultPort : portValue.toUInt32(globalObject));
 
-    uint16_t port = defaultPort;
-    if (portValue.isNumber()) {
-        auto port_int = portValue.toUInt32(globalObject);
-        if (!(port_int > 0 && port_int < 65536)) {
-            throwVMError(globalObject, scope, createRangeError(globalObject, "port must be between 0 and 65535"_s));
-            return JSC::JSValue::encode(JSC::jsUndefined());
-        }
-        port = port_int;
-    } else if (!portValue.isUndefined()) {
-        throwVMError(globalObject, scope, createTypeError(globalObject, "port must be a number between 0 and 65535"_s));
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
-
-    globalObject->setInspectable(true);
-    auto& server = Inspector::RemoteInspectorServer::singleton();
-    if (!server.start(reinterpret_cast<const char*>(host), port)) {
-        throwVMError(globalObject, scope, createError(globalObject, "Failed to start server \""_s + host + ":"_s + port + "\". Is port already in use?"_s));
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
-
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(jsBoolean(res)));
 #else
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

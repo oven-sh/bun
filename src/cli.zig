@@ -173,7 +173,8 @@ pub const Arguments = struct {
         clap.parseParam("--prefer-offline                  Skip staleness checks for packages in bun's JavaScript runtime and resolve from disk") catch unreachable,
         clap.parseParam("--prefer-latest                   Use the latest matching versions of packages in bun's JavaScript runtime, always checking npm") catch unreachable,
         clap.parseParam("--silent                          Don't repeat the command for bun run") catch unreachable,
-        clap.parseParam("--inspect-brk                     Start a debugger") catch unreachable,
+        clap.parseParam("--inspect-brk                     Start a debugger with a breakpoint set") catch unreachable,
+        clap.parseParam("--inspect                         Start a debugger") catch unreachable,
     };
 
     const public_params = shared_public_params ++ not_bun_dev_flags;
@@ -186,8 +187,8 @@ pub const Arguments = struct {
     pub const dev_params = [_]ParamType{
         clap.parseParam("--disable-bun.js                  Disable bun.js from loading in the dev server") catch unreachable,
         clap.parseParam("--disable-react-fast-refresh      Disable React Fast Refresh") catch unreachable,
-        clap.parseParam("--bunfile <STR>                   Use a .bun file (default: node_modules.bun)") catch unreachable,
-        clap.parseParam("--server-bunfile <STR>            Use a .server.bun file (default: node_modules.server.bun)") catch unreachable,
+        clap.parseParam("--bunfile <STR>                   Use a .bun file (DEPRECATED)") catch unreachable,
+        clap.parseParam("--server-bunfile <STR>            Use a .server.bun file (DEPRECATED)") catch unreachable,
         clap.parseParam("--public-dir <STR>                Top-level directory for .html files, fonts or anything external. Defaults to \"<cwd>/public\", to match create-react-app and Next.js") catch unreachable,
         clap.parseParam("--disable-hmr                     Disable Hot Module Reloading (disables fast refresh too) in bun dev") catch unreachable,
         clap.parseParam("--use <STR>                       Choose a framework, e.g. \"--use next\". It checks first for a package named \"bun-framework-packagename\" and then \"packagename\".") catch unreachable,
@@ -472,8 +473,7 @@ pub const Arguments = struct {
 
         const print_help = args.flag("--help");
         if (print_help) {
-            const params_len = if (cmd == .BuildCommand) build_params_public.len else public_params.len;
-            clap.help(Output.writer(), params_to_use[0..params_len]) catch {};
+            clap.help(Output.writer(), params_to_use) catch {};
             Output.prettyln("\n-------\n\n", .{});
             Output.flush();
             HelpCommand.printWithReason(.explicit);
@@ -687,8 +687,12 @@ pub const Arguments = struct {
         // const ResolveMatcher = strings.ExactSizeMatcher(8);
 
         opts.resolve = Api.ResolveMode.lazy;
-        if (comptime cmd == .RunCommand or cmd == .AutoCommand or cmd == .TestCommand)
-            ctx.debug.inspect_break = args.flag("--inspect-brk");
+        if (comptime cmd == .RunCommand or cmd == .AutoCommand or cmd == .TestCommand) {
+            if (args.flag("--inspect-brk"))
+                ctx.debug.inspector = .breakpoint
+            else if (args.flag("--inspect"))
+                ctx.debug.inspector = .port;
+        }
 
         const TargetMatcher = strings.ExactSizeMatcher(8);
 
@@ -908,7 +912,8 @@ pub const Command = struct {
         offline_mode_setting: ?Bunfig.OfflineMode = null,
         run_in_bun: bool = false,
         loaded_bunfig: bool = false,
-        inspect_break: bool = false,
+
+        inspector: bun.JSC.ZigGlobalObject.Inspect = .none,
 
         // technical debt
         macros: MacroOptions = MacroOptions.unspecified,

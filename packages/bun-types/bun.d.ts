@@ -1570,9 +1570,9 @@ declare module "bun" {
    * ```ts
    * import { websocket, serve } from "bun";
    *
-   * serve({
+   * serve<{name: string}>({
    *   port: 3000,
-   *   websocket: websocket<{name: string}>({
+   *   websocket: {
    *     open: (ws) => {
    *       console.log("Client connected");
    *    },
@@ -1582,7 +1582,7 @@ declare module "bun" {
    *     close: (ws) => {
    *       console.log("Client disconnected");
    *    },
-   *  }),
+   *  },
    *
    *   fetch(req, server) {
    *     if (req.url === "/chat") {

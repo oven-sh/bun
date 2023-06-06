@@ -2746,7 +2746,13 @@ pub const ZigConsoleClient = struct {
                     const arrayBuffer = value.asArrayBuffer(this.globalThis).?;
                     const slice = arrayBuffer.byteSlice();
 
-                    writer.writeAll(bun.asByteSlice(@tagName(arrayBuffer.typed_array_type)));
+                    writer.writeAll(
+                        if (arrayBuffer.typed_array_type == .Uint8Array and
+                            arrayBuffer.value.isBuffer(this.globalThis))
+                            "Buffer"
+                        else
+                            bun.asByteSlice(@tagName(arrayBuffer.typed_array_type)),
+                    );
                     writer.print("({d}) [ ", .{arrayBuffer.len});
 
                     if (slice.len > 0) {

@@ -894,4 +894,42 @@ describe("bundler", () => {
       stdout: "it worked\nit worked\nit worked\nit worked",
     },
   });
+  itBundled("edgecase/IsBuffer1", {
+    files: {
+      "/entry.js": /* js */ `
+        import isBuffer from 'lodash-es/isBuffer';
+        if(isBuffer !== 1) throw 'fail';
+        console.log('pass');
+      `,
+      "/node_modules/lodash-es/isBuffer.js": /* js */ `
+        var freeExports = typeof exports == 'object';
+        // this is using the 'freeExports' variable but giving a predictable outcome
+        const isBuffer = freeExports ? 1 : 1;
+        export default isBuffer;
+      `,
+    },
+    run: {
+      stdout: "pass",
+    },
+  });
+  itBundled("edgecase/IsBuffer2", {
+    files: {
+      "/entry.js": /* js */ `
+        import isBuffer from 'lodash-es/isBuffer';
+        if(isBuffer !== 1) throw 'fail';
+        console.log('pass');
+      `,
+      "/node_modules/lodash-es/isBuffer.js": /* js */ `
+        var freeExports = typeof exports == 'object' && exports && !exports.nodeType && exports;
+        var freeModule = freeExports && typeof module == 'object' && module && !module.nodeType && module;
+
+        // this is using the 'freeExports' variable but giving a predictable outcome
+        const isBuffer = [freeExports, freeModule] ? 1 : 1;
+        export default isBuffer;
+      `,
+    },
+    run: {
+      stdout: "pass",
+    },
+  });
 });

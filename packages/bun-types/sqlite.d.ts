@@ -579,7 +579,9 @@ declare module "bun:sqlite" {
     /**
      * Execute the prepared statement and return the results as an array of arrays.
      *
-     * This is a little faster than {@link all}.
+     * In Bun v0.6.7 and earlier, this method returned `null` if there were no
+     * results instead of `[]`. This was changed in v0.6.8 to align
+     * more with what people expect.
      *
      * @param params optional values to bind to the statement. If omitted, the statement is run with the last bound values or no parameters if there are none.
      *
@@ -595,12 +597,15 @@ declare module "bun:sqlite" {
      *
      * stmt.values("foo");
      * // => [['foo']]
+     *
+     * stmt.values("not-found");
+     * // => []
      * ```
      *
      * The following types can be used when binding parameters:
      *
      * | JavaScript type | SQLite type |
-     * | -------------- | ----------- |
+     * | ---------------|-------------|
      * | `string` | `TEXT` |
      * | `number` | `INTEGER` or `DECIMAL` |
      * | `boolean` | `INTEGER` (1 or 0) |

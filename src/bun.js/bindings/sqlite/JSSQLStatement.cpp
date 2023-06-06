@@ -1417,6 +1417,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
 
             result = resultArray;
         }
+    } else if (status == SQLITE_DONE && columnCount != 0) {
+        // breaking change in Bun v0.6.8
+        result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
     }
 
     if (UNLIKELY(status != SQLITE_DONE && status != SQLITE_OK)) {

@@ -503,6 +503,14 @@ it("latin1 supplement chars", () => {
       greeting: "¿Qué sucedió?",
     },
   ]);
+
+  expect(db.query("SELECT * FROM foo").values()).toEqual([
+    [1, "Welcome to bun!"],
+    [2, "Español"],
+    [3, "¿Qué sucedió?"],
+  ]);
+  expect(db.query("SELECT * FROM foo WHERE id > 9999").all()).toEqual([]);
+  expect(db.query("SELECT * FROM foo WHERE id > 9999").values()).toEqual([]);
 });
 
 describe("Database.run", () => {

@@ -1800,9 +1800,9 @@ declare module "bun" {
      *
      * @example
      * ```js
-     *import { serve, websocket } from "bun";
+     *import { serve } from "bun";
      *serve({
-     *  websocket: websocket({
+     *  websocket: {
      *    open: (ws) => {
      *      console.log("Client connected");
      *    },
@@ -1812,7 +1812,7 @@ declare module "bun" {
      *    close: (ws) => {
      *      console.log("Client disconnected");
      *    },
-     *  }),
+     *  },
      *  fetch(req, server) {
      *    if (req.url === "/chat") {
      *      const upgraded = server.upgrade(req);
@@ -2030,9 +2030,9 @@ declare module "bun" {
      *
      * @example
      * ```js
-     * import { serve, websocket } from "bun";
+     * import { serve } from "bun";
      *  serve({
-     *    websocket: websocket({
+     *    websocket: {
      *      open: (ws) => {
      *        console.log("Client connected");
      *      },
@@ -2042,7 +2042,7 @@ declare module "bun" {
      *      close: (ws) => {
      *        console.log("Client disconnected");
      *      },
-     *    }),
+     *    },
      *    fetch(req, server) {
      *      if (req.url === "/chat") {
      *        const upgraded = server.upgrade(req);

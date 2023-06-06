@@ -1951,7 +1951,7 @@ pub const Crypto = struct {
         };
 
         pub export fn JSPasswordObject__create(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-            var object = JSValue.createEmptyObject(globalObject, 2);
+            var object = JSValue.createEmptyObject(globalObject, 4);
             object.put(
                 globalObject,
                 ZigString.static("hash"),

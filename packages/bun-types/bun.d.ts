@@ -1146,7 +1146,7 @@ declare module "bun" {
 
     /**
      * Synchronously hash and verify passwords using argon2 or bcrypt. The default is argon2.
-     * Warning: password hashing is slow, consider using {@link Bun.password}
+     * Warning: password hashing is slow, consider using {@link Bun.password.verify}
      * instead which runs in a worker thread.
      *
      * The underlying implementation of these functions are provided by the Zig
@@ -1185,7 +1185,7 @@ declare module "bun" {
 
     /**
      * Synchronously hash and verify passwords using argon2 or bcrypt. The default is argon2.
-     * Warning: password hashing is slow, consider using {@link Bun.password}
+     * Warning: password hashing is slow, consider using {@link Bun.password.hash}
      * instead which runs in a worker thread.
      *
      * The underlying implementation of these functions are provided by the Zig

@@ -12,43 +12,6 @@ namespace Bun {
 using namespace JSC;
 using namespace WebCore;
 
-class JSMockReturnValue final : public JSC::JSInternalFieldObjectImpl<3> {
-public:
-    using Base = JSC::JSInternalFieldObjectImpl<3>;
-    static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
-
-    JSC::JSInternalPromise* internalPromise();
-
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return WebCore::subspaceForImpl<JSMockReturnValue, UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSMockReturnValue.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSMockReturnValue = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSMockReturnValue.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSMockReturnValue = std::forward<decltype(space)>(space); });
-    }
-
-    static constexpr unsigned numberOfInternalFields = 3;
-
-    static std::array<JSValue, numberOfInternalFields> initialValues()
-    {
-        return { {
-            jsNumber(-1),
-            jsUndefined(),
-            jsUndefined(),
-        } };
-    }
-
-    DECLARE_EXPORT_INFO;
-    DECLARE_VISIT_CHILDREN;
-
-    JSMockReturnValue(JSC::VM&, JSC::Structure*);
-    void finishCreation(JSC::VM&, JSC::JSValue, JSC::JSValue, JSC::JSValue);
-};
-
 class JSMockFunction final : public JSC::InternalFunction {
 public:
     using Base = JSC::InternalFunction;

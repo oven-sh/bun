@@ -199,7 +199,9 @@ const server = Bun.serve<{ username: string }>({
       console.log(`upgrade!`);
       const username = getUsernameFromReq(req);
       const success = server.upgrade(req, { data: { username } });
-      return success ? undefined : new Response("WebSocket upgrade error", { status: 400 });
+      return success
+        ? undefined
+        : new Response("WebSocket upgrade error", { status: 400 });
     }
 
     return new Response("Hello world");
@@ -226,7 +228,19 @@ const server = Bun.serve<{ username: string }>({
 console.log(`Listening on ${server.hostname}:${server.port}`);
 ```
 
-Calling `.publish(data)` will send the message to all subscribers of a topic (excluding the socket that called `.publish()`).
+Calling `.publish(data)` will send the message to all subscribers of a topic _except_ the socket that called `.publish()`.
+
+To connect to this server from the browser, create a new `WebSocket`.
+
+```ts#browser.js
+const socket = new WebSocket("ws://localhost:3000/chat");
+
+socket.addEventListener("message", event => {
+  console.log(event.data);
+})
+```
+
+The cookies that are currently set on the page will be sent with the WebSocket upgrade request and available on `req.headers` in the `fetch` handler. Parse these cookies to determine the identity of the connecting user and set the value of `data` accordingly.
 
 ## Compression
 
@@ -267,7 +281,10 @@ namespace Bun {
   export function serve(params: {
     fetch: (req: Request, server: Server) => Response | Promise<Response>;
     websocket?: {
-      message: (ws: ServerWebSocket, message: string | ArrayBuffer | Uint8Array) => void;
+      message: (
+        ws: ServerWebSocket,
+        message: string | ArrayBuffer | Uint8Array,
+      ) => void;
       open?: (ws: ServerWebSocket) => void;
       close?: (ws: ServerWebSocket) => void;
       error?: (ws: ServerWebSocket, error: Error) => void;
@@ -297,7 +314,11 @@ type Compressor =
 
 interface Server {
   pendingWebsockets: number;
-  publish(topic: string, data: string | ArrayBufferView | ArrayBuffer, compress?: boolean): number;
+  publish(
+    topic: string,
+    data: string | ArrayBufferView | ArrayBuffer,
+    compress?: boolean,
+  ): number;
   upgrade(
     req: Request,
     options?: {

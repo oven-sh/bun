@@ -20,7 +20,7 @@ To connect to an external socket server, create an instance of `WebSocket` with 
 const socket = new WebSocket("ws://localhost:3000");
 ```
 
-Bun supports setting custom headers. This is a Bun-specific extension of the `WebSocket` standard.
+Bun supports setting custom headers. This is a Bun-specific extension of the `WebSocket` standard. _This will not work in browsers._
 
 ```ts
 const socket = new WebSocket("ws://localhost:3000", {
@@ -150,11 +150,13 @@ type WebSocketData = {
 // TypeScript: specify the type of `data`
 Bun.serve<WebSocketData>({
   fetch(req, server) {
+    const cookies = parseCookies(req.headers.get("Cookie"));
     server.upgrade(req, {
       // TS: this object must conform to WebSocketData
       data: {
         createdAt: Date.now(),
         channelId: new URL(req.url).searchParams.get("channelId"),
+        authToken: cookies["X-Token"],
       },
     });
 
@@ -172,6 +174,18 @@ Bun.serve<WebSocketData>({
   },
 });
 ```
+
+To connect to this server from the browser, create a new `WebSocket`.
+
+```ts#browser.js
+const socket = new WebSocket("ws://localhost:3000/chat");
+
+socket.addEventListener("message", event => {
+  console.log(event.data);
+})
+```
+
+The cookies that are currently set on the page will be sent with the WebSocket upgrade request and available on `req.headers` in the `fetch` handler. Parse these cookies to determine the identity of the connecting user and set the value of `data` accordingly.
 
 ## Pub/Sub
 
@@ -212,17 +226,7 @@ const server = Bun.serve<{ username: string }>({
 console.log(`Listening on ${server.hostname}:${server.port}`);
 ```
 
-To connect to this server from the browser, create a new `WebSocket`.
-
-```ts#browser.js
-const socket = new WebSocket("ws://localhost:3000/chat");
-
-socket.addEventListener("message", event => {
-  console.log(event.data);
-})
-```
-
-The cookies that are currently set on the page will be sent with the WebSocket upgrade request and available on `req.headers` in the `fetch` handler. Parse these cookies to determine the identity of the connecting user and set the value of `data` accordingly.
+Calling `.publish(data)` will send the message to all subscribers of a topic (excluding the socket that called `.publish()`).
 
 ## Compression
 

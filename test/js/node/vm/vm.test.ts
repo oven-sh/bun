@@ -74,6 +74,27 @@ function testRunInContext(
     const result = fn("1 + 1; 2 * 2; 3 / 3", context);
     expect(result).toBe(1);
   });
+
+  for (let View of [
+    ArrayBuffer,
+    SharedArrayBuffer,
+    Uint8Array,
+    Int8Array,
+    Uint16Array,
+    Int16Array,
+    Uint32Array,
+    Int32Array,
+    Float32Array,
+    Float64Array,
+    BigInt64Array,
+    BigUint64Array,
+  ]) {
+    test(`new ${View.name}() in VM context doesn't crash`, () => {
+      const context = createContext({});
+      expect(fn(`new ${View.name}(2)`, context)).toHaveLength(2);
+    });
+  }
+
   test("can return a function", () => {
     const context = createContext({});
     const result = fn("() => 'bar';", context);

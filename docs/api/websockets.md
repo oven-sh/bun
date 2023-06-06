@@ -230,18 +230,6 @@ console.log(`Listening on ${server.hostname}:${server.port}`);
 
 Calling `.publish(data)` will send the message to all subscribers of a topic _except_ the socket that called `.publish()`.
 
-To connect to this server from the browser, create a new `WebSocket`.
-
-```ts#browser.js
-const socket = new WebSocket("ws://localhost:3000/chat");
-
-socket.addEventListener("message", event => {
-  console.log(event.data);
-})
-```
-
-The cookies that are currently set on the page will be sent with the WebSocket upgrade request and available on `req.headers` in the `fetch` handler. Parse these cookies to determine the identity of the connecting user and set the value of `data` accordingly.
-
 ## Compression
 
 Per-message [compression](https://websockets.readthedocs.io/en/stable/topics/compression.html) can be enabled with the `perMessageDeflate` parameter.

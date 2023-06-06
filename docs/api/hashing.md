@@ -39,7 +39,6 @@ const bcryptHash = await Bun.password.hash(password, {
   algorithm: "bcrypt",
   cost: 4, // number between 4-31
 });
-console.log(hash);
 ```
 
 The algorithm used to create the hash is stored in the hash itself. When using `bcrypt`, the returned hash is encoded in [Modular Crypt Format](https://passlib.readthedocs.io/en/stable/modular_crypt_format.html) for compatibility with most existing `bcrypt` implementations; with `argon2` the result is encoded in the newer [PHC format](https://github.com/P-H-C/phc-string-format/blob/master/phc-sf-spec.md).

@@ -6,6 +6,10 @@ Bun implements the `createHash` and `createHmac` functions from [`node:crypto`](
 
 ## `Bun.password`
 
+{% callout %}
+**Note** — Added in Bun 0.6.8.
+{% /callout %}
+
 `Bun.password` is a collection of utility functions for hashing and verifying passwords with various cryptographically secure algorithms.
 
 ```ts
@@ -58,11 +62,11 @@ Synchronous versions of all functions are also available. Keep in mind that thes
 ```ts
 const password = "super-secure-pa$$word";
 
-const hash = await Bun.password.hashSync(password, {
+const hash = Bun.password.hashSync(password, {
   /* config */
 });
 
-const isMatch = await Bun.password.verifyhashSync(password, hash);
+const isMatch = Bun.password.verifySync(password, hash);
 // => true
 ```
 

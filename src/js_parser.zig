@@ -17620,7 +17620,7 @@ fn NewParser_(
 
                     if (comptime FeatureFlags.unwrap_commonjs_to_esm) {
                         if (!p.is_control_flow_dead and id.ref.eql(p.exports_ref)) {
-                            if (!p.commonjs_named_exports_deoptimized) {
+                            if (!p.commonjs_named_exports_deoptimized and identifier_opts.assign_target != .none) {
                                 if (identifier_opts.is_delete_target) {
                                     p.deoptimizeCommonJSNamedExports();
                                     return null;

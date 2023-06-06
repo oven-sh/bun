@@ -68,4 +68,53 @@ describe("bundler", () => {
       stdout: "pass",
     },
   });
+  itBundled("npm/LodashEsmImportEsmExport", {
+    files: {
+      "/entry.js": /* js */ `
+          import { isEqual, uniq } from "lodash-es"
+          console.log(isEqual({a: 1}, {a: 1}))
+      `,
+    },
+    install: ["lodash-es"],
+    run: {
+      stdout: "true",
+    },
+  });
+  itBundled("npm/LodashEsmImportCjsExport", {
+    files: {
+      "/entry.js": /* js */ `
+          import { isEqual, uniq } from "lodash"
+          console.log(isEqual({a: 1}, {a: 1}))
+      `,
+    },
+    install: ["lodash"],
+    run: {
+      stdout: "true",
+    },
+  });
+  itBundled("npm/LodashCjsImportCjsExport", {
+    files: {
+      "/entry.js": /* js */ `
+          const { isEqual, uniq } = require("lodash");
+          console.log(isEqual({a: 1}, {a: 1}))
+      `,
+    },
+    install: ["lodash"],
+    run: {
+      stdout: "true",
+    },
+  });
+  itBundled("npm/LodashCjsImportEsmExport", {
+    todo: true,
+    files: {
+      "/entry.js": /* js */ `
+          const { isEqual, uniq } = require("lodash-es");
+          console.log(isEqual({a: 1}, {a: 1}))
+      `,
+    },
+    install: ["lodash-es"],
+    run: {
+      stdout: "true",
+    },
+  });
 });

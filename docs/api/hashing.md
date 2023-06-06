@@ -4,6 +4,66 @@ Bun implements the `createHash` and `createHmac` functions from [`node:crypto`](
 
 {% /callout %}
 
+## `Bun.password`
+
+`Bun.password` is a collection of utility functions for hashing and verifying passwords with various cryptographically secure algorithms.
+
+```ts
+const password = "super-secure-pa$$word";
+
+const hash = await Bun.password.hash(password);
+// => $argon2id$v=19$m=65536,t=2,p=1$tFq+9AVr1bfPxQdh6E8DQRhEXg/M/SqYCNu6gVdRRNs$GzJ8PuBi+K+BVojzPfS5mjnC8OpLGtv8KJqF99eP6a4
+
+const isMatch = await Bun.password.verify(password, hash);
+// => true
+```
+
+The second argument to `Bun.password.hash` accepts a params object that lets you pick and configure the hashing algorithm.
+
+```ts
+const password = "super-secure-pa$$word";
+
+// use argon2 (default)
+const argonHash = await Bun.password.hash(password, {
+  algorithm: "argon2id", // "argon2id" | "argon2i" | "argon2d"
+  memoryCost: 4, // memory usage in kibibytes
+  timeCost: 3, // the number of iterations
+});
+
+// use bcrypt
+const bcryptHash = await Bun.password.hash(password, {
+  algorithm: "bcrypt",
+  cost: 4, // number between 4-31
+});
+console.log(hash);
+```
+
+The algorithm used to create the hash is stored in the hash itself. This means that the `verify` function can automatically detect the algorithm and use the correct verification method.
+
+```ts
+const password = "super-secure-pa$$word";
+
+const hash = await Bun.password.hash(password, {
+  /* config */
+});
+
+const isMatch = await Bun.password.verify(password, hash);
+// => true
+```
+
+Synchronous versions of all functions are also available. Keep in mind that these functions are computationally expensive, so using a blocking API may degrade application performance.
+
+```ts
+const password = "super-secure-pa$$word";
+
+const hash = await Bun.password.hashSync(password, {
+  /* config */
+});
+
+const isMatch = await Bun.password.verifyhashSync(password, hash);
+// => true
+```
+
 ## `Bun.hash`
 
 `Bun.hash` is a collection of utilities for _non-cryptographic_ hashing. Non-cryptographic hashing algorithms are optimized for speed of computation over collision-resistance or security.

@@ -1585,7 +1585,8 @@ declare module "bun" {
    *  },
    *
    *   fetch(req, server) {
-   *     if (req.url === "/chat") {
+   *     const url = new URL(req.url);
+   *     if (url.pathname === "/chat") {
    *       const upgraded = server.upgrade(req, {
    *         data: {
    *           name: new URL(req.url).searchParams.get("name"),
@@ -1814,7 +1815,8 @@ declare module "bun" {
      *    },
      *  },
      *  fetch(req, server) {
-     *    if (req.url === "/chat") {
+     *    const url = new URL(req.url);
+     *    if (url.pathname === "/chat") {
      *      const upgraded = server.upgrade(req);
      *      if (!upgraded) {
      *        return new Response("Upgrade failed", { status: 400 });
@@ -2044,7 +2046,8 @@ declare module "bun" {
      *      },
      *    },
      *    fetch(req, server) {
-     *      if (req.url === "/chat") {
+     *      const url = new URL(req.url);
+     *      if (url.pathname === "/chat") {
      *        const upgraded = server.upgrade(req);
      *        if (!upgraded) {
      *          return new Response("Upgrade failed", { status: 400 });

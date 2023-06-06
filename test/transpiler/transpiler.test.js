@@ -2906,6 +2906,47 @@ console.log(foo, array);
     });
   });
 
+  it("raw template literal contents", () => {
+    expectPrinted("String.raw`\r`", "String.raw`\n`");
+    expectPrinted("String.raw`\r\n`", "String.raw`\n`");
+    expectPrinted("String.raw`\n`", "String.raw`\n`");
+    expectPrinted("String.raw`\r\r\r\r\r\n\r`", "String.raw`\n\n\n\n\n\n`");
+    expectPrinted("String.raw`\n\r`", "String.raw`\n\n`");
+    var code = `String.raw\`
+      <head>
+        <meta charset="UTF-8" />
+        <title>${"meow123"}</title>
+        <link rel="stylesheet" href="/css/style.css" />
+      </head>
+    \``;
+    var result = code;
+    expectPrinted(code, code);
+
+    code = `String.raw\`
+      <head>\r\n\n\r\r\r
+        <meta charset="UTF-8" />\r
+        <title>${"meow123"}</title>\n
+    
+    \r
+    \r
+    \n\r
+        <link rel="stylesheet" href="/css/style.css" />
+      </head>
+    \``;
+    result = `String.raw\`
+      <head>\n\n\n\n
+        <meta charset="UTF-8" />
+        <title>${"meow123"}</title>\n
+    
+    
+    
+    \n
+        <link rel="stylesheet" href="/css/style.css" />
+      </head>
+    \``;
+    expectPrinted(code, result);
+  });
+
   describe("scan", () => {
     it("reports all export names", () => {
       const { imports, exports } = transpiler.scan(code);

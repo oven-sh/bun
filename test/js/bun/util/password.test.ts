@@ -1,12 +1,12 @@
 import { test, expect, describe } from "bun:test";
 
-import { Password, password, passwordSync } from "bun";
+import { Password, password } from "bun";
 
 const placeholder = "hey";
 
 describe("hash", () => {
   describe("arguments parsing", () => {
-    for (let { hash } of [password, passwordSync]) {
+    for (let hash of [password.hash, password.hashSync]) {
       test("no blank password allowed", () => {
         expect(() => hash("")).toThrow("password must not be empty");
       });
@@ -101,7 +101,7 @@ describe("hash", () => {
 
 describe("verify", () => {
   describe("arguments parsing", () => {
-    for (let { verify } of [password, passwordSync]) {
+    for (let verify of [password.verify, password.verifySync]) {
       test("minimum args", () => {
         // @ts-expect-error
         expect(() => verify()).toThrow();
@@ -195,11 +195,11 @@ for (let algorithmValue of algorithms) {
 
   describe(algorithmValue ? algorithmValue : "default", () => {
     const hash = (value: string | TypedArray) => {
-      return algorithmValue ? passwordSync.hash(value, algorithmValue as any) : passwordSync.hash(value);
+      return algorithmValue ? password.hashSync(value, algorithmValue as any) : password.hashSync(value);
     };
 
     const hashSync = (value: string | TypedArray) => {
-      return algorithmValue ? passwordSync.hash(value, algorithmValue as any) : passwordSync.hash(value);
+      return algorithmValue ? password.hashSync(value, algorithmValue as any) : password.hashSync(value);
     };
 
     const verify = (pw: string | TypedArray, value: string | TypedArray) => {
@@ -207,12 +207,12 @@ for (let algorithmValue of algorithms) {
     };
 
     const verifySync = (pw: string | TypedArray, value: string | TypedArray) => {
-      return algorithmValue ? passwordSync.verify(pw, value, algorithmValue as any) : passwordSync.verify(pw, value);
+      return algorithmValue ? password.verifySync(pw, value, algorithmValue as any) : password.verifySync(pw, value);
     };
 
     for (let input of [placeholder, Buffer.from(placeholder)]) {
       describe(typeof input === "string" ? "string" : "buffer", () => {
-        test("passwordSync", () => {
+        test("password sync", () => {
           const hashed = hashSync(input);
           expect(hashed).toStartWith(prefix);
           expect(verifySync(input, hashed)).toBeTrue();

@@ -1599,9 +1599,9 @@ declare module "bun" {
    * ```ts
    * import { websocket, serve } from "bun";
    *
-   * serve({
+   * serve<{name: string}>({
    *   port: 3000,
-   *   websocket: websocket<{name: string}>({
+   *   websocket: {
    *     open: (ws) => {
    *       console.log("Client connected");
    *    },
@@ -1611,10 +1611,11 @@ declare module "bun" {
    *     close: (ws) => {
    *       console.log("Client disconnected");
    *    },
-   *  }),
+   *  },
    *
    *   fetch(req, server) {
-   *     if (req.url === "/chat") {
+   *     const url = new URL(req.url);
+   *     if (url.pathname === "/chat") {
    *       const upgraded = server.upgrade(req, {
    *         data: {
    *           name: new URL(req.url).searchParams.get("name"),
@@ -1829,9 +1830,9 @@ declare module "bun" {
      *
      * @example
      * ```js
-     *import { serve, websocket } from "bun";
+     *import { serve } from "bun";
      *serve({
-     *  websocket: websocket({
+     *  websocket: {
      *    open: (ws) => {
      *      console.log("Client connected");
      *    },
@@ -1841,9 +1842,10 @@ declare module "bun" {
      *    close: (ws) => {
      *      console.log("Client disconnected");
      *    },
-     *  }),
+     *  },
      *  fetch(req, server) {
-     *    if (req.url === "/chat") {
+     *    const url = new URL(req.url);
+     *    if (url.pathname === "/chat") {
      *      const upgraded = server.upgrade(req);
      *      if (!upgraded) {
      *        return new Response("Upgrade failed", { status: 400 });
@@ -2059,9 +2061,9 @@ declare module "bun" {
      *
      * @example
      * ```js
-     * import { serve, websocket } from "bun";
+     * import { serve } from "bun";
      *  serve({
-     *    websocket: websocket({
+     *    websocket: {
      *      open: (ws) => {
      *        console.log("Client connected");
      *      },
@@ -2071,9 +2073,10 @@ declare module "bun" {
      *      close: (ws) => {
      *        console.log("Client disconnected");
      *      },
-     *    }),
+     *    },
      *    fetch(req, server) {
-     *      if (req.url === "/chat") {
+     *      const url = new URL(req.url);
+     *      if (url.pathname === "/chat") {
      *        const upgraded = server.upgrade(req);
      *        if (!upgraded) {
      *          return new Response("Upgrade failed", { status: 400 });

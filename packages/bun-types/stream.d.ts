@@ -46,22 +46,7 @@ declare module "stream" {
       encoding?: BufferEncoding | undefined;
       read?(this: Readable, size: number): void;
     }
-    class Readable<R = any> extends Stream implements ReadableStream {
-      // TODO: improve type later
-      values: any;
-
-      readonly locked: boolean;
-      cancel(reason?: any): Promise<void>;
-      getReader(): ReadableStreamDefaultReader<R>;
-      pipeThrough<T>(
-        transform: ReadableWritablePair<T, R>,
-        options?: StreamPipeOptions,
-      ): ReadableStream<T>;
-      pipeTo(
-        destination: WritableStream<R>,
-        options?: StreamPipeOptions,
-      ): Promise<void>;
-      tee(): [ReadableStream<R>, ReadableStream<R>];
+    class Readable<R = any> extends Stream {
       forEach(
         callbackfn: (
           value: any,
@@ -71,12 +56,23 @@ declare module "stream" {
         thisArg?: any,
       ): void;
       /**
-       * A utility method for creating Readable Streams out of iterators.
+       * A utility method for creating a `Readable` from a web `ReadableStream`.
+       * @since v17.0.0
+       * @experimental
        */
-      static from(
-        iterable: Iterable<any> | AsyncIterable<any>,
-        options?: ReadableOptions,
+      static fromWeb(
+        readableStream: ReadableStream,
+        options?: Pick<
+          ReadableOptions,
+          "encoding" | "highWaterMark" | "objectMode" | "signal"
+        >,
       ): Readable;
+      /**
+       * A utility method for creating a web `ReadableStream` from a `Readable`.
+       * @since v17.0.0
+       * @experimental
+       */
+      static toWeb(streamReadable: Readable): ReadableStream;
       /**
        * Returns whether the stream has been read from or cancelled.
        */
@@ -512,11 +508,25 @@ declare module "stream" {
       ): void;
       final?(this: Writable, callback: (error?: Error | null) => void): void;
     }
-    class Writable<W = any> extends Stream implements WritableStream {
-      readonly locked: boolean;
-      abort(reason?: any): Promise<void>;
-      close(): Promise<void>;
-      getWriter(): WritableStreamDefaultWriter<W>;
+    class Writable<W = any> extends Stream {
+      /**
+       * A utility method for creating a `Writable` from a web `WritableStream`.
+       * @since v17.0.0
+       * @experimental
+       */
+      static fromWeb(
+        writableStream: WritableStream,
+        options?: Pick<
+          WritableOptions,
+          "decodeStrings" | "highWaterMark" | "objectMode" | "signal"
+        >,
+      ): Writable;
+      /**
+       * A utility method for creating a web `WritableStream` from a `Writable`.
+       * @since v17.0.0
+       * @experimental
+       */
+      static toWeb(streamWritable: Writable): WritableStream;
       /**
        * Is `true` if it is safe to call `writable.write()`, which means
        * the stream has not been destroyed, errored or ended.
@@ -634,11 +644,11 @@ declare module "stream" {
        * @return `false` if the stream wishes for the calling code to wait for the `'drain'` event to be emitted before continuing to write additional data; otherwise `true`.
        */
       write(
-        chunk: any,
+        chunk: W,
         callback?: (error: Error | null | undefined) => void,
       ): boolean;
       write(
-        chunk: any,
+        chunk: W,
         encoding: BufferEncoding,
         callback?: (error: Error | null | undefined) => void,
       ): boolean;
@@ -851,28 +861,21 @@ declare module "stream" {
      * * `zlib streams`
      * * `crypto streams`
      */
-    class Duplex extends Readable implements Writable {
-      readonly writable: boolean;
-      readonly writableEnded: boolean;
-      readonly writableFinished: boolean;
-      readonly writableHighWaterMark: number;
-      readonly writableLength: number;
-      readonly writableObjectMode: boolean;
-      readonly writableCorked: number;
-      /**
-       * If `false` then the stream will automatically end the writable side when the
-       * readable side ends. Set initially by the `allowHalfOpen` constructor option,
-       * which defaults to `false`.
-       *
-       * This can be changed manually to change the half-open behavior of an existing`Duplex` stream instance, but must be changed before the `'end'` event is
-       * emitted.
-       * @since v0.9.4
-       */
-      allowHalfOpen: boolean;
-      constructor(opts?: DuplexOptions);
-      abort(reason?: any): Promise<void>;
-      close(): Promise<void>;
-      getWriter(): WritableStreamDefaultWriter<any>;
+    type Duplex<R = any> = Readable<R> &
+      Writable<R> & {
+        /**
+         * If `false` then the stream will automatically end the writable side when the
+         * readable side ends. Set initially by the `allowHalfOpen` constructor option,
+         * which defaults to `false`.
+         *
+         * This can be changed manually to change the half-open behavior of an existing`Duplex` stream instance, but must be changed before the `'end'` event is
+         * emitted.
+         * @since v0.9.4
+         */
+        allowHalfOpen: boolean;
+      };
+    interface DuplexConstructor {
+      new <T = any>(opts?: DuplexOptions): Duplex<T>;
       /**
        * A utility method for creating duplex streams.
        *
@@ -894,7 +897,7 @@ declare module "stream" {
        *
        * @since v16.8.0
        */
-      static from(
+      from(
         src:
           | Stream
           | Blob
@@ -906,39 +909,19 @@ declare module "stream" {
           | Promise<any>
           | Object,
       ): Duplex;
-      _write(
-        chunk: any,
-        encoding: BufferEncoding,
-        callback: (error?: Error | null) => void,
-      ): void;
-      _writev?(
-        chunks: Array<{
-          chunk: any;
-          encoding: BufferEncoding;
-        }>,
-        callback: (error?: Error | null) => void,
-      ): void;
-      _destroy(
-        error: Error | null,
-        callback: (error: Error | null) => void,
-      ): void;
-      _final(callback: (error?: Error | null) => void): void;
-      write(
-        chunk: any,
-        encoding?: BufferEncoding,
-        cb?: (error: Error | null | undefined) => void,
-      ): boolean;
-      write(
-        chunk: any,
-        cb?: (error: Error | null | undefined) => void,
-      ): boolean;
-      setDefaultEncoding(encoding: BufferEncoding): this;
-      end(cb?: () => void): this;
-      end(chunk: any, cb?: () => void): this;
-      end(chunk: any, encoding?: BufferEncoding, cb?: () => void): this;
-      cork(): void;
-      uncork(): void;
+      fromWeb<T = any>(
+        pair: {
+          readable: ReadableStream<T>;
+          writable: WritableStream<T>;
+        },
+        options: DuplexOptions,
+      ): Duplex<T>;
+      toWeb<T>(stream: Duplex<T>): {
+        readable: ReadableStream<T>;
+        writable: WritableStream<T>;
+      };
     }
+    var Duplex: DuplexConstructor;
     type TransformCallback = (error?: Error | null, data?: any) => void;
     interface TransformOptions extends DuplexOptions {
       construct?(
@@ -985,7 +968,7 @@ declare module "stream" {
      * * `crypto streams`
      * @since v0.9.4
      */
-    class Transform extends Duplex {
+    class Transform<T = any> extends Duplex<T> {
       constructor(opts?: TransformOptions);
       _transform(
         chunk: any,
@@ -998,7 +981,7 @@ declare module "stream" {
      * The `stream.PassThrough` class is a trivial implementation of a `Transform` stream that simply passes the input bytes across to the output. Its purpose is
      * primarily for examples and testing, but there are some use cases where`stream.PassThrough` is useful as a building block for novel sorts of streams.
      */
-    class PassThrough extends Transform {}
+    class PassThrough<T = any> extends Transform<T> {}
     /**
      * Attaches an AbortSignal to a readable or writeable stream. This lets code
      * control stream destruction using an `AbortController`.

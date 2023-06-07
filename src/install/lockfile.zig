@@ -63,22 +63,22 @@ const Dependency = @import("./dependency.zig");
 const Behavior = Dependency.Behavior;
 const FolderResolution = @import("./resolvers/folder_resolver.zig").FolderResolution;
 const Install = @import("./install.zig");
+const Aligner = Install.Aligner;
+const alignment_bytes_to_repeat_buffer = Install.alignment_bytes_to_repeat_buffer;
 const PackageManager = Install.PackageManager;
+const DependencyID = Install.DependencyID;
 const ExternalSlice = Install.ExternalSlice;
 const ExternalSliceAligned = Install.ExternalSliceAligned;
-const PackageID = Install.PackageID;
-const DependencyID = Install.DependencyID;
-const Features = Install.Features;
-const PackageInstall = Install.PackageInstall;
-const PackageNameHash = Install.PackageNameHash;
-const Aligner = Install.Aligner;
+const ExternalStringList = Install.ExternalStringList;
 const ExternalStringMap = Install.ExternalStringMap;
-const alignment_bytes_to_repeat_buffer = Install.alignment_bytes_to_repeat_buffer;
+const Features = Install.Features;
 const initializeStore = Install.initializeStore;
 const invalid_package_id = Install.invalid_package_id;
-const ExternalStringList = Install.ExternalStringList;
-const Resolution = @import("./resolution.zig").Resolution;
 const Origin = Install.Origin;
+const PackageID = Install.PackageID;
+const PackageInstall = Install.PackageInstall;
+const PackageNameHash = Install.PackageNameHash;
+const Resolution = @import("./resolution.zig").Resolution;
 const Crypto = @import("../sha.zig").Hashers;
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 
@@ -124,35 +124,28 @@ pub const Scripts = struct {
     postprepare: StringArrayList = .{},
 
     pub fn hasAny(this: *Scripts) bool {
-        return (this.preinstall.items.len +
-            this.install.items.len +
-            this.postinstall.items.len +
-            this.preprepare.items.len +
-            this.prepare.items.len +
-            this.postprepare.items.len) > 0;
+        inline for (Package.Scripts.Hooks) |hook| {
+            if (@field(this, hook).items.len > 0) return true;
+        }
+        return false;
     }
 
     pub fn run(this: *Scripts, allocator: Allocator, env: *DotEnv.Loader, silent: bool, comptime hook: []const u8) !void {
         for (@field(this, hook).items) |entry| {
             if (comptime Environment.allow_assert) std.debug.assert(Fs.FileSystem.instance_loaded);
-            const cwd = Path.joinAbsString(
-                FileSystem.instance.top_level_dir,
-                &[_]string{
-                    entry.cwd,
-                },
-                .posix,
-            );
-            _ = try RunCommand.runPackageScript(allocator, entry.script, hook, cwd, env, &.{}, silent);
+            _ = try RunCommand.runPackageScript(allocator, entry.script, hook, entry.cwd, env, &.{}, silent);
         }
     }
 
     pub fn deinit(this: *Scripts, allocator: Allocator) void {
-        this.preinstall.deinit(allocator);
-        this.install.deinit(allocator);
-        this.postinstall.deinit(allocator);
-        this.preprepare.deinit(allocator);
-        this.prepare.deinit(allocator);
-        this.postprepare.deinit(allocator);
+        inline for (Package.Scripts.Hooks) |hook| {
+            const list = &@field(this, hook);
+            for (list.items) |entry| {
+                allocator.free(entry.cwd);
+                allocator.free(entry.script);
+            }
+            list.deinit(allocator);
+        }
     }
 };
 
@@ -1737,6 +1730,124 @@ pub const Package = extern struct {
 
     meta: Meta = .{},
     bin: Bin = .{},
+    scripts: Package.Scripts = .{},
+
+    pub const Scripts = extern struct {
+        preinstall: String = .{},
+        install: String = .{},
+        postinstall: String = .{},
+        preprepare: String = .{},
+        prepare: String = .{},
+        postprepare: String = .{},
+        filled: bool = false,
+
+        pub const Hooks = .{
+            "preinstall",
+            "install",
+            "postinstall",
+            "preprepare",
+            "prepare",
+            "postprepare",
+        };
+
+        pub fn clone(this: *const Package.Scripts, buf: []const u8, comptime Builder: type, builder: Builder) Package.Scripts {
+            if (!this.filled) return .{};
+            var scripts = Package.Scripts{
+                .filled = true,
+            };
+            inline for (Package.Scripts.Hooks) |hook| {
+                @field(scripts, hook) = builder.append(String, @field(this, hook).slice(buf));
+            }
+            return scripts;
+        }
+
+        pub fn count(this: *const Package.Scripts, buf: []const u8, comptime Builder: type, builder: Builder) void {
+            inline for (Package.Scripts.Hooks) |hook| {
+                builder.count(@field(this, hook).slice(buf));
+            }
+        }
+
+        pub fn hasAny(this: *const Package.Scripts) bool {
+            inline for (Package.Scripts.Hooks) |hook| {
+                if (!@field(this, hook).isEmpty()) return true;
+            }
+            return false;
+        }
+
+        pub fn enqueue(this: *const Package.Scripts, lockfile: *Lockfile, buf: []const u8, cwd: string) void {
+            inline for (Package.Scripts.Hooks) |hook| {
+                const script = @field(this, hook);
+                if (!script.isEmpty()) {
+                    @field(lockfile.scripts, hook).append(lockfile.allocator, .{
+                        .cwd = lockfile.allocator.dupe(u8, cwd) catch unreachable,
+                        .script = lockfile.allocator.dupe(u8, script.slice(buf)) catch unreachable,
+                    }) catch unreachable;
+                }
+            }
+        }
+
+        pub fn parseCount(allocator: Allocator, builder: *Lockfile.StringBuilder, json: Expr) void {
+            if (json.asProperty("scripts")) |scripts_prop| {
+                if (scripts_prop.expr.data == .e_object) {
+                    inline for (Package.Scripts.Hooks) |script_name| {
+                        if (scripts_prop.expr.get(script_name)) |script| {
+                            if (script.asString(allocator)) |input| {
+                                builder.count(input);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        pub fn parseAlloc(this: *Package.Scripts, allocator: Allocator, builder: *Lockfile.StringBuilder, json: Expr) void {
+            if (json.asProperty("scripts")) |scripts_prop| {
+                if (scripts_prop.expr.data == .e_object) {
+                    inline for (Package.Scripts.Hooks) |script_name| {
+                        if (scripts_prop.expr.get(script_name)) |script| {
+                            if (script.asString(allocator)) |input| {
+                                @field(this, script_name) = builder.append(String, input);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        pub fn enqueueFromPackageJSON(
+            this: *Package.Scripts,
+            log: *logger.Log,
+            lockfile: *Lockfile,
+            node_modules: std.fs.Dir,
+            subpath: [:0]const u8,
+            cwd: string,
+        ) !void {
+            var pkg_dir = try bun.openDir(node_modules, subpath);
+            defer pkg_dir.close();
+            const json_file = try pkg_dir.dir.openFileZ("package.json", .{ .mode = .read_only });
+            defer json_file.close();
+            const json_stat = try json_file.stat();
+            const json_buf = try lockfile.allocator.alloc(u8, json_stat.size + 64);
+            const json_len = try json_file.preadAll(json_buf, 0);
+            const json_src = logger.Source.initPathString(cwd, json_buf[0..json_len]);
+            initializeStore();
+            const json = try json_parser.ParseJSONUTF8(
+                &json_src,
+                log,
+                lockfile.allocator,
+            );
+
+            var tmp: Lockfile = undefined;
+            try tmp.initEmpty(lockfile.allocator);
+            defer tmp.deinit();
+            var builder = tmp.stringBuilder();
+            Lockfile.Package.Scripts.parseCount(lockfile.allocator, &builder, json);
+            try builder.allocate();
+            this.parseAlloc(lockfile.allocator, &builder, json);
+
+            this.enqueue(lockfile, tmp.buffers.string_bytes.items, cwd);
+        }
+    };
 
     pub fn verify(this: *const Package, externs: []const ExternalString) void {
         if (comptime !Environment.allow_assert)
@@ -1796,6 +1907,7 @@ pub const Package = extern struct {
         builder.count(this.name.slice(old_string_buf));
         this.resolution.count(old_string_buf, *Lockfile.StringBuilder, builder);
         this.meta.count(old_string_buf, *Lockfile.StringBuilder, builder);
+        this.scripts.count(old_string_buf, *Lockfile.StringBuilder, builder);
         const new_extern_string_count = this.bin.count(old_string_buf, old_extern_string_buf, *Lockfile.StringBuilder, builder);
         const old_dependencies: []const Dependency = this.dependencies.get(old.buffers.dependencies.items);
         const old_resolutions: []const PackageID = this.resolutions.get(old.buffers.resolutions.items);
@@ -1832,7 +1944,14 @@ pub const Package = extern struct {
                     this.name.slice(old_string_buf),
                     this.name_hash,
                 ),
-                .bin = this.bin.clone(old_string_buf, old_extern_string_buf, new.buffers.extern_strings.items, new_extern_strings, *Lockfile.StringBuilder, builder),
+                .bin = this.bin.clone(
+                    old_string_buf,
+                    old_extern_string_buf,
+                    new.buffers.extern_strings.items,
+                    new_extern_strings,
+                    *Lockfile.StringBuilder,
+                    builder,
+                ),
                 .name_hash = this.name_hash,
                 .meta = this.meta.clone(
                     id,
@@ -1841,6 +1960,11 @@ pub const Package = extern struct {
                     builder,
                 ),
                 .resolution = this.resolution.clone(
+                    old_string_buf,
+                    *Lockfile.StringBuilder,
+                    builder,
+                ),
+                .scripts = this.scripts.clone(
                     old_string_buf,
                     *Lockfile.StringBuilder,
                     builder,
@@ -2762,18 +2886,11 @@ pub const Package = extern struct {
             if (json.asProperty("bin")) |bin| {
                 switch (bin.expr.data) {
                     .e_object => |obj| {
-                        switch (obj.properties.len) {
-                            0 => {
-                                break :bin;
-                            },
-                            1 => {},
-                            else => {},
-                        }
-
                         for (obj.properties.slice()) |bin_prop| {
                             string_builder.count(bin_prop.key.?.asString(allocator) orelse break :bin);
                             string_builder.count(bin_prop.value.?.asString(allocator) orelse break :bin);
                         }
+                        break :bin;
                     },
                     .e_string => {
                         if (bin.expr.asString(allocator)) |str_| {
@@ -2796,33 +2913,7 @@ pub const Package = extern struct {
         }
 
         if (comptime features.scripts) {
-            if (json.asProperty("scripts")) |scripts_prop| {
-                if (scripts_prop.expr.data == .e_object) {
-                    const scripts = .{
-                        "install",
-                        "postinstall",
-                        "postprepare",
-                        "preinstall",
-                        "prepare",
-                        "preprepare",
-                    };
-                    var cwd: string = "";
-
-                    inline for (scripts) |script_name| {
-                        if (scripts_prop.expr.get(script_name)) |script| {
-                            if (script.asString(allocator)) |input| {
-                                if (cwd.len == 0 and source.path.name.dir.len > 0) {
-                                    cwd = try allocator.dupe(u8, source.path.name.dir);
-                                }
-                                try @field(lockfile.scripts, script_name).append(allocator, .{
-                                    .cwd = cwd,
-                                    .script = input,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
+            Package.Scripts.parseCount(allocator, &string_builder, json);
         }
 
         if (comptime ResolverContext != void) {
@@ -3098,6 +3189,11 @@ pub const Package = extern struct {
             }
         }
 
+        if (comptime features.scripts) {
+            package.scripts.parseAlloc(allocator, &string_builder, json);
+        }
+        package.scripts.filled = true;
+
         // It is allowed for duplicate dependencies to exist in optionalDependencies and regular dependencies
         if (comptime features.check_for_duplicate_dependencies) {
             lockfile.scratch.duplicate_checker_map.clearRetainingCapacity();
@@ -3328,9 +3424,14 @@ pub const Package = extern struct {
             }
 
             const field_count = try reader.readIntLittle(u64);
-
-            if (field_count != sizes.Types.len) {
-                return error.@"Lockfile validation failed: unexpected number of package fields";
+            switch (field_count) {
+                sizes.Types.len => {},
+                // "scripts" field is absent before v0.6.8
+                // we will back-fill from each package.json
+                sizes.Types.len - 1 => {},
+                else => {
+                    return error.@"Lockfile validation failed: unexpected number of package fields";
+                },
             }
 
             const begin_at = try reader.readIntLittle(u64);
@@ -3345,8 +3446,15 @@ pub const Package = extern struct {
 
             inline for (FieldsEnum.fields) |field| {
                 var bytes = std.mem.sliceAsBytes(sliced.items(@field(Lockfile.Package.List.Field, field.name)));
-                @memcpy(bytes.ptr, stream.buffer[stream.pos..].ptr, bytes.len);
-                stream.pos += bytes.len;
+                const end_pos = stream.pos + bytes.len;
+                if (end_pos <= end_at) {
+                    @memcpy(bytes.ptr, stream.buffer[stream.pos..].ptr, bytes.len);
+                    stream.pos = end_pos;
+                } else if (comptime strings.eqlComptime(field.name, "scripts")) {
+                    @memset(bytes.ptr, 0, bytes.len);
+                } else {
+                    return error.@"Lockfile validation failed: invalid package list range";
+                }
             }
 
             return list;

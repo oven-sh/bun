@@ -1355,8 +1355,6 @@ pub const BundleV2 = struct {
                 
                 this.graph.input_files.items(.loader)[load.source_index.get()] = code.loader;
                 this.graph.input_files.items(.source)[load.source_index.get()].contents = code.source_code;
-                // print source code
-                debug("source code: {s}", .{ code.source_code });
                 var parse_task = load.parse_task;
                 parse_task.loader = code.loader;
                 this.free_list.append(code.source_code) catch unreachable;

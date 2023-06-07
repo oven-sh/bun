@@ -102,7 +102,7 @@ Zig can be installed either with our npm package [`@oven/zig`](https://www.npmjs
 
 ```bash
 $ bun install -g @oven/zig
-$ zigup master
+$ zigup 0.11.0-dev.2777+b95cdf0ae
 ```
 
 ## Building

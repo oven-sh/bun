@@ -315,7 +315,7 @@ extern "C" void JSBundlerPlugin__matchOnLoad(JSC::JSGlobalObject* globalObject, 
     }
 }
 
-extern "C" void JSBundlerPlugin__matchOnResolve(JSC::JSGlobalObject* globalObject, Bun::JSBundlerPlugin* plugin, const ZigString* namespaceString, const ZigString* path, const ZigString* importer, void* context, uint8_t kindId)
+extern "C" void JSBundlerPlugin__matchOnResolve(JSC::JSGlobalObject* globalObject, Bun::JSBundlerPlugin* plugin, const ZigString* namespaceString, const ZigString* path, const ZigString* importer, void* context, uint8_t kindId, const ZigString* resolveDir)
 {
     WTF::String namespaceStringStr = namespaceString ? Zig::toStringCopy(*namespaceString) : WTF::String("file"_s);
     if (namespaceStringStr.length() == 0) {
@@ -323,6 +323,7 @@ extern "C" void JSBundlerPlugin__matchOnResolve(JSC::JSGlobalObject* globalObjec
     }
     WTF::String pathStr = path ? Zig::toStringCopy(*path) : WTF::String();
     WTF::String importerStr = importer ? Zig::toStringCopy(*importer) : WTF::String();
+    WTF::String resolveDirStr = resolveDir ? Zig::toStringCopy(*resolveDir) : WTF::String();
     auto& vm = globalObject->vm();
 
     JSFunction* function = plugin->onResolveFunction.get(plugin);
@@ -341,6 +342,7 @@ extern "C" void JSBundlerPlugin__matchOnResolve(JSC::JSGlobalObject* globalObjec
     arguments.append(JSC::jsString(vm, importerStr));
     arguments.append(WRAP_BUNDLER_PLUGIN(context));
     arguments.append(JSC::jsNumber(kindId));
+    arguments.append(JSC::jsString(vm, resolveDirStr));
 
     auto result = call(globalObject, function, callData, plugin, arguments);
 

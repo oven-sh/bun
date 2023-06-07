@@ -189,11 +189,19 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
   return processSetupResult();
 }
 
-export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespace, importer, internalID, kindId) {
+export function runOnResolvePlugins(
+  this: BundlerPlugin,
+  specifier,
+  inputNamespace,
+  importer,
+  internalID,
+  kindId,
+  resolveDir,
+) {
   // Must be kept in sync with ImportRecord.label
   const kind = $ImportKindIdToLabel[kindId];
 
-  var promiseResult: any = (async (inputPath, inputNamespace, importer, kind) => {
+  var promiseResult: any = (async (inputPath, inputNamespace, importer, kind, resolveDir) => {
     var { onResolve, onLoad } = this;
     var results = onResolve.$get(inputNamespace);
     if (!results) {
@@ -207,7 +215,7 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
           path: inputPath,
           importer,
           namespace: inputNamespace,
-          // resolveDir
+          resolveDir,
           kind,
           // pluginData
         });
@@ -229,8 +237,12 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
         }
 
         var { path, namespace: userNamespace = inputNamespace, external } = result;
-        if (!(typeof path === "string") || !(typeof userNamespace === "string")) {
-          throw new TypeError("onResolve plugins must return an object with a string 'path' and string 'loader' field");
+        if (!(typeof path === "string")) {
+          throw new TypeError("onResolve: expected 'path' to be a string");
+        }
+
+        if (!(typeof userNamespace === "string")) {
+          throw new TypeError("onResolve: expected 'namespace' to be a string");
         }
 
         if (!path) {
@@ -241,7 +253,7 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
           userNamespace = inputNamespace;
         }
         if (typeof external !== "boolean" && !$isUndefinedOrNull(external)) {
-          throw new TypeError('onResolve plugins "external" field must be boolean or unspecified');
+          throw new TypeError("onResolve: expected 'external' to be boolean");
         }
 
         if (!external) {
@@ -271,7 +283,7 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
 
     this.onResolveAsync(internalID, null, null, null);
     return null;
-  })(specifier, inputNamespace, importer, kind);
+  })(specifier, inputNamespace, importer, kind, resolveDir);
 
   while (
     promiseResult &&
@@ -329,6 +341,9 @@ export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespac
         }
 
         var { contents, loader = defaultLoader } = result as OnLoadResultSourceCode & OnLoadResultObject;
+
+        // TODO: Support "object" loader
+
         if (!(typeof contents === "string") && !$isTypedArrayView(contents)) {
           throw new TypeError('onLoad plugins must return an object with "contents" as a string or Uint8Array');
         }

@@ -1186,6 +1186,9 @@ for (const [key, blob] of build.outputs) {
           },
           stdio: ["ignore", "pipe", "pipe"],
         });
+        if (DEBUG) {
+          console.log({ stdout: stdout!.toString("utf-8"), stderr: stderr!.toString("utf-8") });
+        }
 
         if (run.error) {
           if (success) {
@@ -1287,6 +1290,7 @@ export function itBundled(
 ): BundlerTestRef {
   if (typeof opts === "function") {
     const fn = opts;
+    // console.log("outbase", outBase);
     opts = opts({ root: path.join(outBase, id.replaceAll("/", path.sep)), getConfigRef });
     // @ts-expect-error
     opts._referenceFn = fn;

@@ -830,4 +830,32 @@ describe("bundler", () => {
       },
     };
   });
+  itBundled("plugin/resolveDir", ({ getConfigRef, root }) => {
+    return {
+      run: true,
+      files: {
+        "index.ts": /* ts */ `
+          import "./foo.magic";
+        `,
+      },
+      entryPoints: ["./index.ts"],
+      plugins(build) {
+        build.onResolve({ "filter": /.magic$/ }, args => {
+          console.log({ root, resolveDir: args.resolveDir });
+          expect(args.resolveDir).toBeDefined();
+          expect(args.resolveDir!.replace("/private", "")).toEqual(root);
+          return {
+            path: "magic",
+            "namespace": "magic",
+          };
+        });
+        build.onLoad({ namespace: "magic", "filter": /.*/ }, _args => {
+          return {
+            contents: "",
+            loader: "ts",
+          };
+        });
+      },
+    };
+  });
 });

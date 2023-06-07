@@ -2937,7 +2937,10 @@ declare module "bun" {
      * The kind of import this resolve is for.
      */
     kind: ImportKind;
-    // resolveDir: string;
+    /**
+     * The= directory of the importing module. Commonly used to resolve `args.path` to an absolute path.
+     */
+    resolveDir: string;
     // pluginData: any;
   }
 

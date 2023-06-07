@@ -2,7 +2,7 @@
   "git.autoRepositoryDetection": "openEditors",
   "search.quickOpen.includeSymbols": false,
   "search.seedWithNearestWord": true,
-  "search.smartCase": true,
+  "search.smartCase": false,
   "search.exclude": {},
   "search.followSymlinks": false,
   "search.useIgnoreFiles": true,

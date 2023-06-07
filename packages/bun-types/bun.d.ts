@@ -1143,40 +1143,38 @@ declare module "bun" {
         | Password.Argon2Algorithm
         | Password.BCryptAlgorithm,
     ): Promise<string>;
-  };
 
-  /**
-   * Synchronously hash and verify passwords using argon2 or bcrypt. The default is argon2.
-   * Warning: password hashing is slow, consider using {@link Bun.password}
-   * instead which runs in a worker thread.
-   *
-   * The underlying implementation of these functions are provided by the Zig
-   * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
-   * work on this.
-   *
-   * ### Example with argon2
-   *
-   * ```ts
-   * import {password} from "bun";
-   *
-   * const hash = await password.hash("hello world");
-   * const verify = await password.verify("hello world", hash);
-   * console.log(verify); // true
-   * ```
-   *
-   * ### Example with bcrypt
-   * ```ts
-   * import {password} from "bun";
-   *
-   * const hash = await password.hash("hello world", "bcrypt");
-   * // algorithm is optional, will be inferred from the hash if not specified
-   * const verify = await password.verify("hello world", hash, "bcrypt");
-   *
-   * console.log(verify); // true
-   * ```
-   */
-  export const passwordSync: {
-    verify(
+    /**
+     * Synchronously hash and verify passwords using argon2 or bcrypt. The default is argon2.
+     * Warning: password hashing is slow, consider using {@link Bun.password.verify}
+     * instead which runs in a worker thread.
+     *
+     * The underlying implementation of these functions are provided by the Zig
+     * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+     * work on this.
+     *
+     * ### Example with argon2
+     *
+     * ```ts
+     * import {password} from "bun";
+     *
+     * const hash = await password.hashSync("hello world");
+     * const verify = await password.verifySync("hello world", hash);
+     * console.log(verify); // true
+     * ```
+     *
+     * ### Example with bcrypt
+     * ```ts
+     * import {password} from "bun";
+     *
+     * const hash = await password.hashSync("hello world", "bcrypt");
+     * // algorithm is optional, will be inferred from the hash if not specified
+     * const verify = await password.verifySync("hello world", hash, "bcrypt");
+     *
+     * console.log(verify); // true
+     * ```
+     */
+    verifySync(
       password: StringOrBuffer,
       hash: StringOrBuffer,
       /**
@@ -1184,7 +1182,38 @@ declare module "bun" {
        */
       algorithm?: Password.AlgorithmLabel,
     ): boolean;
-    hash(
+
+    /**
+     * Synchronously hash and verify passwords using argon2 or bcrypt. The default is argon2.
+     * Warning: password hashing is slow, consider using {@link Bun.password.hash}
+     * instead which runs in a worker thread.
+     *
+     * The underlying implementation of these functions are provided by the Zig
+     * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+     * work on this.
+     *
+     * ### Example with argon2
+     *
+     * ```ts
+     * import {password} from "bun";
+     *
+     * const hash = await password.hashSync("hello world");
+     * const verify = await password.verifySync("hello world", hash);
+     * console.log(verify); // true
+     * ```
+     *
+     * ### Example with bcrypt
+     * ```ts
+     * import {password} from "bun";
+     *
+     * const hash = await password.hashSync("hello world", "bcrypt");
+     * // algorithm is optional, will be inferred from the hash if not specified
+     * const verify = await password.verifySync("hello world", hash, "bcrypt");
+     *
+     * console.log(verify); // true
+     * ```
+     */
+    hashSync(
       /**
        * The password to hash
        *

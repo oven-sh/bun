@@ -264,7 +264,6 @@ public:
 
     Structure* commonJSFunctionArgumentsStructure() { return m_commonJSFunctionArgumentsStructure.getInitializedOnMainThread(this); }
 
-    JSObject* passwordSyncObject() { return m_lazyPasswordSyncObject.getInitializedOnMainThread(this); }
     JSObject* passwordObject() { return m_lazyPasswordObject.getInitializedOnMainThread(this); }
 
     JSWeakMap* vmModuleContextMap() { return m_vmModuleContextMap.getInitializedOnMainThread(this); }
@@ -479,7 +478,6 @@ private:
     LazyProperty<JSGlobalObject, JSObject> m_lazyRequireCacheObject;
     LazyProperty<JSGlobalObject, JSObject> m_lazyTestModuleObject;
     LazyProperty<JSGlobalObject, JSObject> m_lazyPreloadTestModuleObject;
-    LazyProperty<JSGlobalObject, JSObject> m_lazyPasswordSyncObject;
     LazyProperty<JSGlobalObject, JSObject> m_lazyPasswordObject;
 
     LazyProperty<JSGlobalObject, JSFunction> m_bunSleepThenCallback;

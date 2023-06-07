@@ -843,7 +843,7 @@ describe("bundler", () => {
         build.onResolve({ "filter": /.magic$/ }, args => {
           console.log({ root, resolveDir: args.resolveDir });
           expect(args.resolveDir).toBeDefined();
-          expect(args.resolveDir!.replace("/private", "")).toEqual(root);
+          expect(args.resolveDir).toEqual(root);
           return {
             path: "magic",
             "namespace": "magic",

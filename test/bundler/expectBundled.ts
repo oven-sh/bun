@@ -3,6 +3,7 @@
  */
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import path from "path";
+import fs from "fs";
 import dedent from "dedent";
 import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "os";
@@ -42,7 +43,7 @@ export const RUN_UNCHECKED_TESTS = false;
 
 const outBaseTemplate = path.join(tmpdir(), "bun-build-tests", `${ESBUILD ? "esbuild" : "bun"}-`);
 if (!existsSync(path.dirname(outBaseTemplate))) mkdirSync(path.dirname(outBaseTemplate), { recursive: true });
-const outBase = mkdtempSync(outBaseTemplate);
+const outBase = fs.realpathSync(mkdtempSync(outBaseTemplate));
 const testsRan = new Set();
 
 if (ESBUILD) {
@@ -410,7 +411,7 @@ function expectBundled(
       backend = plugins !== undefined ? "api" : "cli";
     }
 
-    const root = path.join(outBase, id.replaceAll("/", path.sep));
+    const root = await path.join(outBase, id.replaceAll("/", path.sep));
     if (DEBUG) console.log("root:", root);
 
     const entryPaths = entryPoints.map(file => path.join(root, file));

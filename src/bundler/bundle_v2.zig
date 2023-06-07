@@ -1352,7 +1352,6 @@ pub const BundleV2 = struct {
                 _ = @atomicRmw(usize, &this.graph.parse_pending, .Sub, 1, .Monotonic);
             },
             .success => |code| {
-                
                 this.graph.input_files.items(.loader)[load.source_index.get()] = code.loader;
                 this.graph.input_files.items(.source)[load.source_index.get()].contents = code.source_code;
                 var parse_task = load.parse_task;

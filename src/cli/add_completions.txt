@@ -1939,7 +1939,6 @@ detect-gpu
 detect-installed
 detect-it
 detect-kerning
-detect-libc
 detect-newline
 detect-passive-events
 detect-port

@@ -893,6 +893,7 @@ pub const JSBundler = struct {
             importer: *const ZigString,
             context: *anyopaque,
             u8,
+            resolve_dir: *const ZigString,
         ) void;
 
         pub fn hasAnyMatches(
@@ -949,7 +950,11 @@ pub const JSBundler = struct {
                 ZigString.fromUTF8(namespace);
             const path_string = ZigString.fromUTF8(path);
             const importer_string = ZigString.fromUTF8(importer);
-            JSBundlerPlugin__matchOnResolve(globalThis, this, &namespace_string, &path_string, &importer_string, context, @enumToInt(import_record_kind));
+            // TODO: improve this for virtual modules
+            const resolve_dir = std.fs.path.dirname(importer) orelse "/";
+            std.debug.print("{s}\n", .{resolve_dir});
+            const resolve_dir_string = ZigString.fromUTF8(resolve_dir);
+            JSBundlerPlugin__matchOnResolve(globalThis, this, &namespace_string, &path_string, &importer_string, context, @enumToInt(import_record_kind), &resolve_dir_string);
         }
 
         pub fn addPlugin(

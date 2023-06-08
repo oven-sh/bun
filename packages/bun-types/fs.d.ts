@@ -3937,6 +3937,17 @@ declare module "fs" {
        * @since v0.6.8
        */
       close(): void;
+
+      /**
+       * When called, requests that the Node.js event loop not exit so long as the <fs.FSWatcher> is active. Calling watcher.ref() multiple times will have no effect.
+       */
+      ref(): void;
+
+      /**
+       * When called, the active <fs.FSWatcher> object will not require the Node.js event loop to remain active. If there is no other activity keeping the event loop running, the process may exit before the <fs.FSWatcher> object's callback is invoked. Calling watcher.unref() multiple times will have no effect.
+       */
+      unref(): void;
+  
       /**
        * events.EventEmitter
        *   1. change
@@ -3983,15 +3994,38 @@ declare module "fs" {
      * @since v0.6.8
      * @param listener
      */
-    export function watch(
-      filename: PathLike,
-      options:
-          | (WatchOptions & {
-                encoding: 'buffer';
-            })
-          | 'buffer',
-      listener?: WatchListener<Buffer>
+      export function watch(
+        filename: PathLike,
+        options:
+            | (WatchOptions & {
+                  encoding: 'buffer';
+              })
+            | 'buffer',
+        listener?: WatchListener<Buffer>
     ): FSWatcher;
+    /**
+     * Watch for changes on `filename`, where `filename` is either a file or a directory, returning an `FSWatcher`.
+     * @param filename A path to a file or directory. If a URL is provided, it must use the `file:` protocol.
+     * @param options Either the encoding for the filename provided to the listener, or an object optionally specifying encoding, persistent, and recursive options.
+     * If `encoding` is not supplied, the default of `'utf8'` is used.
+     * If `persistent` is not supplied, the default of `true` is used.
+     * If `recursive` is not supplied, the default of `false` is used.
+     */
+    export function watch(filename: PathLike, options?: WatchOptions | BufferEncoding | null, listener?: WatchListener<string>): FSWatcher;
+    /**
+     * Watch for changes on `filename`, where `filename` is either a file or a directory, returning an `FSWatcher`.
+     * @param filename A path to a file or directory. If a URL is provided, it must use the `file:` protocol.
+     * @param options Either the encoding for the filename provided to the listener, or an object optionally specifying encoding, persistent, and recursive options.
+     * If `encoding` is not supplied, the default of `'utf8'` is used.
+     * If `persistent` is not supplied, the default of `true` is used.
+     * If `recursive` is not supplied, the default of `false` is used.
+     */
+    export function watch(filename: PathLike, options: WatchOptions | string, listener?: WatchListener<string | Buffer>): FSWatcher;
+    /**
+     * Watch for changes on `filename`, where `filename` is either a file or a directory, returning an `FSWatcher`.
+     * @param filename A path to a file or directory. If a URL is provided, it must use the `file:` protocol.
+     */
+    export function watch(filename: PathLike, listener?: WatchListener<string>): FSWatcher;
 }
 
 declare module "node:fs" {

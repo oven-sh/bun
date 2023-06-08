@@ -3980,7 +3980,7 @@ declare module "fs" {
      *
      * If a `signal` is passed, aborting the corresponding AbortController will close
      * the returned `fs.FSWatcher`.
-     * @since v0.5.10
+     * @since v0.6.8
      * @param listener
      */
     export function watch(

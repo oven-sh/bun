@@ -108,6 +108,10 @@ pub const INotify = struct {
         std.os.inotify_rm_watch(inotify_fd, wd);
     }
 
+    pub fn isRunning() bool {
+        return loaded_inotify;
+    }
+
     var coalesce_interval: isize = 100_000;
     pub fn init() !void {
         std.debug.assert(!loaded_inotify);
@@ -227,6 +231,10 @@ const DarwinWatcher = struct {
 
         fd = try std.os.kqueue();
         if (fd == 0) return error.KQueueError;
+    }
+
+    pub fn isRunning() bool {
+        return fd != 0;
     }
 
     pub fn stop() void {
@@ -361,6 +369,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         watchloop_handle: ?std.Thread.Id = null,
         cwd: string,
         thread: std.Thread = undefined,
+        running: bool = true,
 
         pub const HashType = u32;
 
@@ -372,7 +381,9 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
         pub fn init(ctx: ContextType, fs: *Fs.FileSystem, allocator: std.mem.Allocator) !*Watcher {
             var watcher = try allocator.create(Watcher);
-            try PlatformWatcher.init();
+            if (!PlatformWatcher.isRunning()) {
+                try PlatformWatcher.init();
+            }
 
             watcher.* = Watcher{
                 .fs = fs,
@@ -393,6 +404,10 @@ pub fn NewWatcher(comptime ContextType: type) type {
             this.thread = try std.Thread.spawn(.{}, Watcher.watchLoop, .{this});
         }
 
+        pub fn stop(this: *Watcher) void {
+            this.running = false;
+        }
+
         // This must only be called from the watcher thread
         pub fn watchLoop(this: *Watcher) !void {
             this.watchloop_handle = std.Thread.getCurrentId();
@@ -402,10 +417,10 @@ pub fn NewWatcher(comptime ContextType: type) type {
             if (FeatureFlags.verbose_watcher) Output.prettyln("Watcher started", .{});
 
             this._watchLoop() catch |err| {
-                Output.prettyErrorln("<r>Watcher crashed: <red><b>{s}<r>", .{@errorName(err)});
-
                 this.watchloop_handle = null;
                 PlatformWatcher.stop();
+
+                this.ctx.onError(err);
                 return;
             };
         }
@@ -475,7 +490,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
                 var changelist_array: [128]KEvent = std.mem.zeroes([128]KEvent);
                 var changelist = &changelist_array;
-                while (true) {
+                while (this.running) {
                     defer Output.flush();
 
                     var count_ = std.os.system.kevent(
@@ -534,7 +549,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     this.ctx.onFileUpdate(watchevents, this.changed_filepaths[0..watchevents.len], this.watchlist);
                 }
             } else if (Environment.isLinux) {
-                restart: while (true) {
+                restart: while (this.running) {
                     defer Output.flush();
 
                     var events = try INotify.read();

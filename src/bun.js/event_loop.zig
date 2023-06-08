@@ -224,6 +224,7 @@ pub const CppTask = opaque {
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 const MicrotaskForDefaultGlobalObject = JSC.MicrotaskForDefaultGlobalObject;
 const HotReloadTask = JSC.HotReloader.HotReloadTask;
+const FSWatchTask = JSC.Node.FSWatcher.FSWatchTask;
 const PollPendingModulesTask = JSC.ModuleLoader.AsyncModule.Queue;
 // const PromiseTask = JSInternalPromise.Completion.PromiseTask;
 const GetAddrInfoRequestTask = JSC.DNS.GetAddrInfoRequest.Task;
@@ -242,6 +243,7 @@ pub const Task = TaggedPointerUnion(.{
     HotReloadTask,
     PollPendingModulesTask,
     GetAddrInfoRequestTask,
+    FSWatchTask,
     // PromiseTask,
     // TimeoutTasklet,
 });
@@ -466,6 +468,11 @@ pub const EventLoop = struct {
                     transform_task.deinit();
                     // special case: we return
                     return 0;
+                },
+                .FSWatchTask => {
+                    var transform_task: *FSWatchTask = task.get(FSWatchTask).?;
+                    transform_task.*.run();
+                    transform_task.deinit();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(AnyTask))) => {
                     var any: *AnyTask = task.get(AnyTask).?;

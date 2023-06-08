@@ -1,3 +1,5 @@
+import { EventEmitter } from "stream";
+
 // Hardcoded module "node:fs"
 var { direct, isPromise, isCallable } = import.meta.primordials;
 var promises = import.meta.require("node:fs/promises");
@@ -7,6 +9,57 @@ var NativeReadable = _getNativeReadableStreamPrototype(2, Readable); // 2 means 
 
 var fs = Bun.fs();
 var debug = process.env.DEBUG ? console.log : () => {};
+
+class FSWatcher extends EventEmitter {
+  #watcher;
+  #listener;
+  constructor(path, options, listener) {
+    super();
+    if (path instanceof URL) {
+      throw new TypeError("Watch URLs are not supported yet");
+    } else if (Buffer.isBuffer(path)) {
+      path = path.toString();
+    } else if (typeof path !== "string") {
+      throw new TypeError("Expected path to be a string or Buffer");
+    }
+
+    if (typeof options === "function") {
+      listener = options;
+      options = {};
+    } else if (typeof options === "string") {
+      options = { encoding: options };
+    }
+
+    if (typeof listener !== "function") {
+      listener = () => {};
+    }
+
+    this.#listener = listener;
+    this.#watcher = fs.watch(path, options, this.#onEvent.bind(this));
+  }
+
+  #onEvent(eventType, filenameOrError) {
+    if (eventType === "error" || eventType === "close") {
+      this.emit(eventType, filenameOrError);
+    } else {
+      this.emit("change", eventType, filenameOrError);
+      this.#listener(eventType, filenameOrError);
+    }
+  }
+
+  close() {
+    this.#watcher?.close();
+    this.#watcher = null;
+  }
+
+  ref() {
+    this.#watcher?.ref();
+  }
+
+  unref() {
+    this.#watcher?.unref();
+  }
+}
 export var access = function access(...args) {
     callbackify(fs.accessSync, args);
   },
@@ -153,6 +206,9 @@ export var access = function access(...args) {
   rmdirSync = fs.rmdirSync.bind(fs),
   Dirent = fs.Dirent,
   Stats = fs.Stats,
+  watch = function watch(path, options, listener) {
+    return new FSWatcher(path, options, listener);
+  },
   promises = import.meta.require("node:fs/promises");
 
 function callbackify(fsFunction, args) {
@@ -1002,7 +1058,8 @@ export default {
   writeSync,
   WriteStream,
   ReadStream,
-
+  watch,
+  FSWatcher,
   [Symbol.for("::bunternal::")]: {
     ReadStreamClass,
     WriteStreamClass,

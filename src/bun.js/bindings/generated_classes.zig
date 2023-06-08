@@ -2312,6 +2312,8 @@ pub const JSNodeJSFS = struct {
             @compileLog("Expected NodeJSFS.utimes to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.utimes)));
         if (@TypeOf(NodeJSFS.utimesSync) != CallbackType)
             @compileLog("Expected NodeJSFS.utimesSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.utimesSync)));
+        if (@TypeOf(NodeJSFS.watch) != CallbackType)
+            @compileLog("Expected NodeJSFS.watch to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.watch)));
         if (@TypeOf(NodeJSFS.write) != CallbackType)
             @compileLog("Expected NodeJSFS.write to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.write)));
         if (@TypeOf(NodeJSFS.writeFile) != CallbackType)
@@ -2402,6 +2404,7 @@ pub const JSNodeJSFS = struct {
             @export(NodeJSFS.unlinkSync, .{ .name = "NodeJSFSPrototype__unlinkSync" });
             @export(NodeJSFS.utimes, .{ .name = "NodeJSFSPrototype__utimes" });
             @export(NodeJSFS.utimesSync, .{ .name = "NodeJSFSPrototype__utimesSync" });
+            @export(NodeJSFS.watch, .{ .name = "NodeJSFSPrototype__watch" });
             @export(NodeJSFS.write, .{ .name = "NodeJSFSPrototype__write" });
             @export(NodeJSFS.writeFile, .{ .name = "NodeJSFSPrototype__writeFile" });
             @export(NodeJSFS.writeFileSync, .{ .name = "NodeJSFSPrototype__writeFileSync" });

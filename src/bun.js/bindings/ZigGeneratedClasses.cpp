@@ -7654,6 +7654,9 @@ JSC_DECLARE_HOST_FUNCTION(NodeJSFSPrototype__utimesCallback);
 extern "C" EncodedJSValue NodeJSFSPrototype__utimesSync(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(NodeJSFSPrototype__utimesSyncCallback);
 
+extern "C" EncodedJSValue NodeJSFSPrototype__watch(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(NodeJSFSPrototype__watchCallback);
+
 extern "C" EncodedJSValue NodeJSFSPrototype__write(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(NodeJSFSPrototype__writeCallback);
 
@@ -7751,6 +7754,7 @@ static const HashTableValue JSNodeJSFSPrototypeTableValues[] = {
     { "unlinkSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__unlinkSyncCallback, 1 } },
     { "utimes"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__utimesCallback, 4 } },
     { "utimesSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__utimesSyncCallback, 3 } },
+    { "watch"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__watchCallback, 3 } },
     { "write"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__writeCallback, 6 } },
     { "writeFile"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__writeFileCallback, 4 } },
     { "writeFileSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__writeFileSyncCallback, 3 } },
@@ -9793,6 +9797,33 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__utimesSyncCallback, (JSGlobalObject 
 #endif
 
     return NodeJSFSPrototype__utimesSync(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__watchCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSNodeJSFS* thisObject = jsDynamicCast<JSNodeJSFS*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return NodeJSFSPrototype__watch(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__writeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

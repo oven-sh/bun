@@ -2913,6 +2913,10 @@ declare module "bun" {
      * The default loader for this file extension
      */
     loader: Loader;
+    /**
+     * Contextual data passed down from the `onResolve` callback that resolved this module
+     */
+    pluginData: any;
   }
 
   type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject;
@@ -2959,6 +2963,10 @@ declare module "bun" {
      */
     namespace?: string;
     external?: boolean;
+    /**
+     * Data to pass to the `onLoad` callback
+     */
+    pluginData?: any;
   }
 
   type OnResolveCallback = (

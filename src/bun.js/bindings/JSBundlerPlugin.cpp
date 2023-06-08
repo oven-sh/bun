@@ -279,10 +279,12 @@ extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* pluginObject, 
     return pluginObject->plugin.anyMatchesCrossThread(pluginObject->vm(), namespaceString, path, isOnLoad);
 }
 
-extern "C" void JSBundlerPlugin__matchOnLoad(JSC::JSGlobalObject* globalObject, Bun::JSBundlerPlugin* plugin, const ZigString* namespaceString, const ZigString* path, void* context, uint8_t defaultLoaderId)
+extern "C" void JSBundlerPlugin__matchOnLoad(JSC::JSGlobalObject* globalObject, Bun::JSBundlerPlugin* plugin, const ZigString* namespaceString, const ZigString* path, void* context, uint8_t defaultLoaderId, JSValue* pluginData)
 {
     WTF::String namespaceStringStr = namespaceString ? Zig::toStringCopy(*namespaceString) : WTF::String();
     WTF::String pathStr = path ? Zig::toStringCopy(*path) : WTF::String();
+    // get value from pointer
+    JSValue pluginDataValue = *pluginData;
 
     JSFunction* function = plugin->onLoadFunction.get(plugin);
     if (UNLIKELY(!function))
@@ -299,6 +301,7 @@ extern "C" void JSBundlerPlugin__matchOnLoad(JSC::JSGlobalObject* globalObject, 
     arguments.append(JSC::jsString(plugin->vm(), pathStr));
     arguments.append(JSC::jsString(plugin->vm(), namespaceStringStr));
     arguments.append(JSC::jsNumber(defaultLoaderId));
+    arguments.append(pluginDataValue);
 
     auto result = call(globalObject, function, callData, plugin, arguments);
 

@@ -5224,6 +5224,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn listen(this: *ThisServer) void {
+            JSC.markBinding(@src());
             httplog("listen", .{});
             if (ssl_enabled) {
                 BoringSSL.load();

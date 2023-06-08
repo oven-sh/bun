@@ -603,7 +603,7 @@ pub const BundleV2 = struct {
             _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .Monotonic);
 
             // Handle onLoad plugins
-            if (!this.enqueueOnLoadPluginIfNeeded(task)) {
+            if (!this.enqueueOnLoadPluginIfNeeded(task, bun.JSC.JSValue.jsUndefined())) {
                 if (loader.shouldCopyForBundling()) {
                     var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
                     additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
@@ -670,7 +670,7 @@ pub const BundleV2 = struct {
         task.tree_shaking = this.linker.options.tree_shaking;
 
         // Handle onLoad plugins as entry points
-        if (!this.enqueueOnLoadPluginIfNeeded(task)) {
+        if (!this.enqueueOnLoadPluginIfNeeded(task, bun.JSC.JSValue.jsUndefined())) {
             if (loader.shouldCopyForBundling()) {
                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
                 additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
@@ -1476,7 +1476,8 @@ pub const BundleV2 = struct {
                         _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .Monotonic);
 
                         // Handle onLoad plugins
-                        if (!this.enqueueOnLoadPluginIfNeeded(task)) {
+                        std.debug.print("enqueueOnLoadPluginIfNeeded", .{});
+                        if (!this.enqueueOnLoadPluginIfNeeded(task, result.plugin_data)) {
                             if (loader.shouldCopyForBundling()) {
                                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
                                 additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
@@ -1774,7 +1775,11 @@ pub const BundleV2 = struct {
         return false;
     }
 
-    pub fn enqueueOnLoadPluginIfNeeded(this: *BundleV2, parse: *ParseTask) bool {
+    pub fn enqueueOnLoadPluginIfNeeded(
+        this: *BundleV2,
+        parse: *ParseTask,
+        plugin_data: JSC.JSValue,
+    ) bool {
         if (this.plugins) |plugins| {
             if (plugins.hasAnyMatches(&parse.path, true)) {
                 // This is where onLoad plugins are enqueued
@@ -1783,12 +1788,8 @@ pub const BundleV2 = struct {
                     parse.path.text,
                 });
                 var load = bun.default_allocator.create(JSC.API.JSBundler.Load) catch unreachable;
-                load.* = JSC.API.JSBundler.Load.create(
-                    this.completion.?,
-                    parse.source_index,
-                    parse.path.loader(&this.bundler.options.loaders) orelse options.Loader.js,
-                    parse.path,
-                );
+                std.debug.print("Load.create", .{});
+                load.* = JSC.API.JSBundler.Load.create(this.completion.?, parse.source_index, parse.path.loader(&this.bundler.options.loaders) orelse options.Loader.js, parse.path, plugin_data);
                 load.parse_task = parse;
                 load.dispatch();
                 return true;
@@ -2164,7 +2165,7 @@ pub const BundleV2 = struct {
                         graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
                         diff += 1;
 
-                        if (this.enqueueOnLoadPluginIfNeeded(new_task)) {
+                        if (this.enqueueOnLoadPluginIfNeeded(new_task, bun.JSC.JSValue.jsUndefined())) {
                             continue;
                         }
 

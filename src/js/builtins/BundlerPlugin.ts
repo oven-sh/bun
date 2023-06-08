@@ -21,7 +21,7 @@ interface BundlerPlugin {
     sourceCode: string | Uint8Array | ArrayBuffer | DataView | null,
     loaderKey: number | null,
   ): void;
-  onResolveAsync(internalID, a, b, c): void;
+  onResolveAsync(internalID, a, b, c, d): void;
   addError(internalID, error, number): void;
   addFilter(filter, namespace, number): void;
 }
@@ -205,7 +205,7 @@ export function runOnResolvePlugins(
     var { onResolve, onLoad } = this;
     var results = onResolve.$get(inputNamespace);
     if (!results) {
-      this.onResolveAsync(internalID, null, null, null);
+      this.onResolveAsync(internalID, null, null, null, null);
       return null;
     }
 
@@ -236,7 +236,7 @@ export function runOnResolvePlugins(
           continue;
         }
 
-        var { path, namespace: userNamespace = inputNamespace, external } = result;
+        var { path, namespace: userNamespace = inputNamespace, external, pluginData } = result;
         if (!(typeof path === "string")) {
           throw new TypeError("onResolve: expected 'path' to be a string");
         }
@@ -276,12 +276,12 @@ export function runOnResolvePlugins(
             throw new TypeError(`Expected onLoad plugin for namespace ${userNamespace} to exist`);
           }
         }
-        this.onResolveAsync(internalID, path, userNamespace, external);
+        this.onResolveAsync(internalID, path, userNamespace, external, pluginData);
         return null;
       }
     }
 
-    this.onResolveAsync(internalID, null, null, null);
+    this.onResolveAsync(internalID, null, null, null, null);
     return null;
   })(specifier, inputNamespace, importer, kind, resolveDir);
 
@@ -303,11 +303,11 @@ export function runOnResolvePlugins(
   }
 }
 
-export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespace, defaultLoaderId) {
+export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespace, defaultLoaderId, pluginData) {
   const LOADERS_MAP = $LoaderLabelToId;
   const loaderName = $LoaderIdToLabel[defaultLoaderId];
 
-  var promiseResult = (async (internalID, path, namespace, defaultLoader) => {
+  var promiseResult = (async (internalID, path, namespace, defaultLoader, pluginData) => {
     var results = this.onLoad.$get(namespace);
     if (!results) {
       this.onLoadAsync(internalID, null, null);
@@ -320,7 +320,7 @@ export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespac
           path,
           namespace,
           // suffix
-          // pluginData
+          pluginData,
           loader: defaultLoader,
         });
 
@@ -364,7 +364,7 @@ export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespac
 
     this.onLoadAsync(internalID, null, null);
     return null;
-  })(internalID, path, namespace, loaderName);
+  })(internalID, path, namespace, loaderName, pluginData);
 
   while (
     promiseResult &&

@@ -39,7 +39,8 @@ type User = {
 
 Bun.serve<User>({
   fetch(req, server) {
-    if (req.url === "/chat") {
+    const url = new URL(req.url);
+    if (url.pathname === "/chat") {
       if (
         server.upgrade(req, {
           data: {

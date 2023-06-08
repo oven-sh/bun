@@ -1,4 +1,4 @@
-name: bun-release-canary
+name: bun-release-types-canary
 concurrency: release-canary
 on:
   push:

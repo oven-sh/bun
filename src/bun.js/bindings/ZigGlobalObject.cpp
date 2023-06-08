@@ -2620,15 +2620,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(result.toObject(globalObject));
         });
 
-    m_lazyPasswordSyncObject.initLater(
-        [](const Initializer<JSObject>& init) {
-            JSC::VM& vm = init.vm;
-            JSC::JSGlobalObject* globalObject = init.owner;
-
-            JSValue result = JSValue::decode(JSPasswordObject__create(globalObject, true));
-            init.set(result.toObject(globalObject));
-        });
-
     m_lazyPreloadTestModuleObject.initLater(
         [](const Initializer<JSObject>& init) {
             JSC::VM& vm = init.vm;
@@ -3556,7 +3547,6 @@ extern "C" void Crypto__randomUUID__put(JSC::JSGlobalObject* globalObject, JSC::
 extern "C" void Crypto__getRandomValues__put(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value);
 
 DEFINE_BUN_LAZY_GETTER(BUN_LAZY_GETTER_FN_NAME(password), passwordObject)
-DEFINE_BUN_LAZY_GETTER(BUN_LAZY_GETTER_FN_NAME(passwordSync), passwordSyncObject)
 
 // This is not a publicly exposed API currently.
 // This is used by the bundler to make Response, Request, FetchEvent,
@@ -3620,12 +3610,6 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         {
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "password"_s);
             object->putDirectCustomAccessor(vm, identifier, JSC::CustomGetterSetter::create(vm, BUN_LAZY_GETTER_FN_NAME(password), nullptr),
-                JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        }
-
-        {
-            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "passwordSync"_s);
-            object->putDirectCustomAccessor(vm, identifier, JSC::CustomGetterSetter::create(vm, BUN_LAZY_GETTER_FN_NAME(passwordSync), nullptr),
                 JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         }
 
@@ -3900,7 +3884,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_lazyPreloadTestModuleObject.visit(visitor);
     thisObject->m_commonJSModuleObjectStructure.visit(visitor);
     thisObject->m_lazyPasswordObject.visit(visitor);
-    thisObject->m_lazyPasswordSyncObject.visit(visitor);
     thisObject->m_commonJSFunctionArgumentsStructure.visit(visitor);
     thisObject->m_cachedGlobalObjectStructure.visit(visitor);
     thisObject->m_cachedGlobalProxyStructure.visit(visitor);

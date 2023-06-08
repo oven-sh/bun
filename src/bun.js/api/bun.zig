@@ -1632,7 +1632,7 @@ pub const Crypto = struct {
 
         return ZigString.fromUTF8(error_message).toErrorInstance(globalThis);
     }
-    const unknwon_password_algorithm_message = "unknown algorithm, expected one of: \"bcrypt\", \"argon2id\", \"argon2d\", \"argon2i\" (default is \"argon2id\")";
+    const unknown_password_algorithm_message = "unknown algorithm, expected one of: \"bcrypt\", \"argon2id\", \"argon2d\", \"argon2i\" (default is \"argon2id\")";
 
     pub const PasswordObject = struct {
         pub const pwhash = std.crypto.pwhash;
@@ -1666,7 +1666,7 @@ pub const Crypto = struct {
                             const algorithm_string = algorithm_value.getZigString(globalObject);
 
                             switch (PasswordObject.Algorithm.label.getWithEql(algorithm_string, JSC.ZigString.eqlComptime) orelse {
-                                globalObject.throwInvalidArgumentType("hash", "algorithm", unknwon_password_algorithm_message);
+                                globalObject.throwInvalidArgumentType("hash", "algorithm", unknown_password_algorithm_message);
                                 return null;
                             }) {
                                 .bcrypt => {
@@ -1740,7 +1740,7 @@ pub const Crypto = struct {
                         const algorithm_string = value.getZigString(globalObject);
 
                         switch (PasswordObject.Algorithm.label.getWithEql(algorithm_string, JSC.ZigString.eqlComptime) orelse {
-                            globalObject.throwInvalidArgumentType("hash", "algorithm", unknwon_password_algorithm_message);
+                            globalObject.throwInvalidArgumentType("hash", "algorithm", unknown_password_algorithm_message);
                             return null;
                         }) {
                             .bcrypt => {
@@ -1950,23 +1950,27 @@ pub const Crypto = struct {
             }
         };
 
-        pub export fn JSPasswordObject__create(globalObject: *JSC.JSGlobalObject, sync: bool) JSC.JSValue {
-            var object = JSValue.createEmptyObject(globalObject, 2);
+        pub export fn JSPasswordObject__create(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+            var object = JSValue.createEmptyObject(globalObject, 4);
             object.put(
                 globalObject,
                 ZigString.static("hash"),
-                if (!sync)
-                    JSC.NewFunction(globalObject, ZigString.static("hash"), 2, JSPasswordObject__hash, false)
-                else
-                    JSC.NewFunction(globalObject, ZigString.static("hash"), 2, JSPasswordObject__hashSync, false),
+                JSC.NewFunction(globalObject, ZigString.static("hash"), 2, JSPasswordObject__hash, false),
+            );
+            object.put(
+                globalObject,
+                ZigString.static("hashSync"),
+                JSC.NewFunction(globalObject, ZigString.static("hashSync"), 2, JSPasswordObject__hashSync, false),
             );
             object.put(
                 globalObject,
                 ZigString.static("verify"),
-                if (!sync)
-                    JSC.NewFunction(globalObject, ZigString.static("verify"), 2, JSPasswordObject__verify, false)
-                else
-                    JSC.NewFunction(globalObject, ZigString.static("verify"), 2, JSPasswordObject__verifySync, false),
+                JSC.NewFunction(globalObject, ZigString.static("verify"), 2, JSPasswordObject__verify, false),
+            );
+            object.put(
+                globalObject,
+                ZigString.static("verifySync"),
+                JSC.NewFunction(globalObject, ZigString.static("verifySync"), 2, JSPasswordObject__verifySync, false),
             );
             return object;
         }
@@ -2333,7 +2337,7 @@ pub const Crypto = struct {
                 const algorithm_string = arguments[2].getZigString(globalObject);
 
                 algorithm = PasswordObject.Algorithm.label.getWithEql(algorithm_string, JSC.ZigString.eqlComptime) orelse {
-                    globalObject.throwInvalidArgumentType("verify", "algorithm", unknwon_password_algorithm_message);
+                    globalObject.throwInvalidArgumentType("verify", "algorithm", unknown_password_algorithm_message);
                     return JSC.JSValue.undefined;
                 };
             }
@@ -2398,7 +2402,7 @@ pub const Crypto = struct {
                 const algorithm_string = arguments[2].getZigString(globalObject);
 
                 algorithm = PasswordObject.Algorithm.label.getWithEql(algorithm_string, JSC.ZigString.eqlComptime) orelse {
-                    globalObject.throwInvalidArgumentType("verify", "algorithm", unknwon_password_algorithm_message);
+                    globalObject.throwInvalidArgumentType("verify", "algorithm", unknown_password_algorithm_message);
                     return JSC.JSValue.undefined;
                 };
             }

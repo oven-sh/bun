@@ -1143,40 +1143,38 @@ declare module "bun" {
         | Password.Argon2Algorithm
         | Password.BCryptAlgorithm,
     ): Promise<string>;
-  };
 
-  /**
-   * Synchronously hash and verify passwords using argon2 or bcrypt. The default is argon2.
-   * Warning: password hashing is slow, consider using {@link Bun.password}
-   * instead which runs in a worker thread.
-   *
-   * The underlying implementation of these functions are provided by the Zig
-   * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
-   * work on this.
-   *
-   * ### Example with argon2
-   *
-   * ```ts
-   * import {password} from "bun";
-   *
-   * const hash = await password.hash("hello world");
-   * const verify = await password.verify("hello world", hash);
-   * console.log(verify); // true
-   * ```
-   *
-   * ### Example with bcrypt
-   * ```ts
-   * import {password} from "bun";
-   *
-   * const hash = await password.hash("hello world", "bcrypt");
-   * // algorithm is optional, will be inferred from the hash if not specified
-   * const verify = await password.verify("hello world", hash, "bcrypt");
-   *
-   * console.log(verify); // true
-   * ```
-   */
-  export const passwordSync: {
-    verify(
+    /**
+     * Synchronously hash and verify passwords using argon2 or bcrypt. The default is argon2.
+     * Warning: password hashing is slow, consider using {@link Bun.password.verify}
+     * instead which runs in a worker thread.
+     *
+     * The underlying implementation of these functions are provided by the Zig
+     * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+     * work on this.
+     *
+     * ### Example with argon2
+     *
+     * ```ts
+     * import {password} from "bun";
+     *
+     * const hash = await password.hashSync("hello world");
+     * const verify = await password.verifySync("hello world", hash);
+     * console.log(verify); // true
+     * ```
+     *
+     * ### Example with bcrypt
+     * ```ts
+     * import {password} from "bun";
+     *
+     * const hash = await password.hashSync("hello world", "bcrypt");
+     * // algorithm is optional, will be inferred from the hash if not specified
+     * const verify = await password.verifySync("hello world", hash, "bcrypt");
+     *
+     * console.log(verify); // true
+     * ```
+     */
+    verifySync(
       password: StringOrBuffer,
       hash: StringOrBuffer,
       /**
@@ -1184,7 +1182,38 @@ declare module "bun" {
        */
       algorithm?: Password.AlgorithmLabel,
     ): boolean;
-    hash(
+
+    /**
+     * Synchronously hash and verify passwords using argon2 or bcrypt. The default is argon2.
+     * Warning: password hashing is slow, consider using {@link Bun.password.hash}
+     * instead which runs in a worker thread.
+     *
+     * The underlying implementation of these functions are provided by the Zig
+     * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+     * work on this.
+     *
+     * ### Example with argon2
+     *
+     * ```ts
+     * import {password} from "bun";
+     *
+     * const hash = await password.hashSync("hello world");
+     * const verify = await password.verifySync("hello world", hash);
+     * console.log(verify); // true
+     * ```
+     *
+     * ### Example with bcrypt
+     * ```ts
+     * import {password} from "bun";
+     *
+     * const hash = await password.hashSync("hello world", "bcrypt");
+     * // algorithm is optional, will be inferred from the hash if not specified
+     * const verify = await password.verifySync("hello world", hash, "bcrypt");
+     *
+     * console.log(verify); // true
+     * ```
+     */
+    hashSync(
       /**
        * The password to hash
        *
@@ -1570,9 +1599,9 @@ declare module "bun" {
    * ```ts
    * import { websocket, serve } from "bun";
    *
-   * serve({
+   * serve<{name: string}>({
    *   port: 3000,
-   *   websocket: websocket<{name: string}>({
+   *   websocket: {
    *     open: (ws) => {
    *       console.log("Client connected");
    *    },
@@ -1582,10 +1611,11 @@ declare module "bun" {
    *     close: (ws) => {
    *       console.log("Client disconnected");
    *    },
-   *  }),
+   *  },
    *
    *   fetch(req, server) {
-   *     if (req.url === "/chat") {
+   *     const url = new URL(req.url);
+   *     if (url.pathname === "/chat") {
    *       const upgraded = server.upgrade(req, {
    *         data: {
    *           name: new URL(req.url).searchParams.get("name"),
@@ -1800,9 +1830,9 @@ declare module "bun" {
      *
      * @example
      * ```js
-     *import { serve, websocket } from "bun";
+     *import { serve } from "bun";
      *serve({
-     *  websocket: websocket({
+     *  websocket: {
      *    open: (ws) => {
      *      console.log("Client connected");
      *    },
@@ -1812,9 +1842,10 @@ declare module "bun" {
      *    close: (ws) => {
      *      console.log("Client disconnected");
      *    },
-     *  }),
+     *  },
      *  fetch(req, server) {
-     *    if (req.url === "/chat") {
+     *    const url = new URL(req.url);
+     *    if (url.pathname === "/chat") {
      *      const upgraded = server.upgrade(req);
      *      if (!upgraded) {
      *        return new Response("Upgrade failed", { status: 400 });
@@ -2030,9 +2061,9 @@ declare module "bun" {
      *
      * @example
      * ```js
-     * import { serve, websocket } from "bun";
+     * import { serve } from "bun";
      *  serve({
-     *    websocket: websocket({
+     *    websocket: {
      *      open: (ws) => {
      *        console.log("Client connected");
      *      },
@@ -2042,9 +2073,10 @@ declare module "bun" {
      *      close: (ws) => {
      *        console.log("Client disconnected");
      *      },
-     *    }),
+     *    },
      *    fetch(req, server) {
-     *      if (req.url === "/chat") {
+     *      const url = new URL(req.url);
+     *      if (url.pathname === "/chat") {
      *        const upgraded = server.upgrade(req);
      *        if (!upgraded) {
      *          return new Response("Upgrade failed", { status: 400 });

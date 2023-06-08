@@ -598,10 +598,12 @@ pub const JSBundler = struct {
                 path: []const u8 = "",
                 namespace: []const u8 = "",
                 external: bool = false,
+                plugin_data: JSValue = JSC.JSValue.jsUndefined(),
 
                 pub fn deinit(this: *@This()) void {
                     bun.default_allocator.destroy(this.path);
                     bun.default_allocator.destroy(this.namespace);
+                    // bun.default_allocator.destroy(this.plugin_data);
                 }
             },
             no_match: void,
@@ -679,6 +681,7 @@ pub const JSBundler = struct {
             path_value: JSValue,
             namespace_value: JSValue,
             external_value: JSValue,
+            plugin_data_value: JSValue,
         ) void {
             var completion = this.completion orelse {
                 this.deinit();
@@ -689,11 +692,14 @@ pub const JSBundler = struct {
             } else {
                 const path = path_value.toSliceCloneWithAllocator(completion.globalThis, bun.default_allocator) orelse @panic("Unexpected: path is not a string");
                 const namespace = namespace_value.toSliceCloneWithAllocator(completion.globalThis, bun.default_allocator) orelse @panic("Unexpected: namespace is not a string");
+                std.debug.print("got plugin data", .{});
+                const plugin_data = plugin_data_value; //.toObject(completion.globalThis).*; // orelse @panic("Unexpected: plugin_data is not an object");
                 this.value = .{
                     .success = .{
                         .path = path.slice(),
                         .namespace = namespace.slice(),
                         .external = external_value.to(bool),
+                        .plugin_data = plugin_data,
                     },
                 };
             }
@@ -711,6 +717,7 @@ pub const JSBundler = struct {
         default_loader: options.Loader,
         path: []const u8 = "",
         namespace: []const u8 = "",
+        plugin_data: JSValue = JSC.JSValue.jsUndefined(),
 
         /// Null means the task was aborted.
         completion: ?*bun.BundleV2.JSBundleCompletionTask = null,
@@ -723,12 +730,7 @@ pub const JSBundler = struct {
         /// Faster path: skip the extra threadpool dispatch when the file is not found
         was_file: bool = false,
 
-        pub fn create(
-            completion: *bun.BundleV2.JSBundleCompletionTask,
-            source_index: Index,
-            default_loader: options.Loader,
-            path: Fs.Path,
-        ) Load {
+        pub fn create(completion: *bun.BundleV2.JSBundleCompletionTask, source_index: Index, default_loader: options.Loader, path: Fs.Path, plugin_data: ?JSValue) Load {
             completion.ref();
             return Load{
                 .source_index = source_index,
@@ -737,6 +739,7 @@ pub const JSBundler = struct {
                 .value = .{ .pending = {} },
                 .path = path.text,
                 .namespace = path.namespace,
+                .plugin_data = plugin_data orelse JSValue.undefined,
             };
         }
 
@@ -772,6 +775,11 @@ pub const JSBundler = struct {
 
         pub fn deinit(this: *Load) void {
             this.value.deinit();
+            // seems like a reasonable place to free idk
+            // if (this.plugin_data != JSValue.undefined) {
+            // bun.default_allocator.free(this.plugin_data);
+            // }
+
             if (this.completion) |completion|
                 completion.deref();
         }
@@ -790,6 +798,7 @@ pub const JSBundler = struct {
                 this.namespace,
                 this,
                 this.default_loader,
+                this.plugin_data,
             );
         }
 
@@ -876,14 +885,7 @@ pub const JSBundler = struct {
             bool,
         ) bool;
 
-        extern fn JSBundlerPlugin__matchOnLoad(
-            *JSC.JSGlobalObject,
-            *Plugin,
-            namespaceString: *const ZigString,
-            path: *const ZigString,
-            context: *anyopaque,
-            u8,
-        ) void;
+        extern fn JSBundlerPlugin__matchOnLoad(*JSC.JSGlobalObject, *Plugin, namespaceString: *const ZigString, path: *const ZigString, context: *anyopaque, u8, pluginData: *const JSValue) void;
 
         extern fn JSBundlerPlugin__matchOnResolve(
             *JSC.JSGlobalObject,
@@ -920,6 +922,7 @@ pub const JSBundler = struct {
             namespace: []const u8,
             context: *anyopaque,
             default_loader: options.Loader,
+            plugin_data: JSValue,
         ) void {
             JSC.markBinding(@src());
             const tracer = bun.tracy.traceNamed(@src(), "JSBundler.matchOnLoad");
@@ -929,7 +932,8 @@ pub const JSBundler = struct {
             else
                 ZigString.fromUTF8(namespace);
             const path_string = ZigString.fromUTF8(path);
-            JSBundlerPlugin__matchOnLoad(globalThis, this, &namespace_string, &path_string, context, @enumToInt(default_loader));
+            std.debug.print("matchonload\n", .{});
+            JSBundlerPlugin__matchOnLoad(globalThis, this, &namespace_string, &path_string, context, @enumToInt(default_loader), &plugin_data);
         }
 
         pub fn matchOnResolve(

@@ -1,4 +1,4 @@
-import { gc as bunGC, unsafe } from "bun";
+import { gc as bunGC, unsafe, which } from "bun";
 import { heapStats } from "bun:jsc";
 import path from "path";
 import fs from "fs";
@@ -14,6 +14,10 @@ export const bunEnv: any = {
 
 export function bunExe() {
   return process.execPath;
+}
+
+export function nodeExe(): string | null {
+  return which("node") || null;
 }
 
 export function gc(force = true) {

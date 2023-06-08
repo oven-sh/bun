@@ -650,6 +650,211 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
     return {};
 }
 
+ExceptionOr<void> WebSocket::terminate()
+{
+    LOG(Network, "WebSocket %p terminate()", this);
+
+    if (m_state == CLOSING || m_state == CLOSED)
+        return {};
+    if (m_state == CONNECTING) {
+        m_state = CLOSING;
+        if (m_upgradeClient != nullptr) {
+            void* upgradeClient = m_upgradeClient;
+            m_upgradeClient = nullptr;
+            if (m_isSecure) {
+                Bun__WebSocketHTTPSClient__cancel(upgradeClient);
+            } else {
+                Bun__WebSocketHTTPClient__cancel(upgradeClient);
+            }
+        }
+        updateHasPendingActivity();
+        return {};
+    }
+    m_state = CLOSING;
+    switch (m_connectedWebSocketKind) {
+    case ConnectedWebSocketKind::Client: {
+        Bun__WebSocketClient__cancel(this->m_connectedWebSocket.client);
+        updateHasPendingActivity();
+        break;
+    }
+    case ConnectedWebSocketKind::ClientSSL: {
+        Bun__WebSocketClientTLS__cancel(this->m_connectedWebSocket.clientSSL);
+        updateHasPendingActivity();
+        break;
+    }
+    default: {
+        break;
+    }
+    }
+    this->m_connectedWebSocketKind = ConnectedWebSocketKind::None;
+    updateHasPendingActivity();
+    return {};
+}
+
+ExceptionOr<void> WebSocket::ping()
+{
+    auto message = WTF::String::number(WTF::jsCurrentTime());
+    LOG(Network, "WebSocket %p ping() Sending Timestamp '%s'", this, message.data());
+    if (m_state == CONNECTING)
+        return Exception { InvalidStateError };
+
+    // No exception is raised if the connection was once established but has subsequently been closed.
+    if (m_state == CLOSING || m_state == CLOSED) {
+        size_t payloadSize = message.length();
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
+        return {};
+    }
+
+    // TODO: this->sendWebSocketString(message, Opcode::Ping);
+
+    return {};
+}
+
+ExceptionOr<void> WebSocket::ping(const String& message)
+{
+    LOG(Network, "WebSocket %p ping() Sending String '%s'", this, message.utf8().data());
+    if (m_state == CONNECTING)
+        return Exception { InvalidStateError };
+
+    // No exception is raised if the connection was once established but has subsequently been closed.
+    if (m_state == CLOSING || m_state == CLOSED) {
+        auto utf8 = message.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
+        size_t payloadSize = utf8.length();
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
+        return {};
+    }
+
+    // TODO: this->sendWebSocketString(message, Opcode::Ping);
+
+    return {};
+}
+
+ExceptionOr<void> WebSocket::ping(ArrayBuffer& binaryData)
+{
+    LOG(Network, "WebSocket %p ping() Sending ArrayBuffer %p", this, &binaryData);
+    if (m_state == CONNECTING)
+        return Exception { InvalidStateError };
+
+    if (m_state == CLOSING || m_state == CLOSED) {
+        unsigned payloadSize = binaryData.byteLength();
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
+        return {};
+    }
+
+    char* data = static_cast<char*>(binaryData.data());
+    size_t length = binaryData.byteLength();
+    // TODO: this->sendWebSocketData(data, length, Opcode::Ping);
+
+    return {};
+}
+
+ExceptionOr<void> WebSocket::ping(ArrayBufferView& arrayBufferView)
+{
+    LOG(Network, "WebSocket %p ping() Sending ArrayBufferView %p", this, &arrayBufferView);
+
+    if (m_state == CONNECTING)
+        return Exception { InvalidStateError };
+
+    if (m_state == CLOSING || m_state == CLOSED) {
+        unsigned payloadSize = arrayBufferView.byteLength();
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
+        return {};
+    }
+
+    auto buffer = arrayBufferView.unsharedBuffer().get();
+    char* baseAddress = reinterpret_cast<char*>(buffer->data()) + arrayBufferView.byteOffset();
+    size_t length = arrayBufferView.byteLength();
+    // TODO: this->sendWebSocketData(baseAddress, length, Opcode::Ping);
+
+    return {};
+}
+
+ExceptionOr<void> WebSocket::pong()
+{
+    auto message = WTF::String::number(WTF::jsCurrentTime());
+    LOG(Network, "WebSocket %p pong() Sending Timestamp '%s'", this, message.data());
+    if (m_state == CONNECTING)
+        return Exception { InvalidStateError };
+
+    // No exception is raised if the connection was once established but has subsequently been closed.
+    if (m_state == CLOSING || m_state == CLOSED) {
+        size_t payloadSize = message.length();
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
+        return {};
+    }
+
+    // TODO: this->sendWebSocketString(message, Opcode::Pong);
+
+    return {};
+}
+
+ExceptionOr<void> WebSocket::pong(const String& message)
+{
+    LOG(Network, "WebSocket %p pong() Sending String '%s'", this, message.utf8().data());
+    if (m_state == CONNECTING)
+        return Exception { InvalidStateError };
+
+    // No exception is raised if the connection was once established but has subsequently been closed.
+    if (m_state == CLOSING || m_state == CLOSED) {
+        auto utf8 = message.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
+        size_t payloadSize = utf8.length();
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
+        return {};
+    }
+
+    // TODO: this->sendWebSocketString(message, Opcode::Pong);
+
+    return {};
+}
+
+ExceptionOr<void> WebSocket::pong(ArrayBuffer& binaryData)
+{
+    LOG(Network, "WebSocket %p pong() Sending ArrayBuffer %p", this, &binaryData);
+    if (m_state == CONNECTING)
+        return Exception { InvalidStateError };
+
+    if (m_state == CLOSING || m_state == CLOSED) {
+        unsigned payloadSize = binaryData.byteLength();
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
+        return {};
+    }
+
+    char* data = static_cast<char*>(binaryData.data());
+    size_t length = binaryData.byteLength();
+    // TODO: this->sendWebSocketData(data, length, Opcode::Pong);
+
+    return {};
+}
+
+ExceptionOr<void> WebSocket::pong(ArrayBufferView& arrayBufferView)
+{
+    LOG(Network, "WebSocket %p pong() Sending ArrayBufferView %p", this, &arrayBufferView);
+
+    if (m_state == CONNECTING)
+        return Exception { InvalidStateError };
+
+    if (m_state == CLOSING || m_state == CLOSED) {
+        unsigned payloadSize = arrayBufferView.byteLength();
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
+        return {};
+    }
+
+    auto buffer = arrayBufferView.unsharedBuffer().get();
+    char* baseAddress = reinterpret_cast<char*>(buffer->data()) + arrayBufferView.byteOffset();
+    size_t length = arrayBufferView.byteLength();
+    // TODO: this->sendWebSocketData(baseAddress, length, Opcode::Pong);
+
+    return {};
+}
+
 const URL& WebSocket::url() const
 {
     return m_url;
@@ -840,17 +1045,17 @@ void WebSocket::didReceiveBinaryData(Vector<uint8_t>&& binaryData)
     //     if (auto* inspector = m_channel->channelInspector())
     //         inspector->didReceiveWebSocketFrame(WebSocketChannelInspector::createFrame(binaryData.data(), binaryData.size(), WebSocketFrame::OpCode::OpCodeBinary));
     // }
-
+    auto eventName = "message"_s;
     switch (m_binaryType) {
     // case BinaryType::Blob:
     //     // FIXME: We just received the data from NetworkProcess, and are sending it back. This is inefficient.
     //     dispatchEvent(MessageEvent::create(Blob::create(scriptExecutionContext(), WTFMove(binaryData), emptyString()), SecurityOrigin::create(m_url)->toString()));
     //     break;
     case BinaryType::ArrayBuffer: {
-        if (this->hasEventListeners("message"_s)) {
+        if (this->hasEventListeners(eventName)) {
             // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
             this->incPendingActivityCount();
-            dispatchEvent(MessageEvent::create(ArrayBuffer::create(binaryData.data(), binaryData.size()), m_url.string()));
+            dispatchEvent(MessageEvent::create(eventName, ArrayBuffer::create(binaryData.data(), binaryData.size()), m_url.string()));
             this->decPendingActivityCount();
             return;
         }
@@ -858,9 +1063,9 @@ void WebSocket::didReceiveBinaryData(Vector<uint8_t>&& binaryData)
         if (auto* context = scriptExecutionContext()) {
             auto arrayBuffer = JSC::ArrayBuffer::create(binaryData.data(), binaryData.size());
             this->incPendingActivityCount();
-            context->postTask([this, buffer = WTFMove(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+            context->postTask([this, name = WTFMove(eventName), buffer = WTFMove(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 ASSERT(scriptExecutionContext());
-                protectedThis->dispatchEvent(MessageEvent::create(buffer, m_url.string()));
+                protectedThis->dispatchEvent(MessageEvent::create(name, buffer, m_url.string()));
                 protectedThis->decPendingActivityCount();
             });
         }
@@ -869,7 +1074,7 @@ void WebSocket::didReceiveBinaryData(Vector<uint8_t>&& binaryData)
     }
     case BinaryType::NodeBuffer: {
 
-        if (this->hasEventListeners("message"_s)) {
+        if (this->hasEventListeners(eventName)) {
             // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
             this->incPendingActivityCount();
             JSUint8Array* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(scriptExecutionContext()->jsGlobalObject(), binaryData.size())));
@@ -880,7 +1085,7 @@ void WebSocket::didReceiveBinaryData(Vector<uint8_t>&& binaryData)
             init.data = buffer;
             init.origin = this->m_url.string();
 
-            dispatchEvent(MessageEvent::create(eventNames().messageEvent, WTFMove(init), EventIsTrusted::Yes));
+            dispatchEvent(MessageEvent::create(eventName, WTFMove(init), EventIsTrusted::Yes));
             this->decPendingActivityCount();
             return;
         }
@@ -890,7 +1095,7 @@ void WebSocket::didReceiveBinaryData(Vector<uint8_t>&& binaryData)
 
             this->incPendingActivityCount();
 
-            context->postTask([this, buffer = WTFMove(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+            context->postTask([this, name = WTFMove(eventName), buffer = WTFMove(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 ASSERT(scriptExecutionContext());
                 size_t length = buffer->byteLength();
                 JSUint8Array* uint8array = JSUint8Array::create(
@@ -903,7 +1108,7 @@ void WebSocket::didReceiveBinaryData(Vector<uint8_t>&& binaryData)
                 MessageEvent::Init init;
                 init.data = uint8array;
                 init.origin = protectedThis->m_url.string();
-                protectedThis->dispatchEvent(MessageEvent::create(eventNames().messageEvent, WTFMove(init), EventIsTrusted::Yes));
+                protectedThis->dispatchEvent(MessageEvent::create(name, WTFMove(init), EventIsTrusted::Yes));
                 protectedThis->decPendingActivityCount();
             });
         }

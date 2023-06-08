@@ -79,11 +79,16 @@ fn buildRequestBody(
     if (client_protocol.len > 0)
         client_protocol_hash.* = bun.hash(static_headers[1].value);
 
-    const headers_ = static_headers[0 .. 1 + @as(usize, @intFromBool(client_protocol.len > 0))];
+    const pathname_ = pathname.toSlice(allocator);
+    const host_ = host.toSlice(allocator);
+    defer {
+        pathname_.deinit();
+        host_.deinit();
+    }
 
-    const pathname_ = pathname.slice();
-    const host_ = host.slice();
+    const headers_ = static_headers[0 .. 1 + @as(usize, @intFromBool(client_protocol.len > 0))];
     const pico_headers = PicoHTTP.Headers{ .headers = headers_ };
+
     return try std.fmt.allocPrint(
         allocator,
         "GET {s} HTTP/1.1\r\n" ++
@@ -96,7 +101,7 @@ fn buildRequestBody(
             "{any}" ++
             "{any}" ++
             "\r\n",
-        .{ pathname_, host_, pico_headers, extra_headers },
+        .{ pathname_.slice(), host_.slice(), pico_headers, extra_headers },
     );
 }
 
@@ -846,6 +851,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         ping_frame_bytes: [128 + 6]u8 = [_]u8{0} ** (128 + 6),
         ping_len: u8 = 0,
+        ping_received: bool = false,
 
         receive_frame: usize = 0,
         receive_body_remain: usize = 0,
@@ -899,6 +905,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.poll_ref.unrefOnNextTick(this.globalThis.bunVM());
             this.clearReceiveBuffers(true);
             this.clearSendBuffers(true);
+            this.ping_received = false;
             this.ping_len = 0;
             this.receive_pending_chunk_len = 0;
         }
@@ -1074,9 +1081,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
                     // if we receive multiple pings in a row
                     // we just send back the last one
-                    if (this.ping_len > 0) {
+                    if (this.ping_received) {
                         _ = this.sendPong(socket);
-                        this.ping_len = 0;
+                        this.ping_received = false;
                     }
                 }
             }
@@ -1218,6 +1225,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     .ping => {
                         const ping_len = @min(data.len, @min(receive_body_remain, 125));
                         this.ping_len = ping_len;
+                        this.ping_received = true;
 
                         if (ping_len > 0) {
                             @memcpy(this.ping_frame_bytes[6..][0..ping_len], data[0..ping_len]);
@@ -1650,6 +1658,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             .writeBinaryData = writeBinaryData,
             .writeString = writeString,
             .close = close,
+            .cancel = cancel,
             .register = register,
             .init = init,
             .finalize = finalize,
@@ -1660,9 +1669,10 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 @export(writeBinaryData, .{ .name = Export[0].symbol_name });
                 @export(writeString, .{ .name = Export[1].symbol_name });
                 @export(close, .{ .name = Export[2].symbol_name });
-                @export(register, .{ .name = Export[3].symbol_name });
-                @export(init, .{ .name = Export[4].symbol_name });
-                @export(finalize, .{ .name = Export[5].symbol_name });
+                @export(cancel, .{ .name = Export[3].symbol_name });
+                @export(register, .{ .name = Export[4].symbol_name });
+                @export(init, .{ .name = Export[5].symbol_name });
+                @export(finalize, .{ .name = Export[6].symbol_name });
             }
         }
     };

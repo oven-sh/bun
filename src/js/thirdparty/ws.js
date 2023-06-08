@@ -22,8 +22,6 @@ function emitWarning(type, message) {
  * deviations: we do not implement these events
  * - "unexpected-response"
  * - "upgrade"
- * - "ping"
- * - "pong"
  * - "redirect"
  */
 class BunWebSocket extends EventEmitter {
@@ -67,14 +65,18 @@ class BunWebSocket extends EventEmitter {
         this.emit("message", this.#fragments ? [encoded] : encoded, isBinary);
       }
     });
+    ws.addEventListener("ping", ({ data }) => {
+      this.emit("ping", data);
+    });
+    ws.addEventListener("pong", ({ data }) => {
+      this.emit("pong", data);
+    });
   }
 
   on(event, listener) {
     if (
       event === "unexpected-response" ||
       event === "upgrade" ||
-      event === "ping" ||
-      event === "pong" ||
       event === "redirect"
     ) {
       emitWarning(event, "ws.WebSocket '" + event + "' event is not implemented in bun");
@@ -90,6 +92,10 @@ class BunWebSocket extends EventEmitter {
 
   close(code, reason) {
     this.#ws.close(code, reason);
+  }
+
+  terminate() {
+    this.#ws.terminate();
   }
 
   get binaryType() {
@@ -170,10 +176,6 @@ class BunWebSocket extends EventEmitter {
   }
 
   ping(data, mask, cb) {
-    if (this.readyState === BunWebSocket.CONNECTING) {
-      throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
-    }
-
     if (typeof data === "function") {
       cb = data;
       data = mask = undefined;
@@ -184,16 +186,11 @@ class BunWebSocket extends EventEmitter {
 
     if (typeof data === "number") data = data.toString();
 
-    // deviation: we don't support ping
-    emitWarning("ping()", "ws.WebSocket.ping() is not implemented in bun");
+    this.#ws.ping(data);
     typeof cb === "function" && cb();
   }
 
   pong(data, mask, cb) {
-    if (this.readyState === BunWebSocket.CONNECTING) {
-      throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
-    }
-
     if (typeof data === "function") {
       cb = data;
       data = mask = undefined;
@@ -204,8 +201,7 @@ class BunWebSocket extends EventEmitter {
 
     if (typeof data === "number") data = data.toString();
 
-    // deviation: we don't support pong
-    emitWarning("pong()", "ws.WebSocket.pong() is not implemented in bun");
+    this.#ws.pong(data);
     typeof cb === "function" && cb();
   }
 

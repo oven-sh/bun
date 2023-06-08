@@ -79,10 +79,14 @@ class BunWebSocket extends EventEmitter {
           encoded = Buffer.from(encoded.buffer, encoded.byteOffset, encoded.byteLength);
         this.emit("message", this.#fragments ? [encoded] : encoded, isBinary);
       }
+    }), ws.addEventListener("ping", ({ data }) => {
+      this.emit("ping", data);
+    }), ws.addEventListener("pong", ({ data }) => {
+      this.emit("pong", data);
     });
   }
   on(event, listener) {
-    if (event === "unexpected-response" || event === "upgrade" || event === "ping" || event === "pong" || event === "redirect")
+    if (event === "unexpected-response" || event === "upgrade" || event === "redirect")
       emitWarning(event, "ws.WebSocket '" + event + "' event is not implemented in bun");
     return super.on(event, listener);
   }
@@ -91,6 +95,9 @@ class BunWebSocket extends EventEmitter {
   }
   close(code, reason) {
     this.#ws.close(code, reason);
+  }
+  terminate() {
+    this.#ws.terminate();
   }
   get binaryType() {
     return this.#binaryType;
@@ -148,26 +155,22 @@ class BunWebSocket extends EventEmitter {
     return this.#paused;
   }
   ping(data, mask, cb) {
-    if (this.readyState === BunWebSocket.CONNECTING)
-      throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
     if (typeof data === "function")
       cb = data, data = mask = void 0;
     else if (typeof mask === "function")
       cb = mask, mask = void 0;
     if (typeof data === "number")
       data = data.toString();
-    emitWarning("ping()", "ws.WebSocket.ping() is not implemented in bun"), typeof cb === "function" && cb();
+    this.#ws.ping(data), typeof cb === "function" && cb();
   }
   pong(data, mask, cb) {
-    if (this.readyState === BunWebSocket.CONNECTING)
-      throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
     if (typeof data === "function")
       cb = data, data = mask = void 0;
     else if (typeof mask === "function")
       cb = mask, mask = void 0;
     if (typeof data === "number")
       data = data.toString();
-    emitWarning("pong()", "ws.WebSocket.pong() is not implemented in bun"), typeof cb === "function" && cb();
+    this.#ws.pong(data), typeof cb === "function" && cb();
   }
   pause() {
     if (this.readyState === WebSocket.CONNECTING || this.readyState === WebSocket.CLOSED)

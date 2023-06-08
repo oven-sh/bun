@@ -56,6 +56,9 @@ export function watch(
     throw new TypeError("Expected path to be a string or Buffer");
   }
   let nextEventResolve: Function | null = null;
+  if (typeof options === "string") {
+    options = { encoding: options };
+  }
   fs.watch(filename, options || {}, (eventType: string, filename: string | Buffer | undefined) => {
     events.push({ eventType, filename });
     if (nextEventResolve) {

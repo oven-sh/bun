@@ -19,6 +19,7 @@
  */
 declare module "fs" {
   import * as stream from "stream";
+  import type EventEmitter from "events";
   import type { SystemError, ArrayBufferView } from "bun";
   interface ObjectEncodingOptions {
     encoding?: BufferEncoding | null | undefined;
@@ -3929,6 +3930,68 @@ declare module "fs" {
      */
     recursive?: boolean;
   }
+
+  export interface FSWatcher extends EventEmitter {
+      /**
+       * Stop watching for changes on the given `fs.FSWatcher`. Once stopped, the `fs.FSWatcher` object is no longer usable.
+       * @since v0.6.8
+       */
+      close(): void;
+      /**
+       * events.EventEmitter
+       *   1. change
+       *   2. error
+       */
+      addListener(event: string, listener: (...args: any[]) => void): this;
+      addListener(event: 'change', listener: (eventType: string, filename: string | Buffer) => void): this;
+      addListener(event: 'error', listener: (error: Error) => void): this;
+      addListener(event: 'close', listener: () => void): this;
+      on(event: string, listener: (...args: any[]) => void): this;
+      on(event: 'change', listener: (eventType: string, filename: string | Buffer) => void): this;
+      on(event: 'error', listener: (error: Error) => void): this;
+      on(event: 'close', listener: () => void): this;
+      once(event: string, listener: (...args: any[]) => void): this;
+      once(event: 'change', listener: (eventType: string, filename: string | Buffer) => void): this;
+      once(event: 'error', listener: (error: Error) => void): this;
+      once(event: 'close', listener: () => void): this;
+      prependListener(event: string, listener: (...args: any[]) => void): this;
+      prependListener(event: 'change', listener: (eventType: string, filename: string | Buffer) => void): this;
+      prependListener(event: 'error', listener: (error: Error) => void): this;
+      prependListener(event: 'close', listener: () => void): this;
+      prependOnceListener(event: string, listener: (...args: any[]) => void): this;
+      prependOnceListener(event: 'change', listener: (eventType: string, filename: string | Buffer) => void): this;
+      prependOnceListener(event: 'error', listener: (error: Error) => void): this;
+      prependOnceListener(event: 'close', listener: () => void): this;
+  }
+  /**
+     * Watch for changes on `filename`, where `filename` is either a file or a
+     * directory.
+     *
+     * The second argument is optional. If `options` is provided as a string, it
+     * specifies the `encoding`. Otherwise `options` should be passed as an object.
+     *
+     * The listener callback gets two arguments `(eventType, filename)`. `eventType`is either `'rename'` or `'change'`, and `filename` is the name of the file
+     * which triggered the event.
+     *
+     * On most platforms, `'rename'` is emitted whenever a filename appears or
+     * disappears in the directory.
+     *
+     * The listener callback is attached to the `'change'` event fired by `fs.FSWatcher`, but it is not the same thing as the `'change'` value of`eventType`.
+     *
+     * If a `signal` is passed, aborting the corresponding AbortController will close
+     * the returned `fs.FSWatcher`.
+     * @since v0.5.10
+     * @param listener
+     */
+    export function watch(
+      filename: PathLike,
+      options:
+          | (WatchOptions & {
+                encoding: 'buffer';
+            })
+          | 'buffer',
+      listener?: WatchListener<Buffer>
+    ): FSWatcher;
 }
 
 declare module "node:fs" {

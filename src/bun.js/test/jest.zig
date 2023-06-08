@@ -697,8 +697,16 @@ pub const Jest = struct {
             Expect.getConstructor(globalObject),
         );
 
+        module.put(
+            globalObject,
+            ZigString.static("mock"),
+            JSMockFunction__createObject(globalObject),
+        );
+
         return module;
     }
+
+    extern fn JSMockFunction__createObject(*JSC.JSGlobalObject) JSC.JSValue;
 
     extern fn Bun__Jest__testPreloadObject(*JSC.JSGlobalObject) JSC.JSValue;
     extern fn Bun__Jest__testModuleObject(*JSC.JSGlobalObject) JSC.JSValue;

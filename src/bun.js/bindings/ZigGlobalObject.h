@@ -41,6 +41,7 @@ class DOMWrapperWorld;
 
 #include "DOMConstructors.h"
 #include "BunPlugin.h"
+#include "JSMockFunction.h"
 
 namespace WebCore {
 class SubtleCrypto;
@@ -405,6 +406,8 @@ public:
     void* napiInstanceData = nullptr;
     void* napiInstanceDataFinalizer = nullptr;
     void* napiInstanceDataFinalizerHint = nullptr;
+
+    Bun::JSMockModule mockModule;
 
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 

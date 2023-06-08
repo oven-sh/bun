@@ -504,7 +504,7 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure)
     , m_builtinInternalFunctions(vm)
 
 {
-
+    mockModule = Bun::JSMockModule::create(this);
     m_scriptExecutionContext = new WebCore::ScriptExecutionContext(&vm, this);
 }
 

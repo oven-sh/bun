@@ -1,8 +1,7 @@
 #pragma once
 
 #include "root.h"
-#include <JavaScriptCore/InternalFunction.h>
-#include "JavaScriptCore/SubspaceInlines.h"
+#include "JavaScriptCore/LazyProperty.h"
 
 namespace WebCore {
 }
@@ -17,7 +16,7 @@ public:
     LazyProperty<JSC::JSGlobalObject, Structure> mockFunctionStructure;
     LazyProperty<JSC::JSGlobalObject, Structure> mockResultStructure;
     LazyProperty<JSC::JSGlobalObject, Structure> mockImplementationStructure;
-    LazyProperty<JSC::JSGlobalObject, Structure> mockObject;
+    LazyProperty<JSC::JSGlobalObject, Structure> mockObjectStructure;
 
     static JSMockModule create(JSC::JSGlobalObject*);
 

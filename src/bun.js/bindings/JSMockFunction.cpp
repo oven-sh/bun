@@ -12,9 +12,7 @@
 #include "JavaScriptCore/LazyProperty.h"
 #include "JavaScriptCore/JSCJSValueInlines.h"
 #include "JavaScriptCore/JSInternalPromise.h"
-#include "JavaScriptCore/JSInternalFieldObjectImpl.h"
 #include "JavaScriptCore/LazyPropertyInlines.h"
-#include "JavaScriptCore/LazyClassStructureInlines.h"
 #include "JavaScriptCore/VMTrapsInlines.h"
 
 namespace Bun {
@@ -40,7 +38,7 @@ JSC_DECLARE_HOST_FUNCTION(jsMockFunctionMockRejectedValueOnce);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionWithImplementation);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionMockImplementationOnce);
 
-class JSMockImplementation final : public JSC::JSInternalFieldObjectImpl<2> {
+class JSMockImplementation final : public JSNonFinalObject {
 public:
     enum class Kind : uint8_t {
         Call,
@@ -58,7 +56,7 @@ public:
         return impl;
     }
 
-    using Base = JSC::JSInternalFieldObjectImpl<2>;
+    using Base = JSC::JSNonFinalObject;
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
         return Structure::create(vm, globalObject, prototype, TypeInfo(JSC::ObjectType, StructureFlags), info());
@@ -77,25 +75,20 @@ public:
 
     static constexpr unsigned numberOfInternalFields = 2;
 
-    static std::array<JSValue, numberOfInternalFields> initialValues()
-    {
-        return { {
-            jsUndefined(),
-            jsNumber(1),
-        } };
-    }
+    mutable JSC::WriteBarrier<Unknown> internalFields[2];
 
     DECLARE_EXPORT_INFO;
+    DECLARE_VISIT_CHILDREN;
 
     Kind kind { Kind::ReturnValue };
 
     bool isOnce()
     {
-        auto secondField = internalField(1).get();
+        auto secondField = internalFields[1].get();
         if (secondField.isNumber() && secondField.asInt32() == 1) {
             return true;
         }
-        return jsDynamicCast<JSMockImplementation*>(secondField);
+        return jsDynamicCast<JSMockImplementation*>(secondField.asCell());
     }
 
     JSMockImplementation(JSC::VM& vm, JSC::Structure* structure, Kind kind)
@@ -107,10 +100,23 @@ public:
     void finishCreation(JSC::VM& vm, JSC::JSValue first, JSC::JSValue second)
     {
         Base::finishCreation(vm);
-        this->internalField(0).set(vm, this, first);
-        this->internalField(1).set(vm, this, second);
+        this->internalFields[0].set(vm, this, first);
+        this->internalFields[1].set(vm, this, second);
     }
 };
+
+template<typename Visitor>
+void JSMockImplementation::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSMockImplementation* fn = jsCast<JSMockImplementation*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(fn, info());
+    Base::visitChildren(fn, visitor);
+
+    visitor.append(fn->internalFields[0]);
+    visitor.append(fn->internalFields[1]);
+}
+
+DEFINE_VISIT_CHILDREN(JSMockImplementation);
 
 const ClassInfo JSMockImplementation::s_info = { "MockImpl"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMockImplementation) };
 
@@ -119,9 +125,9 @@ public:
     using Base = JSC::InternalFunction;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    static JSMockFunction* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+    static JSMockFunction* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, bool isWrapper = false)
     {
-        JSMockFunction* function = new (NotNull, JSC::allocateCell<JSMockFunction>(vm)) JSMockFunction(vm, structure);
+        JSMockFunction* function = new (NotNull, JSC::allocateCell<JSMockFunction>(vm)) JSMockFunction(vm, structure, isWrapper);
         function->finishCreation(vm);
         return function;
     }
@@ -191,8 +197,8 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_subspaceForJSMockFunction = std::forward<decltype(space)>(space); });
     }
 
-    JSMockFunction(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure, jsMockFunctionCall, jsMockFunctionCall)
+    JSMockFunction(JSC::VM& vm, JSC::Structure* structure, bool isWrapper)
+        : Base(vm, structure, isWrapper ? jsMockFunctionMockImplementation : jsMockFunctionCall, isWrapper ? jsMockFunctionMockImplementation : jsMockFunctionCall)
     {
         mock.initLater(
             [](const JSC::LazyProperty<JSMockFunction, JSObject>::Initializer& init) {
@@ -287,7 +293,7 @@ JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
     JSMockModule mock;
     mock.mockFunctionStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
-            auto* prototype = JSMockFunctionPrototype::create(init.vm, init.owner, JSMockFunctionPrototype::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
+            auto* prototype = JSMockFunctionPrototype::create(init.vm, init.owner, JSMockFunctionPrototype::createStructure(init.vm, init.owner, jsNull()));
 
             init.set(JSMockFunction::createStructure(init.vm, init.owner, prototype));
         });
@@ -449,7 +455,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
         implementationValue = jsUndefined();
 
     if (auto* impl = jsDynamicCast<JSMockImplementation*>(implementationValue)) {
-        if (JSValue nextValue = impl->internalField(1).get()) {
+        if (JSValue nextValue = impl->internalFields[1].get()) {
             if (nextValue.inherits<JSMockImplementation>() || (nextValue.isInt32() && nextValue.asInt32() == 1)) {
                 fn->implementation.set(vm, fn, nextValue);
             }
@@ -473,7 +479,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
 
         switch (impl->kind) {
         case JSMockImplementation::Kind::Call: {
-            JSValue result = impl->internalField(0).get();
+            JSValue result = impl->internalFields[0].get();
             JSC::CallData callData = JSC::getCallData(result);
             if (UNLIKELY(callData.type == JSC::CallData::Type::None)) {
                 throwTypeError(globalObject, scope, "Expected mock implementation to be callable"_s);
@@ -508,7 +514,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
         }
         case JSMockImplementation::Kind::ReturnValue:
         case JSMockImplementation::Kind::Promise: {
-            JSValue returnValue = impl->internalField(0).get();
+            JSValue returnValue = impl->internalFields[0].get();
             setReturnValue(createMockResult(vm, globalObject, "return"_s, returnValue));
             return JSValue::encode(returnValue);
         }
@@ -534,7 +540,7 @@ static void pushImplInternal(JSMockFunction* fn, JSGlobalObject* jsGlobalObject,
     JSValue currentImpl = fn->implementation.get();
     if (currentTail) {
         if (auto* current = jsDynamicCast<JSMockImplementation*>(currentTail)) {
-            current->internalField(1).set(vm, current, impl);
+            current->internalFields[1].set(vm, current, impl);
         }
     }
     fn->tail.set(vm, fn, impl);
@@ -574,7 +580,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionGetMockImplementation, (JSC::JSGlobalObje
     JSValue impl = thisObject->implementation.get();
     if (auto* implementation = jsDynamicCast<JSMockImplementation*>(impl)) {
         if (implementation->kind == JSMockImplementation::Kind::Call) {
-            RELEASE_AND_RETURN(scope, JSValue::encode(implementation->internalField(0).get()));
+            RELEASE_AND_RETURN(scope, JSValue::encode(implementation->internalFields[0].get()));
         }
     }
 
@@ -602,12 +608,14 @@ JSC_DEFINE_CUSTOM_GETTER(jsMockFunctionGetter_protoImpl, (JSC::JSGlobalObject * 
         return {};
     }
 
-    if (auto* impl = jsDynamicCast<JSMockImplementation*>(thisObject->implementation.get())) {
-        if (impl->kind == JSMockImplementation::Kind::Call) {
-            return JSValue::encode(impl->internalField(0).get());
-        }
+    if (auto implValue = thisObject->implementation.get()) {
+        if (auto* impl = jsDynamicCast<JSMockImplementation*>(implValue)) {
+            if (impl->kind == JSMockImplementation::Kind::Call) {
+                return JSValue::encode(impl->internalFields[0].get());
+            }
 
-        return JSValue::encode(jsUndefined());
+            return JSValue::encode(jsUndefined());
+        }
     }
 
     return JSValue::encode(jsUndefined());
@@ -616,7 +624,30 @@ JSC_DEFINE_CUSTOM_GETTER(jsMockFunctionGetter_protoImpl, (JSC::JSGlobalObject * 
 extern "C" EncodedJSValue JSMockFunction__createObject(Zig::GlobalObject* globalObject)
 {
     return JSValue::encode(
-        JSMockFunction::create(globalObject->vm(), globalObject, globalObject->mockModule.mockFunctionStructure.getInitializedOnMainThread(globalObject)));
+        JSMockFunction::create(globalObject->vm(), globalObject, globalObject->mockModule.mockFunctionStructure.getInitializedOnMainThread(globalObject), true));
+}
+
+extern "C" EncodedJSValue JSMockFunction__getCalls(EncodedJSValue encodedValue)
+{
+    JSValue value = JSValue::decode(encodedValue);
+    if (value) {
+        if (auto* mock = jsDynamicCast<JSMockFunction*>(value)) {
+            return JSValue::encode(mock->getCalls());
+        }
+    }
+
+    return JSValue::encode({});
+}
+extern "C" EncodedJSValue JSMockFunction__getReturns(EncodedJSValue encodedValue)
+{
+    JSValue value = JSValue::decode(encodedValue);
+    if (value) {
+        if (auto* mock = jsDynamicCast<JSMockFunction*>(value)) {
+            return JSValue::encode(mock->getReturnValues());
+        }
+    }
+
+    return JSValue::encode({});
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionGetMockName, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
@@ -635,7 +666,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionGetMockName, (JSC::JSGlobalObject * globa
 
     if (auto* impl = jsDynamicCast<JSMockImplementation*>(implValue)) {
         if (impl->kind == JSMockImplementation::Kind::Call) {
-            JSObject* object = impl->internalField(0).get().asCell()->getObject();
+            JSObject* object = impl->internalFields[0].get().asCell()->getObject();
             if (auto nameValue = object->getIfPropertyExists(globalObject, PropertyName(vm.propertyNames->name))) {
                 RELEASE_AND_RETURN(scope, JSValue::encode(nameValue));
             }

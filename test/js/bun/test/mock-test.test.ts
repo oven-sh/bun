@@ -37,3 +37,30 @@ test("works when throwing", () => {
   });
   expect(fn.mock.calls[0]).toEqual([43]);
 });
+
+test("mockReset works", () => {
+  const instance = new Error("foo");
+  const fn = mock(f => {
+    throw instance;
+  });
+  expect(() => fn(43)).toThrow("foo");
+  expect(fn.mock.results[0]).toEqual({
+    type: "throw",
+    value: instance,
+  });
+  expect(fn.mock.calls[0]).toEqual([43]);
+
+  fn.mockReset();
+
+  expect(fn.mock.calls).toBeEmpty();
+  expect(fn.mock.results).toBeEmpty();
+  expect(fn.mock.instances).toBeEmpty();
+  expect(fn).not.toHaveBeenCalled();
+
+  expect(() => fn(43)).toThrow("foo");
+  expect(fn.mock.results[0]).toEqual({
+    type: "throw",
+    value: instance,
+  });
+  expect(fn.mock.calls[0]).toEqual([43]);
+});

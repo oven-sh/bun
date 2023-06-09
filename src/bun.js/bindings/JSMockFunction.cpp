@@ -147,6 +147,34 @@ public:
     mutable JSC::WriteBarrier<JSC::JSArray> returnValues;
     mutable JSC::WriteBarrier<JSC::Unknown> tail;
 
+    void initMock()
+    {
+        mock.initLater(
+            [](const JSC::LazyProperty<JSMockFunction, JSObject>::Initializer& init) {
+                JSMockFunction* mock = init.owner;
+                Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(mock->globalObject());
+                JSC::Structure* structure = globalObject->mockModule.mockObjectStructure.getInitializedOnMainThread(globalObject);
+                JSObject* object = JSC::constructEmptyObject(init.vm, structure);
+                object->putDirectOffset(init.vm, 0, mock->getCalls());
+                object->putDirectOffset(init.vm, 1, mock->getContexts());
+                object->putDirectOffset(init.vm, 2, mock->getInstances());
+                object->putDirectOffset(init.vm, 3, mock->getReturnValues());
+                init.set(object);
+            });
+    }
+
+    void reset()
+    {
+        this->calls.clear();
+        this->instances.clear();
+        this->returnValues.clear();
+        this->contexts.clear();
+
+        if (this->mock.isInitialized()) {
+            this->initMock();
+        }
+    }
+
     JSArray* getCalls() const
     {
         JSArray* val = calls.get();
@@ -200,18 +228,7 @@ public:
     JSMockFunction(JSC::VM& vm, JSC::Structure* structure, bool isWrapper)
         : Base(vm, structure, isWrapper ? jsMockFunctionMockImplementation : jsMockFunctionCall, isWrapper ? jsMockFunctionMockImplementation : jsMockFunctionCall)
     {
-        mock.initLater(
-            [](const JSC::LazyProperty<JSMockFunction, JSObject>::Initializer& init) {
-                JSMockFunction* mock = init.owner;
-                Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(mock->globalObject());
-                JSC::Structure* structure = globalObject->mockModule.mockObjectStructure.getInitializedOnMainThread(globalObject);
-                JSObject* object = JSC::constructEmptyObject(init.vm, structure);
-                object->putDirectOffset(init.vm, 0, mock->getCalls());
-                object->putDirectOffset(init.vm, 1, mock->getContexts());
-                object->putDirectOffset(init.vm, 2, mock->getInstances());
-                object->putDirectOffset(init.vm, 3, mock->getReturnValues());
-                init.set(object);
-            });
+        initMock();
     }
 };
 
@@ -686,6 +703,8 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockClear, (JSC::JSGlobalObject * globalO
         throwTypeError(globalObject, scope, "Expected Mock"_s);
     }
 
+    thisObject->reset();
+
     RELEASE_AND_RETURN(scope, JSValue::encode(thisObject));
 }
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockReset, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
@@ -696,6 +715,8 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockReset, (JSC::JSGlobalObject * globalO
     if (UNLIKELY(!thisObject)) {
         throwTypeError(globalObject, scope, "Expected Mock"_s);
     }
+
+    thisObject->reset();
 
     RELEASE_AND_RETURN(scope, JSValue::encode(thisObject));
 }
@@ -741,10 +762,15 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockImplementationOnce, (JSC::JSGlobalObj
     auto& vm = lexicalGlobalObject->vm();
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSMockFunction* thisObject = JSMockFunction::create(
-        vm,
-        globalObject,
-        globalObject->mockModule.mockFunctionStructure.getInitializedOnMainThread(globalObject));
+    JSMockFunction* thisObject = jsDynamicCast<JSMockFunction*>(callframe->thisValue().toThis(globalObject, JSC::ECMAMode::strict()));
+
+    if (UNLIKELY(!thisObject)) {
+        thisObject = JSMockFunction::create(
+            vm,
+            globalObject,
+            globalObject->mockModule.mockFunctionStructure.getInitializedOnMainThread(globalObject),
+            true);
+    }
 
     if (UNLIKELY(!thisObject)) {
         throwOutOfMemoryError(globalObject, scope);

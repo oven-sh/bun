@@ -2623,29 +2623,14 @@ test("toMatchObject", () => {
   expect({ a: "hello world" }).toMatchObject({ a: "hello world" });
   expect({ a: "hello world" }).toMatchObject({ a: expect.stringMatching(/wor/) });
   expect({ a: "hello world" }).not.toMatchObject({ a: expect.stringMatching(/word/) });
-  // same tests from above but expect.stringMatching is on the left side
   expect({ a: expect.stringMatching("wor") }).toMatchObject({ a: "hello world" });
   expect({ a: expect.stringMatching("word") }).not.toMatchObject({ a: "hello world" });
   expect({ a: expect.stringMatching(/wor/) }).toMatchObject({ a: "hello world" });
   expect({ a: expect.stringMatching(/word/) }).not.toMatchObject({ a: "hello world" });
   expect({ a: expect.stringMatching(/word/) }).toMatchObject({ a: "hello word" });
-  // expect({ a: expect.stringMatching(/word/) }).not.toMatchObject({ a: expect.stringContaining("zzzzz") });
-  // expect({ a: expect.stringContaining("zzzzzzz") }).toMatchObject({ a: expect.stringMatching(/word/) });
-  // expect({ a: expect.stringContaining("zzzz") }).toMatchObject({ a: expect.stringContaining("zzzz") });
-  // expect({ a: expect.stringContaining("bbbbb") }).not.toMatchObject({ a: expect.stringContaining("zzzz") });
   expect({ a: [1, 2, 3] }).toMatchObject({ a: [1, 2, 3] });
   expect({ a: [1, 2, 3] }).toMatchObject({ a: [1, 2, 3] });
   expect({ a: [1, 2, 4] }).not.toMatchObject({ a: [1, 2, 3] });
-  // expect({ a: [1, 2, 3] }).toMatchObject({ a: expect.arrayContaining([1, 2]) });
-  // expect({ a: [1, 2, 3] }).toMatchObject({ a: expect.arrayContaining([1, 2, 3]) });
-  // expect({ a: [1, 2, 3] }).not.toMatchObject({ a: expect.arrayContaining([1, 2, 3, 4]) });
-  // expect({ a: [1, 2, 3] }).not.toMatchObject({ a: expect.arrayContaining([1, 2, 4]) });
-  // expect({ a: [1, 2, 3] }).not.toMatchObject({ a: expect.arrayContaining([1, 4]) });
-  // expect({ a: [1, 2, 3] }).not.toMatchObject({ a: expect.arrayContaining([4]) });
-  // expect({ a: [1, 2, 3] }).toMatchObject({ a: expect.arrayContaining([2, 1]) });
-  // expect({ a: [1, 2, 3] }).toMatchObject({ a: expect.arrayContaining([3, 2, 1]) });
-  // expect({ a: [2, 1, 3] }).toMatchObject({ a: expect.arrayContaining([1, 2, 3]) });
-  // expect({ a: [3, 2, 1] }).toMatchObject({ a: expect.arrayContaining([1, 2, 3]) });
 
   expect([]).toMatchObject([]);
   expect([]).toMatchObject({});

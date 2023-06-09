@@ -5254,6 +5254,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             if (comptime debug_mode) {
                 this.app.get("/bun:info", *ThisServer, this, onBunInfoRequest);
                 if (this.config.inspector) {
+                    JSC.markBinding(@src());
                     Bun__addInspector(ssl_enabled, this.app, this.globalThis);
                 }
 

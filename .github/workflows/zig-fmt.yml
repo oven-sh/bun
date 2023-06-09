@@ -28,7 +28,7 @@ jobs:
         run: |
           curl https://ziglang.org/builds/zig-linux-x86_64-${{env.ZIG_VERSION}}.tar.xz -L -o zig.tar.xz
           tar -xf zig.tar.xz
-          sudo mv zig-linux-x86_64-${{env.ZIG_VERSION}}/zig /usr/local/bin
+          echo "$(pwd)/zig-linux-x86_64-${{env.ZIG_VERSION}}" >> $GITHUB_PATH
       - name: Run zig fmt
         id: fmt
         run: |

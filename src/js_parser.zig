@@ -4674,6 +4674,7 @@ const Jest = struct {
     afterEach: Ref = Ref.None,
     beforeAll: Ref = Ref.None,
     afterAll: Ref = Ref.None,
+    jest: Ref = Ref.None,
 };
 
 // workaround for https://github.com/ziglang/zig/issues/10903
@@ -6474,6 +6475,7 @@ fn NewParser_(
             if (p.options.features.inject_jest_globals) {
                 p.jest.describe = try p.declareCommonJSSymbol(.unbound, "describe");
                 p.jest.@"test" = try p.declareCommonJSSymbol(.unbound, "test");
+                p.jest.jest = try p.declareCommonJSSymbol(.unbound, "jest");
                 p.jest.it = try p.declareCommonJSSymbol(.unbound, "it");
                 p.jest.expect = try p.declareCommonJSSymbol(.unbound, "expect");
                 p.jest.beforeEach = try p.declareCommonJSSymbol(.unbound, "beforeEach");

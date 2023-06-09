@@ -3910,6 +3910,15 @@ pub const Expect = struct {
             }
             globalObject.throw(Output.prettyFmt(fmt, false), .{calls.toFmt(globalObject, &formatter)});
             return .zero;
+        } else {
+            const signature = comptime getSignature("toHaveBeenCalled", "<green>expected<r>", true);
+            const fmt = signature ++ "\n\nExpected <green>{any}<r>\n";
+            if (Output.enable_ansi_colors) {
+                globalObject.throw(Output.prettyFmt(fmt, true), .{calls.toFmt(globalObject, &formatter)});
+                return .zero;
+            }
+            globalObject.throw(Output.prettyFmt(fmt, false), .{calls.toFmt(globalObject, &formatter)});
+            return .zero;
         }
 
         unreachable;

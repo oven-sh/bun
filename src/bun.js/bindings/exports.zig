@@ -2239,21 +2239,21 @@ pub const ZigConsoleClient = struct {
                     } else if (value.as(JSC.Jest.ExpectStringContaining) != null) {
                         const substring_value = JSC.Jest.ExpectStringContaining.stringValueGetCached(value) orelse return;
 
-                        this.addForNewLine("StringContaining(".len);
-                        writer.writeAll("StringContaining(");
+                        this.addForNewLine("StringContaining ".len);
+                        writer.writeAll("StringContaining ");
                         this.printAs(.String, Writer, writer_, substring_value, .String, enable_ansi_colors);
-                        this.addForNewLine(1);
-                        writer.writeAll(")");
 
                         return;
                     } else if (value.as(JSC.Jest.ExpectStringMatching) != null) {
                         const test_value = JSC.Jest.ExpectStringMatching.testValueGetCached(value) orelse return;
 
-                        this.addForNewLine("StringMatching(".len);
-                        writer.writeAll("StringMatching(");
+                        this.addForNewLine("StringMatching ".len);
+                        writer.writeAll("StringMatching ");
+
+                        const original_quote_strings = this.quote_strings;
+                        if (test_value.isRegExp()) this.quote_strings = false;
                         this.printAs(.String, Writer, writer_, test_value, .String, enable_ansi_colors);
-                        this.addForNewLine(1);
-                        writer.writeAll(")");
+                        this.quote_strings = original_quote_strings;
 
                         return;
                     } else if (jsType != .DOMWrapper) {

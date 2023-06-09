@@ -217,7 +217,7 @@ pub extern fn JSC__JSValue__createStringArray(arg0: *bindings.JSGlobalObject, ar
 pub extern fn JSC__JSValue__createTypeError(arg0: [*c]const ZigString, arg1: [*c]const ZigString, arg2: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__createUninitializedUint8Array(arg0: *bindings.JSGlobalObject, arg1: usize) JSC__JSValue;
 pub extern fn JSC__JSValue__deepEquals(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, arg2: *bindings.JSGlobalObject) bool;
-pub extern fn JSC__JSValue__deepMatch(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, arg2: *bindings.JSGlobalObject) bool;
+pub extern fn JSC__JSValue__deepMatch(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, arg2: *bindings.JSGlobalObject, arg3: bool) bool;
 pub extern fn JSC__JSValue__eqlCell(JSValue0: JSC__JSValue, arg1: [*c]bindings.JSCell) bool;
 pub extern fn JSC__JSValue__eqlValue(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__fastGet_(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: u8) JSC__JSValue;

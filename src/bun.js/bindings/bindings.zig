@@ -4340,8 +4340,8 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("strictDeepEquals", .{ this, other, global });
     }
 
-    pub fn deepMatch(this: JSValue, subset: JSValue, global: *JSGlobalObject) bool {
-        return cppFn("deepMatch", .{ this, subset, global });
+    pub fn deepMatch(this: JSValue, subset: JSValue, global: *JSGlobalObject, replace_props_with_asymmetric_matchers: bool) bool {
+        return cppFn("deepMatch", .{ this, subset, global, replace_props_with_asymmetric_matchers });
     }
 
     pub const DiffMethod = enum(u8) {

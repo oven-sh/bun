@@ -2220,13 +2220,13 @@ pub const ZigConsoleClient = struct {
                         resolve_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
                         return;
                     } else if (value.as(JSC.Jest.ExpectAnything) != null) {
-                        writer.writeAll("expect.anything");
+                        writer.writeAll("Anything");
                         return;
                     } else if (value.as(JSC.Jest.ExpectAny) != null) {
                         const constructor_value = JSC.Jest.ExpectAny.constructorValueGetCached(value) orelse return;
 
-                        this.addForNewLine("expect.any<".len);
-                        writer.writeAll("expect.any<");
+                        this.addForNewLine("Any<".len);
+                        writer.writeAll("Any<");
                         var class_name = ZigString.init(&name_buf);
 
                         constructor_value.getClassName(this.globalThis, &class_name);
@@ -2239,8 +2239,8 @@ pub const ZigConsoleClient = struct {
                     } else if (value.as(JSC.Jest.ExpectStringContaining) != null) {
                         const substring_value = JSC.Jest.ExpectStringContaining.stringValueGetCached(value) orelse return;
 
-                        this.addForNewLine("expect.stringContaining(".len);
-                        writer.writeAll("expect.stringContaining(");
+                        this.addForNewLine("StringContaining(".len);
+                        writer.writeAll("StringContaining(");
                         this.printAs(.String, Writer, writer_, substring_value, .String, enable_ansi_colors);
                         this.addForNewLine(1);
                         writer.writeAll(")");
@@ -2249,8 +2249,8 @@ pub const ZigConsoleClient = struct {
                     } else if (value.as(JSC.Jest.ExpectStringMatching) != null) {
                         const test_value = JSC.Jest.ExpectStringMatching.testValueGetCached(value) orelse return;
 
-                        this.addForNewLine("expect.stringMatching(".len);
-                        writer.writeAll("expect.stringMatching(");
+                        this.addForNewLine("StringMatching(".len);
+                        writer.writeAll("StringMatching(");
                         this.printAs(.String, Writer, writer_, test_value, .String, enable_ansi_colors);
                         this.addForNewLine(1);
                         writer.writeAll(")");

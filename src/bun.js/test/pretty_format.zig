@@ -1265,10 +1265,12 @@ pub const JestPrettyFormat = struct {
                         resolve_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
                         return;
                     } else if (value.as(JSC.Jest.ExpectAnything) != null) {
-                        writer.writeAll("expect.anything");
+                        this.addForNewLine("Anything".len);
+                        writer.writeAll("Anything");
                         return;
                     } else if (value.as(JSC.Jest.ExpectAny) != null) {
-                        writer.writeAll("expect.any<");
+                        this.addForNewLine("Any<".len);
+                        writer.writeAll("Any<");
                         const constructor_value = JSC.Jest.ExpectAny.constructorValueGetCached(value) orelse .zero;
                         var class_name = ZigString.init(&name_buf);
                         constructor_value.getClassName(this.globalThis, &class_name);
@@ -1278,13 +1280,15 @@ pub const JestPrettyFormat = struct {
                         return;
                     } else if (value.as(JSC.Jest.ExpectStringContaining) != null) {
                         const substring_value = JSC.Jest.ExpectStringContaining.stringValueGetCached(value) orelse .zero;
-                        writer.writeAll("expect.stringContaining(");
+                        this.addForNewLine("StringContaining(".len);
+                        writer.writeAll("StringContaining(");
                         this.printAs(.String, Writer, writer_, substring_value, .String, enable_ansi_colors);
                         writer.writeAll(")");
                         return;
                     } else if (value.as(JSC.Jest.ExpectStringMatching) != null) {
                         const test_value = JSC.Jest.ExpectStringMatching.testValueGetCached(value) orelse .zero;
-                        writer.writeAll("expect.stringMatching(");
+                        this.addForNewLine("StringMatching(".len);
+                        writer.writeAll("StringMatching(");
                         this.printAs(.String, Writer, writer_, test_value, .String, enable_ansi_colors);
                         writer.writeAll(")");
                         return;

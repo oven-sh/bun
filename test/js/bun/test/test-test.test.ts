@@ -2665,6 +2665,7 @@ test("toMatchObject", () => {
   expect({
     first: new Boolean2(false),
     a: {
+      4: [3, 2, 2],
       j: new Date(),
       b: {
         c: {
@@ -2693,18 +2694,24 @@ test("toMatchObject", () => {
               },
             },
           },
-          string: "hello",
+          string1: "hello",
+          string2: "hello",
+          string3: "hello",
         },
       },
     },
   }).toMatchObject({
     first: expect.any(Boolean2),
     a: {
+      4: [3, 2, expect.any(Number)],
+
       j: expect.any(Date),
       b: {
         c: {
           num: expect.any(Number),
-          string: expect.any(String),
+          string1: expect.anything(),
+          string2: expect.stringContaining("ll"),
+          string3: expect.stringMatching(/ll/),
           d: {
             e: {
               bigint: expect.any(BigInt),

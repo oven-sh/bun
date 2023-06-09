@@ -4007,13 +4007,8 @@ pub const Expect = struct {
 
         const property_matchers = args[0];
 
-        var itr = PropertyMatcherIterator{
-            .received_object = received_object,
-        };
+        var pass = received_object.deepMatch(property_matchers, globalObject);
 
-        property_matchers.forEachProperty(globalObject, &itr, PropertyMatcherIterator.forEach);
-
-        var pass = !itr.failed;
         if (not) pass = !pass;
         if (pass) return thisValue;
 
@@ -4023,7 +4018,7 @@ pub const Expect = struct {
             .received = received_object,
             .expected = property_matchers,
             .globalObject = globalObject,
-            .not = if (itr.fail_on_asymmetric_matcher) false else not,
+            .not = not,
         };
 
         if (not) {

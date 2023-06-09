@@ -723,6 +723,150 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
 extern "C" {
 
+using namespace WebCore;
+
+enum class AsymmetricMatcherResult : uint8_t {
+    PASS,
+    FAIL,
+    NOT_MATCHER,
+};
+
+AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSCell* matcherCell, JSValue other, ThrowScope* throwScope)
+{
+    if (auto* expectAnything = jsDynamicCast<JSExpectAnything*>(matcherCell)) {
+        if (other.isUndefinedOrNull()) {
+            return AsymmetricMatcherResult::FAIL;
+        }
+
+        return AsymmetricMatcherResult::PASS;
+    } else if (auto* expectAny = jsDynamicCast<JSExpectAny*>(matcherCell)) {
+        JSObject* constructorObject = expectAny->m_constructorValue.get().getObject();
+
+        if (constructorObject->hasInstance(globalObject, other)) {
+            return AsymmetricMatcherResult::PASS;
+        }
+
+        return AsymmetricMatcherResult::FAIL;
+    } else if (auto* expectStringContaining = jsDynamicCast<JSExpectStringContaining*>(matcherCell)) {
+        JSValue expectedSubstring = expectStringContaining->m_stringValue.get();
+
+        if (other.isString()) {
+            String otherString = other.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(*throwScope, AsymmetricMatcherResult::FAIL);
+
+            String substring = expectedSubstring.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(*throwScope, AsymmetricMatcherResult::FAIL);
+
+            if (otherString.find(substring) != WTF::notFound) {
+                return AsymmetricMatcherResult::PASS;
+            }
+        }
+
+        return AsymmetricMatcherResult::FAIL;
+    } else if (auto* expectStringMatching = jsDynamicCast<JSExpectStringMatching*>(matcherCell)) {
+        JSValue expectedTestValue = expectStringMatching->m_testValue.get();
+
+        if (other.isString()) {
+            if (expectedTestValue.isString()) {
+                String otherString = other.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(*throwScope, AsymmetricMatcherResult::FAIL);
+
+                String substring = expectedTestValue.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(*throwScope, AsymmetricMatcherResult::FAIL);
+
+                if (otherString.find(substring) != WTF::notFound) {
+                    return AsymmetricMatcherResult::PASS;
+                }
+            } else if (expectedTestValue.isCell() and expectedTestValue.asCell()->type() == RegExpObjectType) {
+                if (auto* regex = jsDynamicCast<RegExpObject*>(expectedTestValue)) {
+                    JSString* otherString = other.toString(globalObject);
+                    if (regex->match(globalObject, otherString)) {
+                        return AsymmetricMatcherResult::PASS;
+                    }
+                }
+            }
+        }
+
+        return AsymmetricMatcherResult::FAIL;
+    }
+
+    return AsymmetricMatcherResult::NOT_MATCHER;
+}
+
+bool Bun__deepMatch(JSValue objValue, JSValue subsetValue, JSGlobalObject* globalObject, ThrowScope* throwScope)
+{
+    VM& vm = globalObject->vm();
+    JSObject* obj = objValue.getObject();
+    JSObject* subsetObj = subsetValue.getObject();
+
+    PropertyNameArray subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+    subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
+
+    // arrays should match exactly
+    if (isArray(globalObject, objValue) && isArray(globalObject, subsetValue)) {
+        if (obj->getArrayLength() != subsetObj->getArrayLength()) {
+            return false;
+        }
+    }
+
+    for (size_t i = 0; i < subsetProps.size(); i++) {
+        JSValue prop = obj->getIfPropertyExists(globalObject, subsetProps[i]);
+        RETURN_IF_EXCEPTION(*throwScope, false);
+
+        if (prop.isEmpty()) {
+            return false;
+        }
+
+        JSValue subsetProp = subsetObj->get(globalObject, subsetProps[i]);
+        RETURN_IF_EXCEPTION(*throwScope, false);
+
+        JSCell* subsetPropCell = subsetProp.asCell();
+        JSCell* propCell = prop.asCell();
+
+        if (subsetProp.isCell() and subsetPropCell->type() == JSC::JSType(JSDOMWrapperType)) {
+            switch (matchAsymmetricMatcher(globalObject, subsetPropCell, prop, throwScope)) {
+            case AsymmetricMatcherResult::FAIL: {
+                return false;
+                break;
+            }
+            case AsymmetricMatcherResult::PASS: {
+                return true;
+                break;
+            }
+            case AsymmetricMatcherResult::NOT_MATCHER: {
+                break;
+            }
+            }
+        } else if (prop.isCell() and propCell->type() == JSC::JSType(JSDOMWrapperType)) {
+            switch (matchAsymmetricMatcher(globalObject, propCell, subsetProp, throwScope)) {
+            case AsymmetricMatcherResult::FAIL: {
+                return false;
+                break;
+            }
+            case AsymmetricMatcherResult::PASS: {
+                return true;
+                break;
+            }
+            case AsymmetricMatcherResult::NOT_MATCHER: {
+                break;
+            }
+            }
+        }
+
+        if (subsetProp.isObject() and prop.isObject()) {
+            if (!Bun__deepMatch(prop, subsetProp, globalObject, throwScope)) {
+                return false;
+            }
+        } else {
+            if (!sameValue(globalObject, prop, subsetProp)) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
 bool WebCore__FetchHeaders__isEmpty(WebCore__FetchHeaders* arg0)
 {
     return arg0->size() == 0;
@@ -752,8 +896,6 @@ WebCore__FetchHeaders* WebCore__FetchHeaders__cast_(JSC__JSValue JSValue0, JSC__
 {
     return WebCoreCast<WebCore::JSFetchHeaders, WebCore__FetchHeaders>(JSValue0);
 }
-
-using namespace WebCore;
 
 WebCore__FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC__JSGlobalObject* lexicalGlobalObject, JSC__JSValue argument0_)
 {
@@ -1456,6 +1598,16 @@ bool JSC__JSValue__strictDeepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1
     ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
     Vector<std::pair<JSValue, JSValue>, 16> stack;
     return Bun__deepEquals<true>(globalObject, v1, v2, stack, &scope, true);
+}
+
+bool JSC__JSValue__deepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject)
+{
+    JSValue obj = JSValue::decode(JSValue0);
+    JSValue subset = JSValue::decode(JSValue1);
+
+    ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    return Bun__deepMatch(obj, subset, globalObject, &scope);
 }
 
 // This is the same as the C API version, except it returns a JSValue which may be a *Exception

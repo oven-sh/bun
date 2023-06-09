@@ -4340,6 +4340,10 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("strictDeepEquals", .{ this, other, global });
     }
 
+    pub fn deepMatch(this: JSValue, subset: JSValue, global: *JSGlobalObject) bool {
+        return cppFn("deepMatch", .{ this, subset, global });
+    }
+
     pub const DiffMethod = enum(u8) {
         none,
         character,
@@ -4699,6 +4703,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "isConstructor",
         "isInstanceOf",
         "stringIncludes",
+        "deepMatch",
     };
 };
 

@@ -1129,6 +1129,41 @@ pub const Resolver = struct {
             return .{ .not_found = {} };
         }
 
+        if (strings.hasPrefixComptime(import_path, "file:///")) {
+            const path = import_path[7..];
+
+            if (r.opts.external.abs_paths.count() > 0 and r.opts.external.abs_paths.contains(path)) {
+                // If the string literal in the source text is an absolute path and has
+                // been marked as an external module, mark it as *not* an absolute path.
+                // That way we preserve the literal text in the output and don't generate
+                // a relative path from the output directory to that path.
+                if (r.debug_logs) |*debug| {
+                    debug.addNoteFmt("The path \"{s}\" is marked as external by the user", .{path});
+                }
+
+                return .{
+                    .success = Result{
+                        .path_pair = .{ .primary = Path.init(import_path) },
+                        .is_external = true,
+                    },
+                };
+            }
+
+            if (r.loadAsFile(path, r.extension_order)) |file| {
+                return .{
+                    .success = Result{
+                        .dirname_fd = file.dirname_fd,
+                        .path_pair = .{ .primary = Path.init(file.path) },
+                        .diff_case = file.diff_case,
+                        .file_fd = file.file_fd,
+                        .jsx = r.opts.jsx,
+                    },
+                };
+            }
+
+            return .{ .not_found = {} };
+        }
+
         // Check both relative and package paths for CSS URL tokens, with relative
         // paths taking precedence over package paths to match Webpack behavior.
         const is_package_path = isPackagePath(import_path);
@@ -2297,7 +2332,7 @@ pub const Resolver = struct {
         const source = logger.Source.initPathString(key_path.text, entry.contents);
         const file_dir = source.path.sourceDir();
 
-        var result = (try TSConfigJSON.parse(bun.fs_allocator, r.log, source, &r.caches.json, r.opts.jsx.development)) orelse return null;
+        var result = (try TSConfigJSON.parse(bun.fs_allocator, r.log, source, &r.caches.json)) orelse return null;
 
         if (result.hasBaseURL()) {
 

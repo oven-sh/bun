@@ -222,7 +222,7 @@ pub const ResolvedSource = extern struct {
 
         @"node:buffer" = 1024,
         @"node:process" = 1025,
-        @"node:events" = 1026,
+        @"bun:events_native" = 1026, // native version of EventEmitter used for streams
         @"node:string_decoder" = 1027,
         @"node:module" = 1028,
         @"node:tty" = 1029,
@@ -688,9 +688,9 @@ pub const ZigStackFrame = extern struct {
     };
 
     pub const Zero: ZigStackFrame = ZigStackFrame{
-        .function_name = ZigString{ .ptr = "", .len = 0 },
+        .function_name = ZigString{ ._unsafe_ptr_do_not_use = "", .len = 0 },
         .code_type = ZigStackFrameCode.None,
-        .source_url = ZigString{ .ptr = "", .len = 0 },
+        .source_url = ZigString{ ._unsafe_ptr_do_not_use = "", .len = 0 },
         .position = ZigStackFramePosition.Invalid,
     };
 
@@ -1932,7 +1932,7 @@ pub const ZigConsoleClient = struct {
 
                     if (str.is16Bit()) {
                         // streaming print
-                        writer.print("{s}", .{str});
+                        writer.print("{}", .{str});
                     } else if (strings.isAllASCII(str.slice())) {
                         // fast path
                         writer.writeAll(str.slice());
@@ -2041,6 +2041,7 @@ pub const ZigConsoleClient = struct {
                         Writer,
                         writer_,
                         enable_ansi_colors,
+                        false,
                     );
                 },
                 .Class => {
@@ -2782,7 +2783,13 @@ pub const ZigConsoleClient = struct {
                     const arrayBuffer = value.asArrayBuffer(this.globalThis).?;
                     const slice = arrayBuffer.byteSlice();
 
-                    writer.writeAll(bun.asByteSlice(@tagName(arrayBuffer.typed_array_type)));
+                    writer.writeAll(
+                        if (arrayBuffer.typed_array_type == .Uint8Array and
+                            arrayBuffer.value.isBuffer(this.globalThis))
+                            "Buffer"
+                        else
+                            bun.asByteSlice(@tagName(arrayBuffer.typed_array_type)),
+                    );
                     writer.print("({d}) [ ", .{arrayBuffer.len});
 
                     if (slice.len > 0) {

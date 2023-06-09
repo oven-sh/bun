@@ -1,4 +1,9 @@
 name: bun-macOS-x64
+
+concurrency:
+  group: bun-macOS-x64-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -28,6 +33,7 @@ jobs:
   macos-object-files:
     name: macOS Object
     runs-on: med-ubuntu
+    if: github.repository_owner == 'oven-sh'
     strategy:
       matrix:
         include:
@@ -100,6 +106,7 @@ jobs:
   macOS-cpp:
     name: macOS C++
     runs-on: ${{ matrix.runner }}
+    if: github.repository_owner == 'oven-sh'
     timeout-minutes: 90
     strategy:
       matrix:
@@ -166,8 +173,8 @@ jobs:
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
         run: |
           brew install rust ccache llvm@15 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
-          echo "export PATH=$(brew --prefix coreutils)/libexec/gnubin:\$PATH" >> $GITHUB_ENV
-          echo "export PATH=$(brew --prefix llvm@15)/bin:\$PATH" >> $GITHUB_ENV
+          echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
+          echo "$(brew --prefix llvm@15)/bin" >> $GITHUB_PATH
           brew link --overwrite llvm@15
       - name: Download WebKit
         if: matrix.compile_obj
@@ -240,6 +247,7 @@ jobs:
   macOS:
     name: macOS Link
     runs-on: ${{ matrix.runner }}
+    if: github.repository_owner == 'oven-sh'
     needs: [macOS-cpp, macos-object-files]
     timeout-minutes: 90
     strategy:
@@ -286,8 +294,8 @@ jobs:
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
         run: |
           brew install rust ccache llvm@15 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
-          echo "export PATH=$(brew --prefix coreutils)/libexec/gnubin:\$PATH" >> $GITHUB_ENV
-          echo "export PATH=$(brew --prefix llvm@15)/bin:\$PATH" >> $GITHUB_ENV
+          echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
+          echo "$(brew --prefix llvm@15)/bin" >> $GITHUB_PATH
           brew link --overwrite llvm@15
       - name: Download WebKit
         env:
@@ -394,7 +402,7 @@ jobs:
     name: Tests ${{matrix.tag}}
     runs-on: ${{ matrix.runner }}
     needs: [macOS]
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.repository_owner == 'oven-sh'
     timeout-minutes: 30
     outputs:
       failing_tests: ${{ steps.test.outputs.failing_tests }}
@@ -424,8 +432,8 @@ jobs:
           unzip ${{matrix.tag}}.zip
           cd ${{matrix.tag}}
           chmod +x bun
-          sudo mv bun /usr/local/bin/bun
-          bun --version
+          pwd >> $GITHUB_PATH
+          ./bun --version
       - id: test
         name: Test (node runner)
         # if: ${{github.event.inputs.use_bun == 'false'}}

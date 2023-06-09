@@ -407,6 +407,7 @@ pub const EventLoop = struct {
     forever_timer: ?*uws.Timer = null,
 
     pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
+    const log = bun.Output.scoped(.EventLoop, false);
 
     pub fn tickWithCount(this: *EventLoop) u32 {
         var global = this.global;
@@ -441,6 +442,10 @@ pub const EventLoop = struct {
                 @field(Task.Tag, typeBaseName(@typeName(JSC.napi.napi_async_work))) => {
                     var transform_task: *JSC.napi.napi_async_work = task.get(JSC.napi.napi_async_work).?;
                     transform_task.*.runFromJS();
+                },
+                .ThreadSafeFunction => {
+                    var transform_task: *ThreadSafeFunction = task.as(ThreadSafeFunction);
+                    transform_task.call();
                 },
                 @field(Task.Tag, @typeName(ReadFileTask)) => {
                     var transform_task: *ReadFileTask = task.get(ReadFileTask).?;
@@ -477,7 +482,10 @@ pub const EventLoop = struct {
                 },
                 else => if (Environment.allow_assert) {
                     bun.Output.prettyln("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
-                } else unreachable,
+                } else {
+                    log("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
+                    unreachable;
+                },
             }
 
             global_vm.releaseWeakRefs();

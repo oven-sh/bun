@@ -1114,7 +1114,14 @@ pub const Subprocess = struct {
                 }
 
                 while (cmds_array.next()) |value| {
-                    argv.appendAssumeCapacity(value.getZigString(globalThis).toOwnedSliceZ(allocator) catch {
+                    const arg = value.getZigString(globalThis);
+
+                    // if the string is empty, ignore it, don't add it to the argv
+                    if (arg.len == 0) {
+                        continue;
+                    }
+
+                    argv.appendAssumeCapacity(arg.toOwnedSliceZ(allocator) catch {
                         globalThis.throw("out of memory", .{});
                         return .zero;
                     });
@@ -1128,11 +1135,15 @@ pub const Subprocess = struct {
 
             if (args != .zero and args.isObject()) {
                 if (args.get(globalThis, "cwd")) |cwd_| {
+                    // ignore definitely invalid cwd
                     if (!cwd_.isEmptyOrUndefinedOrNull()) {
-                        cwd = cwd_.getZigString(globalThis).toOwnedSliceZ(allocator) catch {
-                            globalThis.throw("out of memory", .{});
-                            return .zero;
-                        };
+                        const cwd_str = cwd_.getZigString(globalThis);
+                        if (cwd_str.len > 0) {
+                            cwd = cwd_str.toOwnedSliceZ(allocator) catch {
+                                globalThis.throw("out of memory", .{});
+                                return .zero;
+                            };
+                        }
                     }
                 }
 

@@ -3,11 +3,17 @@ const { file } = import.meta;
 import { describe, it, expect } from "bun:test";
 import * as path from "node:path";
 import assert from "assert";
+import { hideFromStackTrace } from "harness";
 
 const strictEqual = (...args) => {
   assert.strictEqual(...args);
   expect(true).toBe(true);
 };
+
+const expectStrictEqual = (actual, expected) => {
+  expect(actual).toBe(expected);
+};
+hideFromStackTrace(expectStrictEqual);
 
 it("should not inherit Object.prototype", () => {
   expect(path).not.toHaveProperty("toString");
@@ -33,6 +39,66 @@ it("path.dirname", () => {
       expect(path.dirname(input)).toBe(expected);
     }
   }
+});
+
+it("path.parse().name", () => {
+  expectStrictEqual(path.parse(file).name, "path.test");
+  expectStrictEqual(path.parse(".js").name, ".js");
+  expectStrictEqual(path.parse("..js").name, ".");
+  expectStrictEqual(path.parse("").name, "");
+  expectStrictEqual(path.parse(".").name, ".");
+  expectStrictEqual(path.parse("dir/name.ext").name, "name");
+  expectStrictEqual(path.parse("/dir/name.ext").name, "name");
+  expectStrictEqual(path.parse("/name.ext").name, "name");
+  expectStrictEqual(path.parse("name.ext").name, "name");
+  expectStrictEqual(path.parse("name.ext/").name, "name");
+  expectStrictEqual(path.parse("name.ext//").name, "name");
+  expectStrictEqual(path.parse("aaa/bbb").name, "bbb");
+  expectStrictEqual(path.parse("aaa/bbb/").name, "bbb");
+  expectStrictEqual(path.parse("aaa/bbb//").name, "bbb");
+  expectStrictEqual(path.parse("/aaa/bbb").name, "bbb");
+  expectStrictEqual(path.parse("/aaa/bbb/").name, "bbb");
+  expectStrictEqual(path.parse("/aaa/bbb//").name, "bbb");
+  expectStrictEqual(path.parse("//aaa/bbb").name, "bbb");
+  expectStrictEqual(path.parse("//aaa/bbb/").name, "bbb");
+  expectStrictEqual(path.parse("//aaa/bbb//").name, "bbb");
+  expectStrictEqual(path.parse("///aaa").name, "aaa");
+  expectStrictEqual(path.parse("//aaa").name, "aaa");
+  expectStrictEqual(path.parse("/aaa").name, "aaa");
+  expectStrictEqual(path.parse("aaa.").name, "aaa");
+
+  // On unix a backslash is just treated as any other character.
+  expectStrictEqual(path.posix.parse("\\dir\\name.ext").name, "\\dir\\name");
+  expectStrictEqual(path.posix.parse("\\name.ext").name, "\\name");
+  expectStrictEqual(path.posix.parse("name.ext").name, "name");
+  expectStrictEqual(path.posix.parse("name.ext\\").name, "name");
+  expectStrictEqual(path.posix.parse("name.ext\\\\").name, "name");
+});
+
+it("path.parse() windows edition", () => {
+  // On Windows a backslash acts as a path separator.
+  expectStrictEqual(path.win32.parse("\\dir\\name.ext").name, "name");
+  expectStrictEqual(path.win32.parse("\\name.ext").name, "name");
+  expectStrictEqual(path.win32.parse("name.ext").name, "name");
+  expectStrictEqual(path.win32.parse("name.ext\\").name, "name");
+  expectStrictEqual(path.win32.parse("name.ext\\\\").name, "name");
+  expectStrictEqual(path.win32.parse("name").name, "name");
+  expectStrictEqual(path.win32.parse(".name").name, ".name");
+  expectStrictEqual(path.win32.parse("file:stream").name, "file:stream");
+});
+
+it.todo("path.parse() windows edition - drive letter", () => {
+  expectStrictEqual(path.win32.parse("C:").name, "");
+  expectStrictEqual(path.win32.parse("C:.").name, ".");
+  expectStrictEqual(path.win32.parse("C:\\").name, "");
+  expectStrictEqual(path.win32.parse("C:\\.").name, ".");
+  expectStrictEqual(path.win32.parse("C:\\.ext").name, ".ext");
+  expectStrictEqual(path.win32.parse("C:\\dir\\name.ext").name, "name");
+  expectStrictEqual(path.win32.parse("C:name.ext").name, "name");
+  expectStrictEqual(path.win32.parse("C:name.ext\\").name, "name");
+  expectStrictEqual(path.win32.parse("C:name.ext\\\\").name, "name");
+  expectStrictEqual(path.win32.parse("C:foo").name, "foo");
+  expectStrictEqual(path.win32.parse("C:.foo").name, ".foo");
 });
 
 it("path.basename", () => {
@@ -449,4 +515,74 @@ it("path.resolve", () => {
     });
   });
   strictEqual(failures.length, 0, failures.join("\n"));
+});
+
+it("path.parse", () => {
+  expect(path.parse("/tmp")).toStrictEqual({ root: "/", dir: "/", base: "tmp", ext: "", name: "tmp" });
+
+  expect(path.parse("/tmp/test.txt")).toStrictEqual({
+    root: "/",
+    dir: "/tmp",
+    base: "test.txt",
+    ext: ".txt",
+    name: "test",
+  });
+
+  expect(path.parse("/tmp/test/file.txt")).toStrictEqual({
+    root: "/",
+    dir: "/tmp/test",
+    base: "file.txt",
+    ext: ".txt",
+    name: "file",
+  });
+
+  expect(path.parse("/tmp/test/dir")).toStrictEqual({ root: "/", dir: "/tmp/test", base: "dir", ext: "", name: "dir" });
+  expect(path.parse("/tmp/test/dir/")).toStrictEqual({
+    root: "/",
+    dir: "/tmp/test",
+    base: "dir",
+    ext: "",
+    name: "dir",
+  });
+
+  expect(path.parse(".")).toStrictEqual({ root: "", dir: "", base: ".", ext: "", name: "." });
+  expect(path.parse("./")).toStrictEqual({ root: "", dir: "", base: ".", ext: "", name: "." });
+  expect(path.parse("/.")).toStrictEqual({ root: "/", dir: "/", base: ".", ext: "", name: "." });
+  expect(path.parse("/../")).toStrictEqual({ root: "/", dir: "/", base: "..", ext: ".", name: "." });
+
+  expect(path.parse("./file.txt")).toStrictEqual({ root: "", dir: ".", base: "file.txt", ext: ".txt", name: "file" });
+  expect(path.parse("../file.txt")).toStrictEqual({ root: "", dir: "..", base: "file.txt", ext: ".txt", name: "file" });
+  expect(path.parse("../test/file.txt")).toStrictEqual({
+    root: "",
+    dir: "../test",
+    base: "file.txt",
+    ext: ".txt",
+    name: "file",
+  });
+  expect(path.parse("test/file.txt")).toStrictEqual({
+    root: "",
+    dir: "test",
+    base: "file.txt",
+    ext: ".txt",
+    name: "file",
+  });
+
+  expect(path.parse("test/dir")).toStrictEqual({ root: "", dir: "test", base: "dir", ext: "", name: "dir" });
+  expect(path.parse("test/dir/another_dir")).toStrictEqual({
+    root: "",
+    dir: "test/dir",
+    base: "another_dir",
+    ext: "",
+    name: "another_dir",
+  });
+
+  expect(path.parse("./dir")).toStrictEqual({ root: "", dir: ".", base: "dir", ext: "", name: "dir" });
+  expect(path.parse("../dir")).toStrictEqual({ root: "", dir: "..", base: "dir", ext: "", name: "dir" });
+  expect(path.parse("../dir/another_dir")).toStrictEqual({
+    root: "",
+    dir: "../dir",
+    base: "another_dir",
+    ext: "",
+    name: "another_dir",
+  });
 });

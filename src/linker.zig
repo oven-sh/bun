@@ -478,8 +478,9 @@ pub const Linker = struct {
                     };
 
                     if (resolved_import_) |*resolved_import| {
-                        if (resolved_import.is_external) {
-                            externals.append(record_index) catch unreachable;
+                        if (resolved_import.is_external or resolved_import.is_standalone_module) {
+                            if (resolved_import.is_external)
+                                externals.append(record_index) catch unreachable;
                             continue;
                         }
 
@@ -1016,10 +1017,8 @@ pub const Linker = struct {
             .napi => {
                 import_record.print_mode = .napi_module;
             },
-            .wasm => {
-                import_record.print_mode = .import_path;
-            },
-            .file => {
+
+            .wasm, .file => {
 
                 // if we're building for web/node, always print as import path
                 // if we're building for bun

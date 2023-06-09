@@ -4,6 +4,71 @@ Bun implements the `createHash` and `createHmac` functions from [`node:crypto`](
 
 {% /callout %}
 
+## `Bun.password`
+
+{% callout %}
+**Note** — Added in Bun 0.6.8.
+{% /callout %}
+
+`Bun.password` is a collection of utility functions for hashing and verifying passwords with various cryptographically secure algorithms.
+
+```ts
+const password = "super-secure-pa$$word";
+
+const hash = await Bun.password.hash(password);
+// => $argon2id$v=19$m=65536,t=2,p=1$tFq+9AVr1bfPxQdh6E8DQRhEXg/M/SqYCNu6gVdRRNs$GzJ8PuBi+K+BVojzPfS5mjnC8OpLGtv8KJqF99eP6a4
+
+const isMatch = await Bun.password.verify(password, hash);
+// => true
+```
+
+The second argument to `Bun.password.hash` accepts a params object that lets you pick and configure the hashing algorithm.
+
+```ts
+const password = "super-secure-pa$$word";
+
+// use argon2 (default)
+const argonHash = await Bun.password.hash(password, {
+  algorithm: "argon2id", // "argon2id" | "argon2i" | "argon2d"
+  memoryCost: 4, // memory usage in kibibytes
+  timeCost: 3, // the number of iterations
+});
+
+// use bcrypt
+const bcryptHash = await Bun.password.hash(password, {
+  algorithm: "bcrypt",
+  cost: 4, // number between 4-31
+});
+```
+
+The algorithm used to create the hash is stored in the hash itself. When using `bcrypt`, the returned hash is encoded in [Modular Crypt Format](https://passlib.readthedocs.io/en/stable/modular_crypt_format.html) for compatibility with most existing `bcrypt` implementations; with `argon2` the result is encoded in the newer [PHC format](https://github.com/P-H-C/phc-string-format/blob/master/phc-sf-spec.md).
+
+The `verify` function automatically detects the algorithm based on the input hash and use the correct verification method. It can correctly infer the algorithm from both PHC- or MCF-encoded hashes.
+
+```ts
+const password = "super-secure-pa$$word";
+
+const hash = await Bun.password.hash(password, {
+  /* config */
+});
+
+const isMatch = await Bun.password.verify(password, hash);
+// => true
+```
+
+Synchronous versions of all functions are also available. Keep in mind that these functions are computationally expensive, so using a blocking API may degrade application performance.
+
+```ts
+const password = "super-secure-pa$$word";
+
+const hash = Bun.password.hashSync(password, {
+  /* config */
+});
+
+const isMatch = Bun.password.verifySync(password, hash);
+// => true
+```
+
 ## `Bun.hash`
 
 `Bun.hash` is a collection of utilities for _non-cryptographic_ hashing. Non-cryptographic hashing algorithms are optimized for speed of computation over collision-resistance or security.

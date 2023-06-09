@@ -2,27 +2,6 @@ interface VoidFunction {
   (): void;
 }
 
-declare namespace Bun {
-  interface Env extends Dict<string> {
-    NODE_ENV: string;
-
-    /**
-     * The timezone used by Intl, Date, etc.
-     *
-     * To change the timezone, set `Bun.env.TZ` or `process.env.TZ` to the time zone you want to use.
-     *
-     * You can view the current timezone with `Intl.DateTimeFormat().resolvedOptions().timeZone`
-     *
-     * @example
-     * ```js
-     * Bun.env.TZ = "America/Los_Angeles";
-     * console.log(Intl.DateTimeFormat().resolvedOptions().timeZone); // "America/Los_Angeles"
-     * ```
-     */
-    TZ?: string;
-  }
-}
-
 /**
  *
  * Bun.js runtime APIs
@@ -43,6 +22,26 @@ declare namespace Bun {
 declare module "bun" {
   type ArrayBufferView = TypedArray | DataView;
   import { Encoding as CryptoEncoding } from "crypto";
+
+  export interface Env extends Dict<string>, NodeJS.ProcessEnv {
+    NODE_ENV: string;
+
+    /**
+     * The timezone used by Intl, Date, etc.
+     *
+     * To change the timezone, set `Bun.env.TZ` or `process.env.TZ` to the time zone you want to use.
+     *
+     * You can view the current timezone with `Intl.DateTimeFormat().resolvedOptions().timeZone`
+     *
+     * @example
+     * ```js
+     * Bun.env.TZ = "America/Los_Angeles";
+     * console.log(Intl.DateTimeFormat().resolvedOptions().timeZone); // "America/Los_Angeles"
+     * ```
+     */
+    TZ?: string;
+  }
+
   /**
    * The environment variables of the process
    *
@@ -51,7 +50,7 @@ declare module "bun" {
    * Changes to `process.env` at runtime won't automatically be reflected in the default value. For that, you can pass `process.env` explicitly.
    *
    */
-  export const env: Bun.Env;
+  export const env: Env;
   export const origin: string;
 
   /**
@@ -282,7 +281,7 @@ declare module "bun" {
    * @returns A promise that resolves with the concatenated chunks or the concatenated chunks as an `ArrayBuffer`.
    */
   export function readableStreamToArrayBuffer(
-    stream: ReadableStream,
+    stream: ReadableStream<ArrayBufferView | ArrayBufferLike>,
   ): Promise<ArrayBuffer> | ArrayBuffer;
 
   /**
@@ -323,7 +322,7 @@ declare module "bun" {
    *
    */
   export function readableStreamToArray<T>(
-    stream: ReadableStream,
+    stream: ReadableStream<T>,
   ): Promise<T[]> | T[];
 
   /**
@@ -1013,6 +1012,226 @@ declare module "bun" {
     //       importSource?: string; // default: "react"
     //     };
   }
+  namespace Password {
+    export type AlgorithmLabel = "bcrypt" | "argon2id" | "argon2d" | "argon2i";
+
+    export interface Argon2Algorithm {
+      algorithm: "argon2id" | "argon2d" | "argon2i";
+      /**
+       * Memory cost, which defines the memory usage, given in kibibytes.
+       */
+      memoryCost?: number;
+      /**
+       * Defines the amount of computation realized and therefore the execution
+       * time, given in number of iterations.
+       */
+      timeCost?: number;
+    }
+
+    export interface BCryptAlgorithm {
+      algorithm: "bcrypt";
+      /**
+       * A number between 4 and 31. The default is 10.
+       */
+      cost?: number;
+    }
+  }
+
+  /**
+   * Hash and verify passwords using argon2 or bcrypt. The default is argon2.
+   * Password hashing functions are necessarily slow, and this object will
+   * automatically run in a worker thread.
+   *
+   * The underlying implementation of these functions are provided by the Zig
+   * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+   * work on this.
+   *
+   * ### Example with argon2
+   *
+   * ```ts
+   * import {password} from "bun";
+   *
+   * const hash = await password.hash("hello world");
+   * const verify = await password.verify("hello world", hash);
+   * console.log(verify); // true
+   * ```
+   *
+   * ### Example with bcrypt
+   * ```ts
+   * import {password} from "bun";
+   *
+   * const hash = await password.hash("hello world", "bcrypt");
+   * // algorithm is optional, will be inferred from the hash if not specified
+   * const verify = await password.verify("hello world", hash, "bcrypt");
+   *
+   * console.log(verify); // true
+   * ```
+   */
+  export const password: {
+    /**
+     * Verify a password against a previously hashed password.
+     *
+     * @returns true if the password matches, false otherwise
+     *
+     * @example
+     * ```ts
+     * import {password} from "bun";
+     * await password.verify("hey", "$argon2id$v=19$m=65536,t=2,p=1$ddbcyBcbAcagei7wSkZFiouX6TqnUQHmTyS5mxGCzeM$+3OIaFatZ3n6LtMhUlfWbgJyNp7h8/oIsLK+LzZO+WI");
+     * // true
+     * ```
+     *
+     * @throws If the algorithm is specified and does not match the hash
+     * @throws If the algorithm is invalid
+     * @throws if the hash is invalid
+     *
+     */
+    verify(
+      /**
+       * The password to verify.
+       *
+       * If empty, always returns false
+       */
+      password: StringOrBuffer,
+      /**
+       * Previously hashed password.
+       * If empty, always returns false
+       */
+      hash: StringOrBuffer,
+      /**
+       * If not specified, the algorithm will be inferred from the hash.
+       *
+       * If specified and the algorithm does not match the hash, this function
+       * throws an error.
+       */
+      algorithm?: Password.AlgorithmLabel,
+    ): Promise<boolean>;
+    /**
+     * Asynchronously hash a password using argon2 or bcrypt. The default is argon2.
+     *
+     * @returns A promise that resolves to the hashed password
+     *
+     * ## Example with argon2
+     * ```ts
+     * import {password} from "bun";
+     * const hash = await password.hash("hello world");
+     * console.log(hash); // $argon2id$v=1...
+     * const verify = await password.verify("hello world", hash);
+     * ```
+     * ## Example with bcrypt
+     * ```ts
+     * import {password} from "bun";
+     * const hash = await password.hash("hello world", "bcrypt");
+     * console.log(hash); // $2b$10$...
+     * const verify = await password.verify("hello world", hash);
+     * ```
+     */
+    hash(
+      /**
+       * The password to hash
+       *
+       * If empty, this function throws an error. It is usually a programming
+       * mistake to hash an empty password.
+       */
+      password: StringOrBuffer,
+      /**
+       * @default "argon2id"
+       *
+       * When using bcrypt, passwords exceeding 72 characters will be SHA512'd before
+       */
+      algorithm?:
+        | Password.AlgorithmLabel
+        | Password.Argon2Algorithm
+        | Password.BCryptAlgorithm,
+    ): Promise<string>;
+
+    /**
+     * Synchronously hash and verify passwords using argon2 or bcrypt. The default is argon2.
+     * Warning: password hashing is slow, consider using {@link Bun.password.verify}
+     * instead which runs in a worker thread.
+     *
+     * The underlying implementation of these functions are provided by the Zig
+     * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+     * work on this.
+     *
+     * ### Example with argon2
+     *
+     * ```ts
+     * import {password} from "bun";
+     *
+     * const hash = await password.hashSync("hello world");
+     * const verify = await password.verifySync("hello world", hash);
+     * console.log(verify); // true
+     * ```
+     *
+     * ### Example with bcrypt
+     * ```ts
+     * import {password} from "bun";
+     *
+     * const hash = await password.hashSync("hello world", "bcrypt");
+     * // algorithm is optional, will be inferred from the hash if not specified
+     * const verify = await password.verifySync("hello world", hash, "bcrypt");
+     *
+     * console.log(verify); // true
+     * ```
+     */
+    verifySync(
+      password: StringOrBuffer,
+      hash: StringOrBuffer,
+      /**
+       * If not specified, the algorithm will be inferred from the hash.
+       */
+      algorithm?: Password.AlgorithmLabel,
+    ): boolean;
+
+    /**
+     * Synchronously hash and verify passwords using argon2 or bcrypt. The default is argon2.
+     * Warning: password hashing is slow, consider using {@link Bun.password.hash}
+     * instead which runs in a worker thread.
+     *
+     * The underlying implementation of these functions are provided by the Zig
+     * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+     * work on this.
+     *
+     * ### Example with argon2
+     *
+     * ```ts
+     * import {password} from "bun";
+     *
+     * const hash = await password.hashSync("hello world");
+     * const verify = await password.verifySync("hello world", hash);
+     * console.log(verify); // true
+     * ```
+     *
+     * ### Example with bcrypt
+     * ```ts
+     * import {password} from "bun";
+     *
+     * const hash = await password.hashSync("hello world", "bcrypt");
+     * // algorithm is optional, will be inferred from the hash if not specified
+     * const verify = await password.verifySync("hello world", hash, "bcrypt");
+     *
+     * console.log(verify); // true
+     * ```
+     */
+    hashSync(
+      /**
+       * The password to hash
+       *
+       * If empty, this function throws an error. It is usually a programming
+       * mistake to hash an empty password.
+       */
+      password: StringOrBuffer,
+      /**
+       * @default "argon2id"
+       *
+       * When using bcrypt, passwords exceeding 72 characters will be SHA256'd before
+       */
+      algorithm?:
+        | Password.AlgorithmLabel
+        | Password.Argon2Algorithm
+        | Password.BCryptAlgorithm,
+    ): string;
+  };
 
   interface BuildArtifact extends Blob {
     path: string;
@@ -1380,9 +1599,9 @@ declare module "bun" {
    * ```ts
    * import { websocket, serve } from "bun";
    *
-   * serve({
+   * serve<{name: string}>({
    *   port: 3000,
-   *   websocket: websocket<{name: string}>({
+   *   websocket: {
    *     open: (ws) => {
    *       console.log("Client connected");
    *    },
@@ -1392,10 +1611,11 @@ declare module "bun" {
    *     close: (ws) => {
    *       console.log("Client disconnected");
    *    },
-   *  }),
+   *  },
    *
    *   fetch(req, server) {
-   *     if (req.url === "/chat") {
+   *     const url = new URL(req.url);
+   *     if (url.pathname === "/chat") {
    *       const upgraded = server.upgrade(req, {
    *         data: {
    *           name: new URL(req.url).searchParams.get("name"),
@@ -1610,9 +1830,9 @@ declare module "bun" {
      *
      * @example
      * ```js
-     *import { serve, websocket } from "bun";
+     *import { serve } from "bun";
      *serve({
-     *  websocket: websocket({
+     *  websocket: {
      *    open: (ws) => {
      *      console.log("Client connected");
      *    },
@@ -1622,9 +1842,10 @@ declare module "bun" {
      *    close: (ws) => {
      *      console.log("Client disconnected");
      *    },
-     *  }),
+     *  },
      *  fetch(req, server) {
-     *    if (req.url === "/chat") {
+     *    const url = new URL(req.url);
+     *    if (url.pathname === "/chat") {
      *      const upgraded = server.upgrade(req);
      *      if (!upgraded) {
      *        return new Response("Upgrade failed", { status: 400 });
@@ -1840,9 +2061,9 @@ declare module "bun" {
      *
      * @example
      * ```js
-     * import { serve, websocket } from "bun";
+     * import { serve } from "bun";
      *  serve({
-     *    websocket: websocket({
+     *    websocket: {
      *      open: (ws) => {
      *        console.log("Client connected");
      *      },
@@ -1852,9 +2073,10 @@ declare module "bun" {
      *      close: (ws) => {
      *        console.log("Client disconnected");
      *      },
-     *    }),
+     *    },
      *    fetch(req, server) {
-     *      if (req.url === "/chat") {
+     *      const url = new URL(req.url);
+     *      if (url.pathname === "/chat") {
      *        const upgraded = server.upgrade(req);
      *        if (!upgraded) {
      *          return new Response("Upgrade failed", { status: 400 });
@@ -2765,7 +2987,7 @@ declare module "bun" {
      * ```
      */
     namespace?: string;
-    external: boolean;
+    external?: boolean;
   }
 
   type OnResolveCallback = (

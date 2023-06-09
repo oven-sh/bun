@@ -361,6 +361,17 @@ extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* g
     return true;
 }
 
+#define BUN_LAZY_GETTER_FN_NAME(GetterName) BunLazyGetter##GetterName##_getter
+
+#define DEFINE_BUN_LAZY_GETTER(GetterName, __propertyName)                                    \
+    JSC_DEFINE_CUSTOM_GETTER(GetterName,                                                      \
+        (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,            \
+            JSC::PropertyName))                                                               \
+    {                                                                                         \
+        Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject); \
+        return JSC::JSValue::encode(thisObject->__propertyName());                            \
+    }
+
 #define GENERATED_CONSTRUCTOR_GETTER(ConstructorName)                                         \
     JSC_DECLARE_CUSTOM_GETTER(ConstructorName##_getter);                                      \
     JSC_DEFINE_CUSTOM_GETTER(ConstructorName##_getter,                                        \
@@ -2492,6 +2503,7 @@ JSC::JSValue GlobalObject::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* le
 }
 
 extern "C" void Bun__remapStackFramePositions(JSC::JSGlobalObject*, ZigStackFrame*, size_t);
+extern "C" EncodedJSValue JSPasswordObject__create(JSC::JSGlobalObject*, bool);
 
 JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace);
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -2599,6 +2611,15 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(result.toObject(globalObject));
         });
 
+    m_lazyPasswordObject.initLater(
+        [](const Initializer<JSObject>& init) {
+            JSC::VM& vm = init.vm;
+            JSC::JSGlobalObject* globalObject = init.owner;
+
+            JSValue result = JSValue::decode(JSPasswordObject__create(globalObject, false));
+            init.set(result.toObject(globalObject));
+        });
+
     m_lazyPreloadTestModuleObject.initLater(
         [](const Initializer<JSObject>& init) {
             JSC::VM& vm = init.vm;
@@ -2619,7 +2640,7 @@ void GlobalObject::finishCreation(VM& vm)
             JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(
                 globalObject,
                 globalObject->objectPrototype(),
-                3);
+                5);
             JSC::PropertyOffset offset;
             auto& vm = globalObject->vm();
 
@@ -2634,6 +2655,20 @@ void GlobalObject::finishCreation(VM& vm)
                 vm,
                 structure,
                 JSC::Identifier::fromString(vm, "exports"_s),
+                0,
+                offset);
+
+            structure = structure->addPropertyTransition(
+                vm,
+                structure,
+                JSC::Identifier::fromString(vm, "__dirname"_s),
+                0,
+                offset);
+
+            structure = structure->addPropertyTransition(
+                vm,
+                structure,
+                JSC::Identifier::fromString(vm, "__filename"_s),
                 0,
                 offset);
 
@@ -3511,6 +3546,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 extern "C" void Crypto__randomUUID__put(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value);
 extern "C" void Crypto__getRandomValues__put(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value);
 
+DEFINE_BUN_LAZY_GETTER(BUN_LAZY_GETTER_FN_NAME(password), passwordObject)
+
 // This is not a publicly exposed API currently.
 // This is used by the bundler to make Response, Request, FetchEvent,
 // and any other objects available globally.
@@ -3567,6 +3604,13 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
             peekFunction->putDirect(vm, PropertyName(JSC::Identifier::fromString(vm, "status"_s)), peekStatus, JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
             object->putDirect(vm, PropertyName(identifier), JSValue(peekFunction),
                 JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        }
+
+        // TODO: code generate these
+        {
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "password"_s);
+            object->putDirectCustomAccessor(vm, identifier, JSC::CustomGetterSetter::create(vm, BUN_LAZY_GETTER_FN_NAME(password), nullptr),
+                JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         }
 
         {
@@ -3839,6 +3883,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_lazyTestModuleObject.visit(visitor);
     thisObject->m_lazyPreloadTestModuleObject.visit(visitor);
     thisObject->m_commonJSModuleObjectStructure.visit(visitor);
+    thisObject->m_lazyPasswordObject.visit(visitor);
     thisObject->m_commonJSFunctionArgumentsStructure.visit(visitor);
     thisObject->m_cachedGlobalObjectStructure.visit(visitor);
     thisObject->m_cachedGlobalProxyStructure.visit(visitor);
@@ -4080,7 +4125,6 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     JSModuleRecord* record,
     JSValue val)
 {
-
     JSC::VM& vm = globalObject->vm();
     JSC::JSString* keyString = key.toStringOrNull(globalObject);
     if (UNLIKELY(!keyString))
@@ -4094,7 +4138,6 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* globalObject,
     JSValue moduleRecordValue, JSValue scriptFetcher,
     JSValue sentValue, JSValue resumeMode)
 {
-
     if (UNLIKELY(scriptFetcher && scriptFetcher.isObject())) {
         return scriptFetcher;
     }

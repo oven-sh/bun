@@ -312,6 +312,18 @@ pub const SliceOrBuffer = union(Tag) {
     string: JSC.ZigString.Slice,
     buffer: Buffer,
 
+    pub fn ensureCloned(this: *SliceOrBuffer, allocator: std.mem.Allocator) !void {
+        if (this.* == .string) {
+            this.string = try this.string.cloneIfNeeded(allocator);
+            return;
+        }
+
+        const bytes = this.buffer.buffer.byteSlice();
+        this.* = .{
+            .string = JSC.ZigString.Slice.from(try allocator.dupe(u8, bytes), allocator),
+        };
+    }
+
     pub fn deinit(this: SliceOrBuffer) void {
         switch (this) {
             .string => {
@@ -1672,18 +1684,22 @@ pub const Path = struct {
         }
     }
     fn isAbsoluteString(path: JSC.ZigString, windows: bool) bool {
-        if (!windows) return path.len > 0 and path.slice()[0] == '/';
+        if (!windows) return path.hasPrefixChar('/');
 
         return isZigStringAbsoluteWindows(path);
     }
     pub fn isAbsolute(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
-        if (args_len == 0) return JSC.JSValue.jsBoolean(false);
-        var zig_str: JSC.ZigString = args_ptr[0].getZigString(globalThis);
-        if (zig_str.isEmpty()) return JSC.JSValue.jsBoolean(false);
-        return JSC.JSValue.jsBoolean(isAbsoluteString(zig_str, isWindows));
+        const arg = if (args_len > 0) args_ptr[0] else JSC.JSValue.undefined;
+        if (!arg.isString()) {
+            globalThis.throwInvalidArgumentType("isAbsolute", "path", "string");
+            return JSC.JSValue.undefined;
+        }
+        const zig_str = arg.getZigString(globalThis);
+        return JSC.JSValue.jsBoolean(zig_str.len > 0 and isAbsoluteString(zig_str, isWindows));
     }
     fn isZigStringAbsoluteWindows(zig_str: JSC.ZigString) bool {
+        std.debug.assert(zig_str.len > 0); // caller must check
         if (zig_str.is16Bit()) {
             var buf = [4]u16{ 0, 0, 0, 0 };
             var u16_slice = zig_str.utf16Slice();
@@ -1767,7 +1783,7 @@ pub const Path = struct {
         if (str_slice.isAllocated()) out_str.setOutputEncoding();
         return out_str.toValueGC(globalThis);
     }
-    pub fn parse(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
+    pub fn parse(globalThis: *JSC.JSGlobalObject, win32: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
         if (args_len == 0 or !args_ptr[0].jsType().isStringLike()) {
             return JSC.toInvalidArguments("path string is required", .{}, globalThis);
@@ -1775,17 +1791,22 @@ pub const Path = struct {
         var path_slice: JSC.ZigString.Slice = args_ptr[0].toSlice(globalThis, heap_allocator);
         defer path_slice.deinit();
         var path = path_slice.slice();
-        var path_name = Fs.PathName.init(path);
-        var root = JSC.ZigString.init(path_name.dir);
-        const is_absolute = (isWindows and isZigStringAbsoluteWindows(root)) or (!isWindows and path_name.dir.len > 0 and path_name.dir[0] == '/');
-
+        const path_name = Fs.NodeJSPathName.init(
+            path,
+            if (win32) std.fs.path.sep_windows else std.fs.path.sep_posix,
+        );
         var dir = JSC.ZigString.init(path_name.dir);
-        if (is_absolute) {
-            root = JSC.ZigString.Empty;
-            if (path_name.dir.len == 0)
-                dir = JSC.ZigString.init(if (isWindows) std.fs.path.sep_str_windows else std.fs.path.sep_str_posix);
-        }
+        const is_absolute = (win32 and dir.len > 0 and isZigStringAbsoluteWindows(dir)) or (!win32 and path.len > 0 and path[0] == '/');
 
+        // if its not absolute root must be empty
+        var root = JSC.ZigString.Empty;
+        if (is_absolute) {
+            root = JSC.ZigString.init(if (win32) std.fs.path.sep_str_windows else std.fs.path.sep_str_posix);
+            // if is absolute and dir is empty, then dir = root
+            if (path_name.dir.len == 0) {
+                dir = root;
+            }
+        }
         var base = JSC.ZigString.init(path_name.base);
         var name_ = JSC.ZigString.init(path_name.filename);
         var ext = JSC.ZigString.init(path_name.ext);

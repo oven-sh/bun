@@ -207,8 +207,14 @@ pub const BuildCommand = struct {
         this_bundler.options.jsx.development = !this_bundler.options.production;
         this_bundler.resolver.opts.jsx.development = this_bundler.options.jsx.development;
 
-        if (ctx.debug.macros) |macros| {
-            this_bundler.options.macro_remap = macros;
+        switch (ctx.debug.macros) {
+            .disable => {
+                this_bundler.options.no_macros = true;
+            },
+            .map => |macros| {
+                this_bundler.options.macro_remap = macros;
+            },
+            .unspecified => {},
         }
 
         // var env_loader = this_bundler.env;

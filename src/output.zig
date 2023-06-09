@@ -95,29 +95,32 @@ pub const Source = struct {
     }
 
     pub fn isNoColor() bool {
-        return bun.getenvZ("NO_COLOR") != null;
+        const no_color = bun.getenvZ("NO_COLOR") orelse return false;
+        // https://no-color.org/
+        // "when present and not an empty string (regardless of its value)"
+        return no_color.len != 0;
     }
 
-    pub fn isForceColor() ?bool {
-        const force_color_str = bun.getenvZ("FORCE_COLOR") orelse return null;
-        return force_color_str.len == 0 or
-            strings.eqlComptime(force_color_str, "TRUE") or
-            strings.eqlComptime(force_color_str, "ON") or
-            strings.eqlComptime(force_color_str, "YES") or
-            strings.eqlComptime(force_color_str, "1") or
-            strings.eqlComptime(force_color_str, " ");
+    pub fn isForceColor() bool {
+        const force_color = bun.getenvZ("FORCE_COLOR") orelse return false;
+        // Supported by Node.js, if set will ignore NO_COLOR.
+        // - "1", "true", or "" to indicate 16-color support
+        // - "2" to indicate 256-color support
+        // - "3" to indicate 16 million-color support
+        return force_color.len == 0 or
+            strings.eqlComptime(force_color, "1") or
+            strings.eqlComptime(force_color, "true") or
+            strings.eqlComptime(force_color, "2") or
+            strings.eqlComptime(force_color, "3");
     }
 
     pub fn isColorTerminal() bool {
-        if (isForceColor()) |val| return val;
-        if (bun.getenvZ("COLORTERM")) |color_term| return !strings.eqlComptime(color_term, "0");
-
-        if (bun.getenvZ("TERM")) |term| {
-            if (strings.eqlComptime(term, "dumb")) return false;
-
-            return true;
+        if (bun.getenvZ("COLORTERM")) |color_term| {
+            return !strings.eqlComptime(color_term, "0");
         }
-
+        if (bun.getenvZ("TERM")) |term| {
+            return !strings.eqlComptime(term, "dumb");
+        }
         return false;
     }
 
@@ -128,27 +131,26 @@ pub const Source = struct {
         if (!stdout_stream_set) {
             stdout_stream_set = true;
             if (comptime Environment.isNative) {
-                var is_color_terminal: ?bool = null;
-                if (_source.stream.isTty()) {
+                var enable_color: ?bool = null;
+                if (isForceColor()) {
+                    enable_color = true;
+                } else if (isNoColor() or !isColorTerminal()) {
+                    enable_color = false;
+                }
+
+                const is_stdout_tty = _source.stream.isTty();
+                if (is_stdout_tty) {
                     stdout_descriptor_type = OutputStreamDescriptor.terminal;
-                    enable_ansi_colors_stdout = isColorTerminal();
-                    is_color_terminal = enable_ansi_colors_stdout;
-                } else if (isForceColor()) |val| {
-                    enable_ansi_colors_stdout = val;
-                } else {
-                    enable_ansi_colors_stdout = false;
                 }
 
-                if (_source.error_stream.isTty()) {
+                const is_stderr_tty = _source.error_stream.isTty();
+                if (is_stderr_tty) {
                     stderr_descriptor_type = OutputStreamDescriptor.terminal;
-                    enable_ansi_colors_stderr = is_color_terminal orelse isColorTerminal();
-                } else if (isForceColor()) |val| {
-                    enable_ansi_colors_stderr = val;
-                } else {
-                    enable_ansi_colors_stderr = false;
                 }
 
-                enable_ansi_colors = enable_ansi_colors_stderr or enable_ansi_colors_stdout;
+                enable_ansi_colors_stdout = enable_color orelse is_stdout_tty;
+                enable_ansi_colors_stderr = enable_color orelse is_stderr_tty;
+                enable_ansi_colors = enable_ansi_colors_stdout or enable_ansi_colors_stderr;
             }
 
             stdout_stream = _source.stream;
@@ -168,12 +170,20 @@ pub var enable_ansi_colors = Environment.isNative;
 pub var enable_ansi_colors_stderr = Environment.isNative;
 pub var enable_ansi_colors_stdout = Environment.isNative;
 pub var enable_buffering = Environment.isNative;
+pub var is_github_action = false;
 
 pub var stderr_descriptor_type = OutputStreamDescriptor.unknown;
 pub var stdout_descriptor_type = OutputStreamDescriptor.unknown;
 
 pub inline fn isEmojiEnabled() bool {
     return enable_ansi_colors and !Environment.isWindows;
+}
+
+pub fn isGithubAction() bool {
+    if (bun.getenvZ("GITHUB_ACTIONS")) |value| {
+        return strings.eqlComptime(value, "true");
+    }
+    return false;
 }
 
 var _source_for_test: if (Environment.isTest) Output.Source else void = undefined;

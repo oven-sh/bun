@@ -2070,13 +2070,14 @@ fn NewLexer_(
                         lexer.step();
 
                         var has_set_flags_start = false;
-                        const min_flag = comptime std.mem.min(u8, "dgimsuy");
-                        const max_flag = comptime std.mem.max(u8, "dgimsuy");
+                        const flag_characters = "dgimsuvy";
+                        const min_flag = comptime std.mem.min(u8, flag_characters);
+                        const max_flag = comptime std.mem.max(u8, flag_characters);
                         const RegexpFlags = std.bit_set.IntegerBitSet((max_flag - min_flag) + 1);
                         var flags = RegexpFlags.initEmpty();
                         while (isIdentifierContinue(lexer.code_point)) {
                             switch (lexer.code_point) {
-                                'd', 'g', 'i', 'm', 's', 'u', 'y' => {
+                                'd', 'g', 'i', 'm', 's', 'u', 'y', 'v' => {
                                     if (!has_set_flags_start) {
                                         lexer.regex_flags_start = @truncate(u16, lexer.end - lexer.start);
                                         has_set_flags_start = true;
@@ -2640,7 +2641,7 @@ fn NewLexer_(
             // them. <CR><LF> and <CR> LineTerminatorSequences are normalized to
             // <LF> for both TV and TRV. An explicit EscapeSequence is needed to
             // include a <CR> or <CR><LF> sequence.
-            var bytes = MutableString.init(lexer.allocator, text.len) catch unreachable;
+            var bytes = MutableString.initCopy(lexer.allocator, text) catch @panic("Out of memory");
             var end: usize = 0;
             var i: usize = 0;
             var c: u8 = '0';
@@ -2662,7 +2663,7 @@ fn NewLexer_(
                 end += 1;
             }
 
-            return bytes.toOwnedSliceLength(end + 1);
+            return bytes.toOwnedSliceLength(end);
         }
 
         fn parseNumericLiteralOrDot(lexer: *LexerType) !void {

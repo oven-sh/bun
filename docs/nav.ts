@@ -169,6 +169,9 @@ export default {
     page("bundler/executables", "Executables", {
       description: "Compile a TypeScript or JavaScript file to a standalone cross-platform executable",
     }),
+    page("bundler/macros", "Macros", {
+      description: `Run JavaScript functions at bundle-time and inline the results into your bundle`,
+    }),
     page("bundler/vs-esbuild", "vs esbuild", {
       description: `Guides for migrating from other bundlers to Bun.`,
     }),

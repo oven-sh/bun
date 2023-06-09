@@ -14,10 +14,34 @@ If both a global and local `bunfig` are detected, the results are shallow-merged
 
 ## Environment variables
 
-<!-- - `GOMAXPROCS`: For `bun bun`, this sets the maximum number of threads to use. If you’re experiencing an issue with `bun bun`, try setting `GOMAXPROCS=1` to force Bun to run single-threaded -->
+These environment variables are checked by Bun to detect functionality and toggle features.
 
-- `DISABLE_BUN_ANALYTICS=1` this disables Bun's analytics. Bun records bundle timings (so we can answer with data, "is Bun getting faster?") and feature usage (e.g., "are people actually using macros?"). The request body size is about 60 bytes, so it’s not a lot of data
-- `TMPDIR`: Bun occasionally requires a directory to store intermediate assets during bundling or other operations. If unset, `TMPDIR` defaults to the platform-specific temporary directory (on Linux, `/tmp` and on macOS `/private/tmp`).
+{% table %}
+
+- Name
+- Description
+
+---
+
+- `TMPDIR`
+- Bun occasionally requires a directory to store intermediate assets during bundling or other operations. If unset, defaults to the platform-specific temporary directory: `/tmp` on Linux, `/private/tmp` on macOS.
+
+---
+
+- `NO_COLOR`
+- If `NO_COLOR=1`, then ANSI color output is [disabled](https://no-color.org/).
+
+---
+
+- `FORCE_COLOR`
+- If `FORCE_COLOR=1`, then ANSI color output is force enabled, even if `NO_COLOR` is set.
+
+---
+
+- `DO_NOT_TRACK`
+- If `DO_NOT_TRACK=1`, then analytics are [disabled](https://do-not-track.dev/). Bun records bundle timings (so we can answer with data, "is Bun getting faster?") and feature usage (e.g., "are people actually using macros?"). The request body size is about 60 bytes, so it's not a lot of data.
+
+{% /table %}
 
 ## Runtime
 
@@ -38,13 +62,6 @@ logLevel = "debug"
 
 # publicDir = "public"
 # external = ["jquery"]
-
-[macros]
-# Remap any import like this:
-#     import {graphql} from 'react-relay';
-# To:
-#     import {graphql} from 'macro:bun-macro-relay';
-react-relay = { "graphql" = "bun-macro-relay" }
 
 [define]
 # Replace any usage of "process.env.bagel" with the string `lox`.

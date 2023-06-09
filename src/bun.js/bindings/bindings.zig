@@ -88,9 +88,10 @@ pub const JSObject = extern struct {
 };
 
 pub const ZigString = extern struct {
-    // TODO: align this to align(2)
-    // That would improve perf a bit
-    ptr: [*]const u8,
+    /// This can be a UTF-16, Latin1, or UTF-8 string.
+    /// The pointer itself is tagged, so it cannot be used without untagging it first
+    /// Accessing it directly is unsafe.
+    _unsafe_ptr_do_not_use: [*]const u8,
     len: usize,
 
     pub const ByteString = union(enum) {
@@ -160,6 +161,22 @@ pub const ZigString = extern struct {
         };
     }
 
+    pub fn indexOfAny(this: ZigString, comptime chars: []const u8) ?strings.OptionalUsize {
+        if (this.is16Bit()) {
+            return strings.indexOfAny16(this.utf16SliceAligned(), chars);
+        } else {
+            return strings.indexOfAny(this.slice(), chars);
+        }
+    }
+
+    pub fn charAt(this: ZigString, offset: usize) u8 {
+        if (this.is16Bit()) {
+            return @truncate(u8, this.utf16SliceAligned()[offset]);
+        } else {
+            return @truncate(u8, this.slice()[offset]);
+        }
+    }
+
     pub fn eql(this: ZigString, other: ZigString) bool {
         if (this.len == 0 or other.len == 0)
             return this.len == other.len;
@@ -225,14 +242,7 @@ pub const ZigString = extern struct {
         return this.slice()[0] == char;
     }
 
-    pub fn substring(this: ZigString, offset: usize, maxlen: usize) ZigString {
-        var len: usize = undefined;
-        if (maxlen == 0) {
-            len = this.len;
-        } else {
-            len = @max(this.len, maxlen);
-        }
-
+    pub fn substringWithLen(this: ZigString, offset: usize, len: usize) ZigString {
         if (this.is16Bit()) {
             return ZigString.from16Slice(this.utf16SliceAligned()[@min(this.len, offset)..len]);
         }
@@ -247,6 +257,17 @@ pub const ZigString = extern struct {
         }
 
         return out;
+    }
+
+    pub fn substring(this: ZigString, offset: usize, maxlen: usize) ZigString {
+        var len: usize = undefined;
+        if (maxlen == 0) {
+            len = this.len;
+        } else {
+            len = @max(this.len, maxlen);
+        }
+
+        return this.substringWithLen(offset, len);
     }
 
     pub fn maxUTF8ByteLength(this: ZigString) usize {
@@ -307,7 +328,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn trunc(this: ZigString, len: usize) ZigString {
-        return .{ .ptr = this.ptr, .len = @min(len, this.len) };
+        return .{ ._unsafe_ptr_do_not_use = this._unsafe_ptr_do_not_use, .len = @min(len, this.len) };
     }
 
     pub fn eqlComptime(this: ZigString, comptime other: []const u8) bool {
@@ -428,7 +449,7 @@ pub const ZigString = extern struct {
     pub const namespace = "";
 
     pub inline fn is16Bit(this: *const ZigString) bool {
-        return (@ptrToInt(this.ptr) & (1 << 63)) != 0;
+        return (@ptrToInt(this._unsafe_ptr_do_not_use) & (1 << 63)) != 0;
     }
 
     pub inline fn utf16Slice(this: *const ZigString) []align(1) const u16 {
@@ -438,7 +459,7 @@ pub const ZigString = extern struct {
             }
         }
 
-        return @ptrCast([*]align(1) const u16, untagged(this.ptr))[0..this.len];
+        return @ptrCast([*]align(1) const u16, untagged(this._unsafe_ptr_do_not_use))[0..this.len];
     }
 
     pub inline fn utf16SliceAligned(this: *const ZigString) []const u16 {
@@ -448,7 +469,7 @@ pub const ZigString = extern struct {
             }
         }
 
-        return @ptrCast([*]const u16, @alignCast(@alignOf(u16), untagged(this.ptr)))[0..this.len];
+        return @ptrCast([*]const u16, @alignCast(@alignOf(u16), untagged(this._unsafe_ptr_do_not_use)))[0..this.len];
     }
 
     pub inline fn isEmpty(this: *const ZigString) bool {
@@ -458,7 +479,7 @@ pub const ZigString = extern struct {
     pub fn fromStringPointer(ptr: StringPointer, buf: string, to: *ZigString) void {
         to.* = ZigString{
             .len = ptr.length,
-            .ptr = buf[ptr.offset..][0..ptr.length].ptr,
+            ._unsafe_ptr_do_not_use = buf[ptr.offset..][0..ptr.length].ptr,
         };
     }
 
@@ -479,7 +500,7 @@ pub const ZigString = extern struct {
     }
 
     pub inline fn init(slice_: []const u8) ZigString {
-        return ZigString{ .ptr = slice_.ptr, .len = slice_.len };
+        return ZigString{ ._unsafe_ptr_do_not_use = slice_.ptr, .len = slice_.len };
     }
 
     pub fn initUTF8(slice_: []const u8) ZigString {
@@ -498,10 +519,24 @@ pub const ZigString = extern struct {
 
     pub fn static(comptime slice_: []const u8) *const ZigString {
         const Holder = struct {
-            pub const value = ZigString{ .ptr = slice_.ptr, .len = slice_.len };
+            pub const value = ZigString{ ._unsafe_ptr_do_not_use = slice_.ptr, .len = slice_.len };
         };
 
         return &Holder.value;
+    }
+
+    pub const GithubActionFormatter = struct {
+        text: ZigString,
+
+        pub fn format(this: GithubActionFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            var bytes = this.text.toSlice(bun.default_allocator);
+            defer bytes.deinit();
+            try strings.githubActionWriter(writer, bytes.slice());
+        }
+    };
+
+    pub fn githubAction(this: ZigString) GithubActionFormatter {
+        return GithubActionFormatter{ .text = this };
     }
 
     pub fn toAtomicValue(this: *const ZigString, globalThis: *JSC.JSGlobalObject) JSValue {
@@ -509,7 +544,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn init16(slice_: []const u16) ZigString {
-        var out = ZigString{ .ptr = std.mem.sliceAsBytes(slice_).ptr, .len = slice_.len };
+        var out = ZigString{ ._unsafe_ptr_do_not_use = std.mem.sliceAsBytes(slice_).ptr, .len = slice_.len };
         out.markUTF16();
         return out;
     }
@@ -551,15 +586,15 @@ pub const ZigString = extern struct {
     }
 
     pub fn isUTF8(this: ZigString) bool {
-        return (@ptrToInt(this.ptr) & (1 << 61)) != 0;
+        return (@ptrToInt(this._unsafe_ptr_do_not_use) & (1 << 61)) != 0;
     }
 
     pub fn markUTF8(this: *ZigString) void {
-        this.ptr = @intToPtr([*]const u8, @ptrToInt(this.ptr) | (1 << 61));
+        this._unsafe_ptr_do_not_use = @intToPtr([*]const u8, @ptrToInt(this._unsafe_ptr_do_not_use) | (1 << 61));
     }
 
     pub fn markUTF16(this: *ZigString) void {
-        this.ptr = @intToPtr([*]const u8, @ptrToInt(this.ptr) | (1 << 63));
+        this._unsafe_ptr_do_not_use = @intToPtr([*]const u8, @ptrToInt(this._unsafe_ptr_do_not_use) | (1 << 63));
     }
 
     pub fn setOutputEncoding(this: *ZigString) void {
@@ -568,7 +603,7 @@ pub const ZigString = extern struct {
     }
 
     pub inline fn isGloballyAllocated(this: ZigString) bool {
-        return (@ptrToInt(this.ptr) & (1 << 62)) != 0;
+        return (@ptrToInt(this._unsafe_ptr_do_not_use) & (1 << 62)) != 0;
     }
 
     pub inline fn deinitGlobal(this: ZigString) void {
@@ -578,7 +613,7 @@ pub const ZigString = extern struct {
     pub const mark = markGlobal;
 
     pub inline fn markGlobal(this: *ZigString) void {
-        this.ptr = @intToPtr([*]const u8, @ptrToInt(this.ptr) | (1 << 62));
+        this._unsafe_ptr_do_not_use = @intToPtr([*]const u8, @ptrToInt(this._unsafe_ptr_do_not_use) | (1 << 62));
     }
 
     pub fn format(self: ZigString, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -599,7 +634,7 @@ pub const ZigString = extern struct {
         return init(slice_).toValue(global).asRef();
     }
 
-    pub const Empty = ZigString{ .ptr = "", .len = 0 };
+    pub const Empty = ZigString{ ._unsafe_ptr_do_not_use = "", .len = 0 };
 
     inline fn untagged(ptr: [*]const u8) [*]const u8 {
         // this can be null ptr, so long as it's also a 0 length string
@@ -614,7 +649,7 @@ pub const ZigString = extern struct {
             }
         }
 
-        return untagged(this.ptr)[0..@min(this.len, std.math.maxInt(u32))];
+        return untagged(this._unsafe_ptr_do_not_use)[0..@min(this.len, std.math.maxInt(u32))];
     }
 
     pub fn dupe(this: ZigString, allocator: std.mem.Allocator) ![]const u8 {
@@ -634,7 +669,7 @@ pub const ZigString = extern struct {
         }
 
         return Slice{
-            .ptr = untagged(this.ptr),
+            .ptr = untagged(this._unsafe_ptr_do_not_use),
             .len = @truncate(u32, this.len),
         };
     }
@@ -653,7 +688,7 @@ pub const ZigString = extern struct {
             };
         }
 
-        if (!this.isUTF8() and !strings.isAllASCII(untagged(this.ptr)[0..this.len])) {
+        if (!this.isUTF8() and !strings.isAllASCII(untagged(this._unsafe_ptr_do_not_use)[0..this.len])) {
             const buffer = this.toOwnedSlice(allocator) catch unreachable;
             return Slice{
                 .allocator = NullableAllocator.init(allocator),
@@ -663,7 +698,7 @@ pub const ZigString = extern struct {
         }
 
         return Slice{
-            .ptr = untagged(this.ptr),
+            .ptr = untagged(this._unsafe_ptr_do_not_use),
             .len = @truncate(u32, this.len),
         };
     }
@@ -693,7 +728,7 @@ pub const ZigString = extern struct {
         }
 
         return Slice{
-            .ptr = untagged(this.ptr),
+            .ptr = untagged(this._unsafe_ptr_do_not_use),
             .len = @truncate(u32, this.len),
         };
     }
@@ -703,7 +738,7 @@ pub const ZigString = extern struct {
     }
 
     pub inline fn full(this: *const ZigString) []const u8 {
-        return untagged(this.ptr)[0..this.len];
+        return untagged(this._unsafe_ptr_do_not_use)[0..this.len];
     }
 
     pub fn trimmedSlice(this: *const ZigString) []const u8 {
@@ -728,7 +763,9 @@ pub const ZigString = extern struct {
 
     inline fn assertGlobal(this: *const ZigString) void {
         if (comptime bun.Environment.allow_assert) {
-            std.debug.assert(this.len == 0 or bun.Mimalloc.mi_is_in_heap_region(untagged(this.ptr)) or bun.Mimalloc.mi_check_owned(untagged(this.ptr)));
+            std.debug.assert(this.len == 0 or
+                bun.Mimalloc.mi_is_in_heap_region(untagged(this._unsafe_ptr_do_not_use)) or
+                bun.Mimalloc.mi_check_owned(untagged(this._unsafe_ptr_do_not_use)));
         }
     }
 
@@ -780,9 +817,9 @@ pub const ZigString = extern struct {
         }
 
         return if (this.is16Bit())
-            C_API.JSStringCreateWithCharactersNoCopy(@ptrCast([*]const u16, @alignCast(@alignOf([*]const u16), untagged(this.ptr))), this.len)
+            C_API.JSStringCreateWithCharactersNoCopy(@ptrCast([*]const u16, @alignCast(@alignOf([*]const u16), untagged(this._unsafe_ptr_do_not_use))), this.len)
         else
-            C_API.JSStringCreateStatic(untagged(this.ptr), this.len);
+            C_API.JSStringCreateStatic(untagged(this._unsafe_ptr_do_not_use), this.len);
     }
 
     pub fn toErrorInstance(this: *const ZigString, global: *JSGlobalObject) JSValue {
@@ -2648,7 +2685,7 @@ pub const JSGlobalObject = extern struct {
         str.markUTF8();
         var err_value = str.toErrorInstance(this);
         this.vm().throwError(this, err_value);
-        this.bunVM().allocator.free(ZigString.untagged(str.ptr)[0..str.len]);
+        this.bunVM().allocator.free(ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
     }
 
     pub fn handleError(
@@ -3404,6 +3441,10 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn isRegExp(this: JSValue) bool {
         return this.jsType() == .RegExpObject;
+    }
+
+    pub fn isDate(this: JSValue) bool {
+        return this.jsType() == .JSDate;
     }
 
     pub fn asCheckLoaded(value: JSValue, comptime ZigType: type) ?*ZigType {

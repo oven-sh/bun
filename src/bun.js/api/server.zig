@@ -136,6 +136,8 @@ pub const ServerConfig = struct {
 
     websocket: ?WebSocketServer = null,
 
+    inspector: bool = false,
+
     pub const SSLConfig = struct {
         server_name: [*c]const u8 = null,
 
@@ -741,7 +743,19 @@ pub const ServerConfig = struct {
             }
 
             if (arg.get(global, "development")) |dev| {
-                args.development = dev.toBoolean();
+                args.development = dev.coerce(bool, global);
+            }
+
+            if (arg.get(global, "inspector")) |inspector| {
+                args.inspector = inspector.coerce(bool, global);
+
+                if (args.inspector and !args.development) {
+                    JSC.throwInvalidArguments("Cannot enable inspector in production. Please set development: true in Bun.serve()", .{}, global, exception);
+                    if (args.ssl_config) |*conf| {
+                        conf.deinit();
+                    }
+                    return args;
+                }
             }
 
             if (arg.getTruthy(global, "tls")) |tls| {
@@ -5239,6 +5253,11 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
             if (comptime debug_mode) {
                 this.app.get("/bun:info", *ThisServer, this, onBunInfoRequest);
+                if (this.config.inspector) {
+                    JSC.markBinding(@src());
+                    Bun__addInspector(ssl_enabled, this.app, this.globalThis);
+                }
+
                 this.app.get("/src:/*", *ThisServer, this, onSrcRequest);
             }
 
@@ -5290,3 +5309,5 @@ pub const AnyServer = union(enum) {
 };
 
 const welcome_page_html_gz = @embedFile("welcome-page.html.gz");
+
+extern fn Bun__addInspector(bool, *anyopaque, *JSC.JSGlobalObject) void;

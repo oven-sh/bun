@@ -37,9 +37,10 @@ describe("bundler", () => {
         if (res.status !== 200) throw "fail from server";
         if (await res.text() !== "Hello world") throw "fail from server";
         server.stop();
+        console.log("ok");
       `,
     },
-    run: true,
+    run: { stdout: "ok" },
   });
   itBundled("compile/ReactSSR", {
     install: ["react@next", "react-dom@next"],

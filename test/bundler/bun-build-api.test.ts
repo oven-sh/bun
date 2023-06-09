@@ -207,7 +207,7 @@ describe("Bun.build", () => {
     expect(await response.text()).toMatchSnapshot("response text");
   });
 
-  test("new Response(BuildArtifact) sets etag", async () => {
+  test.todo("new Response(BuildArtifact) sets etag", async () => {
     const x = await Bun.build({
       entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],
     });

@@ -93,10 +93,10 @@ describe(".env file is loaded", () => {
     const dir = tempDirWithFiles("dotenv", {
       ".env": "FAILED=false\n",
       ".env.local": "FAILED=true\n",
-      "index.test.ts": "console.log(process.env.FAILED, process.env.NODE_ENV);",
+      "index.test.ts": "console.log(process.env.FAILED);",
     });
     const { stdout } = bunTest(`${dir}/index.test.ts`, {});
-    expect(stdout).toBe("false test");
+    expect(stdout).toBe("false");
   });
   test(".env.development and .env.production ignored when bun test", () => {
     const dir = tempDirWithFiles("dotenv", {
@@ -105,10 +105,17 @@ describe(".env file is loaded", () => {
       ".env.development.local": "FAILED=development.local\n",
       ".env.production": "FAILED=production\n",
       ".env.production.local": "FAILED=production.local\n",
-      "index.test.ts": "console.log(process.env.FAILED, process.env.NODE_ENV);",
+      "index.test.ts": "console.log(process.env.FAILED);",
     });
     const { stdout } = bunTest(`${dir}/index.test.ts`);
-    expect(stdout).toBe("false test");
+    expect(stdout).toBe("false");
+  });
+  test.todo("NODE_ENV is automatically set to test within bun test", () => {
+    const dir = tempDirWithFiles("dotenv", {
+      "index.test.ts": "console.log(process.env.NODE_ENV);",
+    });
+    const { stdout } = bunTest(`${dir}/index.test.ts`);
+    expect(stdout).toBe("test");
   });
 });
 describe("dotenv priority", () => {

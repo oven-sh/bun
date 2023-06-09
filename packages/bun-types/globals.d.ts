@@ -187,6 +187,7 @@ declare namespace NodeJS {
     (id: string): any;
     resolve: RequireResolve;
   }
+  interface ProcessEnv {}
   type Signals =
     | "SIGABRT"
     | "SIGALRM"
@@ -367,7 +368,7 @@ interface Process {
   platform: Platform;
   argv: string[];
   execArgv: string[];
-  env: Bun.Env;
+  env: import("bun").Env;
 
   /** Whether you are using Bun */
   isBun: 1; // FIXME: this should actually return a boolean

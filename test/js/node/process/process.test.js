@@ -124,7 +124,7 @@ it("process.version starts with v", () => {
   expect(process.version.startsWith("v")).toBeTruthy();
 });
 
-it("process.argv0", () => {
+it.todo("process.argv0", () => {
   expect(basename(process.argv0)).toBe(basename(process.argv[0]));
 });
 

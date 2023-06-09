@@ -55,7 +55,7 @@ describe("bundler", () => {
     target: "bun",
   });
   itBundled("minify/FunctionExpressionRemoveName", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         capture(function remove() {});

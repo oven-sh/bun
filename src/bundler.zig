@@ -532,8 +532,9 @@ pub const Bundler = struct {
             else => {},
         }
 
-        if (this.env.map.get("DISABLE_BUN_ANALYTICS")) |should_disable| {
-            if (strings.eqlComptime(should_disable, "1")) {
+        if (this.env.map.get("DO_NOT_TRACK")) |dnt| {
+            // https://do-not-track.dev/
+            if (strings.eqlComptime(dnt, "1")) {
                 Analytics.disabled = true;
             }
         }
@@ -1388,6 +1389,7 @@ pub const Bundler = struct {
                 opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
                 opts.features.should_fold_typescript_constant_expressions = loader.isTypeScript() or target.isBun() or bundler.options.minify_syntax;
                 opts.features.dynamic_require = target.isBun();
+                opts.features.no_macros = bundler.options.no_macros;
                 opts.transform_only = bundler.options.transform_only;
 
                 // @bun annotation

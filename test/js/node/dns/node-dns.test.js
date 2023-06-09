@@ -57,7 +57,10 @@ test("dns.resolveSoa (bun.sh)", done => {
     expect(result.refresh).toBe(10000);
     expect(result.retry).toBe(2400);
     expect(result.expire).toBe(604800);
-    expect(result.minttl).toBe(3600);
+
+    // Cloudflare might randomly change min TTL
+    expect(result.minttl).toBeNumber();
+
     expect(result.nsname).toBe("hans.ns.cloudflare.com");
     expect(result.hostmaster).toBe("dns.cloudflare.com");
     done(err);

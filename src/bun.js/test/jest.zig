@@ -68,6 +68,7 @@ pub const TestRunner = struct {
     only: bool = false,
     run_todo: bool = false,
     last_file: u64 = 0,
+    bail: u32 = 0,
 
     allocator: std.mem.Allocator,
     callback: *Callback = undefined,

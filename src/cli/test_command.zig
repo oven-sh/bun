@@ -81,6 +81,7 @@ pub const CommandLineReporter = struct {
     summary: Summary = Summary{},
     prev_file: u64 = 0,
     repeat_count: u32 = 1,
+    start_time: i128 = 0,
 
     failures_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
     skips_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
@@ -200,6 +201,14 @@ pub const CommandLineReporter = struct {
         this.summary.fail += 1;
         this.summary.expectations += expectations;
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.fail;
+
+        if (this.jest.bail == this.summary.fail) {
+            const runned_tests = this.summary.fail + this.summary.pass + this.summary.skip + this.summary.todo;
+            Output.prettyError("Ran {d} tests across {d} files. ", .{ runned_tests, this.jest.files.len });
+            Output.printStartEnd(this.start_time, std.time.nanoTimestamp());
+            Output.prettyError("\nBailed out after {d} failures<r>\n", .{this.jest.bail});
+            Global.exit(1);
+        }
     }
 
     pub fn handleTestSkip(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
@@ -434,21 +443,14 @@ pub const TestCommand = struct {
 
         var reporter = try ctx.allocator.create(CommandLineReporter);
         reporter.* = CommandLineReporter{
-            .jest = TestRunner{
+            .jest = TestRunner{ .allocator = ctx.allocator, .log = ctx.log, .callback = undefined, .default_timeout_ms = ctx.test_options.default_timeout_ms, .run_todo = ctx.test_options.run_todo, .only = ctx.test_options.only, .bail = ctx.test_options.bail, .snapshots = Snapshots{
                 .allocator = ctx.allocator,
-                .log = ctx.log,
-                .callback = undefined,
-                .default_timeout_ms = ctx.test_options.default_timeout_ms,
-                .run_todo = ctx.test_options.run_todo,
-                .only = ctx.test_options.only,
-                .snapshots = Snapshots{
-                    .allocator = ctx.allocator,
-                    .update_snapshots = ctx.test_options.update_snapshots,
-                    .file_buf = &snapshot_file_buf,
-                    .values = &snapshot_values,
-                    .counts = &snapshot_counts,
-                },
-            },
+                .update_snapshots = ctx.test_options.update_snapshots,
+                .file_buf = &snapshot_file_buf,
+                .values = &snapshot_values,
+                .counts = &snapshot_counts,
+            } },
+            .start_time = ctx.start_time,
             .callback = undefined,
         };
         reporter.callback = TestRunner.Callback{

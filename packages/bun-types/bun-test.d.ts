@@ -16,6 +16,49 @@
 
 declare module "bun:test" {
   /**
+   * -- Mocks --
+   */
+  export type Mock<T extends (...args: any[]) => any> = T & {
+    mockImplementation(fn: T): Mock<T>;
+    mockImplementationOnce(fn: T): Mock<T>;
+    mockReset(): void;
+    mockRestore(): void;
+    mockReturnValue(value: ReturnType<T>): Mock<T>;
+    mockReturnValueOnce(value: ReturnType<T>): Mock<T>;
+    mockResolvedValue(value: ReturnType<T>): Mock<T>;
+    mockResolvedValueOnce(value: ReturnType<T>): Mock<T>;
+    mockRejectedValue(value: ReturnType<T>): Mock<T>;
+    mockRejectedValueOnce(value: ReturnType<T>): Mock<T>;
+    mockName(name: string): Mock<T>;
+    mockClear(): void;
+    mock: {
+      calls: any[][];
+      instances: any[];
+      results: Array<{ type: "return" | "throw"; value: any }>;
+      contexts: any[];
+    };
+
+    (...args: Parameters<T>): ReturnType<T>;
+  };
+
+  export const mock: {
+    mockImplementation<T>(fn: T): Mock<T>;
+    mockImplementationOnce<T>(fn: T): Mock<T>;
+    mockReturnValue<T>(value: ReturnType<T>): Mock<T>;
+    mockReturnValueOnce<T>(value: ReturnType<T>): Mock<T>;
+    mockResolvedValue<T>(value: ReturnType<T>): Mock<T>;
+    mockResolvedValueOnce<T>(value: ReturnType<T>): Mock<T>;
+    mockRejectedValue<T>(value: ReturnType<T>): Mock<T>;
+    mockRejectedValueOnce<T>(value: ReturnType<T>): Mock<T>;
+    <T extends CallableFunction>(Function: T): Mock<T>;
+  };
+
+  export function spyOn<T extends object, K extends keyof T>(
+    obj: T,
+    methodOrPropertyValue: K,
+  ): Mock<T[K]>;
+
+  /**
    * Describes a group of related tests.
    *
    * @example

@@ -599,7 +599,7 @@ pub const Jest = struct {
     pub fn Bun__Jest__createTestModuleObject(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
 
-        const module = JSC.JSValue.createEmptyObject(globalObject, 7);
+        const module = JSC.JSValue.createEmptyObject(globalObject, 11);
 
         const test_fn = JSC.NewFunction(globalObject, ZigString.static("test"), 2, TestScope.call, false);
         module.put(
@@ -698,15 +698,20 @@ pub const Jest = struct {
         );
 
         const mock_object = JSMockFunction__createObject(globalObject);
+        const spyOn = JSC.NewFunction(globalObject, ZigString.static("spyOn"), 2, JSMock__spyOn, false);
+        const restoreAllMocks = JSC.NewFunction(globalObject, ZigString.static("restoreAllMocks"), 2, jsFunctionResetSpies, false);
         module.put(
             globalObject,
             ZigString.static("mock"),
             mock_object,
         );
 
-        const jest = JSValue.createEmptyObject(globalObject, 1);
+        const jest = JSValue.createEmptyObject(globalObject, 3);
         jest.put(globalObject, ZigString.static("fn"), mock_object);
+        jest.put(globalObject, ZigString.static("spyOn"), spyOn);
+        jest.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
         module.put(globalObject, ZigString.static("jest"), jest);
+        module.put(globalObject, ZigString.static("spyOn"), spyOn);
 
         return module;
     }
@@ -715,6 +720,8 @@ pub const Jest = struct {
 
     extern fn Bun__Jest__testPreloadObject(*JSC.JSGlobalObject) JSC.JSValue;
     extern fn Bun__Jest__testModuleObject(*JSC.JSGlobalObject) JSC.JSValue;
+    extern fn jsFunctionResetSpies(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
+    extern fn JSMock__spyOn(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
 
     pub fn call(
         _: void,
@@ -3862,6 +3869,15 @@ pub const Expect = struct {
         if (not) {
             const signature = comptime getSignature("toHaveBeenCalled", "<green>expected<r>", true);
             const fmt = signature ++ "\n\nExpected: not <green>{any}<r>\n";
+            if (Output.enable_ansi_colors) {
+                globalObject.throw(Output.prettyFmt(fmt, true), .{calls.toFmt(globalObject, &formatter)});
+                return .zero;
+            }
+            globalObject.throw(Output.prettyFmt(fmt, false), .{calls.toFmt(globalObject, &formatter)});
+            return .zero;
+        } else {
+            const signature = comptime getSignature("toHaveBeenCalled", "<green>expected<r>", true);
+            const fmt = signature ++ "\n\nExpected <green>{any}<r>\n";
             if (Output.enable_ansi_colors) {
                 globalObject.throw(Output.prettyFmt(fmt, true), .{calls.toFmt(globalObject, &formatter)});
                 return .zero;

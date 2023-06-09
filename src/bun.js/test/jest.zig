@@ -3893,7 +3893,7 @@ pub const Expect = struct {
 
         const times = arguments[0].coerce(i32, globalObject);
 
-        var pass = @intCast(i32, calls.getLength(globalObject)) >= times;
+        var pass = @intCast(i32, calls.getLength(globalObject)) == times;
 
         const not = this.op.contains(.not);
         if (not) pass = !pass;

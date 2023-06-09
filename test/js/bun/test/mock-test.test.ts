@@ -112,6 +112,10 @@ test("spyOn on object doens't crash if object GC'd", () => {
   jest.restoreAllMocks();
 });
 
+declare global {
+  var original: number;
+}
+
 test("spyOn works on globalThis", () => {
   var obj = globalThis;
   obj.original = 42;

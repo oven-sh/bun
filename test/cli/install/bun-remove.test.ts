@@ -1,21 +1,10 @@
 import { bunExe, bunEnv as env } from "harness";
-import { access, mkdir, mkdtemp, readlink, realpath, rm, writeFile } from "fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "fs/promises";
 import { join, relative } from "path";
 import { tmpdir } from "os";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import {
-  dummyAfterAll,
-  dummyAfterEach,
-  dummyBeforeAll,
-  dummyBeforeEach,
-  dummyRegistry,
-  package_dir,
-  readdirSorted,
-  requested,
-  root_url,
-  setHandler,
-} from "./dummy.registry";
-import { spawn, write } from "bun";
+import { dummyAfterAll, dummyAfterEach, dummyBeforeAll, dummyBeforeEach, package_dir } from "./dummy.registry";
+import { spawn } from "bun";
 import { file } from "bun";
 
 beforeAll(dummyBeforeAll);
@@ -65,12 +54,18 @@ it("should remove existing package", async () => {
   const { exited: exited1 } = spawn({
     cmd: [bunExe(), "add", `file:${pkg1_path}`],
     cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
     env,
   });
   expect(await exited1).toBe(0);
   const { exited: exited2 } = spawn({
     cmd: [bunExe(), "add", `file:${pkg2_path}`],
     cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
     env,
   });
   expect(await exited2).toBe(0);
@@ -182,6 +177,9 @@ it("should reject missing package", async () => {
   const { exited: addExited } = spawn({
     cmd: [bunExe(), "add", `file:${pkg_path}`],
     cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
     env,
   });
   expect(await addExited).toBe(0);
@@ -257,6 +255,9 @@ it("should retain a new line in the end of package.json", async () => {
   const { exited: addExited } = spawn({
     cmd: [bunExe(), "add", `file:${pkg_path}`],
     cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
     env,
   });
   expect(await addExited).toBe(0);

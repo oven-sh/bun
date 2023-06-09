@@ -25,14 +25,6 @@ declare module "bun:test" {
   }
 
   export const mock: {
-    // mockImplementation<T extends AnyFunction>(fn: T): Mock<T>;
-    // mockImplementationOnce<T extends AnyFunction>(fn: T): Mock<T>;
-    // mockReturnValue<T extends AnyFunction>(value: ReturnType<T>): Mock<T>;
-    // mockReturnValueOnce<T extends AnyFunction>(value: ReturnType<T>): Mock<T>;
-    // mockResolvedValue<T extends AnyFunction>(value: ReturnType<T>): Mock<T>;
-    // mockResolvedValueOnce<T extends AnyFunction>(value: ReturnType<T>): Mock<T>;
-    // mockRejectedValue<T extends AnyFunction>(value: ReturnType<T>): Mock<T>;
-    // mockRejectedValueOnce<T extends AnyFunction>(value: ReturnType<T>): Mock<T>;
     <T extends AnyFunction>(Function: T): Mock<T>;
   };
 

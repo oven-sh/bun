@@ -348,7 +348,8 @@ describe("streaming", () => {
   });
 
   // Also verifies error handler reset in `.reload()` due to test above
-  it("text from JS throws on start with no error handler", async () => {
+  // TODO: rewrite test so uncaught error does not create an annotation in CI
+  it.skip("text from JS throws on start with no error handler", async () => {
     await runTest(
       {
         error: undefined,

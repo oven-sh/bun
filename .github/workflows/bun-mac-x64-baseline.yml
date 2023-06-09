@@ -173,9 +173,9 @@ jobs:
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
         run: |
           brew install ccache rust llvm@15 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
-          echo "export PATH=$(brew --prefix ccache)/bin:\$PATH" >> $GITHUB_ENV
-          echo "export PATH=$(brew --prefix coreutils)/libexec/gnubin:\$PATH" >> $GITHUB_ENV
-          echo "export PATH=$(brew --prefix llvm@15)/bin:\$PATH" >> $GITHUB_ENV
+          echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
+          echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
+          echo "$(brew --prefix llvm@15)/bin" >> $GITHUB_PATH
           brew link --overwrite llvm@15
       - name: ccache (dependencies)
         uses: hendrikmuhs/ccache-action@v1.2
@@ -292,8 +292,8 @@ jobs:
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
         run: |
           brew install ccache rust llvm@15 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
-          echo "export PATH=$(brew --prefix coreutils)/libexec/gnubin:\$PATH" >> $GITHUB_ENV
-          echo "export PATH=$(brew --prefix llvm@15)/bin:\$PATH" >> $GITHUB_ENV
+          echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
+          echo "$(brew --prefix llvm@15)/bin" >> $GITHUB_PATH
           brew link --overwrite llvm@15
       - name: ccache (link)
         uses: hendrikmuhs/ccache-action@v1.2
@@ -430,8 +430,8 @@ jobs:
           unzip ${{matrix.tag}}.zip
           cd ${{matrix.tag}}
           chmod +x bun
-          sudo mv bun /usr/local/bin/bun
-          bun --version
+          pwd >> $GITHUB_PATH
+          ./bun --version
       - id: test
         name: Test (node runner)
         # if: ${{github.event.inputs.use_bun == 'false'}}

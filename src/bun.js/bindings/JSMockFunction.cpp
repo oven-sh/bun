@@ -357,7 +357,7 @@ JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
             structure = structure->addPropertyTransition(
                 init.vm,
                 structure,
-                JSC::Identifier::fromString(init.vm, "returnValues"_s),
+                JSC::Identifier::fromString(init.vm, "results"_s),
                 JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly,
                 offset);
 

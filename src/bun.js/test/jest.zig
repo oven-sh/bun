@@ -697,11 +697,16 @@ pub const Jest = struct {
             Expect.getConstructor(globalObject),
         );
 
+        const mock_object = JSMockFunction__createObject(globalObject);
         module.put(
             globalObject,
             ZigString.static("mock"),
-            JSMockFunction__createObject(globalObject),
+            mock_object,
         );
+
+        const jest = JSValue.createEmptyObject(globalObject, 1);
+        jest.put(globalObject, ZigString.static("fn"), mock_object);
+        module.put(globalObject, ZigString.static("jest"), jest);
 
         return module;
     }

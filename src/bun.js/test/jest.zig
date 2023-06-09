@@ -3700,129 +3700,6 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub const PropertyMatcherIterator = struct {
-        received_object: JSValue,
-        failed: bool = false,
-        fail_on_asymmetric_matcher: bool = false,
-        i: usize = 0,
-
-        pub fn forEach(
-            globalObject: *JSGlobalObject,
-            ctx_ptr: ?*anyopaque,
-            key_: [*c]ZigString,
-            value: JSValue,
-            _: bool,
-        ) callconv(.C) void {
-            const key: ZigString = key_.?[0];
-            if (key.eqlComptime("constructor")) return;
-            if (key.eqlComptime("call")) return;
-
-            var ctx: *@This() = bun.cast(*@This(), ctx_ptr orelse return);
-            defer ctx.i += 1;
-            var received_object: JSValue = ctx.received_object;
-
-            if (received_object.get(globalObject, key.slice())) |received_value| {
-                if (ExpectAnything.fromJS(value) != null) {
-                    if (!received_value.isUndefinedOrNull()) {
-                        return;
-                    }
-
-                    ctx.failed = true;
-                    ctx.fail_on_asymmetric_matcher = true;
-                    return;
-                } else if (ExpectAny.fromJS(value) != null) {
-                    var constructor_value = ExpectAny.constructorValueGetCached(value) orelse {
-                        globalObject.throw("Internal consistency error: the expect.any(constructor value) was garbage collected but it should not have been!", .{});
-                        ctx.failed = true;
-                        return;
-                    };
-
-                    if (received_value.isCell() and received_value.isInstanceOf(globalObject, constructor_value)) {
-                        received_object.put(globalObject, &key, value);
-                        return;
-                    }
-
-                    // check primitives
-                    // TODO: check the constructor for primitives by reading it from JSGlobalObject through a binding.
-                    var constructor_name = ZigString.Empty;
-                    constructor_value.getNameProperty(globalObject, &constructor_name);
-                    if (received_value.isNumber() and constructor_name.eqlComptime("Number")) {
-                        received_object.put(globalObject, &key, value);
-                        return;
-                    }
-                    if (received_value.isBoolean() and constructor_name.eqlComptime("Boolean")) {
-                        received_object.put(globalObject, &key, value);
-                        return;
-                    }
-                    if (received_value.isString() and constructor_name.eqlComptime("String")) {
-                        received_object.put(globalObject, &key, value);
-                        return;
-                    }
-                    if (received_value.isBigInt() and constructor_name.eqlComptime("BigInt")) {
-                        received_object.put(globalObject, &key, value);
-                        return;
-                    }
-
-                    ctx.failed = true;
-                    ctx.fail_on_asymmetric_matcher = true;
-                    return;
-                } else if (ExpectStringContaining.fromJS(value) != null) {
-                    var expected_substring = ExpectStringContaining.stringValueGetCached(value) orelse {
-                        globalObject.throw("Internal consistency error: the expect.stringContaining(string value) was garbage collected but it should not have been!", .{});
-                        ctx.failed = true;
-                        return;
-                    };
-
-                    if (received_value.isString()) {
-                        if (received_value.stringIncludes(globalObject, expected_substring)) {
-                            return;
-                        }
-                    }
-
-                    ctx.failed = true;
-                    ctx.fail_on_asymmetric_matcher = true;
-                    return;
-                } else if (ExpectStringMatching.fromJS(value) != null) {
-                    const test_value = ExpectStringMatching.testValueGetCached(value) orelse {
-                        globalObject.throw("Internal consistency error: the expect.stringMatching(test value) was garbage collected but it should not have been!", .{});
-                        ctx.failed = true;
-                        return;
-                    };
-
-                    if (test_value.isString()) {
-                        if (received_value.stringIncludes(globalObject, test_value)) return;
-                    } else if (test_value.isRegExp()) {
-                        if (test_value.toMatch(globalObject, received_value)) return;
-                    }
-
-                    ctx.failed = true;
-                    ctx.fail_on_asymmetric_matcher = true;
-                    return;
-                }
-
-                if (value.isObject()) {
-                    if (received_object.get(globalObject, key.slice())) |new_object| {
-                        var itr = PropertyMatcherIterator{
-                            .received_object = new_object,
-                        };
-                        value.forEachProperty(globalObject, &itr, PropertyMatcherIterator.forEach);
-                        if (itr.failed) {
-                            ctx.failed = true;
-                        }
-                    } else {
-                        ctx.failed = true;
-                    }
-
-                    return;
-                }
-
-                if (value.isSameValue(received_value, globalObject)) return;
-            }
-
-            ctx.failed = true;
-        }
-    };
-
     pub fn toBeInstanceOf(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
         defer this.postMatch(globalObject);
 
@@ -4006,7 +3883,6 @@ pub const Expect = struct {
         if (not) pass = !pass;
         if (pass) return thisValue;
 
-        // TODO: print diff with properties from propertyMatchers
         // handle failure
         const diff_formatter = DiffFormatter{
             .received = received_object,

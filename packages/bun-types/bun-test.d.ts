@@ -329,6 +329,9 @@ declare module "bun:test" {
     any: (
       constructor: ((..._: any[]) => any) | { new (..._: any[]): any },
     ) => Expect;
+    anything: () => Expect;
+    stringContaining: (str: string) => Expect;
+    stringMatching: (regex: RegExp | string) => Expect;
   };
   /**
    * Asserts that a value matches some criteria.
@@ -618,6 +621,16 @@ declare module "bun:test" {
      * @param hint Hint used to identify the snapshot in the snapshot file.
      */
     toMatchSnapshot(propertyMatchers?: Object, hint?: string): void;
+    /**
+     * Asserts that an object matches a subset of properties.
+     *
+     * @example
+     * expect({ a: 1, b: 2 }).toMatchObject({ b: 2 });
+     * expect({ c: new Date(), d: 2 }).toMatchObject({ d: 2 });
+     *
+     * @param subset Subset of properties to match with.
+     */
+    toMatchObject(subset: Object): void;
     /**
      * Asserts that a value is empty.
      *

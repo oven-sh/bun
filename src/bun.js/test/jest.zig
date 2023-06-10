@@ -3592,6 +3592,78 @@ pub const Expect = struct {
         return .zero;
     }
 
+    pub fn toSatisfy(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        if (arguments.len < 1) {
+            globalThis.throwInvalidArguments("toSatisfy() takes 1 argument", .{});
+            return .zero;
+        }
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toSatisfy() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const right = arguments[0];
+        right.ensureStillAlive();
+
+        if (!right.jsType().isFunction()) {
+            globalThis.throw("toSatisfy() argument must be a function", .{});
+            return .zero;
+        }
+
+        const left = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        left.ensureStillAlive();
+
+        const not = this.op.contains(.not);
+        var pass = right.call(globalThis, &.{left}).toBoolean();
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        if (not) {
+            const signature = comptime getSignature("toSatisfy", "<green>expected<r>", true);
+            const fmt = signature ++ "\n\nExpected: not <green>{any}<r>\n";
+            if (Output.enable_ansi_colors) {
+                globalThis.throw(Output.prettyFmt(fmt, true), .{right.toFmt(globalThis, &formatter)});
+                return .zero;
+            }
+            globalThis.throw(Output.prettyFmt(fmt, false), .{right.toFmt(globalThis, &formatter)});
+            return .zero;
+        }
+
+        const signature = comptime getSignature("toSatisfy", "<green>expected<r>", false);
+
+        const fmt = signature ++ "\n\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>\n";
+
+        if (Output.enable_ansi_colors) {
+            globalThis.throw(Output.prettyFmt(fmt, true), .{
+                right.toFmt(globalThis, &formatter),
+                left.toFmt(globalThis, &formatter),
+            });
+            return .zero;
+        }
+
+        globalThis.throw(Output.prettyFmt(fmt, false), .{
+            right.toFmt(globalThis, &formatter),
+            left.toFmt(globalThis, &formatter),
+        });
+
+        return .zero;
+    }
+
     pub fn toStartWith(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
         defer this.postMatch(globalThis);
 

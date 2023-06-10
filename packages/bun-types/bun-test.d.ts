@@ -855,6 +855,16 @@ declare module "bun:test" {
      */
     toInclude(expected: string): void;
     /**
+     * Checks whether a value satisfies a custom condition.
+     * @param {Function} predicate - The custom condition to be satisfied. It should be a function that takes a value as an argument (in this case the value from expect) and returns a boolean.
+     * @example
+     * expect(1).toSatisfy((val) => val > 0);
+     * expect("foo").toSatisfy((val) => val === "foo");
+     * expect("bar").not.toSatisfy((val) => val === "bun");
+     * @link https://vitest.dev/api/expect.html#tosatisfy
+    */
+    toSatisfy(predicate: (value: T) => boolean): void;
+    /**
      * Asserts that a value starts with a `string`.
      *
      * @param expected the string to start with

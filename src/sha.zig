@@ -76,7 +76,7 @@ fn NewEVP(
         }
 
         pub fn deinit(this: *@This()) void {
-            BoringSSL.EVP_MD_CTX_cleanup(&this.ctx);
+            _ = BoringSSL.EVP_MD_CTX_cleanup(&this.ctx);
         }
     };
 }

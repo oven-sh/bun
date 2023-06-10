@@ -2020,6 +2020,35 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepEquals, (JSGlobalObject * globalObject, 
     }
 }
 
+JSC_DECLARE_HOST_FUNCTION(functionBunDeepMatch);
+
+JSC_DEFINE_HOST_FUNCTION(functionBunDeepMatch, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* global = reinterpret_cast<GlobalObject*>(globalObject);
+    JSC::VM& vm = global->vm();
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 2) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwTypeError(globalObject, throwScope, "Expected 2 values to compare"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSC::JSValue subset = callFrame->uncheckedArgument(0);
+    JSC::JSValue object = callFrame->uncheckedArgument(1);
+
+    if (!subset.isObject() || !object.isObject()) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwTypeError(globalObject, throwScope, "Expected 2 object to match"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    bool isEqual = Bun__deepMatch(object, subset, globalObject, &scope, false);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsBoolean(isEqual));
+}
+
 JSC_DECLARE_HOST_FUNCTION(functionBunNanoseconds);
 
 JSC_DEFINE_HOST_FUNCTION(functionBunNanoseconds, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -3664,6 +3693,12 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         {
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "deepEquals"_s);
             object->putDirectNativeFunction(vm, this, identifier, 2, functionBunDeepEquals, ImplementationVisibility::Public, NoIntrinsic,
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        }
+
+        {
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "deepMatch"_s);
+            object->putDirectNativeFunction(vm, this, identifier, 2, functionBunDeepMatch, ImplementationVisibility::Public, NoIntrinsic,
                 JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
         }
 

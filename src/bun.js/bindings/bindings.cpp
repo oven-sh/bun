@@ -721,8 +721,6 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     return true;
 }
 
-extern "C" {
-
 using namespace WebCore;
 
 enum class AsymmetricMatcherResult : uint8_t {
@@ -891,6 +889,8 @@ bool Bun__deepMatch(JSValue objValue, JSValue subsetValue, JSGlobalObject* globa
 
     return true;
 }
+
+extern "C" {
 
 bool WebCore__FetchHeaders__isEmpty(WebCore__FetchHeaders* arg0)
 {

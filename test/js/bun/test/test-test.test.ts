@@ -2522,207 +2522,213 @@ test("toBeOdd()", () => {
   // FUTURE: expect(new WebAssembly.Global({value:'v128', mutable:true}, 43).value).toBeOdd();
 });
 
-test("toMatchObject", () => {
-  const f = Symbol.for("foo");
-  const b = Symbol.for("bar");
-
-  class Number2 extends Number {
-    constructor(value) {
-      super(value);
-    }
-  }
-  class Number3 extends Number2 {
-    constructor(value) {
-      super(value);
-    }
-  }
-
-  class Boolean2 extends Boolean {
-    constructor(value) {
-      super(value);
-    }
-  }
-  expect({ [f]: 2 }).toMatchObject({ [f]: 2 });
-  expect({ [f]: 2 }).toMatchObject({ [f]: expect.anything() });
-  expect({ [f]: new Date() }).toMatchObject({ [f]: expect.any(Date) });
-  expect({ [f]: new Date() }).not.toMatchObject({ [f]: expect.any(RegExp) });
-  expect({ [f]: 3 }).not.toMatchObject({ [f]: 5 });
-  expect({ [f]: 3 }).not.toMatchObject({ [b]: 3 });
-  expect({}).toMatchObject({});
-  expect([5]).toMatchObject([5]);
-  expect([5]).not.toMatchObject([4]);
-  expect(() => {
-    expect({}).toMatchObject();
-  }).toThrow();
-  expect(() => {
-    expect(true).toMatchObject(true);
-  }).toThrow();
-  expect(() => {
-    expect(true).toMatchObject(true);
-  }).toThrow();
-  expect(() => {
-    expect(1).toMatchObject(1);
-  }).toThrow();
-  expect(() => {
-    expect("a").toMatchObject("a");
-  }).toThrow();
-  expect(() => {
-    expect(null).toMatchObject(null);
-  }).toThrow();
-  expect(() => {
-    expect(undefined).toMatchObject(undefined);
-  }).toThrow();
-  expect(() => {
-    expect(Symbol()).toMatchObject(Symbol());
-  }).toThrow();
-  expect(() => {
-    expect(BigInt(1)).toMatchObject(BigInt(1));
-  }).toThrow();
-  expect([]).toMatchObject([]);
-  expect([1]).toMatchObject([1]);
-  expect([1, 2]).toMatchObject([1, 2]);
-  expect(() => {
-    expect([1]).toMatchObject([1, 2]);
-  }).toThrow();
-  expect(() => {
-    expect([1, 2]).toMatchObject([1]);
-  }).toThrow();
-  expect([]).toMatchObject({});
-  expect([1]).toMatchObject({});
-  expect([1, 2]).toMatchObject({ 0: 1, 1: 2 });
-  expect([1, 2]).not.toMatchObject({ 0: 2 });
-  expect(() => {
-    expect({}).toMatchObject([]);
-  }).toThrow();
-  expect({ a: 1 }).toMatchObject({});
-  expect({ a: 1 }).toMatchObject({ a: expect.anything() });
-  expect({ a: 1, b: 2 }).toMatchObject({ a: 1 });
-  expect({ a: 1, b: 2 }).toMatchObject({ a: 1, b: 2 });
-  expect({ a: 1, b: 2 }).toMatchObject({ b: 2 });
-  expect({ a: 1, b: 2 }).toMatchObject({ b: 2, a: 1 });
-  expect({ a: 1, b: 2 }).toMatchObject({ a: 1, b: 2 });
-  expect({}).not.toMatchObject({ a: 1 });
-  expect({ a: 89 }).not.toMatchObject({ b: 90 });
-  expect({ a: 1, b: 2 }).not.toMatchObject({ a: 1, b: 3 });
-  expect({ a: 1, b: 2 }).not.toMatchObject({ a: 1, b: 2, c: 4 });
-  expect({ a: new Date(), b: "jj" }).not.toMatchObject({ b: expect.any(Number) });
-  expect({ a: "123" }).not.toMatchObject({ a: expect.stringContaining("4") });
-  class DString extends String {
-    constructor(str) {
-      super(str);
-    }
-  }
-  expect({ a: "hello world" }).toMatchObject({ a: expect.stringContaining("wor") });
-  expect({ a: "hello world" }).not.toMatchObject({ a: expect.stringContaining("wol") });
-  expect({ a: "hello String" }).toMatchObject({ a: expect.stringContaining(new String("Str")) });
-  expect({ a: "hello String" }).not.toMatchObject({ a: expect.stringContaining(new String("Strs")) });
-  expect({ a: "hello derived String" }).toMatchObject({ a: expect.stringContaining(new DString("riv")) });
-  expect({ a: "hello derived String" }).not.toMatchObject({ a: expect.stringContaining(new DString("rivd")) });
-  expect({ a: "hello world" }).toMatchObject({ a: expect.stringMatching("wor") });
-  expect({ a: "hello world" }).not.toMatchObject({ a: expect.stringMatching("word") });
-  expect({ a: "hello world" }).toMatchObject({ a: "hello world" });
-  expect({ a: "hello world" }).toMatchObject({ a: expect.stringMatching(/wor/) });
-  expect({ a: "hello world" }).not.toMatchObject({ a: expect.stringMatching(/word/) });
-  expect({ a: expect.stringMatching("wor") }).toMatchObject({ a: "hello world" });
-  expect({ a: expect.stringMatching("word") }).not.toMatchObject({ a: "hello world" });
-  expect({ a: expect.stringMatching(/wor/) }).toMatchObject({ a: "hello world" });
-  expect({ a: expect.stringMatching(/word/) }).not.toMatchObject({ a: "hello world" });
-  expect({ a: expect.stringMatching(/word/) }).toMatchObject({ a: "hello word" });
-  expect({ a: [1, 2, 3] }).toMatchObject({ a: [1, 2, 3] });
-  expect({ a: [1, 2, 3] }).toMatchObject({ a: [1, 2, 3] });
-  expect({ a: [1, 2, 4] }).not.toMatchObject({ a: [1, 2, 3] });
-
-  expect([]).toMatchObject([]);
-  expect([]).toMatchObject({});
-  expect({}).not.toMatchObject([]);
-  expect({ a: 1 }).toMatchObject({});
-  expect({ a: 1 }).toMatchObject({ a: 1 });
-
-  expect({ a: 1 }).toMatchObject({ a: expect.anything() });
-  expect({ a: null }).not.toMatchObject({ a: expect.anything() });
-  expect({ a: undefined }).not.toMatchObject({ a: expect.anything() });
-
-  expect({ a: new Date() }).toMatchObject({ a: expect.any(Date) });
-  expect({ a: new Date() }).not.toMatchObject({ a: expect.any(RegExp) });
-  expect({ a: new RegExp("a", "g") }).toMatchObject({ a: expect.any(RegExp) });
-  expect({ a: /a/g }).toMatchObject({ a: expect.any(RegExp) });
-
-  expect({
-    first: new Boolean2(false),
-    a: {
-      4: [3, 2, 2],
-      j: new Date(),
-      b: {
-        c: {
-          num: 1,
-          d: {
-            e: {
-              bigint: 123n,
-              f: {
-                g: {
-                  h: {
-                    i: new Number3(2),
-                    bool: true,
-                  },
-                  compare: "compare",
-                },
-              },
-              ignore1: 234,
-              ignore2: {
-                ignore3: 23421,
-                ignore4: {
-                  ignore5: {
-                    ignore6: "hello",
-                    ignore7: "done",
-                  },
-                },
-              },
-            },
-          },
-          string1: "hello",
-          string2: "hello",
-          string3: "hello",
-        },
-      },
-    },
-  }).toMatchObject({
-    first: expect.any(Boolean2),
-    a: {
-      4: [3, 2, expect.any(Number)],
-
-      j: expect.any(Date),
-      b: {
-        c: {
-          num: expect.any(Number),
-          string1: expect.anything(),
-          string2: expect.stringContaining("ll"),
-          string3: expect.stringMatching(/ll/),
-          d: {
-            e: {
-              bigint: expect.any(BigInt),
-              f: {
-                g: {
-                  compare: "compare",
-                  h: {
-                    i: expect.any(Number3),
-                    bool: expect.any(Boolean),
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
+describe("toMatchObject", () => {
+  test("with Bun.deepMatch", () => {
+    expect(Bun.deepMatch({ a: 1, b: 2 }, { a: 1 })).toBe(false);
+    expect(Bun.deepMatch({ a: 1 }, { a: 1, b: 2 })).toBe(true);
   });
+  test("with expect matcher", () => {
+    const f = Symbol.for("foo");
+    const b = Symbol.for("bar");
 
-  var a1 = [1];
-  a1[f] = 99;
-  expect(a1).not.toMatchObject([1]);
-  expect([1]).not.toMatchObject(a1);
-  expect({ 1: 1 }).not.toMatchObject(a1);
-  expect(a1).not.toMatchObject({ 1: 1 });
-  expect(a1).toMatchObject(a1);
+    class Number2 extends Number {
+      constructor(value) {
+        super(value);
+      }
+    }
+    class Number3 extends Number2 {
+      constructor(value) {
+        super(value);
+      }
+    }
+
+    class Boolean2 extends Boolean {
+      constructor(value) {
+        super(value);
+      }
+    }
+    expect({ [f]: 2 }).toMatchObject({ [f]: 2 });
+    expect({ [f]: 2 }).toMatchObject({ [f]: expect.anything() });
+    expect({ [f]: new Date() }).toMatchObject({ [f]: expect.any(Date) });
+    expect({ [f]: new Date() }).not.toMatchObject({ [f]: expect.any(RegExp) });
+    expect({ [f]: 3 }).not.toMatchObject({ [f]: 5 });
+    expect({ [f]: 3 }).not.toMatchObject({ [b]: 3 });
+    expect({}).toMatchObject({});
+    expect([5]).toMatchObject([5]);
+    expect([5]).not.toMatchObject([4]);
+    expect(() => {
+      expect({}).toMatchObject();
+    }).toThrow();
+    expect(() => {
+      expect(true).toMatchObject(true);
+    }).toThrow();
+    expect(() => {
+      expect(true).toMatchObject(true);
+    }).toThrow();
+    expect(() => {
+      expect(1).toMatchObject(1);
+    }).toThrow();
+    expect(() => {
+      expect("a").toMatchObject("a");
+    }).toThrow();
+    expect(() => {
+      expect(null).toMatchObject(null);
+    }).toThrow();
+    expect(() => {
+      expect(undefined).toMatchObject(undefined);
+    }).toThrow();
+    expect(() => {
+      expect(Symbol()).toMatchObject(Symbol());
+    }).toThrow();
+    expect(() => {
+      expect(BigInt(1)).toMatchObject(BigInt(1));
+    }).toThrow();
+    expect([]).toMatchObject([]);
+    expect([1]).toMatchObject([1]);
+    expect([1, 2]).toMatchObject([1, 2]);
+    expect(() => {
+      expect([1]).toMatchObject([1, 2]);
+    }).toThrow();
+    expect(() => {
+      expect([1, 2]).toMatchObject([1]);
+    }).toThrow();
+    expect([]).toMatchObject({});
+    expect([1]).toMatchObject({});
+    expect([1, 2]).toMatchObject({ 0: 1, 1: 2 });
+    expect([1, 2]).not.toMatchObject({ 0: 2 });
+    expect(() => {
+      expect({}).toMatchObject([]);
+    }).toThrow();
+    expect({ a: 1 }).toMatchObject({});
+    expect({ a: 1 }).toMatchObject({ a: expect.anything() });
+    expect({ a: 1, b: 2 }).toMatchObject({ a: 1 });
+    expect({ a: 1, b: 2 }).toMatchObject({ a: 1, b: 2 });
+    expect({ a: 1, b: 2 }).toMatchObject({ b: 2 });
+    expect({ a: 1, b: 2 }).toMatchObject({ b: 2, a: 1 });
+    expect({ a: 1, b: 2 }).toMatchObject({ a: 1, b: 2 });
+    expect({}).not.toMatchObject({ a: 1 });
+    expect({ a: 89 }).not.toMatchObject({ b: 90 });
+    expect({ a: 1, b: 2 }).not.toMatchObject({ a: 1, b: 3 });
+    expect({ a: 1, b: 2 }).not.toMatchObject({ a: 1, b: 2, c: 4 });
+    expect({ a: new Date(), b: "jj" }).not.toMatchObject({ b: expect.any(Number) });
+    expect({ a: "123" }).not.toMatchObject({ a: expect.stringContaining("4") });
+    class DString extends String {
+      constructor(str) {
+        super(str);
+      }
+    }
+    expect({ a: "hello world" }).toMatchObject({ a: expect.stringContaining("wor") });
+    expect({ a: "hello world" }).not.toMatchObject({ a: expect.stringContaining("wol") });
+    expect({ a: "hello String" }).toMatchObject({ a: expect.stringContaining(new String("Str")) });
+    expect({ a: "hello String" }).not.toMatchObject({ a: expect.stringContaining(new String("Strs")) });
+    expect({ a: "hello derived String" }).toMatchObject({ a: expect.stringContaining(new DString("riv")) });
+    expect({ a: "hello derived String" }).not.toMatchObject({ a: expect.stringContaining(new DString("rivd")) });
+    expect({ a: "hello world" }).toMatchObject({ a: expect.stringMatching("wor") });
+    expect({ a: "hello world" }).not.toMatchObject({ a: expect.stringMatching("word") });
+    expect({ a: "hello world" }).toMatchObject({ a: "hello world" });
+    expect({ a: "hello world" }).toMatchObject({ a: expect.stringMatching(/wor/) });
+    expect({ a: "hello world" }).not.toMatchObject({ a: expect.stringMatching(/word/) });
+    expect({ a: expect.stringMatching("wor") }).toMatchObject({ a: "hello world" });
+    expect({ a: expect.stringMatching("word") }).not.toMatchObject({ a: "hello world" });
+    expect({ a: expect.stringMatching(/wor/) }).toMatchObject({ a: "hello world" });
+    expect({ a: expect.stringMatching(/word/) }).not.toMatchObject({ a: "hello world" });
+    expect({ a: expect.stringMatching(/word/) }).toMatchObject({ a: "hello word" });
+    expect({ a: [1, 2, 3] }).toMatchObject({ a: [1, 2, 3] });
+    expect({ a: [1, 2, 3] }).toMatchObject({ a: [1, 2, 3] });
+    expect({ a: [1, 2, 4] }).not.toMatchObject({ a: [1, 2, 3] });
+
+    expect([]).toMatchObject([]);
+    expect([]).toMatchObject({});
+    expect({}).not.toMatchObject([]);
+    expect({ a: 1 }).toMatchObject({});
+    expect({ a: 1 }).toMatchObject({ a: 1 });
+
+    expect({ a: 1 }).toMatchObject({ a: expect.anything() });
+    expect({ a: null }).not.toMatchObject({ a: expect.anything() });
+    expect({ a: undefined }).not.toMatchObject({ a: expect.anything() });
+
+    expect({ a: new Date() }).toMatchObject({ a: expect.any(Date) });
+    expect({ a: new Date() }).not.toMatchObject({ a: expect.any(RegExp) });
+    expect({ a: new RegExp("a", "g") }).toMatchObject({ a: expect.any(RegExp) });
+    expect({ a: /a/g }).toMatchObject({ a: expect.any(RegExp) });
+
+    expect({
+      first: new Boolean2(false),
+      a: {
+        4: [3, 2, 2],
+        j: new Date(),
+        b: {
+          c: {
+            num: 1,
+            d: {
+              e: {
+                bigint: 123n,
+                f: {
+                  g: {
+                    h: {
+                      i: new Number3(2),
+                      bool: true,
+                    },
+                    compare: "compare",
+                  },
+                },
+                ignore1: 234,
+                ignore2: {
+                  ignore3: 23421,
+                  ignore4: {
+                    ignore5: {
+                      ignore6: "hello",
+                      ignore7: "done",
+                    },
+                  },
+                },
+              },
+            },
+            string1: "hello",
+            string2: "hello",
+            string3: "hello",
+          },
+        },
+      },
+    }).toMatchObject({
+      first: expect.any(Boolean2),
+      a: {
+        4: [3, 2, expect.any(Number)],
+
+        j: expect.any(Date),
+        b: {
+          c: {
+            num: expect.any(Number),
+            string1: expect.anything(),
+            string2: expect.stringContaining("ll"),
+            string3: expect.stringMatching(/ll/),
+            d: {
+              e: {
+                bigint: expect.any(BigInt),
+                f: {
+                  g: {
+                    compare: "compare",
+                    h: {
+                      i: expect.any(Number3),
+                      bool: expect.any(Boolean),
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    var a1 = [1];
+    a1[f] = 99;
+    expect(a1).not.toMatchObject([1]);
+    expect([1]).not.toMatchObject(a1);
+    expect({ 1: 1 }).not.toMatchObject(a1);
+    expect(a1).not.toMatchObject({ 1: 1 });
+    expect(a1).toMatchObject(a1);
+  });
 });
 
 try {

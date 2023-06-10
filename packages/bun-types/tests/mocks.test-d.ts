@@ -13,3 +13,5 @@ type arg2 = jest.Spied<() => string>;
 declare var arg2: arg2;
 arg2.mock.calls[0];
 mock;
+
+type _arg3 = jest.Mock<() => number>;

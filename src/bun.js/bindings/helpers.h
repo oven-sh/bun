@@ -251,6 +251,11 @@ static const unsigned char* taggedUTF16Ptr(const UChar* ptr)
     return reinterpret_cast<const unsigned char*>(reinterpret_cast<uintptr_t>(ptr) | (static_cast<uint64_t>(1) << 63));
 }
 
+static const unsigned char* taggedUTF8Ptr(const LChar* ptr)
+{
+    return reinterpret_cast<const unsigned char*>(reinterpret_cast<uintptr_t>(ptr) | (static_cast<uint64_t>(1) << 61));
+}
+
 static ZigString toZigString(WTF::String* str)
 {
     return str->isEmpty()
@@ -280,6 +285,16 @@ static ZigString toZigString(const WTF::StringView& str)
     return str.isEmpty()
         ? ZigStringEmpty
         : ZigString { str.is8Bit() ? str.characters8() : taggedUTF16Ptr(str.characters16()),
+              str.length() };
+}
+
+// Sometimes WTF::String has already encode by UTF8, but it regards as Latin-1. 
+// So we need to explicitly to set to UTF-8 when transfering to ZigString.
+static ZigString utf8ToZigString(const WTF::StringView& str)
+{
+    return str.isEmpty()
+        ? ZigStringEmpty
+        : ZigString { str.is8Bit() ? taggedUTF8Ptr(str.characters8()) : taggedUTF16Ptr(str.characters16()),
               str.length() };
 }
 

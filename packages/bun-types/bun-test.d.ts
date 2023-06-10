@@ -855,6 +855,12 @@ declare module "bun:test" {
      */
     toInclude(expected: string): void;
     /**
+     * Asserts that a value includes a `string` {times} times.
+     * @param expected the expected substring
+     * @param times the number of times the substring should occur
+     */
+    toIncludeRepeated(expected: string, times: number): void;
+    /**
      * Checks whether a value satisfies a custom condition.
      * @param {Function} predicate - The custom condition to be satisfied. It should be a function that takes a value as an argument (in this case the value from expect) and returns a boolean.
      * @example

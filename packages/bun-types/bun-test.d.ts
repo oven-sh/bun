@@ -30,6 +30,7 @@ declare module "bun:test" {
 
   interface Jest {
     restoreAllMocks(): void;
+    fn<T extends AnyFunction>(): Mock<T>;
   }
   export const jest: Jest;
   export namespace jest {
@@ -862,7 +863,7 @@ declare module "bun:test" {
     /**
      * Ensure that a mock function is called with specific arguments.
      */
-    toHaveBeenCalledWith(...expected: Array<unknown>): void;
+    // toHaveBeenCalledWith(...expected: Array<unknown>): void;
   };
 }
 
@@ -1025,12 +1026,12 @@ declare namespace JestMock {
      * List of the call order indexes of the mock. Jest is indexing the order of
      * invocations of all mocks in a test file. The index is starting with `1`.
      */
-    invocationCallOrder: Array<number>;
+    // invocationCallOrder: Array<number>;
     /**
      * List of the call arguments of the last call that was made to the mock.
      * If the function was not called, it will return `undefined`.
      */
-    lastCall?: Parameters<T>;
+    // lastCall?: Parameters<T>;
     /**
      * List of the results of all calls that have been made to the mock.
      */

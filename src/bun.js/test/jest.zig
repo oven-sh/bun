@@ -3861,6 +3861,7 @@ pub const Expect = struct {
             return .zero;
         };
 
+        JSC.markBinding(@src());
         const calls = JSMockFunction__getCalls(value);
         active_test_expectation_counter.actual += 1;
 
@@ -3911,6 +3912,7 @@ pub const Expect = struct {
 
         active_test_expectation_counter.actual += 1;
 
+        JSC.markBinding(@src());
         const calls = JSMockFunction__getCalls(value);
 
         if (calls == .zero or !calls.jsType().isArray()) {

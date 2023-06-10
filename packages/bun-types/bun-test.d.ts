@@ -1029,6 +1029,11 @@ declare namespace JestMock {
      */
     calls: Array<Parameters<T>>;
     /**
+     * List of the call arguments of the last call that was made to the mock.
+     * If the function was not called, it will return `undefined`.
+     */
+    lastCall?: Parameters<T>;
+    /**
      * List of all the object instances that have been instantiated from the mock.
      */
     instances: Array<ReturnType<T>>;
@@ -1041,11 +1046,6 @@ declare namespace JestMock {
      * invocations of all mocks in a test file. The index is starting with `1`.
      */
     // invocationCallOrder: Array<number>;
-    /**
-     * List of the call arguments of the last call that was made to the mock.
-     * If the function was not called, it will return `undefined`.
-     */
-    // lastCall?: Parameters<T>;
     /**
      * List of the results of all calls that have been made to the mock.
      */

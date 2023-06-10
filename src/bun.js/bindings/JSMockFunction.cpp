@@ -23,6 +23,7 @@ namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionCall);
 JSC_DECLARE_CUSTOM_GETTER(jsMockFunctionGetter_protoImpl);
 JSC_DECLARE_CUSTOM_GETTER(jsMockFunctionGetter_mock);
+JSC_DECLARE_CUSTOM_GETTER(jsMockFunctionGetter_mockGetLastCall);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionGetMockImplementation);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionGetMockName);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionMockClear);
@@ -218,6 +219,9 @@ public:
                 object->putDirectOffset(init.vm, 1, mock->getContexts());
                 object->putDirectOffset(init.vm, 2, mock->getInstances());
                 object->putDirectOffset(init.vm, 3, mock->getReturnValues());
+                object->putDirectCustomAccessor(init.vm, JSC::Identifier::fromString(init.vm, "lastCall"_s),
+                    JSC::CustomGetterSetter::create(init.vm, jsMockFunctionGetter_mockGetLastCall, nullptr),
+                    JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
                 init.set(object);
             });
     }
@@ -582,7 +586,7 @@ JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
             JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(
                 globalObject,
                 globalObject->objectPrototype(),
-                4);
+                5);
             JSC::PropertyOffset offset;
             structure = structure->addPropertyTransition(
                 init.vm,
@@ -607,6 +611,12 @@ JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
                 structure,
                 JSC::Identifier::fromString(init.vm, "results"_s),
                 JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly,
+                offset);
+            structure = structure->addPropertyTransition(
+                init.vm,
+                structure,
+                JSC::Identifier::fromString(init.vm, "lastCall"_s),
+                JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor,
                 offset);
 
             init.set(structure);
@@ -841,6 +851,27 @@ JSC_DEFINE_CUSTOM_GETTER(jsMockFunctionGetter_protoImpl, (JSC::JSGlobalObject * 
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_CUSTOM_GETTER(jsMockFunctionGetter_mockGetLastCall, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    JSValue thisObject = JSValue::decode(thisValue);
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (UNLIKELY(!thisObject.isObject())) {
+        throwTypeError(globalObject, scope, "Expected Mock"_s);
+        return {};
+    }
+    JSValue callsValue = thisObject.get(globalObject, Identifier::fromString(globalObject->vm(), "calls"_s));
+    if (UNLIKELY(!callsValue.isCell() || !callsValue.asCell()->inherits<JSArray>())) {
+        throwTypeError(globalObject, scope, "Expected Mock"_s);
+        return {};
+    }
+    JSArray *callsArray = jsCast<JSArray*>(callsValue);
+    auto len = callsArray->length();
+    if (len == 0)
+        return JSValue::encode(jsUndefined());
+
+    return JSValue::encode(callsArray->getIndex(globalObject, len - 1));
+}
+
 extern "C" EncodedJSValue JSMockFunction__createObject(Zig::GlobalObject* globalObject)
 {
     return JSValue::encode(
@@ -858,6 +889,7 @@ extern "C" EncodedJSValue JSMockFunction__getCalls(EncodedJSValue encodedValue)
 
     return JSValue::encode({});
 }
+
 extern "C" EncodedJSValue JSMockFunction__getReturns(EncodedJSValue encodedValue)
 {
     JSValue value = JSValue::decode(encodedValue);

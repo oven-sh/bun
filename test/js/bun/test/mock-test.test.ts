@@ -2,17 +2,24 @@ import { test, mock, expect, spyOn, jest } from "bun:test";
 
 test("are callable", () => {
   const fn = mock(() => 42);
+  expect(fn).not.toHaveBeenCalled();
+  expect(fn).not.toHaveBeenCalledTimes(1);
+  expect(fn.mock.calls).toBeEmpty();
+  expect(fn.mock.lastCall).toBeUndefined();
+
   expect(fn()).toBe(42);
   expect(fn).toHaveBeenCalled();
   expect(fn).toHaveBeenCalledTimes(1);
   expect(fn.mock.calls).toHaveLength(1);
   expect(fn.mock.calls[0]).toBeEmpty();
+  expect(fn.mock.lastCall).not.toBeUndefined();
 
   expect(fn()).toBe(42);
   expect(fn).toHaveBeenCalledTimes(2);
-
+  expect(fn).not.toHaveBeenCalledTimes(1);
   expect(fn.mock.calls).toHaveLength(2);
   expect(fn.mock.calls[1]).toBeEmpty();
+  expect(fn.mock.lastCall).toBe(fn.mock.calls[1]); // should refer to the same object
 });
 
 test("include arguments", () => {
@@ -23,6 +30,7 @@ test("include arguments", () => {
     value: 43,
   });
   expect(fn.mock.calls[0]).toEqual([43]);
+  expect(fn.mock.lastCall).toEqual([43]);
 });
 
 test("works when throwing", () => {
@@ -36,6 +44,7 @@ test("works when throwing", () => {
     value: instance,
   });
   expect(fn.mock.calls[0]).toEqual([43]);
+  expect(fn.mock.lastCall).toEqual([43]);
 });
 
 test("mockReset works", () => {
@@ -49,6 +58,7 @@ test("mockReset works", () => {
     value: instance,
   });
   expect(fn.mock.calls[0]).toEqual([43]);
+  expect(fn.mock.lastCall).toEqual([43]);
 
   fn.mockReset();
 
@@ -63,6 +73,7 @@ test("mockReset works", () => {
     value: instance,
   });
   expect(fn.mock.calls[0]).toEqual([43]);
+  expect(fn.mock.lastCall).toEqual([43]);
 });
 
 test("spyOn works on functions", () => {
@@ -133,3 +144,12 @@ test("spyOn works on globalThis", () => {
 });
 
 // spyOn does not work with getters/setters yet.
+
+test("lastCall works", () => {
+  const fn = mock((v) => -v);
+  expect(fn.mock.lastCall).toBeUndefined();
+  expect(fn(1)).toBe(-1);
+  expect(fn.mock.lastCall).toEqual([1]);
+  expect(fn(-2)).toBe(2);
+  expect(fn.mock.lastCall).toEqual([-2]);
+});

@@ -3970,6 +3970,8 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("toZigString", .{ this, out, global });
     }
 
+    /// this: RegExp value
+    /// other: string value
     pub fn toMatch(this: JSValue, global: *JSGlobalObject, other: JSValue) bool {
         return cppFn("toMatch", .{ this, global, other });
     }
@@ -4338,6 +4340,10 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("strictDeepEquals", .{ this, other, global });
     }
 
+    pub fn deepMatch(this: JSValue, subset: JSValue, global: *JSGlobalObject, replace_props_with_asymmetric_matchers: bool) bool {
+        return cppFn("deepMatch", .{ this, subset, global, replace_props_with_asymmetric_matchers });
+    }
+
     pub const DiffMethod = enum(u8) {
         none,
         character,
@@ -4697,6 +4703,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "isConstructor",
         "isInstanceOf",
         "stringIncludes",
+        "deepMatch",
     };
 };
 
@@ -5033,6 +5040,10 @@ pub const CallFrame = opaque {
                     .ptr = args,
                     .len = i,
                 };
+            }
+
+            pub inline fn slice(self: @This()) []const JSValue {
+                return self.ptr[0..self.len];
             }
         };
     }

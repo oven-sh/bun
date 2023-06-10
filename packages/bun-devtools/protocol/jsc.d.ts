@@ -1211,7 +1211,8 @@ export namespace JSC {
         | "weakset"
         | "iterator"
         | "class"
-        | "proxy";
+        | "proxy"
+        | "weakref";
       /** Object class (constructor) name. Specified for <code>object</code> type values only. */
       className?: string;
       /** Remote object value (in case of primitive values or JSON values if it was requested). */
@@ -1245,7 +1246,8 @@ export namespace JSC {
         | "weakset"
         | "iterator"
         | "class"
-        | "proxy";
+        | "proxy"
+        | "weakref";
       /** String representation of the object. */
       description?: string;
       /** Determines whether preview is lossless (contains all information of the original object). */
@@ -1278,11 +1280,14 @@ export namespace JSC {
         | "weakset"
         | "iterator"
         | "class"
-        | "proxy";
+        | "proxy"
+        | "weakref";
       /** User-friendly property value string. */
       value?: string;
       /** Nested value preview. */
       valuePreview?: ObjectPreview;
+      /** True if this is a private field. */
+      isPrivate?: boolean;
       /** True if this is an internal property. */
       internal?: boolean;
     };
@@ -1320,6 +1325,8 @@ export namespace JSC {
       isOwn?: boolean;
       /** Property symbol object, if the property is a symbol. */
       symbol?: Runtime.RemoteObject;
+      /** True if the property is a private field. */
+      isPrivate?: boolean;
       /** True if the property value came from a native getter. */
       nativeGetter?: boolean;
     };

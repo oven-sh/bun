@@ -208,7 +208,7 @@ variables as its properties. */
       executionContextId: Runtime.ExecutionContextId;
       /** Content hash of the script, SHA-256. */
       hash: string;
-      /** Embedder-specific auxiliary data. */
+      /** Embedder-specific auxiliary data likely matching {isDefault: boolean, type: 'default'|'isolated'|'worker', frameId: string} */
       executionContextAuxData?: Record<string, unknown>;
       /** URL of source map associated with script (if any). */
       sourceMapURL?: string;
@@ -245,7 +245,7 @@ variables as its properties. */
       executionContextId: Runtime.ExecutionContextId;
       /** Content hash of the script, SHA-256. */
       hash: string;
-      /** Embedder-specific auxiliary data. */
+      /** Embedder-specific auxiliary data likely matching {isDefault: boolean, type: 'default'|'isolated'|'worker', frameId: string} */
       executionContextAuxData?: Record<string, unknown>;
       /** True, if this script is generated as a result of the live edit operation. */
       isLiveEdit?: boolean;
@@ -912,6 +912,8 @@ milliseconds relatively to this requestTime. */
       pushStart: number;
       /** Time the server finished pushing request. */
       pushEnd: number;
+      /** Started receiving response headers. */
+      receiveHeadersStart: number;
       /** Finished receiving response headers. */
       receiveHeadersEnd: number;
     };
@@ -1474,9 +1476,16 @@ the same request (but not for redirected requests). */
       reportingEndpoint?: string;
       reportOnlyReportingEndpoint?: string;
     };
+    export type ContentSecurityPolicySource = "HTTP" | "Meta";
+    export type ContentSecurityPolicyStatus = {
+      effectiveDirectives: string;
+      isEnforced: boolean;
+      source: unknown;
+    };
     export type SecurityIsolationStatus = {
       coop?: CrossOriginOpenerPolicyStatus;
       coep?: CrossOriginEmbedderPolicyStatus;
+      csp?: Array<unknown>;
     };
     /** The status of a Reporting API report. */
     export type ReportStatus = "Queued" | "Pending" | "MarkedForRemoval" | "Success";
@@ -1817,6 +1826,7 @@ preemptively (e.g. a cache hit). */
       status:
         | "Ok"
         | "InvalidArgument"
+        | "MissingIssuerKeys"
         | "FailedPrecondition"
         | "ResourceExhausted"
         | "AlreadyExists"
@@ -2380,9 +2390,15 @@ profile startTime. */
   export namespace Runtime {
     /** Unique script identifier. */
     export type ScriptId = string;
-    /** Represents the value serialiazed by the WebDriver BiDi specification
-https://w3c.github.io/webdriver-bidi. */
-    export type WebDriverValue = {
+    /** Represents options for serialization. Overrides `generatePreview`, `returnByValue` and
+`generateWebDriverValue`. */
+    export type SerializationOptions = {
+      serialization: "deep" | "json" | "idOnly";
+      /** Deep serialization depth. Default is full depth. Respected only in `deep` serialization mode. */
+      maxDepth?: number;
+    };
+    /** Represents deep serialized value. */
+    export type DeepSerializedValue = {
       type:
         | "undefined"
         | "null"
@@ -2409,6 +2425,10 @@ https://w3c.github.io/webdriver-bidi. */
         | "window";
       value?: any;
       objectId?: string;
+      /** Set if value reference met more then once during serialization. In such
+case, value is provided only to one of the serialized values. Unique
+per value in the scope of one CDP call. */
+      weakLocalObjectReference?: number;
     };
     /** Unique object identifier. */
     export type RemoteObjectId = string;
@@ -2451,8 +2471,10 @@ property. */
       unserializableValue?: UnserializableValue;
       /** String representation of the object. */
       description?: string;
-      /** WebDriver BiDi representation of the value. */
-      webDriverValue?: WebDriverValue;
+      /** Deprecated. Use `deepSerializedValue` instead. WebDriver BiDi representation of the value. */
+      webDriverValue?: DeepSerializedValue;
+      /** Deep serialized value. */
+      deepSerializedValue?: DeepSerializedValue;
       /** Unique object identifier (for non-primitive values). */
       objectId?: RemoteObjectId;
       /** Preview containing abbreviated property values. Specified for `object` type values only. */
@@ -2611,7 +2633,7 @@ script evaluation should be performed. */
 multiple processes, so can be reliably used to identify specific context while backend
 performs a cross-process navigation. */
       uniqueId: string;
-      /** Embedder-specific auxiliary data. */
+      /** Embedder-specific auxiliary data likely matching {isDefault: boolean, type: 'default'|'isolated'|'worker', frameId: string} */
       auxData?: Record<string, unknown>;
     };
     /** Detailed information about exception (or error) that was thrown during script compilation or
@@ -2784,7 +2806,8 @@ object. */
       /** In silent mode exceptions thrown during evaluation are not reported and do not pause
 execution. Overrides `setPauseOnException` state. */
       silent?: boolean;
-      /** Whether the result is expected to be a JSON object which should be sent by value. */
+      /** Whether the result is expected to be a JSON object which should be sent by value.
+Can be overriden by `serializationOptions`. */
       returnByValue?: boolean;
       /** Whether preview should be generated for the result. */
       generatePreview?: boolean;
@@ -2808,10 +2831,14 @@ in context different than intended (e.g. as a result of navigation across proces
 boundaries).
 This is mutually exclusive with `executionContextId`. */
       uniqueContextId?: string;
-      /** Whether the result should contain `webDriverValue`, serialized according to
+      /** Deprecated. Use `serializationOptions: {serialization:"deep"}` instead.
+Whether the result should contain `webDriverValue`, serialized according to
 https://w3c.github.io/webdriver-bidi. This is mutually exclusive with `returnByValue`, but
 resulting `objectId` is still provided. */
       generateWebDriverValue?: boolean;
+      /** Specifies the result serialization. If provided, overrides
+`generatePreview`, `returnByValue` and `generateWebDriverValue`. */
+      serializationOptions?: SerializationOptions;
     };
     /** `Runtime.callFunctionOn` */
     export type CallFunctionOnResponse = {
@@ -2900,8 +2927,15 @@ in context different than intended (e.g. as a result of navigation across proces
 boundaries).
 This is mutually exclusive with `contextId`. */
       uniqueContextId?: string;
-      /** Whether the result should be serialized according to https://w3c.github.io/webdriver-bidi. */
+      /** Deprecated. Use `serializationOptions: {serialization:"deep"}` instead.
+Whether the result should contain `webDriverValue`, serialized
+according to
+https://w3c.github.io/webdriver-bidi. This is mutually exclusive with `returnByValue`, but
+resulting `objectId` is still provided. */
       generateWebDriverValue?: boolean;
+      /** Specifies the result serialization. If provided, overrides
+`generatePreview`, `returnByValue` and `generateWebDriverValue`. */
+      serializationOptions?: SerializationOptions;
     };
     /** `Runtime.evaluate` */
     export type EvaluateResponse = {

@@ -1,8 +1,24 @@
 {
   "name": "bun-devtools",
-  "private": true,
   "module": "./index.ts",
+  "version": "0.0.2",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./index.ts",
+      "require": "./index.ts"
+    }
+  },
   "scripts": {
     "generate-protocol": "bun run scripts/generate-protocol.ts"
+  },
+  "files": [
+    "index.ts",
+    "package.json",
+    "tsconfig.json",
+    "protocol"
+  ],
+  "peerDependencies": {
+    "typescript": "^5.0.0"
   }
 }

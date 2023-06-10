@@ -3057,6 +3057,10 @@ pub const Parser = struct {
         var did_import_fast_refresh = false;
         _ = did_import_fast_refresh;
 
+        // This is a workaround for broken module environment checks in packages like lodash-es
+        // https://github.com/lodash/lodash/issues/5660
+        var force_esm = false;
+
         if (comptime FeatureFlags.unwrap_commonjs_to_esm) {
             if (p.imports_to_convert_from_require.items.len > 0) {
                 var all_stmts = p.allocator.alloc(Stmt, p.imports_to_convert_from_require.items.len) catch unreachable;
@@ -3094,49 +3098,69 @@ pub const Parser = struct {
                 var export_names = p.commonjs_named_exports.keys();
 
                 if (!p.commonjs_named_exports_deoptimized) {
-                    // We make this safe by doing toCommonJS() at runtime
-                    for (export_refs, export_names) |*export_ref, alias| {
-                        if (export_ref.needs_decl) {
-                            var this_stmts = p.allocator.alloc(Stmt, 2) catch unreachable;
-                            var decls = p.allocator.alloc(Decl, 1) catch unreachable;
-                            const ref = export_ref.loc_ref.ref.?;
-                            decls[0] = .{
-                                .binding = p.b(B.Identifier{ .ref = ref }, export_ref.loc_ref.loc),
-                                .value = null,
-                            };
-                            var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, 1) catch unreachable;
-                            declared_symbols.appendAssumeCapacity(.{ .ref = ref, .is_top_level = true });
-                            this_stmts[0] = p.s(
-                                S.Local{
-                                    .kind = .k_var,
-                                    .is_export = false,
-                                    .was_commonjs_export = true,
-                                    .decls = Decl.List.init(decls),
-                                },
-                                export_ref.loc_ref.loc,
-                            );
-                            p.module_scope.generated.push(p.allocator, ref) catch unreachable;
-                            var clause_items = p.allocator.alloc(js_ast.ClauseItem, 1) catch unreachable;
-                            clause_items[0] = js_ast.ClauseItem{
-                                .alias = alias,
-                                .alias_loc = export_ref.loc_ref.loc,
-                                .name = export_ref.loc_ref,
-                            };
 
-                            this_stmts[1] = p.s(
-                                S.ExportClause{
-                                    .items = clause_items,
-                                    .is_single_line = true,
-                                },
-                                export_ref.loc_ref.loc,
-                            );
-                            export_ref.needs_decl = false;
-                            before.append(.{
-                                .stmts = this_stmts,
-                                .declared_symbols = declared_symbols,
-                                .tag = .commonjs_named_export,
-                                .can_be_removed_if_unused = p.stmtsCanBeRemovedIfUnused(this_stmts),
-                            }) catch unreachable;
+                    // This is a workaround for packages which have broken ESM checks
+                    // If they never actually assign to exports.foo, only check for it
+                    // and the package specifies type "module"
+                    // and the package uses ESM syntax
+                    // We should just say
+                    // You're ESM and lying about it.
+                    if (p.options.module_type == .esm and p.has_es_module_syntax) {
+                        var needs_decl_count: usize = 0;
+                        for (export_refs) |*export_ref| {
+                            needs_decl_count += @as(usize, @boolToInt(export_ref.needs_decl));
+                        }
+
+                        if (needs_decl_count == export_names.len) {
+                            force_esm = true;
+                        }
+                    }
+
+                    if (!force_esm) {
+                        // We make this safe by doing toCommonJS() at runtime
+                        for (export_refs, export_names) |*export_ref, alias| {
+                            if (export_ref.needs_decl) {
+                                var this_stmts = p.allocator.alloc(Stmt, 2) catch unreachable;
+                                var decls = p.allocator.alloc(Decl, 1) catch unreachable;
+                                const ref = export_ref.loc_ref.ref.?;
+                                decls[0] = .{
+                                    .binding = p.b(B.Identifier{ .ref = ref }, export_ref.loc_ref.loc),
+                                    .value = null,
+                                };
+                                var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, 1) catch unreachable;
+                                declared_symbols.appendAssumeCapacity(.{ .ref = ref, .is_top_level = true });
+                                this_stmts[0] = p.s(
+                                    S.Local{
+                                        .kind = .k_var,
+                                        .is_export = false,
+                                        .was_commonjs_export = true,
+                                        .decls = Decl.List.init(decls),
+                                    },
+                                    export_ref.loc_ref.loc,
+                                );
+                                p.module_scope.generated.push(p.allocator, ref) catch unreachable;
+                                var clause_items = p.allocator.alloc(js_ast.ClauseItem, 1) catch unreachable;
+                                clause_items[0] = js_ast.ClauseItem{
+                                    .alias = alias,
+                                    .alias_loc = export_ref.loc_ref.loc,
+                                    .name = export_ref.loc_ref,
+                                };
+
+                                this_stmts[1] = p.s(
+                                    S.ExportClause{
+                                        .items = clause_items,
+                                        .is_single_line = true,
+                                    },
+                                    export_ref.loc_ref.loc,
+                                );
+                                export_ref.needs_decl = false;
+                                before.append(.{
+                                    .stmts = this_stmts,
+                                    .declared_symbols = declared_symbols,
+                                    .tag = .commonjs_named_export,
+                                    .can_be_removed_if_unused = p.stmtsCanBeRemovedIfUnused(this_stmts),
+                                }) catch unreachable;
+                            }
                         }
                     }
                 }
@@ -3345,7 +3369,8 @@ pub const Parser = struct {
         var exports_kind = js_ast.ExportsKind.none;
         const exports_ref_usage_count = p.symbols.items[p.exports_ref.innerIndex()].use_count_estimate;
         const uses_exports_ref = exports_ref_usage_count > 0;
-        if (uses_exports_ref and p.commonjs_named_exports.count() > 0) {
+
+        if (uses_exports_ref and p.commonjs_named_exports.count() > 0 and !force_esm) {
             p.deoptimizeCommonJSNamedExports();
         }
 
@@ -3401,7 +3426,7 @@ pub const Parser = struct {
             }
         }
 
-        if (exports_kind == .esm and p.commonjs_named_exports.count() > 0 and !p.unwrap_all_requires) {
+        if (exports_kind == .esm and p.commonjs_named_exports.count() > 0 and !p.unwrap_all_requires and !force_esm) {
             exports_kind = .esm_with_dynamic_fallback_from_cjs;
         }
 
@@ -4674,6 +4699,7 @@ const Jest = struct {
     afterEach: Ref = Ref.None,
     beforeAll: Ref = Ref.None,
     afterAll: Ref = Ref.None,
+    jest: Ref = Ref.None,
 };
 
 // workaround for https://github.com/ziglang/zig/issues/10903
@@ -4756,6 +4782,7 @@ fn NewParser_(
 
         /// Used for transforming export default -> module.exports
         has_export_default: bool = false,
+        has_export_keyword: bool = false,
 
         is_file_considered_to_have_esm_exports: bool = false,
 
@@ -6408,7 +6435,7 @@ fn NewParser_(
             try p.pushScopeForVisitPass(js_ast.Scope.Kind.entry, locModuleScope);
             p.fn_or_arrow_data_visit.is_outside_fn_or_arrow = true;
             p.module_scope = p.current_scope;
-            p.has_es_module_syntax = p.esm_import_keyword.len > 0 or p.esm_export_keyword.len > 0 or p.top_level_await_keyword.len > 0;
+            p.has_es_module_syntax = p.has_es_module_syntax or p.esm_import_keyword.len > 0 or p.esm_export_keyword.len > 0 or p.top_level_await_keyword.len > 0;
 
             if (p.lexer.jsx_pragma.jsx()) |factory| {
                 p.options.jsx.factory = options.JSX.Pragma.memberListToComponentsIfDifferent(p.allocator, p.options.jsx.factory, factory.text) catch unreachable;
@@ -6474,6 +6501,7 @@ fn NewParser_(
             if (p.options.features.inject_jest_globals) {
                 p.jest.describe = try p.declareCommonJSSymbol(.unbound, "describe");
                 p.jest.@"test" = try p.declareCommonJSSymbol(.unbound, "test");
+                p.jest.jest = try p.declareCommonJSSymbol(.unbound, "jest");
                 p.jest.it = try p.declareCommonJSSymbol(.unbound, "it");
                 p.jest.expect = try p.declareCommonJSSymbol(.unbound, "expect");
                 p.jest.beforeEach = try p.declareCommonJSSymbol(.unbound, "beforeEach");
@@ -8784,6 +8812,7 @@ fn NewParser_(
                                     break :default_name_getter createDefaultName(p, defaultLoc) catch unreachable;
                                 };
                                 p.has_export_default = true;
+                                p.has_es_module_syntax = true;
                                 return p.s(
                                     S.ExportDefault{ .default_name = default_name, .value = js_ast.StmtOrExpr{ .stmt = stmt } },
                                     loc,
@@ -8896,6 +8925,7 @@ fn NewParser_(
                             }
 
                             try p.lexer.expectOrInsertSemicolon();
+                            p.has_es_module_syntax = true;
                             return p.s(S.ExportStar{
                                 .namespace_ref = namespace_ref,
                                 .alias = alias,
@@ -8946,7 +8976,7 @@ fn NewParser_(
                                     p.import_records.items[import_record_index].calls_runtime_re_export_fn = true;
                                 }
                                 p.current_scope.is_after_const_local_prefix = true;
-
+                                p.has_es_module_syntax = true;
                                 return p.s(
                                     S.ExportFrom{
                                         .items = export_clause.clauses,
@@ -8968,7 +8998,7 @@ fn NewParser_(
                                     return p.s(S.TypeScript{}, loc);
                                 }
                             }
-
+                            p.has_es_module_syntax = true;
                             return p.s(S.ExportClause{ .items = export_clause.clauses, .is_single_line = export_clause.is_single_line }, loc);
                         },
                         T.t_equals => {

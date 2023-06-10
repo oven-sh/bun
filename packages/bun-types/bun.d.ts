@@ -745,6 +745,14 @@ declare module "bun" {
   ): boolean;
 
   /**
+   * Returns true if all properties in the subset exist in the
+   * other and have equal values.
+   *
+   * This also powers expect().toMatchObject in `bun:test`
+   */
+  export function deepMatch(subset: unknown, a: unknown): boolean;
+
+  /**
    * tsconfig.json options supported by Bun
    */
   interface TSConfig {

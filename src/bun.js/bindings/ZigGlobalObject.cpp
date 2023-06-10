@@ -504,7 +504,7 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure)
     , m_builtinInternalFunctions(vm)
 
 {
-
+    mockModule = Bun::JSMockModule::create(this);
     m_scriptExecutionContext = new WebCore::ScriptExecutionContext(&vm, this);
 }
 
@@ -2018,6 +2018,35 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepEquals, (JSGlobalObject * globalObject, 
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsBoolean(isEqual));
     }
+}
+
+JSC_DECLARE_HOST_FUNCTION(functionBunDeepMatch);
+
+JSC_DEFINE_HOST_FUNCTION(functionBunDeepMatch, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* global = reinterpret_cast<GlobalObject*>(globalObject);
+    JSC::VM& vm = global->vm();
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 2) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwTypeError(globalObject, throwScope, "Expected 2 values to compare"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSC::JSValue subset = callFrame->uncheckedArgument(0);
+    JSC::JSValue object = callFrame->uncheckedArgument(1);
+
+    if (!subset.isObject() || !object.isObject()) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwTypeError(globalObject, throwScope, "Expected 2 object to match"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    bool isEqual = Bun__deepMatch(object, subset, globalObject, &scope, false);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsBoolean(isEqual));
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionBunNanoseconds);
@@ -3668,6 +3697,12 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         }
 
         {
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "deepMatch"_s);
+            object->putDirectNativeFunction(vm, this, identifier, 2, functionBunDeepMatch, ImplementationVisibility::Public, NoIntrinsic,
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        }
+
+        {
 
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "version"_s);
             object->putDirect(vm, PropertyName(identifier), JSC::jsOwnedString(vm, makeString(Bun__version + 1)),
@@ -3887,6 +3922,12 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_commonJSFunctionArgumentsStructure.visit(visitor);
     thisObject->m_cachedGlobalObjectStructure.visit(visitor);
     thisObject->m_cachedGlobalProxyStructure.visit(visitor);
+
+    thisObject->mockModule.mockFunctionStructure.visit(visitor);
+    thisObject->mockModule.mockResultStructure.visit(visitor);
+    thisObject->mockModule.mockImplementationStructure.visit(visitor);
+    thisObject->mockModule.mockObjectStructure.visit(visitor);
+    thisObject->mockModule.activeSpySetStructure.visit(visitor);
 
     for (auto& barrier : thisObject->m_thenables) {
         visitor.append(barrier);

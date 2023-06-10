@@ -146,7 +146,7 @@ test("spyOn works on globalThis", () => {
 // spyOn does not work with getters/setters yet.
 
 test("lastCall works", () => {
-  const fn = mock((v) => -v);
+  const fn = mock(v => -v);
   expect(fn.mock.lastCall).toBeUndefined();
   expect(fn(1)).toBe(-1);
   expect(fn.mock.lastCall).toEqual([1]);

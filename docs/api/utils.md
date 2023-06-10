@@ -75,13 +75,13 @@ Bun.sleepSync(1000); // blocks thread for one second
 console.log("hello one second later!");
 ```
 
-Alternatively, pass a `Date` object to receive a `Promise` that resolves at that point in time.
+Alternatively, pass a `Date` object to block the thread until that point in time.
 
 ```ts
 const oneSecondInFuture = new Date(Date.now() + 1000);
 
 console.log("hello");
-await Bun.sleep(oneSecondInFuture);
+Bun.sleepSync(oneSecondInFuture);
 console.log("hello one second later!");
 ```
 

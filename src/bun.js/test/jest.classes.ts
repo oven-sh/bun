@@ -333,6 +333,14 @@ export default [
         fn: "toInclude",
         length: 1,
       },
+      toIncludeRepeated: {
+        fn: "toIncludeRepeated",
+        length: 2,
+      },
+      toSatisfy: {
+        fn: "toSatisfy",
+        length: 1,
+      },
       toStartWith: {
         fn: "toStartWith",
         length: 1,

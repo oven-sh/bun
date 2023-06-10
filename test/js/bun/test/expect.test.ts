@@ -354,6 +354,14 @@ describe("expect()", () => {
     expect("bob").not.toInclude("alice");
   });
 
+  test("toIncludeRepeated()", () => {
+    expect("123").toIncludeRepeated("1", 1);
+    expect("abc abc").toIncludeRepeated("abc", 2);
+    expect("123").not.toIncludeRepeated("1", 2);
+    expect("abc abc").not.toIncludeRepeated("abc", 3);
+    expect("abc abc abc").toIncludeRepeated("abc", 2);
+  });
+
   test("toSatisfy()", () => {
     // Arrow functions
     const isOdd = (value: unknown) => (value as number) % 2 === 1;

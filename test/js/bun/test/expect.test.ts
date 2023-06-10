@@ -354,6 +354,25 @@ describe("expect()", () => {
     expect("bob").not.toInclude("alice");
   });
 
+  test("toSatisfy()", () => {
+    // Arrow functions
+    const isOdd = (value: unknown) => (value as number) % 2 === 1;
+    const hasLetterH = (value: unknown) => (value as string).includes("H");
+
+    expect(1).toSatisfy(isOdd);
+    expect("Hello").toSatisfy(hasLetterH);
+
+    // Function expressions
+    function hasBunInAnArray (value: unknown) { return (value as string[]).includes("bun"); }
+
+    expect(["bun", "cheese", "patty"]).toSatisfy(hasBunInAnArray);
+    expect(["cheese", "patty"]).not.toSatisfy(hasBunInAnArray);
+
+    // Inline functions
+    expect([]).toSatisfy((value: unknown) => (value as unknown[]).length === 0);
+    expect([]).not.toSatisfy((value: unknown) => (value as unknown[]).length > 0);
+  });
+
   test("toStartWith()", () => {
     expect("123").toStartWith("1");
     expect("abc").toStartWith("abc");

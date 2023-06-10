@@ -72,6 +72,37 @@ pub fn initializeStore() void {
     JSAst.Stmt.Data.Store.create(default_allocator);
 }
 
+/// The default store we use pre-allocates around 16 MB of memory per thread
+/// That adds up in multi-threaded scenarios.
+/// ASTMemoryAllocator uses a smaller fixed buffer allocator
+pub fn initializeMiniStore() void {
+    const MiniStore = struct {
+        heap: bun.MimallocArena,
+        memory_allocator: JSAst.ASTMemoryAllocator,
+
+        pub threadlocal var instance: ?*@This() = null;
+    };
+    if (MiniStore.instance == null) {
+        var mini_store = bun.default_allocator.create(MiniStore) catch @panic("OOM");
+        mini_store.* = .{
+            .heap = bun.MimallocArena.init() catch @panic("OOM"),
+            .memory_allocator = undefined,
+        };
+        mini_store.memory_allocator = .{ .allocator = mini_store.heap.allocator() };
+        mini_store.memory_allocator.reset();
+        MiniStore.instance = mini_store;
+        mini_store.memory_allocator.push();
+    } else {
+        var mini_store = MiniStore.instance.?;
+        if (mini_store.memory_allocator.stack_allocator.fixed_buffer_allocator.end_index >= mini_store.memory_allocator.stack_allocator.fixed_buffer_allocator.buffer.len -| 1) {
+            mini_store.heap.reset();
+            mini_store.memory_allocator.allocator = mini_store.heap.allocator();
+        }
+        mini_store.memory_allocator.reset();
+        mini_store.memory_allocator.push();
+    }
+}
+
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 const NetworkQueue = std.fifo.LinearFifo(*NetworkTask, .{ .Static = 32 });
@@ -558,10 +589,16 @@ const Task = struct {
         switch (this.tag) {
             .package_manifest => {
                 var allocator = bun.default_allocator;
+                const body = this.request.package_manifest.network.response_buffer.move();
+
+                defer {
+                    this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
+                    bun.default_allocator.free(body);
+                }
                 const package_manifest = Npm.Registry.getPackageMetadata(
                     allocator,
                     this.request.package_manifest.network.http.response.?,
-                    this.request.package_manifest.network.response_buffer.toOwnedSliceLeaky(),
+                    body,
                     &this.log,
                     this.request.package_manifest.name.slice(),
                     this.request.package_manifest.network.callback.package_manifest.loaded_manifest,
@@ -575,7 +612,6 @@ const Task = struct {
                     this.err = err;
                     this.status = Status.fail;
                     this.data = .{ .package_manifest = .{} };
-                    this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
                     return;
                 };
 
@@ -584,7 +620,6 @@ const Task = struct {
                     .fresh => |manifest| {
                         this.status = Status.success;
                         this.data = .{ .package_manifest = manifest };
-                        this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
                         return;
                     },
                     .not_found => {
@@ -593,14 +628,20 @@ const Task = struct {
                         }) catch unreachable;
                         this.status = Status.fail;
                         this.data = .{ .package_manifest = .{} };
-                        this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
                         return;
                     },
                 }
             },
             .extract => {
+                const bytes = this.request.extract.network.response_buffer.move();
+
+                defer {
+                    this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
+                    bun.default_allocator.free(bytes);
+                }
+
                 const result = this.request.extract.tarball.run(
-                    this.request.extract.network.response_buffer.toOwnedSliceLeaky(),
+                    bytes,
                 ) catch |err| {
                     if (comptime Environment.isDebug) {
                         if (@errorReturnTrace()) |trace| {
@@ -611,13 +652,11 @@ const Task = struct {
                     this.err = err;
                     this.status = Status.fail;
                     this.data = .{ .extract = .{} };
-                    this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
                     return;
                 };
 
                 this.data = .{ .extract = result };
                 this.status = Status.success;
-                this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
             },
             .git_clone => {
                 const manager = this.package_manager;
@@ -1690,6 +1729,7 @@ pub const PackageManager = struct {
 
     pub fn sleep(this: *PackageManager) void {
         if (this.wait_count.swap(0, .Monotonic) > 0) return;
+        bun.Mimalloc.mi_collect(false);
         _ = this.waiter.wait() catch 0;
     }
 

@@ -42,4 +42,4 @@ function sendReadyMessage() {
 
 console.log(`Waiting for ${CLIENTS_TO_WAIT_FOR} clients to connect..`);
 
-Deno.serve(reqHandler, { port });
+Deno.serve({ port }, reqHandler);

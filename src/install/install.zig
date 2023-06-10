@@ -7327,7 +7327,13 @@ pub const PackageManager = struct {
                         package_json_source,
                         Features.main,
                     );
-                    manager.lockfile.scripts = lockfile.scripts;
+                    if (!root.scripts.filled) {
+                        maybe_root.scripts.enqueue(
+                            manager.lockfile,
+                            lockfile.buffers.string_bytes.items,
+                            strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir),
+                        );
+                    }
                     var mapping = try manager.lockfile.allocator.alloc(PackageID, maybe_root.dependencies.len);
                     std.mem.set(PackageID, mapping, invalid_package_id);
 

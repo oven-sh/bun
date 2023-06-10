@@ -15,6 +15,77 @@
  */
 
 declare module "bun:test" {
+  type AnyFunction = (...args: any) => any;
+  /**
+   * -- Mocks --
+   */
+  export interface Mock<T extends AnyFunction>
+    extends JestMock.MockInstance<T> {
+    (...args: Parameters<T>): ReturnType<T>;
+  }
+  type _Mock<T extends AnyFunction> = Mock<T>;
+
+  export const mock: {
+    <T extends AnyFunction>(Function: T): Mock<T>;
+  };
+
+  interface Jest {
+    restoreAllMocks(): void;
+    fn<T extends AnyFunction>(func: T): Mock<T>;
+  }
+  export const jest: Jest;
+  export namespace jest {
+    /**
+     * Constructs the type of a mock function, e.g. the return type of `jest.fn()`.
+     */
+    type Mock<T extends AnyFunction = AnyFunction> = _Mock<T>;
+    /**
+     * Wraps a class, function or object type with Jest mock type definitions.
+     */
+    // type Mocked<T extends object> = JestMock.Mocked<T>;
+    /**
+     * Wraps a class type with Jest mock type definitions.
+     */
+    // type MockedClass<T extends JestMock.ClassLike> = JestMock.MockedClass<T>;
+    /**
+     * Wraps a function type with Jest mock type definitions.
+     */
+    // type MockedFunction<T extends AnyFunction> = JestMock.MockedFunction<T>;
+    /**
+     * Wraps an object type with Jest mock type definitions.
+     */
+    // type MockedObject<T extends object> = JestMock.MockedObject<T>;
+    /**
+     * Constructs the type of a replaced property.
+     */
+    type Replaced<T> = JestMock.Replaced<T>;
+    /**
+     * Constructs the type of a spied class or function.
+     */
+    type Spied<T extends JestMock.ClassLike | AnyFunction> = JestMock.Spied<T>;
+    /**
+     * Constructs the type of a spied class.
+     */
+    type SpiedClass<T extends JestMock.ClassLike> = JestMock.SpiedClass<T>;
+    /**
+     * Constructs the type of a spied function.
+     */
+    type SpiedFunction<T extends AnyFunction> = JestMock.SpiedFunction<T>;
+    /**
+     * Constructs the type of a spied getter.
+     */
+    type SpiedGetter<T> = JestMock.SpiedGetter<T>;
+    /**
+     * Constructs the type of a spied setter.
+     */
+    type SpiedSetter<T> = JestMock.SpiedSetter<T>;
+  }
+
+  export function spyOn<T extends object, K extends keyof T>(
+    obj: T,
+    methodOrPropertyValue: K,
+  ): Mock<() => T[K]>;
+
   /**
    * Describes a group of related tests.
    *
@@ -795,10 +866,445 @@ declare module "bun:test" {
      * @param expected the string to end with
      */
     toEndWith(expected: string): void;
+    /**
+     * Ensures that a mock function is called.
+     */
+    toHaveBeenCalled(): void;
+    /**
+     * Ensures that a mock function is called an exact number of times.
+     */
+    toHaveBeenCalledTimes(expected: number): void;
+    /**
+     * Ensure that a mock function is called with specific arguments.
+     */
+    // toHaveBeenCalledWith(...expected: Array<unknown>): void;
   };
 }
 
 declare module "test" {
   import BunTestModule = require("bun:test");
   export = BunTestModule;
+}
+
+declare namespace JestMock {
+  /**
+   * Copyright (c) Meta Platforms, Inc. and affiliates.
+   *
+   * This source code is licensed under the MIT license found in the
+   * LICENSE file in the root directory of this source tree.
+   */
+  export type ClassLike = {
+    new (...args: any): any;
+  };
+
+  export type ConstructorLikeKeys<T> = keyof {
+    [K in keyof T as Required<T>[K] extends ClassLike ? K : never]: T[K];
+  };
+
+  // export const fn: <T extends FunctionLike = UnknownFunction>(
+  //   implementation?: T | undefined,
+  // ) => Mock<T>;
+
+  export type FunctionLike = (...args: any) => any;
+
+  export type MethodLikeKeys<T> = keyof {
+    [K in keyof T as Required<T>[K] extends FunctionLike ? K : never]: T[K];
+  };
+
+  /**
+   * All what the internal typings need is to be sure that we have any-function.
+   * `FunctionLike` type ensures that and helps to constrain the type as well.
+   * The default of `UnknownFunction` makes sure that `any`s do not leak to the
+   * user side. For instance, calling `fn()` without implementation will return
+   * a mock of `(...args: Array<unknown>) => unknown` type. If implementation
+   * is provided, its typings are inferred correctly.
+   */
+  // export interface Mock<T extends FunctionLike = UnknownFunction>
+  //   extends Function,
+  //     MockInstance<T> {
+  //   new (...args: Parameters<T>): ReturnType<T>;
+  //   (...args: Parameters<T>): ReturnType<T>;
+  // }
+
+  // export type Mocked<T> = T extends ClassLike
+  //   ? MockedClass<T>
+  //   : T extends FunctionLike
+  //   ? MockedFunction<T>
+  //   : T extends object
+  //   ? MockedObject<T>
+  //   : T;
+
+  // export const mocked: {
+  //   <T extends object>(
+  //     source: T,
+  //     options?: {
+  //       shallow: false;
+  //     },
+  //   ): Mocked<T>;
+  //   <T_1 extends object>(
+  //     source: T_1,
+  //     options: {
+  //       shallow: true;
+  //     },
+  //   ): MockedShallow<T_1>;
+  // };
+
+  // export type MockedClass<T extends ClassLike> = MockInstance<
+  //   (...args: ConstructorParameters<T>) => Mocked<InstanceType<T>>
+  // > &
+  //   MockedObject<T>;
+
+  // export type MockedFunction<T extends FunctionLike> = MockInstance<T> &
+  //   MockedObject<T>;
+
+  // type MockedFunctionShallow<T extends FunctionLike> = MockInstance<T> & T;
+
+  // export type MockedObject<T extends object> = {
+  //   [K in keyof T]: T[K] extends ClassLike
+  //     ? MockedClass<T[K]>
+  //     : T[K] extends FunctionLike
+  //     ? MockedFunction<T[K]>
+  //     : T[K] extends object
+  //     ? MockedObject<T[K]>
+  //     : T[K];
+  // } & T;
+
+  // type MockedObjectShallow<T extends object> = {
+  //   [K in keyof T]: T[K] extends ClassLike
+  //     ? MockedClass<T[K]>
+  //     : T[K] extends FunctionLike
+  //     ? MockedFunctionShallow<T[K]>
+  //     : T[K];
+  // } & T;
+
+  // export type MockedShallow<T> = T extends ClassLike
+  //   ? MockedClass<T>
+  //   : T extends FunctionLike
+  //   ? MockedFunctionShallow<T>
+  //   : T extends object
+  //   ? MockedObjectShallow<T>
+  //   : T;
+
+  // export type MockFunctionMetadata<
+  //   T = unknown,
+  //   MetadataType = MockMetadataType,
+  // > = MockMetadata<T, MetadataType>;
+
+  // export type MockFunctionMetadataType = MockMetadataType;
+
+  type MockFunctionResult<T extends FunctionLike = UnknownFunction> =
+    | MockFunctionResultIncomplete
+    | MockFunctionResultReturn<T>
+    | MockFunctionResultThrow;
+
+  type MockFunctionResultIncomplete = {
+    type: "incomplete";
+    /**
+     * Result of a single call to a mock function that has not yet completed.
+     * This occurs if you test the result from within the mock function itself,
+     * or from within a function that was called by the mock.
+     */
+    value: undefined;
+  };
+
+  type MockFunctionResultReturn<T extends FunctionLike = UnknownFunction> = {
+    type: "return";
+    /**
+     * Result of a single call to a mock function that returned.
+     */
+    value: ReturnType<T>;
+  };
+
+  type MockFunctionResultThrow = {
+    type: "throw";
+    /**
+     * Result of a single call to a mock function that threw.
+     */
+    value: unknown;
+  };
+
+  type MockFunctionState<T extends FunctionLike = FunctionLike> = {
+    /**
+     * List of the call arguments of all calls that have been made to the mock.
+     */
+    calls: Array<Parameters<T>>;
+    /**
+     * List of all the object instances that have been instantiated from the mock.
+     */
+    instances: Array<ReturnType<T>>;
+    /**
+     * List of all the function contexts that have been applied to calls to the mock.
+     */
+    contexts: Array<ThisParameterType<T>>;
+    /**
+     * List of the call order indexes of the mock. Jest is indexing the order of
+     * invocations of all mocks in a test file. The index is starting with `1`.
+     */
+    // invocationCallOrder: Array<number>;
+    /**
+     * List of the call arguments of the last call that was made to the mock.
+     * If the function was not called, it will return `undefined`.
+     */
+    // lastCall?: Parameters<T>;
+    /**
+     * List of the results of all calls that have been made to the mock.
+     */
+    results: Array<MockFunctionResult<T>>;
+  };
+
+  export interface MockInstance<T extends FunctionLike = UnknownFunction> {
+    _isMockFunction: true;
+    _protoImpl: Function;
+    getMockImplementation(): T | undefined;
+    getMockName(): string;
+    mock: MockFunctionState<T>;
+    mockClear(): this;
+    mockReset(): this;
+    mockRestore(): void;
+    mockImplementation(fn: T): this;
+    mockImplementationOnce(fn: T): this;
+    withImplementation(fn: T, callback: () => Promise<unknown>): Promise<void>;
+    withImplementation(fn: T, callback: () => void): void;
+    mockName(name: string): this;
+    mockReturnThis(): this;
+    mockReturnValue(value: ReturnType<T>): this;
+    mockReturnValueOnce(value: ReturnType<T>): this;
+    mockResolvedValue(value: ResolveType<T>): this;
+    mockResolvedValueOnce(value: ResolveType<T>): this;
+    mockRejectedValue(value: RejectType<T>): this;
+    mockRejectedValueOnce(value: RejectType<T>): this;
+  }
+
+  // export type MockMetadata<T, MetadataType = MockMetadataType> = {
+  //   ref?: number;
+  //   members?: Record<string, MockMetadata<T>>;
+  //   mockImpl?: T;
+  //   name?: string;
+  //   refID?: number;
+  //   type?: MetadataType;
+  //   value?: T;
+  //   length?: number;
+  // };
+
+  // export type MockMetadataType =
+  //   | "object"
+  //   | "array"
+  //   | "regexp"
+  //   | "function"
+  //   | "constant"
+  //   | "collection"
+  //   | "null"
+  //   | "undefined";
+
+  // export class ModuleMocker {
+  //   private readonly _environmentGlobal;
+  //   private _mockState;
+  //   private _mockConfigRegistry;
+  //   private _spyState;
+  //   private _invocationCallCounter;
+  //   /**
+  //    * @see README.md
+  //    * @param global Global object of the test environment, used to create
+  //    * mocks
+  //    */
+  //   constructor(global: typeof globalThis);
+  //   private _getSlots;
+  //   private _ensureMockConfig;
+  //   private _ensureMockState;
+  //   private _defaultMockConfig;
+  //   private _defaultMockState;
+  //   private _makeComponent;
+  //   private _createMockFunction;
+  //   private _generateMock;
+  //   /**
+  //    * Check whether the given property of an object has been already replaced.
+  //    */
+  //   private _findReplacedProperty;
+  //   /**
+  //    * @see README.md
+  //    * @param metadata Metadata for the mock in the schema returned by the
+  //    * getMetadata method of this module.
+  //    */
+  //   generateFromMetadata<T>(metadata: MockMetadata<T>): Mocked<T>;
+  //   /**
+  //    * @see README.md
+  //    * @param component The component for which to retrieve metadata.
+  //    */
+  //   getMetadata<T = unknown>(
+  //     component: T,
+  //     _refs?: Map<T, number>,
+  //   ): MockMetadata<T> | null;
+  //   isMockFunction<T extends FunctionLike = UnknownFunction>(
+  //     fn: MockInstance<T>,
+  //   ): fn is MockInstance<T>;
+  //   isMockFunction<P extends Array<unknown>, R>(
+  //     fn: (...args: P) => R,
+  //   ): fn is Mock<(...args: P) => R>;
+  //   isMockFunction(fn: unknown): fn is Mock<UnknownFunction>;
+  //   fn<T extends FunctionLike = UnknownFunction>(implementation?: T): Mock<T>;
+  //   private _attachMockImplementation;
+  //   spyOn<
+  //     T extends object,
+  //     K extends PropertyLikeKeys<T>,
+  //     A extends "get" | "set",
+  //   >(
+  //     object: T,
+  //     methodKey: K,
+  //     accessType: A,
+  //   ): A extends "get"
+  //     ? SpiedGetter<T[K]>
+  //     : A extends "set"
+  //     ? SpiedSetter<T[K]>
+  //     : never;
+  //   spyOn<
+  //     T extends object,
+  //     K extends ConstructorLikeKeys<T> | MethodLikeKeys<T>,
+  //     V extends Required<T>[K],
+  //   >(
+  //     object: T,
+  //     methodKey: K,
+  //   ): V extends ClassLike | FunctionLike ? Spied<V> : never;
+  //   private _spyOnProperty;
+  //   replaceProperty<
+  //     T extends object,
+  //     K extends PropertyLikeKeys<T>,
+  //     V extends T[K],
+  //   >(object: T, propertyKey: K, value: V): Replaced<T[K]>;
+  //   clearAllMocks(): void;
+  //   resetAllMocks(): void;
+  //   restoreAllMocks(): void;
+  //   private _typeOf;
+  //   mocked<T extends object>(
+  //     source: T,
+  //     options?: {
+  //       shallow: false;
+  //     },
+  //   ): Mocked<T>;
+  //   mocked<T extends object>(
+  //     source: T,
+  //     options: {
+  //       shallow: true;
+  //     },
+  //   ): MockedShallow<T>;
+  // }
+
+  export type PropertyLikeKeys<T> = Exclude<
+    keyof T,
+    ConstructorLikeKeys<T> | MethodLikeKeys<T>
+  >;
+
+  type RejectType<T extends FunctionLike> =
+    ReturnType<T> extends PromiseLike<any> ? unknown : never;
+
+  export interface Replaced<T = unknown> {
+    /**
+     * Restore property to its original value known at the time of mocking.
+     */
+    restore(): void;
+    /**
+     * Change the value of the property.
+     */
+    replaceValue(value: T): this;
+  }
+
+  export const replaceProperty: <
+    T extends object,
+    K_2 extends Exclude<
+      keyof T,
+      | keyof {
+          [K in keyof T as Required<T>[K] extends ClassLike ? K : never]: T[K];
+        }
+      | keyof {
+          [K_1 in keyof T as Required<T>[K_1] extends FunctionLike
+            ? K_1
+            : never]: T[K_1];
+        }
+    >,
+    V extends T[K_2],
+  >(
+    object: T,
+    propertyKey: K_2,
+    value: V,
+  ) => Replaced<T[K_2]>;
+
+  type ResolveType<T extends FunctionLike> = ReturnType<T> extends PromiseLike<
+    infer U
+  >
+    ? U
+    : never;
+
+  export type Spied<T extends ClassLike | FunctionLike> = T extends ClassLike
+    ? SpiedClass<T>
+    : T extends FunctionLike
+    ? SpiedFunction<T>
+    : never;
+
+  export type SpiedClass<T extends ClassLike = UnknownClass> = MockInstance<
+    (...args: ConstructorParameters<T>) => InstanceType<T>
+  >;
+
+  export type SpiedFunction<T extends FunctionLike = UnknownFunction> =
+    MockInstance<(...args: Parameters<T>) => ReturnType<T>>;
+
+  export type SpiedGetter<T> = MockInstance<() => T>;
+
+  export type SpiedSetter<T> = MockInstance<(arg: T) => void>;
+
+  export interface SpyInstance<T extends FunctionLike = UnknownFunction>
+    extends MockInstance<T> {}
+
+  export const spyOn: {
+    <
+      T extends object,
+      K_2 extends Exclude<
+        keyof T,
+        | keyof {
+            [K in keyof T as Required<T>[K] extends ClassLike
+              ? K
+              : never]: T[K];
+          }
+        | keyof {
+            [K_1 in keyof T as Required<T>[K_1] extends FunctionLike
+              ? K_1
+              : never]: T[K_1];
+          }
+      >,
+      V extends Required<T>[K_2],
+      A extends "set" | "get",
+    >(
+      object: T,
+      methodKey: K_2,
+      accessType: A,
+    ): A extends "get"
+      ? SpiedGetter<V>
+      : A extends "set"
+      ? SpiedSetter<V>
+      : never;
+    <
+      T_1 extends object,
+      K_5 extends
+        | keyof {
+            [K_3 in keyof T_1 as Required<T_1>[K_3] extends ClassLike
+              ? K_3
+              : never]: T_1[K_3];
+          }
+        | keyof {
+            [K_4 in keyof T_1 as Required<T_1>[K_4] extends FunctionLike
+              ? K_4
+              : never]: T_1[K_4];
+          },
+      V_1 extends Required<T_1>[K_5],
+    >(
+      object: T_1,
+      methodKey: K_5,
+    ): V_1 extends ClassLike | FunctionLike ? Spied<V_1> : never;
+  };
+
+  export type UnknownClass = {
+    new (...args: Array<unknown>): unknown;
+  };
+
+  export type UnknownFunction = (...args: Array<unknown>) => unknown;
+
+  export {};
 }

@@ -600,7 +600,7 @@ pub const Jest = struct {
     pub fn Bun__Jest__createTestModuleObject(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
 
-        const module = JSC.JSValue.createEmptyObject(globalObject, 7);
+        const module = JSC.JSValue.createEmptyObject(globalObject, 11);
 
         const test_fn = JSC.NewFunction(globalObject, ZigString.static("test"), 2, TestScope.call, false);
         module.put(
@@ -698,11 +698,31 @@ pub const Jest = struct {
             Expect.getConstructor(globalObject),
         );
 
+        const mock_object = JSMockFunction__createObject(globalObject);
+        const spyOn = JSC.NewFunction(globalObject, ZigString.static("spyOn"), 2, JSMock__spyOn, false);
+        const restoreAllMocks = JSC.NewFunction(globalObject, ZigString.static("restoreAllMocks"), 2, jsFunctionResetSpies, false);
+        module.put(
+            globalObject,
+            ZigString.static("mock"),
+            mock_object,
+        );
+
+        const jest = JSValue.createEmptyObject(globalObject, 3);
+        jest.put(globalObject, ZigString.static("fn"), mock_object);
+        jest.put(globalObject, ZigString.static("spyOn"), spyOn);
+        jest.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
+        module.put(globalObject, ZigString.static("jest"), jest);
+        module.put(globalObject, ZigString.static("spyOn"), spyOn);
+
         return module;
     }
 
+    extern fn JSMockFunction__createObject(*JSC.JSGlobalObject) JSC.JSValue;
+
     extern fn Bun__Jest__testPreloadObject(*JSC.JSGlobalObject) JSC.JSValue;
     extern fn Bun__Jest__testModuleObject(*JSC.JSGlobalObject) JSC.JSValue;
+    extern fn jsFunctionResetSpies(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
+    extern fn JSMock__spyOn(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
 
     pub fn call(
         _: void,
@@ -3768,13 +3788,13 @@ pub const Expect = struct {
         const _arguments = callFrame.arguments(1);
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
-        if (arguments.len < 1) {
-            globalObject.throwInvalidArguments("toMatch() requires 1 argument", .{});
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalObject.throw("toMatch() must be called in a test", .{});
             return .zero;
         }
 
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalObject.throw("toMatch() must be called in a test", .{});
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toMatch() requires 1 argument", .{});
             return .zero;
         }
 
@@ -3830,6 +3850,110 @@ pub const Expect = struct {
         const fmt = comptime getSignature("toMatch", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
         globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
         return .zero;
+    }
+
+    pub fn toHaveBeenCalled(this: *Expect, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const thisValue = callframe.this();
+        defer this.postMatch(globalObject);
+
+        const value: JSValue = JSC.Jest.Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+
+        const calls = JSMockFunction__getCalls(value);
+        active_test_expectation_counter.actual += 1;
+
+        if (calls == .zero or !calls.jsType().isArray()) {
+            globalObject.throw("Expected value must be a mock function: {}", .{value});
+            return .zero;
+        }
+
+        var pass = calls.getLength(globalObject) > 0;
+
+        const not = this.op.contains(.not);
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        if (not) {
+            const signature = comptime getSignature("toHaveBeenCalled", "<green>expected<r>", true);
+            const fmt = signature ++ "\n\nExpected: not <green>{any}<r>\n";
+            if (Output.enable_ansi_colors) {
+                globalObject.throw(Output.prettyFmt(fmt, true), .{calls.toFmt(globalObject, &formatter)});
+                return .zero;
+            }
+            globalObject.throw(Output.prettyFmt(fmt, false), .{calls.toFmt(globalObject, &formatter)});
+            return .zero;
+        } else {
+            const signature = comptime getSignature("toHaveBeenCalled", "<green>expected<r>", true);
+            const fmt = signature ++ "\n\nExpected <green>{any}<r>\n";
+            if (Output.enable_ansi_colors) {
+                globalObject.throw(Output.prettyFmt(fmt, true), .{calls.toFmt(globalObject, &formatter)});
+                return .zero;
+            }
+            globalObject.throw(Output.prettyFmt(fmt, false), .{calls.toFmt(globalObject, &formatter)});
+            return .zero;
+        }
+
+        unreachable;
+    }
+    pub fn toHaveBeenCalledTimes(this: *Expect, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const thisValue = callframe.this();
+        const arguments_ = callframe.arguments(1);
+        const arguments: []const JSValue = arguments_.ptr[0..arguments_.len];
+        defer this.postMatch(globalObject);
+        const value: JSValue = JSC.Jest.Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+
+        active_test_expectation_counter.actual += 1;
+
+        const calls = JSMockFunction__getCalls(value);
+
+        if (calls == .zero or !calls.jsType().isArray()) {
+            globalObject.throw("Expected value must be a mock function: {}", .{value});
+            return .zero;
+        }
+
+        if (arguments.len < 1 or !arguments[0].isAnyInt()) {
+            globalObject.throwInvalidArguments("toHaveBeenCalledTimes() requires 1 integer argument", .{});
+            return .zero;
+        }
+
+        const times = arguments[0].coerce(i32, globalObject);
+
+        var pass = @intCast(i32, calls.getLength(globalObject)) == times;
+
+        const not = this.op.contains(.not);
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        if (not) {
+            const signature = comptime getSignature("toHaveBeenCalled", "<green>expected<r>", true);
+            const fmt = signature ++ "\n\nExpected: not <green>{any}<r>\n";
+            if (Output.enable_ansi_colors) {
+                globalObject.throw(Output.prettyFmt(fmt, true), .{calls.toFmt(globalObject, &formatter)});
+                return .zero;
+            }
+            globalObject.throw(Output.prettyFmt(fmt, false), .{calls.toFmt(globalObject, &formatter)});
+            return .zero;
+        } else {
+            const signature = comptime getSignature("toHaveBeenCalled", "<green>expected<r>", true);
+            const fmt = signature ++ "\n\nExpected <green>{any}<r>\n";
+            if (Output.enable_ansi_colors) {
+                globalObject.throw(Output.prettyFmt(fmt, true), .{calls.toFmt(globalObject, &formatter)});
+                return .zero;
+            }
+            globalObject.throw(Output.prettyFmt(fmt, false), .{calls.toFmt(globalObject, &formatter)});
+            return .zero;
+        }
+
+        unreachable;
     }
 
     pub fn toMatchObject(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
@@ -3904,7 +4028,6 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub const toHaveBeenCalledTimes = notImplementedJSCFn;
     pub const toHaveBeenCalledWith = notImplementedJSCFn;
     pub const toHaveBeenLastCalledWith = notImplementedJSCFn;
     pub const toHaveBeenNthCalledWith = notImplementedJSCFn;
@@ -5098,3 +5221,11 @@ pub fn printGithubAnnotation(exception: *JSC.ZigException) void {
     Output.printError("\n", .{});
     Output.flush();
 }
+
+/// JSValue.zero is used to indicate it was not a JSMockFunction
+/// If there were no calls, it returns an empty JSArray*
+extern fn JSMockFunction__getCalls(JSValue) JSValue;
+
+/// JSValue.zero is used to indicate it was not a JSMockFunction
+/// If there were no calls, it returns an empty JSArray*
+extern fn JSMockFunction__getReturns(JSValue) JSValue;

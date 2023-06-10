@@ -112,6 +112,10 @@ export default [
         fn: "toBe",
         length: 1,
       },
+      toHaveBeenCalled: {
+        fn: "toHaveBeenCalled",
+        length: 0,
+      },
       toHaveBeenCalledTimes: {
         fn: "toHaveBeenCalledTimes",
         length: 1,

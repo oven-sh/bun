@@ -944,6 +944,8 @@ pub const JSExpect = struct {
             @compileLog("Expected Expect.toEndWith to be a callback but received " ++ @typeName(@TypeOf(Expect.toEndWith)));
         if (@TypeOf(Expect.toEqual) != CallbackType)
             @compileLog("Expected Expect.toEqual to be a callback but received " ++ @typeName(@TypeOf(Expect.toEqual)));
+        if (@TypeOf(Expect.toHaveBeenCalled) != CallbackType)
+            @compileLog("Expected Expect.toHaveBeenCalled to be a callback but received " ++ @typeName(@TypeOf(Expect.toHaveBeenCalled)));
         if (@TypeOf(Expect.toHaveBeenCalledTimes) != CallbackType)
             @compileLog("Expected Expect.toHaveBeenCalledTimes to be a callback but received " ++ @typeName(@TypeOf(Expect.toHaveBeenCalledTimes)));
         if (@TypeOf(Expect.toHaveBeenCalledWith) != CallbackType)
@@ -1069,6 +1071,7 @@ pub const JSExpect = struct {
             @export(Expect.toContainEqual, .{ .name = "ExpectPrototype__toContainEqual" });
             @export(Expect.toEndWith, .{ .name = "ExpectPrototype__toEndWith" });
             @export(Expect.toEqual, .{ .name = "ExpectPrototype__toEqual" });
+            @export(Expect.toHaveBeenCalled, .{ .name = "ExpectPrototype__toHaveBeenCalled" });
             @export(Expect.toHaveBeenCalledTimes, .{ .name = "ExpectPrototype__toHaveBeenCalledTimes" });
             @export(Expect.toHaveBeenCalledWith, .{ .name = "ExpectPrototype__toHaveBeenCalledWith" });
             @export(Expect.toHaveBeenLastCalledWith, .{ .name = "ExpectPrototype__toHaveBeenLastCalledWith" });

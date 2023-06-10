@@ -235,6 +235,13 @@ pub const MutableString = struct {
         return self.list.items;
     }
 
+    /// Clear the existing value without freeing the memory or shrinking the capacity.
+    pub fn move(self: *MutableString) []u8 {
+        const out = self.list.items;
+        self.list = .{};
+        return out;
+    }
+
     pub fn toOwnedSentinelLeaky(self: *MutableString) [:0]u8 {
         if (self.list.items.len > 0 and self.list.items[self.list.items.len - 1] != 0) {
             self.list.append(

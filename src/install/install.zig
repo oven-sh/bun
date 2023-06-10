@@ -589,13 +589,11 @@ const Task = struct {
         switch (this.tag) {
             .package_manifest => {
                 var allocator = bun.default_allocator;
-                const body = this.request.package_manifest.network.response_buffer.toOwnedSliceLeaky();
-                this.request.package_manifest.network.response_buffer.list.items.len = 0;
-                this.request.package_manifest.network.response_buffer.list.capacity = 0;
+                const body = this.request.package_manifest.network.response_buffer.move();
 
                 defer {
-                    bun.default_allocator.free(body);
                     this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
+                    bun.default_allocator.free(body);
                 }
                 const package_manifest = Npm.Registry.getPackageMetadata(
                     allocator,
@@ -635,13 +633,11 @@ const Task = struct {
                 }
             },
             .extract => {
-                const bytes = this.request.extract.network.response_buffer.toOwnedSliceLeaky();
-                this.request.extract.network.response_buffer.list.capacity = 0;
-                this.request.extract.network.response_buffer.list.items.len = 0;
+                const bytes = this.request.extract.network.response_buffer.move();
 
                 defer {
-                    bun.default_allocator.free(bytes);
                     this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
+                    bun.default_allocator.free(bytes);
                 }
 
                 const result = this.request.extract.tarball.run(

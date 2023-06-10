@@ -768,15 +768,6 @@ pub const PackageManifest = struct {
 
     const ExternalStringMapDeduper = std.HashMap(u64, ExternalStringList, IdentityContext(u64), 80);
 
-    threadlocal var string_pool_: String.Builder.StringPool = undefined;
-    threadlocal var string_pool_loaded: bool = false;
-
-    threadlocal var external_string_maps_: ExternalStringMapDeduper = undefined;
-    threadlocal var external_string_maps_loaded: bool = false;
-
-    threadlocal var optional_peer_dep_names_: std.ArrayList(u64) = undefined;
-    threadlocal var optional_peer_dep_names_loaded: bool = false;
-
     /// This parses [Abbreviated metadata](https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#abbreviated-metadata-format)
     pub fn parse(
         allocator: std.mem.Allocator,
@@ -813,10 +804,6 @@ pub const PackageManifest = struct {
         defer external_string_maps.deinit();
         var optional_peer_dep_names = std.ArrayList(u64).init(default_allocator);
         defer optional_peer_dep_names.deinit();
-
-        defer string_pool_ = string_pool;
-        defer external_string_maps_ = external_string_maps;
-        defer optional_peer_dep_names_ = optional_peer_dep_names;
 
         var string_builder = String.Builder{
             .string_pool = string_pool,

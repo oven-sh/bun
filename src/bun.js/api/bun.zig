@@ -1533,7 +1533,6 @@ pub const Crypto = struct {
             var ctx: BoringSSL.EVP_MD_CTX = undefined;
             BoringSSL.EVP_MD_CTX_init(&ctx);
             _ = BoringSSL.EVP_DigestInit_ex(&ctx, md, engine);
-
             return .{
                 .ctx = ctx,
                 .md = md,
@@ -1614,6 +1613,11 @@ pub const Crypto = struct {
             var name_str = name.toSlice(global.allocator());
             defer name_str.deinit();
             return byNameAndEngine(global.bunVM().rareData().boringEngine(), name_str.slice());
+        }
+
+        pub fn deinit(this: *EVP) void {
+            // https://github.com/oven-sh/bun/issues/3250
+            _ = BoringSSL.EVP_MD_CTX_cleanup(&this.ctx);
         }
     };
 
@@ -2469,10 +2473,11 @@ pub const Crypto = struct {
         fn hashToEncoding(
             globalThis: *JSGlobalObject,
             evp: *EVP,
-            input: JSC.Node.StringOrBuffer,
+            input: JSC.Node.SliceOrBuffer,
             encoding: JSC.Node.Encoding,
         ) JSC.JSValue {
             var output_digest_buf: Digest = undefined;
+            defer input.deinit();
 
             const len = evp.hash(globalThis.bunVM().rareData().boringEngine(), input.slice(), &output_digest_buf) orelse {
                 const err = BoringSSL.ERR_get_error();
@@ -2487,11 +2492,12 @@ pub const Crypto = struct {
         fn hashToBytes(
             globalThis: *JSGlobalObject,
             evp: *EVP,
-            input: JSC.Node.StringOrBuffer,
+            input: JSC.Node.SliceOrBuffer,
             output: ?JSC.ArrayBuffer,
         ) JSC.JSValue {
             var output_digest_buf: Digest = undefined;
             var output_digest_slice: []u8 = &output_digest_buf;
+            defer input.deinit();
             if (output) |output_buf| {
                 const size = evp.size();
                 var bytes = output_buf.byteSlice();
@@ -2513,21 +2519,22 @@ pub const Crypto = struct {
             if (output) |output_buf| {
                 return output_buf.value;
             } else {
-                var array_buffer_out = JSC.ArrayBuffer.fromBytes(bun.default_allocator.dupe(u8, output_digest_slice[0..len]) catch unreachable, .Uint8Array);
-                return array_buffer_out.toJSUnchecked(globalThis, null);
+                // Clone to GC-managed memory
+                return JSC.ArrayBuffer.create(globalThis, output_digest_slice[0..len], .Buffer);
             }
         }
 
         pub fn hash_(
             globalThis: *JSGlobalObject,
             algorithm: ZigString,
-            input: JSC.Node.StringOrBuffer,
+            input: JSC.Node.SliceOrBuffer,
             output: ?JSC.Node.StringOrBuffer,
         ) JSC.JSValue {
             var evp = EVP.byName(algorithm, globalThis) orelse {
                 globalThis.throwInvalidArguments("Unsupported algorithm \"{any}\"", .{algorithm});
                 return .zero;
             };
+            defer evp.deinit();
 
             if (output) |string_or_buffer| {
                 switch (string_or_buffer) {
@@ -2624,13 +2631,14 @@ pub const Crypto = struct {
         pub fn digest_(
             this: *@This(),
             globalThis: *JSGlobalObject,
-            output: ?JSC.Node.StringOrBuffer,
+            output: ?JSC.Node.SliceOrBuffer,
         ) JSC.JSValue {
             if (output) |string_or_buffer| {
                 switch (string_or_buffer) {
                     .string => |str| {
-                        const encoding = JSC.Node.Encoding.from(str) orelse {
-                            globalThis.throwInvalidArguments("Unknown encoding: {s}", .{str});
+                        defer str.deinit();
+                        const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
+                            globalThis.throwInvalidArguments("Unknown encoding: {}", .{str});
                             return JSC.JSValue.zero;
                         };
 
@@ -2667,8 +2675,8 @@ pub const Crypto = struct {
             if (output) |output_buf| {
                 return output_buf.value;
             } else {
-                var array_buffer_out = JSC.ArrayBuffer.fromBytes(bun.default_allocator.dupe(u8, result) catch unreachable, .Uint8Array);
-                return array_buffer_out.toJSUnchecked(globalThis, null);
+                // Clone to GC-managed memory
+                return JSC.ArrayBuffer.create(globalThis, result, .Buffer);
             }
         }
 
@@ -2683,7 +2691,10 @@ pub const Crypto = struct {
         }
 
         pub fn finalize(this: *CryptoHasher) callconv(.C) void {
-            VirtualMachine.get().allocator.destroy(this);
+            // https://github.com/oven-sh/bun/issues/3250
+            this.evp.deinit();
+
+            bun.default_allocator.destroy(this);
         }
     };
 

@@ -819,9 +819,19 @@ bool Bun__deepMatch(JSValue objValue, JSValue subsetValue, JSGlobalObject* globa
     PropertyNameArray subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
     subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
 
+    // TODO: add fast paths for:
+    // - two "simple" objects (using ->forEachProperty in both)
+    // - two "simple" arrays
+    // similar to what is done in deepEquals (canPerformFastPropertyEnumerationForIterationBun)
+
     // arrays should match exactly
     if (isArray(globalObject, objValue) && isArray(globalObject, subsetValue)) {
         if (obj->getArrayLength() != subsetObj->getArrayLength()) {
+            return false;
+        }
+        PropertyNameArray objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+        obj->getPropertyNames(globalObject, objProps, DontEnumPropertiesMode::Exclude);
+        if (objProps.size() != subsetProps.size()) {
             return false;
         }
     }

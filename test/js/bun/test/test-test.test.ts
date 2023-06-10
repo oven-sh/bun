@@ -2715,6 +2715,14 @@ test("toMatchObject", () => {
       },
     },
   });
+
+  var a1 = [1];
+  a1[f] = 99;
+  expect(a1).not.toMatchObject([1]);
+  expect([1]).not.toMatchObject(a1);
+  expect({ 1: 1 }).not.toMatchObject(a1);
+  expect(a1).not.toMatchObject({ 1: 1 });
+  expect(a1).toMatchObject(a1);
 });
 
 try {

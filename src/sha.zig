@@ -74,6 +74,10 @@ fn NewEVP(
         pub fn final(this: *@This(), out: *Digest) void {
             std.debug.assert(BoringSSL.EVP_DigestFinal(&this.ctx, out, null) == 1);
         }
+
+        pub fn deinit(this: *@This()) void {
+            _ = BoringSSL.EVP_MD_CTX_cleanup(&this.ctx);
+        }
     };
 }
 pub const EVP = struct {
@@ -331,4 +335,3 @@ pub fn main() anyerror!void {
 //     std.crypto.hash.sha2.Sha256.hash(value, &hash2, .{});
 //     try std.testing.expectEqual(hash, hash2);
 // }
-

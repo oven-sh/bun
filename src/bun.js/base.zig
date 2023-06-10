@@ -3125,6 +3125,29 @@ pub fn wrapStaticMethod(
                             args[i] = null;
                         }
                     },
+                    JSC.Node.SliceOrBuffer => {
+                        const arg = iter.nextEat() orelse {
+                            globalThis.throwInvalidArguments("expected string or buffer", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
+                        };
+                        args[i] = JSC.Node.SliceOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
+                            globalThis.throwInvalidArguments("expected string or buffer", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
+                        };
+                    },
+                    ?JSC.Node.SliceOrBuffer => {
+                        if (iter.nextEat()) |arg| {
+                            args[i] = JSC.Node.SliceOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
+                                globalThis.throwInvalidArguments("expected string or buffer", .{});
+                                iter.deinit();
+                                return JSC.JSValue.zero;
+                            };
+                        } else {
+                            args[i] = null;
+                        }
+                    },
                     JSC.ArrayBuffer => {
                         if (iter.nextEat()) |arg| {
                             args[i] = arg.asArrayBuffer(globalThis.ptr()) orelse {

@@ -293,6 +293,7 @@ pub const Body = struct {
     pub const Value = union(Tag) {
         const log = Output.scoped(.BodyValue, false);
         Blob: Blob,
+        WTFStringImpl: bun.WTF.StringImpl,
         /// Single-use Blob
         /// Avoids a heap allocation.
         InternalBlob: InternalBlob,
@@ -305,6 +306,19 @@ pub const Body = struct {
         Null: void,
 
         pub fn toBlobIfPossible(this: *Value) void {
+            if (this.* == .WTFStringImpl) {
+                if (this.WTFStringImpl.toUTF8IfNeeded(bun.default_allocator)) |bytes| {
+                    var str = this.WTFStringImpl;
+                    defer str.deref();
+                    this.* = .{
+                        .InternalBlob = InternalBlob{
+                            .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, @constCast(bytes.slice())),
+                            .was_string = true,
+                        },
+                    };
+                }
+            }
+
             if (this.* != .Locked)
                 return;
 
@@ -312,6 +326,7 @@ pub const Body = struct {
                 this.* = switch (blob) {
                     .Blob => .{ .Blob = blob.Blob },
                     .InternalBlob => .{ .InternalBlob = blob.InternalBlob },
+                    .WTFStringImpl => .{ .WTFStringImpl = blob.WTFStringImpl },
                     // .InlineBlob => .{ .InlineBlob = blob.InlineBlob },
                 };
             }
@@ -321,6 +336,17 @@ pub const Body = struct {
             return switch (this.*) {
                 .Blob => this.Blob.size,
                 .InternalBlob => @truncate(Blob.SizeType, this.InternalBlob.sliceConst().len),
+                .WTFStringImpl => @truncate(Blob.SizeType, this.WTFStringImpl.utf8ByteLength()),
+                // .InlineBlob => @truncate(Blob.SizeType, this.InlineBlob.sliceConst().len),
+                else => 0,
+            };
+        }
+
+        pub fn fastSize(this: *const Value) Blob.SizeType {
+            return switch (this.*) {
+                .Blob => this.Blob.size,
+                .InternalBlob => @truncate(Blob.SizeType, this.InternalBlob.sliceConst().len),
+                .WTFStringImpl => @truncate(Blob.SizeType, this.WTFStringImpl.byteSlice().len),
                 // .InlineBlob => @truncate(Blob.SizeType, this.InlineBlob.sliceConst().len),
                 else => 0,
             };
@@ -329,6 +355,7 @@ pub const Body = struct {
         pub fn estimatedSize(this: *const Value) usize {
             return switch (this.*) {
                 .InternalBlob => this.InternalBlob.sliceConst().len,
+                .WTFStringImpl => this.WTFStringImpl.byteSlice().len,
                 // .InlineBlob => this.InlineBlob.sliceConst().len,
                 else => 0,
             };
@@ -359,6 +386,7 @@ pub const Body = struct {
         pub const Tag = enum {
             Blob,
             InternalBlob,
+            WTFStringImpl,
             // InlineBlob,
             Locked,
             Used,
@@ -379,10 +407,7 @@ pub const Body = struct {
                 .Null => {
                     return JSValue.null;
                 },
-                .InternalBlob,
-                .Blob,
-                // .InlineBlob,
-                => {
+                .InternalBlob, .Blob, .WTFStringImpl => {
                     var blob = this.use();
                     defer blob.detach();
                     blob.resolveSize();
@@ -461,76 +486,18 @@ pub const Body = struct {
             const js_type = value.jsType();
 
             if (js_type.isStringLike()) {
-                var str = value.getZigString(globalThis);
-                if (str.len == 0) {
+                var str = value.toBunString(globalThis);
+                if (str.length() == 0) {
                     return Body.Value{
                         .Empty = {},
                     };
                 }
 
-                // if (str.is16Bit()) {
-                //     if (str.maxUTF8ByteLength() < InlineBlob.available_bytes or
-                //         (str.len <= InlineBlob.available_bytes and str.utf8ByteLength() <= InlineBlob.available_bytes))
-                //     {
-                //         var blob = InlineBlob{
-                //             .was_string = true,
-                //             .bytes = undefined,
-                //             .len = 0,
-                //         };
-                //         if (comptime Environment.allow_assert) {
-                //             std.debug.assert(str.utf8ByteLength() <= InlineBlob.available_bytes);
-                //         }
-
-                //         const result = strings.copyUTF16IntoUTF8(
-                //             blob.bytes[0..blob.bytes.len],
-                //             []const u16,
-                //             str.utf16SliceAligned(),
-                //             true,
-                //         );
-                //         blob.len = @intCast(InlineBlob.IntSize, result.written);
-                //         std.debug.assert(@as(usize, result.read) == str.len);
-                //         std.debug.assert(@as(usize, result.written) <= InlineBlob.available_bytes);
-
-                //         return Body.Value{
-                //             .InlineBlob = blob,
-                //         };
-                //     }
-                // } else {
-                //     if (str.maxUTF8ByteLength() <= InlineBlob.available_bytes or
-                //         (str.len <= InlineBlob.available_bytes and str.utf8ByteLength() <= InlineBlob.available_bytes))
-                //     {
-                //         var blob = InlineBlob{
-                //             .was_string = true,
-                //             .bytes = undefined,
-                //             .len = 0,
-                //         };
-                //         if (comptime Environment.allow_assert) {
-                //             std.debug.assert(str.utf8ByteLength() <= InlineBlob.available_bytes);
-                //         }
-                //         const result = strings.copyLatin1IntoUTF8(
-                //             blob.bytes[0..blob.bytes.len],
-                //             []const u8,
-                //             str.slice(),
-                //         );
-                //         blob.len = @intCast(InlineBlob.IntSize, result.written);
-                //         std.debug.assert(@as(usize, result.read) == str.len);
-                //         std.debug.assert(@as(usize, result.written) <= InlineBlob.available_bytes);
-                //         return Body.Value{
-                //             .InlineBlob = blob,
-                //         };
-                //     }
-                // }
-
-                var buffer = str.toOwnedSlice(bun.default_allocator) catch {
-                    globalThis.vm().throwError(globalThis, ZigString.static("Failed to clone string").toErrorInstance(globalThis));
-                    return null;
-                };
+                str.ref();
+                std.debug.assert(str.tag == .WTFStringImpl);
 
                 return Body.Value{
-                    .InternalBlob = .{
-                        .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, buffer),
-                        .was_string = true,
-                    },
+                    .WTFStringImpl = str.value.WTFStringImpl,
                 };
             }
 
@@ -659,10 +626,11 @@ pub const Body = struct {
                     switch (locked.action) {
                         .getText => {
                             switch (new.*) {
+                                .WTFStringImpl,
                                 .InternalBlob,
                                 // .InlineBlob,
                                 => {
-                                    var blob = new.useAsAnyBlob();
+                                    var blob = new.useAsAnyBlobAllowNonUTF8String();
                                     promise.resolve(global, blob.toString(global, .transfer));
                                 },
                                 else => {
@@ -672,7 +640,7 @@ pub const Body = struct {
                             }
                         },
                         .getJSON => {
-                            var blob = new.useAsAnyBlob();
+                            var blob = new.useAsAnyBlobAllowNonUTF8String();
                             const json_value = blob.toJSON(global, .share);
                             blob.detach();
 
@@ -683,7 +651,8 @@ pub const Body = struct {
                             }
                         },
                         .getArrayBuffer => {
-                            var blob = new.useAsAnyBlob();
+                            var blob = new.useAsAnyBlobAllowNonUTF8String();
+                            // toArrayBuffer checks for non-UTF8 strings
                             promise.resolve(global, blob.toArrayBuffer(global, .transfer));
                         },
                         .getFormData => inner: {
@@ -711,6 +680,7 @@ pub const Body = struct {
             return switch (this.*) {
                 .Blob => this.Blob.sharedView(),
                 .InternalBlob => this.InternalBlob.sliceConst(),
+                .WTFStringImpl => if (this.WTFStringImpl.canUseAsUTF8()) this.WTFStringImpl.latin1Slice() else "",
                 // .InlineBlob => this.InlineBlob.sliceConst(),
                 else => "",
             };
@@ -739,6 +709,27 @@ pub const Body = struct {
                     this.* = .{ .Used = {} };
                     return new_blob;
                 },
+                .WTFStringImpl => {
+                    var new_blob: Blob = undefined;
+                    var wtf = this.WTFStringImpl;
+                    defer wtf.deref();
+                    if (wtf.toUTF8IfNeeded(bun.default_allocator)) |allocated_slice| {
+                        new_blob = Blob.init(
+                            @constCast(allocated_slice.slice()),
+                            bun.default_allocator,
+                            JSC.VirtualMachine.get().global,
+                        );
+                    } else {
+                        new_blob = Blob.init(
+                            bun.default_allocator.dupe(u8, wtf.latin1Slice()) catch @panic("Out of memory"),
+                            bun.default_allocator,
+                            JSC.VirtualMachine.get().global,
+                        );
+                    }
+
+                    this.* = .{ .Used = {} };
+                    return new_blob;
+                },
                 // .InlineBlob => {
                 //     const cloned = this.InlineBlob.bytes;
                 //     // keep same behavior as InternalBlob but clone the data
@@ -759,6 +750,12 @@ pub const Body = struct {
         }
 
         pub fn tryUseAsAnyBlob(this: *Value) ?AnyBlob {
+            if (this.* == .WTFStringImpl) {
+                if (this.WTFStringImpl.canUseAsUTF8()) {
+                    return AnyBlob{ .WTFStringImpl = this.WTFStringImpl };
+                }
+            }
+
             const any_blob: AnyBlob = switch (this.*) {
                 .Blob => AnyBlob{ .Blob = this.Blob },
                 .InternalBlob => AnyBlob{ .InternalBlob = this.InternalBlob },
@@ -775,6 +772,38 @@ pub const Body = struct {
             const any_blob: AnyBlob = switch (this.*) {
                 .Blob => .{ .Blob = this.Blob },
                 .InternalBlob => .{ .InternalBlob = this.InternalBlob },
+                .WTFStringImpl => |str| brk: {
+                    if (str.toUTF8IfNeeded(bun.default_allocator)) |utf8| {
+                        defer str.deref();
+                        break :brk .{
+                            .InternalBlob = InternalBlob{
+                                .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, @constCast(utf8.slice())),
+                                .was_string = true,
+                            },
+                        };
+                    } else {
+                        break :brk .{
+                            .WTFStringImpl = str,
+                        };
+                    }
+                },
+                // .InlineBlob => .{ .InlineBlob = this.InlineBlob },
+                .Locked => this.Locked.toAnyBlobAllowPromise() orelse AnyBlob{ .Blob = .{} },
+                else => .{ .Blob = Blob.initEmpty(undefined) },
+            };
+
+            this.* = if (this.* == .Null)
+                .{ .Null = {} }
+            else
+                .{ .Used = {} };
+            return any_blob;
+        }
+
+        pub fn useAsAnyBlobAllowNonUTF8String(this: *Value) AnyBlob {
+            const any_blob: AnyBlob = switch (this.*) {
+                .Blob => .{ .Blob = this.Blob },
+                .InternalBlob => .{ .InternalBlob = this.InternalBlob },
+                .WTFStringImpl => .{ .WTFStringImpl = this.WTFStringImpl },
                 // .InlineBlob => .{ .InlineBlob = this.InlineBlob },
                 .Locked => this.Locked.toAnyBlobAllowPromise() orelse AnyBlob{ .Blob = .{} },
                 else => .{ .Blob = Blob.initEmpty(undefined) },
@@ -856,6 +885,11 @@ pub const Body = struct {
                 this.* = Value{ .Null = {} };
             }
 
+            if (tag == .WTFStringImpl) {
+                this.WTFStringImpl.deref();
+                this.* = Value{ .Null = {} };
+            }
+
             if (tag == .Error) {
                 JSC.C.JSValueUnprotect(VirtualMachine.get().global, this.Error.asObjectRef());
             }
@@ -878,6 +912,11 @@ pub const Body = struct {
 
             if (this.* == .Blob) {
                 return Value{ .Blob = this.Blob.dupe() };
+            }
+
+            if (this.* == .WTFStringImpl) {
+                this.WTFStringImpl.ref();
+                return Value{ .WTFStringImpl = this.WTFStringImpl };
             }
 
             if (this.* == .Null) {
@@ -983,7 +1022,7 @@ pub fn BodyMixin(comptime Type: type) type {
                 return value.Locked.setPromise(globalObject, .{ .getText = {} });
             }
 
-            var blob = value.useAsAnyBlob();
+            var blob = value.useAsAnyBlobAllowNonUTF8String();
             return JSC.JSPromise.wrap(globalObject, blob.toString(globalObject, .transfer));
         }
 
@@ -1025,7 +1064,7 @@ pub fn BodyMixin(comptime Type: type) type {
                 return value.Locked.setPromise(globalObject, .{ .getJSON = {} });
             }
 
-            var blob = value.useAsAnyBlob();
+            var blob = value.useAsAnyBlobAllowNonUTF8String();
             return JSC.JSPromise.wrap(globalObject, blob.toJSON(globalObject, .share));
         }
 
@@ -1054,7 +1093,8 @@ pub fn BodyMixin(comptime Type: type) type {
                 return value.Locked.setPromise(globalObject, .{ .getArrayBuffer = {} });
             }
 
-            var blob: AnyBlob = value.useAsAnyBlob();
+            // toArrayBuffer in AnyBlob checks for non-UTF8 strings
+            var blob: AnyBlob = value.useAsAnyBlobAllowNonUTF8String();
             return JSC.JSPromise.wrap(globalObject, blob.toArrayBuffer(globalObject, .transfer));
         }
 

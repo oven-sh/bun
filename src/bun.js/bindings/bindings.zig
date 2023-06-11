@@ -88,6 +88,7 @@ pub const JSObject = extern struct {
     };
 };
 
+/// Prefer using bun.String instead of ZigString in new code.
 pub const ZigString = extern struct {
     /// This can be a UTF-16, Latin1, or UTF-8 string.
     /// The pointer itself is tagged, so it cannot be used without untagging it first

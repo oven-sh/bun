@@ -127,7 +127,7 @@ pub const Request = struct {
 
     pub fn writeFormat(this: *Request, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         const Writer = @TypeOf(writer);
-        try writer.print("Request ({}) {{\n", .{bun.fmt.size(this.body.value.slice().len)});
+        try writer.print("Request ({}) {{\n", .{bun.fmt.size(this.body.value.size())});
         {
             formatter.indent += 1;
             defer formatter.indent -|= 1;
@@ -203,6 +203,7 @@ pub const Request = struct {
                 return MimeType.other.value;
             },
             .InternalBlob => return this.body.value.InternalBlob.contentType(),
+            .WTFStringImpl => return MimeType.text.value,
             // .InlineBlob => return this.body.value.InlineBlob.contentType(),
             .Null, .Error, .Used, .Locked, .Empty => return MimeType.other.value,
         }

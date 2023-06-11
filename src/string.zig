@@ -11,21 +11,6 @@ pub const BufferOwnership = enum {
     BufferExternal,
 };
 
-// ---------------------------------------------------------------------
-// These details must stay in sync with WTFStringImpl.h in WebKit!
-// ---------------------------------------------------------------------
-const s_flagCount: u32 = 8;
-
-const s_flagMask: u32 = (1 << s_flagCount) - 1;
-const s_flagStringKindCount: u32 = 4;
-const s_hashZeroValue: u32 = 0;
-const s_hashFlagStringKindIsAtom: u32 = @as(1, u32) << (s_flagStringKindCount);
-const s_hashFlagStringKindIsSymbol: u32 = @as(1, u32) << (s_flagStringKindCount + 1);
-const s_hashMaskStringKind: u32 = s_hashFlagStringKindIsAtom | s_hashFlagStringKindIsSymbol;
-const s_hashFlagDidReportCost: u32 = @as(1, u32) << 3;
-const s_hashFlag8BitBuffer: u32 = 1 << 2;
-const s_hashMaskBufferOwnership: u32 = (1 << 0) | (1 << 1);
-
 pub const WTFStringImpl = *WTFStringImplStruct;
 
 pub const WTFStringImplStruct = extern struct {
@@ -35,6 +20,35 @@ pub const WTFStringImplStruct = extern struct {
     m_hashAndFlags: u32 = 0,
 
     // ---------------------------------------------------------------------
+    // These details must stay in sync with WTFStringImpl.h in WebKit!
+    // ---------------------------------------------------------------------
+    const s_flagCount: u32 = 8;
+
+    const s_flagMask: u32 = (1 << s_flagCount) - 1;
+    const s_flagStringKindCount: u32 = 4;
+    const s_hashZeroValue: u32 = 0;
+    const s_hashFlagStringKindIsAtom: u32 = @as(1, u32) << (s_flagStringKindCount);
+    const s_hashFlagStringKindIsSymbol: u32 = @as(1, u32) << (s_flagStringKindCount + 1);
+    const s_hashMaskStringKind: u32 = s_hashFlagStringKindIsAtom | s_hashFlagStringKindIsSymbol;
+    const s_hashFlagDidReportCost: u32 = @as(1, u32) << 3;
+    const s_hashFlag8BitBuffer: u32 = 1 << 2;
+    const s_hashMaskBufferOwnership: u32 = (1 << 0) | (1 << 1);
+
+    /// The bottom bit in the ref count indicates a static (immortal) string.
+    const s_refCountFlagIsStaticString = 0x1;
+
+    /// This allows us to ref / deref without disturbing the static string flag.
+    const s_refCountIncrement = 0x2;
+
+    // ---------------------------------------------------------------------
+
+    pub fn refCount(this: WTFStringImpl) u32 {
+        return this.m_refCount / s_refCountIncrement;
+    }
+
+    pub fn isStatic(this: WTFStringImpl) bool {
+        return this.m_refCount & s_refCountIncrement != 0;
+    }
 
     pub fn byteLength(this: WTFStringImpl) usize {
         return if (this.is8Bit()) this.m_length else this.m_length * 2;
@@ -62,6 +76,13 @@ pub const WTFStringImplStruct = extern struct {
         return self.m_ptr.latin1[0..length(self)];
     }
 
+    /// Caller must ensure that the string is 8-bit and ASCII.
+    pub inline fn utf8Slice(self: WTFStringImpl) []const u8 {
+        if (comptime bun.Environment.allow_assert)
+            std.debug.assert(canUseAsUTF8(self));
+        return self.m_ptr.latin1[0..length(self)];
+    }
+
     pub fn toZigString(this: WTFStringImpl) ZigString {
         if (this.is8Bit()) {
             return ZigString.init(this.latin1Slice());
@@ -72,22 +93,22 @@ pub const WTFStringImplStruct = extern struct {
 
     pub inline fn deref(self: WTFStringImpl) void {
         JSC.markBinding(@src());
-        const current_count = self.m_refCount;
+        const current_count = self.refCount();
         std.debug.assert(current_count > 0);
         Bun__WTFStringImpl__deref(self);
         if (comptime bun.Environment.allow_assert) {
             if (current_count > 1) {
-                std.debug.assert(self.m_refCount < current_count);
+                std.debug.assert(self.refCount() < current_count or self.isStatic());
             }
         }
     }
 
     pub inline fn ref(self: WTFStringImpl) void {
         JSC.markBinding(@src());
-        const current_count = self.m_refCount;
+        const current_count = self.refCount();
         std.debug.assert(current_count > 0);
         Bun__WTFStringImpl__ref(self);
-        std.debug.assert(self.m_refCount > current_count);
+        std.debug.assert(self.refCount() > current_count or self.isStatic());
     }
 
     pub fn toUTF8(this: WTFStringImpl, allocator: std.mem.Allocator) ZigString.Slice {
@@ -105,6 +126,38 @@ pub const WTFStringImplStruct = extern struct {
         }
 
         return .{};
+    }
+
+    pub fn toUTF8IfNeeded(this: WTFStringImpl, allocator: std.mem.Allocator) ?ZigString.Slice {
+        if (this.is8Bit()) {
+            if (bun.strings.toUTF8FromLatin1(allocator, this.latin1Slice()) catch null) |utf8| {
+                return ZigString.Slice.init(allocator, utf8.items);
+            }
+
+            return null;
+        }
+
+        if (bun.strings.toUTF8Alloc(allocator, this.utf16Slice()) catch null) |utf8| {
+            return ZigString.Slice.init(allocator, utf8);
+        }
+
+        return null;
+    }
+
+    /// Avoid using this in code paths that are about to get the string as a UTF-8
+    /// In that case, use toUTF8IfNeeded instead.
+    pub fn canUseAsUTF8(this: WTFStringImpl) bool {
+        return this.is8Bit() and bun.strings.isAllASCII(this.latin1Slice());
+    }
+
+    pub fn utf8ByteLength(this: WTFStringImpl) usize {
+        if (this.is8Bit()) {
+            const input = this.latin1Slice();
+            return if (input.len > 0) JSC.WebCore.Encoder.byteLengthU8(input.ptr, input.len, .utf8) else 0;
+        } else {
+            const input = this.utf16Slice();
+            return if (input.len > 0) JSC.WebCore.Encoder.byteLengthU16(input.ptr, input.len, .utf8) else 0;
+        }
     }
 
     pub fn refCountAllocator(self: WTFStringImpl) std.mem.Allocator {
@@ -174,6 +227,7 @@ pub const StringImpl = extern union {
     Empty: void,
 };
 
+/// Prefer using String instead of ZigString in new code.
 pub const String = extern struct {
     pub const name = "BunString";
 
@@ -239,6 +293,17 @@ pub const String = extern struct {
             return out;
         } else {
             return String.dead;
+        }
+    }
+
+    pub fn tryFromJS(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) ?String {
+        JSC.markBinding(@src());
+
+        var out: String = String.dead;
+        if (BunString__fromJS(globalObject, value, &out)) {
+            return out;
+        } else {
+            return null;
         }
     }
 

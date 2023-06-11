@@ -185,7 +185,7 @@ $ cd /path/to/my-app
 $ bun link cool-pkg
 ```
 
-This will add `cool-pkg` to the `dependencies` field of your app's package.json with a special version specifier that tells Bun to load from the registered local directory instead of installing from `npm`.
+In addition, the `--save` flag can be used to add `cool-pkg` to the `dependencies` field of your app's package.json with a special version specifier that tells Bun to load from the registered local directory instead of installing from `npm`:
 
 ```json-diff
   {

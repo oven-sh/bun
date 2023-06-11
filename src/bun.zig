@@ -1527,5 +1527,6 @@ pub const StandaloneModuleGraph = @import("./standalone_bun.zig").StandaloneModu
 pub const String = @import("./string.zig").String;
 
 pub const WTF = struct {
+    /// The String type from WebKit's WTF library.
     pub const StringImpl = @import("./string.zig").WTFStringImpl;
 };

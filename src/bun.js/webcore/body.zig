@@ -99,8 +99,7 @@ pub const Body = struct {
             try writer.writeAll("\n");
             try formatter.writeIndent(Writer, writer);
             try this.value.Blob.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
-        } else if (this.value == .InternalBlob) {
-            // } else if (this.value == .InternalBlob or this.value == .InlineBlob) {
+        } else if (this.value == .InternalBlob or this.value == .WTFStringImpl) {
             try formatter.printComma(Writer, writer, enable_ansi_colors);
             try writer.writeAll("\n");
             try formatter.writeIndent(Writer, writer);
@@ -293,6 +292,37 @@ pub const Body = struct {
     pub const Value = union(Tag) {
         const log = Output.scoped(.BodyValue, false);
         Blob: Blob,
+
+        /// This is the String type from WebKit
+        /// It is reference counted, so we must always deref it (which this does automatically)
+        /// Be careful where it can directly be used.
+        ///
+        /// If it is a latin1 string with only ascii, we can use it directly.
+        /// Otherwise, we must convert it to utf8.
+        ///
+        /// Unless we are sending it directly to JavaScript, for example:
+        ///
+        ///   var str = "hello world 🤭"
+        ///   var response = new Response(str);
+        ///   /* Body.Value stays WTFStringImpl */
+        ///   var body = await response.text();
+        ///
+        /// In this case, even though there's an emoji, we can use the StringImpl directly.
+        /// BUT, if we were instead using it in the HTTP server, this cannot be used directly.
+        ///
+        /// When the server calls .toBlobIfPossible(), we will automatically
+        /// convert this Value to an InternalBlob
+        ///
+        /// Example code:
+        ///
+        ///     Bun.serve({
+        ///         fetch(req) {
+        ///              /* Body.Value becomes InternalBlob */
+        ///              return new Response("hello world 🤭");
+        ///         }
+        ///     })
+        ///
+        /// This works for .json(), too.
         WTFStringImpl: bun.WTF.StringImpl,
         /// Single-use Blob
         /// Avoids a heap allocation.

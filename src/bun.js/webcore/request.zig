@@ -155,13 +155,14 @@ pub const Request = struct {
                 try writer.writeAll("\n");
                 try formatter.writeIndent(Writer, writer);
                 try this.body.value.Blob.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
-            } else if (this.body.value == .InternalBlob) {
+            } else if (this.body.value == .InternalBlob or this.body.value == .WTFStringImpl) {
                 try writer.writeAll("\n");
                 try formatter.writeIndent(Writer, writer);
-                if (this.body.value.size() == 0) {
+                const size = this.body.value.size();
+                if (size == 0) {
                     try Blob.initEmpty(undefined).writeFormat(Formatter, formatter, writer, enable_ansi_colors);
                 } else {
-                    try Blob.writeFormatForSize(this.body.value.size(), writer, enable_ansi_colors);
+                    try Blob.writeFormatForSize(size, writer, enable_ansi_colors);
                 }
             } else if (this.body.value == .Locked) {
                 if (this.body.value.Locked.readable) |stream| {

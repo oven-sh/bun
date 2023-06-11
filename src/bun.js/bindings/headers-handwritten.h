@@ -244,7 +244,6 @@ WTF::String toWTFString(const BunString& bunString);
 BunString toString(WTF::String& wtfString);
 BunString toString(const WTF::String& wtfString);
 BunString toString(WTF::StringImpl* wtfString);
-BunString toBunString(JSC::JSGlobalObject* globalObject, JSC::JSValue value) { return toString(globalObject, value); }
 
 }
 

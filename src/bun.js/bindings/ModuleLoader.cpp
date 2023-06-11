@@ -505,8 +505,8 @@ extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultResolve(JSC::JSGlobal
     pendingModule->internalField(1).set(vm, pendingModule, JSC::jsUndefined());
     JSC::JSInternalPromise* promise = pendingModule->internalPromise();
 
-    BunString specifier = toBunString(globalObject, specifierString);
-    BunString referrer = toBunString(globalObject, referrerString);
+    BunString specifier = Bun::toString(globalObject, specifierString);
+    BunString referrer = Bun::toString(globalObject, referrerString);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSValue result = handleVirtualModuleResult<false>(reinterpret_cast<Zig::GlobalObject*>(globalObject), objectResult, &res, &specifier, &referrer);
     if (res.success) {

@@ -53,16 +53,16 @@ pub const ZigGlobalObject = extern struct {
         return shim.cppFn("resetModuleRegistryMap", .{ global, map });
     }
 
-    pub fn import(global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) ErrorableZigString {
+    pub fn import(global: *JSGlobalObject, specifier: *bun.String, source: *bun.String) callconv(.C) ErrorableString {
         JSC.markBinding(@src());
 
         return @call(.always_inline, Interface.import, .{ global, specifier, source });
     }
-    pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: *ZigString, source: *ZigString, query: *ZigString) callconv(.C) void {
+    pub fn resolve(res: *ErrorableString, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, query: *ZigString) callconv(.C) void {
         JSC.markBinding(@src());
         @call(.always_inline, Interface.resolve, .{ res, global, specifier, source, query });
     }
-    pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) void {
+    pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String) callconv(.C) void {
         JSC.markBinding(@src());
         @call(.always_inline, Interface.fetch, .{ ret, global, specifier, source });
     }
@@ -202,7 +202,7 @@ pub const ResolvedSource = extern struct {
     pub const name = "ResolvedSource";
     pub const namespace = shim.namespace;
 
-    specifier: ZigString,
+    specifier: bun.String,
     source_code: ZigString,
     source_url: ZigString,
     commonjs_exports: ?[*]ZigString = null,
@@ -866,6 +866,7 @@ pub const ZigException = extern struct {
 pub const ErrorableResolvedSource = Errorable(ResolvedSource);
 pub const ErrorableZigString = Errorable(ZigString);
 pub const ErrorableJSValue = Errorable(JSValue);
+pub const ErrorableString = Errorable(bun.String);
 
 pub const ZigConsoleClient = struct {
     pub const shim = Shimmer("Zig", "ConsoleClient", @This());

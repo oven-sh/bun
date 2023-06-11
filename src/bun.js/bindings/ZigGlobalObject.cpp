@@ -118,6 +118,8 @@
 #include "JavaScriptCore/RemoteInspectorServer.h"
 #endif
 
+using namespace Bun;
+
 extern "C" JSC::EncodedJSValue Bun__fetch(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 
 using JSGlobalObject
@@ -282,7 +284,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
         return JSValue::encode(JSC::jsUndefined());
     }
 
-    auto specifier = Zig::toZigString(moduleKey);
+    auto specifier = Bun::toString(moduleKey);
     ErrorableResolvedSource res;
     res.success = false;
     res.result.err.code = 0;
@@ -4055,19 +4057,19 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject,
     JSModuleLoader* loader, JSValue key,
     JSValue referrer, JSValue origin)
 {
-    ErrorableZigString res;
+    ErrorableString res;
     res.success = false;
-    ZigString keyZ = toZigString(key, globalObject);
-    ZigString referrerZ = referrer && !referrer.isUndefinedOrNull() && referrer.isString() ? toZigString(referrer, globalObject) : ZigStringEmpty;
+    BunString keyZ = Bun::toString(globalObject, key);
+    BunString referrerZ = referrer && !referrer.isUndefinedOrNull() && referrer.isString() ? Bun::toString(globalObject, referrer) : BunStringEmpty;
     ZigString queryString = { 0, 0 };
     Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryString);
 
     if (res.success) {
         if (queryString.len > 0) {
-            return JSC::Identifier::fromString(globalObject->vm(), makeString(Zig::toString(res.result.value), Zig::toString(queryString)));
+            return JSC::Identifier::fromString(globalObject->vm(), makeString(Bun::toWTFString(res.result.value), Zig::toString(queryString)));
         }
 
-        return toIdentifier(res.result.value, globalObject);
+        return Identifier::fromString(globalObject->vm(), toWTFString(res.result.value));
     } else {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         throwException(scope, res.result.err, globalObject);
@@ -4088,9 +4090,9 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* g
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
 
     auto sourceURL = sourceOrigin.url();
-    ErrorableZigString resolved;
-    auto moduleNameZ = toZigString(moduleNameValue, globalObject);
-    auto sourceOriginZ = sourceURL.isEmpty() ? ZigStringCwd : toZigString(sourceURL.fileSystemPath());
+    ErrorableString resolved;
+    auto moduleNameZ = Bun::toString(globalObject, moduleNameValue);
+    auto sourceOriginZ = sourceURL.isEmpty() ? BunStringCwd : Bun::toString(sourceURL.fileSystemPath());
     ZigString queryString = { 0, 0 };
     resolved.success = false;
     Zig__GlobalObject__resolve(&resolved, globalObject, &moduleNameZ, &sourceOriginZ, &queryString);
@@ -4101,9 +4103,9 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* g
 
     JSC::Identifier resolvedIdentifier;
     if (queryString.len == 0) {
-        resolvedIdentifier = toIdentifier(resolved.result.value, globalObject);
+        resolvedIdentifier = JSC::Identifier::fromString(vm, Bun::toWTFString(resolved.result.value));
     } else {
-        resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(Zig::toString(resolved.result.value), Zig::toString(queryString)));
+        resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(Bun::toWTFString(resolved.result.value), Zig::toString(queryString)));
     }
 
     auto result = JSC::importModule(globalObject, resolvedIdentifier,
@@ -4138,8 +4140,8 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
     }
 
-    auto moduleKeyZig = toZigString(moduleKey);
-    auto source = Zig::toZigString(value1, globalObject);
+    auto moduleKeyBun = Bun::toString(moduleKey);
+    auto source = Bun::toString(globalObject, value1);
     ErrorableResolvedSource res;
     res.success = false;
     res.result.err.code = 0;
@@ -4148,7 +4150,7 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
     JSValue result = Bun::fetchSourceCodeAsync(
         reinterpret_cast<Zig::GlobalObject*>(globalObject),
         &res,
-        &moduleKeyZig,
+        &moduleKeyBun,
         &source);
 
     if (auto* internalPromise = JSC::jsDynamicCast<JSC::JSInternalPromise*>(result)) {

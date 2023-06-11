@@ -1523,3 +1523,9 @@ pub const Generation = u16;
 pub const zstd = @import("./deps/zstd.zig");
 pub const StringPointer = Schema.Api.StringPointer;
 pub const StandaloneModuleGraph = @import("./standalone_bun.zig").StandaloneModuleGraph;
+
+pub const String = @import("./string.zig").String;
+
+pub const WTF = struct {
+    pub const StringImpl = @import("./string.zig").WTFStringImpl;
+};

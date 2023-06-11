@@ -67,7 +67,7 @@ public:
         {
         }
 
-        EncodedJSValue run(JSC::JSGlobalObject* globalObject, ZigString* namespaceString, ZigString* path);
+        EncodedJSValue run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path);
     };
 
     class OnResolve final : public Base {
@@ -78,7 +78,7 @@ public:
         {
         }
 
-        EncodedJSValue run(JSC::JSGlobalObject* globalObject, ZigString* namespaceString, ZigString* path, ZigString* importer);
+        EncodedJSValue run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path, BunString* importer);
     };
 };
 

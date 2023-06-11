@@ -919,6 +919,9 @@ describe("bundler", () => {
         if(isBuffer !== 1) throw 'fail';
         console.log('pass');
       `,
+      "/node_modules/lodash-es/package.json": /* json */ `
+        { "name": "lodash-es", "type": "module"}
+      `,
       "/node_modules/lodash-es/isBuffer.js": /* js */ `
         var freeExports = typeof exports == 'object' && exports && !exports.nodeType && exports;
         var freeModule = freeExports && typeof module == 'object' && module && !module.nodeType && module;

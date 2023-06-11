@@ -447,7 +447,7 @@ pub const Blob = struct {
                     bun.default_allocator.destroy(this);
                     promise.reject(globalThis, ZigString.init("Body was used after it was consumed").toErrorInstance(globalThis));
                 },
-                // .InlineBlob,
+                .WTFStringImpl,
                 .InternalBlob,
                 .Null,
                 .Empty,
@@ -684,7 +684,7 @@ pub const Blob = struct {
         var source_blob: Blob = brk: {
             if (data.as(Response)) |response| {
                 switch (response.body.value) {
-                    // .InlineBlob,
+                    .WTFStringImpl,
                     .InternalBlob,
                     .Used,
                     .Empty,
@@ -719,7 +719,7 @@ pub const Blob = struct {
 
             if (data.as(Request)) |request| {
                 switch (request.body.value) {
-                    // .InlineBlob,
+                    .WTFStringImpl,
                     .InternalBlob,
                     .Used,
                     .Empty,
@@ -3512,10 +3512,20 @@ pub const AnyBlob = union(enum) {
     Blob: Blob,
     // InlineBlob: InlineBlob,
     InternalBlob: InternalBlob,
+    WTFStringImpl: bun.WTF.StringImpl,
+
+    pub inline fn fastSize(this: *const AnyBlob) Blob.SizeType {
+        return switch (this.*) {
+            .Blob => this.Blob.size,
+            .WTFStringImpl => @truncate(Blob.SizeType, this.WTFStringImpl.byteLength()),
+            else => @truncate(Blob.SizeType, this.slice().len),
+        };
+    }
 
     pub fn hasContentTypeFromUser(this: AnyBlob) bool {
         return switch (this) {
             .Blob => this.Blob.hasContentTypeFromUser(),
+            .WTFStringImpl => false,
             .InternalBlob => false,
         };
     }
@@ -3544,6 +3554,19 @@ pub const AnyBlob = union(enum) {
 
                 return str;
             },
+            .WTFStringImpl => {
+                var str = bun.String.init(this.WTFStringImpl);
+                defer str.deref();
+                this.* = .{
+                    .Blob = .{},
+                };
+
+                if (str.length() == 0) {
+                    return JSValue.jsNull();
+                }
+
+                return str.toJS(global).parseJSON(global);
+            },
         }
     }
 
@@ -3566,6 +3589,13 @@ pub const AnyBlob = union(enum) {
                 const owned = this.InternalBlob.toStringOwned(global);
                 this.* = .{ .Blob = .{} };
                 return owned;
+            },
+            .WTFStringImpl => {
+                var str = bun.String.init(this.WTFStringImpl);
+                defer str.deref();
+                this.* = .{ .Blob = .{} };
+
+                return str.toJS(global);
             },
         }
     }
@@ -3599,12 +3629,29 @@ pub const AnyBlob = union(enum) {
                 );
                 return value.toJS(global, null);
             },
+            .WTFStringImpl => {
+                const str = bun.String.init(this.WTFStringImpl);
+                this.* = .{ .Blob = .{} };
+                defer str.deref();
+
+                const out_bytes = str.toUTF8(bun.default_allocator);
+                if (out_bytes.isAllocated()) {
+                    const value = JSC.ArrayBuffer.fromBytes(
+                        @constCast(out_bytes.slice()),
+                        .ArrayBuffer,
+                    );
+                    return value.toJS(global, null);
+                }
+
+                return JSC.ArrayBuffer.create(global, out_bytes.slice(), .ArrayBuffer);
+            },
         }
     }
 
     pub inline fn size(this: *const AnyBlob) Blob.SizeType {
         return switch (this.*) {
             .Blob => this.Blob.size,
+            .WTFStringImpl => @truncate(Blob.SizeType, this.WTFStringImpl.utf8ByteLength()),
             else => @truncate(Blob.SizeType, this.slice().len),
         };
     }
@@ -3635,6 +3682,7 @@ pub const AnyBlob = union(enum) {
     pub fn contentType(self: *const @This()) []const u8 {
         return switch (self.*) {
             .Blob => self.Blob.content_type,
+            .WTFStringImpl => MimeType.text.value,
             // .InlineBlob => self.InlineBlob.contentType(),
             .InternalBlob => self.InternalBlob.contentType(),
         };
@@ -3643,6 +3691,7 @@ pub const AnyBlob = union(enum) {
     pub fn wasString(self: *const @This()) bool {
         return switch (self.*) {
             .Blob => self.Blob.is_all_ascii orelse false,
+            .WTFStringImpl => true,
             // .InlineBlob => self.InlineBlob.was_string,
             .InternalBlob => self.InternalBlob.was_string,
         };
@@ -3651,6 +3700,7 @@ pub const AnyBlob = union(enum) {
     pub inline fn slice(self: *const @This()) []const u8 {
         return switch (self.*) {
             .Blob => self.Blob.sharedView(),
+            .WTFStringImpl => self.WTFStringImpl.utf8Slice(),
             // .InlineBlob => self.InlineBlob.sliceConst(),
             .InternalBlob => self.InternalBlob.sliceConst(),
         };
@@ -3659,8 +3709,7 @@ pub const AnyBlob = union(enum) {
     pub fn needsToReadFile(self: *const @This()) bool {
         return switch (self.*) {
             .Blob => self.Blob.needsToReadFile(),
-            // .InlineBlob => false,
-            .InternalBlob => false,
+            .WTFStringImpl, .InternalBlob => false,
         };
     }
 
@@ -3677,6 +3726,12 @@ pub const AnyBlob = union(enum) {
             // },
             .InternalBlob => {
                 self.InternalBlob.bytes.clearAndFree();
+                self.* = .{
+                    .Blob = .{},
+                };
+            },
+            .WTFStringImpl => {
+                self.WTFStringImpl.deref();
                 self.* = .{
                     .Blob = .{},
                 };

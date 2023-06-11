@@ -987,7 +987,7 @@ declare module "http" {
      * in the response to be dropped and the socket to be destroyed.
      * @deprecated Since v14.1.0,v13.14.0 - Use `destroy` instead.
      */
-    // abort(): void;
+    abort(): void;
     /**
      * Once a socket is assigned to this request and is connected `socket.setTimeout()` will be called.
      * @param timeout Milliseconds before a request times out.

@@ -328,14 +328,13 @@ pub const Response = struct {
 
                 return default.value;
             },
-            // .InlineBlob => {
-            //     // auto-detect HTML if unspecified
-            //     if (strings.hasPrefixComptime(response.body.value.slice(), "<!DOCTYPE html>")) {
-            //         return MimeType.html.value;
-            //     }
+            .WTFStringImpl => |str| {
+                if (bun.String.init(str).hasPrefixComptime("<!DOCTYPE html>")) {
+                    return MimeType.html.value;
+                }
 
-            //     return response.body.value.InlineBlob.contentType();
-            // },
+                return default.value;
+            },
             .InternalBlob => {
                 // auto-detect HTML if unspecified
                 if (strings.hasPrefixComptime(response.body.value.slice(), "<!DOCTYPE html>")) {

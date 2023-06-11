@@ -53,16 +53,16 @@ pub const ZigGlobalObject = extern struct {
         return shim.cppFn("resetModuleRegistryMap", .{ global, map });
     }
 
-    pub fn import(global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) ErrorableZigString {
+    pub fn import(global: *JSGlobalObject, specifier: *bun.String, source: *bun.String) callconv(.C) ErrorableString {
         JSC.markBinding(@src());
 
         return @call(.always_inline, Interface.import, .{ global, specifier, source });
     }
-    pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: *ZigString, source: *ZigString, query: *ZigString) callconv(.C) void {
+    pub fn resolve(res: *ErrorableString, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, query: *ZigString) callconv(.C) void {
         JSC.markBinding(@src());
         @call(.always_inline, Interface.resolve, .{ res, global, specifier, source, query });
     }
-    pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) void {
+    pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String) callconv(.C) void {
         JSC.markBinding(@src());
         @call(.always_inline, Interface.fetch, .{ ret, global, specifier, source });
     }
@@ -202,7 +202,7 @@ pub const ResolvedSource = extern struct {
     pub const name = "ResolvedSource";
     pub const namespace = shim.namespace;
 
-    specifier: ZigString,
+    specifier: bun.String,
     source_code: ZigString,
     source_url: ZigString,
     commonjs_exports: ?[*]ZigString = null,
@@ -866,6 +866,7 @@ pub const ZigException = extern struct {
 pub const ErrorableResolvedSource = Errorable(ResolvedSource);
 pub const ErrorableZigString = Errorable(ZigString);
 pub const ErrorableJSValue = Errorable(JSValue);
+pub const ErrorableString = Errorable(bun.String);
 
 pub const ZigConsoleClient = struct {
     pub const shim = Shimmer("Zig", "ConsoleClient", @This());
@@ -2218,6 +2219,43 @@ pub const ZigConsoleClient = struct {
                         return;
                     } else if (value.as(JSC.ResolveMessage)) |resolve_log| {
                         resolve_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
+                        return;
+                    } else if (value.as(JSC.Jest.ExpectAnything) != null) {
+                        writer.writeAll("Anything");
+                        return;
+                    } else if (value.as(JSC.Jest.ExpectAny) != null) {
+                        const constructor_value = JSC.Jest.ExpectAny.constructorValueGetCached(value) orelse return;
+
+                        this.addForNewLine("Any<".len);
+                        writer.writeAll("Any<");
+                        var class_name = ZigString.init(&name_buf);
+
+                        constructor_value.getClassName(this.globalThis, &class_name);
+                        this.addForNewLine(class_name.len);
+                        writer.print(comptime Output.prettyFmt("<cyan>{}<r>", enable_ansi_colors), .{class_name});
+                        this.addForNewLine(1);
+                        writer.writeAll(">");
+
+                        return;
+                    } else if (value.as(JSC.Jest.ExpectStringContaining) != null) {
+                        const substring_value = JSC.Jest.ExpectStringContaining.stringValueGetCached(value) orelse return;
+
+                        this.addForNewLine("StringContaining ".len);
+                        writer.writeAll("StringContaining ");
+                        this.printAs(.String, Writer, writer_, substring_value, .String, enable_ansi_colors);
+
+                        return;
+                    } else if (value.as(JSC.Jest.ExpectStringMatching) != null) {
+                        const test_value = JSC.Jest.ExpectStringMatching.testValueGetCached(value) orelse return;
+
+                        this.addForNewLine("StringMatching ".len);
+                        writer.writeAll("StringMatching ");
+
+                        const original_quote_strings = this.quote_strings;
+                        if (test_value.isRegExp()) this.quote_strings = false;
+                        this.printAs(.String, Writer, writer_, test_value, .String, enable_ansi_colors);
+                        this.quote_strings = original_quote_strings;
+
                         return;
                     } else if (jsType != .DOMWrapper) {
                         if (value.isCallable(this.globalThis.vm())) {

@@ -72,6 +72,37 @@ pub fn initializeStore() void {
     JSAst.Stmt.Data.Store.create(default_allocator);
 }
 
+/// The default store we use pre-allocates around 16 MB of memory per thread
+/// That adds up in multi-threaded scenarios.
+/// ASTMemoryAllocator uses a smaller fixed buffer allocator
+pub fn initializeMiniStore() void {
+    const MiniStore = struct {
+        heap: bun.MimallocArena,
+        memory_allocator: JSAst.ASTMemoryAllocator,
+
+        pub threadlocal var instance: ?*@This() = null;
+    };
+    if (MiniStore.instance == null) {
+        var mini_store = bun.default_allocator.create(MiniStore) catch @panic("OOM");
+        mini_store.* = .{
+            .heap = bun.MimallocArena.init() catch @panic("OOM"),
+            .memory_allocator = undefined,
+        };
+        mini_store.memory_allocator = .{ .allocator = mini_store.heap.allocator() };
+        mini_store.memory_allocator.reset();
+        MiniStore.instance = mini_store;
+        mini_store.memory_allocator.push();
+    } else {
+        var mini_store = MiniStore.instance.?;
+        if (mini_store.memory_allocator.stack_allocator.fixed_buffer_allocator.end_index >= mini_store.memory_allocator.stack_allocator.fixed_buffer_allocator.buffer.len -| 1) {
+            mini_store.heap.reset();
+            mini_store.memory_allocator.allocator = mini_store.heap.allocator();
+        }
+        mini_store.memory_allocator.reset();
+        mini_store.memory_allocator.push();
+    }
+}
+
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 const NetworkQueue = std.fifo.LinearFifo(*NetworkTask, .{ .Static = 32 });
@@ -558,10 +589,16 @@ const Task = struct {
         switch (this.tag) {
             .package_manifest => {
                 var allocator = bun.default_allocator;
+                const body = this.request.package_manifest.network.response_buffer.move();
+
+                defer {
+                    this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
+                    bun.default_allocator.free(body);
+                }
                 const package_manifest = Npm.Registry.getPackageMetadata(
                     allocator,
                     this.request.package_manifest.network.http.response.?,
-                    this.request.package_manifest.network.response_buffer.toOwnedSliceLeaky(),
+                    body,
                     &this.log,
                     this.request.package_manifest.name.slice(),
                     this.request.package_manifest.network.callback.package_manifest.loaded_manifest,
@@ -574,18 +611,15 @@ const Task = struct {
                     }
                     this.err = err;
                     this.status = Status.fail;
-                    this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
+                    this.data = .{ .package_manifest = .{} };
                     return;
                 };
-
-                this.data = .{ .package_manifest = .{} };
 
                 switch (package_manifest) {
                     .cached => unreachable,
                     .fresh => |manifest| {
-                        this.data = .{ .package_manifest = manifest };
                         this.status = Status.success;
-                        this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
+                        this.data = .{ .package_manifest = manifest };
                         return;
                     },
                     .not_found => {
@@ -593,14 +627,21 @@ const Task = struct {
                             this.request.package_manifest.name.slice(),
                         }) catch unreachable;
                         this.status = Status.fail;
-                        this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
+                        this.data = .{ .package_manifest = .{} };
                         return;
                     },
                 }
             },
             .extract => {
+                const bytes = this.request.extract.network.response_buffer.move();
+
+                defer {
+                    this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
+                    bun.default_allocator.free(bytes);
+                }
+
                 const result = this.request.extract.tarball.run(
-                    this.request.extract.network.response_buffer.toOwnedSliceLeaky(),
+                    bytes,
                 ) catch |err| {
                     if (comptime Environment.isDebug) {
                         if (@errorReturnTrace()) |trace| {
@@ -611,13 +652,11 @@ const Task = struct {
                     this.err = err;
                     this.status = Status.fail;
                     this.data = .{ .extract = .{} };
-                    this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
                     return;
                 };
 
                 this.data = .{ .extract = result };
                 this.status = Status.success;
-                this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
             },
             .git_clone => {
                 const manager = this.package_manager;
@@ -1690,6 +1729,7 @@ pub const PackageManager = struct {
 
     pub fn sleep(this: *PackageManager) void {
         if (this.wait_count.swap(0, .Monotonic) > 0) return;
+        bun.Mimalloc.mi_collect(false);
         _ = this.waiter.wait() catch 0;
     }
 
@@ -6220,6 +6260,7 @@ pub const PackageManager = struct {
 
         var buffer_writer = try JSPrinter.BufferWriter.init(ctx.allocator);
         try buffer_writer.buffer.list.ensureTotalCapacity(ctx.allocator, current_package_json_buf.len + 1);
+        buffer_writer.append_newline = preserve_trailing_newline_at_eof_for_package_json;
         var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
 
         var written = JSPrinter.printJSON(@TypeOf(&package_json_writer), &package_json_writer, current_package_json, &package_json_source) catch |err| {
@@ -6647,6 +6688,63 @@ pub const PackageManager = struct {
                                     }
                                 }
                             }
+                        }
+
+                        var scripts = this.lockfile.packages.items(.scripts)[package_id];
+                        if (scripts.hasAny()) {
+                            var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                            const path_str = Path.joinAbsString(
+                                bun.getFdPath(this.node_modules_folder.dir.fd, &path_buf) catch unreachable,
+                                &[_]string{destination_dir_subpath},
+                                .posix,
+                            );
+
+                            scripts.enqueue(this.lockfile, buf, path_str);
+                        } else if (!scripts.filled and switch (resolution.tag) {
+                            .folder => Features.folder.scripts,
+                            .npm => Features.npm.scripts,
+                            .git, .github, .gitlab, .local_tarball, .remote_tarball => Features.tarball.scripts,
+                            .symlink => Features.link.scripts,
+                            .workspace => Features.workspace.scripts,
+                            else => false,
+                        }) {
+                            var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                            const path_str = Path.joinAbsString(
+                                bun.getFdPath(this.node_modules_folder.dir.fd, &path_buf) catch unreachable,
+                                &[_]string{destination_dir_subpath},
+                                .posix,
+                            );
+
+                            scripts.enqueueFromPackageJSON(
+                                this.manager.log,
+                                this.lockfile,
+                                this.node_modules_folder.dir,
+                                destination_dir_subpath,
+                                path_str,
+                            ) catch |err| {
+                                if (comptime log_level != .silent) {
+                                    const fmt = "\n<r><red>error:<r> failed to parse life-cycle scripts for <b>{s}<r>: {s}\n";
+                                    const args = .{ name, @errorName(err) };
+
+                                    if (comptime log_level.showProgress()) {
+                                        if (Output.enable_ansi_colors) {
+                                            this.progress.log(comptime Output.prettyFmt(fmt, true), args);
+                                        } else {
+                                            this.progress.log(comptime Output.prettyFmt(fmt, false), args);
+                                        }
+                                    } else {
+                                        Output.prettyErrorln(fmt, args);
+                                    }
+                                }
+
+                                if (this.manager.options.enable.fail_early) {
+                                    Global.exit(1);
+                                }
+
+                                Output.flush();
+                                this.summary.fail += 1;
+                                return;
+                            };
                         }
                     },
                     .fail => |cause| {
@@ -7269,7 +7367,13 @@ pub const PackageManager = struct {
                         package_json_source,
                         Features.main,
                     );
-                    manager.lockfile.scripts = lockfile.scripts;
+                    if (!root.scripts.filled) {
+                        maybe_root.scripts.enqueue(
+                            manager.lockfile,
+                            lockfile.buffers.string_bytes.items,
+                            strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir),
+                        );
+                    }
                     var mapping = try manager.lockfile.allocator.alloc(PackageID, maybe_root.dependencies.len);
                     std.mem.set(PackageID, mapping, invalid_package_id);
 
@@ -7521,37 +7625,12 @@ pub const PackageManager = struct {
             }
         }
 
-        // Install script order for npm 8.3.0:
-        // 1. preinstall
-        // 2. install
-        // 3. postinstall
-        // 4. preprepare
-        // 5. prepare
-        // 6. postprepare
-
-        const run_lifecycle_scripts = manager.options.do.run_scripts and manager.lockfile.scripts.hasAny() and manager.options.do.install_packages;
-        const has_pre_lifecycle_scripts = manager.lockfile.scripts.preinstall.items.len > 0;
-        const needs_configure_bundler_for_run = run_lifecycle_scripts and !has_pre_lifecycle_scripts;
-
-        if (run_lifecycle_scripts and has_pre_lifecycle_scripts) {
-            // We need to figure out the PATH and other environment variables
-            // to do that, we re-use the code from bun run
-            // this is expensive, it traverses the entire directory tree going up to the root
-            // so we really only want to do it when strictly necessary
-            {
-                var this_bundler: bundler.Bundler = undefined;
-                var ORIGINAL_PATH: string = "";
-                _ = try RunCommand.configureEnvForRun(
-                    ctx,
-                    &this_bundler,
-                    manager.env,
-                    &ORIGINAL_PATH,
-                    log_level != .silent,
-                    false,
-                );
-            }
-
-            try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "preinstall");
+        if (root.scripts.hasAny()) {
+            root.scripts.enqueue(
+                manager.lockfile,
+                manager.lockfile.buffers.string_bytes.items,
+                strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir),
+            );
         }
 
         var install_summary = PackageInstall.Summary{};
@@ -7560,6 +7639,34 @@ pub const PackageManager = struct {
                 manager.lockfile,
                 log_level,
             );
+        }
+
+        // Install script order for npm 8.3.0:
+        // 1. preinstall
+        // 2. install
+        // 3. postinstall
+        // 4. preprepare
+        // 5. prepare
+        // 6. postprepare
+        const run_lifecycle_scripts = manager.options.do.run_scripts and manager.lockfile.scripts.hasAny() and manager.options.do.install_packages;
+        if (run_lifecycle_scripts) {
+            // We need to figure out the PATH and other environment variables
+            // to do that, we re-use the code from bun run
+            // this is expensive, it traverses the entire directory tree going up to the root
+            // so we really only want to do it when strictly necessary
+            var this_bundler: bundler.Bundler = undefined;
+            var ORIGINAL_PATH: string = "";
+            _ = try RunCommand.configureEnvForRun(
+                ctx,
+                &this_bundler,
+                manager.env,
+                &ORIGINAL_PATH,
+                log_level != .silent,
+                false,
+            );
+
+            // 1. preinstall
+            try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "preinstall");
         }
 
         if (needs_new_lockfile) {
@@ -7665,44 +7772,6 @@ pub const PackageManager = struct {
         }
 
         if (run_lifecycle_scripts and install_summary.fail == 0) {
-            // We need to figure out the PATH and other environment variables
-            // to do that, we re-use the code from bun run
-            // this is expensive, it traverses the entire directory tree going up to the root
-            // so we really only want to do it when strictly necessary
-            if (needs_configure_bundler_for_run) {
-                var this_bundler: bundler.Bundler = undefined;
-                var ORIGINAL_PATH: string = "";
-                _ = try RunCommand.configureEnvForRun(
-                    ctx,
-                    &this_bundler,
-                    manager.env,
-                    &ORIGINAL_PATH,
-                    log_level != .silent,
-                    false,
-                );
-            } else {
-                // bun install may have installed new bins, so we need to update the PATH
-                // this can happen if node_modules/.bin didn't previously exist
-                // note: it is harmless to have the same directory in the PATH multiple times
-                const current_path = manager.env.map.get("PATH") orelse "";
-
-                // TODO: windows
-                const cwd_without_trailing_slash = if (Fs.FileSystem.instance.top_level_dir.len > 1 and Fs.FileSystem.instance.top_level_dir[Fs.FileSystem.instance.top_level_dir.len - 1] == '/')
-                    Fs.FileSystem.instance.top_level_dir[0 .. Fs.FileSystem.instance.top_level_dir.len - 1]
-                else
-                    Fs.FileSystem.instance.top_level_dir;
-
-                try manager.env.map.put("PATH", try std.fmt.allocPrint(
-                    ctx.allocator,
-                    "{s}:{s}/node_modules/.bin",
-                    .{
-                        current_path,
-                        cwd_without_trailing_slash,
-                    },
-                ));
-            }
-
-            // 1. preinstall
             // 2. install
             // 3. postinstall
             try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "install");

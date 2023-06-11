@@ -302,7 +302,7 @@ pub const InitCommand = struct {
                 var dev_dependencies = fields.object.get("devDependencies") orelse js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, logger.Loc.Empty);
                 const version = comptime brk: {
                     var base = Global.version;
-                    base.patch = 0;
+                    base.patch = 8;
                     break :brk base;
                 };
 
@@ -312,7 +312,7 @@ pub const InitCommand = struct {
 
             if (needs_typescript_dependency) {
                 var peer_dependencies = fields.object.get("peer_dependencies") orelse js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, logger.Loc.Empty);
-                try peer_dependencies.data.e_object.putString(alloc, "typescript", "^5.0.0");
+                try peer_dependencies.data.e_object.putString(alloc, "typescript", "^5.1.0");
                 try fields.object.put(alloc, "peerDependencies", peer_dependencies);
             }
         }

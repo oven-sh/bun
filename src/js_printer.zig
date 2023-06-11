@@ -4757,11 +4757,11 @@ fn NewPrinter(
                 p.print(quote);
                 p.print(import_record.path.namespace);
                 p.print(":");
-                p.print(import_record.path.text);
+                p.printIdentifier(import_record.path.text);
                 p.print(quote);
             } else {
                 p.print(quote);
-                p.print(import_record.path.text);
+                p.printIdentifier(import_record.path.text);
                 p.print(quote);
             }
         }

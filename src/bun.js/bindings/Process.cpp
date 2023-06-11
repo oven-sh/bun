@@ -2,6 +2,8 @@
 #include "JavaScriptCore/JSMicrotask.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/NumberPrototype.h"
+#include "JavaScriptCore/JSGlobalObject.h"
+#include "JavaScriptCore/JSONObject.h"
 #include "node_api.h"
 #include <dlfcn.h>
 #include "ZigGlobalObject.h"
@@ -10,6 +12,8 @@
 #include "ImportMetaObject.h"
 #include <sys/stat.h>
 #include "ZigConsoleClient.h"
+#include <gnu/libc-version.h>
+#include <link.h>
 #pragma mark - Node.js Process
 
 namespace Zig {
@@ -17,6 +21,63 @@ namespace Zig {
 using namespace JSC;
 
 #define REPORTED_NODE_VERSION "18.15.0"
+
+#if defined(__APPLE__)
+    #define PROCESS_PLATFORM "darwin"
+#else
+    #define PROCESS_PLATFORM "linux"
+#endif
+
+#if defined(__x86_64__)
+    #define PROCESS_ARCH "x64"
+#elif defined(__i386__)
+    #define PROCESS_ARCH "x86"
+#elif defined(__arm__)
+    #define PROCESS_ARCH "arm"
+#elif defined(__aarch64__)
+    #define PROCESS_ARCH "arm64"
+#else
+    #define PROCESS_ARCH "unknown"
+#endif
+
+#define GET_PROCESS_VERSIONS_OBJ(VM_OBJ, GLOBAL_OBJ, OBJECT) \
+    JSC::JSObject* OBJECT = JSC::constructEmptyObject(GLOBAL_OBJ, GLOBAL_OBJ->objectPrototype(), 19); \
+    OBJECT->putDirect(VM_OBJ, JSC::Identifier::fromString(VM_OBJ, "node"_s), \
+        JSC::JSValue(JSC::jsOwnedString(VM_OBJ, makeAtomString(REPORTED_NODE_VERSION)))); \
+    OBJECT->putDirect( \
+        VM_OBJ, JSC::Identifier::fromString(VM_OBJ, "bun"_s), \
+        JSC::JSValue(JSC::jsOwnedString(VM_OBJ, makeAtomString(Bun__version + 1 /* prefix with v */)))); \
+    OBJECT->putDirect(VM_OBJ, JSC::Identifier::fromString(VM_OBJ, "webkit"_s), \
+        JSC::JSValue(JSC::jsOwnedString(VM_OBJ, makeAtomString(BUN_WEBKIT_VERSION)))); \
+    OBJECT->putDirect(VM_OBJ, JSC::Identifier::fromString(VM_OBJ, "boringssl"_s), \
+        JSC::JSValue(JSC::jsString(VM_OBJ, makeString(Bun__versions_boringssl))), 0); \
+    OBJECT->putDirect(VM_OBJ, JSC::Identifier::fromString(VM_OBJ, "libarchive"_s), \
+        JSC::JSValue(JSC::jsString(VM_OBJ, makeString(Bun__versions_libarchive))), 0); \
+    OBJECT->putDirect(VM_OBJ, JSC::Identifier::fromString(VM_OBJ, "mimalloc"_s), \
+        JSC::JSValue(JSC::jsString(VM_OBJ, makeString(Bun__versions_mimalloc))), 0); \
+    OBJECT->putDirect(VM_OBJ, JSC::Identifier::fromString(VM_OBJ, "picohttpparser"_s), \
+        JSC::JSValue(JSC::jsString(VM_OBJ, makeString(Bun__versions_picohttpparser))), 0); \
+    OBJECT->putDirect(VM_OBJ, JSC::Identifier::fromString(VM_OBJ, "uwebsockets"_s), \
+        JSC::JSValue(JSC::jsString(VM_OBJ, makeString(Bun__versions_uws))), 0); \
+    OBJECT->putDirect(VM_OBJ, JSC::Identifier::fromString(VM_OBJ, "webkit"_s), \
+        JSC::JSValue(JSC::jsString(VM_OBJ, makeString(Bun__versions_webkit))), 0); \
+    OBJECT->putDirect(VM_OBJ, JSC::Identifier::fromString(VM_OBJ, "zig"_s), \
+        JSC::JSValue(JSC::jsString(VM_OBJ, makeString(Bun__versions_zig))), 0); \
+    OBJECT->putDirect(VM_OBJ, JSC::Identifier::fromString(VM_OBJ, "zlib"_s), \
+        JSC::JSValue(JSC::jsString(VM_OBJ, makeString(Bun__versions_zlib))), 0); \
+    OBJECT->putDirect(VM_OBJ, JSC::Identifier::fromString(VM_OBJ, "tinycc"_s), \
+        JSC::JSValue(JSC::jsString(VM_OBJ, makeString(Bun__versions_tinycc))), 0); \
+    OBJECT->putDirect(VM_OBJ, JSC::Identifier::fromString(VM_OBJ, "lolhtml"_s), \
+        JSC::JSValue(JSC::jsString(VM_OBJ, makeString(Bun__versions_lolhtml))), 0); \
+    OBJECT->putDirect(VM_OBJ, JSC::Identifier::fromString(VM_OBJ, "ares"_s), \
+        JSC::JSValue(JSC::jsString(VM_OBJ, makeString(Bun__versions_c_ares))), 0); \
+    OBJECT->putDirect(VM_OBJ, JSC::Identifier::fromString(VM_OBJ, "usockets"_s), \
+        JSC::JSValue(JSC::jsString(VM_OBJ, makeString(Bun__versions_usockets))), 0); \
+    OBJECT->putDirect(VM_OBJ, JSC::Identifier::fromString(VM_OBJ, "v8"_s), JSValue(JSC::jsString(VM_OBJ, makeString("10.8.168.20-node.8"_s))), 0); \
+    OBJECT->putDirect(VM_OBJ, JSC::Identifier::fromString(VM_OBJ, "uv"_s), JSValue(JSC::jsString(VM_OBJ, makeString("1.44.2"_s))), 0); \
+    OBJECT->putDirect(VM_OBJ, JSC::Identifier::fromString(VM_OBJ, "napi"_s), JSValue(JSC::jsString(VM_OBJ, makeString("8"_s))), 0); \
+    OBJECT->putDirect(VM_OBJ, JSC::Identifier::fromString(VM_OBJ, "modules"_s), \
+        JSC::JSValue(JSC::jsOwnedString(VM_OBJ, makeAtomString("108"))))
 
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
@@ -451,6 +512,154 @@ JSC_DEFINE_CUSTOM_SETTER(Process_setterRelease,
     return true;
 }
 
+struct dl_phdrCallbackData {
+    JSC::JSGlobalObject* globalObject;
+    JSC::JSArray* sharedObjs;
+};
+int dl_phdrCallback(struct ::dl_phdr_info* info, size_t size, void* data) {
+    dl_phdrCallbackData* callbackData = reinterpret_cast<dl_phdrCallbackData*>(data);
+    JSC::JSGlobalObject* globalObject = callbackData->globalObject;
+    if (!info->dlpi_name || info->dlpi_name[0] == '\0') return 0;
+
+    callbackData->sharedObjs->push(globalObject, jsString(globalObject->vm(), makeAtomString(info->dlpi_name)));
+    return 0;
+};
+JSC_DEFINE_HOST_FUNCTION(Process_functionGetReport,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+
+    std::chrono::time_point now = std::chrono::system_clock::now();
+    int64_t timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+    int64_t timeSeconds = timestamp / 1000;
+    char timeString[21];
+    strftime(timeString, sizeof(timeString), "%FT%TZ", gmtime(&timeSeconds));
+
+    GET_PROCESS_VERSIONS_OBJ(vm, globalObject, componentVersions);
+
+    auto* header = JSC::constructEmptyObject(globalObject);
+    header->putDirect(vm, Identifier::fromString(vm, "reportVersion"_s), jsNumber(3));
+    header->putDirect(vm, Identifier::fromString(vm, "event"_s), jsString(vm, WTF::String("JavaScript API"_s)));
+    header->putDirect(vm, Identifier::fromString(vm, "trigger"_s), jsString(vm, WTF::String("GetReport"_s)));
+    header->putDirect(vm, Identifier::fromString(vm, "filename"_s), jsNull());
+    header->putDirect(vm, Identifier::fromString(vm, "dumpEventTime"_s), jsString(vm, makeAtomString(timeString)));
+    header->putDirect(vm, Identifier::fromString(vm, "dumpEventTimeStamp"_s), jsNumber(timestamp));
+    header->putDirect(vm, Identifier::fromString(vm, "processId"_s), JSC::JSValue(getpid()));
+    header->putDirect(vm, Identifier::fromString(vm, "threadId"_s), jsNumber(0));
+    header->putDirect(vm, Identifier::fromString(vm, "cwd"_s), JSC::JSValue::decode(Process_functionCwd(globalObject, callFrame)));
+    header->putDirect(vm, Identifier::fromString(vm, "commandLine"_s), globalObject->getIfPropertyExists(
+            globalObject, Identifier::fromString(vm, "Bun"_s)).get(globalObject, Identifier::fromString(vm, "argv"_s)));
+    header->putDirect(vm, Identifier::fromString(vm, "nodejsVersion"_s), jsString(vm, makeString("v", REPORTED_NODE_VERSION)));
+    header->putDirect(vm, Identifier::fromString(vm, "glibcVersionRuntime"_s), jsString(vm, makeString(gnu_get_libc_version())));
+    header->putDirect(vm, Identifier::fromString(vm, "glibcVersionCompiler"_s), jsString(vm, makeString(__GLIBC__, '.', __GLIBC_MINOR__)));
+    header->putDirect(vm, Identifier::fromString(vm, "wordSize"_s), jsNumber(64));
+    header->putDirect(vm, Identifier::fromString(vm, "arch"_s), jsString(vm, makeAtomString(PROCESS_ARCH)));
+    header->putDirect(vm, Identifier::fromString(vm, "platform"_s), jsString(vm, makeAtomString(PROCESS_PLATFORM)));
+    header->putDirect(vm, Identifier::fromString(vm, "componentVersions"_s), componentVersions);
+    header->putDirect(vm, Identifier::fromString(vm, "release"_s), JSC::JSValue::decode(Process_getterRelease(globalObject, JSValue::encode(jsUndefined()), nullptr)));
+    header->putDirect(vm, Identifier::fromString(vm, "osName"_s), jsEmptyString(vm));    // TODO: os.type()
+    header->putDirect(vm, Identifier::fromString(vm, "osRelease"_s), jsEmptyString(vm)); // TODO: os.release()
+    header->putDirect(vm, Identifier::fromString(vm, "osVersion"_s), jsEmptyString(vm)); // TODO: os.version()
+    header->putDirect(vm, Identifier::fromString(vm, "osMachine"_s), jsEmptyString(vm)); // TODO: os.machine()
+    header->putDirect(vm, Identifier::fromString(vm, "cpus"_s), JSC::constructEmptyArray(globalObject, nullptr)); // TODO: os.cpus()
+    header->putDirect(vm, Identifier::fromString(vm, "networkInterfaces"_s), JSC::constructEmptyArray(globalObject, nullptr)); // TODO: os.networkInterfaces()
+    header->putDirect(vm, Identifier::fromString(vm, "host"_s), jsEmptyString(vm)); // TODO: os.hostname()
+
+    auto* jsStack = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
+    jsStack->putDirect(vm, Identifier::fromString(vm, "message"_s), jsString(vm, WTF::String("Error [ERR_SYNTHETIC]: JavaScript Callstack"_s)));
+    jsStack->putDirect(vm, Identifier::fromString(vm, "stack"_s), JSC::constructEmptyArray(globalObject, nullptr));
+    auto* jsStack_ErrorProps = JSC::constructEmptyObject(globalObject);
+    jsStack_ErrorProps->putDirect(vm, Identifier::fromString(vm, "code"_s), jsString(vm, WTF::String("ERR_SYNTHETIC"_s)));
+    jsStack->putDirect(vm, Identifier::fromString(vm, "errorProperties"_s), jsStack_ErrorProps);
+
+    // Not implemented stubs
+    auto* jsHeap = JSC::constructEmptyObject(globalObject);
+    auto* nativeStack = JSC::constructEmptyArray(globalObject, nullptr);
+    auto* resUsage = JSC::constructEmptyObject(globalObject);
+    auto* uvthreadResUsage = JSC::constructEmptyObject(globalObject);
+    auto* libuv = JSC::constructEmptyArray(globalObject, nullptr);
+    auto* workers = JSC::constructEmptyArray(globalObject, nullptr);
+    auto* userLimits = JSC::constructEmptyObject(globalObject);
+
+    auto* process = jsCast<Zig::Process*>(static_cast<Zig::GlobalObject*>(globalObject)->processObject());
+    auto envVars = process->getIfPropertyExists(globalObject, Identifier::fromString(vm, "env"_s));
+
+    auto* sharedObjs = JSC::constructEmptyArray(globalObject, nullptr);
+    dl_phdrCallbackData callbackData = { globalObject, sharedObjs };
+    dl_iterate_phdr(dl_phdrCallback, &callbackData);
+
+    auto* report = JSC::constructEmptyObject(globalObject);
+    report->putDirect(vm, Identifier::fromString(vm, "header"_s), header, 0);
+    report->putDirect(vm, Identifier::fromString(vm, "javascriptStack"_s), jsStack, 0);
+    report->putDirect(vm, Identifier::fromString(vm, "javascriptHeap"_s), jsHeap, 0);
+    report->putDirect(vm, Identifier::fromString(vm, "nativeStack"_s), nativeStack, 0);
+    report->putDirect(vm, Identifier::fromString(vm, "resourceUsage"_s), resUsage, 0);
+    report->putDirect(vm, Identifier::fromString(vm, "uvthreadResourceUsage"_s), uvthreadResUsage, 0);
+    report->putDirect(vm, Identifier::fromString(vm, "libuv"_s), libuv, 0);
+    report->putDirect(vm, Identifier::fromString(vm, "workers"_s), workers, 0);
+    report->putDirect(vm, Identifier::fromString(vm, "environmentVariables"_s), envVars, 0);
+    report->putDirect(vm, Identifier::fromString(vm, "userLimits"_s), userLimits, 0);
+    report->putDirect(vm, Identifier::fromString(vm, "sharedObjects"_s), sharedObjs, 0);
+
+    return JSValue::encode(report);
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    JSC::JSObject* report = JSC::JSValue::decode(Process_functionGetReport(globalObject, callFrame)).getObject();
+    JSC::JSObject* header = report->getDirect(vm, Identifier::fromString(vm, "header"_s)).getObject();
+    header->putDirect(vm, Identifier::fromString(vm, "trigger"_s), jsString(vm, WTF::String("API"_s)));
+
+    char timeString[24];
+    std::chrono::time_point now = std::chrono::system_clock::now();
+    int64_t timeSeconds = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+    strftime(timeString, sizeof(timeString), "report.%Y%m%d.%H%M%S.", gmtime(&timeSeconds));
+    WTF::String filename = makeString(timeString, getpid(), ".0.001.json");
+    JSC::JSString* filenameJSString = jsString(vm, filename);
+    header->putDirect(vm, Identifier::fromString(vm, "filename"_s), filenameJSString);
+
+    fprintf(stderr, "Writing Bun.js report to file: %s\n", filename.ascii().data());
+
+    WTF::String reportJsonString = JSC::JSONStringify(globalObject, report, 2);
+    FILE* reportFile = fopen(filename.ascii().data(), "w");
+    fprintf(reportFile, "%s", reportJsonString.utf8().data());
+    fclose(reportFile);
+
+    fprintf(stderr, "Bun.js report completed\n");
+
+    return JSValue::encode(filenameJSString);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(Process_getterReport, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
+{
+    auto& vm = globalObject->vm();
+    auto* reportObj = JSC::constructEmptyObject(globalObject);
+
+    JSC::JSFunction* writeReport = JSC::JSFunction::create(vm, globalObject, 0,
+        MAKE_STATIC_STRING_IMPL("writeReport"), Process_functionWriteReport, ImplementationVisibility::Public);
+    JSC::JSFunction* getReport = JSC::JSFunction::create(vm, globalObject, 0,
+        MAKE_STATIC_STRING_IMPL("getReport"), Process_functionGetReport, ImplementationVisibility::Public);
+
+    reportObj->putDirect(vm, Identifier::fromString(vm, "writeReport"_s), writeReport, 0);
+    reportObj->putDirect(vm, Identifier::fromString(vm, "getReport"_s), getReport, 0);
+
+    // TODO:
+    // These are currently marked ReadOnly with their default values so code which only reads them can work,
+    // but trying to set them should error as their actual functionalities are not yet implemented.
+    // See: https://nodejs.org/api/process.html#processreport and https://nodejs.org/api/report.html#configuration
+    reportObj->putDirect(vm, Identifier::fromString(vm, "directory"_s), jsEmptyString(vm), static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly));
+    reportObj->putDirect(vm, Identifier::fromString(vm, "filename"_s), jsEmptyString(vm), static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly));
+    reportObj->putDirect(vm, Identifier::fromString(vm, "compact"_s), jsBoolean(false), static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly));
+    reportObj->putDirect(vm, Identifier::fromString(vm, "signal"_s), jsString(vm, WTF::String("SIGUSR2"_s)), static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly));
+    reportObj->putDirect(vm, Identifier::fromString(vm, "reportOnFatalError"_s), jsBoolean(false), static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly));
+    reportObj->putDirect(vm, Identifier::fromString(vm, "reportOnSignal"_s), jsBoolean(false), static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly));
+    reportObj->putDirect(vm, Identifier::fromString(vm, "reportOnUncaughtException"_s), jsBoolean(false), static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly));
+
+    return JSValue::encode(reportObj);
+}
+
 // static const NeverDestroyed<String> signalNames[] = {
 //     MAKE_STATIC_STRING_IMPL("SIGHUP"),
 //     MAKE_STATIC_STRING_IMPL("SIGINT"),
@@ -687,27 +896,12 @@ void Process::finishCreation(JSC::VM& vm)
     // this should probably be renamed to what the name of the bundler is, instead of "notNodeJS"
     // but it must be something that won't evaluate to truthy in Node.js
     this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "isBun"_s), JSC::JSValue(true));
-#if defined(__APPLE__)
-    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "platform"_s),
-        JSC::jsString(this->vm(), makeAtomString("darwin")));
-#else
-    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "platform"_s),
-        JSC::jsString(this->vm(), makeAtomString("linux")));
-#endif
 
-#if defined(__x86_64__)
+    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "platform"_s),
+        JSC::jsString(this->vm(), makeAtomString(PROCESS_PLATFORM)));
+
     this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "arch"_s),
-        JSC::jsString(this->vm(), makeAtomString("x64")));
-#elif defined(__i386__)
-    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "arch"_s),
-        JSC::jsString(this->vm(), makeAtomString("x86")));
-#elif defined(__arm__)
-    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "arch"_s),
-        JSC::jsString(this->vm(), makeAtomString("arm")));
-#elif defined(__aarch64__)
-    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "arch"_s),
-        JSC::jsString(this->vm(), makeAtomString("arm64")));
-#endif
+        JSC::jsString(this->vm(), makeAtomString(PROCESS_ARCH)));
 
     JSC::JSFunction* hrtime = JSC::JSFunction::create(vm, globalObject, 0,
         MAKE_STATIC_STRING_IMPL("hrtime"), Process_functionHRTime, ImplementationVisibility::Public);
@@ -720,6 +914,9 @@ void Process::finishCreation(JSC::VM& vm)
 
     this->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "release"_s)),
         JSC::CustomGetterSetter::create(vm, Process_getterRelease, Process_setterRelease), 0);
+
+    this->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "report"_s)),
+        JSC::CustomGetterSetter::create(vm, Process_getterReport, nullptr), 0);
 
     this->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "stdout"_s)),
         JSC::CustomGetterSetter::create(vm, Process_lazyStdoutGetter, Process_defaultSetter), 0);
@@ -779,7 +976,7 @@ void Process::finishCreation(JSC::VM& vm)
     // }
     JSC::JSObject* config = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
     JSC::JSObject* variables = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
-    variables->putDirect(vm, JSC::Identifier::fromString(vm, "v8_enable_i8n_support"_s),
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "v8_enable_i18n_support"_s),
         JSC::jsNumber(1), 0);
     config->putDirect(vm, JSC::Identifier::fromString(vm, "target_defaults"_s), JSC::constructEmptyObject(globalObject), 0);
     config->putDirect(vm, JSC::Identifier::fromString(vm, "variables"_s), variables, 0);
@@ -883,46 +1080,7 @@ JSC_DEFINE_CUSTOM_GETTER(Process_getVersionsLazy,
     }
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 19);
-
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "node"_s),
-        JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(REPORTED_NODE_VERSION))));
-    object->putDirect(
-        vm, JSC::Identifier::fromString(vm, "bun"_s),
-        JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(Bun__version + 1 /* prefix with v */))));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "webkit"_s),
-        JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(BUN_WEBKIT_VERSION))));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "boringssl"_s),
-        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_boringssl))), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "libarchive"_s),
-        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_libarchive))), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "mimalloc"_s),
-        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_mimalloc))), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "picohttpparser"_s),
-        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_picohttpparser))), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "uwebsockets"_s),
-        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_uws))), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "webkit"_s),
-        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_webkit))), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "zig"_s),
-        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_zig))), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "zlib"_s),
-        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_zlib))), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "tinycc"_s),
-        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_tinycc))), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "lolhtml"_s),
-        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_lolhtml))), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "ares"_s),
-        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_c_ares))), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "usockets"_s),
-        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_usockets))), 0);
-
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "v8"_s), JSValue(JSC::jsString(vm, makeString("10.8.168.20-node.8"_s))), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "uv"_s), JSValue(JSC::jsString(vm, makeString("1.44.2"_s))), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "napi"_s), JSValue(JSC::jsString(vm, makeString("8"_s))), 0);
-
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "modules"_s),
-        JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString("108"))));
+    GET_PROCESS_VERSIONS_OBJ(vm, globalObject, object);
 
     thisObject->putDirect(vm, clientData->builtinNames().versionsPublicName(), object, 0);
 

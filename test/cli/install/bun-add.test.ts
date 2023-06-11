@@ -1416,3 +1416,48 @@ it("should add dependencies to workspaces directly", async () => {
   expect(await readdirSorted(join(package_dir, "node_modules", "foo"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "foo", "package.json")).text()).toEqual(foo_package);
 });
+
+it("should redirect 'install --save X' to 'add'", async () => {
+  await installRedirectsToAdd(true);
+});
+
+it("should redirect 'install X --save' to 'add'", async () => {
+  await installRedirectsToAdd(false);
+});
+
+async function installRedirectsToAdd(saveFlagFirst) {
+  await writeFile(
+    join(add_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+  const add_path = relative(package_dir, add_dir);
+
+  const args = [`file:${add_path}`, "--save"];
+  if (saveFlagFirst) args.reverse();
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", ...args],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun add", " Saved lockfile", ""]);
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    ` installed foo@${add_path}`,
+    "",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect((await file(join(package_dir, "package.json")).text()).includes("bun-add.test"));
+}

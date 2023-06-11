@@ -2326,10 +2326,10 @@ static JSC::EncodedJSValue resolverFunctionCallback(JSC::JSGlobalObject* globalO
 
 JSC__JSInternalPromise*
 JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* globalObject,
-    const ZigString* arg1)
+    const BunString* arg1)
 {
     globalObject->vm().drainMicrotasks();
-    auto name = Zig::toString(*arg1);
+    auto name = Bun::toWTFString(*arg1);
     name.impl()->ref();
 
     auto* promise = JSC::loadAndEvaluateModule(globalObject, name, JSC::jsUndefined(), JSC::jsUndefined());

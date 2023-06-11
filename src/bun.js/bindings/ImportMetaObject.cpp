@@ -59,7 +59,7 @@ static EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObject, 
         JSC::JSValue moduleName = callFrame->argument(0);
 
         auto doIt = [&](const WTF::String& fromStr) -> JSC::EncodedJSValue {
-            ZigString from = Zig::toZigString(fromStr);
+            BunString from = Bun::toString(fromStr);
             auto result = Bun__resolveSyncWithSource(globalObject, JSC::JSValue::encode(moduleName), &from, false);
 
             if (!JSC::JSValue::decode(result).isString()) {

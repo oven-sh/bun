@@ -1467,6 +1467,17 @@ pub fn toUTF8ListWithType(list_: std.ArrayList(u8), comptime Type: type, utf16: 
     return toUTF8ListWithTypeBun(list_, Type, utf16);
 }
 
+pub fn toUTF8FromLatin1(allocator: std.mem.Allocator, latin1: []const u8) !?std.ArrayList(u8) {
+    if (bun.JSC.is_bindgen)
+        unreachable;
+
+    if (isAllASCII(latin1))
+        return null;
+
+    var list = try std.ArrayList(u8).initCapacity(allocator, latin1.len);
+    return try allocateLatin1IntoUTF8WithList(list, 0, []const u8, latin1);
+}
+
 pub fn toUTF8ListWithTypeBun(list_: std.ArrayList(u8), comptime Type: type, utf16: Type) !std.ArrayList(u8) {
     var list = list_;
     var utf16_remaining = utf16;

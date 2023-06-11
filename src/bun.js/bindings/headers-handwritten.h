@@ -9,6 +9,39 @@ typedef struct ZigString {
     const unsigned char* ptr;
     size_t len;
 } ZigString;
+
+#ifndef __cplusplus
+typedef uint8_t BunStringTag;
+typedef union BunStringImpl {
+    ZigString zig;
+    void* wtf;
+} BunStringImpl;
+
+typedef struct BunString {
+    BunStringTag tag;
+    BunStringImpl impl;
+} BunString;
+#else
+typedef union BunStringImpl {
+    ZigString zig;
+    WTF::StringImpl* wtf;
+} BunStringImpl;
+
+enum class BunStringTag : uint8_t {
+    Dead = 0,
+    WTFStringImpl = 1,
+    ZigString = 2,
+    StaticZigString = 3,
+    Empty = 4,
+};
+
+typedef struct BunString {
+    BunStringTag tag;
+    BunStringImpl impl;
+} BunString;
+
+#endif
+
 typedef struct ZigErrorType {
     ZigErrorCode code;
     void* ptr;
@@ -21,8 +54,16 @@ typedef struct ErrorableZigString {
     ErrorableZigStringResult result;
     bool success;
 } ErrorableZigString;
+typedef union ErrorableStringResult {
+    BunString value;
+    ZigErrorType err;
+} ErrorableStringResult;
+typedef struct ErrorableString {
+    ErrorableStringResult result;
+    bool success;
+} ErrorableString;
 typedef struct ResolvedSource {
-    ZigString specifier;
+    BunString specifier;
     ZigString source_code;
     ZigString source_url;
     ZigString* commonJSExports;
@@ -190,6 +231,22 @@ typedef struct Uint8Array_alias Uint8Array_alias;
 
 #ifdef __cplusplus
 
+extern "C" void Bun__WTFStringImpl__deref(WTF::StringImpl* impl);
+extern "C" void Bun__WTFStringImpl__ref(WTF::StringImpl* impl);
+extern "C" bool BunString__fromJS(JSC::JSGlobalObject*, JSC::EncodedJSValue, BunString*);
+extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, BunString*);
+extern "C" void BunString__toWTFString(BunString*);
+
+namespace Bun {
+JSC::JSValue toJS(JSC::JSGlobalObject*, BunString);
+BunString toString(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
+WTF::String toWTFString(const BunString& bunString);
+BunString toString(WTF::String& wtfString);
+BunString toString(const WTF::String& wtfString);
+BunString toString(WTF::StringImpl* wtfString);
+
+}
+
 using Uint8Array_alias = JSC::JSUint8Array;
 
 typedef struct {
@@ -224,21 +281,21 @@ extern "C" void Microtask__run_default(void* ptr, void* global);
 
 extern "C" bool Bun__transpileVirtualModule(
     JSC::JSGlobalObject* global,
-    const ZigString* specifier,
-    const ZigString* referrer,
+    const BunString* specifier,
+    const BunString* referrer,
     ZigString* sourceCode,
     BunLoaderType loader,
     ErrorableResolvedSource* result);
 
 extern "C" JSC::EncodedJSValue Bun__runVirtualModule(
     JSC::JSGlobalObject* global,
-    const ZigString* specifier);
+    const BunString* specifier);
 
 extern "C" void* Bun__transpileFile(
     void* bunVM,
     JSC::JSGlobalObject* global,
-    const ZigString* specifier,
-    const ZigString* referrer,
+    const BunString* specifier,
+    const BunString* referrer,
     ErrorableResolvedSource* result, bool allowPromise);
 
 extern "C" JSC::EncodedJSValue CallbackJob__onResolve(JSC::JSGlobalObject*, JSC::CallFrame*);
@@ -247,8 +304,8 @@ extern "C" JSC::EncodedJSValue CallbackJob__onReject(JSC::JSGlobalObject*, JSC::
 extern "C" bool Bun__fetchBuiltinModule(
     void* bunVM,
     JSC::JSGlobalObject* global,
-    const ZigString* specifier,
-    const ZigString* referrer,
+    const BunString* specifier,
+    const BunString* referrer,
     ErrorableResolvedSource* result);
 
 // Used in process.version

@@ -127,7 +127,7 @@ pub const Request = struct {
 
     pub fn writeFormat(this: *Request, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         const Writer = @TypeOf(writer);
-        try writer.print("Request ({}) {{\n", .{bun.fmt.size(this.body.value.slice().len)});
+        try writer.print("Request ({}) {{\n", .{bun.fmt.size(this.body.value.size())});
         {
             formatter.indent += 1;
             defer formatter.indent -|= 1;
@@ -155,13 +155,14 @@ pub const Request = struct {
                 try writer.writeAll("\n");
                 try formatter.writeIndent(Writer, writer);
                 try this.body.value.Blob.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
-            } else if (this.body.value == .InternalBlob) {
+            } else if (this.body.value == .InternalBlob or this.body.value == .WTFStringImpl) {
                 try writer.writeAll("\n");
                 try formatter.writeIndent(Writer, writer);
-                if (this.body.value.size() == 0) {
+                const size = this.body.value.size();
+                if (size == 0) {
                     try Blob.initEmpty(undefined).writeFormat(Formatter, formatter, writer, enable_ansi_colors);
                 } else {
-                    try Blob.writeFormatForSize(this.body.value.size(), writer, enable_ansi_colors);
+                    try Blob.writeFormatForSize(size, writer, enable_ansi_colors);
                 }
             } else if (this.body.value == .Locked) {
                 if (this.body.value.Locked.readable) |stream| {
@@ -203,6 +204,7 @@ pub const Request = struct {
                 return MimeType.other.value;
             },
             .InternalBlob => return this.body.value.InternalBlob.contentType(),
+            .WTFStringImpl => return MimeType.text.value,
             // .InlineBlob => return this.body.value.InlineBlob.contentType(),
             .Null, .Error, .Used, .Locked, .Empty => return MimeType.other.value,
         }

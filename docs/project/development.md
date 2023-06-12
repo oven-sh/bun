@@ -42,7 +42,7 @@ $ brew install llvm@15
 
 ```bash#Ubuntu/Debian
 # On Ubuntu 22.04 and newer, LLVM 15 is available in the default repositories
-$ sudo apt install llvm-15 lld-15
+$ sudo apt install llvm-15 lld-15 clang-15
 # On older versions,
 $ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 15 all
 ```

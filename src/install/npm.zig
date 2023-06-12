@@ -11,7 +11,7 @@ const PackageManager = @import("./install.zig").PackageManager;
 const ExternalStringMap = @import("./install.zig").ExternalStringMap;
 const ExternalStringList = @import("./install.zig").ExternalStringList;
 const ExternalSlice = @import("./install.zig").ExternalSlice;
-const initializeStore = @import("./install.zig").initializeStore;
+const initializeStore = @import("./install.zig").initializeMiniStore;
 const logger = @import("root").bun.logger;
 const Output = @import("root").bun.Output;
 const Integrity = @import("./integrity.zig").Integrity;
@@ -768,15 +768,6 @@ pub const PackageManifest = struct {
 
     const ExternalStringMapDeduper = std.HashMap(u64, ExternalStringList, IdentityContext(u64), 80);
 
-    threadlocal var string_pool_: String.Builder.StringPool = undefined;
-    threadlocal var string_pool_loaded: bool = false;
-
-    threadlocal var external_string_maps_: ExternalStringMapDeduper = undefined;
-    threadlocal var external_string_maps_loaded: bool = false;
-
-    threadlocal var optional_peer_dep_names_: std.ArrayList(u64) = undefined;
-    threadlocal var optional_peer_dep_names_loaded: bool = false;
-
     /// This parses [Abbreviated metadata](https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#abbreviated-metadata-format)
     pub fn parse(
         allocator: std.mem.Allocator,
@@ -789,7 +780,14 @@ pub const PackageManifest = struct {
     ) !?PackageManifest {
         const source = logger.Source.initPathString(expected_name, json_buffer);
         initializeStore();
-        const json = json_parser.ParseJSONUTF8(&source, log, allocator) catch return null;
+        defer bun.JSAst.Stmt.Data.Store.memory_allocator.?.pop();
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        const json = json_parser.ParseJSONUTF8(
+            &source,
+            log,
+            arena.allocator(),
+        ) catch return null;
 
         if (json.asProperty("error")) |error_q| {
             if (error_q.expr.asString(allocator)) |err| {
@@ -800,31 +798,12 @@ pub const PackageManifest = struct {
 
         var result = PackageManifest{};
 
-        if (!string_pool_loaded) {
-            string_pool_ = String.Builder.StringPool.init(default_allocator);
-            string_pool_loaded = true;
-        }
-
-        if (!external_string_maps_loaded) {
-            external_string_maps_ = ExternalStringMapDeduper.initContext(default_allocator, .{});
-            external_string_maps_loaded = true;
-        }
-
-        if (!optional_peer_dep_names_loaded) {
-            optional_peer_dep_names_ = std.ArrayList(u64).init(default_allocator);
-            optional_peer_dep_names_loaded = true;
-        }
-
-        var string_pool = string_pool_;
-        string_pool.clearRetainingCapacity();
-        var external_string_maps = external_string_maps_;
-        external_string_maps.clearRetainingCapacity();
-        var optional_peer_dep_names = optional_peer_dep_names_;
-        optional_peer_dep_names.clearRetainingCapacity();
-
-        defer string_pool_ = string_pool;
-        defer external_string_maps_ = external_string_maps;
-        defer optional_peer_dep_names_ = optional_peer_dep_names;
+        var string_pool = String.Builder.StringPool.init(default_allocator);
+        defer string_pool.deinit();
+        var external_string_maps = ExternalStringMapDeduper.initContext(default_allocator, .{});
+        defer external_string_maps.deinit();
+        var optional_peer_dep_names = std.ArrayList(u64).init(default_allocator);
+        defer optional_peer_dep_names.deinit();
 
         var string_builder = String.Builder{
             .string_pool = string_pool,

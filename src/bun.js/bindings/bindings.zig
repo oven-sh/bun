@@ -19,7 +19,8 @@ const FFI = @import("./FFI.zig");
 const NullableAllocator = @import("../../nullable_allocator.zig").NullableAllocator;
 const MutableString = bun.MutableString;
 const JestPrettyFormat = @import("../test/pretty_format.zig").JestPrettyFormat;
-
+const String = bun.String;
+const ErrorableString = JSC.ErrorableString;
 pub const JSObject = extern struct {
     pub const shim = Shimmer("JSC", "JSObject", @This());
     bytes: shim.Bytes,
@@ -87,6 +88,7 @@ pub const JSObject = extern struct {
     };
 };
 
+/// Prefer using bun.String instead of ZigString in new code.
 pub const ZigString = extern struct {
     /// This can be a UTF-16, Latin1, or UTF-8 string.
     /// The pointer itself is tagged, so it cannot be used without untagging it first
@@ -98,6 +100,13 @@ pub const ZigString = extern struct {
         latin1: []const u8,
         utf16: []const u16,
     };
+
+    pub fn fromBytes(slice_: []const u8) ZigString {
+        if (!strings.isAllASCII(slice_))
+            return fromUTF8(slice_);
+
+        return init(slice_);
+    }
 
     pub inline fn as(this: ZigString) ByteString {
         return if (this.is16Bit()) .{ .utf16 = this.utf16SliceAligned() } else .{ .latin1 = this.slice() };
@@ -348,10 +357,50 @@ pub const ZigString = extern struct {
 
     pub const shim = Shimmer("", "ZigString", @This());
 
+    pub inline fn length(this: ZigString) usize {
+        return this.len;
+    }
+
+    pub fn byteSlice(this: ZigString) []const u8 {
+        if (this.is16Bit()) {
+            return std.mem.sliceAsBytes(this.utf16SliceAligned());
+        }
+
+        return this.slice();
+    }
+
+    pub fn markStatic(this: *ZigString) void {
+        this.ptr = @intToPtr([*]const u8, @ptrToInt(this.ptr) | (1 << 60));
+    }
+
+    pub fn isStatic(this: *const ZigString) bool {
+        return @ptrToInt(this.ptr) & (1 << 60) != 0;
+    }
+
     pub const Slice = struct {
         allocator: NullableAllocator = .{},
         ptr: [*]const u8 = undefined,
         len: u32 = 0,
+
+        pub fn init(allocator: std.mem.Allocator, input: []const u8) Slice {
+            return .{
+                .ptr = input.ptr,
+                .len = @truncate(u32, input.len),
+                .allocator = NullableAllocator.init(allocator),
+            };
+        }
+
+        pub fn toZigString(this: Slice) ZigString {
+            if (this.isAllocated())
+                return ZigString.initUTF8(this.ptr[0..this.len]);
+            return ZigString.init(this.slice());
+        }
+
+        pub inline fn length(this: Slice) usize {
+            return this.len;
+        }
+
+        pub const byteSlice = Slice.slice;
 
         pub fn from(input: []u8, allocator: std.mem.Allocator) Slice {
             return .{
@@ -440,6 +489,12 @@ pub const ZigString = extern struct {
         /// Does nothing if the slice is not allocated
         pub fn deinit(this: *const Slice) void {
             if (this.allocator.get()) |allocator| {
+                if (bun.String.isWTFAllocator(allocator)) {
+                    // workaround for https://github.com/ziglang/zig/issues/4298
+                    bun.String.StringImplAllocator.free(allocator.ptr, bun.constStrToU8(this.slice()), 0, 0);
+                    return;
+                }
+
                 allocator.free(this.slice());
             }
         }
@@ -1685,31 +1740,31 @@ pub fn NewGlobalObject(comptime Type: type) type {
         const importNotImpl = "Import not implemented";
         const resolveNotImpl = "resolve not implemented";
         const moduleNotImpl = "Module fetch not implemented";
-        pub fn import(global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) ErrorableZigString {
+        pub fn import(global: *JSGlobalObject, specifier: *String, source: *String) callconv(.C) ErrorableString {
             if (comptime @hasDecl(Type, "import")) {
                 return @call(.always_inline, Type.import, .{ global, specifier.*, source.* });
             }
-            return ErrorableZigString.err(error.ImportFailed, ZigString.init(importNotImpl).toErrorInstance(global).asVoid());
+            return ErrorableString.err(error.ImportFailed, String.init(importNotImpl).toErrorInstance(global).asVoid());
         }
         pub fn resolve(
-            res: *ErrorableZigString,
+            res: *ErrorableString,
             global: *JSGlobalObject,
-            specifier: *ZigString,
-            source: *ZigString,
+            specifier: *String,
+            source: *String,
             query_string: *ZigString,
         ) callconv(.C) void {
             if (comptime @hasDecl(Type, "resolve")) {
                 @call(.always_inline, Type.resolve, .{ res, global, specifier.*, source.*, query_string, true });
                 return;
             }
-            res.* = ErrorableZigString.err(error.ResolveFailed, ZigString.init(resolveNotImpl).toErrorInstance(global).asVoid());
+            res.* = ErrorableString.err(error.ResolveFailed, String.init(resolveNotImpl).toErrorInstance(global).asVoid());
         }
-        pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) void {
+        pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: *String, source: *String) callconv(.C) void {
             if (comptime @hasDecl(Type, "fetch")) {
                 @call(.always_inline, Type.fetch, .{ ret, global, specifier.*, source.* });
                 return;
             }
-            ret.* = ErrorableResolvedSource.err(error.FetchFailed, ZigString.init(moduleNotImpl).toErrorInstance(global).asVoid());
+            ret.* = ErrorableResolvedSource.err(error.FetchFailed, String.init(moduleNotImpl).toErrorInstance(global).asVoid());
         }
         pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, rejection: JSPromiseRejectionOperation) callconv(.C) JSValue {
             if (comptime @hasDecl(Type, "promiseRejectionTracker")) {
@@ -1769,7 +1824,7 @@ pub const JSModuleLoader = extern struct {
         });
     }
 
-    pub fn loadAndEvaluateModule(globalObject: *JSGlobalObject, module_name: *const ZigString) *JSInternalPromise {
+    pub fn loadAndEvaluateModule(globalObject: *JSGlobalObject, module_name: *const bun.String) *JSInternalPromise {
         return shim.cppFn("loadAndEvaluateModule", .{
             globalObject,
             module_name,
@@ -2483,12 +2538,12 @@ pub const JSGlobalObject = extern struct {
         node = 1,
         browser = 2,
     };
-    extern fn Bun__runOnLoadPlugins(*JSC.JSGlobalObject, ?*const ZigString, *const ZigString, BunPluginTarget) JSValue;
-    extern fn Bun__runOnResolvePlugins(*JSC.JSGlobalObject, ?*const ZigString, *const ZigString, *const ZigString, BunPluginTarget) JSValue;
+    extern fn Bun__runOnLoadPlugins(*JSC.JSGlobalObject, ?*const bun.String, *const bun.String, BunPluginTarget) JSValue;
+    extern fn Bun__runOnResolvePlugins(*JSC.JSGlobalObject, ?*const bun.String, *const bun.String, *const String, BunPluginTarget) JSValue;
 
-    pub fn runOnLoadPlugins(this: *JSGlobalObject, namespace_: ZigString, path: ZigString, target: BunPluginTarget) ?JSValue {
+    pub fn runOnLoadPlugins(this: *JSGlobalObject, namespace_: bun.String, path: bun.String, target: BunPluginTarget) ?JSValue {
         JSC.markBinding(@src());
-        const result = Bun__runOnLoadPlugins(this, if (namespace_.len > 0) &namespace_ else null, &path, target);
+        const result = Bun__runOnLoadPlugins(this, if (namespace_.length() > 0) &namespace_ else null, &path, target);
         if (result.isEmptyOrUndefinedOrNull()) {
             return null;
         }
@@ -2496,10 +2551,10 @@ pub const JSGlobalObject = extern struct {
         return result;
     }
 
-    pub fn runOnResolvePlugins(this: *JSGlobalObject, namespace_: ZigString, path: ZigString, source: ZigString, target: BunPluginTarget) ?JSValue {
+    pub fn runOnResolvePlugins(this: *JSGlobalObject, namespace_: bun.String, path: bun.String, source: bun.String, target: BunPluginTarget) ?JSValue {
         JSC.markBinding(@src());
 
-        const result = Bun__runOnResolvePlugins(this, if (namespace_.len > 0) &namespace_ else null, &path, &source, target);
+        const result = Bun__runOnResolvePlugins(this, if (namespace_.length() > 0) &namespace_ else null, &path, &source, target);
         if (result.isEmptyOrUndefinedOrNull()) {
             return null;
         }
@@ -3968,6 +4023,10 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn toZigString(this: JSValue, out: *ZigString, global: *JSGlobalObject) void {
         return cppFn("toZigString", .{ this, out, global });
+    }
+
+    pub fn toBunString(this: JSValue, globalObject: *JSC.JSGlobalObject) bun.String {
+        return bun.String.fromJS(this, globalObject);
     }
 
     /// this: RegExp value

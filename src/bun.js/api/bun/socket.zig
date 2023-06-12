@@ -1589,8 +1589,8 @@ fn NewSocket(comptime ssl: bool) type {
 
                 globalObject.throw("sendfile() not implemented yet", .{});
                 return .{ .fail = {} };
-            } else if (args.ptr[0].toStringOrNull(globalObject)) |jsstring| {
-                var zig_str = jsstring.toSlice(globalObject, globalObject.bunVM().allocator);
+            } else if (bun.String.tryFromJS(args.ptr[0], globalObject)) |bun_str| {
+                var zig_str = bun_str.toUTF8(bun.default_allocator);
                 defer zig_str.deinit();
 
                 var slice = zig_str.slice();

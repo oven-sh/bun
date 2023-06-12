@@ -82,13 +82,13 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
 JSValue fetchSourceCodeSync(
     Zig::GlobalObject* globalObject,
     ErrorableResolvedSource* res,
-    ZigString* specifier,
-    ZigString* referrer);
+    BunString* specifier,
+    BunString* referrer);
 
 JSValue fetchSourceCodeAsync(
     Zig::GlobalObject* globalObject,
     ErrorableResolvedSource* res,
-    ZigString* specifier,
-    ZigString* referrer);
+    BunString* specifier,
+    BunString* referrer);
 
 } // namespace Bun

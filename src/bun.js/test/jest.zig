@@ -3782,6 +3782,8 @@ pub const Expect = struct {
     }
 
     pub fn toMatch(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        JSC.markBinding(@src());
+
         defer this.postMatch(globalObject);
 
         const thisValue = callFrame.this();
@@ -3853,6 +3855,7 @@ pub const Expect = struct {
     }
 
     pub fn toHaveBeenCalled(this: *Expect, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        JSC.markBinding(@src());
         const thisValue = callframe.this();
         defer this.postMatch(globalObject);
 
@@ -3900,6 +3903,8 @@ pub const Expect = struct {
         unreachable;
     }
     pub fn toHaveBeenCalledTimes(this: *Expect, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        JSC.markBinding(@src());
+
         const thisValue = callframe.this();
         const arguments_ = callframe.arguments(1);
         const arguments: []const JSValue = arguments_.ptr[0..arguments_.len];
@@ -3957,6 +3962,8 @@ pub const Expect = struct {
     }
 
     pub fn toMatchObject(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        JSC.markBinding(@src());
+
         defer this.postMatch(globalObject);
         const thisValue = callFrame.this();
         const args = callFrame.arguments(1).slice();

@@ -17,6 +17,7 @@
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/WeakMapImpl.h>
+#include <JavaScriptCore/WeakMapImplInlines.h>
 
 namespace Bun {
 

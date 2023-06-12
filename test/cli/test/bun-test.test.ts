@@ -180,6 +180,13 @@ describe("bun test", () => {
     });
   });
   describe("--bail", () => {
+    test("must provide a number bail", () => {
+      const stderr = runTest({
+        args: ["--bail", "foo"],
+      });
+      expect(stderr).toContain("expects a number");
+    });
+
     test("must provide non-negative bail", () => {
       const stderr = runTest({
         args: ["--bail", "-1"],

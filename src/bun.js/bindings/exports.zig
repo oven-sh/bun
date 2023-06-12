@@ -2220,11 +2220,11 @@ pub const ZigConsoleClient = struct {
                     } else if (value.as(JSC.ResolveMessage)) |resolve_log| {
                         resolve_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
                         return;
-                    } else if (value.as(JSC.Jest.ExpectAnything) != null) {
+                    } else if (value.as(JSC.Expect.ExpectAnything) != null) {
                         writer.writeAll("Anything");
                         return;
-                    } else if (value.as(JSC.Jest.ExpectAny) != null) {
-                        const constructor_value = JSC.Jest.ExpectAny.constructorValueGetCached(value) orelse return;
+                    } else if (value.as(JSC.Expect.ExpectAny) != null) {
+                        const constructor_value = JSC.Expect.ExpectAny.constructorValueGetCached(value) orelse return;
 
                         this.addForNewLine("Any<".len);
                         writer.writeAll("Any<");
@@ -2237,16 +2237,16 @@ pub const ZigConsoleClient = struct {
                         writer.writeAll(">");
 
                         return;
-                    } else if (value.as(JSC.Jest.ExpectStringContaining) != null) {
-                        const substring_value = JSC.Jest.ExpectStringContaining.stringValueGetCached(value) orelse return;
+                    } else if (value.as(JSC.Expect.ExpectStringContaining) != null) {
+                        const substring_value = JSC.Expect.ExpectStringContaining.stringValueGetCached(value) orelse return;
 
                         this.addForNewLine("StringContaining ".len);
                         writer.writeAll("StringContaining ");
                         this.printAs(.String, Writer, writer_, substring_value, .String, enable_ansi_colors);
 
                         return;
-                    } else if (value.as(JSC.Jest.ExpectStringMatching) != null) {
-                        const test_value = JSC.Jest.ExpectStringMatching.testValueGetCached(value) orelse return;
+                    } else if (value.as(JSC.Expect.ExpectStringMatching) != null) {
+                        const test_value = JSC.Expect.ExpectStringMatching.testValueGetCached(value) orelse return;
 
                         this.addForNewLine("StringMatching ".len);
                         writer.writeAll("StringMatching ");

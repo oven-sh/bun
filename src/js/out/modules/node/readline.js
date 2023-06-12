@@ -143,7 +143,7 @@ function* emitKeys(stream) {
         else
           code += cmd;
       }
-      switch (keyCtrl2 = !!(modifier & 4), keyMeta = !!(modifier & 10), keyShift = !!(modifier & 1), keyCode = code, code) {
+      switch (keyCtrl2 = !!(modifier & 4), keyMeta = !!(modifier & 10), keyShift = !!(modifier & 1), code) {
         case "[P":
           keyName = "f1";
           break;

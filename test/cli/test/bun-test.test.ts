@@ -180,13 +180,6 @@ describe("bun test", () => {
     });
   });
   describe("--bail", () => {
-    test("must provide a number bail", () => {
-      const stderr = runTest({
-        args: ["--bail", "foo"],
-      });
-      expect(stderr).toContain("expects a number");
-    });
-
     test("must provide non-negative bail", () => {
       const stderr = runTest({
         args: ["--bail", "-1"],
@@ -201,9 +194,9 @@ describe("bun test", () => {
       expect(stderr).toContain("expects a number");
     });
 
-    test("should bail after 1 failure", () => {
+    test("bail should be 1 by default", () => {
       const stderr = runTest({
-        args: ["--bail", "1"],
+        args: ["--bail"],
         input: `
           import { test, expect } from "bun:test";
           test("test #1", () => {
@@ -218,7 +211,8 @@ describe("bun test", () => {
       expect(stderr).not.toContain("test #2");
     });
 
-    test("should bail after 3 failures", () => {
+
+    test("should bail out after 3 failures", () => {
       const stderr = runTest({
         args: ["--bail", "3"],
         input: `

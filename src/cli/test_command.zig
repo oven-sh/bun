@@ -254,7 +254,7 @@ pub const CommandLineReporter = struct {
     }
 
     pub fn printSummary(this: *CommandLineReporter, summary: Summary, start_time: i128, total_tests: ?u32) void {
-        const runned_tests = summary.fail + summary.pass;
+        const runned_tests = summary.fail + summary.pass + summary.skip + summary.todo;
 
         // if it's not null it's most likely called after all tests are done, else it bailed out.
         if (total_tests) |total| {

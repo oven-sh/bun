@@ -217,7 +217,7 @@ pub const Arguments = struct {
         clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
         clap.parseParam("--only                           Only run tests that are marked with \"test.only()\"") catch unreachable,
         clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
-        clap.parseParam("--bail <NUMBER>                  Exit the test suite after <NUMBER> failures") catch unreachable,
+        clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
     };
 
     const build_params_public = public_params ++ build_only_params;
@@ -395,6 +395,8 @@ pub const Arguments = struct {
                         Output.prettyErrorln("--bail expects a number greater than 0", .{});
                         Global.exit(1);
                     }
+                } else {
+                    ctx.test_options.bail = 1;
                 }
             }
             if (args.option("--rerun-each")) |repeat_count| {

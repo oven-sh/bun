@@ -80,8 +80,7 @@ pub const CommandLineReporter = struct {
     last_dot: u32 = 0,
     summary: Summary = Summary{},
     prev_file: u64 = 0,
-    repeat_count: u32 = 1,
-    start_time: i128 = 0,
+    repeat_count: u32 = 0,
 
     failures_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
     skips_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
@@ -203,12 +202,23 @@ pub const CommandLineReporter = struct {
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.fail;
 
         if (this.jest.bail == this.summary.fail) {
-            const runned_tests = this.summary.fail + this.summary.pass + this.summary.skip + this.summary.todo;
-            Output.prettyError("Ran {d} tests across {d} files. ", .{ runned_tests, this.jest.files.len });
-            Output.printStartEnd(this.start_time, std.time.nanoTimestamp());
+            this.printSummary(this.summary, bun.start_time, null);
             Output.prettyError("\nBailed out after {d} failures<r>\n", .{this.jest.bail});
             Global.exit(1);
         }
+    }
+
+    pub fn printSummary(this: *CommandLineReporter, summary: Summary, start_time: i128, total_tests: ?u32) void {
+        const runned_tests = summary.fail + summary.pass;
+
+        // if it's not null it's most likely called after all tests are done, else it bailed out.
+        if (total_tests) |total| {
+            Output.prettyError("Ran {d} tests across {d} files. <d>{d} total<r> ", .{ runned_tests, this.jest.files.len, total });
+        } else {
+            Output.prettyError("Ran {d} tests across {d} files. ", .{ runned_tests, this.jest.files.len });
+        }
+
+        Output.printStartEnd(start_time, std.time.nanoTimestamp());
     }
 
     pub fn handleTestSkip(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
@@ -450,7 +460,6 @@ pub const TestCommand = struct {
                 .values = &snapshot_values,
                 .counts = &snapshot_counts,
             } },
-            .start_time = ctx.start_time,
             .callback = undefined,
         };
         reporter.callback = TestRunner.Callback{
@@ -653,8 +662,8 @@ pub const TestCommand = struct {
             }
 
             const total_tests = reporter.summary.fail + reporter.summary.pass + reporter.summary.skip + reporter.summary.todo;
-            Output.prettyError("Ran {d} tests across {d} files. <d>{d} total<r> ", .{ reporter.summary.fail + reporter.summary.pass, test_files.len, total_tests });
-            Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
+
+            reporter.printSummary(reporter.summary, ctx.start_time, total_tests);
         }
 
         Output.prettyError("\n", .{});

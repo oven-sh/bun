@@ -194,6 +194,13 @@ describe("bun test", () => {
       expect(stderr).toContain("expects a number");
     });
 
+    test("should not be 0", () => {
+      const stderr = runTest({
+        args: ["--bail", "0"],
+      });
+      expect(stderr).toContain("expects a number");
+    });
+
     test("should bail after 1 failure", () => {
       const stderr = runTest({
         args: ["--bail", "1"],

@@ -390,6 +390,11 @@ pub const Arguments = struct {
                         Output.prettyErrorln("--bail expects a number: {s}", .{@errorName(e)});
                         Global.exit(1);
                     };
+
+                    if (ctx.test_options.bail == 0) {
+                        Output.prettyErrorln("--bail expects a number greater than 0", .{});
+                        Global.exit(1);
+                    }
                 }
             }
             if (args.option("--rerun-each")) |repeat_count| {

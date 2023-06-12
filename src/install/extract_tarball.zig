@@ -157,13 +157,14 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     var tmpdir = this.temp_dir;
     var tmpname_buf: [256]u8 = undefined;
     const name = this.name.slice();
-
-    var basename = this.name.slice();
-    if (basename[0] == '@') {
-        if (std.mem.indexOfScalar(u8, basename, '/')) |i| {
-            basename = basename[i + 1 ..];
+    const basename = brk: {
+        if (name[0] == '@') {
+            if (std.mem.indexOfScalar(u8, name, '/')) |i| {
+                break :brk name[i + 1 ..];
+            }
         }
-    }
+        break :brk name;
+    };
 
     var resolved: string = "";
     var tmpname = try FileSystem.instance.tmpname(basename[0..@min(basename.len, 32)], &tmpname_buf, tgz_bytes.len);
@@ -361,39 +362,39 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     var json_path: []u8 = "";
     var json_buf: []u8 = "";
     var json_len: usize = 0;
-    switch (this.resolution.tag) {
-        .github, .local_tarball, .remote_tarball => {
-            const json_file = final_dir.openFileZ("package.json", .{ .mode = .read_only }) catch |err| {
-                this.package_manager.log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    this.package_manager.allocator,
-                    "\"package.json\" for \"{s}\" failed to open: {s}",
-                    .{ name, @errorName(err) },
-                ) catch unreachable;
-                return error.InstallFailed;
-            };
-            defer json_file.close();
-            const json_stat = try json_file.stat();
-            json_buf = try this.package_manager.allocator.alloc(u8, json_stat.size + 64);
-            json_len = try json_file.preadAll(json_buf, 0);
+    if (switch (this.resolution.tag) {
+        // TODO remove extracted files not matching any globs under "files"
+        .github, .local_tarball, .remote_tarball => true,
+        else => strings.indexEqualAny(this.package_manager.lockfile.trusted_dependencies.items, name) != null,
+    }) {
+        const json_file = final_dir.openFileZ("package.json", .{ .mode = .read_only }) catch |err| {
+            this.package_manager.log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                this.package_manager.allocator,
+                "\"package.json\" for \"{s}\" failed to open: {s}",
+                .{ name, @errorName(err) },
+            ) catch unreachable;
+            return error.InstallFailed;
+        };
+        defer json_file.close();
+        const json_stat = try json_file.stat();
+        json_buf = try this.package_manager.allocator.alloc(u8, json_stat.size + 64);
+        json_len = try json_file.preadAll(json_buf, 0);
 
-            json_path = bun.getFdPath(
-                json_file.handle,
-                &json_path_buf,
-            ) catch |err| {
-                this.package_manager.log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    this.package_manager.allocator,
-                    "\"package.json\" for \"{s}\" failed to resolve: {s}",
-                    .{ name, @errorName(err) },
-                ) catch unreachable;
-                return error.InstallFailed;
-            };
-            // TODO remove extracted files not matching any globs under "files"
-        },
-        else => {},
+        json_path = bun.getFdPath(
+            json_file.handle,
+            &json_path_buf,
+        ) catch |err| {
+            this.package_manager.log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                this.package_manager.allocator,
+                "\"package.json\" for \"{s}\" failed to resolve: {s}",
+                .{ name, @errorName(err) },
+            ) catch unreachable;
+            return error.InstallFailed;
+        };
     }
 
     const ret_json_path = try FileSystem.instance.dirname_store.append(@TypeOf(json_path), json_path);

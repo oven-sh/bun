@@ -166,8 +166,8 @@ pub const ExternalStringList = ExternalSlice(ExternalString);
 pub const VersionSlice = ExternalSlice(Semver.Version);
 
 pub const ExternalStringMap = extern struct {
-    name: ExternalStringList = ExternalStringList{},
-    value: ExternalStringList = ExternalStringList{},
+    name: ExternalStringList = .{},
+    value: ExternalStringList = .{},
 };
 
 pub const PackageNameHash = u64;
@@ -467,7 +467,7 @@ pub const Features = struct {
     is_main: bool = false,
     optional_dependencies: bool = false,
     peer_dependencies: bool = true,
-    scripts: bool = false,
+    trusted_dependencies: bool = false,
     workspaces: bool = false,
 
     check_for_duplicate_dependencies: bool = false,
@@ -487,7 +487,7 @@ pub const Features = struct {
         .dev_dependencies = true,
         .is_main = true,
         .optional_dependencies = true,
-        .scripts = true,
+        .trusted_dependencies = true,
         .workspaces = true,
     };
 
@@ -499,7 +499,7 @@ pub const Features = struct {
     pub const workspace = Features{
         .dev_dependencies = true,
         .optional_dependencies = true,
-        .scripts = true,
+        .trusted_dependencies = true,
     };
 
     pub const link = Features{
@@ -3546,7 +3546,34 @@ pub const PackageManager = struct {
 
                 return package;
             },
-            else => {},
+            else => if (data.json_len > 0) {
+                const package_json_source = logger.Source.initPathString(
+                    data.json_path,
+                    data.json_buf[0..data.json_len],
+                );
+                initializeStore();
+                const json = json_parser.ParseJSONUTF8(
+                    &package_json_source,
+                    manager.log,
+                    manager.allocator,
+                ) catch |err| {
+                    if (comptime log_level != .silent) {
+                        const string_buf = manager.lockfile.buffers.string_bytes.items;
+                        Output.prettyErrorln("<r><red>error:<r> expected package.json in <b>{any}<r> to be a JSON file: {s}\n", .{
+                            resolution.fmtURL(&manager.options, string_buf),
+                            @errorName(err),
+                        });
+                    }
+                    Global.crash();
+                };
+                var builder = manager.lockfile.stringBuilder();
+                Lockfile.Package.Scripts.parseCount(manager.allocator, &builder, json);
+                builder.allocate() catch unreachable;
+                if (comptime Environment.allow_assert) std.debug.assert(package_id.* != invalid_package_id);
+                var scripts = manager.lockfile.packages.items(.scripts)[package_id.*];
+                scripts.parseAlloc(manager.allocator, &builder, json);
+                scripts.filled = true;
+            },
         }
 
         return null;
@@ -5308,36 +5335,31 @@ pub const PackageManager = struct {
             // When using bun, we only do staleness checks once per day
         ) -| std.time.s_per_day;
 
-        manager.lockfile = brk: {
+        if (root_dir.entries.hasComptimeQuery("bun.lockb")) {
             var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var parts = [_]string{
+                "./bun.lockb",
+            };
+            var lockfile_path = Path.joinAbsStringBuf(
+                Fs.FileSystem.instance.top_level_dir,
+                &buf,
+                &parts,
+                .auto,
+            );
+            buf[lockfile_path.len] = 0;
+            var lockfile_path_z = buf[0..lockfile_path.len :0];
 
-            if (root_dir.entries.hasComptimeQuery("bun.lockb")) {
-                var parts = [_]string{
-                    "./bun.lockb",
-                };
-                var lockfile_path = Path.joinAbsStringBuf(
-                    Fs.FileSystem.instance.top_level_dir,
-                    &buf,
-                    &parts,
-                    .auto,
-                );
-                buf[lockfile_path.len] = 0;
-                var lockfile_path_z = buf[0..lockfile_path.len :0];
-
-                const result = manager.lockfile.loadFromDisk(
-                    allocator,
-                    log,
-                    lockfile_path_z,
-                );
-
-                if (result == .ok) {
-                    break :brk result.ok;
-                }
+            switch (manager.lockfile.loadFromDisk(
+                allocator,
+                log,
+                lockfile_path_z,
+            )) {
+                .ok => |lockfile| manager.lockfile = lockfile,
+                else => try manager.lockfile.initEmpty(allocator),
             }
-
+        } else {
             try manager.lockfile.initEmpty(allocator);
-            break :brk manager.lockfile;
-        };
+        }
 
         return manager;
     }
@@ -6313,7 +6335,7 @@ pub const PackageManager = struct {
         // haha unless
         defer if (auto_free) bun.default_allocator.free(old_ast_nodes);
 
-        try installWithManager(ctx, manager, new_package_json_source, log_level);
+        try manager.installWithManager(ctx, new_package_json_source, log_level);
 
         if (op == .update or op == .add or op == .link) {
             for (manager.package_json_updates) |update| {
@@ -6435,11 +6457,11 @@ pub const PackageManager = struct {
         };
 
         try switch (manager.options.log_level) {
-            .default => installWithManager(ctx, manager, package_json_contents, .default),
-            .verbose => installWithManager(ctx, manager, package_json_contents, .verbose),
-            .silent => installWithManager(ctx, manager, package_json_contents, .silent),
-            .default_no_progress => installWithManager(ctx, manager, package_json_contents, .default_no_progress),
-            .verbose_no_progress => installWithManager(ctx, manager, package_json_contents, .verbose_no_progress),
+            .default => manager.installWithManager(ctx, package_json_contents, .default),
+            .verbose => manager.installWithManager(ctx, package_json_contents, .verbose),
+            .silent => manager.installWithManager(ctx, package_json_contents, .silent),
+            .default_no_progress => manager.installWithManager(ctx, package_json_contents, .default_no_progress),
+            .verbose_no_progress => manager.installWithManager(ctx, package_json_contents, .verbose_no_progress),
         };
     }
 
@@ -6718,61 +6740,56 @@ pub const PackageManager = struct {
                             }
                         }
 
-                        var scripts = this.lockfile.packages.items(.scripts)[package_id];
-                        if (scripts.hasAny()) {
-                            var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                            const path_str = Path.joinAbsString(
-                                bun.getFdPath(this.node_modules_folder.dir.fd, &path_buf) catch unreachable,
-                                &[_]string{destination_dir_subpath},
-                                .posix,
-                            );
+                        if (resolution.tag == .workspace or strings.indexEqualAny(this.lockfile.trusted_dependencies.items, name) != null) {
+                            var scripts = this.lockfile.packages.items(.scripts)[package_id];
+                            if (scripts.hasAny()) {
+                                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                                const path_str = Path.joinAbsString(
+                                    bun.getFdPath(this.node_modules_folder.dir.fd, &path_buf) catch unreachable,
+                                    &[_]string{destination_dir_subpath},
+                                    .posix,
+                                );
 
-                            scripts.enqueue(this.lockfile, buf, path_str);
-                        } else if (!scripts.filled and switch (resolution.tag) {
-                            .folder => Features.folder.scripts,
-                            .npm => Features.npm.scripts,
-                            .git, .github, .gitlab, .local_tarball, .remote_tarball => Features.tarball.scripts,
-                            .symlink => Features.link.scripts,
-                            .workspace => Features.workspace.scripts,
-                            else => false,
-                        }) {
-                            var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                            const path_str = Path.joinAbsString(
-                                bun.getFdPath(this.node_modules_folder.dir.fd, &path_buf) catch unreachable,
-                                &[_]string{destination_dir_subpath},
-                                .posix,
-                            );
+                                scripts.enqueue(this.lockfile, buf, path_str);
+                            } else if (!scripts.filled) {
+                                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                                const path_str = Path.joinAbsString(
+                                    bun.getFdPath(this.node_modules_folder.dir.fd, &path_buf) catch unreachable,
+                                    &[_]string{destination_dir_subpath},
+                                    .posix,
+                                );
 
-                            scripts.enqueueFromPackageJSON(
-                                this.manager.log,
-                                this.lockfile,
-                                this.node_modules_folder.dir,
-                                destination_dir_subpath,
-                                path_str,
-                            ) catch |err| {
-                                if (comptime log_level != .silent) {
-                                    const fmt = "\n<r><red>error:<r> failed to parse life-cycle scripts for <b>{s}<r>: {s}\n";
-                                    const args = .{ name, @errorName(err) };
+                                scripts.enqueueFromPackageJSON(
+                                    this.manager.log,
+                                    this.lockfile,
+                                    this.node_modules_folder.dir,
+                                    destination_dir_subpath,
+                                    path_str,
+                                ) catch |err| {
+                                    if (comptime log_level != .silent) {
+                                        const fmt = "\n<r><red>error:<r> failed to parse life-cycle scripts for <b>{s}<r>: {s}\n";
+                                        const args = .{ name, @errorName(err) };
 
-                                    if (comptime log_level.showProgress()) {
-                                        if (Output.enable_ansi_colors) {
-                                            this.progress.log(comptime Output.prettyFmt(fmt, true), args);
+                                        if (comptime log_level.showProgress()) {
+                                            if (Output.enable_ansi_colors) {
+                                                this.progress.log(comptime Output.prettyFmt(fmt, true), args);
+                                            } else {
+                                                this.progress.log(comptime Output.prettyFmt(fmt, false), args);
+                                            }
                                         } else {
-                                            this.progress.log(comptime Output.prettyFmt(fmt, false), args);
+                                            Output.prettyErrorln(fmt, args);
                                         }
-                                    } else {
-                                        Output.prettyErrorln(fmt, args);
                                     }
-                                }
 
-                                if (this.manager.options.enable.fail_early) {
-                                    Global.exit(1);
-                                }
+                                    if (this.manager.options.enable.fail_early) {
+                                        Global.exit(1);
+                                    }
 
-                                Output.flush();
-                                this.summary.fail += 1;
-                                return;
-                            };
+                                    Output.flush();
+                                    this.summary.fail += 1;
+                                    return;
+                                };
+                            }
                         }
                     },
                     .fail => |cause| {
@@ -7312,8 +7329,8 @@ pub const PackageManager = struct {
     }
 
     fn installWithManager(
-        ctx: Command.Context,
         manager: *PackageManager,
+        ctx: Command.Context,
         package_json_contents: string,
         comptime log_level: Options.LogLevel,
     ) !void {
@@ -7326,7 +7343,7 @@ pub const PackageManager = struct {
                 manager.options.lockfile_path,
             )
         else
-            Lockfile.LoadFromDiskResult{ .not_found = {} };
+            .{ .not_found = {} };
         var root = Lockfile.Package{};
         var needs_new_lockfile = load_lockfile_result != .ok or (load_lockfile_result.ok.buffers.dependencies.items.len == 0 and manager.package_json_updates.len > 0);
         // this defaults to false

@@ -208,19 +208,6 @@ pub const CommandLineReporter = struct {
         }
     }
 
-    pub fn printSummary(this: *CommandLineReporter, summary: Summary, start_time: i128, total_tests: ?u32) void {
-        const runned_tests = summary.fail + summary.pass;
-
-        // if it's not null it's most likely called after all tests are done, else it bailed out.
-        if (total_tests) |total| {
-            Output.prettyError("Ran {d} tests across {d} files. <d>{d} total<r> ", .{ runned_tests, this.jest.files.len, total });
-        } else {
-            Output.prettyError("Ran {d} tests across {d} files. ", .{ runned_tests, this.jest.files.len });
-        }
-
-        Output.printStartEnd(start_time, std.time.nanoTimestamp());
-    }
-
     pub fn handleTestSkip(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
         var writer_: std.fs.File.Writer = Output.errorWriter();
         var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
@@ -264,6 +251,19 @@ pub const CommandLineReporter = struct {
         this.summary.todo += 1;
         this.summary.expectations += expectations;
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.todo;
+    }
+
+    pub fn printSummary(this: *CommandLineReporter, summary: Summary, start_time: i128, total_tests: ?u32) void {
+        const runned_tests = summary.fail + summary.pass;
+
+        // if it's not null it's most likely called after all tests are done, else it bailed out.
+        if (total_tests) |total| {
+            Output.prettyError("Ran {d} tests across {d} files. <d>{d} total<r> ", .{ runned_tests, this.jest.files.len, total });
+        } else {
+            Output.prettyError("Ran {d} tests across {d} files. ", .{ runned_tests, this.jest.files.len });
+        }
+
+        Output.printStartEnd(start_time, std.time.nanoTimestamp());
     }
 };
 

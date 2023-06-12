@@ -690,7 +690,6 @@ function* emitKeys(stream) {
       keyCtrl = !!(modifier & 4);
       keyMeta = !!(modifier & 10);
       keyShift = !!(modifier & 1);
-      keyCode = code;
 
       // Parse the key itself
       switch (code) {

@@ -6740,7 +6740,7 @@ pub const PackageManager = struct {
                             }
                         }
 
-                        if (resolution.tag == .workspace or strings.indexEqualAny(this.lockfile.trusted_dependencies.items, name) != null) {
+                        if (resolution.tag == .workspace or this.lockfile.trusted_dependencies.contains(@truncate(u32, String.Builder.stringHash(name)))) {
                             var scripts = this.lockfile.packages.items(.scripts)[package_id];
                             if (scripts.hasAny()) {
                                 var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;

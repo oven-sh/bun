@@ -85,7 +85,7 @@ const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const MetaHash = [std.crypto.hash.sha2.Sha512256.digest_length]u8;
 const zero_hash = std.mem.zeroes(MetaHash);
 const NameHashMap = std.ArrayHashMapUnmanaged(u32, String, ArrayIdentityContext, false);
-const NameList = std.ArrayListUnmanaged(string);
+const NameHashSet = std.ArrayHashMapUnmanaged(u32, void, ArrayIdentityContext, false);
 
 // Serialized data
 /// The version of the lockfile format, intended to prevent data corruption for format changes.
@@ -103,8 +103,8 @@ string_pool: StringPool,
 allocator: Allocator,
 scratch: Scratch = .{},
 
-trusted_dependencies: NameList = .{},
 scripts: Scripts = .{},
+trusted_dependencies: NameHashSet = .{},
 workspace_paths: NameHashMap = .{},
 
 const Stream = std.io.FixedBufferStream([]u8);
@@ -196,8 +196,8 @@ pub fn loadFromBytes(this: *Lockfile, buf: []u8, allocator: Allocator, log: *log
     var stream = Stream{ .buffer = buf, .pos = 0 };
 
     this.format = FormatVersion.current;
-    this.trusted_dependencies = .{};
     this.scripts = .{};
+    this.trusted_dependencies = .{};
     this.workspace_paths = .{};
 
     Lockfile.Serializer.load(this, &stream, allocator, log) catch |err| {
@@ -1497,8 +1497,8 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) !void {
         .string_pool = StringPool.init(allocator),
         .allocator = allocator,
         .scratch = Scratch.init(allocator),
-        .trusted_dependencies = .{},
         .scripts = .{},
+        .trusted_dependencies = .{},
         .workspace_paths = .{},
     };
 }
@@ -3123,7 +3123,7 @@ pub const Package = extern struct {
                     .e_array => |arr| {
                         try lockfile.trusted_dependencies.ensureUnusedCapacity(allocator, arr.items.len);
                         for (arr.slice()) |item| {
-                            var name = item.asString(allocator) orelse {
+                            const name = item.asString(allocator) orelse {
                                 log.addErrorFmt(&source, q.loc, allocator,
                                     \\trustedDependencies expects an array of strings, e.g.
                                     \\"trustedDependencies": [
@@ -3132,7 +3132,7 @@ pub const Package = extern struct {
                                 , .{}) catch {};
                                 return error.InvalidPackageJSON;
                             };
-                            lockfile.trusted_dependencies.appendAssumeCapacity(try allocator.dupe(u8, name));
+                            lockfile.trusted_dependencies.putAssumeCapacity(@truncate(u32, String.Builder.stringHash(name)), {});
                         }
                     },
                     else => {
@@ -3543,11 +3543,8 @@ pub fn deinit(this: *Lockfile) void {
     this.buffers.deinit(this.allocator);
     this.packages.deinit(this.allocator);
     this.string_pool.deinit();
-    for (this.trusted_dependencies.items) |name| {
-        this.allocator.free(name);
-    }
-    this.trusted_dependencies.deinit(this.allocator);
     this.scripts.deinit(this.allocator);
+    this.trusted_dependencies.deinit(this.allocator);
     this.workspace_paths.deinit(this.allocator);
 }
 

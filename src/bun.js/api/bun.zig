@@ -3602,7 +3602,7 @@ pub const TOML = struct {
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        var arena = std.heap.ArenaAllocator.init(getAllocator(ctx));
+        var arena = @import("root").bun.ArenaAllocator.init(getAllocator(ctx));
         var allocator = arena.allocator();
         defer arena.deinit();
         var log = logger.Log.init(default_allocator);

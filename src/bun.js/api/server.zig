@@ -296,7 +296,7 @@ pub const ServerConfig = struct {
 
                         var i: u32 = 0;
                         var valid_count: u32 = 0;
-                        var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator);
+                        var arena: @import("root").bun.ArenaAllocator = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
                         while (i < count) : (i += 1) {
                             const item = js_obj.getIndex(global, i);
                             if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item, exception)) |sb| {
@@ -351,7 +351,7 @@ pub const ServerConfig = struct {
                     }
                 } else {
                     const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
-                    var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator);
+                    var arena: @import("root").bun.ArenaAllocator = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
                     if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj, exception)) |sb| {
                         const sliced = sb.slice();
                         if (sliced.len > 0) {
@@ -398,7 +398,7 @@ pub const ServerConfig = struct {
                         var i: u32 = 0;
                         var valid_count: u32 = 0;
 
-                        var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator);
+                        var arena: @import("root").bun.ArenaAllocator = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
                         while (i < count) : (i += 1) {
                             const item = js_obj.getIndex(global, i);
                             if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item, exception)) |sb| {
@@ -453,7 +453,7 @@ pub const ServerConfig = struct {
                     }
                 } else {
                     const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
-                    var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator);
+                    var arena: @import("root").bun.ArenaAllocator = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
                     if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj, exception)) |sb| {
                         const sliced = sb.slice();
                         if (sliced.len > 0) {
@@ -513,7 +513,7 @@ pub const ServerConfig = struct {
                         var i: u32 = 0;
                         var valid_count: u32 = 0;
 
-                        var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator);
+                        var arena: @import("root").bun.ArenaAllocator = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
                         while (i < count) : (i += 1) {
                             const item = js_obj.getIndex(global, i);
                             if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item, exception)) |sb| {
@@ -568,7 +568,7 @@ pub const ServerConfig = struct {
                     }
                 } else {
                     const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
-                    var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator);
+                    var arena: @import("root").bun.ArenaAllocator = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
                     if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj, exception)) |sb| {
                         const sliced = sb.slice();
                         if (sliced.len > 0) {

@@ -1530,3 +1530,5 @@ pub const WTF = struct {
     /// The String type from WebKit's WTF library.
     pub const StringImpl = @import("./string.zig").WTFStringImpl;
 };
+
+pub const ArenaAllocator = @import("./ArenaAllocator.zig").ArenaAllocator;

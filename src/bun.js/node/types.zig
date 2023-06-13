@@ -754,7 +754,7 @@ pub const Valid = struct {
 pub const ArgumentsSlice = struct {
     remaining: []const JSC.JSValue,
     vm: *JSC.VirtualMachine,
-    arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator),
+    arena: @import("root").bun.ArenaAllocator = @import("root").bun.ArenaAllocator.init(bun.default_allocator),
     all: []const JSC.JSValue,
     threw: bool = false,
     protected: std.bit_set.IntegerBitSet(32) = std.bit_set.IntegerBitSet(32).initEmpty(),
@@ -794,7 +794,7 @@ pub const ArgumentsSlice = struct {
             .remaining = arguments,
             .vm = vm,
             .all = arguments,
-            .arena = std.heap.ArenaAllocator.init(vm.allocator),
+            .arena = @import("root").bun.ArenaAllocator.init(vm.allocator),
         };
     }
 
@@ -1733,7 +1733,7 @@ pub const Path = struct {
             heap_allocator,
         );
         var allocator = stack_fallback_allocator.get();
-        var arena = std.heap.ArenaAllocator.init(heap_allocator);
+        var arena = @import("root").bun.ArenaAllocator.init(heap_allocator);
         var arena_allocator = arena.allocator();
         defer arena.deinit();
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -1870,7 +1870,7 @@ pub const Path = struct {
         var parts = allocator.alloc(string, args_len) catch unreachable;
         defer allocator.free(parts);
 
-        var arena = std.heap.ArenaAllocator.init(heap_allocator);
+        var arena = @import("root").bun.ArenaAllocator.init(heap_allocator);
         var arena_allocator = arena.allocator();
         defer arena.deinit();
 

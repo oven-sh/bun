@@ -241,7 +241,7 @@ pub fn addrInfoToJSArray(
     globalThis: *JSC.JSGlobalObject,
 ) JSC.JSValue {
     var stack = std.heap.stackFallback(2048, parent_allocator);
-    var arena = std.heap.ArenaAllocator.init(stack.get());
+    var arena = @import("root").bun.ArenaAllocator.init(stack.get());
     const array = JSC.JSValue.createEmptyArray(
         globalThis,
         addrInfoCount(addr_info),
@@ -553,7 +553,7 @@ pub const GetAddrInfo = struct {
                     .addrinfo => |addrinfo| addrInfoToJSArray(globalThis.allocator(), addrinfo orelse return null, globalThis),
                     .list => |list| brk: {
                         var stack = std.heap.stackFallback(2048, globalThis.allocator());
-                        var arena = std.heap.ArenaAllocator.init(stack.get());
+                        var arena = @import("root").bun.ArenaAllocator.init(stack.get());
                         const array = JSC.JSValue.createEmptyArray(globalThis, @truncate(u32, list.items.len));
                         var i: u32 = 0;
                         const items: []const Result = list.items;

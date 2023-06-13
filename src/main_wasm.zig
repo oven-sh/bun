@@ -202,7 +202,7 @@ const Arena = @import("./mimalloc_arena.zig").Arena;
 var log: Logger.Log = undefined;
 
 export fn transform(opts_array: u64) u64 {
-    // var arena = std.heap.ArenaAllocator.init(default_allocator);
+    // var arena = @import("root").bun.ArenaAllocator.init(default_allocator);
     var arena = Arena.init() catch unreachable;
     var allocator = arena.allocator();
     defer arena.deinit();
@@ -274,7 +274,7 @@ export fn transform(opts_array: u64) u64 {
 }
 
 export fn scan(opts_array: u64) u64 {
-    // var arena = std.heap.ArenaAllocator.init(default_allocator);
+    // var arena = @import("root").bun.ArenaAllocator.init(default_allocator);
     var arena = Arena.init() catch unreachable;
     var allocator = arena.allocator();
     defer arena.deinit();

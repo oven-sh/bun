@@ -81,7 +81,7 @@ export function hideFromStackTrace(block: CallableFunction) {
 }
 
 export function tempDirWithFiles(basename: string, files: Record<string, string>) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), basename + "_"));
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), basename + "_"));
   for (const [name, contents] of Object.entries(files)) {
     fs.writeFileSync(path.join(dir, name), contents);
   }

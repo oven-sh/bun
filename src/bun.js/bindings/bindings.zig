@@ -4395,8 +4395,18 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("deepEquals", .{ this, other, global });
     }
 
+    /// same as `JSValue.deepEquals`, but with jest asymmetric matchers enabled
+    pub fn jestDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
+        return cppFn("jestDeepEquals", .{ this, other, global });
+    }
+
     pub fn strictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
         return cppFn("strictDeepEquals", .{ this, other, global });
+    }
+
+    /// same as `JSValue.strictDeepEquals`, but with jest asymmetric matchers enabled
+    pub fn jestStrictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
+        return cppFn("jestStrictDeepEquals", .{ this, other, global });
     }
 
     pub fn deepMatch(this: JSValue, subset: JSValue, global: *JSGlobalObject, replace_props_with_asymmetric_matchers: bool) bool {
@@ -4763,6 +4773,8 @@ pub const JSValue = enum(JSValueReprInt) {
         "isInstanceOf",
         "stringIncludes",
         "deepMatch",
+        "jestDeepEquals",
+        "jestStrictDeepEquals",
     };
 };
 

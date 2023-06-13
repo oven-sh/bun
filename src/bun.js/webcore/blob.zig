@@ -603,35 +603,25 @@ pub const Blob = struct {
             const len = data.getLength(ctx);
 
             if (len < 256 * 1024 or bun.isMissingIOUring()) {
-                const str = data.getZigString(ctx);
+                const str = data.toBunString(ctx);
 
                 const pathlike: JSC.Node.PathOrFileDescriptor = if (path_or_blob == .path)
                     path_or_blob.path
                 else
                     path_or_blob.blob.store.?.data.file.pathlike;
 
-                if (pathlike == .path) {
-                    const result = writeStringToFileFast(
+                const result = switch (pathlike == .path) {
+                    inline else => |is_path| writeStringToFileFast(
                         ctx,
                         pathlike,
                         str,
                         &needs_async,
-                        true,
-                    );
-                    if (!needs_async) {
-                        return result.asObjectRef();
-                    }
-                } else {
-                    const result = writeStringToFileFast(
-                        ctx,
-                        pathlike,
-                        str,
-                        &needs_async,
-                        false,
-                    );
-                    if (!needs_async) {
-                        return result.asObjectRef();
-                    }
+                        is_path,
+                    ),
+                };
+
+                if (!needs_async) {
+                    return result.asObjectRef();
                 }
             }
         } else if (data.asArrayBuffer(ctx)) |buffer_view| {
@@ -784,7 +774,7 @@ pub const Blob = struct {
     fn writeStringToFileFast(
         globalThis: *JSC.JSGlobalObject,
         pathlike: JSC.Node.PathOrFileDescriptor,
-        str: ZigString,
+        str: bun.String,
         needs_async: *bool,
         comptime needs_open: bool,
     ) JSC.JSValue {
@@ -807,7 +797,7 @@ pub const Blob = struct {
             unreachable;
         };
 
-        var truncate = needs_open or str.len == 0;
+        var truncate = needs_open or str.length() == 0;
         var jsc_vm = globalThis.bunVM();
         var written: usize = 0;
 
@@ -822,19 +812,17 @@ pub const Blob = struct {
                 _ = JSC.Node.Syscall.close(fd);
             }
         }
-        if (str.len == 0) {} else if (str.is16Bit()) {
-            var decoded = str.toSlice(jsc_vm.allocator);
+        if (str.length() != 0) {
+            var decoded = str.toUTF8(jsc_vm.allocator);
             defer decoded.deinit();
 
             var remain = decoded.slice();
-            const end = remain.ptr + remain.len;
 
-            while (remain.ptr != end) {
-                const result = JSC.Node.Syscall.write(fd, remain);
+            while (remain[written..].len > 0) {
+                const result = JSC.Node.Syscall.write(fd, remain[written..]);
                 switch (result) {
                     .result => |res| {
                         written += res;
-                        remain = remain[res..];
                         if (res == 0) break;
                     },
                     .err => |err| {
@@ -843,55 +831,6 @@ pub const Blob = struct {
                             needs_async.* = true;
                             return .zero;
                         }
-                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
-                    },
-                }
-            }
-        } else if (str.isUTF8() or strings.isAllASCII(str.slice())) {
-            var remain = str.slice();
-            const end = remain.ptr + remain.len;
-
-            while (remain.ptr != end) {
-                const result = JSC.Node.Syscall.write(fd, remain);
-                switch (result) {
-                    .result => |res| {
-                        written += res;
-                        remain = remain[res..];
-                        if (res == 0) break;
-                    },
-                    .err => |err| {
-                        truncate = false;
-                        if (err.getErrno() == .AGAIN) {
-                            needs_async.* = true;
-                            return .zero;
-                        }
-
-                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
-                    },
-                }
-            }
-        } else {
-            var decoded = str.toOwnedSlice(jsc_vm.allocator) catch {
-                return JSC.JSPromise.rejectedPromiseValue(globalThis, ZigString.static("Out of memory").toErrorInstance(globalThis));
-            };
-            defer jsc_vm.allocator.free(decoded);
-            var remain = decoded;
-            const end = remain.ptr + remain.len;
-            while (remain.ptr != end) {
-                const result = JSC.Node.Syscall.write(fd, remain);
-                switch (result) {
-                    .result => |res| {
-                        written += res;
-                        remain = remain[res..];
-                        if (res == 0) break;
-                    },
-                    .err => |err| {
-                        truncate = false;
-                        if (err.getErrno() == .AGAIN) {
-                            needs_async.* = true;
-                            return .zero;
-                        }
-
                         return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
                     },
                 }
@@ -940,14 +879,11 @@ pub const Blob = struct {
         }
 
         var remain = bytes;
-        const end = remain.ptr + remain.len;
-
-        while (remain.ptr != end) {
-            const result = JSC.Node.Syscall.write(fd, remain);
+        while (remain[written..].len > 0) {
+            const result = JSC.Node.Syscall.write(fd, remain[written..]);
             switch (result) {
                 .result => |res| {
                     written += res;
-                    remain = remain[res..];
                     if (res == 0) break;
                 },
                 .err => |err| {

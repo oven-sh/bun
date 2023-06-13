@@ -54,7 +54,7 @@ export function getEventSource() {
       }
     }
 
-    static #ProcessChunk(self: EventSource, chunks : string, offset: number) {
+    static #ProcessChunk(self: EventSource, chunks: string, offset: number) {
       for (;;) {
         if (offset >= chunks.length) {
           return;
@@ -180,7 +180,7 @@ export function getEventSource() {
           EventSource.#SendRequest(socket, self.#url);
         }
       },
-      handshake(socket: Socket, success : boolean, verifyError: Error) {
+      handshake(socket: Socket, success: boolean, verifyError: Error) {
         const self = socket.data;
         if (success) {
           EventSource.#SendRequest(socket, self.#url);

@@ -80,12 +80,13 @@ public:
     mutable JSC::WriteBarrier<JSC::JSString> m_id;
     mutable JSC::WriteBarrier<JSC::EvalExecutable> m_executable;
 
-    void finishCreation(JSC::VM& vm, JSC::JSValue exportsObject, JSC::JSString* id)
+    void finishCreation(JSC::VM& vm, JSC::JSValue exportsObject, JSC::JSString* id, JSC::JSString* filename, JSC::JSValue requireFunction, JSC::EvalExecutable* executable)
     {
         Base::finishCreation(vm);
         ASSERT(inherits(vm, info()));
         m_exportsObject.set(vm, this, exportsObject);
         m_id.set(vm, this, id);
+        m_executable.set(vm, this, executable);
 
         this->putDirectOffset(
             vm,
@@ -101,16 +102,27 @@ public:
             vm,
             2,
             id);
+        this->putDirectOffset(
+            vm,
+            3,
+            filename);
+        this->putDirectOffset(
+            vm,
+            4,
+            requireFunction);
     }
 
     static JSCommonJSModule* create(
         JSC::VM& vm,
         JSC::Structure* structure,
         JSC::JSValue exportsObject,
-        JSC::JSString* id)
+        JSC::JSString* id,
+        JSC::JSString* filename,
+        JSC::JSValue requireFunction,
+        JSC::EvalExecutable* executable)
     {
         JSCommonJSModule* cell = new (NotNull, JSC::allocateCell<JSCommonJSModule>(vm)) JSCommonJSModule(vm, structure);
-        cell->finishCreation(vm, exportsObject, id);
+        cell->finishCreation(vm, exportsObject, id, filename, requireFunction, executable);
         return cell;
     }
 
@@ -255,7 +267,8 @@ JSCommonJSModule* createCommonJSModuleObject(
     const WTF::String& sourceURL,
     JSC::JSValue exportsObjectValue,
     JSC::JSValue requireFunctionValue,
-    EvalExecutable* executable)
+    JSC::EvalExecutable* executable,
+    JSC::JSString* filename)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -265,14 +278,7 @@ JSCommonJSModule* createCommonJSModuleObject(
         vm,
         globalObject->CommonJSModuleObjectStructure(),
         exportsObjectValue,
-        jsSourceURL);
-
-    moduleObject->putDirectOffset(
-        vm,
-        3,
-        requireFunctionValue);
-
-    moduleObject->m_executable.set(vm, moduleObject, executable);
+        jsSourceURL, filename, requireFunctionValue, executable);
 
     return moduleObject;
 }
@@ -352,7 +358,8 @@ JSC::SourceCode createCommonJSModule(
                     source,
                     sourceURL,
                     exportsObject,
-                    requireFunction, executable);
+                    requireFunction, executable, filename);
+
                 scopeExtensionObject->putDirectOffset(
                     vm,
                     0,
@@ -460,6 +467,13 @@ JSC::SourceCode createCommonJSModule(
 
                 globalObject->requireMap()->set(globalObject, requireMapKey, result);
 
+                exportNames.append(vm.propertyNames->defaultKeyword);
+                exportValues.append(result);
+
+                // This exists to tell ImportMetaObject.ts that this is a CommonJS module.
+                exportNames.append(Identifier::fromUid(vm.symbolRegistry().symbolForKey("CommonJS"_s)));
+                exportValues.append(jsNumber(0));
+
                 moduleObject->m_executable.clear();
 
                 if (result.isObject()) {
@@ -521,13 +535,6 @@ JSC::SourceCode createCommonJSModule(
                         }
                     }
                 }
-
-                exportNames.append(vm.propertyNames->defaultKeyword);
-                exportValues.append(result);
-
-                // This exists to tell ImportMetaObject.ts that this is a CommonJS module.
-                exportNames.append(Identifier::fromUid(vm.symbolRegistry().symbolForKey("CommonJS"_s)));
-                exportValues.append(jsNumber(0));
             },
             SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL)),
             sourceURL));

@@ -1,5 +1,19 @@
 import { test, mock, expect, spyOn, jest } from "bun:test";
 
+test("mockResolvedValue", async () => {
+  const fn = mock.mockResolvedValueOnce(42).mockResolvedValue(43);
+  expect(await fn()).toBe(42);
+  expect(await fn()).toBe(43);
+  expect(await fn()).toBe(43);
+});
+
+test("mockRejectedValue", async () => {
+  const fn = mock.mockRejectedValue(42);
+  expect(await fn()).toBe(42);
+  fn.mockRejectedValue(43);
+  expect(await fn()).toBe(43);
+});
+
 test("are callable", () => {
   const fn = mock(() => 42);
   expect(fn()).toBe(42);
@@ -208,5 +222,3 @@ test("spyOn works on globalThis", () => {
   obj.original;
   expect(fn).not.toHaveBeenCalled();
 });
-
-// spyOn does not work with getters/setters yet.
